@@ -16,6 +16,8 @@
                                          against the same schemas and the same rules
 """
 import json, sys, os, datetime, re
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import legacy   # an older application's pre-rename state keys, where this machine names them (lib/legacy.py)
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state")
 TODAY = datetime.date.today().isoformat()
@@ -649,14 +651,26 @@ def _lane_specs():
     return errs
 
 def _operator_identity(app_id, docs):
-    """workspace.operator_self names who the app was stamped for. Its pre-rename spelling, fde_self, is still
-    accepted for one release, so the schema requires neither and this requires exactly one of the two."""
+    """workspace.operator_self names who the app was stamped for. Its pre-rename spelling, where this machine names one
+    (lib/legacy.py), is still accepted, so the schema requires neither and this requires exactly one of the two."""
     ws = (docs.get("application") or {}).get("workspace")
     if not isinstance(ws, dict): return []
-    have = [k for k in ("operator_self", "fde_self") if k in ws]
+    have = [k for k in legacy.spellings("operator_self") if k in ws]
     if not have: return [f"{app_id}/application.json.workspace: missing operator_self"]
-    if len(have) == 2: return [f"{app_id}/application.json.workspace: carries both operator_self and its legacy name fde_self; keep operator_self only"]
+    if len(have) == 2: return [f"{app_id}/application.json.workspace: carries both operator_self and its pre-rename spelling {have[1]}; keep operator_self only"]
     return []
+def _current_names(name, doc):
+    """A copy of one state file with this machine's pre-rename spellings (lib/legacy.py) under their current names, so
+    the schema, which knows only the current ones, judges what the readers read."""
+    if not isinstance(doc, dict) or not legacy.old_name("operator_self") and not legacy.old_name("live_source_agent"): return doc
+    doc = json.loads(json.dumps(doc))
+    ws = doc.get("workspace") if name == "application" else None
+    old = legacy.has_old(ws, "operator_self")
+    if old and "operator_self" not in ws: ws["operator_self"] = ws.pop(old)
+    for k in (("postgres", "blob") if name == "datastores" else ()):
+        snap = (doc.get(k) or {}).get("snapshot") if isinstance(doc.get(k), dict) else None
+        if isinstance(snap, dict) and legacy.is_value(snap.get("source"), "live_source_agent"): snap["source"] = "live_source_agent"
+    return doc
 def _repository(app_id, docs):
     """What the schema cannot say about infrastructure.repository (mold_v1-177). It is optional and absent unless the
     operator asked for a repository; when present it is a note of WHERE, never a credential, and it must be the one
@@ -726,7 +740,7 @@ def _app_errors(app, adir):
     for name in ["application","infrastructure","datastores","datainfra"]:
         f = os.path.join(adir, f"{name}.json")
         if os.path.exists(f):
-            docs[name] = load(f); errs += _check(docs[name], load(os.path.join(sdir, f"{name}.schema.json")), f"{app}/{name}.json")
+            docs[name] = load(f); errs += _check(_current_names(name, docs[name]), load(os.path.join(sdir, f"{name}.schema.json")), f"{app}/{name}.json")
         else: errs.append(f"{app}: missing {name}.json")
     errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
              + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs))

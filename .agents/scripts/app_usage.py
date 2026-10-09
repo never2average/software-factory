@@ -29,7 +29,7 @@ agent_session_owners (a child session inherits its parent's owner). Both: sorted
 descending, at most 50 rows; each row names its workspace.
 
 Money carries its basis (`cost_basis` on a by_agent row, `workflow_cost_basis` beside workflow_cost_usd): `recorded` is
-what the app recorded (a specialist run's cost and model per step, fde-agent drizzle/0036; a chat turn's model, priced
+what the app recorded (a specialist run's cost and model per step, upstream drizzle/0036; a chat turn's model, priced
 at the app's own price table as its usage page does); `estimated` is a specialist's runs that recorded tokens but no
 cost and no model, priced at the model that specialist is configured with NOW (`estimated_from`): its role from its
 agent.ts (build/<app_id>, the app's packs, its mold), the model from the deployment's per-role model variables when
@@ -154,7 +154,7 @@ try {
         cost_usd: w.unpriced_turns || !price ? null : w.cost_usd, unpriced_turns: w.unpriced_turns, last_active: iso(lastChat[0].last) });
     } else if (!(byModel && chats && days && lastChat)) w.berr.main ||= w.errors.chat || 'the chat usage table could not be read';
     // Per specialist, its runs in three kinds (tok = the run used tokens):
-    //   recorded   the app recorded a cost (and, since fde-agent drizzle/0036, the model per step) — summed as is;
+    //   recorded   the app recorded a cost (and, since upstream drizzle/0036, the model per step) — summed as is;
     //   unpriced   the app recorded the model but no cost: a model its price table does not price — unknown;
     //   estimate   tokens but no cost and no model (recorded before the app recorded models) — priced here at the
     //              specialist's configured model (A.agent_models), with the app's own price table.

@@ -42,6 +42,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 S = os.path.join(ROOT, ".claude", "scripts")
 sys.path.insert(0, S)
 import branding, library, packs
+sys.path.insert(0, os.path.join(S, "lib")); from factory_local import mold_source, repo_slug
 
 ENV = dict(os.environ)                      # what every child process sees; the self-test swaps it for stand-ins
 AUTHOR = ("Software Factory", "factory@software-factory.invalid")
@@ -174,7 +175,7 @@ def assemble(app_id, dest):
     finally:
         if os.path.islink(link): os.unlink(link)
     m = {"app_id": app_id, "product_name": ((app.get("surface") or {}).get("branding") or {}).get("product_name") or app_id,
-         "mold_id": app["mold_id"], "mold_repo": src.get("repo", "its upstream repository"), "mold_commit": src["commit"],
+         "mold_id": app["mold_id"], "mold_repo": repo_slug(mold_source(app["mold_id"], os.path.join(ROOT, "state"))) or "its upstream repository", "mold_commit": src["commit"],
          "mold_snapshot_date": src.get("snapshot_date"), "deployed_mold_commit": app.get("mold_commit"),
          "packs": [pack_record(p) for p in app.get("packs") or []]}
     f = os.path.join(dest, "factory"); os.makedirs(os.path.join(f, "state"))

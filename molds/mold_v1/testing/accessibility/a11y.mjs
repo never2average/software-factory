@@ -32,7 +32,7 @@
 // "email-session" token lib/auth-session.ts defines and lib/ops-auth.ts admits on its signature alone
 // (the emailed one-time code gates the mint ROUTE, app/api/auth/email/verify, not the token). For an
 // application the factory provisioned, the factory holds that app's AUTH_JWT_PRIVATE_KEY by name, so
-// .claude/scripts/lib/session.py signs one for the app's own FDE (application.workspace.fde_self.email)
+// .claude/scripts/lib/session.py signs one for the app's own operator (application.workspace.operator_self.email)
 // and hands it to this harness by NAME in an environment variable — lane.json runs the check through
 // it. An operator who signed in and lent that browser's session wins over a minted one. The harness
 // stores whichever it was given under the same localStorage key the app's own sign-in writes
@@ -127,11 +127,22 @@ function readSession() {
   return { token: raw, who: c.email || c.sub || "(the token names no email)", exp: c.exp, expired };
 }
 
-// A locally built mold bakes a rewrite of /eve/v1/* to the LIVE fde-agent-api into routes-manifest.json,
+// A locally built mold bakes a rewrite of /eve/v1/* to the LIVE API project into routes-manifest.json,
 // so a browser that touches those paths pulls a live production project into a test run. This lane is
 // read-only on the app under test and must never reach the live factory projects: those requests are
 // aborted in the browser and counted, and a non-zero count is reported rather than hidden.
-const LIVE = /(^|\.)fde-(agent|agent-api|task-workflow)[^.]*\./i;   // any host, not just *.vercel.app
+// The live projects' names are this machine's own (state/factory.local.json -> live_projects, found by walking up
+// from this file); a host whose first label starts with one of them is the live deployment. None named: none blocked
+// by name (the proxy paths below are blocked either way).
+const LIVE = (() => {   // any host, not just *.vercel.app
+  let names = [];
+  for (let d = HERE; d !== dirname(d); d = dirname(d)) {
+    try { names = Object.values(JSON.parse(readFileSync(join(d, "state", "factory.local.json"), "utf8")).live_projects || {}); break; } catch { /* not here */ }
+  }
+  names = names.filter((n) => typeof n === "string" && n);
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return names.length ? new RegExp(`(^|\\.)(${names.map(esc).join("|")})[^.]*\\.`, "i") : /(?!)/;
+})();
 const PROXY_PATHS = /\/(eve\/v1|\.well-known\/workflow)\//;
 let blocked = 0, writes = 0;
 // Read-only, enforced rather than intended. Signed OUT the app issues no writes worth speaking of;
@@ -191,7 +202,7 @@ const notRendered = (c) => c.interactive ? null
 // resolved a workspace for the identity; 401 means the token is not this deployment's, or has expired.
 const serverAcceptsSession = (page) => page.evaluate(async () => {
   try {
-    const t = localStorage.getItem("workspace-google-token") || localStorage.getItem("fde-google-token");
+    const t = localStorage.getItem("workspace-google-token");
     if (!t) return { status: -1, why: "no session was installed in this browser" };
     const r = await fetch("/api/ops/orgs", { headers: { authorization: "Bearer " + t } });
     return { status: r.status };
@@ -206,10 +217,8 @@ const newCtx = async (token) => {
     // script runs in EVERY frame, including third-party sign-in iframes, and a credential must never
     // be written into somebody else's storage.
     await ctx.addInitScript(({ t, o }) => {
-      // Both spellings: the app reads `workspace-google-token` (lib/browser-storage.ts STORAGE_KEYS.token,
-      // fde-agent #47) and falls back to the legacy `fde-google-token`; a deployment older than #47 reads
-      // only the legacy one. Writing both keeps the harness correct on either side of the alias removal.
-      try { if (location.origin === o) { localStorage.setItem("workspace-google-token", t); localStorage.setItem("fde-google-token", t); } } catch { /* private mode */ }
+      // The key the app reads (lib/browser-storage.ts STORAGE_KEYS.token, since upstream #47).
+      try { if (location.origin === o) localStorage.setItem("workspace-google-token", t); } catch { /* private mode */ }
     }, { t: token, o: ORIGIN });
   }
   await guard(ctx);

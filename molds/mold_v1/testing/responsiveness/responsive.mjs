@@ -19,8 +19,8 @@
 // what would make this lane cry wolf on every horizontal tab strip in every future mold.
 //
 // HARD RULE 2 (read-only on the live projects) is enforced in the browser, not by good intentions:
-// every request to a live fde-* host — and every same-origin path the mold rewrites INTO one, which is
-// how /eve/v1/* reaches the live fde-agent-api — is aborted and counted, and the count is in the footer as
+// every request to a live project's host — and every same-origin path the mold rewrites INTO one, which is
+// how /eve/v1/* reaches the live API project — is aborted and counted, and the count is in the footer as
 // evidence. Interaction rows only ever click in-page controls whose accessible name is not an auth or
 // destructive verb, and each click asserts the URL did not change.
 //
@@ -30,6 +30,10 @@
 // A skipped row NEVER lifts the exit code: unmeasured must never read as pass.
 import { createRequire } from "node:module";
 import os from "node:os";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+const HERE_DIR = dirname(fileURLToPath(import.meta.url));
 const { chromium } = createRequire("/usr/lib/node_modules/")("playwright");
 
 const BUDGET = {
@@ -50,12 +54,23 @@ const TOUCH_VIEWPORTS = ["mobile-390", "tablet-820"];
 // HARD RULE 2: the live factory projects are never touched, only counted. TWO tests, because a
 // hostname test alone does not cover this mold. next.config.ts:33 rewrites the SAME-ORIGIN paths
 // /eve/v1/* and /.well-known/workflow/* to EVE_API, which lib/agent-url.ts defaults to the LIVE
-// fde-agent-api whenever the env var is missing, and forwards the Authorization header. The browser
+// API project whenever the env var is missing, and forwards the Authorization header. The browser
 // only ever sees https://<app-under-test>/eve/v1/..., so the hostname never matches and Vercel proxies
 // the test session straight into a production project. Signed out that path is unreachable (the chat
 // shell never renders); signed in, `/` is the chat thread and chat-shell.tsx / agent-chat.tsx /
 // cockpit.tsx all fetch /eve/v1/session/*. So the PATH is blocked too, at the same place.
-const LIVE = /(^|\.)fde-(agent|agent-api|task-workflow)[^.]*\./i;
+// The live projects' names are this machine's own (state/factory.local.json -> live_projects, found by walking up
+// from this file); a host whose first label starts with one of them is the live deployment. None named: none blocked
+// by name (the proxy paths below are blocked either way).
+const LIVE = (() => {
+  let names = [];
+  for (let d = HERE_DIR; d !== dirname(d); d = dirname(d)) {
+    try { names = Object.values(JSON.parse(readFileSync(join(d, "state", "factory.local.json"), "utf8")).live_projects || {}); break; } catch { /* not here */ }
+  }
+  names = names.filter((n) => typeof n === "string" && n);
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return names.length ? new RegExp(`(^|\\.)(${names.map(esc).join("|")})[^.]*\\.`, "i") : /(?!)/;
+})();
 const PROXY_PATHS = /\/(eve\/v1|\.well-known\/workflow)\//;
 
 // ---- the product, behind a signed-in identity (--auth) -------------------------------------------
@@ -67,7 +82,7 @@ const PROXY_PATHS = /\/(eve\/v1|\.well-known\/workflow)\//;
 // `--auth` measures those. The session is the app's OWN kind: the ES256 "email-session" token
 // lib/auth-session.ts defines and lib/ops-auth.ts admits on its signature alone (the emailed code gates
 // the mint route, not the token). The factory holds a provisioned app's AUTH_JWT_PRIVATE_KEY by name,
-// so .claude/scripts/lib/session.py signs one for the app's own FDE (application.workspace.fde_self.email)
+// so .claude/scripts/lib/session.py signs one for the app's own operator (application.workspace.operator_self.email)
 // and hands it over BY NAME in an environment variable — lane.json runs each --auth check through it,
 // and a session an operator signed in for and lent wins over a minted one. It is stored under the same
 // localStorage key the app's own sign-in writes. Nothing HERE mints, forges or weakens anything:
@@ -269,10 +284,8 @@ async function newCtx(browser, vp) {
     // application's own origin: an init script runs in EVERY frame, third-party sign-in iframes
     // included, and a credential must never be written into somebody else's storage.
     await ctx.addInitScript(({ t, o }) => {
-      // Both spellings: the app reads `workspace-google-token` (lib/browser-storage.ts STORAGE_KEYS.token,
-      // fde-agent #47) and falls back to the legacy `fde-google-token`; a deployment older than #47 reads
-      // only the legacy one. Writing both keeps the harness correct on either side of the alias removal.
-      try { if (location.origin === o) { localStorage.setItem("workspace-google-token", t); localStorage.setItem("fde-google-token", t); } } catch { /* private mode */ }
+      // The key the app reads (lib/browser-storage.ts STORAGE_KEYS.token, since upstream #47).
+      try { if (location.origin === o) localStorage.setItem("workspace-google-token", t); } catch { /* private mode */ }
     }, { t: SESSION.token, o: ORIGIN });
   }
   await ctx.route("**/*", (r) => {
@@ -337,7 +350,7 @@ const notRendered = (c) => c.controls ? null
 //      without this a green row would certify the shell. Nothing measured is never a pass.
 const serverAcceptsSession = (page) => page.evaluate(async () => {
   try {
-    const t = localStorage.getItem("workspace-google-token") || localStorage.getItem("fde-google-token");
+    const t = localStorage.getItem("workspace-google-token");
     if (!t) return { status: -1, why: "no session was installed in this browser" };
     const r = await fetch("/api/ops/orgs", { headers: { authorization: "Bearer " + t } });
     return { status: r.status };

@@ -1,9 +1,20 @@
 {
-  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json.",
+  "_comment": "Copy to state/factory.local.json (never committed) and put your own values in. .claude/scripts/lib/factory_local.py merges it over state/factory.json. mold_sources: where `mold.py fetch <mold_id>` clones each mold from. live_projects: an existing live deployment the factory must only read (optional). legacy_names: {current: old} spellings of state keys older applications still carry (optional).",
   "defaults": {
     "operator_email": "you@yourcompany.com",
     "notify_domain": "yourcompany.com",
     "vercel_team": "your-vercel-team-slug",
-    "vm": { "host": "203.0.113.10" }
+    "vm": {
+      "host": "203.0.113.10"
+    },
+    "secret_source_project": "your-live-web-project"
+  },
+  "mold_sources": {
+    "mold_v1": "https://github.com/your-org/your-mold-source.git"
+  },
+  "live_projects": {
+    "web": "your-live-web-project",
+    "api": "your-live-api-project",
+    "workflow": "your-live-workflow-project"
   }
 }

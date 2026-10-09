@@ -222,11 +222,10 @@
               "type": "string",
               "enum": [
                 "live_source_agent",
-                "live_fde_agent",
                 "application",
                 "none"
               ],
-              "description": "live_source_agent = a snapshot of the live source deployment; live_fde_agent is its pre-rename spelling, still accepted for one release"
+              "description": "live_source_agent = a snapshot of the live source deployment"
             },
             "ref": {
               "type": "string"
@@ -327,11 +326,10 @@
               "type": "string",
               "enum": [
                 "live_source_agent",
-                "live_fde_agent",
                 "application",
                 "none"
               ],
-              "description": "live_source_agent = a snapshot of the live source deployment; live_fde_agent is its pre-rename spelling, still accepted for one release"
+              "description": "live_source_agent = a snapshot of the live source deployment"
             },
             "ref": {
               "type": "string"

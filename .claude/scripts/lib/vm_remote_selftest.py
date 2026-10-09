@@ -427,7 +427,7 @@ def _env_file(check, tmp):
     check("the app_rw URL is moved onto the port that answers, keeping its credentials", V.retarget("postgresql://app_rw:pw@db.example:6543/x?a=1", "postgresql://sfadmin:other@127.0.0.1:5432/x", "require")
           == "postgresql://app_rw:pw@127.0.0.1:5432/x?a=1&sslmode=require")
 
-# ---- one env file per service (fde-agent #99: SERVICE_AUTH=session-key) -------------------------------------------
+# ---- one env file per service (upstream #99: SERVICE_AUTH=session-key) -------------------------------------------
 PRIV, PUB = "PRIV-" + SECRET, "PUB-KEY-material"
 def _master_values(S):
     """Every name the master file holds after a deploy, with stand-in values."""
@@ -478,7 +478,7 @@ def _service_env(check, tmp):
     check("the unit files point each service at exactly the file written for it", all(f"EnvironmentFile={S['env_files'][k]}" in t for k, t in
           ((k, V.unit_files(S, list(V.CRONS))[f"{S['unit']}-{n}.service"]) for k, n in (("web", "web"), ("api", "api"), ("workflow", "workflow")))))
 
-# ---- storage names (fde-agent #103) and the sandbox deny list (fde-agent #100) --------------------------------------
+# ---- storage names (upstream #103) and the sandbox deny list (upstream #100) --------------------------------------
 def _storage_and_sandbox(check, tmp):
     s3 = lambda **kw: (lambda d: (d["infrastructure"]["vm_remote"].update(storage=dict({"driver": "s3", "bucket": "acme-files", "endpoint": "https://fra1.digitaloceanspaces.com",
                        "region": "fra1", "access_key_ref": "SPACES_KEY", "secret_key_ref": "SPACES_SECRET"}, **kw)),

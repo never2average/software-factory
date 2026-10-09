@@ -1,5 +1,5 @@
 {
-  "$comment": "Branding overlay rules for mold_v1. The mold snapshot under codebase/ is never edited; branding.py copies it per app and applies these rules to the copy. Every rule must match at least once or the build is refused, so a mold refresh that moves this text fails loudly instead of shipping half-branded. Since fde-agent #15 the product name, tagline and description come from the deployment profile: branding.py writes profiles/90-brand.json and skips the rules marked via_profile and the product_name_files list; they remain for molds without a profile.",
+  "$comment": "Branding overlay rules for mold_v1. The mold snapshot under codebase/ is never edited; branding.py copies it per app and applies these rules to the copy. Every rule must match at least once or the build is refused, so a mold refresh that moves this text fails loudly instead of shipping half-branded. Since upstream #15 the product name, tagline and description come from the deployment profile: branding.py writes profiles/90-brand.json and skips the rules marked via_profile and the product_name_files list; they remain for molds without a profile. The rule that rewrote the original layout description is gone: that literal left the source with upstream #15, and only a profiled mold is stamped.",
   "mold_id": "mold_v1",
   "product_name_default": "Delivered",
   "files": {
@@ -19,13 +19,6 @@
     "inbox"
   ],
   "replacements": [
-    {
-      "id": "layout_description",
-      "file": "layout",
-      "find": "\"Delivered — the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.\"",
-      "replace": "{description_literal}",
-      "via_profile": true
-    },
     {
       "id": "auth_tagline",
       "file": "auth_gate",

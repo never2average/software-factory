@@ -1094,47 +1094,6 @@
           ],
           "description": "operator:onboard-self; the identity every configure script runs as (the workspace owner the app was stamped for)"
         },
-        "fde_self": {
-          "type": "object",
-          "properties": {
-            "email": {
-              "type": "string",
-              "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
-            },
-            "name": {
-              "type": "string"
-            },
-            "title": {
-              "type": "string",
-              "default": "Workspace owner"
-            },
-            "focus": {
-              "type": "string"
-            },
-            "timezone": {
-              "type": "string"
-            },
-            "skills": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "pod": {
-              "type": "string"
-            },
-            "capacity_target_accounts": {
-              "type": "integer",
-              "default": 8
-            }
-          },
-          "required": [
-            "email",
-            "name"
-          ],
-          "description": "DEPRECATED: the pre-rename name of operator_self, still read for one release. Write operator_self; factory.py validate requires one of the two",
-          "deprecated": true
-        },
         "members": {
           "type": "array",
           "items": {

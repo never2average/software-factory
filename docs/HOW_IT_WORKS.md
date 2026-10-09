@@ -10,7 +10,7 @@ brief (5 lines) ──intake──▶ state/application/<app_id>/ ──provisio
                                      └──────────────── revert (failed lane → task) ◀────────┘
 ```
 
-1. **Molds** (`molds/<mold_id>/`). A mold is a snapshot of a codebase plus its test lanes. `mold_v1` is fde-agent at a pinned commit: eve framework, Next.js 16, Drizzle on Postgres, Vercel Blob data room, and one of two inference providers chosen at intake — GLM 5.2 on Cloudflare Workers AI (the default) or Claude Sonnet 5 through the Vercel AI Gateway (`docs/INTAKE.md`, Inference providers). `mold_v2` and `mold_v3` hold a `MOLD.md` and a roadmap and no codebase at all; nothing has been stamped from either. Molds are never edited in place; they are refreshed from upstream or forked.
+1. **Molds** (`molds/<mold_id>/`). A mold is a snapshot of a codebase plus its test lanes. `mold_v1` is the mold's source at a pinned commit: eve framework, Next.js 16, Drizzle on Postgres, Vercel Blob data room, and one of two inference providers chosen at intake — GLM 5.2 on Cloudflare Workers AI (the default) or Claude Sonnet 5 through the Vercel AI Gateway (`docs/INTAKE.md`, Inference providers). `mold_v2` and `mold_v3` hold a `MOLD.md` and a roadmap and no codebase at all; nothing has been stamped from either. Molds are never edited in place; they are refreshed from upstream or forked.
 
 2. **State** (`state/`). JSON that describes the factory and every application, validated by schemas.
    - `factory.json`: operator, the six-item service surface, the molds, the service/revert loop, and `defaults` (the answers that apply to every app).
@@ -275,8 +275,8 @@ another project's, and Vercel would not reveal it anyway. Consequences (task mol
 ## Access
 
 - VM: SSH alias `digitalocean`, root. Provisioned by `infra/vm/provision.sh` (node 24, docker, Vercel CLI, Playwright).
-- GitHub: this repo via a write deploy key; fde-agent via a read-only deploy key (alias `github-fde`).
-- Vercel: CLI logged in on the VM; every project of a stamped app (`<project>`, `<project>-api`, `<project>-workflow`) is Node 24.x with Root Directory `.` — Git integration must stay disconnected; `provision.py` now enforces it (it disconnects each project right after the deploy that may have created it, and `--check` refuses to proceed while one is reconnected) so only `provision.py --deploy` creates deployments. A project the CLI creates from inside the factory checkout is auto-connected to `never2average/software-factory`, and every push then builds the factory root as that app: 39 failed production deployments, plus a poisoned build cache the next CLI deploy restores. Do not reconnect Git or set a Root Directory, both break CLI deploys from the mold dir. The live `fde-agent*` projects are off limits to the factory.
+- GitHub: this repo via a write deploy key; the mold's source via a read-only deploy key (its address is in `state/factory.local.json` → `mold_sources`).
+- Vercel: CLI logged in on the VM; every project of a stamped app (`<project>`, `<project>-api`, `<project>-workflow`) is Node 24.x with Root Directory `.` — Git integration must stay disconnected; `provision.py` now enforces it (it disconnects each project right after the deploy that may have created it, and `--check` refuses to proceed while one is reconnected) so only `provision.py --deploy` creates deployments. A project the CLI creates from inside the factory checkout is auto-connected to `never2average/software-factory`, and every push then builds the factory root as that app: 39 failed production deployments, plus a poisoned build cache the next CLI deploy restores. Do not reconnect Git or set a Root Directory, both break CLI deploys from the mold dir. The live projects (named in `state/factory.local.json` → `live_projects`) are off limits to the factory.
 
 ## Where things stand (2026-09-08)
 

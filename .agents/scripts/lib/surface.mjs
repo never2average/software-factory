@@ -34,7 +34,7 @@ const SURFACE = {
   memories:              { key: ["org_id","scope","entity_id","key"], cols: ["sensitivity","version"] },
   workflows:             { key: ["org_id","name"], cols: ["description","trigger","customer_id","steps","instructions","instructions_enabled","enabled","created_by"] },
   workflow_definitions:  { key: ["org_id","id"], cols: ["name","entity","stages","current_version","is_default","archived_at"] },
-  customers:             { key: ["org_id","customer_id"], cols: ["customer_name","tier","lifecycle_stage","status","fde_owner","account_owner","vertical","account_region","business_owner_email","technical_owner_email"] },
+  customers:             { key: ["org_id","customer_id"], cols: ["customer_name","tier","lifecycle_stage","status","account_owner","vertical","account_region","business_owner_email","technical_owner_email"] },
   internal_staff:        { key: ["org_id","customer_id","staff_role","email"], cols: ["name","employer_org"] },
   customer_stakeholders: { key: ["org_id","customer_id","stakeholder_role","email"], cols: ["name","employer_org"] },
   platform:              { key: ["org_id","customer_id"], cols: ["deployment_model","data_residency_constraint","primary_model","primary_use_case","feature_flags","enabled_connectors"] },
@@ -148,7 +148,7 @@ function applyOnly(raw) {
   return new Set(want);
 }
 async function apply(url, state, only = null) {
-  const root = pg(url); let sql = root; const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) { if (!only || only.has(t)) pk[t] = await pkCols(sql, t); } const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.fde_self.email; const done = {};
+  const root = pg(url); let sql = root; const pk = {}; for (const t of ["orgs","org_members","platform_admins","people_roster","agent_profiles","agent_configs","workflow_definitions"]) { if (!only || only.has(t)) pk[t] = await pkCols(sql, t); } const s = state.surface; const mp = state.workspace; const ws = mp.org; const me = mp.operator_self.email; const done = {};
   // Org-scoped tables are written INSIDE a transaction that names the workspace (set_config('app.org_id', …, true)),
   // exactly as the app's own withOrgDb does. This goes through app_rw on purpose, and under fail_closed RLS a
   // write that names no workspace is refused: on a fresh database every scoped insert failed with "new row

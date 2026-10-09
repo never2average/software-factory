@@ -30,7 +30,7 @@ VAPID_PUB, VAPID_PRIV = "PUSHPUB-" + "p" * 79, "PUSHPRIV-" + B.SECRET
 def push(check, tmp):
     S = B._settings()
     check("push: an app whose mold can send notifications and whose state names an operator gets them", S["push"] is True and V.push_subject(S) == "mailto:operator@example.com")
-    S0 = B._settings(lambda d: d["application"]["workspace"].update(operator_self={"email": ""}, fde_self=None))
+    S0 = B._settings(lambda d: d["application"]["workspace"].update(operator_self={"email": ""}))
     check("push:   ...and one with no operator email does not (the push services need somebody to contact)", S0["push"] is False and V.push_subject(S0) == "")
     S1 = B._settings(lambda d: d["application"].update(mold_id="mold_without_push"))
     check("push:   ...nor one whose mold has no agent/lib/web-push.ts", S1["push"] is False)

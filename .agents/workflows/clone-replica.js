@@ -1,6 +1,6 @@
 export const meta = {
   name: 'clone-replica',
-  description: 'Clone the live fde-agent into a stamped app with parallel agents: preflight, deploy with a diagnosis panel on failure, data, configure, adversarially verified checks, report',
+  description: 'Clone the live source deployment into a stamped app with parallel agents: preflight, deploy with a diagnosis panel on failure, data, configure, adversarially verified checks, report',
   whenToUse: 'When an app stamped with clone_of must become a running, verified replica of live. args: {app_id, date}',
   phases: [
     { title: 'Preflight', detail: 'live access, state, mold, deploy lock — in parallel' },
@@ -22,7 +22,7 @@ const DIAG = { type: 'object', properties: { hypothesis: { type: 'string' }, evi
 const JUDGE = { type: 'object', properties: { chosen: { type: 'integer' }, reason: { type: 'string' } }, required: ['chosen', 'reason'] }
 const VERIFY = { type: 'object', properties: { dimension: { type: 'string' }, status: { type: 'string', enum: ['pass', 'fail', 'skipped'] }, evidence: { type: 'string' } }, required: ['dimension', 'status', 'evidence'] }
 const REFUTE = { type: 'object', properties: { refuted: { type: 'boolean' }, reason: { type: 'string' } }, required: ['refuted', 'reason'] }
-const RULES = `Rules: never touch the live Vercel projects fde-agent, fde-agent-api, fde-task-workflow except to read; never edit files under ${MOLD}; never print secret values; state lives under ${ROOT}/state/application/${APP}/. Scripts: ${ROOT}/.claude/scripts/clone.py, provision.py, factory.py; docs ${ROOT}/docs/HOW_IT_WORKS.md and ${ROOT}/.claude/skills/clone/SKILL.md.`
+const RULES = `Rules: never touch the live Vercel projects (their names are in ${ROOT}/state/factory.local.json under live_projects) except to read; never edit files under ${MOLD}; never print secret values; state lives under ${ROOT}/state/application/${APP}/. Scripts: ${ROOT}/.claude/scripts/clone.py, provision.py, factory.py; docs ${ROOT}/docs/HOW_IT_WORKS.md and ${ROOT}/.claude/skills/clone/SKILL.md.`
 
 // ---------------- Preflight (parallel, read-only) ----------------
 phase('Preflight')

@@ -23,8 +23,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 # before it goes to a public registry.
 ALLOWED = [re.compile(p) for p in (
     r"^package\.json$", r"^README\.md$", r"^dm\.md$", r"^deployment\.generated\.mjs$",
-    # fde-*.mjs: the file names the mold's own setup/ package ships (upstream fde-agent), not factory vocabulary.
-    r"^fde-[a-z-]+\.mjs$", r"^skills/[a-z][a-z0-9-]*/[A-Za-z0-9_./-]+$",
+    # <prefix>-<name>.mjs at the top level: the modules the mold's own setup/ package ships (its CLI, login, tools,
+    # skill installer), named by the mold's source, not by the factory.
+    r"^[a-z][a-z0-9]*-[a-z-]+\.mjs$", r"^skills/[a-z][a-z0-9-]*/[A-Za-z0-9_./-]+$",
 )]
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -148,8 +149,9 @@ def self_test():
     assert next_version(None) == "0.1.0" and next_version("0.1.0") == "0.1.1" and next_version("1.9.41") == "1.9.42"
     try: next_version("1.0.0-beta"); raise AssertionError("a prerelease must be refused")
     except ValueError: pass
-    ok = ["package.json", "README.md", "dm.md", "deployment.generated.mjs", "fde-cli.mjs", "fde-install-skill.mjs", "skills/research-workspace-setup/SKILL.md"]
+    ok = ["package.json", "README.md", "dm.md", "deployment.generated.mjs", "agent-cli.mjs", "agent-install-skill.mjs", "skills/research-workspace-setup/SKILL.md"]
     assert disallowed(ok) == []
+    assert disallowed(["cli.mjs", "Agent-cli.mjs", "lib/agent-cli.mjs"]) == ["cli.mjs", "Agent-cli.mjs", "lib/agent-cli.mjs"]
     assert disallowed(ok + [".env", "schemas/kpi-spec.md", "skills/../x", ".npmrc"]) == [".env", "schemas/kpi-spec.md", "skills/../x", ".npmrc"]
     assert ".env" in disallowed([".env"]) and "agent/subagents/x/schemas/kpi-spec.md" in disallowed(["agent/subagents/x/schemas/kpi-spec.md"])
     rc = npmrc_lines("https://registry.npmjs.org/", "NPM_TOKEN")

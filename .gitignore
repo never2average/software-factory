@@ -27,7 +27,7 @@ reports/usage/
 !.agents/scripts/fixtures/app_usage/fake-app/node_modules/
 
 # Kept on the factory machine, never in the repository (open-source split, 2026-10-09): each application's own code,
-# records and results. The factory reads them from disk; the mold's codebase is re-fetched by its MOLD.md refresh.
+# records and results. The factory reads them from disk; the mold's codebase is fetched by .claude/scripts/mold.py.
 /molds/*/codebase/
 /packs/
 /brands/

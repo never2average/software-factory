@@ -4,7 +4,7 @@ Does the application work at the width the customer actually holds?
 
 Two halves. **Signed out**: the mold's three page routes — which is a sign-in page and an empty
 workspace shell. **Signed in** (`--auth`): the product — the chat thread, the ops centre and the
-workflow builder — measured with a session the factory signs for the application's own FDE with the
+workflow builder — measured with a session the factory signs for the application's own operator with the
 app's own key (see "Authenticated coverage"). Until the second half existed,
 a green responsiveness lane meant a sign-in page reflowed at 320px and said nothing at all about the
 workspace people actually work in (mold_v1-040).
@@ -19,7 +19,7 @@ MOLD_V1_SESSION_TOKEN='<a session you signed in for>' \
 ```
 
 The signed-in half needs no paste: `lane.json` runs each `*.authenticated` check through
-`.claude/scripts/lib/session.py <app_id> -- …`, which signs a session for the application's own FDE with
+`.claude/scripts/lib/session.py <app_id> -- …`, which signs a session for the application's own operator with
 the application's own `AUTH_JWT_PRIVATE_KEY` and hands it over by name.
 
 | file | what it is |
@@ -129,10 +129,10 @@ manufacture a failure there would be as dishonest as hiding it.
   the summary line, so a harness that crashed after printing a header cannot read as green.
 - **Losing the target mid-run exits 3**, not 0 — nothing measured must never be reported as nothing wrong.
 - **HARD RULE 2 is enforced in the browser, by host *and by path*.** Every request to a live
-  `fde-agent` / `fde-agent-api` / `fde-task-workflow` host is aborted and counted — and so is every
+  web / API / workflow project host (`state/factory.local.json` → `live_projects`) is aborted and counted — and so is every
   request to `/eve/v1/` or `/.well-known/workflow/`, whatever host it is addressed to. The second half
   is not belt-and-braces: `next.config.ts` rewrites those **same-origin** paths to `EVE_API`, which
-  `lib/agent-url.ts` defaults to the live `fde-agent-api` whenever the variable is missing, and it
+  `lib/agent-url.ts` defaults to the live API project whenever the variable is missing, and it
   forwards the `Authorization` header. The browser only ever sees `https://<app-under-test>/eve/v1/…`,
   so a hostname test alone never fires and Vercel proxies the test session straight into a production
   project. Signed out that path is unreachable (the chat shell never renders); signed in, `/` **is**
@@ -149,7 +149,7 @@ The three `*.authenticated` checks measure the product. They need **a session fo
 test**, and the factory now makes one: `lane.json` runs each check, and its precondition, through
 `.claude/scripts/lib/session.py <app_id> -- …`, which signs the app's own kind of session — the ES256
 "email-session" token `lib/auth-session.ts` defines and `lib/ops-auth.ts` admits on its signature alone —
-with the app's own `AUTH_JWT_PRIVATE_KEY`, for the app's own FDE (`application.workspace.fde_self.email`),
+with the app's own `AUTH_JWT_PRIVATE_KEY`, for the app's own operator (`application.workspace.operator_self.email`),
 and hands it to the harness by name in `MOLD_V1_SESSION_TOKEN`. Why that is a real session and not a
 bypass, where the key is read from, what the token does and does not prove, and how to measure as
 yourself instead, are written out once in the accessibility lane's README ("Authenticated coverage") —
@@ -206,7 +206,7 @@ nothing but green.
 
 Against a throwaway `target: vm` application (`sess_probe`: stamped by intake, database from
 `provision.py --verify-db`, the mold built from a scratch copy and started on 127.0.0.1 with that app's
-own `.env`, its workspace seeded by the mold's own `fde:new-org`; the key pair written into its `.env`
+own `.env`, its workspace seeded by the mold's own `operator:new-org`; the key pair written into its `.env`
 by hand at the time; `--verify-db` now mints it, as the vercel lane does), each check exactly as `lane.json` runs it:
 
     python3 .claude/scripts/lib/session.py sess_probe -- node …/responsive.mjs --url http://127.0.0.1:3123 --only layout --auth
@@ -224,7 +224,7 @@ by hand at the time; `--verify-db` now mints it, as the vercel lane does), each 
 
 The precondition, the same way: `session.py sess_probe -- session-live.py http://127.0.0.1:3123
 --min-remaining 1200` -> `200 · session accepted for operator@example.com · member of 1 workspace(s)`.
-A fresh key pair the deployment does not hold -> 401 -> `skipped`; an FDE identity with no membership
+A fresh key pair the deployment does not hold -> 401 -> `skipped`; an operator identity with no membership
 -> "lists no workspace for that identity" -> `skipped`. At the time the runner itself could not drive
 the lane end to end because a `target: vm` app holds no `production_url` (mold_v1-053); the next section
 is that run.
@@ -242,7 +242,7 @@ deployment the factory mints no session (`session.py` refuses every `target: ver
 is measured only with an operator-lent `MOLD_V1_SESSION_TOKEN` — no run of this lane has had one. The
 accessibility README, "Measuring a vm fixture", lists what
 starting the fixture took (the four env names `--verify-db` writes, the database host rewritten from the
-network alias to the container's address, `fde:new-org` for the workspace). Then:
+network alias to the container's address, `operator:new-org` for the workspace). Then:
 
     MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py v040fix --lane responsiveness --dry-run
 
@@ -282,10 +282,10 @@ lane cannot imply more than it measured. What is left after the signed-in half:
   declared `not-covered` with the reason and the check is `skipped`, never `pass` (`expect.skip_on`);
   on a deployment the factory mints no session at all (`session.py` refuses every `target: vercel` app), so the builder has been measured by no run of this lane; it is measured only with a session an operator signs in for and lends in `MOLD_V1_SESSION_TOKEN`, and its absence is then a fail;
 - **the signed-in half itself, whenever no usable session exists** — no key in the app's secret store
-  (a `target: vm` app that has not run `--verify-db`), a key the deployment does not run with, an FDE
+  (a `target: vm` app that has not run `--verify-db`), a key the deployment does not run with, an operator
   identity with no workspace there, and no operator-lent session: those checks are `skipped` and so is
   the lane. Never `pass`;
-- **any identity but the application's own FDE** — the minted session is the workspace owner's; a
+- **any identity but the application's own operator** — the minted session is the workspace owner's; a
   `member`'s layout is measured only when an operator lends such a session;
 - **which identity, and how much data.** A workspace with a hundred members lays out differently from
   the one the supplied session resolves to. The report names the identity it measured.

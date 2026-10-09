@@ -22,7 +22,12 @@ STAMP = datetime.datetime.fromisoformat(NOW).strftime("%Y-%m-%dT%H%M%SZ")   # th
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lanes import reserve_report   # ONE implementation of "a report path nobody can reopen", shared with the lanes
 from factory import _ts, TS_FORM   # ONE reading of an ISO-8601 instant, shared with validate (lanes.py imports factory the same way)
-LIVE = {"web": "fde-agent", "api": "fde-agent-api", "workflow": "fde-task-workflow"}   # the reference deployment; never deployed to
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+from factory_local import live_projects
+import legacy
+# The reference deployment, only ever read and never deployed to. Its project names are this machine's own
+# (state/factory.local.json -> live_projects), never the repository's.
+LIVE = live_projects()
 def load(p): return json.load(open(p))
 def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
 
@@ -147,6 +152,9 @@ def main(a):
     org = app["workspace"]["org"]["org_id"]; prefix = ""   # whole store: the mold keeps the data room under dataroom/ and org subtrees under dataroom/orgs/<org>/
     clone = app.get("clone_of")
     if step != "configure" and not clone: sys.exit(f"{app_id} has no clone_of; only `configure` applies to a non-clone app")
+    if step != "configure" and not all(LIVE.get(k) for k in ("web", "api", "workflow")):
+        sys.exit("This machine does not name the live deployment to clone. Put its three Vercel project names in "
+                 "state/factory.local.json under \"live_projects\" ({\"web\": ..., \"api\": ..., \"workflow\": ...}), then run this again.")
     if step == "plan":
         print(f"{app_id}: org={org} project={proj} live={LIVE['web']} prefix={prefix} scope={ds['postgres'].get('scope')}")
         print("  extract   SELECT surface tables on live -> application.surface, datainfra.{platforms,deployments,pipelines,agents}")
@@ -175,7 +183,7 @@ def main(a):
                 sys.exit("set application.surface.primary_context.workspace.org_id to one of them and re-run")
         s = app["surface"]; x = out["surface"]; w = app["workspace"]; xw = out["workspace"]
         w["org"].update(xw["org"]); w.update({k: v for k, v in xw.items() if k != "org" and v})
-        me = (w.get("operator_self") or w.get("fde_self") or {})["email"]   # fde_self: pre-rename name, read for one release
+        me = legacy.get(w, "operator_self", {})["email"]   # or its pre-rename spelling, where this machine names one (lib/legacy.py)
         if not any(m["email"] == me for m in w["members"]): w["members"].insert(0, {"email": me, "role": "owner"})
         pc = s["primary_context"]; xp = x["primary_context"]
         pc["corpus"] = xp.get("corpus", pc["corpus"])
@@ -268,7 +276,7 @@ def main(a):
         return
 
     if step == "configure":
-        if clone and ds["postgres"].get("snapshot", {}).get("source") in ("live_source_agent", "live_fde_agent"):   # old name read for one release
+        if clone and ds["postgres"].get("snapshot", {}).get("source") in legacy.spellings("live_source_agent"):
             print("configure skipped: this app is a clone and its database is a snapshot of live; the surface already matches. Configure is for apps stamped from a brief."); return
         mine = pull_env(proj, mold, proj)
         # The APP role, not the admin one. Surface writes are ordinary application writes and must go
@@ -276,9 +284,10 @@ def main(a):
         # whether the app can actually do them, and hides a missing policy until a user hits it.
         dst = mine.get("DATABASE_URL") or pg_url(mine)
         if not dst: sys.exit(f"no database url for the app; run `python3 .claude/scripts/provision.py {app_id} --deploy` first")
-        ws = dict(app["workspace"]); me = ws.get("operator_self") or ws.get("fde_self")
-        # surface.mjs still reads workspace.fde_self until its own rename lands; hand it both names for one release.
-        if me: ws["operator_self"] = ws["fde_self"] = me
+        ws = dict(app["workspace"]); me = legacy.get(ws, "operator_self")
+        old = legacy.has_old(ws, "operator_self")
+        if old: ws.pop(old)
+        if me: ws["operator_self"] = me   # surface.mjs reads workspace.operator_self only
         out = node("apply", dict(base, DATABASE_URL=dst), mold, stdin=json.dumps({"workspace": ws, "surface": app["surface"]}))
         bad = {k: v for k, v in out.items() if isinstance(v, str) and v.startswith("ERR")}
         print("applied: " + ", ".join(f"{k}={v}" for k, v in out.items()))

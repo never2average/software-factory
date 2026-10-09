@@ -32,7 +32,7 @@
       "name": "vocabulary",
       "run": "PYTHONDONTWRITEBYTECODE=1 python3 {testing}/context/pack-vocabulary.py {app_id}",
       "timeout_s": 600,
-      "why": "The rows above run the mold's own tests on the DEFAULT profile, because they pin its words; this row grades THIS app's. For each of its packs, the mold's agent-vocabulary gate in pack mode (npm run check:agent-vocabulary -- --pack packs/<id> --allow <its vocabulary-allow.json>) renders everything the model reads under the pack's own profile — prompts, briefing, every tool's name and parameters, every subagent, real offline tool results — and fails on any base word (customer, deployment, implementation, rollout, FDE) left in it; an app without packs is graded on the default surface. A leak here is an agent reasoning in the base product's words about this app's records.",
+      "why": "The rows above run the mold's own tests on the DEFAULT profile, because they pin its words; this row grades THIS app's. For each of its packs, the mold's agent-vocabulary gate in pack mode (npm run check:agent-vocabulary -- --pack packs/<id> --allow <its vocabulary-allow.json>) renders everything the model reads under the pack's own profile — prompts, briefing, every tool's name and parameters, every subagent, real offline tool results — and fails on any base word (customer, deployment, implementation, rollout, the base role word) left in it; an app without packs is graded on the default surface. A leak here is an agent reasoning in the base product's words about this app's records.",
       "expect": {
         "exit": 0,
         "stdout": [

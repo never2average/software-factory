@@ -47,7 +47,7 @@ the other read-only views.
 
 Only ever Vercel projects named `sf-neon-inspect-<8 hex>` — the exact pattern `^sf-neon-inspect-[0-9a-f]{8}$`
 (`SCRATCH_RE` in `provision.py`), which is the only name this file mints. Never the app's projects, never a Neon
-resource or Blob store, never the live `fde-agent*` projects. A `--check` deletes nothing: it only names the
+resource or Blob store, never the live projects (named in `state/factory.local.json` → `live_projects`). A `--check` deletes nothing: it only names the
 inspection in its plan.
 
 - **When:** during a `--deploy` or `--verify-db` of a **vercel** app with `postgres.scope: fresh`, `provider: neon`,

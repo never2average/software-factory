@@ -14,7 +14,8 @@ Anything the brief does not say gets the mold's own default, never a guess.
 """
 import sys as _sys_fl, os as _os_fl
 _sys_fl.path.insert(0, _os_fl.path.join(_os_fl.path.dirname(_os_fl.path.abspath(__file__)), "lib"))
-from factory_local import load_factory
+from factory_local import load_factory, live_projects
+import legacy
 import json, os, re, sys, datetime, subprocess
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
@@ -70,8 +71,8 @@ def parse_brief(text):
     # Only a line that STARTS with the label: "Multi-organization: no, one workspace" once named a workspace "no, one workspace".
     m = re.search(r"^\s*(?:workspace|org(?:anisation|anization)?)(?: name)?:\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I | re.M)
     if m: h["workspace_name"] = m.group(1).strip()
-    # "fde:" is the pre-rename label; still read for one release so older briefs keep stamping.
-    m = re.search(r"\b(?:operator|owner|fde):\s*(" + EMAIL + ")", t)
+    # ...or the label's pre-rename spelling, where this machine names one (lib/legacy.py), so older briefs keep stamping.
+    m = re.search(r"\b(?:" + "|".join(map(re.escape, ("owner",) + legacy.spellings("operator"))) + r"):\s*(" + EMAIL + ")", t)
     if m: h["operator_email"] = m.group(1)
     m = re.search(r"\b(?:members?|team):\s*((?:" + EMAIL + r"[,\s]*)+)", t)
     if m: h["members"] = re.findall(EMAIL, m.group(1))
@@ -79,8 +80,9 @@ def parse_brief(text):
     if m:
         n = m.group(1) or m.group(2)   # singular: companies -> company, patients -> patient, classes -> class
         h["account_noun"] = n[:-3] + "y" if n.endswith("ies") else n[:-2] if n.endswith("sses") else n.rstrip("s")
-    m = re.search(r"(?:clone|replica|copy) of (?:the )?live(?: fde.agent)?(?:\s+at\s+(https?://\S+|[a-z0-9.-]+\.[a-z]{2,}))?", t)
-    if m: h["clone_of"] = {"kind": "live_deployment", "ref": (m.group(1) or "fde-agent").rstrip(".,)")}
+    web = live_projects().get("web") or "live"   # the live deployment's web project, this machine's own name for it
+    m = re.search(r"(?:clone|replica|copy) of (?:the )?live(?: " + "[ -]".join(map(re.escape, re.split(r"[-\s]+", web.lower()))) + r")?(?:\s+at\s+(https?://\S+|[a-z0-9.-]+\.[a-z]{2,}))?", t)
+    if m: h["clone_of"] = {"kind": "live_deployment", "ref": (m.group(1) or web).rstrip(".,)")}
     m = re.search(r"primary context[:\s]+([^\n.]+)", t)
     if m: h["corpus"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
     m = re.search(r"multiplayer(?: context)?[:\s]+([^\n.]+)", t)
@@ -233,7 +235,7 @@ QUESTIONS = [
  ("workspace_name", "application.surface.primary_context.workspace.name", "Workspace (org) display name.", None,
    lambda d,h,c: h.get("workspace_name") or d.get("workspace_name")),
  ("operator_email", "application.workspace.operator_self.email", "Email of the operator who owns this workspace (must match the identity domain the mold accepts).", None,
-   lambda d,h,c: h.get("operator_email") or d.get("operator_email") or d.get("fde_email")),   # fde_email: pre-rename default, read for one release
+   lambda d,h,c: h.get("operator_email") or legacy.get(d, "operator_email")),   # or its pre-rename spelling (lib/legacy.py)
  ("library", "application.surface.custom_workflow_builder.library.install", "Give new workspaces the original product's starter library (13 workflows and 5 onboarding recipes for account delivery)? none = no starter library.", ["none","all"],
    lambda d,h,c: h.get("library", "none")),
 ]
@@ -300,10 +302,11 @@ def carry_forward(new, old, owned, path=""):
 def keep_measured(app, infra, ds, existing):
     """The carry-forward, plus the three fields intake writes but a later writer knows better."""
     ex_app, ex_inf, ex_ds = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores"))
-    # workspace.fde_self is the pre-rename name of workspace.operator_self: migrate it, never carry both.
+    # workspace.operator_self under a pre-rename spelling (lib/legacy.py): migrate it, never carry both.
     ex_ws = ex_app.get("workspace") or {}
-    if "fde_self" in ex_ws:
-        ex_ws = dict(ex_ws); legacy = ex_ws.pop("fde_self"); ex_ws.setdefault("operator_self", legacy)
+    old = legacy.has_old(ex_ws, "operator_self")
+    if old:
+        ex_ws = dict(ex_ws); was = ex_ws.pop(old); ex_ws.setdefault("operator_self", was)
         ex_app = dict(ex_app, workspace=ex_ws)
     # mold_commit is what is IN FRONT OF TRAFFIC once provision.py deployed it; mint.py compares it with the
     # snapshot to know a redeploy is due, so resetting it to the snapshot's commit would hide a pending deploy.
@@ -536,7 +539,8 @@ def self_test(app_id="onfinance_hfc"):
         if r.returncode: fails.append(f"re-run exited {r.returncode}: {(r.stdout + r.stderr).strip()[-400:]}")
         for nm, old in before.items():
             new = load(os.path.join(tapp, f"{nm}.json"))
-            renamed = lambda p: p.replace("workspace.fde_self", "workspace.operator_self", 1)   # migrated on purpose
+            old_ws = legacy.old_name("operator_self")
+            renamed = lambda p: p.replace(f"workspace.{old_ws}", "workspace.operator_self", 1) if old_ws else p   # migrated on purpose
             lost = [p for p, _ in paths(old) if renamed(p) not in dict(paths(new))]
             n += 1
             if lost: fails.append(f"{nm}: a same-answers re-run dropped {len(lost)} field(s): {', '.join(lost[:8])}")
@@ -590,8 +594,9 @@ def main(a):
     qfile = os.path.join(outdir, "questions.json")
     if os.path.exists(qfile) and not answers:
         prev = load(qfile).get("answers", {}); answers.update(prev)
-    # pre-rename answer id, accepted for one release; answers.json is rewritten under the new id below
-    if "fde_email" in answers: answers.setdefault("operator_email", answers.pop("fde_email"))
+    # a pre-rename answer id (lib/legacy.py); answers.json is rewritten under the new id below
+    old = legacy.has_old(answers, "operator_email")
+    if old: answers.setdefault("operator_email", answers.pop(old))
     for qid, path, prompt, options, resolve in QUESTIONS:
         if qid in answers: resolved[qid] = coerce(answers[qid]); continue
         v = resolve(d, hints, ctx)

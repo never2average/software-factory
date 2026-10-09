@@ -5,7 +5,7 @@
       "product_id": "delivered",
       "mold_id": "mold_v1",
       "name": "Delivered",
-      "tagline": "The FDE operations console: onboarding, deployments and the data room for the forward-deployed team.",
+      "tagline": "The operations console: onboarding, deployments and the data room for the forward-deployed team.",
       "stage": "released",
       "target_model": "GLM 5.2",
       "gates": {
@@ -40,7 +40,7 @@
       "brand": {
         "product_name": "Delivered",
         "tagline": "The operations console for forward-deployed teams.",
-        "description": "Delivered \u2014 the FDE operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
+        "description": "Delivered \u2014 the operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for the forward-deployed team.",
         "brand_color": "oklch(0.19 0 0)",
         "neutral_chroma": 0,
         "radius": "0.625rem",

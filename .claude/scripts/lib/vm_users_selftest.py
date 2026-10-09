@@ -464,7 +464,7 @@ def workspace(check, tmp):
     check("surface:   ...the default profile's fields, the subagent configs, the definitions and the scripts, as state has them", st_["surface"]["primary_context"]["instructions"] == SURFACE["primary_context"]["instructions"]
           and st_["surface"]["web_search"] == SURFACE["web_search"] and st_["surface"]["browser"] == SURFACE["browser"]
           and st_["surface"]["custom_workflow_builder"] == {"definitions": SURFACE["custom_workflow_builder"]["definitions"], "scripts": SURFACE["custom_workflow_builder"]["scripts"]}, st_)
-    check("surface:   ...the operator as the author of the rows, and nothing else of the workspace (no members, no roster, no admins)", st_["workspace"] == {"org": {"org_id": "example", "name": "Example"}, "fde_self": {"email": "operator@example.com"}}, st_["workspace"])
+    check("surface:   ...the operator as the author of the rows, and nothing else of the workspace (no members, no roster, no admins)", st_["workspace"] == {"org": {"org_id": "example", "name": "Example"}, "operator_self": {"email": "operator@example.com"}}, st_["workspace"])
     check("surface:   ...a state with no surface asks for none", V.surface_doc({"app_id": "x", "workspace": app["workspace"]}) is None and V.surface_digest({"app_id": "x", "workspace": app["workspace"]}) is None)
     src_mjs = open(os.path.join(HERE, "surface.mjs")).read(); listed = re.search(r"const APPLY_TABLES = \[([^\]]*)\]", src_mjs)
     apply_tables = re.findall(r'"(\w+)"', listed.group(1)) if listed else []
@@ -889,7 +889,7 @@ def _real_surface(check, tmp, sdoc):
     rc, out, db, err = run(state, dbf, only="agent_profiles,customers")
     check("surface.mjs (run with node): a table apply does not write is refused by name, before anything is opened", rc == 1 and "SURFACE_ONLY names customers" in err and json.dumps(db["tables"], sort_keys=True) == snap, (rc, err))
     # the same file on the Vercel path: no SURFACE_ONLY, the whole of apply, as clone.py configure runs it
-    full = {"workspace": {"org": {"org_id": "example", "name": "Example", "display_name": "Example Co"}, "fde_self": {"email": "operator@example.com"}, "operator_self": {"email": "operator@example.com"},
+    full = {"workspace": {"org": {"org_id": "example", "name": "Example", "display_name": "Example Co"}, "operator_self": {"email": "operator@example.com"},
                           "members": [{"email": "operator@example.com", "role": "owner"}], "platform_admins": ["operator@example.com"], "roster": [{"email": "ana@example.com", "name": "Ana", "team": "Credit"}]},
             "surface": state["surface"]}
     dbf2 = os.path.join(tmp, "fake-pg-vercel.json")

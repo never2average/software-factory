@@ -81,6 +81,8 @@ Every step is safe to run again. A redeploy takes the app offline from step 9 un
 not relocatable, so there is nowhere else to build it); say so before running one in working hours.
 """
 import datetime, getpass, json, os, re, secrets as pysecrets, shlex, shutil, socket, subprocess, sys, tempfile, time, urllib.parse
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import legacy   # an older application's pre-rename state keys, where this machine names them (lib/legacy.py)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -123,13 +125,13 @@ EGRESS_DENY = ("169.254.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
 # express; this list is only the fallback when a source has no vercel.json, and the self-test pins it to the mold's.
 CRONS = (("resume-workflows", "*/5 * * * *"), ("run-cron-workflows", "* * * * *"), ("refresh-apps", "* * * * *"),
          ("sync-inbox", "*/10 * * * *"), ("close-abandoned-runs", "*/15 * * * *"), ("deliver-queued", "* * * * *"))
-# The switches the mold must carry before it can run off Vercel (all upstream since fde-agent da581f2). A real deploy
+# The switches the mold must carry before it can run off Vercel (all upstream since upstream da581f2). A real deploy
 # refuses while any is missing from the source it ships, and a dry run names them.
-MOLD_SWITCHES = (("SANDBOX_BACKEND", "the sandbox setting (microVM backend, vCPUs, memory, network deny list)", "fde-agent #100 (mold_v1-151)"),
-                 ("STORAGE_DRIVER", "the file-storage driver that replaces Vercel Blob", "fde-agent #103 (mold_v1-073)"),
-                 ("SERVICE_AUTH", "the web app's own service identity that replaces the Vercel token", "fde-agent #99 (mold_v1-074)"))
-# The mold's own off-Vercel tooling the deploy runs (fde-agent #100). A source without it is refused like a missing switch.
-MOLD_SCRIPTS = (("sandbox:prewarm", "the mold's serial sandbox prewarm (stale locks, runtime link, file-link reach check)", "fde-agent #100 (docs/self-hosting/SANDBOX.md)"),)
+MOLD_SWITCHES = (("SANDBOX_BACKEND", "the sandbox setting (microVM backend, vCPUs, memory, network deny list)", "upstream #100 (mold_v1-151)"),
+                 ("STORAGE_DRIVER", "the file-storage driver that replaces Vercel Blob", "upstream #103 (mold_v1-073)"),
+                 ("SERVICE_AUTH", "the web app's own service identity that replaces the Vercel token", "upstream #99 (mold_v1-074)"))
+# The mold's own off-Vercel tooling the deploy runs (upstream #100). A source without it is refused like a missing switch.
+MOLD_SCRIPTS = (("sandbox:prewarm", "the mold's serial sandbox prewarm (stale locks, runtime link, file-link reach check)", "upstream #100 (docs/self-hosting/SANDBOX.md)"),)
 # STORAGE_SIGNING_SECRET signs the filesystem driver's file links (lib/storage/settings.ts: 32+ characters; the web app and
 # the agent hold the same value). Minted with the others; it reaches a service's env file only on the filesystem driver.
 INTERNAL = ("CRON_SECRET", "OPS_SECRETS_KEY", "TASK_WORKFLOW_SERVICE_TOKEN", "STORAGE_SIGNING_SECRET")
@@ -147,7 +149,7 @@ PUSH_SOURCE = "agent/lib/web-push.ts"
 # Read by the agent and never by the web app, so the web app's file does not get them.
 AGENT_ONLY = ("VAPID_PRIVATE_KEY", "VAPID_SUBJECT")
 EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
-# ---- which service reads which name (fde-agent da581f2; checked against the source, see the self-test) ------------
+# ---- which service reads which name (upstream da581f2; checked against the source, see the self-test) ------------
 # The master env file holds every name; each service gets a file of its own split from it (env_split), so a process
 # never holds what it does not read. Read only by the factory's database chain and the mold's migration scripts, which
 # run as root from the master file: no service gets these.
@@ -216,7 +218,7 @@ def settings(app_id, app, infra, ds):
                 "db": pg.get("database") or re.sub(r"[^a-z0-9]", "", app_id.lower()), "port": int(pg.get("port") or 5432)},
          "mode": pg.get("rls", "fail_closed"), "flags": dict(infra.get("runtime_env") or {}), "model": dict(app.get("model") or {}),
          "secrets_user": list(infra.get("secrets_user") or []),
-         "email": ((ws.get("operator_self") or ws.get("fde_self") or {}).get("email") or "").strip()}
+         "email": (legacy.get(ws, "operator_self", {}).get("email") or "").strip()}
     # `host` is the PUBLIC address (DNS, the sandbox deny list). SSH goes to ssh_host when one is named, e.g. the
     # server's address on a private administration tunnel (mold_v1-156); and the firewall lets only ssh_allow_from
     # reach the SSH port when that is named. Absent, both are today's behaviour: SSH to `host`, port open to all.
@@ -428,7 +430,7 @@ def sandbox_conflict(S, addresses=None):
     return None
 
 def storage_pairs(S):
-    """The storage driver's settings, under the names lib/storage/settings.ts reads (fde-agent #103, docs/STORAGE.md).
+    """The storage driver's settings, under the names lib/storage/settings.ts reads (upstream #103, docs/STORAGE.md).
     Names and non-secret values only: the signing secret is minted on the server, the s3 key pair is the operator's."""
     sg = S["storage"]
     if (sg.get("driver") or "fs") == "fs":
@@ -454,12 +456,12 @@ def config_pairs(S):
          "OPS_MULTI_TENANT": f.get("OPS_MULTI_TENANT", "1"),
          "WEB_ORIGIN": S["url"],
          # Both names, one address: lib/agent-url.ts refuses EVE_API_URL that differs from NEXT_PUBLIC_EVE_API_URL, and
-         # off Vercel refuses to build or start with neither (fde-agent #101). Read at BUILD time.
+         # off Vercel refuses to build or start with neither (upstream #101). Read at BUILD time.
          "EVE_API_URL": f"http://127.0.0.1:{PORTS['api']}", "NEXT_PUBLIC_EVE_API_URL": f"http://127.0.0.1:{PORTS['api']}",
          "TASK_WORKFLOW_SERVICE_URL": f"http://127.0.0.1:{PORTS['workflow']}",
          # eve's local workflow world (the agent). The task-workflow service gets a directory of its own (service_env_spec).
          "WORKFLOW_LOCAL_DATA_DIR": f"{S['data']}/workflow-data",
-         # The web app presents its own short-lived service token and the agent accepts it (fde-agent #99).
+         # The web app presents its own short-lived service token and the agent accepts it (upstream #99).
          "SERVICE_AUTH": "session-key",
          "SANDBOX_BACKEND": sb.get("backend", "microsandbox"), "SANDBOX_CPUS": str(sb.get("cpus", 2)),
          "SANDBOX_MEMORY_MIB": str(sb.get("memory_mib", 1024)), "SANDBOX_DENY_SUBNETS": ",".join(deny_list(S)),
@@ -1247,7 +1249,7 @@ chown -hR @USER@:@GROUP@ @APPDIR@
 RUN_API="@RUN_API@"
 RUN_WEB="@RUN_WEB@"
 RUN_WF="@RUN_WF@"
-# patches/ too: the app patches a dependency at install (patch-package, fde-agent #122), so a patch-only change must reinstall
+# patches/ too: the app patches a dependency at install (patch-package, upstream #122), so a patch-only change must reinstall
 lock_now="$(cat @APPDIR@/package-lock.json @APPDIR@/patches/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)"
 if [ ! -d @APPDIR@/node_modules ] || [ "$(cat @DATA@/build-stamps/app.lock 2>/dev/null || true)" != "$lock_now" ]; then
   # devDependencies included: the sandbox runtime (microsandbox) is one of them.
@@ -1288,7 +1290,7 @@ def api_prestart_sh(S):
 set -eu
 [ -c /dev/kvm ] || { echo "no /dev/kvm on this server: the sandbox cannot start" >&2; exit 1; }
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "the service user cannot open /dev/kvm (is it in group kvm?)" >&2; exit 1; }
-# The mold's own prewarm (fde-agent #100, docs/self-hosting/SANDBOX.md), which does what this file used to do, better:
+# The mold's own prewarm (upstream #100, docs/self-hosting/SANDBOX.md), which does what this file used to do, better:
 #   - removes only template locks whose owner process is gone (a held one stops it, naming the process);
 #   - --link-runtime: links the microsandbox runtime npm already installed into ~/.microsandbox (no download);
 #   - resolves STORAGE_PUBLIC_URL and refuses if the sandbox deny list holds any address it leads to, so the API never
@@ -2157,7 +2159,7 @@ def library_cleanup(env_file, user, home, app_dir, expect, org=None, apply=False
     return _library_on_server("cleanup", env_file, user, home, app_dir, expect, org, apply, run, say)
 
 def library_apply(env_file, user, home, app_dir, expect, org=None, apply=False, run=None, say=print):
-    """ON THE SERVER, as root: the twin of library_cleanup for the mold's operator:library-apply (fde-agent #115): the
+    """ON THE SERVER, as root: the twin of library_cleanup for the mold's operator:library-apply (upstream #115): the
     starter apps of the running build's library, for workspaces that already exist. Same user, same env file, same
     dry run first; with `apply`, one run per workspace the dry run listed (library.run_apply). The LIBRARY line also
     carries `sources` (starter key -> who writes it), read from the built app, so the factory can say it."""
@@ -2626,7 +2628,7 @@ def sandbox_load_remote(S, app, a, source, runner=real_runner, rig_runner=_run_r
     if not S["domain"]: raise Stop(f"{S['app_id']}: the app's domain is not in state yet, so there is nothing to call. Nothing was started.")
     if not os.path.isfile(rig):
         raise Stop(f"{S['app_id']}: {SANDBOX_RIG} is not in the source this app deploys from ({os.path.relpath(source, ROOT)}). It arrives with the "
-                   f"mold's sandbox guard (fde-agent, mold_v1-183): refresh the mold, redeploy, then run this again. Nothing was started.")
+                   f"mold's sandbox guard (upstream, mold_v1-183): refresh the mold, redeploy, then run this again. Nothing was started.")
     token = _rig_token(a, app["mold_id"], env)
     child = {k: v for k, v in env.items() if not k.endswith("_SESSION_TOKEN")}
     child.update({"RIG_BASE": S["url"], "RIG_TOKEN": token, **({"RIG_ORG": org} if org else {})})
@@ -2669,7 +2671,7 @@ def state_seed(app):
     logo, hosted domain), the owner, the members with their roles, the platform administrators and the people roster.
     Raises Stop with one sentence when state does not say who owns it."""
     ws = app.get("workspace") or {}; org = ws.get("org") or {}
-    me = ((ws.get("operator_self") or ws.get("fde_self") or {}).get("email") or "").strip().lower()
+    me = (legacy.get(ws, "operator_self", {}).get("email") or "").strip().lower()
     members = [m for m in ws.get("members") or [] if isinstance(m, dict) and m.get("email")]
     owner = next((m["email"].strip().lower() for m in members if m.get("role") == "owner"), "") or me
     if not org.get("org_id") or not org.get("name") or not owner:
@@ -2722,9 +2724,9 @@ def surface_doc(app):
     sf = app.get("surface"); ws = app.get("workspace") or {}
     if not isinstance(sf, dict) or not (ws.get("org") or {}).get("org_id"): return None
     seed = state_seed(app)
-    me = ((ws.get("operator_self") or ws.get("fde_self") or {}).get("email") or "").strip().lower() or seed["owner"]
+    me = (legacy.get(ws, "operator_self", {}).get("email") or "").strip().lower() or seed["owner"]
     cwb = sf.get("custom_workflow_builder") or {}
-    state = {"workspace": {"org": {"org_id": seed["org_id"], "name": seed["name"]}, "fde_self": {"email": me}},   # surface.mjs reads fde_self (clone.py hands it both names)
+    state = {"workspace": {"org": {"org_id": seed["org_id"], "name": seed["name"]}, "operator_self": {"email": me}},
              "surface": {"primary_context": {"instructions": (sf.get("primary_context") or {}).get("instructions") or {}},
                          "web_search": sf.get("web_search") or {}, "browser": sf.get("browser") or {},
                          "custom_workflow_builder": {"definitions": cwb.get("definitions") or [], "scripts": cwb.get("scripts") or []}}}

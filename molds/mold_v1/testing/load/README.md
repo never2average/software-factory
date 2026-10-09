@@ -139,9 +139,9 @@ those are not jitter, and they are not re-rolled.
 
 Printed verbatim into every report from `lane.json`. The one that needs explaining:
 
-### `fde:thread-open-perf` — not covered, and why it is not merely "skipped"
+### `operator:thread-open-perf` — not covered, and why it is not merely "skipped"
 
-`codebase/scripts/fde/thread-open-perf.mjs` is a good script: it separates the Ops gate, the Next
+`codebase/scripts/operator/thread-open-perf.mjs` is a good script: it separates the Ops gate, the Next
 rewrite hop, the eve stream and the shared-thread membership proxy, and it reports *why* a replay
 stopped. This lane cannot run it, and says so rather than carrying it as a permanently skipped row.
 
@@ -152,17 +152,17 @@ Three facts, each verifiable in the mold:
   states the rule outright: *"There is deliberately no shared service key: every caller is a real,
   named human."* Both are obtained interactively and last about an hour. No factory script can mint
   one for a stamped app, and `HOW_TO_GET_A_TOKEN` in that script tells you to open a browser console
-  and `copy(localStorage.getItem("fde-google-token"))` — not an instruction this factory gives a
+  and `copy(localStorage.getItem("workspace-google-token"))` — not an instruction this factory gives a
   non-technical operator.
 * **The precondition guarded a name the code has never heard of.** The check used to be declared
-  with `requires: [{ env: "FDE_OPS_TOKEN" }]`. `grep -rn FDE_OPS_TOKEN molds/mold_v1/codebase` returns
-  nothing (exit 1): the script reads `--token`, `--token-file` or `FDE_GOOGLE_TOKEN`. So exporting
-  `FDE_OPS_TOKEN` would have *satisfied* the precondition and run the script with no token at all —
+  with an `env` precondition on an ops-token variable. A `grep -rn` for that name in molds/mold_v1/codebase
+  returns nothing (exit 1): the script reads `--token`, `--token-file` or `WORKSPACE_GOOGLE_TOKEN`. So
+  exporting that variable would have *satisfied* the precondition and run the script with no token at all —
   which prints "No token — baseline only" and `process.exit(0)`, and the runner would have recorded
   `pass` for a check that measured no thread open whatsoever.
 * **Unconfigured, it points at the live projects.** `FRONT` defaults to
-  `https://fde-agent.vercel.app` and `AGENT` to `https://fde-agent-api.vercel.app`. Without
-  `FDE_OPS_URL` and `NEXT_PUBLIC_EVE_API_URL`, that vacuous `pass` would have been measured against
+  the live web project's address and `AGENT` to the live API project's. Without
+  `WORKSPACE_OPS_URL` and `NEXT_PUBLIC_EVE_API_URL`, that vacuous `pass` would have been measured against
   a different application than the one under test.
 
 The lane README's own rule settles it: *a row that could never run is `not-covered`, not `skipped`* —
@@ -176,7 +176,7 @@ report states the gap instead of implying it was measured.
    pieces — `lib/auth-session.ts` mints an ES256 email-session token that `verifyOpsAuth` accepts —
    but nothing exposes a way to mint one for a named operator address from a script, and adding one
    is a change to `codebase/`, i.e. a mold refresh from source per `MOLD.md`, not a lane edit.
-2. `stress.py`'s sibling would then set `FDE_OPS_URL` and `NEXT_PUBLIC_EVE_API_URL` to *this app's*
+2. `stress.py`'s sibling would then set `WORKSPACE_OPS_URL` and `NEXT_PUBLIC_EVE_API_URL` to *this app's*
    `infrastructure.vercel.production_url`, pass the token as `--token-file` (never as an argv or a
    lane-stored value), and require at least one owned thread with an `eveSessionId` — the script
    measures nothing without one, and "no thread to measure" must be an `unmeasured` row, not a pass.

@@ -11,7 +11,7 @@ An application's own GitHub or GitLab repository is made ONLY when the operator 
 Under it, to stamp from a description: `intake` subagent (asks the user only unresolved questions, writes state) then `provisioner` subagent (checks secrets by name, deploys). Secret values never enter the repo or the chat.
 
 Rules:
-- Molds under `molds/<mold_id>/codebase` are general-purpose snapshots. Do not edit them in place, and do not fork one to stamp an application. Refresh from source per the mold's `MOLD.md`.
+- Molds under `molds/<mold_id>/codebase` are general-purpose snapshots. Do not edit them in place, and do not fork one to stamp an application. The codebase is not in the repository: fetch it, check it or refresh it from source with the `mold` skill (`python3 .claude/scripts/mold.py fetch|check|refresh <mold_id>`; the source's address is `mold_sources` in `state/factory.local.json`).
 - An application's own code (subagents, a root-instructions section, shared sandbox helpers) is a pack under `packs/<pack_id>/`. The application's state names it, and `.claude/scripts/packs.py` applies it to `build/<app_id>/`. If a vertical needs a base-code change, that is a pull request to the mold's upstream, never a fork.
 - Stamping an application means: copy `state/application/app_id/` to a real id, fill the four JSON files against their schemas, then run the five testing lanes in `molds/<mold_id>/testing/`. A failed lane sets the application to `reverted` and hands control back to the operator.
 - Secrets are referenced by name only (`*_ref` fields). Values live in Vercel or the VM environment.

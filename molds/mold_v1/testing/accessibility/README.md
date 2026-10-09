@@ -6,7 +6,7 @@ only, and never against the live factory projects (see "Safety" below).
 
 Two halves. **Signed out**: the mold's three page routes, which is a sign-in page and an empty shell.
 **Signed in** (`--only auth`): the product — the chat thread, the ops centre and the workflow builder —
-graded with a session the factory signs for the application's own FDE with the app's own key (see
+graded with a session the factory signs for the application's own operator with the app's own key (see
 "Authenticated coverage"). Until this second half existed, a green accessibility lane certified a
 sign-in page and nothing else (mold_v1-040).
 
@@ -112,8 +112,8 @@ produce and must not try — or the app's **own** "email-session" token: ES256, 
 exp}`. `verifyOpsAuth` checks that kind first and asks nothing else of it. The emailed six-digit code
 gates the **route** that mints (`/api/auth/email/verify`), not the token: what that route returns after a
 code is exactly this token for that email. The browser's "signed in" is the same token under
-`localStorage["workspace-google-token"]` (`fde-google-token` on a deployment older than fde-agent #47). The factory generates and holds a provisioned application's key pair
-by name, so it can sign the same bytes — for **the app's own FDE**, `application.workspace.fde_self.email`,
+`localStorage["workspace-google-token"]` (a deployment older than upstream #47 used an earlier key name). The factory generates and holds a provisioned application's key pair
+by name, so it can sign the same bytes — for **the app's own operator**, `application.workspace.operator_self.email`,
 the person the app was stamped for and seeded as its workspace owner; never a hard-coded address.
 
 **What the token does not do.** It proves an email. Membership is read from the application's database
@@ -131,15 +131,14 @@ check here is 15 and asks for 20 — not the seven days the app's own sessions g
 and runs the check with that. To measure as yourself, or as a `member` rather than the owner:
 
 1. Open the application in Chrome and sign in the way you normally would.
-2. `F12` -> **Application** -> **Local Storage** -> the app's own URL -> the row `workspace-google-token` (or `fde-google-token` on an older deployment).
+2. `F12` -> **Application** -> **Local Storage** -> the app's own URL -> the row `workspace-google-token`.
 3. Copy that value and put it in the environment of one run:
    `MOLD_V1_SESSION_TOKEN='<paste>' python3 .claude/scripts/lanes.py <app_id> --lane accessibility`.
 
 Treat it as a password. The harness prints the identity it signed in as and the expiry, never the token.
 
-**What the harness does with it.** It stores the token under `workspace-google-token` and the legacy
-`fde-google-token` for the app's own origin only — the key the app's own sign-in writes today and the one an
-older bundle (or the app's read-fallback) still reads — then opens `/`, `/workspace?tab=people`,
+**What the harness does with it.** It stores the token under `workspace-google-token` for the app's own origin only — the key the app's own
+sign-in writes — then opens `/`, `/workspace?tab=people`,
 `?tab=audit` and `?tab=workflows` (the app's own deep links) and grades them exactly as the signed-out
 rows are graded.
 
@@ -183,7 +182,7 @@ verdicts available are "run it" and `skipped`:
 - the deployment answers 401/403 to the read-only `GET /api/ops/orgs` -> `skipped`;
 - 2xx -> the check runs.
 
-The probe refuses to send a credential to `fde-agent*` or `fde-task-workflow*` at all (HARD RULE 2): a
+The probe refuses to send a credential to a live project's host at all (`state/factory.local.json` → `live_projects`) (HARD RULE 2): a
 `production_url` pointing at a live factory project is a provisioning defect, not a target.
 
 **The window this does not close, stated plainly.** A session accepted by the probe and then revoked
@@ -194,7 +193,7 @@ and needs a deliberate act elsewhere. Closing it entirely needs the runner to be
 was measured" back from a harness, which is a change to `.claude/scripts/lanes.py`, not to this lane.
 
 **The harness never mints a token.** `a11y.mjs` reads one variable and never sees a key. Signing happens
-in `.claude/scripts/lib/session.py`, from the application's own key, for the application's own FDE —
+in `.claude/scripts/lib/session.py`, from the application's own key, for the application's own operator —
 see "Authenticated coverage". A session that key cannot produce is the `skipped` case above, not a
 `fail`.
 
@@ -208,7 +207,8 @@ is printed, so grading a real deployment cannot change it.
   here as `vendor/axe.min.js` (MPL-2.0) and injected with `addScriptTag`, so the lane needs no
   `node_modules` and no network at run time. `npm --prefix molds/mold_v1/testing/accessibility run vendor`
   re-vendors it; `package.json` pins the version.
-- The browser aborts any request to `fde-agent`, `fde-agent-api` or `fde-task-workflow`, and to the
+- The browser aborts any request to the live web, API or workflow project (`state/factory.local.json` →
+  `live_projects`), and to the
   `/eve/v1/` and `/.well-known/workflow/` proxy paths. A mold built without `EVE_API_URL` (which off
   Vercel now also takes `EVE_API_URL_OPTIONAL=1`, see "Measuring a vm fixture") bakes a
   rewrite to the **live** agent into `routes-manifest.json`, so without this guard a local run would
@@ -231,9 +231,9 @@ is printed, so grading a real deployment cannot change it.
   `not-covered` with the reason and the check is recorded `skipped` (`expect.skip_on`), so the lane cannot be
   `pass` with that surface unopened; on a deployment the factory mints no session at all (`session.py` refuses every `target: vercel` app), so the builder has been measured by no run of this lane; it is measured only with a session an operator signs in for and lends in `MOLD_V1_SESSION_TOKEN`, and its absence is then a fail.
 - **The signed-in surface at all, when no usable session exists** — no key in the app's secret store (a
-  `target: vm` app that has not run `--verify-db`), a key the deployment does not run with, an FDE identity with no workspace there, and
+  `target: vm` app that has not run `--verify-db`), a key the deployment does not run with, an operator identity with no workspace there, and
   no operator-lent session: the check is `skipped` and so is the lane. Not `pass`.
-- **Any identity but the application's own FDE.** The minted session is the workspace owner's; a
+- **Any identity but the application's own operator.** The minted session is the workspace owner's; a
   `member`'s or an invitee's controls are graded only when an operator lends such a session.
 - **Which identity is on screen.** A member and an owner see different controls; the lane grades the
   workspace the supplied session resolves to, and the report names that identity.
@@ -286,7 +286,7 @@ deployment that takes the session and still shows nothing can never pass.
 
 Against a throwaway `target: vm` application (`sess_probe`, stamped by intake, database from
 `provision.py --verify-db`, the mold built from a scratch copy and started on 127.0.0.1 with that app's
-own `.env`, its workspace seeded by the mold's own `fde:new-org`), the lane's exact commands:
+own `.env`, its workspace seeded by the mold's own `operator:new-org`), the lane's exact commands:
 
     python3 .claude/scripts/lib/session.py sess_probe -- \
       python3 molds/mold_v1/testing/accessibility/session-live.py http://127.0.0.1:3123 --min-remaining 1200
@@ -304,8 +304,8 @@ own `.env`, its workspace seeded by the mold's own `fde:new-org`), the lane's ex
                                             task-workflow service, which this fixture does not run
 
 And the two ways it refuses, each measured: a key the deployment does not hold (a fresh pair written into
-the app's `.env`) -> `GET /api/ops/orgs` 401 -> exit 1 -> `skipped`; an FDE identity with no membership
-(`fde_self.email` swapped in state) -> 200, "lists no workspace for that identity" -> exit 1 -> `skipped`.
+the app's `.env`) -> `GET /api/ops/orgs` 401 -> exit 1 -> `skipped`; an operator identity with no membership
+(`operator_self.email` swapped in state) -> 200, "lists no workspace for that identity" -> exit 1 -> `skipped`.
 
 The same manifests, resolved by `lanes.py`'s own `unmet()` with this app and URL, report the rewired
 precondition MET. `lanes.py` itself could not run the lane end to end: a `target: vm` app may hold no
@@ -343,7 +343,7 @@ outputs quoted are the ones it printed:
    `npm run build` (exit 0), then `next start -H 127.0.0.1 -p 3123`. **Today both need
    `EVE_API_URL_OPTIONAL=1` in front of them** (`EVE_API_URL_OPTIONAL=1 npm run build`, then
    `EVE_API_URL_OPTIONAL=1 npx next start -H 127.0.0.1 -p 3123`): since mold snapshot `da581f2`
-   (fde-agent #101, `lib/agent-url.ts`) a production build or server off Vercel refuses to build or start
+   (upstream #101, `lib/agent-url.ts`) a production build or server off Vercel refuses to build or start
    without an agent address (`AgentUrlNotConfiguredError`), and this fixture runs no agent. That switch is
    the one `agent-url.ts` keeps for "a test build that talks to no agent"; it keeps the old fallback to the
    live agent's address, which the browser guard in **Safety** blocks. Do not instead point
@@ -353,8 +353,8 @@ outputs quoted are the ones it printed:
    URLs rewritten from the network alias `db` to the container's address (`docker inspect` of
    `pg-v040fix`), because the mold ran on the host rather than on the app's private network. No inference,
    blob, mail or task-workflow variable was set; the three signed-in surfaces render without them.
-3. The workspace seeded once with the mold's own `npm run fde:new-org -- --name "Fix 040" --id fix-040
-   --domain onfinance.in --owner <application.workspace.fde_self.email>`, with a `.env.local` in the
+3. The workspace seeded once with the mold's own `npm run operator:new-org -- --name "Fix 040" --id fix-040
+   --domain onfinance.in --owner <application.workspace.operator_self.email>`, with a `.env.local` in the
    SCRATCH copy holding `DATABASE_URL=<the admin URL>` (the seed writes rows the app_rw role's policies do
    not let it insert; the file was deleted right after). It created the `orgs` row and the owner +
    platform-admin membership, then its own `recipes` insert failed on a NULL `org_id` — a defect of the
@@ -367,7 +367,7 @@ outputs quoted are the ones it printed:
    `recipes org_id=sweep-059 n=5`, `workflows org_id=sweep-059 n=13` and no NULL `org_id` row. Repeating
    these five steps today seeds the whole workspace, not just its membership.
 4. `python3 .claude/scripts/lib/session.py v040fix -- python3 molds/mold_v1/testing/accessibility/session-live.py http://127.0.0.1:3123 --session-env MOLD_V1_SESSION_TOKEN --min-remaining 1200` printed
-   `session accepted for <fde_self.email> · member of 1 workspace(s) · 1798s left (needs 1200s)`.
+   `session accepted for <operator_self.email> · member of 1 workspace(s) · 1798s left (needs 1200s)`.
 5. Then the runner itself:
 
     MOLD_V1_LANE_URL=http://127.0.0.1:3123 python3 .claude/scripts/lanes.py v040fix --lane accessibility --dry-run
@@ -412,8 +412,8 @@ vm app's key against this fixture is refused by the fixture itself (`/api/ops/or
   run to date: `session.py` mints only for a vm fixture, so on a deployment the builder is opened only with a
   session an operator signs in for and lends (`MOLD_V1_SESSION_TOKEN`), where its absence is a fail.
 - **A Vercel-held key is never used.** `session.py` mints only from a key the factory generated for a local vm fixture (`infra/vm/apps/<app>/.env`); an app on Vercel is refused outright, whatever its key's storage type.
-- **The workspace must exist.** `fde_self` is seeded as owner by whatever stamped the application
-  (`fde:new-org`, a live snapshot, the onboarding wizard). Nothing in this lane writes it, and the
+- **The workspace must exist.** `operator_self` is seeded as owner by whatever stamped the application
+  (`operator:new-org`, a live snapshot, the onboarding wizard). Nothing in this lane writes it, and the
   precondition refuses to grade an identity with no workspace.
 - **Which mold_v1 application is serving this URL.** The precondition checks that the HTML carries this
   mold's markers, which catches an undeployed URL and a URL now served by something else. It cannot

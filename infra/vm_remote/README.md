@@ -45,7 +45,7 @@ The operator's click-by-click steps are `docs/RUNBOOK.md` §9. The state fields 
 
 The API runs as `sfapp` (no login shell, no sudo) with `SupplementaryGroups=kvm`; the web app as `sfweb`, the task-workflow
 service as `sfwork` (below). Before the API starts, `api-prestart.sh` checks
-`/dev/kvm` and runs the mold's own `npm run sandbox:prewarm -- --link-runtime --retries 2` (fde-agent #100): it clears template locks
+`/dev/kvm` and runs the mold's own `npm run sandbox:prewarm -- --link-runtime --retries 2` (upstream #100): it clears template locks
 whose owner is gone, links the microsandbox runtime from `node_modules`, refuses to finish if the data room's file-link origin resolves
 into the sandbox deny list, and prewarms the templates one at a time with three tries each. Then `node .output/server/index.mjs`, not
 `eve start`. (The factory used to ship its own `prewarm-serial.mjs` for this; the mold's script does the same job and more.)
@@ -105,7 +105,7 @@ into the sandbox deny list, and prewarms the templates one at a time with three 
   nothing whose status or age it cannot read, and nothing at all if msb cannot list. `eve-sbx-tpl-tmp-*` leftovers of a killed prewarm
   go after an hour when no prewarm is running; one of those that msb has no record of is the only directory it deletes itself.
   `health.sh` reports the disk and the store: a warning from `sandbox.disk_alarm_percent` (80), a failure at 95.
-- **A real deploy refuses until the mold carries three switches and one script**: `SANDBOX_BACKEND` (fde-agent #100), `STORAGE_DRIVER`
+- **A real deploy refuses until the mold carries three switches and one script**: `SANDBOX_BACKEND` (upstream #100), `STORAGE_DRIVER`
   (#103), `SERVICE_AUTH` (#99), and the `sandbox:prewarm` npm script (#100). All four are in snapshot `da581f2`. Every name
   `config_pairs` writes is one that snapshot reads; the self-test checks it name by name against the snapshot in the checkout.
 - **Each service holds only what it reads.** The agent verifies the web app's service token with the public key and cannot mint one

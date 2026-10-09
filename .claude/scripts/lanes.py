@@ -393,7 +393,7 @@ def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet
             L += ["", f"`{r['cmd']}`", "", "```", "\n".join((r["out"] or "(no output)").splitlines()[-40:])[-4000:], "```", ""]
         if any(r["defect"] for r in fails):
             L += ["Rows marked with a task id are defects of the mold snapshot itself, not of this application. "
-                  "Fixing them needs a mold refresh from source per `MOLD.md`; they are reported here rather than "
+                  "Fixing them needs a mold refresh from source (`mold.py refresh <mold_id>`, `MOLD.md`); they are reported here rather than "
                   "muted, and they still fail the lane.", ""]
     # A check skipped by a precondition has no output; one skipped on its own output (skip_on) measured
     # rows, and those are printed — the report shows what was measured and the verdict stays `skipped`.

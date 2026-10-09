@@ -43,7 +43,7 @@
   removable: ones nobody edited, ran or built on. --org <id> looks at one workspace. It reads and writes through the
   app role (row-level security in force); the database address is read from the app's own production environment
   for the length of the run (Vercel), or never leaves the server (an app on its own server), and is never printed.
---library-apply: its twin (the mold's own `operator:library-apply`, fde-agent #115). Per workspace that ALREADY
+--library-apply: its twin (the mold's own `operator:library-apply`, upstream #115). Per workspace that ALREADY
   exists, list the starter apps of the running build's library it does not have yet ("would add: app ... (written by
   <specialist> the first time someone opens it)") and the ones left alone and why. A DRY RUN; with --apply it adds
   exactly what that dry run listed, one workspace at a time; nothing is generated until someone opens the app.
@@ -770,7 +770,7 @@ def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
         priv, pub = mint_jwt_pair()
         _set_env("AUTH_JWT_PRIVATE_KEY", priv, mold_dir, project=proj); _set_env("AUTH_JWT_PUBLIC_KEY", pub, mold_dir, project=proj)
         print("generated AUTH_JWT key pair" + ("" if "AUTH_JWT_PRIVATE_KEY" not in present else " (the previous pair was write-only, so it could never reach the api project; every session signed with it is now invalid)"))
-    # Web Push keys, only for a mold that sends push (fde-agent #63): minted once, never rotated here.
+    # Web Push keys, only for a mold that sends push (upstream #63): minted once, never rotated here.
     if os.path.exists(os.path.join(mold_dir, "agent/lib/web-push.ts")) and not {"VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"} <= present:
         pub, priv = mint_vapid_pair()
         _set_env("VAPID_PUBLIC_KEY", pub, mold_dir, project=proj); _set_env("VAPID_PRIVATE_KEY", priv, mold_dir, project=proj)
@@ -1373,7 +1373,7 @@ _PK_ADD = re.compile(r'^\s*ALTER\s+TABLE\s+"([^"]+)"\s+ADD\s+CONSTRAINT\s+"([^"]
 def _unchanged_pks(todo, pks):
     """Split out drizzle-kit's re-emitted primary keys: a DROP CONSTRAINT "n" followed by ADD CONSTRAINT "n"
     PRIMARY KEY(...) on the same table, where the live key "n" already has exactly those columns in that order.
-    push --force used to apply these pairs silently on every deploy; once a key has dependants (fde-agent
+    push --force used to apply these pairs silently on every deploy; once a key has dependants (upstream
     #84's two-column foreign keys to customers) the DROP is refused (2BP01) and the deploy stops. A pair
     whose columns differ from the live key is a real change and stays in the plan. Returns (todo, unchanged)."""
     keep, same, i = [], [], 0
@@ -1627,7 +1627,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         if vals.get("AUTH_JWT_PUBLIC_KEY"): _set_env("AUTH_JWT_PUBLIC_KEY", vals["AUTH_JWT_PUBLIC_KEY"], mold_dir, project=f"{proj}-api"); print(f"  {proj}-api: AUTH_JWT_PUBLIC_KEY set to the main project's current public key")
         _set_env("TASK_WORKFLOW_SERVICE_URL", wf_url, mold_dir, project=f"{proj}-api")
         # The agent trusts the web app's Vercel OIDC token as the platform's service identity only for the web project
-        # these settings name (fde-agent #118: no deployment is hard-coded in the base any more). A function sees only
+        # these settings name (upstream #118: no deployment is hard-coded in the base any more). A function sees only
         # the environment its deployment was BUILT with, so they, and WEB_ORIGIN, go in before the api build.
         _set_env("VERCEL_FRONTEND_TEAM_SLUG", infra["vercel"]["team"], mold_dir, project=f"{proj}-api")
         _set_env("VERCEL_FRONTEND_PROJECT", proj, mold_dir, project=f"{proj}-api")
@@ -1651,7 +1651,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
                               "belongs to another application and this deploy neither bootstraps nor gates it"})
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
-    # WEB_ORIGIN has no default in the base (fde-agent #118); the agent got it before its build above.
+    # WEB_ORIGIN has no default in the base (upstream #118); the agent got it before its build above.
     # Point it at this app's own front door; the value is only known once the web app has a URL, so a
     # first deploy sets it from the project alias and later deploys correct it.
     web_origin = infra["vercel"].get("production_url") or f"https://{proj}.vercel.app"
@@ -2293,13 +2293,16 @@ def _revert(adir, app, reason, note=""):
     save(os.path.join(adir, "application.json"), app)
     print(f"  status set to reverted: {reason[:200]}")
 
-LIVE_PROJECTS = ("fde-agent", "fde-agent-api", "fde-task-workflow")   # read-only by the factory's founding rule
+# Read-only by the factory's founding rule. The live source deployment's project names are this machine's own
+# (state/factory.local.json -> live_projects), never the repository's.
+sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); from factory_local import live_projects as _live_projects
+LIVE_PROJECTS = tuple(_live_projects().values())
 
 def _refuse_live_or_shared_project(app_id, infra):
     """Two refusals that every Vercel writer must pass, --set-secret first of all.
 
     The live projects are read-only to this factory (AGENTS.md); until today nothing in provision.py
-    checked the name, so an infrastructure.json pointing vercel.project at fde-agent would have been
+    checked the name, so an infrastructure.json pointing vercel.project at the live web project would have been
     written to. And --set-secret returned before the "others already deploy to this project" check,
     so a value could land in another app's environment namespace. Both found by the round-4 critic."""
     proj = (infra.get("vercel") or {}).get("project", "")

@@ -12,11 +12,11 @@ not try), or the app's OWN "email-session" token: ES256, signed with the app's A
 {email, kind:"email-session", sub, iss:"delivered", aud:"delivered-app", iat, exp}. verifyOpsAuth checks THAT
 kind first and asks nothing else of it — the emailed six-digit code gates only the route that mints
 (app/api/auth/email/verify), not the token. The browser's "signed in" is the same token under localStorage
-`workspace-google-token` (legacy `fde-google-token`; app/_components/auth-gate.tsx admits `kind === "email-session"`). So for an application whose
+`workspace-google-token` (app/_components/auth-gate.tsx admits `kind === "email-session"`). So for an application whose
 private key the factory itself generated and holds by name, the factory can sign a session and it is a real one:
 the same bytes the app's own verify route would return to that person after a code.
 
-WHO IT SIGNS IN AS: application.workspace.operator_self.email (legacy name fde_self, read for one release) — the
+WHO IT SIGNS IN AS: application.workspace.operator_self.email (or its pre-rename spelling, where lib/legacy.py names one) — the
 operator this application was stamped for, recorded in
 state and seeded as its workspace owner. Never a hard-coded person and never an address the factory invents: the
 token proves an email, and membership is read from the app's database on every request (lib/org-context.ts), so
@@ -38,6 +38,8 @@ nothing is minted — a human who signed in and lent that session (the READMEs' 
 product as themselves, on purpose, and a minted token silently replacing theirs would measure someone else.
 """
 import base64, json, os, re, subprocess, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import legacy
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 REDACTED = "[SENSITIVE]"    # what `vercel env pull` writes for a variable the CLI may not read (provision.py)
@@ -72,7 +74,7 @@ def state(app_id):
             f"minted for a fixture that serves nobody. Nothing was minted.")
     print(f"{app_id}: minting a HARNESS session for the local vm fixture (not a user sign-in)", file=sys.stderr)
     ws = app.get("workspace") or {}
-    email = (ws.get("operator_self") or ws.get("fde_self") or {}).get("email", "").strip().lower()   # fde_self: pre-rename name
+    email = legacy.get(ws, "operator_self", {}).get("email", "").strip().lower()
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", email):
         die(f"{app_id}: application.workspace.operator_self.email is missing, so there is no named person to sign in as. "
             f"Set it in state/application/{app_id}/application.json (the operator this app was stamped for) and rerun.")

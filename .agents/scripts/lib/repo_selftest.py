@@ -76,7 +76,8 @@ def write(p, s, mode=None):
 
 def fixture(fx):
     j = lambda p, o: write(os.path.join(fx, p), json.dumps(o, indent=2) + "\n")
-    j("state/factory.json", {"molds": [{"mold_id": "mold_t", "source": {"repo": "github.com/example/base", "commit": MOLD_COMMIT, "snapshot_date": "2026-10-01"}}]})
+    j("state/factory.json", {"molds": [{"mold_id": "mold_t", "source": {"commit": MOLD_COMMIT, "snapshot_date": "2026-10-01"}}]})
+    j("state/factory.local.json", {"mold_sources": {"mold_t": "https://github.com/example/base.git"}})   # where the source is named
     c = os.path.join(fx, "molds/mold_t/codebase")
     for p, s in (("package.json", '{"name":"base"}\n'), ("app/page.tsx", "export default function Page() { return null }\n"), ("app/icon.svg", "<svg/>\n"),
                  (".gitignore", "dist\n.env*\n!.env.example\n"), ("dist/out.js", "built\n"), ("node_modules/x/index.js", "module.exports = 1\n"),

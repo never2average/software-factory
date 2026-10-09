@@ -1,6 +1,6 @@
 ---
 name: clone
-description: Replicate the live fde-agent deployment into a stamped mold_v1 application and regression-diff the two. Use when asked to clone live, replicate production, or prove the factory reproduces the live app.
+description: Replicate the live source deployment into a stamped mold_v1 application and regression-diff the two. Use when asked to clone live, replicate production, or prove the factory reproduces the live app.
 ---
 # clone
 
@@ -13,4 +13,4 @@ Preferred: the `clone-replica` workflow (`.claude/workflows/clone-replica.js`, a
 5. `configure` — upserts `application.surface` into the app database (org, members, admins, roster, agent profile, agent configs, workflow definitions, extra scripts). Idempotent.
 6. `regress` — row counts for every table, keyed diff of the surface tables, blob tree per top-level folder. Writes `molds/<mold>/testing/context/reports/<app>-regression-<YYYY-MM-DDTHHMMSSZ>[-n].md` (reserved write-once through lanes.py, so a re-run can never overwrite a report a revert record cites), sets `clone_of.regression` and the context lane; a fail reverts the app.
 
-Nothing is asked of the operator: external secrets are copied from the live project by name, the live blob token is discovered across the three live projects (and blob work is skipped with a note if none works), and fresh datastores are created for the clone. Every step pulls env values from Vercel at run time into a temp file in the mold dir and deletes it. The agent runtime is not allowed to handle secret values, so steps 2 to 6 run from sol's terminal; the agent prepares state, reads reports and files tasks. Never point any step at the live projects for writes: `LIVE` in clone.py is read-only by construction.
+Nothing is asked of the operator: external secrets are copied from the live project by name, the live blob token is discovered across the three live projects (and blob work is skipped with a note if none works), and fresh datastores are created for the clone. Every step pulls env values from Vercel at run time into a temp file in the mold dir and deletes it. The agent runtime is not allowed to handle secret values, so steps 2 to 6 run from sol's terminal; the agent prepares state, reads reports and files tasks. Never point any step at the live projects for writes: `LIVE` in clone.py (the three project names in `state/factory.local.json` under `live_projects`) is read-only by construction.

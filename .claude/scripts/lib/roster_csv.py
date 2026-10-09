@@ -17,7 +17,9 @@ The seed files live in state, not under build/<app_id>/: `branding.py prepare` r
 mold with rsync --delete on every deploy, so anything written there is replaced by the mold's own fixture data.
 Seeding copies them over build/<app_id>/data/ after prepare, immediately before `npm run seed:postgres`.
 
-In a research mold a "customer" row is a covered company and `fdeOwner` is the covering analyst. The mold has two
+In a research mold a "customer" row is a covered company and its owner is the covering analyst, written under the key
+the mold's seed contract uses for the account owner: what the mold's own agent/lib/owner-keys.ts maps `accountOwner` to
+(its record key still carries the base product's role word), or `accountOwner` itself for a mold without that map. The mold has two
 staff roles only; the covering analyst is recorded as `solution_engineer` and a second analyst as
 `account_executive` — the role names are the mold's, the meaning here is primary and secondary coverage.
 
@@ -25,7 +27,19 @@ Nothing is guessed: a row with a bad email, no company name, an unknown listing_
 primary for one company, or one email spelt with two names is reported with its line number and nothing is written.
 """
 import csv, io, json, os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import legacy
 
+NEUTRAL_OWNER = "accountOwner"
+
+
+def owner_key(mold_id="mold_v1"):
+    """The seed contract's key for the account owner, as the mold itself maps it (see above)."""
+    f = os.path.join(ROOT, "molds", mold_id, "codebase", "agent", "lib", "owner-keys.ts")
+    try: src = open(f).read()
+    except OSError: return NEUTRAL_OWNER
+    m = re.search(r'\[\s*"([A-Za-z]+)"\s*,\s*"' + NEUTRAL_OWNER + r'"\s*\]', src)
+    return m.group(1) if m else NEUTRAL_OWNER
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 COLS = ["analyst_name", "analyst_email", "manager_email", "company_name", "nse_symbol", "bse_code", "isin", "sector",
         "listing_type", "parent_company", "secondary_analyst_email"]
@@ -71,7 +85,7 @@ def parse(text):
     if not rows and not problems: problems.append("the file has a header and no rows")
     return rows, problems
 
-def build(rows, owner_email, org_name):
+def build(rows, owner_email, org_name, owner_field=NEUTRAL_OWNER):
     """-> (members, roster, customers_state, customers_seed, people_seed, problems)"""
     problems, names, managers, companies = [], {}, {}, {}
     for r in rows:
@@ -117,7 +131,7 @@ def build(rows, owner_email, org_name):
         profile = "; ".join(x for x in [f"listing: {listing}", f"NSE: {r['nse_symbol']}" if r["nse_symbol"] else "",
                                          f"BSE: {r['bse_code']}" if r["bse_code"] else "",
                                          f"parent: {r['parent_company']}" if r["parent_company"] else ""] if x)
-        s = {"id": cid, "name": r["company_name"], "tier": c["tier"], "fdeOwner": r["analyst_email"], "arrCurrency": "INR",
+        s = {"id": cid, "name": r["company_name"], "tier": c["tier"], owner_field: r["analyst_email"], "arrCurrency": "INR",
              "accountRegion": "APAC", "vertical": c["vertical"], "industrySegment": "Housing Finance Company", "regulatoryProfile": profile}
         if r["secondary_analyst_email"]: s["aeOwner"] = r["secondary_analyst_email"]
         if r["isin"]: s["externalAccountId"] = r["isin"]
@@ -133,10 +147,10 @@ TEMPLATE = ",".join(COLS) + "\n" + \
 
 def self_test():
     rows, p = parse(TEMPLATE); assert not p and len(rows) == 2, p
-    m, ro, st, seed, people, p = build(rows, "owner@example.com", "OnFinance AI"); assert not p, p
+    m, ro, st, seed, people, p = build(rows, "owner@example.com", "OnFinance AI", "recordOwner"); assert not p, p
     assert [x["role"] for x in m] == ["owner", "member", "admin", "member"], m
     assert st[0]["id"] == "example-home-loans" and st[1]["id"] == "examplehfl", [c["id"] for c in st]
-    assert seed["customers"][1]["fdeOwner"] == "asha@example.com" and seed["customers"][1]["aeOwner"] == "ravi@example.com"
+    assert seed["customers"][1]["recordOwner"] == "asha@example.com" and seed["customers"][1]["aeOwner"] == "ravi@example.com"
     assert seed["customers"][0]["tier"].startswith("Unlisted") and "parent: Example Financial" in seed["customers"][0]["regulatoryProfile"]
     assert len(people["internalStaffAssignments"]) == 3
     bad = TEMPLATE + "Ravi Example,ravi@example.com,,Example Housing Finance Ltd,EXAMPLEHFL,,,,equity,,\n" + "X,not-an-email,,Y Ltd,,,,,listed,,\n"
@@ -145,7 +159,8 @@ def self_test():
     assert any("already has" in x for x in build(rows, "", "O")[5])  # two primaries for one company
     assert parse("analyst_name,company_name\nA,B\n")[1] == ["missing column 'analyst_email'"]
     assert parse(",".join(COLS) + "\n")[1] == ["the file has a header and no rows"]
-    print("roster_csv: 11 checks passed"); return 0
+    assert build(rows[:1], "", "O")[3]["customers"][0].get(NEUTRAL_OWNER) and owner_key("no_such_mold") == NEUTRAL_OWNER
+    print("roster_csv: 12 checks passed"); return 0
 
 def main(a):
     if "--self-test" in a: return self_test()
@@ -156,10 +171,10 @@ def main(a):
     appf = os.path.join(ROOT, "state", "application", app_id, "application.json")
     if not os.path.exists(appf): sys.exit(f"{app_id}: no state/application/{app_id}/application.json — run intake first")
     app = json.load(open(appf)); ws = app.setdefault("workspace", {})
-    owner = next((m["email"] for m in ws.get("members", []) if m.get("role") == "owner"), (ws.get("fde_self") or {}).get("email", ""))
+    owner = next((m["email"] for m in ws.get("members", []) if m.get("role") == "owner"), legacy.get(ws, "operator_self", {}).get("email", ""))
     org = (ws.get("org") or {}).get("name") or "Research"
     rows, problems = parse(open(path, encoding="utf-8-sig").read())
-    built = build(rows, owner.lower(), org) if not problems else None
+    built = build(rows, owner.lower(), org, owner_key(app.get("mold_id") or "mold_v1")) if not problems else None
     if built: problems += built[5]
     if problems:
         for p in problems: print(p, file=sys.stderr)

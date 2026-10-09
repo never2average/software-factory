@@ -19,10 +19,10 @@ Physical wiring (backend, blob prefix, platform version ids, seed source) lives 
 | `browser.local` | `BROWSER_LOCAL` runtime env |
 
 ## workspace (not a surface item)
-Tenancy and people. `org` is the `orgs` row (`operator:new-org`); `operator_self` the operator identity (read under its pre-rename name `fde_self` for one release) (`operator:onboard-self`, also the `--email` every configure script runs as); `members` are `org_members` (`owner`, `admin`, `engineer`, `member`); `platform_admins` who may create orgs; `roster` is `people_roster` with `manager_email` as the reporting line and `escalations[]` as the fan-out; `customers` map to `operator:new-customer` plus `internal_staff` and `customer_stakeholders`.
+Tenancy and people. `org` is the `orgs` row (`operator:new-org`); `operator_self` the operator identity (`operator:onboard-self`, also the `--email` every configure script runs as); `members` are `org_members` (`owner`, `admin`, `engineer`, `member`); `platform_admins` who may create orgs; `roster` is `people_roster` with `manager_email` as the reporting line and `escalations[]` as the fan-out; `customers` map to `operator:new-customer` plus `internal_staff` and `customer_stakeholders`.
 
 ## surface.primary_context
-What the agent knows. For the upstream fde-agent that is customer agreements, product offerings and rollout case studies, not the org row.
+What the agent knows. For the base codebase that is customer agreements, product offerings and rollout case studies, not the org row.
 
 | Field | Mold |
 |---|---|

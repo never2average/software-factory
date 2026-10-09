@@ -38,7 +38,6 @@
       "capabilities": [],
       "path": "molds/mold_v1",
       "source": {
-        "repo": "github.com/never2average/fde-agent",
         "commit": "20ebafc35b8868592222a9cd616e0b5e7c8d335d",
         "snapshot_date": "2026-10-09"
       }
@@ -114,7 +113,7 @@
     "postgres_scope": "fresh",
     "workspace_name": "OnFinance",
     "operator_email": "operator@example.com",
-    "secret_source_project": "fde-agent",
+    "secret_source_project": "live-web",
     "agent_cli_scope": "@onfinance",
     "notify_domain": "example.com"
   }

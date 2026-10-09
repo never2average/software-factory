@@ -3,7 +3,7 @@
 
 The starter library of an application: the workflows and onboarding recipes every NEW workspace is given.
 
-A mold carries no library of its own (mold_v1 since fde-agent #111). The one the original product shipped, 13
+A mold carries no library of its own (mold_v1 since upstream #111). The one the original product shipped, 13
 workflows and 5 recipes for a team that delivers a platform to accounts, sits in the mold as
 library/account-delivery/, and a build gets it only by naming it in its deployment profile. An application says
 which it wants in state (application.json, surface.custom_workflow_builder.library.install):
@@ -39,7 +39,7 @@ GENERATED = "agent/lib/workflow-library.generated.ts"
 PROFILE_AWARE = "scripts/lib/profile-library.mjs"          # a mold that has this reads its library from the profile
 GENERATORS = ("scripts/build-workflow-library.mjs", "scripts/gen-deployment-profile.mjs")   # in the order npm run build:generated runs them
 CLEANUP_SCRIPT = "scripts/operator/library-cleanup.mjs"
-APPLY_SCRIPT = "scripts/operator/library-apply.mjs"         # fde-agent #115: starter apps for workspaces that already exist
+APPLY_SCRIPT = "scripts/operator/library-apply.mjs"         # upstream #115: starter apps for workspaces that already exist
 ORG_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
 LISTED = ('surface.custom_workflow_builder.library.install is "listed", which no longer exists: the library is all or nothing. '
           'Write "all" for the whole account-delivery library (13 workflows, 5 recipes), or "none" and put the workflows '

@@ -10,8 +10,8 @@ Anything else exits 1, which the runner reads as an unmet precondition and recor
 lane `skipped` — never `pass`, because a lane that could not sign in has not seen the product.
 
 WHERE THE SESSION COMES FROM (mold_v1-040). lane.json runs this probe — and the harness — through
-`.claude/scripts/lib/session.py <app_id> -- …`, which signs a session for the application's own FDE identity
-(application.workspace.fde_self.email) with the app's own AUTH_JWT_PRIVATE_KEY, read by name from the app's
+`.claude/scripts/lib/session.py <app_id> -- …`, which signs a session for the application's own operator identity
+(application.workspace.operator_self.email) with the app's own AUTH_JWT_PRIVATE_KEY, read by name from the app's
 secret store, and hands it over in the variable. That is a real session on this mold: lib/ops-auth.ts admits
 the app's ES256 "email-session" token on its signature alone (the emailed code gates the mint ROUTE, not the
 token), and it is the same token the app's own verify route would hand that person. A session an operator
@@ -50,7 +50,16 @@ from urllib.parse import urlparse
 # HARD RULE 2: the live factory projects are never touched, by anything, including a probe. A
 # `production_url` pointing at one of them is a provisioning defect; this refuses to send a
 # credential there rather than "just reading" from production.
-LIVE = re.compile(r"(^|\.)fde-(agent|agent-api|task-workflow)[^.]*\.", re.I)
+def _live_names():
+    """The live projects' names: this machine's own (state/factory.local.json -> live_projects), found by walking up
+    from this file. None named: none refused by name."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    while d != os.path.dirname(d):
+        try: return [n for n in (json.load(open(os.path.join(d, "state", "factory.local.json"))).get("live_projects") or {}).values() if isinstance(n, str) and n]
+        except (OSError, ValueError): d = os.path.dirname(d)
+    return []
+_NAMES = _live_names()
+LIVE = re.compile(r"(^|\.)(" + "|".join(map(re.escape, _NAMES)) + r")[^.]*\.", re.I) if _NAMES else re.compile(r"(?!)")
 PATH = "/api/ops/orgs"   # the app's own read-only ops GET (app/_components/ops/lib.ts sends exactly this)
 
 def claims(tok):
@@ -65,7 +74,7 @@ def main(a):
     base = a[0].rstrip("/")
     env = a[a.index("--session-env") + 1] if "--session-env" in a else "MOLD_V1_SESSION_TOKEN"
     need = int(a[a.index("--min-remaining") + 1]) if "--min-remaining" in a else 0
-    how = (f"Run the check through the factory's session helper, which signs one for the application's own FDE "
+    how = (f"Run the check through the factory's session helper, which signs one for the application's own operator "
            f"identity (python3 .claude/scripts/lib/session.py <app_id> -- …, as lane.json does); if it says why it "
            f"cannot, sign in to the app yourself, copy that browser's `workspace-google-token` value out of localStorage, "
            f"and re-run with it in {env}.")
@@ -115,7 +124,7 @@ def main(a):
         print(f"{base}{PATH} {code}: this deployment accepts the session for {who}, but lists "
               f"{'no workspace' if orgs == 0 else 'an unreadable answer'} for that identity, so signing in would land "
               f"on onboarding rather than the product and nothing would be measured. Seed the application's workspace "
-              f"with its FDE as a member (application.workspace.members), or sign in as a member and re-run with that "
+              f"with its operator as a member (application.workspace.members), or sign in as a member and re-run with that "
               f"session in {env}.", file=sys.stderr); return 1
     print(f"{base}{PATH} {code} · session accepted for {who} · member of {orgs} workspace(s)" +
           (f" · {left}s left (needs {need}s)" if left is not None else " · no exp claim; the server's answer is the verdict"))

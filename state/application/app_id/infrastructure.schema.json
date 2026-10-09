@@ -256,7 +256,7 @@
           "required": [
             "driver"
           ],
-          "description": "The file store behind the data room and artifacts off Vercel (mold_v1-073, fde-agent #103), written to the env file under the names the mold reads (docs/STORAGE.md): fs is STORAGE_DRIVER=filesystem, STORAGE_FS_ROOT (dir), STORAGE_PUBLIC_URL (https://<domain>) and STORAGE_SIGNING_SECRET (minted on the server); s3 is STORAGE_DRIVER=s3, STORAGE_S3_ENDPOINT, STORAGE_S3_BUCKET, STORAGE_S3_REGION, STORAGE_S3_ADDRESSING, NEXT_PUBLIC_STORAGE_HOST (derived), and STORAGE_S3_ACCESS_KEY_ID / STORAGE_S3_SECRET_ACCESS_KEY taken on the server from the names access_key_ref / secret_key_ref. Credentials by NAME only.",
+          "description": "The file store behind the data room and artifacts off Vercel (mold_v1-073, upstream #103), written to the env file under the names the mold reads (docs/STORAGE.md): fs is STORAGE_DRIVER=filesystem, STORAGE_FS_ROOT (dir), STORAGE_PUBLIC_URL (https://<domain>) and STORAGE_SIGNING_SECRET (minted on the server); s3 is STORAGE_DRIVER=s3, STORAGE_S3_ENDPOINT, STORAGE_S3_BUCKET, STORAGE_S3_REGION, STORAGE_S3_ADDRESSING, NEXT_PUBLIC_STORAGE_HOST (derived), and STORAGE_S3_ACCESS_KEY_ID / STORAGE_S3_SECRET_ACCESS_KEY taken on the server from the names access_key_ref / secret_key_ref. Credentials by NAME only.",
           "properties": {
             "driver": {
               "type": "string",

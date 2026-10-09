@@ -303,7 +303,7 @@ def auth_mark_jsx(inner):
     hyphenated; JSX wants them camel-cased."""
     if is_logo_mark(inner):
         # The same mark is already served as app/icon.svg (/icon.svg). Point at it rather than inlining a
-        # base64 copy: inlined, a raster logo was ~72 KB of every page's HTML AND of the JS bundle (fde-agent #64).
+        # base64 copy: inlined, a raster logo was ~72 KB of every page's HTML AND of the JS bundle (upstream #64).
         return '<img src="/icon.svg" alt="" className="size-8 rounded-md" aria-hidden />'
     body = re.sub(r"<rect\b[^>]*/>", "", inner, count=1).strip()
     body = re.sub(r'\sfill="none"', "", body)
@@ -330,7 +330,7 @@ def apply_overlay(build_dir, b, rules):
     # from profiles/*.json, not from literals in source: the brand is written as profiles/90-brand.json (after any
     # pack's profile, so the application's own brand wins) and the generator is re-run. The rules marked
     # "via_profile" and the product-name file list are then skipped — those literals no longer exist upstream
-    # (fde-agent #15). The icon, the sign-in mark and the palette are still source rewrites.
+    # (upstream #15). The icon, the sign-in mark and the palette are still source rewrites.
     profiled = os.path.exists(os.path.join(build_dir, "scripts", "gen-deployment-profile.mjs"))
     if profiled:
         prod = {"name": name}
