@@ -160,3 +160,89 @@ test('a gate ticket drops its product and stage lead', async () => {
   expect(plainTitle(t)).toBe('Docs + pricing decided')
   expect(plainTitle({ ...t, product: undefined })).toBe(t.title)
 })
+
+import { buildParts, duration, parseBuild, sumBuilds } from './board'
+
+const SUMMARY = {
+  build_cost_usd: 1298.66,
+  build_cost_basis: 'apportioned',
+  build_cost_uncounted_est_usd: 37.62,
+  build_cost_shares: [{ session: '9129ce07', basis: 'apportioned', share: 0.3318 }],
+  agent_model_s: 60935,
+  agent_tool_s: 147470,
+  active_s: 45553,
+  first_message: '2026-09-18T12:16:38.506Z',
+  first_deploy: '2026-09-19T09:49:59+00:00',
+  latest_deploy: '2026-10-09T09:14:15+00:00',
+  deploys: 70,
+  calendar_to_first_deploy_s: 77600,
+  sessions: 1,
+}
+
+test('build cost: a mint report reads with its basis, and what is missing stays not measured', async () => {
+  const b = parseBuild({ generated_at: '2026-10-09T12:00:00Z', summary: SUMMARY })
+  expect([b.cost_usd, b.basis, b.uncounted_est_usd, b.deploys, b.shares[0]?.share]).toEqual([1298.66, 'apportioned', 37.62, 70, 0.3318])
+  // an older report has no summary: every figure is null (not measured), never 0
+  const old = parseBuild({ app_id: 'x', sessions: [] })
+  expect([old.cost_usd, old.basis, old.agent_model_s, old.deploys, old.first_message]).toEqual([null, null, null, null, ''])
+  expect(parseBuild({ summary: { build_cost_basis: 'guessed', first_message: 'not a time' } }).basis).toBe(null)
+  expect(duration(300)).toBe('5m')
+  expect(duration(18720)).toBe('5h 12m')
+  expect(duration(187200)).toBe('2d 4h')
+  expect(duration(null)).toBe('not measured')
+  // apportioned and estimated parts are dimmed and marked; first message → live and deploys are not
+  expect(buildParts(b)).toEqual([
+    { text: 'built: $1,299 (shared)', dim: true },
+    { text: '+ ~$37.62 est.', dim: true },
+    { text: '· agent 16h 55m', dim: true },
+    { text: '· active 12h 39m', dim: true },
+    { text: '· first message → live 21h 33m', dim: false },
+    { text: '· 70 deploys', dim: false },
+  ])
+  const own = parseBuild({ summary: { ...SUMMARY, build_cost_usd: 12.5, build_cost_basis: 'own', build_cost_uncounted_est_usd: null, deploys: 1 } })
+  expect(buildParts(own).map(p => p.text)).toEqual([
+    'built: $12.50',
+    '· agent 16h 55m',
+    '· active 12h 39m',
+    '· first message → live 21h 33m',
+    '· 1 deploy',
+  ])
+  expect(buildParts(own).some(p => p.dim)).toBe(false)
+  expect(buildParts(old).map(p => p.text)).toEqual([
+    'built: not measured',
+    '· agent not measured',
+    '· active not measured',
+    '· first message → live not measured',
+    '· deploys not measured',
+  ])
+  expect(buildParts(undefined)).toEqual([{ text: 'built: not measured', dim: true }])
+})
+
+test('a product total sums its apps, is apportioned when any part is, and counts a shared session once', async () => {
+  const hfc = parseBuild({ summary: SUMMARY })
+  const vm = parseBuild({
+    summary: {
+      ...SUMMARY,
+      build_cost_usd: 243.12,
+      build_cost_uncounted_est_usd: 19.16,
+      agent_model_s: 11407,
+      active_s: 8528,
+      first_message: '2026-10-03T12:38:58.837Z',
+      first_deploy: '2026-10-04T10:39:12+00:00',
+      latest_deploy: '2026-10-09T10:41:04+00:00',
+      deploys: 24,
+    },
+  })
+  const total = sumBuilds([hfc, vm])!
+  expect(Math.round(total.cost_usd! * 100) / 100).toBe(1541.78)
+  expect(Math.round(total.uncounted_est_usd! * 100) / 100).toBe(56.78)
+  expect([total.basis, total.deploys, total.sessions, total.agent_model_s]).toEqual(['apportioned', 94, 1, 72342])
+  expect([total.first_message, total.first_deploy, total.latest_deploy]).toEqual([SUMMARY.first_message, SUMMARY.first_deploy, '2026-10-09T10:41:04+00:00'])
+  expect(total.calendar_to_first_deploy_s).toBe(77600.494)
+  expect(sumBuilds([])).toBe(null)
+  // an app without figures adds nothing, and is not read as 0 when it is the only one
+  const blank = parseBuild({})
+  expect(sumBuilds([blank])!.cost_usd).toBe(null)
+  expect(sumBuilds([blank, hfc])!.cost_usd).toBe(1298.66)
+  expect(sumBuilds([parseBuild({ summary: { ...SUMMARY, build_cost_basis: 'own' } })])!.basis).toBe('own')
+})

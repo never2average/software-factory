@@ -36,6 +36,17 @@ Each product in `state/products.json` gets:
   - **Checks:** the answer from each health page the board loads itself (web, api, and on Vercel the workflow service). Also the workspace-isolation proof from the last deploy: `RLS 62/62` means all 62 workspace tables are locked to their workspace.
   - **Deploy:** when it was last deployed, and the base-code (mold) version it runs. `current` is the factory's latest snapshot; `behind` means a redeploy would update it.
   - **Address:** its web address.
+  - **Built:** what it took to make the app, for example `built: $1,299 (shared) + ~$37.62 est. · agent 16h 55m · active 12h 39m · first message → live 21h 33m · 70 deploys`:
+    - **built:** the AI (Claude) the factory spent making it, at list prices, read from the agent sessions' own cost counters. On a Claude subscription it is the value used, not an invoice.
+    - **(shared):** most of the work happened in long sessions that built several apps. Such a session is split: each piece of work (from one message to the agent to the next) goes to the apps it names, in proportion to how often it names each, and a piece that names no app stays factory work, charged to no app. So two apps that share a session never both count all of it. A shared figure is dimmed.
+    - **~ est.:** work done after a session's last cost record, which the counter hasn't seen yet. It is estimated from the counted part, dimmed, and never added into the measured figure.
+    - **agent:** the time the model spent working; **active:** session time with idle gaps over 5 minutes taken out. Both are shared the same way, and dimmed when they are.
+    - **first message → live:** calendar time from the first message that named the app to its first deploy, waits included.
+    - **deploys:** how many times it has been deployed, from git history.
+    - A figure that can't be worked out says **not measured**, never `0`.
+- **The product's total**, under its name: the sum of its apps' lines, marked **(shared)** when any part is.
+
+The build figures come from `.claude/scripts/mint_report.py --all --json`, which the board runs every hour and on **Recompute build costs** (at the bottom of this tab). It reads the agent sessions and git on this machine, goes nowhere online, and writes `reports/mint/<app>.json` and `.md` for each app that isn't retired. `reports/mint/<app>.md` explains each figure in full, with the share taken of each session.
 
 Apps that belong to no product are listed under **Other apps**.
 
@@ -109,13 +120,13 @@ The board reads the factory's records from the folder Claude Code was started in
 ## Developing it
 
 - `hooks/register.tsx` holds the pane, its tabs, `/factory` and the timers.
-- `hooks/board.ts` holds the pure readers of the state files and the usage report.
+- `hooks/board.ts` holds the pure readers of the state files, the usage report and the build reports.
 - `types/index.d.ts` declares the values the pane keeps.
 
 The tests are:
 
-- `hooks/board.test.ts` for the readers;
-- `hooks/tickets-ui.test.tsx`, which clicks through the tickets, the filters and the Products & apps tab on the terminal and desktop surfaces against a small fake factory.
+- `hooks/board.test.ts` for the readers, the build lines and the product totals;
+- `hooks/tickets-ui.test.tsx`, which clicks through the tickets, the filters and the Products & apps tab (with its build lines and **Recompute build costs**) on the terminal and desktop surfaces against a small fake factory.
 
 ```
 claude plugin validate plugins/factory-board

@@ -1,4 +1,4 @@
-import type { AgentUsage, AppRow, Check, CostBasis, MoldRow, ProductRow, Ticket, Usage, UsageNumbers, UserUsage } from '../types'
+import type { AgentUsage, AppRow, Build, BuildBasis, Check, CostBasis, Measured, MoldRow, ProductRow, Ticket, Usage, UsageNumbers, UserUsage } from '../types'
 
 // Pure readers of the factory's own state files (state/factory.json, state/products.json,
 // state/application/<id>/*.json, state/tasks/<mold>.jsonl). No I/O here, so the tests drive them directly.
@@ -283,4 +283,93 @@ export function plainTitle(t: Ticket): string {
   const lead = new RegExp(`^${t.product.replace(/[^a-z0-9_]/gi, '')}\\s+[a-z_]+\\s+gate:\\s*`, 'i')
   const cut = t.title.replace(lead, '')
   return cut ? cut.charAt(0).toUpperCase() + cut.slice(1) : t.title
+}
+
+/* ---- build cost and time: reports/mint/<app>.json, written by .claude/scripts/mint_report.py --all ------------------ */
+
+export const buildBasis = (v: unknown): BuildBasis | null => (v === 'own' || v === 'apportioned' ? v : null)
+
+const iso = (v: unknown): string => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? v : '')
+
+/** A mint report's summary; an older report without one reads as not measured throughout, never as 0. */
+export function parseBuild(raw: Json): Build {
+  const s: Json = raw?.summary ?? {}
+  return {
+    cost_usd: num(s.build_cost_usd),
+    basis: buildBasis(s.build_cost_basis),
+    uncounted_est_usd: num(s.build_cost_uncounted_est_usd),
+    agent_model_s: num(s.agent_model_s),
+    agent_tool_s: num(s.agent_tool_s),
+    active_s: num(s.active_s),
+    first_message: iso(s.first_message),
+    first_deploy: iso(s.first_deploy),
+    latest_deploy: iso(s.latest_deploy),
+    deploys: num(s.deploys),
+    calendar_to_first_deploy_s: num(s.calendar_to_first_deploy_s),
+    sessions: num(s.sessions),
+    shares: (Array.isArray(s.build_cost_shares) ? s.build_cost_shares : []).map((x: Json) => ({
+      session: String(x.session ?? ''),
+      basis: buildBasis(x.basis),
+      share: num(x.share),
+    })),
+    generated_at: String(raw?.generated_at ?? ''),
+  }
+}
+
+/** Sum of the numbers that were measured; null when none was (not measured, never 0). */
+const sumOf = (xs: readonly Measured[]): Measured => {
+  const got = xs.filter((x): x is number => x !== null)
+  return got.length ? got.reduce((a, b) => a + b, 0) : null
+}
+
+const earliest = (xs: readonly string[]): string => xs.filter(Boolean).sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? ''
+const latest = (xs: readonly string[]): string => xs.filter(Boolean).sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? ''
+
+/** A product's total: the sum of its apps' builds. Apportioned shares of one session add up without counting it twice,
+ * so the sum is honest; it is "apportioned" when any part is. Null when no app of it has a report. */
+export function sumBuilds(builds: readonly Build[]): Build | null {
+  if (builds.length === 0) return null
+  const first = earliest(builds.map(b => b.first_message))
+  const deployed = earliest(builds.map(b => b.first_deploy))
+  const gap = first && deployed ? (Date.parse(deployed) - Date.parse(first)) / 1000 : null
+  const bases = new Set(builds.map(b => b.basis).filter(Boolean))
+  return {
+    cost_usd: sumOf(builds.map(b => b.cost_usd)),
+    basis: bases.size === 0 ? null : bases.has('apportioned') ? 'apportioned' : 'own',
+    uncounted_est_usd: sumOf(builds.map(b => b.uncounted_est_usd)),
+    agent_model_s: sumOf(builds.map(b => b.agent_model_s)),
+    agent_tool_s: sumOf(builds.map(b => b.agent_tool_s)),
+    active_s: sumOf(builds.map(b => b.active_s)),
+    first_message: first,
+    first_deploy: deployed,
+    latest_deploy: latest(builds.map(b => b.latest_deploy)),
+    deploys: sumOf(builds.map(b => b.deploys)),
+    calendar_to_first_deploy_s: gap !== null && gap >= 0 ? gap : null,
+    sessions: new Set(builds.flatMap(b => b.shares.map(s => s.session))).size || sumOf(builds.map(b => b.sessions)),
+    shares: builds.flatMap(b => b.shares),
+    generated_at: latest(builds.map(b => b.generated_at)),
+  }
+}
+
+/** 300 -> "5m", 18720 -> "5h 12m", 187200 -> "2d 4h"; not measured -> "not measured". */
+export function duration(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) return 'not measured'
+  const m = Math.max(0, Math.floor(seconds / 60))
+  if (m < 60) return `${m}m`
+  if (m < 24 * 60) return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+  return `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`
+}
+
+/** One app's (or product's) build line as parts; `dim` parts are apportioned or estimated, and are shown dimmed so they
+ * never read as a figure measured for this app alone. */
+export function buildParts(b: Build | null | undefined): { text: string; dim: boolean }[] {
+  if (!b) return [{ text: 'built: not measured', dim: true }]
+  const shared = b.basis === 'apportioned'
+  const parts = [{ text: `built: ${money(b.cost_usd)}${b.cost_usd !== null && shared ? ' (shared)' : ''}`, dim: shared }]
+  if (b.uncounted_est_usd) parts.push({ text: `+ ~${money(b.uncounted_est_usd)} est.`, dim: true })
+  parts.push({ text: `· agent ${duration(b.agent_model_s)}`, dim: shared && b.agent_model_s !== null })
+  parts.push({ text: `· active ${duration(b.active_s)}`, dim: shared && b.active_s !== null })
+  parts.push({ text: `· first message → live ${duration(b.calendar_to_first_deploy_s)}`, dim: false })
+  parts.push({ text: b.deploys === null ? '· deploys not measured' : `· ${b.deploys} deploy${b.deploys === 1 ? '' : 's'}`, dim: false })
+  return parts
 }

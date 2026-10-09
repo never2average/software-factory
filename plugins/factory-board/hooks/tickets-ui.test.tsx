@@ -34,6 +34,24 @@ const FILES: Record<string, string> = {
   [`${ROOT}/state/tasks/mold_v1.jsonl`]: TASKS,
   [`${ROOT}/state/application/demo_app/application.json`]: JSON.stringify({ mold_id: 'mold_v1', status: 'stamped' }),
   [`${ROOT}/state/application/demo_app/infrastructure.json`]: JSON.stringify({ target: 'vercel', vercel: {} }),
+  [`${ROOT}/.claude/scripts/mint_report.py`]: '',
+  [`${ROOT}/reports/mint/demo_app.json`]: JSON.stringify({
+    app_id: 'demo_app',
+    generated_at: '2026-10-09T12:00:00Z',
+    summary: {
+      build_cost_usd: 123.45,
+      build_cost_basis: 'apportioned',
+      build_cost_uncounted_est_usd: 6.5,
+      build_cost_shares: [{ session: 's1', basis: 'apportioned', share: 0.4 }],
+      agent_model_s: 18720,
+      active_s: 34800,
+      first_message: '2026-10-01T00:00:00Z',
+      first_deploy: '2026-10-03T04:00:00Z',
+      deploys: 7,
+      calendar_to_first_deploy_s: 187200,
+      sessions: 1,
+    },
+  }),
 }
 
 for (const surface of ['terminal', 'desktop'] as const) {
@@ -48,6 +66,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
     on('fs.exists', async (_$, e) => ({ value: e.path in FILES }))
     on('ui.open', async () => ({ value: { isPlaced: true as const } }))
     on('http.fetch', async () => ({ value: { status: 200, ok: true, headers: {}, text: '' } }))
+    const ran: string[][] = []
+    on('process.run', async (_$, e) => {
+      ran.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '{}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
 
     // the command as a person types it; the test fills the engine-stamped fields the types require
     await $.command.run({ command: 'factory', args: 'tickets' } as any)
@@ -84,5 +107,20 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ text: '● built' })).toBeDefined()
     expect(await ui.find({ text: 'demo_app' })).toBeDefined()
     expect(await ui.find({ key: 'pticket-demo-mold_v1-9' })).toBeUndefined()
+
+    // each app has its build line, and the product heading the sum of its apps; shared and estimated parts are marked
+    expect(await ui.find({ key: 'build-demo_app' })).toBeDefined()
+    expect(await ui.find({ key: 'pbuild-demo' })).toBeDefined()
+    expect(await ui.find({ text: 'built: $123.45 (shared)' })).toBeDefined()
+    expect(await ui.find({ text: '+ ~$6.50 est.' })).toBeDefined()
+    expect(await ui.find({ text: '· agent 5h 12m' })).toBeDefined()
+    expect(await ui.find({ text: '· active 9h 40m' })).toBeDefined()
+    expect(await ui.find({ text: '· first message → live 2d 4h' })).toBeDefined()
+    expect(await ui.find({ text: '· 7 deploys' })).toBeDefined()
+
+    // "Recompute build costs" runs the report for every app, then reads it again
+    await ui.press({ key: 'compute' })
+    expect(ran.some(argv => argv.join(' ') === `python3 ${ROOT}/.claude/scripts/mint_report.py --all --json`)).toBe(true)
+    expect(await ui.find({ text: 'built: $123.45 (shared)' })).toBeDefined()
   })
 }
