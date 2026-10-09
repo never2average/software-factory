@@ -64,7 +64,7 @@ Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `val
 
 **Always ask first, naming the app and what will happen, and wait for a plain yes:**
 
-- **Deploys:** `provision.py --deploy`, `--deploy-remote`, `--verify-db`, and `mint.py <app> run` when its next station is a deploy. A request that asks for the deploy ("deploy it", "carry on" after you said the deploy is next) is a yes; your own inference is not. An app that is live with users gets its own yes every time.
+- **Deploys:** `provision.py --deploy`, `--deploy-remote`, `--verify-db`, and `mint.py <app> run` when its next station is a deploy. A request that asks for the deploy ("deploy it", "carry on" after you said the deploy is next) is a yes; your own inference is not. **An app that is live with users gets its own separate yes every time, even when the request names it:** if the request bundles the deploy with another risky step (a force-push, a delete, "quickly"), stop, say what each step would do, and ask about the live deploy on its own.
 - **Repositories:** `repo.py publish` or `push` (only ever when the person asked for a repository), `gh repo create`.
 - **Force-push or history rewrite** on any shared branch: `git push --force`, `-f`, `--force-with-lease`, `+refspec`.
 - **Spending:** anything that starts a paid plan, a bigger server, a paid add-on, or publishes a package (`agent_cli.py publish`, `npm publish`).
