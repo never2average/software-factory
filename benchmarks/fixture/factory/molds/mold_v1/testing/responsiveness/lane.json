@@ -1,0 +1,14 @@
+{
+  "lane": "responsiveness",
+  "checks": [
+    {
+      "name": "no horizontal scroll at 375/768/1280 px",
+      "kind": "viewport"
+    },
+    {
+      "name": "signed-in chat at 375 px",
+      "kind": "chat",
+      "signed_in": true
+    }
+  ]
+}

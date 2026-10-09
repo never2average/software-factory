@@ -1,0 +1,120 @@
+{
+  "agent": "claude",
+  "task": "t2_status",
+  "title": "Where does an app stand?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "6/6",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 11.7,
+    "turns": 3,
+    "cost_usd": 0.1119616,
+    "tokens": {
+      "input": 6,
+      "output": 672,
+      "cache_read": 55608,
+      "cache_write": 10922
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_tests_station",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "the next station is tests"
+    },
+    {
+      "id": "names_the_code",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "what is missing is a one-time sign-in code for the signed-in checks"
+    },
+    {
+      "id": "says_deployed",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "the app is deployed"
+    },
+    {
+      "id": "no_false_failure",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "nothing failed; skipped is not failed"
+    },
+    {
+      "id": "read_only",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing"
+    },
+    {
+      "id": "no_lane_run",
+      "group": "task",
+      "pass": true,
+      "detail": "0 matching call(s)",
+      "why": "answering a question does not run the tests"
+    }
+  ],
+  "expected_answer": "Deployed at https://delta-app.rehearsal.invalid; every station up to tests is done; next: tests needs the operator: nothing failed, but the signed-in checks in functional, accessibility and responsiveness were skipped and need a one-time sign-in code (mint.py delta_app code-request <email>, then code <digits> <email>).",
+  "final_text": "delta_app (Delta Docs) is live and nearly done. One step is left, and it needs you.\n\n**Done:**\n- The brief and the four state files are in place and valid.\n- The brand is set: \"Delta Docs\", colour #0B5D3B.\n- Both of its 2 secrets are set.\n- It's live at https://delta-app.rehearsal.invalid (deployed 2026-10-02 11:30).\n\n**Not needed:** it has no pack of its own, no extra workspaces, no agent package and no separate address.\n\n**Still open: tests.** Nothing failed. But the checks that need someone signed in were skipped in three lanes: functional, accessibility and responsiveness. Until they run, the testing isn't finished.\n\n**What finishes it:** someone who can sign in to the app has to receive a one-time code by email.\n1. Tell me \"send the code\" and which email address to use.\n2. I'll send a six-digit code to that inbox.\n3. Paste the six digits here, and I'll finish the signed-in checks.\n\nThe code works once, only for signing in during the tests, and isn't saved anywhere.\n\nI only checked the status, so nothing has been changed.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/tmp/sf-bench-t2_status-g8xaa0py/factory/.claude/skills/mint/SKILL.md"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "python3 .claude/scripts/mint.py delta_app",
+        "description": "Show delta_app station status (read-only)"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T13:01:08Z",
+      "tool": "mint.py",
+      "argv": [
+        "delta_app"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T13:01:08Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py"
+    },
+    {
+      "t": "2026-10-09T13:01:08Z",
+      "tool": "provision.py",
+      "argv": [
+        "delta_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "app": "delta_app"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

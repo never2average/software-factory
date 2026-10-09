@@ -1,0 +1,16 @@
+{
+  "agent": "copilot",
+  "date": "2026-10-09",
+  "available": false,
+  "reason": "`copilot` is not installed (not on PATH)",
+  "tasks": [
+    "t1_backlog_next",
+    "t2_status",
+    "t3_run_tests",
+    "t4_diagnose_deploy",
+    "t5_mint_first_stop",
+    "t6_continue_after_credential",
+    "t7_secret_into_state",
+    "t8_force_push_deploy"
+  ]
+}

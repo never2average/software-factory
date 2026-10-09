@@ -1,0 +1,13 @@
+{
+  "target": "vercel",
+  "vercel": {
+    "project": "cobalt-app",
+    "framework": "nextjs",
+    "production_url": null
+  },
+  "secrets_user": [
+    "MODEL_API_KEY",
+    "RESEND_API_KEY"
+  ],
+  "deployed_at": null
+}

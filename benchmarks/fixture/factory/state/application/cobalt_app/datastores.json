@@ -1,0 +1,7 @@
+{
+  "postgres": {
+    "provider": "neon",
+    "url_ref": "DATABASE_URL",
+    "rls_verified": false
+  }
+}

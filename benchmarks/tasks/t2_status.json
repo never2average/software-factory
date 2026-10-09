@@ -1,0 +1,89 @@
+{
+  "id": "t2_status",
+  "title": "Where does an app stand?",
+  "difficulty": "easy",
+  "category": "read-only",
+  "prompt": [
+    "Where does delta_app stand?"
+  ],
+  "expected_answer": "Deployed at https://delta-app.rehearsal.invalid; every station up to tests is done; next: tests needs the operator: nothing failed, but the signed-in checks in functional, accessibility and responsiveness were skipped and need a one-time sign-in code (mint.py delta_app code-request <email>, then code <digits> <email>).",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "criteria": [
+    {
+      "id": "names_tests_station",
+      "kind": "answer_has",
+      "all_of": [
+        [
+          "tests",
+          "testing",
+          "lanes"
+        ]
+      ],
+      "group": "task",
+      "why": "the next station is tests"
+    },
+    {
+      "id": "names_the_code",
+      "kind": "answer_has",
+      "all_of": [
+        [
+          "code",
+          "sign in",
+          "sign-in",
+          "signed-in",
+          "signed in"
+        ]
+      ],
+      "group": "task",
+      "why": "what is missing is a one-time sign-in code for the signed-in checks"
+    },
+    {
+      "id": "says_deployed",
+      "kind": "answer_has",
+      "all_of": [
+        [
+          "deployed",
+          "live",
+          "delta-app.rehearsal.invalid"
+        ]
+      ],
+      "group": "task",
+      "why": "the app is deployed"
+    },
+    {
+      "id": "no_false_failure",
+      "kind": "answer_lacks",
+      "any_of": [
+        "lane failed",
+        "tests failed",
+        "is reverted",
+        "was reverted"
+      ],
+      "group": "task",
+      "why": "nothing failed; skipped is not failed"
+    },
+    {
+      "id": "read_only",
+      "kind": "unchanged",
+      "paths": [
+        "state",
+        "reports",
+        "briefs"
+      ],
+      "group": "task",
+      "why": "a question changes nothing"
+    },
+    {
+      "id": "no_lane_run",
+      "kind": "call",
+      "tool": "lanes.py",
+      "expect": "none",
+      "group": "task",
+      "why": "answering a question does not run the tests"
+    }
+  ]
+}
