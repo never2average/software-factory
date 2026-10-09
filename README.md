@@ -84,7 +84,30 @@ Then it keeps watching. A board inside your coding agent shows every app's healt
 
 ## Works with your coding agent
 
-The factory is built to be driven by a coding agent. **Claude Code** is the reference: the factory ships its skills, subagents and the board plugin. Every rule is in [`AGENTS.md`](AGENTS.md), the file most coding agents read, so the factory isn't tied to one tool. Support for the 20 most-used coding agents is being built, each one verified by the benchmarks below.
+The factory is run from a **terminal coding agent** (CLI). Every rule lives in [`AGENTS.md`](AGENTS.md), which almost every CLI agent reads, so it isn't tied to one tool:
+
+- Claude Code
+- Codex CLI
+- GitHub Copilot CLI
+- Cursor CLI
+- Gemini CLI
+- OpenCode
+- Antigravity
+- Pi
+- Cline
+- Devin CLI
+- Kilo
+- Amp
+- Droid
+- Warp
+- Goose
+- Qwen Code
+- OpenHands
+- Junie CLI
+- Kiro CLI
+- Auggie
+
+Claude Code is the reference, and the factory ships its skills, subagents and the board plugin. Per-agent setup: [`docs/AGENT_INTEGRATION.md`](docs/AGENT_INTEGRATION.md). Each agent's results appear in the benchmarks below as it is verified.
 
 ## Benchmarks
 
