@@ -545,6 +545,10 @@ def collect_secrets(app_id, missing, environ=None, ask=None, tty=None, explain=N
             got[n] = v; say(f"  {n}: taken from this shell's environment (not shown)")
         else: need_prompt.append(n)
     if need_prompt and not tty:
+        import agent_result   # each name in --json's `needs`: only the operator types it, at their own terminal
+        for n in need_prompt:
+            agent_result.need("secret", n, f"Open a separate terminal on the factory machine (not this chat) and run: python3 .claude/scripts/provision.py "
+                              f"{app_id} --deploy-remote - it asks for {n} at a hidden prompt and stores it only on the app's server. Then tell me it is done.")
         raise Stop(f"{app_id}: {len(need_prompt)} value(s) only you hold are not on the server yet: {', '.join(need_prompt)}. "
                    f"They are typed at a hidden prompt, so run this command yourself in a terminal: "
                    f"python3 .claude/scripts/provision.py {app_id} --deploy-remote")

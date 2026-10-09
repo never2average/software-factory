@@ -1,4 +1,4 @@
-"""state/factory.json with this machine's own values merged over it.
+"""state/factory.json with this machine's own values merged over it (or FACTORY_LOCAL's, when that names a file).
 
 The repository's state/factory.json carries neutral placeholders (operator email, notification domain, Vercel team,
 the factory machine's address). The real ones live in state/factory.local.json on the factory machine, which is never
@@ -30,7 +30,8 @@ def _merge(base, over):
 def load_factory(state_dir):
     with open(os.path.join(state_dir, "factory.json")) as f:
         data = json.load(f)
-    local = os.path.join(state_dir, "factory.local.json")
+    # FACTORY_LOCAL names another file to merge instead (a rehearsal's example values; lib/services.py).
+    local = os.environ.get("FACTORY_LOCAL") or os.path.join(state_dir, "factory.local.json")
     if os.path.exists(local):
         with open(local) as f:
             data = _merge(data, json.load(f))
@@ -78,6 +79,12 @@ if __name__ == "__main__":
                    "legacy_names": {"operator_self": "old_self", "same": "same"}}, open(os.path.join(d, "factory.local.json"), "w"))
         assert mold_source("mold_v1", d) == "https://git.example.com/acme/base.git" and mold_source("mold_v2", d) is None
         assert live_projects(d) == {"web": "w"} and legacy_names(d) == {"operator_self": "old_self"}
+        other = os.path.join(d, "elsewhere.json"); json.dump({"defaults": {"operator_email": "rehearsal@example.test"}}, open(other, "w"))
+        was = os.environ.get("FACTORY_LOCAL"); os.environ["FACTORY_LOCAL"] = other
+        try: assert load_factory(d)["defaults"]["operator_email"] == "rehearsal@example.test" and mold_source("mold_v1", d) is None
+        finally:
+            if was is None: os.environ.pop("FACTORY_LOCAL", None)
+            else: os.environ["FACTORY_LOCAL"] = was
     for u, want in (("https://git.example.com/acme/base.git", "git.example.com/acme/base"), ("git@host-alias:acme/base.git", "host-alias/acme/base"),
                     ("ssh://git@git.example.com/acme/base", "git.example.com/acme/base"), ("/tmp/x.git", None), ("file:///tmp/x.git", None), (None, None)):
         assert repo_slug(u) == want, (u, repo_slug(u))

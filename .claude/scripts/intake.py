@@ -308,6 +308,11 @@ def keep_measured(app, infra, ds, existing):
     if old:
         ex_ws = dict(ex_ws); was = ex_ws.pop(old); ex_ws.setdefault("operator_self", was)
         ex_app = dict(ex_app, workspace=ex_ws)
+    # A clone keeps the workspace it extracted from the live deployment WHOLE (build_state), old spelling included, and
+    # the carry-forward below then added operator_self beside it: both keys, which validate refuses. Migrate it there too.
+    nw = app.get("workspace") or {}; old = legacy.has_old(nw, "operator_self")
+    if old:
+        nw = dict(nw); was = nw.pop(old); nw.setdefault("operator_self", was); app["workspace"] = nw
     # mold_commit is what is IN FRONT OF TRAFFIC once provision.py deployed it; mint.py compares it with the
     # snapshot to know a redeploy is due, so resetting it to the snapshot's commit would hide a pending deploy.
     if ex_app.get("mold_commit") and ex_app.get("status") not in (None, "planned"): app["mold_commit"] = ex_app["mold_commit"]
@@ -560,7 +565,10 @@ def self_test(app_id="onfinance_hfc"):
             fails.append("the operator's model choice was reset by a re-run that did not change the provider")
         # a real change of database provider must NOT keep the old database's isolation proof
         for nm in before: save(os.path.join(tapp, f"{nm}.json"), before[nm])
-        other = "supabase" if answers.get("postgres_provider") != "supabase" else "neon"
+        # A real switch: a provider that is neither the one in state nor the recorded answer (a recorded answer that only
+        # repeats itself does not override state; see main()).
+        now_prov = before["datastores"]["postgres"].get("provider")
+        other = next(p for p in ("supabase", "neon", "rds") if p not in (now_prov, answers.get("postgres_provider")))
         r = rerun(dict(answers, postgres_provider=other)); n += 1
         ds2 = load(os.path.join(tapp, "datastores.json"))
         if "rls_verified" in ds2.get("postgres", {}): fails.append(f"switching postgres to {other} kept the old database's rls_verified")
@@ -613,6 +621,12 @@ def main(a):
     recorded = os.path.join(outdir, "answers.json")
     if ex_lib in ("all", "none") and "library" not in hints and os.path.exists(recorded) and load(recorded).get("library") == resolved.get("library") != ex_lib:
         resolved["library"] = ex_lib
+    # The same for the database provider: an app moved to another provider after it was stamped (by hand, as provision.py
+    # advises when a deploy cannot reach a private network) keeps its state's provider and the isolation proof measured
+    # on it, when a re-run only repeats the answer recorded before the move. A new answer, or a brief that says, decides.
+    ex_prov = ((existing.get("datastores") or {}).get("postgres") or {}).get("provider")
+    if ex_prov and "postgres_provider" not in hints and os.path.exists(recorded) and load(recorded).get("postgres_provider") == resolved.get("postgres_provider") != ex_prov:
+        resolved["postgres_provider"] = ex_prov
     if "--ask" in opts and pending:
         for q in pending:
             hint = f" [{'/'.join(q['options'])}]" if q["options"] else ""
@@ -641,11 +655,15 @@ def main(a):
         save(os.path.join(outdir, f"{name}.json"), obj)
     if os.path.exists(qfile): os.remove(qfile)
     save(os.path.join(outdir, "answers.json"), resolved)
+    # Written back to the REPOSITORY's factory.json, never the merged view: `factory` carries this machine's own values
+    # from state/factory.local.json (the operator's email, the mold's source, live project names), and saving it whole
+    # copied them into a committed file.
+    raw = load(os.path.join(ST, "factory.json")); rd = raw.setdefault("defaults", {})
     if not d.get("confirmed"):
-        for k in ("deploy_target","postgres_provider","blob_provider","inference_provider","secret_store"): d[k] = resolved[k]
-        d["confirmed"] = True; factory["defaults"] = d
-    if app_id not in factory.setdefault("applications", []): factory["applications"].append(app_id)
-    save(os.path.join(ST,"factory.json"), factory)
+        for k in ("deploy_target","postgres_provider","blob_provider","inference_provider","secret_store"): rd[k] = resolved[k]
+        rd["confirmed"] = True
+    if app_id not in raw.setdefault("applications", []): raw["applications"].append(app_id)
+    save(os.path.join(ST,"factory.json"), raw)
     P = load(os.path.join(ST,"products.json"))
     for p in P["products"]:
         if p["product_id"]==app["product_id"] and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Provision: validated application state -> running deployment.
 
-  provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]
+  provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]   [--json]
+  provision.py <app_id> --deploy --background [--json]     start the deploy detached; returns at once (also --deploy-remote)
+  provision.py <app_id> status [--json]                    the latest deploy: still running (and how far), or its result
   provision.py --self-test   offline checks of the deadlines, deploy watch and VM-headroom logic
   provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
   provision.py <app_id> [--set-remote host=.. domain=..] [--remote-key] [--qualify-remote]
@@ -22,7 +24,14 @@
   (mold_v1-041: it used to call ensure_projects and provision_datastores before counting a secret, so a
   "check" built real, billable, team-visible resources). Exit 0 = ready for --deploy, 1 = the operator
   still has to set a secret. On target=vm it regenerates infra/vm/apps/<app_id>/ (local files only).
---set-secret NAME: type one credential at a hidden prompt; written encrypted to all three projects.
+AGENT INTERFACE. --json prints one result ({"ok","status","summary","next","needs","log","details"}; lib/agent_result.py)
+  and sends everything else to the log it names. Exit 0 done, 1 failed, 3 a person is needed (a missing secret: `needs`
+  names it and says how the person sets it), 4 another deploy of this app holds its lock (who, since when, and the
+  status command). A deploy takes the app's deploy lock, foreground or --background; a lock left by a dead process
+  is taken over.
+--set-secret NAME: type one credential at a hidden prompt; written encrypted to all three projects. ONLY at a
+  terminal: a value piped on stdin is refused (an agent must never handle one), except from the factory's own
+  trusted caller, which sets FACTORY_SECRET_FROM_STDIN=1 (mint.py reuse-keys, copying values it read in memory).
   On a vercel app whose projects do not exist yet, it CREATES them first (three empty, free projects
   with no deployment — the value needs somewhere to live) and says so before it does.
 --deploy: prints the plan — EVERYTHING the run creates, writes or rotates, in the order it happens: the
@@ -89,6 +98,10 @@ Neon's is not, and an unattached Neon resource already sits on this team, so app
 """
 import base64, json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time, signal
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import agent_result as AR   # the one --json result shape, exit codes 0/1/3/4 (lib/agent_result.py)
+import runs                 # one lock per app and step, background runs and their status (lib/runs.py)
+import services             # FACTORY_REHEARSAL / FACTORY_CALL_LOG (lib/services.py); nothing changes when unset
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
@@ -330,7 +343,7 @@ def _set_env(name, value, cwd, project=None):
     project = project or load(os.path.join(cwd, ".vercel/project.json"))["projectId"]
     vrun(f"vercel env rm {name} production --project {project} --yes", shell=True, cwd=cwd, capture_output=True, text=True)   # API DELETE refuses without a confirmation flag
     r = _env_api(project, f"/v10/projects/{project}/env", "POST", {"key": name, "value": value, "type": "encrypted", "target": ["production"]}, cwd)
-    if '"error"' in r.stdout or r.returncode: sys.exit(f"could not set {name} on {project}: {(r.stdout + r.stderr).strip()[-200:]}")
+    if '"error"' in r.stdout or r.returncode: sys.exit(f"could not set {name} on {project}: {(r.stdout + r.stderr).replace(value, '<hidden>').strip()[-200:]}")
     got = [e for e in _env_entries(project, cwd) if e.get("key") == name and "production" in (e.get("target") or [])]
     if not got: sys.exit(f"could not set {name} on {project}: it is absent on readback")
     if any(e.get("type") == "sensitive" for e in got):
@@ -735,6 +748,7 @@ def stable_url(project, url):
 
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
+    if services.REHEARSAL: return services.rehearsal_provision_datastores(sys.modules[__name__], app_id, ds, mold_dir, present, infra, proj)
     pg, blob = ds.get("postgres", {}), ds.get("blob", {})
     prov = pg.get("provider", "supabase")
     if pg.get("scope") == "fresh" and prov == "neon" and DB_SENTINEL["neon"] not in present:
@@ -1566,6 +1580,7 @@ def bring_up_schema(app_id, mold_dir, ds, proj, projects):
 def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     """Mirror of the mold's Makefile `deploy` target: migrate, workflow service (services/task-workflow, Next.js),
     Eve API (vercel build with experimental frameworks + --prebuilt), web dashboard, then health verification."""
+    if services.REHEARSAL: return services.rehearsal_deploy_vercel(sys.modules[__name__], app_id, app, infra, ds, mold_dir, adir)
     proj = infra["vercel"]["project"]; team = infra["vercel"].get("team", ""); scope = f"--scope {team}" if team else ""
     shared = ds.get("postgres", {}).get("scope") == "shared_with_live"
     have = vercel_env_names(mold_dir, proj)
@@ -2061,7 +2076,10 @@ def ask_nicely_for(app_id, missing):
     print("Run each line below, one at a time. Each one explains where to find the value and then asks you to paste it "
           "(hidden, never stored here or shown in chat):")
     for m in missing: print(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {m}")
+    print("Run them in a separate terminal on this machine (a second SSH session), not in a chat window: what you type "
+          "there stays out of any conversation.")
     print("After the last one, run the check again and it will say Ready.")
+    for m in missing: AR.need("secret", m, AR.secret_how(app_id, m))
 
 def check_shape(name, value):
     g = GUIDE.get(name)
@@ -2070,6 +2088,18 @@ def check_shape(name, value):
     if not re.fullmatch(pat, value):
         sys.exit(f"{name}: that does not look like {human}, so it was not written. Nothing was stored. "
                  f"Check the value against 'where' above and rerun.")
+
+def stop_for_human(msg):
+    """Stop because only a person can do the next thing: the message on stderr, exit 3 (lib/agent_result.py)."""
+    print(msg, file=sys.stderr); sys.exit(AR.EXIT["needs_human"])
+
+def trusted_stdin():
+    """A value on stdin is accepted only from the factory's own caller: FACTORY_SECRET_FROM_STDIN=1, set by mint.py
+    reuse-keys, AND (where /proc can say) a parent process that is mint.py."""
+    if os.environ.get("FACTORY_SECRET_FROM_STDIN") != "1": return False
+    try: parent = open(f"/proc/{os.getppid()}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
+    except OSError: return True
+    return "mint.py" in parent
 
 def set_secret(app_id, name, infra, mold_dir):
     """Prompt for one credential and write it where this app's secrets live.
@@ -2085,19 +2115,29 @@ def set_secret(app_id, name, infra, mold_dir):
         sys.exit("That does not look like the NAME of a credential; it looks like the value itself. The name goes on the "
                  "command line and the value is asked for afterwards. Names this app needs: " + ", ".join(ask) +
                  f".\nExample: python3 .claude/scripts/provision.py {app_id} --set-secret {ask[0] if ask else 'NAME'}")
-    explain(name)
     if sys.stdin.isatty():
+        explain(name)
         value = getpass.getpass(f"{name} (input hidden): ").strip()
-    else:
-        # No terminal to hide typing in (the `!` shortcut inside a chat, a pipe, a script). getpass used to die
-        # here with a traceback. A piped value is accepted; with nothing piped, point at the web form instead.
+    elif trusted_stdin():
+        # The factory's own caller (mint.py reuse-keys), handing over a value it read in memory from another of the
+        # operator's apps. Nobody typed it, and it is never printed.
         value = sys.stdin.readline().strip()
-        if not value:
-            where = (f"https://vercel.com/{infra['vercel']['team']}/{infra['vercel']['project']}/settings/environment-variables"
-                     if infra.get("target") == "vercel" else "a terminal on the machine (not the chat)")
-            sys.exit(f"\nThis window cannot hide what you type, so nothing was asked and nothing was saved.\n"
-                     f"Enter {name} in the web form instead: {where}\n"
-                     f"  Key: {name}   Value: (paste)   Environment: Production   Sensitive: OFF   then Save.")
+    else:
+        # No terminal to hide typing in: a pipe, a script, or an agent's shell (whose output goes into a chat). A value
+        # piped here used to be accepted, which made `echo <value> | provision.py ...` the easiest way for an agent to
+        # handle a secret. It is refused WITHOUT READING stdin, so a value sent here is never read, stored or shown.
+        where = (f"https://vercel.com/{infra['vercel']['team']}/{infra['vercel']['project']}/settings/environment-variables"
+                 if infra.get("target") == "vercel" else "a terminal on the machine (not the chat)")
+        services.log_call("provision.py", ["--set-secret", name], action="set-secret", secret_written=False, refused="no terminal")
+        AR.need("secret", name, AR.secret_how(app_id, name))
+        AR.note(summary=f"{name} was not set: this command only takes a value typed at a hidden prompt in a terminal, by the operator.")
+        stop_for_human(f"\nThis window cannot hide what you type, so nothing was read and nothing was saved. A value piped or pasted "
+                       f"here is refused on purpose: only the operator types a secret, at a hidden prompt.\n"
+                       f"The operator runs this themselves, in a separate terminal on this machine (not in a chat window):\n"
+                       f"  python3 .claude/scripts/provision.py {app_id} --set-secret {name}\n"
+                       f"Or enters {name} in the web form instead: {where}\n"
+                       f"  Key: {name}   Value: (paste)   Environment: Production   Sensitive: OFF   then Save.")
+    AR.forbid(value)
     if not value: sys.exit("nothing entered")
     if name == "PLATFORM_NOTIFY_FROM":
         app = load(os.path.join(ST, "application", app_id, "application.json"))
@@ -2128,6 +2168,8 @@ def set_secret(app_id, name, infra, mold_dir):
         finally: os.umask(old)
         os.chmod(f, 0o600); where = os.path.relpath(f, ROOT)
     print(f"{name} set on {where}.")
+    services.log_call("provision.py", ["--set-secret", name], action="set-secret", secret_written=True)
+    AR.note(summary=f"{name} set on {where} (the value was never shown or stored here).")
     if name in ("GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"):
         # The client id's numeric prefix IS the Google Cloud project number, so the app's Google project is
         # recorded from the value itself: an identifier, public by construction, never a secret. Every app
@@ -2612,9 +2654,69 @@ def self_test():
     ro = _read_only("postgresql://u:p@h/db?sslmode=require&options=endpoint%3Dep-x")
     check("the dry run's URL is read-only and keeps an existing options value",
           "default_transaction_read_only%3Don" in ro and "endpoint%3Dep-x" in ro and "sslmode=require" in ro, ro)
+    self_test_agent(check)
     if fails:
         sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
-    print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window)")
+    print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window; "
+          f"--json, exit codes, the deploy lock, --background and status, a piped secret refused)")
+
+def self_test_agent(check):
+    """The agent interface, end to end in a throwaway factory with a refusing stand-in `vercel` first on PATH: one JSON
+    result, exit 3 with the missing names, a piped secret refused unread, the deploy lock (exit 4), --background and
+    status. Nothing here reaches Vercel."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    t = tempfile.mkdtemp(prefix="provision-agent-selftest-")
+    try:
+        shutil.copytree(here, os.path.join(t, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
+        a = os.path.join(t, "state", "application", "app1"); os.makedirs(a); os.makedirs(os.path.join(t, "molds", "m1", "codebase"))
+        json.dump({"molds": [{"mold_id": "m1", "status": "active"}]}, open(os.path.join(t, "state", "factory.json"), "w"))
+        json.dump({"app_id": "app1", "mold_id": "m1", "status": "planned"}, open(os.path.join(a, "application.json"), "w"))
+        json.dump({"target": "vercel", "secret_store": "vercel_env", "vercel": {"team": "t", "project": "app-one"}, "secrets": ["RESEND_API_KEY"],
+                   "secrets_user": ["RESEND_API_KEY"]}, open(os.path.join(a, "infrastructure.json"), "w"))
+        json.dump({"postgres": {"provider": "neon", "scope": "fresh", "rls": "off"}, "blob": {"provider": "vercel_blob"}}, open(os.path.join(a, "datastores.json"), "w"))
+        b = os.path.join(t, "bin"); os.makedirs(b)
+        open(os.path.join(b, "vercel"), "w").write("#!/bin/sh\nsleep 1\necho 'Error: Project not found. (404)' >&2\nexit 1\n"); os.chmod(os.path.join(b, "vercel"), 0o755)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FACTORY_")}
+        env.update(PATH=b + os.pathsep + env.get("PATH", ""), PROVISION_MIN_FREE_MB="0", PROVISION_MAX_LOAD="100000", PROVISION_HEADROOM_WAIT_S="0")
+        P = os.path.join(t, ".claude", "scripts", "provision.py")
+        def go(*args, inp=None, extra=None):
+            r = subprocess.run([sys.executable, P, "app1", *args], cwd=t, env=dict(env, **(extra or {})), capture_output=True, text=True, input=inp)
+            try: d = json.loads(r.stdout)
+            except ValueError: d = {}
+            return r.returncode, d, r
+        code, d, r = go("--json")
+        check("--json: one result with the seven keys", set(d) == {"ok", "status", "summary", "next", "needs", "log", "details"}, r.stdout[-300:])
+        check("  ...a missing key is needs_human, exit 3, named in needs with the separate-terminal hidden-prompt instruction",
+              code == 3 and d.get("status") == "needs_human" and d["needs"][0]["name"] == "RESEND_API_KEY" and d["needs"][0]["kind"] == "secret"
+              and "separate terminal" in d["needs"][0]["how"] and "--set-secret RESEND_API_KEY" in d["needs"][0]["how"], d)
+        check("  ...and the long output is in the log, not on stdout", "Almost there" in open(d.get("log") or os.devnull).read() and "Almost there" not in r.stdout)
+        code, _, r = go()
+        check("without --json the check prints as before and exits 3 for the operator's key", code == 3 and "--set-secret RESEND_API_KEY" in r.stdout, r.stdout[-200:])
+        v = "re_SELFTEST_never_read_12345"
+        code, d, r = go("--set-secret", "RESEND_API_KEY", "--json", inp=v + "\n")
+        check("a piped secret is refused: exit 3, needs_human, nothing written", code == 3 and d.get("status") == "needs_human" and d["needs"][0]["name"] == "RESEND_API_KEY", r.stdout[-300:])
+        check("  ...and the value is in no output and no log", v not in r.stdout + r.stderr and v not in open(d.get("log") or os.devnull).read())
+        code, d, r = go("--set-secret", "RESEND_API_KEY", inp=v + "\n", extra={"FACTORY_SECRET_FROM_STDIN": "1"})
+        check("  ...even with FACTORY_SECRET_FROM_STDIN=1 when the caller is not mint.py", code == 3 and "refused on purpose" in r.stderr, r.stderr[-200:])
+        sys.path.insert(0, os.path.join(here, "lib")); import runs as R
+        lk = R.Lock(t, "app1", "deploy"); lk.acquire(["provision.py", "app1", "--deploy"])
+        code, d, r = go("--deploy", "--json")
+        check("a second deploy while the lock is held: exit 4, the holder's pid and the status command",
+              code == 4 and d.get("details", {}).get("holder", {}).get("pid") == os.getpid() and "status" in d.get("next", ""), r.stdout[-300:])
+        lk.release()
+        code, d, r = go("--deploy", "--background", "--json")
+        check("--background: returns at once, status running, exit 0, with the status command", code == 0 and d.get("status") == "running" and "provision.py app1 status" in d.get("next", ""), r.stdout[-300:])
+        code2, d2, _ = go("--deploy", "--background", "--json")
+        check("  ...a second background start while it runs: exit 4", code2 == 4 and d2.get("status") == "running", d2)
+        code, d, r = go("status", "--json")
+        check("status while it runs: running", d.get("status") == "running", d)
+        for _ in range(150):
+            code, d, r = go("status", "--json")
+            if d.get("status") != "running": break
+            time.sleep(0.2)
+        check("status after it ends: the deploy's own result (needs_human, the key, exit 3)", code == 3 and d.get("status") == "needs_human" and d["needs"][0]["name"] == "RESEND_API_KEY", d)
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
 
 def shipped_note():
     """What a stopped deploy really changed in production (mold_v1-106/109). A deploy that died in the eve
@@ -2647,7 +2749,7 @@ def _library():
     return library
 def _wants_library(app): return _library().install(app) == "all"
 
-def main(a):
+def _main(a):
     if a and a[0] == "--self-test": return self_test()
     if a and a[0] == "--self-test-remote":
         sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
@@ -2672,7 +2774,7 @@ def main(a):
         sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
         rc = vm_remote.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__])
         if rc == 0 and "--deploy-remote" in a and "--dry-run" not in a: repo_auto(app_id, adir, "a deploy")
-        sys.exit(rc)
+        sys.exit(AR.EXIT["needs_human"] if rc and AR.NOTES["needs"] else rc)   # a value only the operator holds: exit 3
     if target == "vm" and not deploy and app.get("status") not in VM_STATUSES:
         # The same refusal factory.py validate makes (_vm_status), at the writer: a vm app never serves
         # traffic, and this lane never writes a status that says it does, so one that says so was set
@@ -2790,8 +2892,8 @@ def main(a):
             if missing_user:
                 verb = "--deploy" if deploy else "--verify-db"
                 ask_nicely_for(app_id, missing_user)
-                sys.exit(f"refusing {verb}: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
-                         f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} {verb}")
+                stop_for_human(f"refusing {verb}: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
+                               f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} {verb}")
             if deploy:
                 # A deploy on a saturated VM is an OOM waiting to happen (mold_v1-109). Wait for room first,
                 # bounded; if it never comes, stop HERE, before anything is created or the status moves.
@@ -2858,8 +2960,17 @@ def main(a):
         # listed above as what it will create.
         print("check only, read-only: nothing was created. " + (f"Set the secret(s) above, then run:" if missing_user else "Ready:")
               + f" python3 .claude/scripts/provision.py {app_id} --deploy")
-        sys.exit(1 if missing_user else 0)
-    if missing_user or missing_derived: sys.exit("refusing to deploy with missing secrets")
+        AR.detail("secrets_present", len([x for x in secrets if x in present])); AR.detail("secrets_total", len(secrets))
+        AR.detail("missing", missing_user); AR.detail("will_create", plan["create"])
+        if missing_user:
+            AR.note(summary=f"{app_id} cannot deploy yet: {len(missing_user)} key(s) only the operator holds are not set ({', '.join(missing_user)}).")
+        else:
+            AR.note(summary=f"{app_id} is ready to deploy; nothing was created.",
+                    next=f"Ask the operator for a yes, then: python3 .claude/scripts/provision.py {app_id} --deploy --background --json")
+        # Exit 3 = a person is needed (only the operator can set a secret); 0 = ready.
+        sys.exit(3 if missing_user else 0)
+    if missing_user: stop_for_human("refusing to deploy with missing secrets")
+    if missing_derived: sys.exit("refusing to deploy with missing secrets")
     for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, _on_signal)
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     try:
@@ -2917,5 +3028,68 @@ def main(a):
     if shipped: app["mold_commit"] = shipped
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
+    AR.detail("production_url", infra.get('vercel', {}).get('production_url')); AR.detail("deployed_at", NOW)
+    AR.note(summary=f"{app_id} deployed: {infra.get('vercel', {}).get('production_url')}, tenant isolation proven on the app serving traffic.",
+            next=f"Run the five testing lanes: python3 .claude/scripts/lanes.py {app_id} --background --json")
     repo_auto(app_id, adir, "a deploy")
+# ---- the agent interface: --json, --background, status, the deploy lock (lib/agent_result.py, lib/runs.py) ----------
+DEPLOY_FLAGS = ("--deploy", "--deploy-remote")
+def _action(a):
+    for f, act in (("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--verify-db", "verify-db"),
+                   ("--verify-rls", "verify-rls")):
+        if f in a: return act + ("-dry-run" if "--dry-run" in a else "")
+    return "status" if a[1:2] == ["status"] else "check"
+
+def _call(fn, argv):
+    """fn(argv) -> its exit code, with sys.exit("message") printed to stderr as Python would."""
+    try:
+        rc = fn(argv); return rc if isinstance(rc, int) else 0
+    except SystemExit as e:
+        if e.code is None or isinstance(e.code, int): return e.code or 0
+        print(e.code, file=sys.stderr); return 1
+
+def _say(res):
+    """A result for a person at a terminal (no --json)."""
+    print(res["summary"])
+    if res["next"]: print(f"next: {res['next']}")
+    if res.get("log"): print(f"log: {res['log']}")
+
+def main(a):
+    if a and a[0] in ("--self-test", "--self-test-remote"): return _main(a)
+    as_json, a = AR.wants_json(a)
+    if not a or a[0].startswith("-"): return _main(a)
+    app_id = a[0]
+    services.script_start("provision.py", a, action=_action(a))
+    flag = "--deploy-remote" if "--deploy-remote" in a else "--deploy"
+    start = f"python3 .claude/scripts/provision.py {app_id} {flag} --background --json"
+    if a[1:2] == ["status"]:
+        res = runs.status(ROOT, "provision.py", app_id, "deploy", start)
+        if as_json: sys.exit(AR.emit(res))
+        _say(res); sys.exit(AR.exit_code(res))
+    deploying = any(f in a for f in DEPLOY_FLAGS) and "--dry-run" not in a
+    if "--background" in a:
+        if not deploying:
+            sys.exit(f"--background goes with --deploy or --deploy-remote (the long step); everything else here answers at once. "
+                     f"Example: python3 .claude/scripts/provision.py {app_id} --deploy --background --json")
+        res, code = runs.start_background(ROOT, "provision.py", app_id, "deploy", [x for x in a if x != "--background"], start)
+        if as_json: sys.exit(AR.emit(res, locked=code == AR.LOCKED))
+        _say(res); sys.exit(code)
+    if not deploying:
+        if as_json: sys.exit(AR.run_json(_main, a, root=ROOT, app=app_id, step=_action(a)))
+        return _main(a)
+    # A deploy: under the app's deploy lock, with a run record, foreground or as a background child.
+    log = AR.new_log(ROOT, app_id, "deploy") if as_json else ""
+    if as_json: os.environ["FACTORY_RUN_LOG"] = log
+    held = runs.Held(ROOT, app_id, "deploy", "provision.py", a, log=log).__enter__()
+    if held.locked:
+        res = runs.locked_result("provision.py", app_id, "deploy", held.lock.held_by)
+        if as_json: sys.exit(AR.emit(res, locked=True))
+        print(res["summary"] + f"\n  Check on it: {res['next']}", file=sys.stderr); sys.exit(AR.LOCKED)
+    try:
+        code = AR.run_json(_main, a, root=ROOT, app=app_id, step="deploy") if as_json else _call(_main, a)
+        if not as_json: runs.finish_record(held.record, code)
+    finally:
+        held.__exit__(None, None, None)
+    sys.exit(code)
+
 if __name__ == "__main__": main(sys.argv[1:])

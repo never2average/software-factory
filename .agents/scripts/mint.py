@@ -16,6 +16,13 @@
   mint.py list                     every application and its next step
   mint.py --self-test
 
+FOR AN AGENT. `mint.py <app_id> --json`, `mint.py <app_id> run --json` and `mint.py list --json` print one result
+({"ok","status","summary","next","needs","log","details"}; lib/agent_result.py), with every station in details. Exit 0
+nothing blocks you (done, or the next station is work you can run), 1 a station failed, 3 a person is needed: `needs`
+says exactly what (a key at the hidden prompt, a sign-in code, a DNS record, an npm sign-in) and how they give it.
+`mint.py <app_id> run --background [--json]` starts the run detached (a deploy and the lanes take most of an hour);
+`mint.py <app_id> --json` then reports it under details.background_run until it ends.
+
 The stations. Each knows whether it is done by LOOKING (state, the registry, the live app), never by remembering,
 so `run` can be repeated at any time and picks up where things stand:
 
@@ -44,11 +51,12 @@ import hashlib, json, os, re, subprocess, sys, time, urllib.request, urllib.erro
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 S = os.path.join(ROOT, ".claude", "scripts")
-PRIVATE = os.path.join(os.path.expanduser("~"), ".cache", "software-factory")   # outside the repo, mode 700
 DONE, TODO, OPERATOR, FAILED, NA = "done", "next", "needs you", "failed", "not needed"
 
 sys.path.insert(0, os.path.join(S, "lib"))
 import lane_url   # target_url(infra): where the application lives, per deploy target (vercel, or a server of its own)
+import agent_result as AR, runs, services   # --json results, background runs, the rehearsal switch and call log
+PRIVATE = services.private_dir()   # FACTORY_PRIVATE_DIR, else ~/.cache/software-factory
 
 def load(p): return json.load(open(p))
 def adir(app): return os.path.join(ROOT, "state", "application", app)
@@ -108,6 +116,7 @@ def st_brand(app, a, i):
     b = (a.get("surface") or {}).get("branding") or {}
     return (DONE, f"{b['product_name']}, {b.get('brand_color', 'default colour')}") if b.get("product_name") else (NA, "the mold's own look (set one with branding.py <app> set --name … --color … --logo …)")
 
+MISSING_KEYS = {}   # app -> the key names st_keys found missing (for --json's needs)
 def st_keys(app, a, i):
     if i.get("target") == "vm_remote":
         # Its own server (mold_v1-075): the check is offline, and what is left is the server, the domain and the key
@@ -119,7 +128,8 @@ def st_keys(app, a, i):
     if i.get("target") != "vercel": return NA, "a vm application's keys live in its own environment file"
     r = quiet(os.path.join(S, "provision.py"), app, "--check"); out = clean(r.stdout + r.stderr)
     if r.returncode == 0: return DONE, (re.search(r"secrets present: \S+", out) or [""])[0] or "all present"
-    missing = re.findall(r"--set-secret (\S+)", out)
+    missing = list(dict.fromkeys(re.findall(r"--set-secret (\S+)", out)))
+    MISSING_KEYS[app] = missing
     if not missing: return FAILED, out.strip().splitlines()[-1][:220]
     return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)}. If another of your apps already runs: mint.py {app} reuse-keys <that_app>"
 
@@ -134,6 +144,10 @@ def st_deploy(app, a, i):
         if was and now and was != now: return OPERATOR, f"the mold moved ({was[:7]} -> {now[:7]}); redeploy at your terminal: python3 .claude/scripts/provision.py {app} --deploy-remote"
         return DONE, f"{url} (deployed {i['deployed_at'][:16]})"
     if i.get("target") != "vercel": return NA, "vm target: see the VM tasks"
+    if (not url or not i.get("deployed_at")) and a.get("status") == "reverted" and (a.get("revert") or {}).get("reason"):
+        # The first deploy stopped and recorded why (provision.py _revert). Running it again unchanged would stop the same way.
+        why = " ".join(str(a["revert"]["reason"]).split())
+        return FAILED, f"the first deploy stopped: {why[:300]} (state/application/{app}/application.json revert.reason; the whole log: python3 .claude/scripts/provision.py {app} status)"
     if not url or not i.get("deployed_at"): return TODO, "first deploy"
     now = mold_commit(a["mold_id"]); was = a.get("mold_commit")
     if a.get("status") == "reverted": return TODO, "a test lane failed; redeploy once the cause is fixed"
@@ -261,17 +275,22 @@ def do(app, name):
     return False
 
 def run(app):
+    RAN.clear()
     for _ in range(12):
         rows = survey(app); nxt = next(((n, st) for n, st, _ in rows if st in (TODO, OPERATOR, FAILED)), None)
         if not nxt or nxt[1] != TODO: break
         print(f"\n=== {nxt[0]} ===", flush=True)
-        t0 = time.time(); ok = do(app, nxt[0])
+        t0 = time.time(); ok = do(app, nxt[0]); RAN.append({"station": nxt[0], "ok": bool(ok), "seconds": round(time.time() - t0)})
         # One line per station actually run: what `mint.py <app> report` reads to say where the time went.
         with open(os.path.join(adir(app), "mint-log.jsonl"), "a") as f:
             f.write(json.dumps({"station": nxt[0], "start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t0)), "seconds": round(time.time() - t0), "ok": bool(ok)}) + "\n")
         if not ok: print(f"\n{nxt[0]} did not finish; stopping here.\n"); break
     rows = show(app)
-    return 0 if not any(st in (TODO, OPERATOR, FAILED) for _, st, _ in rows) else 1
+    LAST_ROWS[app] = rows
+    nxt = next((st for _, st, _ in rows if st in (TODO, OPERATOR, FAILED)), None)
+    # 3 = it stopped where only a person can go on (lib/agent_result.py); 1 = a station failed or did not finish.
+    return 0 if not nxt else AR.EXIT["needs_human"] if nxt == OPERATOR else 1
+RAN, LAST_ROWS = [], {}
 
 # ---- the operator's side, without a value ever reaching the chat or the repo ------------------------------------
 
@@ -285,14 +304,16 @@ def reuse_keys(app, other):
     names = [n for n in (i.get("secrets_user") or []) if n not in ("PLATFORM_NOTIFY_FROM",) and vals.get(n) and vals[n] != "[SENSITIVE]"]
     if not names: sys.exit(f"{other} holds none of the keys {app} needs")
     for n in names:
-        r = subprocess.run([sys.executable, os.path.join(S, "provision.py"), app, "--set-secret", n], input=vals[n] + "\n", text=True, cwd=ROOT, capture_output=True)
+        r = subprocess.run([sys.executable, os.path.join(S, "provision.py"), app, "--set-secret", n], input=vals[n] + "\n", text=True, cwd=ROOT, capture_output=True,
+                           env=dict(os.environ, FACTORY_SECRET_FROM_STDIN="1"))   # the one trusted caller of a piped value
         print(f"  {n}: {'copied' if r.returncode == 0 else 'NOT copied: ' + clean(r.stderr).strip()[-160:].replace(vals[n], '<value>')}")
     # The sender is this app's own, but it is not a secret and needs nobody: <Product> <project@the operator's verified domain>.
     dom = load_factory(os.path.join(ROOT, "state")).get("defaults", {}).get("notify_domain")
     if dom and "PLATFORM_NOTIFY_FROM" in (i.get("secrets_user") or []):
         name = ((a.get("surface") or {}).get("branding") or {}).get("product_name") or a["app_id"]
         sender = f"{name} <{i['vercel']['project']}@{dom}>"
-        r = subprocess.run([sys.executable, os.path.join(S, "provision.py"), app, "--set-secret", "PLATFORM_NOTIFY_FROM"], input=sender + "\n", text=True, cwd=ROOT, capture_output=True)
+        r = subprocess.run([sys.executable, os.path.join(S, "provision.py"), app, "--set-secret", "PLATFORM_NOTIFY_FROM"], input=sender + "\n", text=True, cwd=ROOT, capture_output=True,
+                           env=dict(os.environ, FACTORY_SECRET_FROM_STDIN="1"))
         print(f"  PLATFORM_NOTIFY_FROM: {sender if r.returncode == 0 else 'NOT set: ' + clean(r.stderr).strip()[-160:]}"); names.append("PLATFORM_NOTIFY_FROM")
     left = [n for n in (i.get("secrets_user") or []) if n not in names]
     if left: print(f"still this app's own to set: {', '.join(left)}")
@@ -305,6 +326,10 @@ def origin(app):
     return u
 
 def post(url, body):
+    if services.REHEARSAL:
+        code, doc = services.http_json("POST", url, body)
+        if 200 <= code < 300 and isinstance(doc, dict): return doc
+        sys.exit((doc or {}).get("error") if isinstance(doc, dict) and (doc or {}).get("error") else f"refused ({code})")
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"content-type": "application/json"})
     try: return json.load(urllib.request.urlopen(req, timeout=20))
     except urllib.error.HTTPError as e:
@@ -395,10 +420,121 @@ def self_test():
             ran.clear(); repo_auto("x", "a lane run"); assert len(ran) == n, (rec, ran)
     finally:
         globals()["docs"], globals()["py"] = real_docs, real_py
-    print("mint: 20 checks passed"); return 0
+    # --json: the survey as one result, the needs a person gets, and the exit codes (lib/agent_result.py)
+    real_runs = runs.status
+    try:
+        runs.status = lambda *a, **k: AR.result(True, "done", "", "", [], "", {"record": None})
+        globals()["repository_line"] = lambda app: "repository: none"
+        rows = [("brief", DONE, ""), ("keys", OPERATOR, "2 key(s) not set yet: A_KEY, B_KEY"), ("deploy", "later", "")]
+        MISSING_KEYS["x"] = ["A_KEY", "B_KEY"]
+        r = survey_result("x", rows)
+        assert set(r) == {"ok", "status", "summary", "next", "needs", "log", "details"} and r["status"] == "needs_human" and AR.exit_code(r) == 3
+        assert [n["name"] for n in r["needs"]] == ["A_KEY", "B_KEY"] and all(n["kind"] == "secret" and "separate terminal" in n["how"] and "--set-secret" in n["how"] for n in r["needs"])
+        r = survey_result("x", [("tests", OPERATOR, "signed-in checks were skipped")])
+        assert r["needs"][0]["kind"] == "code" and "only after you say so" in r["needs"][0]["how"]
+        r = survey_result("x", [("deploy", TODO, "first deploy")])
+        assert r["status"] == "done" and AR.exit_code(r) == 0 and r["next"].startswith("Ask the operator for a plain yes")
+        r = survey_result("x", [("deploy", FAILED, "the first deploy stopped: x. Run: python3 .claude/scripts/provision.py x --deploy")])
+        assert r["status"] == "failed" and AR.exit_code(r) == 1 and r["next"] == "python3 .claude/scripts/provision.py x --deploy"
+        r = survey_result("x", [("brief", DONE, ""), ("package", NA, "")])
+        assert r["status"] == "done" and r["ok"] and r["summary"].startswith("x is finished")
+        # `run` exits 3 when it stops where only a person can go on
+        globals()["survey"] = lambda app: [("keys", OPERATOR, "1 key(s) not set yet: A_KEY")]; globals()["show"] = lambda app, rows=None: survey(app)
+        assert run("x") == 3
+        globals()["survey"] = lambda app: [("deploy", FAILED, "x")]
+        assert run("x") == 1
+    finally:
+        runs.status = real_runs
+    # the sessions live where FACTORY_PRIVATE_DIR says (a rehearsal never touches the operator's own)
+    import subprocess as sp
+    out = sp.run([sys.executable, "-c", f"import sys; sys.path.insert(0, {S!r}); import mint; print(mint.session_path('a'))"], env=dict(os.environ, FACTORY_PRIVATE_DIR="/tmp/sf-private-x"),
+                 capture_output=True, text=True).stdout.strip()
+    assert out == "/tmp/sf-private-x/a.session.json", out
+    # reuse-keys is the one trusted caller of a piped value, and says so with FACTORY_SECRET_FROM_STDIN=1
+    import inspect
+    assert inspect.getsource(reuse_keys).count('FACTORY_SECRET_FROM_STDIN="1"') == 2
+    print("mint: 31 checks passed"); return 0
+
+# ---- --json: the survey as one result (lib/agent_result.py) ---------------------------------------------------------
+def needs_for(app, name, why):
+    """What a person must give at an OPERATOR station, as `needs` entries with plain instructions."""
+    if name == "keys":
+        return [{"kind": "secret", "name": k, "how": AR.secret_how(app, k)} for k in MISSING_KEYS.get(app) or []] or \
+               [{"kind": "approval", "name": "server, domain and key name", "how": why}]
+    if name == "tests":
+        return [{"kind": "code", "name": "one-time sign-in code", "how":
+                 f"Tell me which email address can sign in to {app} and say that I may send it a code. I then run "
+                 f"`python3 .claude/scripts/mint.py {app} code-request <email>` (only after you say so); a six-digit code arrives "
+                 f"by email within a minute and lasts ten minutes. Paste just the six digits here; the session it buys is kept in "
+                 f"a private file, never shown."}]
+    if name == "package":
+        return [{"kind": "login", "name": "npm sign-in", "how": "The operator runs `npm login` once in a separate terminal on this machine; it prints a link to open and confirm."}]
+    if name == "address":
+        return [{"kind": "dns", "name": "DNS record", "how": f"The domain's owner adds one DNS record at their domain registrar; `python3 .claude/scripts/domain.py {app} status` prints it exactly. {why}"}]
+    if name == "deploy":
+        return [{"kind": "approval", "name": "deploy at the operator's terminal", "how": f"The operator runs it themselves, in a separate terminal (it asks for values at a hidden prompt): python3 .claude/scripts/provision.py {app} --deploy-remote"}]
+    if name == "state":
+        return [{"kind": "approval", "name": "intake questions", "how": f"Answer the questions in state/application/{app}/questions.json, one at a time; I write the answers to answers.json and run the state station again. {why}"}]
+    if name == "brief":
+        return [{"kind": "approval", "name": "brief", "how": why}]
+    return [{"kind": "approval", "name": name, "how": why}]
+
+def survey_result(app, rows, ran=None):
+    stations = [{"name": n, "status": st, "why": why} for n, st, why in rows]
+    nxt = next(((n, st, why) for n, st, why in rows if st in (TODO, OPERATOR, FAILED)), None)
+    details = {"app": app, "stations": stations, "repository": repository_line(app)}
+    if ran is not None: details["ran"] = ran
+    bg = runs.status(ROOT, "mint.py", app, "mint", f"python3 .claude/scripts/mint.py {app} run --background --json")
+    if bg["details"].get("record"): details["background_run"] = {k: bg[k] for k in ("status", "summary", "next", "log")}
+    if not nxt:
+        return AR.result(True, "done", f"{app} is finished: every station is done or not needed.", "", [], "", details)
+    n, st, why = nxt
+    if st == OPERATOR:
+        needs = needs_for(app, n, why)
+        return AR.result(False, "needs_human", f"{app} stops at {n}: {why}", needs[0]["how"], needs, "", details)
+    if st == FAILED:
+        return AR.result(False, "failed", f"{app}: the {n} station failed: {why}", AR.command_in(why) or f"Read why, fix the cause, then: python3 .claude/scripts/mint.py {app} run --json", [], "", details)
+    ask = n == "deploy"
+    return AR.result(True, "done", f"{app}: next is {n} ({why}); it needs nobody" + (" but a yes to deploy" if ask else "") + ".",
+                     ("Ask the operator for a plain yes to deploy (unless they already asked for it), then: " if ask else "")
+                     + f"python3 .claude/scripts/mint.py {app} run --background --json", [], "", details)
+
+def main_json(a):
+    if a[0] == "list":
+        apps = []
+        for app in sorted(d for d in os.listdir(os.path.join(ROOT, "state", "application")) if d != "app_id" and os.path.isdir(adir(d))):
+            nxt = next(((n, st, why) for n, st, why in survey(app) if st in (TODO, OPERATOR, FAILED)), None)
+            apps.append({"app": app, "next_station": nxt[0] if nxt else None, "status": nxt[1] if nxt else "finished", "why": nxt[2] if nxt else ""})
+        return AR.emit(AR.result(True, "done", f"{len(apps)} application(s): " + ", ".join(f"{x['app']} ({x['next_station'] + ': ' + x['status'] if x['next_station'] else 'finished'})" for x in apps),
+                                 "", [], "", {"apps": apps}))
+    app = a[0]
+    if not os.path.isdir(adir(app)) and not os.path.exists(os.path.join(ROOT, "briefs", app + ".md")):
+        return AR.emit(AR.result(False, "failed", f"There is no application {app} (no state/application/{app}/ and no briefs/{app}.md).",
+                                 f"python3 .claude/scripts/mint.py new {app} --brief briefs/{app}.md", [], "", {}))
+    if len(a) == 1 or a[1] == "status": return AR.emit(survey_result(app, survey(app)))
+    if a[1] == "run":
+        if "--background" in a:
+            res, rc = runs.start_background(ROOT, "mint.py", app, "mint", [app, "run"], f"python3 .claude/scripts/mint.py {app} run --background --json")
+            if rc == 0: res["next"] = f"Check on it every minute or so: python3 .claude/scripts/mint.py {app} --json (details.background_run)"
+            return AR.emit(res, locked=rc == AR.LOCKED)
+        def go(_):
+            with runs.Held(ROOT, app, "mint", "mint.py", [app, "run"]) as h:
+                if h.locked: HELD_BY[app] = h.lock.held_by; return AR.LOCKED
+                return run(app)
+        def finish(rc, log, notes):
+            if rc == AR.LOCKED: return runs.locked_result("mint.py", app, "mint", HELD_BY.get(app, {}))
+            return survey_result(app, LAST_ROWS.get(app) or survey(app), list(RAN))
+        return AR.run_json(go, [], root=ROOT, app=app, step="mint", finish=finish)
+    return None
+HELD_BY = {}
 
 def main(a):
     if "--self-test" in a: return self_test()
+    if a: services.script_start("mint.py", [x for x in a if x != "--json"], action=(a[1] if len(a) > 1 and not a[1].startswith("-") else "status") if a[0] not in ("new", "list") else a[0])
+    as_json, a = AR.wants_json(a)
+    if as_json and a and a[0] != "new":
+        r = main_json(a)
+        if r is not None: return r
     if not a: sys.exit(__doc__)
     if a[0] == "list":
         for app in sorted(d for d in os.listdir(os.path.join(ROOT, "state", "application")) if d != "app_id" and os.path.isdir(adir(d))):
@@ -410,6 +546,9 @@ def main(a):
         return new(a[1], a[3], a[a.index("--mold") + 1] if "--mold" in a else "mold_v1")
     app = a[0]
     if len(a) == 1 or a[1] == "status": show(app); return 0
+    if a[1] == "run" and "--background" in a:
+        res, rc = runs.start_background(ROOT, "mint.py", app, "mint", [app, "run"], f"python3 .claude/scripts/mint.py {app} run --background")
+        print(res["summary"] + f"\nnext: python3 .claude/scripts/mint.py {app}"); return rc
     if a[1] == "run": return run(app)
     if a[1] == "report": return py(os.path.join(S, "mint_report.py"), app, *a[2:]).returncode
     if a[1] == "handoff":
