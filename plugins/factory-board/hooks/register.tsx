@@ -47,6 +47,13 @@ type $ = EngineInterface
 
 let root = FALLBACK_ROOT
 
+// The "in progress" locks live in the module, not in $.state: $.state survives a reload of the plugin, so a lock held
+// there by a refresh the reload cut short would stay set and every later refresh would skip (the board then sat on
+// "Reading…"). A reload starts the module over, and these with it.
+let refreshing = false
+let collecting = false
+const STORE_KEY = 'last-board'
+
 async function readJson($: $, path: string): Promise<any> {
   return JSON.parse(await $.fs.read(path))
 }
@@ -103,7 +110,8 @@ async function probe($: $, check: Check): Promise<Check> {
 }
 
 async function refresh($: $): Promise<void> {
-  if (await read($, isRefreshing)) return
+  if (refreshing) return
+  refreshing = true
   await update($, isRefreshing, () => true)
   try {
     const loaded = await load($)
@@ -113,6 +121,8 @@ async function refresh($: $): Promise<void> {
     )
     const checkedAt = await $.clock.now()
     await update($, board, current => (current ? { ...current, apps, checkedAt } : current))
+    // the last board, kept across sessions, so the next /factory opens on it at once while it refreshes
+    void $.store.set(STORE_KEY, { ...loaded, apps, checkedAt }).catch(() => undefined)
     $.ui.status(summary(apps, loaded.tickets.length))
     if (!(await read($, selectedApp))) {
       const first = apps.find(a => a.status !== 'retired')
@@ -127,6 +137,7 @@ async function refresh($: $): Promise<void> {
     }))
     $.ui.status('factory: could not read state')
   } finally {
+    refreshing = false
     await update($, isRefreshing, () => false)
   }
 }
@@ -144,7 +155,8 @@ async function readUsage($: $, apps: readonly AppRow[]): Promise<void> {
 
 /** Runs the read-only collector for every app, then reads what it wrote. */
 async function collect($: $): Promise<void> {
-  if (await read($, isCollecting)) return
+  if (collecting) return
+  collecting = true
   await update($, isCollecting, () => true)
   await update($, collectError, () => '')
   try {
@@ -163,6 +175,7 @@ async function collect($: $): Promise<void> {
   } catch (error) {
     await update($, collectError, () => (error instanceof Error ? error.message : String(error)))
   } finally {
+    collecting = false
     await update($, isCollecting, () => false)
   }
 }
@@ -194,6 +207,12 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     if (e.cwd && (await $.fs.exists(`${e.cwd}/state/factory.json`))) root = e.cwd
+    await update($, isRefreshing, () => false)
+    await update($, isCollecting, () => false)
+    if (!(await read($, board))) {
+      const last = (await $.store.get(STORE_KEY).catch(() => undefined)) as Board | undefined
+      if (last && last.root === root) await update($, board, () => last)
+    }
     await $.command.register({
       name: 'factory',
       description: 'Factory board: products and apps, molds, tickets, analytics (/factory products|molds|tickets|analytics [app]|refresh|<ticket id>)',
@@ -215,8 +234,7 @@ export const register: Register = on => {
       await update($, tab, () => 'tickets')
     }
     await $.ui.open({ id: PANE, title: 'Factory board' })
-    if (arg === 'refresh' || !(await read($, board))) await refresh($)
-    else void refresh($)
+    void refresh($)
     if (arg === 'analytics' && Object.keys(await read($, usage)).length === 0) void collect($)
     const current = await read($, board)
     return { text: current ? summary(current.apps, current.tickets.length) : 'Factory board opened.' }
