@@ -63,8 +63,8 @@ async function main() {
     }
     await withOrgDb(orgId, (tx) => tx
       .insert(solutions)
-      .values({ orgId, customerId, solutionId: id, useCase, businessProcess: "agent", modulesEnabled: [], solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me })
-      .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, businessProcess: "agent", solutionStatus: "configuring", solutionOwner: me, solutionFdeOwner: me } }));
+      .values({ orgId, customerId, solutionId: id, useCase, businessProcess: "agent", modulesEnabled: [], solutionStatus: "configuring", solutionOwner: me })
+      .onConflictDoUpdate({ target: [solutions.orgId, solutions.customerId, solutions.solutionId], set: { useCase, businessProcess: "agent", solutionStatus: "configuring", solutionOwner: me } }));
     // Seed the customer's deployment agent recipe folder (dm.md recipe seam).
     const dep = `${FOLDER.deliveries}/${customerId}/${version}/platform/agents/${id}`;
     // In the workspace's own data room: {folder:deliveries}/{customer_id}/… is per company, and so per workspace.

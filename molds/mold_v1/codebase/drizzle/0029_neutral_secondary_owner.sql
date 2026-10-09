@@ -1,7 +1,7 @@
 -- Neutral second-owner column (mold_v1-103, PR 7c): customers.secondary_owner beside customers.ae_owner.
 --
 -- `ae_owner` names one line of work's role (a sales team's account executive) in the base schema. It gets a neutral
--- twin exactly as `fde_owner` did in 0028: the original column is never dropped or renamed here, because a writer
+-- twin exactly as customers' original owner column did in 0028: the original column is never dropped or renamed here, because a writer
 -- outside this repository may name it in raw SQL, and a trigger keeps the two EQUAL whichever side a statement writes:
 --
 --   * INSERT: a side left NULL takes the other's value; when both are given and differ, the neutral side wins.

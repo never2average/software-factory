@@ -5,7 +5,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { LEGACY_CONFIG_DIR } from "../../lib/agent-cli.mjs";
 import { DEFAULT_DOMAIN } from "../../lib/default-org.mjs";
 
 /** Consistent console vocabulary across every operator script. */
@@ -25,40 +24,18 @@ export function hasFlag(name) {
 }
 
 /**
- * The environment the operator tooling reads: the neutral `WORKSPACE_*` name first, then the name it had before
- * (kept working: it is typed into shells and `.env.local` files that nobody re-reads). The first two match the
- * published package's own table (setup/workspace-tools.mjs LEGACY_ENV_NAMES); the last two only this tooling reads.
+ * The environment the operator tooling reads (all `WORKSPACE_*`): `{ value, name }`, the trimmed value of `name` and
+ * the variable that answered, or `{ value: "", name: null }` when it is unset. `env` defaults to process.env; the
+ * test passes its own.
  */
-export const LEGACY_OPERATOR_ENV = Object.freeze({
-  WORKSPACE_ORG: "FDE_ORG",
-  WORKSPACE_OPS_URL: "FDE_OPS_URL",
-  WORKSPACE_SELF_EMAIL: "FDE_SELF_EMAIL",
-  WORKSPACE_GOOGLE_TOKEN: "FDE_GOOGLE_TOKEN",
-});
-
-const warnedEnv = new Set();
-
-/**
- * `{ value, name }`: the trimmed value of `name` (a key of LEGACY_OPERATOR_ENV) and which variable answered, or
- * `{ value: "", name: null }` when neither is set. The old name answering says so once per process, on stderr.
- * `env` defaults to process.env; the test passes its own.
- */
-export function operatorEnvSource(name, env = process.env, warn = (m) => console.error(m)) {
-  const current = String(env[name] ?? "").trim();
-  if (current) return { value: current, name };
-  const legacy = LEGACY_OPERATOR_ENV[name];
-  const old = legacy ? String(env[legacy] ?? "").trim() : "";
-  if (!old) return { value: "", name: null };
-  if (!warnedEnv.has(legacy)) {
-    warnedEnv.add(legacy);
-    warn(`${glyph.warn} ${legacy} still works but is the old name for ${name}; set ${name} instead.`);
-  }
-  return { value: old, name: legacy };
+export function operatorEnvSource(name, env = process.env) {
+  const value = String(env[name] ?? "").trim();
+  return value ? { value, name } : { value: "", name: null };
 }
 
 /** The value alone ("" when unset). */
-export function operatorEnv(name, env = process.env, warn) {
-  return operatorEnvSource(name, env, warn).value;
+export function operatorEnv(name, env = process.env) {
+  return operatorEnvSource(name, env).value;
 }
 
 /** The Ops API base — same default the MCP uses. */
@@ -66,19 +43,12 @@ export function opsUrl() {
   return (operatorEnv("WORKSPACE_OPS_URL") || "https://agent-workspace.vercel.app").replace(/\/$/, "");
 }
 
-/**
- * The stored sign-in of the package's login command: its folder today, then the one it had
- * before the rename (setup/workspace-login.mjs reads both the same way, so somebody who signed
- * in with an older checkout is still recognised).
- */
-export const CREDENTIAL_PATHS = [
-  join(homedir(), ".config", "workspace-mcp", "credentials.json"),
-  join(homedir(), ".config", LEGACY_CONFIG_DIR, "credentials.json"),
-];
+/** The stored sign-in of the package's login command (setup/workspace-login.mjs). */
+export const CREDENTIAL_PATHS = [join(homedir(), ".config", "workspace-mcp", "credentials.json")];
 
 /**
  * Who is running this. Preference order: explicit --email, then the stored
- * sign-in (CREDENTIAL_PATHS), then WORKSPACE_SELF_EMAIL (or its old name).
+ * sign-in (CREDENTIAL_PATHS), then WORKSPACE_SELF_EMAIL.
  * Returns { email, name } — name is best-effort from the flag.
  */
 export function resolveIdentity({ credentialPaths = CREDENTIAL_PATHS } = {}) {
@@ -127,27 +97,24 @@ export function envReady(name) {
 }
 
 /**
- * The team memory that records an operator's profile (onboard-self). Written under the neutral key; the key it had
- * before (`fde-profile:<email>`) is still read, so a profile recorded by an older checkout is found, updated and moved
- * to the neutral key rather than duplicated.
+ * The team memory that records an operator's profile (onboard-self), under `member-profile:<email>`. (A profile
+ * recorded under the key it had before was moved to this one by drizzle/0037.)
  */
 export const MEMBER_PROFILE_PREFIX = "member-profile:";
-export const LEGACY_MEMBER_PROFILE_PREFIX = "fde-profile:";
 
-/** `{ key, legacyKey }` for one email (lower-cased): `key` is what gets written, both are read. */
+/** `{ key }` for one email (lower-cased): the memory key a profile is read and written under. */
 export function memberProfileKeys(email) {
   const e = String(email ?? "").trim().toLowerCase();
-  return { key: `${MEMBER_PROFILE_PREFIX}${e}`, legacyKey: `${LEGACY_MEMBER_PROFILE_PREFIX}${e}` };
+  return { key: `${MEMBER_PROFILE_PREFIX}${e}` };
 }
 
-/** Of the memory rows found under either key, the one to update: the neutral key's first, else the old key's; null if none. */
+/** Of the memory rows found, the one recording this person's profile; null if none. */
 export function pickMemberProfile(rows, email) {
-  const { key, legacyKey } = memberProfileKeys(email);
-  return rows.find((r) => r.key === key) ?? rows.find((r) => r.key === legacyKey) ?? null;
+  const { key } = memberProfileKeys(email);
+  return rows.find((r) => r.key === key) ?? null;
 }
 
-/** The email a profile key names, under either prefix; null for any other key. */
+/** The email a profile key names; null for any other key. */
 export function memberProfileEmail(key) {
-  for (const p of [MEMBER_PROFILE_PREFIX, LEGACY_MEMBER_PROFILE_PREFIX]) if (String(key).startsWith(p)) return String(key).slice(p.length);
-  return null;
+  return String(key).startsWith(MEMBER_PROFILE_PREFIX) ? String(key).slice(MEMBER_PROFILE_PREFIX.length) : null;
 }

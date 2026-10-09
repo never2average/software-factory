@@ -537,7 +537,7 @@ No periods at all:
 
 | Key | Meaning | Default |
 |---|---|---|
-| `account_fields.hidden` | Fields of the account record itself (the `customerSchema` keys in `agent/lib/customer-schema.ts`: `arr`, `seats`, `aeOwner`, `renewalDate`, `contractStatus`, … and the nested parts `platform`, `solutions`, `tickets`) this deployment does not use. They are removed from what the **model** reads and writes: `upsert_customer`'s parameters, and every record `get_customer`, `list_customers` and `upsert_customer` return; a hidden nested part is also dropped from those tools' descriptions. A hidden key the model sends anyway is not written. Storage, the API, the CLI, the MCP server and the forms are unchanged. `id` and `name` cannot be hidden, nor `custom` (it holds `custom_fields`, below); an unknown key fails the build. The two owner fields may be named by either of their keys: `fdeOwner` or `accountOwner`, `aeOwner` or `secondaryOwner`. Either hides the one field under both keys; naming both keys of a pair is naming it twice. | `[]` |
+| `account_fields.hidden` | Fields of the account record itself (the `customerSchema` keys in `agent/lib/customer-schema.ts`: `arr`, `seats`, `aeOwner`, `renewalDate`, `contractStatus`, … and the nested parts `platform`, `solutions`, `tickets`) this deployment does not use. They are removed from what the **model** reads and writes: `upsert_customer`'s parameters, and every record `get_customer`, `list_customers` and `upsert_customer` return; a hidden nested part is also dropped from those tools' descriptions. A hidden key the model sends anyway is not written. Storage, the API, the CLI, the MCP server and the forms are unchanged. `id` and `name` cannot be hidden, nor `custom` (it holds `custom_fields`, below); an unknown key fails the build. The two owner fields may be named by either of their keys: `accountOwner` or `accountOwner`, `aeOwner` or `secondaryOwner`. Either hides the one field under both keys; naming both keys of a pair is naming it twice. | `[]` |
 | `account_fields.custom_fields` | The deployment's OWN fields on the account record itself: a research desk's notes on a company, a field team's permit number on a site. Same spec, types and rules as [Custom fields](#custom-fields) on the areas; see [Own fields on the account record](#own-fields-on-the-account-record). | `[]` |
 
 The two redefinable areas hide their own fields with `domains.<area>.fields.<key>.hidden` (above), and the record
@@ -666,7 +666,7 @@ tool boundary instead: see "How the agent sees it" below.)
   and every entry of `DATAROOM_PATH_TEMPLATES` after its first segment. (The first segment, the folder's own name,
   IS the profile's: `dataroom.domains.<id>.folder`. A label never moves it: a domain labelled "Companies" is still
   stored under its `folder`.)
-- **Workbook column names**: `customer_id`, `customer_name`, `fde_owner`… They are data, and the agent reads them
+- **Workbook column names**: `customer_id`, `customer_name`, `account_owner`… They are data, and the agent reads them
   by name. (A domain's main sheet carries the domain's stored folder name.)
 - **Database tables and fields**, and the JSON keys of every API payload.
 - **API routes** (`/api/ops/*`, `/api/dataroom`…).
@@ -702,7 +702,7 @@ has a word of its own), the model reads only the profile's words, everywhere
 | What the model reads | Base | Relabelled (the research-desk profile) |
 |---|---|---|
 | tool names | `list_customers`, `get_customer`, `upsert_customer`, `list_members`, `read_customer_slas` | `list_companies`, `get_company`, `upsert_company`, `list_analysts`, `read_company_slas` |
-| parameters and result keys | `customerId`, `customer_id`, `fdeOwner`, `deployments[].deploymentId`, `implementation.rolloutId` | `companyId`, `company_id`, `analystOwner`, `coverageReports[].coverageReportId`, `portfolioEntry.portfolioId` |
+| parameters and result keys | `customerId`, `customer_id`, `deployments[].deploymentId`, `implementation.rolloutId` (`accountOwner` is neutral and stays as it is) | `companyId`, `company_id`, `coverageReports[].coverageReportId`, `portfolioEntry.portfolioId` |
 | enum values | `Waiting on Customer`, `customer-vpc`, TODO `containerType` `deployment` | `Waiting on Company`, `company-vpc`, `coverageReport` |
 | data-room paths (in and out) | the stored folders: `Accounts/acme/…`, `Deliveries/…`, `Projects/…` (or the names a deployment pins) | `Companies/acme/…`, `Coverage-reports/…`, `Portfolios/…` (the label as a folder name) |
 | memory scopes | `customer:{id}` | `company:{id}` |
@@ -764,13 +764,15 @@ the provisioned workflow library, a workflow step's prompt, the generated subage
 word. `check:agent-vocabulary` fails when a placeholder reaches the model unfilled, or when the default deployment's
 model reads the member's legacy word as a word.
 
-**The member's legacy word.** Before the default profile spoke neutrally it called the member by an acronym,
-now spelled in one place only, `agent/lib/legacy-member.ts`. It survives only where something outside the
-base text already holds it: contract identifiers (the `fdeOwner` key and `fde_owner` column, until the owner column
-moves; the old roster tool name), stored enum values (a ticket's `ownerTeam`, an account's `valueEvidenceStatus`)
-and text older checkouts wrote. Stored rows are never rewritten. A person reads such a value in the profile's
-member word (`storedValueLabel` in `lib/ui-words.ts`; the owner key reads the owner label everywhere,
-`humanizeKey`), and a relabelling profile translates the legacy spelling for the model like any base word.
+**The member's legacy word.** Before the default profile spoke neutrally it called the member by an acronym. No
+file spells it any more (`check:neutral-names`); `agent/lib/legacy-member.ts` builds it from its letters, once,
+for the code that still READS data written under it: the owner keys a workbook, an export or an older client may
+still carry (`accountOwner` and `solutionOwner` replaced them, drizzle/0028 and 0037), the old roster tool name in a
+stored transcript or workflow, stored enum values a data room may still hold (a ticket's `ownerTeam`, an account's
+`valueEvidenceStatus`; drizzle/0037 rewrote the database's to "Member" and "Member Verified") and text older
+checkouts wrote. A person reads such a value in the profile's member word (`storedValueLabel` in
+`lib/ui-words.ts`; an owner key reads the owner label everywhere, `humanizeKey`), and a relabelling profile
+translates the legacy spelling for the model like any base word.
 
 **The rule: the product's words are translated, user data never is — in either direction.** Product words are
 tool names, parameter and result keys, the value of a field whose schema declares it an enum, the folder at the

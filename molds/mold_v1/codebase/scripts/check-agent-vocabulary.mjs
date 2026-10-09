@@ -72,14 +72,6 @@ const ALLOW_FILE = argAfter("--allow");
 const BASE_WORDS = ["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", BASE_PRODUCT_WORD, `${BASE_PRODUCT_WORD}s`];
 /** The member's legacy word standing as a WORD (not inside an identifier such as a column name). */
 const LEGACY_AS_WORD = new RegExp(`(?<![A-Za-z0-9_\\-.])(${BASE_PRODUCT_WORD}s?)(?![A-Za-z0-9_\\-])`, "gi");
-/**
- * STORED enum values that carry the legacy word (a ticket's `ownerTeam`, an account's `valueEvidenceStatus`,
- * agent/lib/customer-schema.ts). They are data the model writes back as stored, like a column name, and are moved
- * only by a data migration; a person reads them in the profile's member word (lib/ui-words.ts storedValueLabel).
- * A schema line that is exactly one of them is not a word the model is taught.
- */
-const LEGACY_STORED_VALUES = new Set([BASE_PRODUCT_WORD.toUpperCase(), `${BASE_PRODUCT_WORD.toUpperCase()} Verified`]);
-const isStoredValueLine = (line) => LEGACY_STORED_VALUES.has(line.trim().replace(/^"|",?$|"$/g, ""));
 /** A role or record placeholder base text writes, which every boundary must fill from the profile. */
 const UNFILLED = /(?<!\$)\{(members?|Members?|owner|Owner|accounts?|Accounts?|deployments?|Deployments?|implementations?|Implementations?|rollouts?|Rollouts?|period_items?|Period_items?|periods?|Periods?|(?:folder|domain):[a-z]+)\}/g;
 /** Names that are not prose where they stand (a specialist's directory name, a stored enum value): the ratchet's own list. */
@@ -112,7 +104,7 @@ function linesWith(surface, re) {
   let section = "(start)";
   for (const line of surface.split("\n")) {
     if (line.startsWith("=== ")) section = line.slice(4);
-    else if (new RegExp(re.source, re.flags.replace("g", "")).test(line) && !(re === LEGACY_AS_WORD && / :: tool :: /.test(section) && isStoredValueLine(line))) out.push(`[${section}] ${line.trim().slice(0, 200)}`);
+    else if (new RegExp(re.source, re.flags.replace("g", "")).test(line)) out.push(`[${section}] ${line.trim().slice(0, 200)}`);
   }
   return out;
 }
@@ -277,7 +269,7 @@ if (!PACK) {
     if (legacy.length) console.error(`check-agent-vocabulary: DEFAULT profile — the model reads the member's legacy word as a word in ${legacy.length} line(s). Write a role placeholder ({member}, {owner}) the profile fills:\n${legacy.slice(0, 40).map((l) => `  - ${l}`).join("\n")}`);
     if (unfilled.length) console.error(`check-agent-vocabulary: DEFAULT profile — ${unfilled.length} role placeholder(s) reached the model unfilled:\n${unfilled.slice(0, 40).map((l) => `  - ${l}`).join("\n")}`);
   } else {
-    console.log("check-agent-vocabulary: default profile — the member's legacy word appears in no model-facing text (only inside contract identifiers), and every role placeholder is filled");
+    console.log("check-agent-vocabulary: default profile — the member's legacy word appears in no model-facing text, and every role placeholder is filled");
   }
 }
 if (PACK) {
@@ -316,6 +308,10 @@ if (PACK) {
 // step return together, and five passages of prompt-core.md were tightened to keep the stable prompt under its word
 // budget (the publish rules, the missing-library rule, memory, browsers, "ask before expanding"). The same line edits
 // are in default-surface.txt, applied as one diff to both; no path, folder or any other line moved. And once more
+// (the owner keys and stored member values, drizzle/0037): every record key and enum value that carried the base
+// product's old role word now reads `accountOwner` / `account_owner`, `solutionOwner` / `solution_owner`, "Member"
+// and "Member Verified", in the tool schemas, two tool descriptions and two specialists' prompts; the same lines in
+// both files, applied as one diff. And once more
 // (mold_v1-184, per-result delegation): that sentence keeps #121's advice (specialists called together MAY return
 // together; get the person's answer first or run that one alone) and adds how a "reports later" result arrives; the
 // same lines in both files. And once more (mold_v1-184, live rig 2026-10-06): "get that first" became "ask for that

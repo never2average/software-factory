@@ -21,7 +21,7 @@ const runbook = await agent(
 
 phase("Blockers");
 const blockers = await agent(
-  "From the go-live runbook for " + c + ", file a ticket for each Blocked/At-Risk item (owned by the {account}'s fde_owner, priority by go-live impact) and post a ranked blocker list. Runbook follows.\n\n" + runbook,
+  "From the go-live runbook for " + c + ", file a ticket for each Blocked/At-Risk item (owned by the {account}'s account_owner, priority by go-live impact) and post a ranked blocker list. Runbook follows.\n\n" + runbook,
   { subagent: "follow-ups" },
 );
 

@@ -423,7 +423,7 @@ export const listMembersTool = modelFacing("list_members", defineTool({
     const customers = await listCustomers(org);
     const load = new Map<string, { accounts: number; openTickets: number }>();
     for (const c of customers) {
-      const owner = (c.fdeOwner ?? "").toLowerCase();
+      const owner = (c.accountOwner ?? "").toLowerCase();
       if (!owner) continue;
       const cur = load.get(owner) ?? { accounts: 0, openTickets: 0 };
       cur.accounts += 1;
@@ -437,10 +437,10 @@ export const listMembersTool = modelFacing("list_members", defineTool({
     });
     // Accounts whose owner is not in the roster (dangling) or unset (unassigned).
     const rosterEmails = new Set(roster.map((r) => (typeof r.email === "string" ? r.email.toLowerCase() : "")));
-    const unassigned = customers.filter((c) => !c.fdeOwner).map((c) => c.id);
+    const unassigned = customers.filter((c) => !c.accountOwner).map((c) => c.id);
     const danglingOwners = customers
-      .filter((c) => c.fdeOwner && !rosterEmails.has(c.fdeOwner.toLowerCase()))
-      .map((c) => ({ customerId: c.id, owner: c.fdeOwner }));
+      .filter((c) => c.accountOwner && !rosterEmails.has(c.accountOwner.toLowerCase()))
+      .map((c) => ({ customerId: c.id, owner: c.accountOwner }));
     return { roster, count: roster.length, unassigned, danglingOwners };
   },
 }), { spokenOutput: ["kind"] });
@@ -476,7 +476,7 @@ export const reassignOwnerTool = modelFacing("reassign_owner", defineTool({
 
 export const createTicketTool = modelFacing("create_ticket", defineTool({
   description:
-    "Create a ticket in the system of record for a {account} — e.g. a {account} doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the {account}'s fde_owner. Gated on approval since it writes to the shared tickets store.",
+    "Create a ticket in the system of record for a {account} — e.g. a {account} doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the {account}'s account_owner. Gated on approval since it writes to the shared tickets store.",
   approval: once(),
   inputSchema: z.object({
     customerId: z.string().min(1),
@@ -517,7 +517,7 @@ export const runEmailIntakeTool = modelFacing("run_email_intake", defineTool({
 
 export const matchCustomerByEmailTool = modelFacing("match_customer_by_email", defineTool({
   description:
-    "Deterministically match an inbound email sender to a {account} — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on a {account}'s business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.",
+    "Deterministically match an inbound email sender to a {account} — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on a {account}'s business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, accountOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.",
   inputSchema: z.object({
     sender: z.string().min(3).describe("The sender's email address (a raw address or a 'Name <addr>' header form)."),
   }),

@@ -45,12 +45,7 @@ interface PromptNotification {
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
 const GIS_SRC = "https://accounts.google.com/gsi/client";
-/**
- * The signed-in session. These three keys were `fde-*` until the base product's
- * role name came out of the wire; every read below goes through lib/browser-storage,
- * which falls back to the old spelling, because renaming the token key outright
- * signs out every analyst with an open tab.
- */
+/** The signed-in session (lib/browser-storage). */
 const TOKEN_KEY = STORAGE_KEYS.token;
 /** Where the invite outcome is left for ChatShell to render. */
 export const INVITE_RESULT_KEY = STORAGE_KEYS.inviteResult;

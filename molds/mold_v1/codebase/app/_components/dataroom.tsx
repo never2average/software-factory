@@ -293,7 +293,7 @@ interface Solution {
   expansionStage?: string;
   expansionPotentialAnnualValueUsd?: number;
   expansionConfidencePct?: number;
-  solutionFdeOwner?: string;
+  solutionOwner?: string;
   lastReviewedDate?: string;
 }
 interface Implementation {
@@ -357,7 +357,7 @@ interface Customer {
   lifecycleStage?: string;
   status?: string;
   healthScore?: number;
-  fdeOwner?: string;
+  accountOwner?: string;
   /** The account's second owner; the API returns it under both names (secondaryOwner is the neutral one). */
   secondaryOwner?: string;
   aeOwner?: string;
@@ -477,7 +477,7 @@ export interface CustomerContextSummary {
   // WHY the status is what it is — the only part of "health" that says
   // something the status word doesn't.
   healthReason?: string;
-  fdeOwner?: string;
+  accountOwner?: string;
   lead?: { name: string; role?: string };
   openTickets: number;
   lastTouchDate?: string;
@@ -619,7 +619,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
         "lifecycle_stage",
         "status",
         "health_score",
-        "fde_owner",
+        "account_owner",
         "ae_owner",
         "arr",
         "arr_currency",
@@ -659,7 +659,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
         c.lifecycleStage,
         c.status,
         c.healthScore != null ? String(c.healthScore) : undefined,
-        c.fdeOwner,
+        c.accountOwner,
         c.secondaryOwner ?? c.aeOwner,
         c.arr != null ? String(c.arr) : undefined,
         c.arrCurrency,
@@ -961,7 +961,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
         "expansion_stage",
         "expansion_potential_annual_value_usd",
         "expansion_confidence_pct",
-        "solution_fde_owner",
+        "solution_owner",
         "last_reviewed_date",
       ],
       rows: customers.flatMap((c) =>
@@ -1039,7 +1039,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
           s.expansionStage,
           s.expansionPotentialAnnualValueUsd != null ? String(s.expansionPotentialAnnualValueUsd) : undefined,
           formatPercent(s.expansionConfidencePct),
-          s.solutionFdeOwner,
+          s.solutionOwner,
           s.lastReviewedDate,
         ]),
       ),

@@ -37,6 +37,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type PgColumnBuilderBase,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -44,7 +45,14 @@ import { sql } from "drizzle-orm";
 /* Customers — one row per customer account (the account spine)               */
 /* -------------------------------------------------------------------------- */
 
-export const customers = pgTable(
+/**
+ * customers, built with any extra columns a caller adds. The app uses `customers` (no extra column). The schema
+ * drizzle-kit reads (agent/lib/db/drizzle-kit-schema.ts) adds the retired owner column a live database still holds
+ * until drizzle/0038 drops it, so the deploy's drift check does not plan a DROP COLUMN in between; the app itself
+ * never names that column. One definition, so the two can never differ in anything else.
+ */
+export function customersTableWith<C extends Record<string, PgColumnBuilderBase>>(extra: C) {
+  return pgTable(
   "customers",
   {
     // Which org (workspace) holds this company: the first half of its key. Declared before customer_id, as in every
@@ -58,11 +66,8 @@ export const customers = pgTable(
     lifecycleStage: text("lifecycle_stage"),
     status: text("status"),
     healthScore: doublePrecision("health_score"),
-    // The account's owner (an email), under two names kept equal by a trigger whichever side is written
-    // (drizzle/0028_neutral_owner_columns.sql). `account_owner` is the neutral one the app reads first; `fde_owner` is
-    // the original, which writers outside this repository still name, so it is kept and never dropped. The app writes
-    // both (agent/lib/db/owner-columns.ts), since a database built by `drizzle-kit push` alone has no trigger.
-    fdeOwner: text("fde_owner"),
+    // The account's owner (an email). It replaced the original owner column (drizzle/0028 added it and copied the
+    // values, drizzle/0037 stopped every reader and writer of the original, drizzle/0038 drops it).
     accountOwner: text("account_owner"),
     // The account's second owner (an email), under two names kept equal the same way
     // (drizzle/0029_neutral_secondary_owner.sql). `secondary_owner` is the neutral one the app reads first; `ae_owner`
@@ -103,6 +108,7 @@ export const customers = pgTable(
     // key; agent/lib/custom-fields.ts validates every write. NULLABLE, unlike deployments.custom: NULL is "no own
     // values", so the column was added without touching a single existing row (drizzle/0019_account_custom_fields.sql).
     custom: jsonb("custom").$type<Record<string, string | number>>(),
+    ...extra,
   },
   (t) => [
     /**
@@ -114,13 +120,15 @@ export const customers = pgTable(
      * org_id so both sides of every foreign key read the same way (scripts/test-company-key-migration-db.mjs).
      */
     primaryKey({ name: "customers_org_id_customer_id_pk", columns: [t.orgId, t.customerId] }),
-    index("customers_fde_owner_idx").on(t.fdeOwner),
-    // Both owner columns are indexed: the original index above is kept (dropping it would be an index drop the
-    // deploy's drift step refuses), and 0028 adds the neutral column's.
+    // The owner's index (0028). The original column's index was dropped by drizzle/0037, in the journal: the
+    // deploy's drift step refuses an index drop.
     index("customers_account_owner_idx").on(t.accountOwner),
     index("customers_lifecycle_stage_idx").on(t.lifecycleStage),
   ],
-);
+  );
+}
+
+export const customers = customersTableWith({});
 
 /* -------------------------------------------------------------------------- */
 /* Platform — one row per customer platform configuration                     */
@@ -248,7 +256,9 @@ export const deployments = pgTable(
 /* Solutions — one row per (customer_id, solution_id) workflow                */
 /* -------------------------------------------------------------------------- */
 
-export const solutions = pgTable(
+/** solutions, built with any extra columns a caller adds: as customersTableWith. */
+export function solutionsTableWith<C extends Record<string, PgColumnBuilderBase>>(extra: C) {
+  return pgTable(
   "solutions",
   {
     orgId: text("org_id").notNull(),
@@ -325,12 +335,11 @@ export const solutions = pgTable(
     expansionStage: text("expansion_stage"),
     expansionPotentialAnnualValueUsd: doublePrecision("expansion_potential_annual_value_usd"),
     expansionConfidencePct: doublePrecision("expansion_confidence_pct"),
-    // The solution's owner under two names kept equal by a trigger (drizzle/0028_neutral_owner_columns.sql), as on
-    // customers. The original stays NOT NULL; the neutral one is nullable so a writer that names only the original
-    // (on a database without the trigger) is never refused, and readers fall back to the original.
-    solutionFdeOwner: text("solution_fde_owner").notNull(),
+    // The solution's owner (an email). It replaced the original owner column, as on customers (0028, 0037, 0038).
+    // Nullable, as 0028 added it: a database migrated from before 0028 has it nullable, so schema.ts says so too.
     solutionOwner: text("solution_owner"),
     lastReviewedDate: text("last_reviewed_date"),
+    ...extra,
   },
   (t) => [
     primaryKey({ name: "solutions_org_id_customer_id_solution_id_pk", columns: [t.orgId, t.customerId, t.solutionId] }),
@@ -338,7 +347,10 @@ export const solutions = pgTable(
     foreignKey({ name: "solutions_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
     index("solutions_solution_status_idx").on(t.solutionStatus),
   ],
-);
+  );
+}
+
+export const solutions = solutionsTableWith({});
 
 /* -------------------------------------------------------------------------- */
 /* Implementation — one row per customer rollout plan                         */

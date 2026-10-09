@@ -119,7 +119,7 @@ const PICKER = DEPLOYMENT_PROFILE.vocabulary.account_context;
 const EMPTY_PEOPLE = { internalStaffAssignments: [], customerStakeholders: [] };
 /** A real workspace's records, as the org-scoped APIs answer: neutral invented data, none of it a sample record. */
 const REAL = {
-  customers: [{ id: "harbor-lane", name: "Harbor Lane Finance", tier: "Enterprise", status: "On Track", fdeOwner: "dana.ruiz@harbor.example" }],
+  customers: [{ id: "harbor-lane", name: "Harbor Lane Finance", tier: "Enterprise", status: "On Track", accountOwner: "dana.ruiz@harbor.example" }],
   people: {
     internalStaffAssignments: [{ customer_id: "harbor-lane", staffRole: "solution_engineer", name: "Dana Ruiz", title: "Engagement lead", employerOrg: "Harbor Lane", email: "dana.ruiz@harbor.example" }],
     customerStakeholders: [{ customer_id: "harbor-lane", stakeholderRole: "champion", name: "Ola Brandt", title: "Head of Research", employerOrg: "Harbor Lane Finance", email: "ola.brandt@harbor.example" }],

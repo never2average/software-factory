@@ -35,12 +35,10 @@ Two binaries, zero runtime dependencies, Node 20+.
 | `workspace-login` | One interactive sign-in: Google, or `--email <address>` for a six-digit code sent to your inbox. Stores the login at `~/.config/workspace-mcp/credentials.json` (mode 600). |
 | `workspace-mcp` | The MCP server your coding agent talks to. Presents your own login on every call (a fresh Google ID token, or your email session), so every write carries *your* identity — not a shared key. |
 
-**Older names still work.** Before version 0.12 these were `fde-login`, `fde-mcp` and
-`fde-install-skill`, the files were `fde-*.mjs`, and the sign-in was kept in
-`~/.config/fde-mcp/`. The old commands are still installed beside the new ones, the old files
-still run, and a sign-in in the old folder is read (and copied to the new one), so an MCP
-config written then needs no edit and nobody is signed out. Use the new names in anything
-you write now.
+**Before version 0.12 these had other names** (the base product's initials, and a config folder
+named the same way). Since 0.13 only the names above are installed and read: an MCP config
+written before 0.12 needs the new command name, and a sign-in made then needs one
+`workspace-login`.
 
 > `workspace-mcp` writes to the **live** platform — the same blob store and Ops API the
 > web console uses. There is no sandbox, so be deliberate about what you write.
@@ -143,11 +141,8 @@ paste it into a chat or into `dataroom_write`.
 | `BLOB_READ_WRITE_TOKEN` | Direct-blob mode for the Data Room tools (platform repo only). Without it they go through the Ops API as you. |
 | `WORKSPACE_OAUTH_CLIENT_ID` / `WORKSPACE_OAUTH_CLIENT_SECRET` | Use this Google desktop OAuth client instead of the one the package was built with. This generic package is built with none, so without these it signs in by emailed code (`--email`). |
 
-Every variable above was once spelled `FDE_*` (`FDE_OPS_URL`, `FDE_ORG`,
-`FDE_ACTOR`, `FDE_OAUTH_CLIENT_ID`, `FDE_OAUTH_CLIENT_SECRET`,
-`FDE_PRODUCT_NAME`). **The old names still work** — an MCP config you wrote
-months ago needs no edit — and using one prints a single line on stderr naming
-the variable to move to. They will be removed once nobody is on them.
+Every variable above is read by the name shown, and only by it: the `WORKSPACE_*`
+names replaced an older prefix in 0.12, and since 0.13 the older names are not read.
 
 A package built for a deployment carries that deployment's Google desktop client
 id and secret in its `deployment.generated.mjs`, deliberately; this generic

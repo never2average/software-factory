@@ -1,84 +1,42 @@
 /**
- * THE NEUTRAL-NAMES RATCHET: where the base product's role word may still appear
- * in this repository, and nowhere else.
+ * THE NEUTRAL-NAMES GATE: the base product's old role word appears NOWHERE in this repository.
  *
- * The base was written for one use, a forward-deployed engineering team, and its
- * role word ran through everything: the operator tooling's folder and npm script
- * names, the package's bin names, an environment prefix, a database column, the
- * comments and the tests. Four earlier gates took it out of what a PERSON reads
- * (check:ui-vocabulary), what the MODEL reads (check:agent-vocabulary), a
- * published package's own names (the agent-cli own-name gate) and the identifiers
- * on the wire (check:wire-names). This one covers the rest of the tree, the part
- * none of them walks, so the word cannot drift back in through a new identifier,
- * file name or comment while the contracts are migrated one PR at a time.
+ * The base was written for one use, and its role word ran through everything: the operator tooling's folder and npm
+ * script names, the package's bin names, an environment prefix, database columns, browser keys, comments and tests.
+ * Four other gates keep it out of what a PERSON reads (check:ui-vocabulary), what the MODEL reads
+ * (check:agent-vocabulary), a published package's own names (the agent-cli own-name gate) and the identifiers on the
+ * wire (check:wire-names). This one covers the whole tree, and it has no allowance at all: no listed contract, no
+ * per-file ceiling, no exempt path. Every name that carried the word was migrated (drizzle/0037 and 0038 for the
+ * columns), and the few places that still READ data written under it (a stored value, an old record key, an old tool
+ * name in a stored transcript) build it from its letters in one definition (agent/lib/legacy-member.ts,
+ * BASE_PRODUCT_WORD in scripts/lib/agent-cli.mjs) instead of spelling it.
  *
- * Every occurrence of the word is one of exactly three things, and
- * scripts/neutral-names.allow.json says which:
+ * It matches what `grep -rIi` matches: the three letters in that order, in any case, ANYWHERE: inside an identifier,
+ * a hex digest, a URL-encoded path (`%2F` before a capital D and e), a lockfile hash. A file that must hold such a
+ * value exactly (a recorded golden, a schema snapshot) writes the letter as a JSON `\uXXXX` escape
+ * (scripts/lib/json-text.mjs), which parses to the same value. Binary files (a NUL byte) are not read, as `grep -I`.
  *
- *   1. A CONTRACT: an exact name something outside this repository already holds
- *      (a database column, an environment variable, a browser-storage key, a tool
- *      name, a bin, an npm script, a Vercel project, a URL). Contracts move by an
- *      additive migration with the old name kept as an alias, never by a rename,
- *      so they are listed one by one, each with its kind and its plan. A listed
- *      contract that no longer occurs anywhere FAILS: the list only ever shrinks
- *      to match the tree.
- *   2. The bare WORD in a file whose text legitimately carries it: the one
- *      definition of the legacy word the machinery and the gates build on
- *      (agent/lib/legacy-member.ts, BASE_PRODUCT_WORD), and stored values and the
- *      records that carry them. Base text never does: it writes role placeholders
- *      (`{member}`, `{owner}`) the deployment profile fills. Each such file has a
- *      CEILING, the exact count today. More fails (a new occurrence); fewer also
- *      fails, with the number to lower it to, so the ceiling follows every
- *      removal down and never leaves room for a new one.
- *   3. A path under an EXEMPT prefix, each with its reason (migration history
- *      that must never be rewritten, pinned before-images of old surfaces).
- *
- * Anything else fails: a new identifier (`fooFdeBar`, `FDE_NEW`), a new file or
- * directory named with the word, or the word in a file with no ceiling.
- *
- * Offline, no network, no build: it reads the tracked and untracked-but-not-ignored
- * files of a git checkout, or walks the directory when there is no git.
+ * Offline, no network, no build: it reads the tracked and untracked-but-not-ignored files of a git checkout, or walks
+ * the directory when there is no git.
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { BASE_PRODUCT_WORD } from "./agent-cli.mjs";
 
-const W = BASE_PRODUCT_WORD.toLowerCase();
-const Cap = W[0].toUpperCase() + W.slice(1);
-const UP = W.toUpperCase();
-
-/**
- * One occurrence of the word as a word or an identifier part:
- *   - at a boundary (not preceded by a letter or digit): `fde_owner`, `FDE_OPS_URL`, `fde-login`, `fdeOwner`;
- *   - or as a camelCase part (`solutionFdeOwner`, `ownerFDE`); a regex escape (`\bFDE`) is a boundary;
- * optionally plural, and never followed by a lowercase letter or a digit. So `confdeltype`,
- * `wfDefs`, `RefDetail` and hex such as `3fde41` or `deadbeefdeadbeef` are not occurrences.
- */
-const OCCURRENCE = new RegExp(`(?:(?:(?<![A-Za-z0-9])|(?<=\\\\[A-Za-z]))(?:${W}|${Cap}|${UP})|(?<=(?<!\\\\)[a-z])(?:${Cap}|${UP}))s?(?![a-z0-9])`, "g");
-const BARE = new RegExp(`^(?:${W}|${Cap}|${UP})s?$`);
+const OCCURRENCE = new RegExp(BASE_PRODUCT_WORD, "gi");
 const IDENT = /[A-Za-z0-9_-]/;
 
-/**
- * The whole name an occurrence sits in: extended over letters, digits, `_` and `-`, and over a
- * `:` joining two name parts (`fde:new-org`, an npm script). The bare word stays bare.
- */
+/** Every occurrence in `text`: its line and the whole name it sits in (extended over letters, digits, `_` and `-`). */
 export function occurrencesIn(text) {
   const out = [];
-  const lines = String(text).split("\n");
-  lines.forEach((line, i) => {
+  String(text).split("\n").forEach((line, i) => {
     for (const m of line.matchAll(OCCURRENCE)) {
       let a = m.index;
       let b = m.index + m[0].length;
-      // A regex escape (`\bFDE`) is a boundary, not a name part: stop before its letter.
-      while (a > 0 && IDENT.test(line[a - 1]) && !(line[a - 2] === "\\" && /[A-Za-z]/.test(line[a - 1]))) a--;
+      while (a > 0 && IDENT.test(line[a - 1])) a--;
       while (b < line.length && IDENT.test(line[b])) b++;
-      // `fde:new-org` is one name (an npm script); `owner:…:project:agent-workspace:…` is not, so only the bare word extends.
-      if (BARE.test(line.slice(a, b)) && line[b] === ":" && /[a-z]/.test(line[b + 1] ?? "")) {
-        b++;
-        while (b < line.length && IDENT.test(line[b])) b++;
-      }
-      out.push({ line: i + 1, name: line.slice(a, b), bare: BARE.test(line.slice(a, b)) });
+      out.push({ line: i + 1, name: line.slice(a, b) });
     }
   });
   return out;
@@ -116,54 +74,24 @@ export function listFiles(root) {
   }
 }
 
-/** The allow-list, validated: a malformed table is an error, never an empty allowance. */
+/**
+ * The allow-list file, read for the sections the other ratchets use. The word has NO section: a list that brings
+ * one back (contracts, examples, a per-file ceiling or an exempt path) is refused, not honoured.
+ */
 export function readAllowList(path) {
   const raw = JSON.parse(readFileSync(path, "utf8"));
-  const exempt = raw.exempt_paths ?? {};
-  // `examples` follow the same rule as contracts (exact names, each must still occur); they are kept apart
-  // because they are not held by anything outside: legacy prefixes named in prose, the vocabulary
-  // machinery's own examples, and the offenders the gate tests construct.
-  const contracts = { ...(raw.contracts ?? {}), ...(raw.examples ?? {}) };
-  const ceilings = new Map();
-  for (const [group, body] of Object.entries(raw.base_word ?? {})) {
-    if (group.startsWith("$")) continue;
-    if (typeof body?.why !== "string" || typeof body.files !== "object") throw new Error(`neutral-names: base_word["${group}"] needs a "why" and "files"`);
-    for (const [file, count] of Object.entries(body.files)) {
-      if (!Number.isInteger(count) || count < 1) throw new Error(`neutral-names: base_word["${group}"].files["${file}"] must be a positive integer`);
-      if (ceilings.has(file)) throw new Error(`neutral-names: ${file} has a ceiling in two groups`);
-      ceilings.set(file, { count, group });
-    }
+  for (const key of ["contracts", "examples", "base_word", "exempt_paths"]) {
+    if (key in raw) throw new Error(`neutral-names: "${key}" is not an allowance any more; the base product's old role word is allowed nowhere`);
   }
-  for (const [name, c] of Object.entries(contracts)) {
-    if (name.startsWith("$")) continue;
-    if (typeof c?.kind !== "string" || typeof c?.plan !== "string") throw new Error(`neutral-names: "${name}" needs a "kind" and a "plan"`);
-  }
-  for (const [prefix, why] of Object.entries(exempt)) {
-    if (prefix.startsWith("$")) continue;
-    if (typeof why !== "string" || !why) throw new Error(`neutral-names: exempt path "${prefix}" needs a reason`);
-  }
-  const prefixes = Object.keys(exempt).filter((k) => !k.startsWith("$"));
-  const contractNames = new Set(Object.keys(contracts).filter((k) => !k.startsWith("$")));
-  if (!contractNames.size) throw new Error("neutral-names: the contract list parsed as empty; refusing a blank allowance");
-  return { prefixes, contractNames, ceilings };
+  return {};
 }
 
-/**
- * Check a tree against an allow-list. Returns { problems, seenContracts, baseCounts } —
- * `baseCounts` is the bare-word count per file, which `--report` prints.
- */
-export function checkTree(root, allow) {
+/** Check a tree. Returns { problems, files } (files: how many were read). */
+export function checkTree(root) {
   const problems = [];
-  const seen = new Set();
-  const baseCounts = new Map();
-  const exempt = (p) => allow.prefixes.some((x) => p === x || p.startsWith(x));
+  let files = 0;
   for (const path of listFiles(root)) {
-    if (exempt(path)) continue;
-    // The path itself: a file or directory named with the word is a name somebody types.
-    for (const hit of occurrencesIn(path.split("/").join("\n"))) {
-      if (allow.contractNames.has(hit.name)) seen.add(hit.name);
-      else problems.push(`${path}: the path carries "${hit.name}". Name the file after what it does; if something outside the repository already calls it this, it is a contract: list it in scripts/neutral-names.allow.json with its plan.`);
-    }
+    for (const hit of occurrencesIn(path)) problems.push(`${path}: the path carries "${hit.name}". Name it after what it does.`);
     let text;
     try {
       const bytes = readFileSync(join(root, path));
@@ -172,37 +100,10 @@ export function checkTree(root, allow) {
     } catch {
       continue;
     }
-    let bare = 0;
-    const firstBare = [];
+    files++;
     for (const hit of occurrencesIn(text)) {
-      if (allow.contractNames.has(hit.name)) {
-        seen.add(hit.name);
-        continue;
-      }
-      if (hit.bare) {
-        bare++;
-        if (firstBare.length < 3) firstBare.push(hit.line);
-        continue;
-      }
-      problems.push(`${path}:${hit.line}: "${hit.name}" carries the base product's role word. Use a neutral name (member, owner, operator, workspace); if it is a contract something outside already holds, add it to "contracts" with its kind and migration plan.`);
-    }
-    if (bare) baseCounts.set(path, bare);
-    const ceiling = allow.ceilings.get(path);
-    if (bare && !ceiling) {
-      problems.push(`${path}:${firstBare.join(",")}: the word "${UP}" (any case) appears ${bare} time(s) in a file with no ceiling. Write a role placeholder the profile fills ({member}, {members}, {owner}) or a neutral word ("member", "owner", "operator"); the legacy word is spelled only in agent/lib/legacy-member.ts.`);
-    } else if (ceiling && bare > ceiling.count) {
-      problems.push(`${path}: the word "${UP}" (any case) appears ${bare} times, over its ceiling of ${ceiling.count} ("${ceiling.group}"). A new occurrence is not allowed; use a neutral word.`);
-    } else if (ceiling && bare < ceiling.count) {
-      problems.push(`${path}: the word "${UP}" (any case) now appears ${bare} time(s), under its ceiling of ${ceiling.count}. Lower the ceiling in scripts/neutral-names.allow.json to ${bare}${bare ? "" : " (remove the entry)"} so the room cannot be reused.`);
+      problems.push(`${path}:${hit.line}: "${hit.name}" carries the base product's old role word. Use a neutral name (member, owner, operator, workspace); to READ data stored under it, build it from agent/lib/legacy-member.ts; for a recorded value (a hash, an encoded path) write the JSON escape (scripts/lib/json-text.mjs).`);
     }
   }
-  for (const [file] of allow.ceilings) {
-    if (!baseCounts.has(file) && !problems.some((p) => p.startsWith(`${file}:`))) {
-      problems.push(`${file}: has a ceiling but no occurrence (or no longer exists). Remove its entry from scripts/neutral-names.allow.json.`);
-    }
-  }
-  for (const name of allow.contractNames) {
-    if (!seen.has(name)) problems.push(`contract "${name}" no longer occurs anywhere. Remove it from scripts/neutral-names.allow.json: the list only ever shrinks to match the tree.`);
-  }
-  return { problems, seenContracts: seen, baseCounts };
+  return { problems, files };
 }

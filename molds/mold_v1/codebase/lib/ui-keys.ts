@@ -1,7 +1,7 @@
 /**
  * A stored KEY (a record field, a workbook column, an export section) as a person reads it, in the profile's words.
  *
- * Keys never move: the API, the database and the workbook keep `customerId`, `customer_id`, `fdeOwner`. Where the UI
+ * Keys never move: the API, the database and the workbook keep `customerId`, `customer_id`, `accountOwner`. Where the UI
  * shows one to a person (a data-room sheet's column header, a Markdown or JSON export, a JSON / JSONL viewer, an API
  * error naming a field), it shows the key the MODEL is given for it (agent/lib/agent-vocabulary.ts: `customer_id` ->
  * `company_id`), so a person and the agent name a column the same way. The owner key, whose name still carries the
@@ -59,8 +59,8 @@ export function speakKey(key: string): string {
 
 /** camelCase key -> "Words Like This", spoken: `customerId` -> "Company Id"; the owner key -> the owner label. */
 export function humanizeKey(key: string): string {
-  // The owner key under any of its names, the stored one (fde_owner) and the neutral one beside it
-  // (account_owner, drizzle/0028_neutral_owner_columns.sql): the profile's owner label, under every profile.
+  // The owner key (account_owner, and the key it was stored under before drizzle/0028, which an older workbook or
+  // export may still carry): the profile's owner label, under every profile.
   // The second owner's key under any of its names (ae_owner, and secondary_owner beside it,
   // drizzle/0029_neutral_secondary_owner.sql): the profile's label for it, under every profile.
   const owner = ownerKeyLabel(key, W.owner) ?? secondaryOwnerKeyLabel(key, W.secondaryOwner);
@@ -129,7 +129,7 @@ const KEY_SHAPED = /^[a-z][a-z0-9]*(?:(?:[A-Z][a-z0-9]*)+|(?:_[a-z0-9]+)+)$/;
 
 /**
  * A table preview's column header as a person reads it: "customer_id" / "customerId" -> "Account ID" (the
- * profile's word for the record, as keyLabel), "fde_owner" -> the profile's owner label. Column headers should
+ * profile's word for the record, as keyLabel), "account_owner" -> the profile's owner label. Column headers should
  * never read as raw snake_case, and a product KEY never in a record word the deployment does not use. A header
  * that is not key-shaped is the file's own text (a column a person named "Customer"): it is data, and only its
  * case is tidied.

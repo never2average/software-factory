@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME, fillProfileText } from "@/lib/deployment-profile.generated";
-import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/lib/browser-storage";
+import { STORAGE_KEYS } from "@/lib/browser-storage";
 import { startupScript } from "@/lib/startup-fetch";
 import { cn } from "@/lib/utils";
 import "./globals.css";
@@ -49,15 +49,12 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
           CSS in globals.css does the rest. Kept deliberately tiny and
           dependency-free; anything that can throw here blanks the page.
           
-          The keys must match THEME_KEY in _components/theme-toggle.tsx. BOTH are
-          read: the key used to be `fde-theme`, and a person who chose dark before
-          the rename would otherwise get a light flash on every load forever —
-          this script runs before any React code that could migrate the value.
+          The key must match THEME_KEY in _components/theme-toggle.tsx.
         */}
         <script
           dangerouslySetInnerHTML={{
             __html:
-              `try{var s=localStorage,t=s.getItem(${JSON.stringify(STORAGE_KEYS.theme)})||s.getItem(${JSON.stringify(LEGACY_STORAGE_KEYS[STORAGE_KEYS.theme])});if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}`,
+              `try{var s=localStorage,t=s.getItem(${JSON.stringify(STORAGE_KEYS.theme)});if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}`,
           }}
         />
         {/*

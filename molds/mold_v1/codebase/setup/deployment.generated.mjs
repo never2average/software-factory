@@ -49,11 +49,6 @@ export const DEPLOYMENT = {
     "mcp": "workspace-mcp",
     "installSkills": "workspace-install-skill"
   },
-  "legacyCommands": {
-    "login": "fde-login",
-    "mcp": "fde-mcp",
-    "installSkills": "fde-install-skill"
-  },
   "modules": {
     "cli": "./workspace-cli.mjs",
     "login": "./workspace-login.mjs",
@@ -65,4 +60,4 @@ export const DEPLOYMENT = {
   "connect": null,
   "googleSignIn": null
 };
-export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, workPeriods, commands, legacyCommands, modules, configDir, connect, googleSignIn } = DEPLOYMENT;
+export const { packageName, name, slug, tagline, origin, mcpEndpoint, vocabulary, folders, workPeriods, commands, modules, configDir, connect, googleSignIn } = DEPLOYMENT;

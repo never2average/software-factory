@@ -64,8 +64,7 @@ npm run operator:onboard-self -- --name "Your Name" --title "Solutions Engineer"
   --focus "what you own" [--timezone Asia/Kolkata]
 ```
 It resolves your identity from step 2, checks health + local env, and upserts
-`member-profile:<you>` (idempotent — re-run any time to update; a profile an older
-checkout recorded under `fde-profile:<you>` is found and moved to the new key). Green checks = you're
+`member-profile:<you>` (idempotent — re-run any time to update). Green checks = you're
 recorded.
 
 **6. Smoke test.** From your coding agent, ask it to run the MCP's `connector_list`.
@@ -80,13 +79,12 @@ subagents (`research`, `configuration`, `deployment`, `data-migration`,
 ## Where this reads / writes
 
 READ:
-- `~/.config/workspace-mcp/credentials.json` — your stored identity (email only); a sign-in made before the rename is read from `~/.config/fde-mcp/` too
+- `~/.config/workspace-mcp/credentials.json` — your stored identity (email only)
 - `/api/ops/health` — live platform status
 - `.env.local` — presence of `BLOB_READ_WRITE_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`
 
 WRITE (only this):
 - `memories` table, `scope=team`, key `member-profile:<email>` ← your member profile
-  (read under the old `fde-profile:<email>` key too, and moved to the new one on write)
 
 ## Never
 

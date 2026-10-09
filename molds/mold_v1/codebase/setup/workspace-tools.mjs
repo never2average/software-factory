@@ -43,54 +43,19 @@ import { createHash } from "node:crypto";
 
 /* ------------------------------------------------------------------ env names
  *
- * This package's configuration variables, renamed off the base product's role
- * name — and the old spellings, still honoured.
- *
- * `FDE_OPS_URL` and its siblings are typed by a person into an MCP config file
- * on their own laptop, or into a shell, and then forgotten for months. A
- * deployment sold to a desk of analysts that has never heard of the base product's role should
- * not ask them to set a variable named after one; but renaming without reading
- * the old name breaks every config file already written, at the moment an agent
- * starts up and with no obvious cause. So both are read, the new one wins, and
- * using the old one says so once.
- *
- * Disjoint from agent/lib/compat-env.ts on purpose: that file holds the two
- * variables DEPLOYED code reads, which is a different risk (a live project's
- * settings) and lives where the deployed code can import it. Nothing is in both.
- * scripts/check-wire-names.mjs reads these two tables as its only allowance.
+ * This package's configuration variables are all `WORKSPACE_*`: typed by a person
+ * into an MCP config file on their own laptop, or into a shell.
  */
-export const LEGACY_ENV_NAMES = {
-  WORKSPACE_OPS_URL: "FDE_OPS_URL",
-  WORKSPACE_ORG: "FDE_ORG",
-  WORKSPACE_ACTOR: "FDE_ACTOR",
-  WORKSPACE_PRODUCT_NAME: "FDE_PRODUCT_NAME",
-  WORKSPACE_OAUTH_CLIENT_ID: "FDE_OAUTH_CLIENT_ID",
-  WORKSPACE_OAUTH_CLIENT_SECRET: "FDE_OAUTH_CLIENT_SECRET",
-};
-
-/** One warning per variable per process — a per-read warning would drown an MCP session's stderr. */
-const warnedEnv = new Set();
 
 /**
- * `env[name]`, falling back to whatever the variable used to be called.
+ * `env[name]`, trimmed; undefined when unset.
  *
  * `env` is passed in rather than read here: this file is bundled into a Next.js
  * route as well as shipped in the package, and it reads no environment of its
- * own. `onLegacy` is called at most once per old name — stderr in the stdio
- * server, because stdout carries the protocol.
+ * own.
  */
-export function compatEnv(env, name, onLegacy) {
-  const current = env?.[name]?.trim?.() ?? env?.[name];
-  if (current) return current;
-  const legacy = LEGACY_ENV_NAMES[name];
-  if (!legacy) return current;
-  const old = env?.[legacy]?.trim?.() ?? env?.[legacy];
-  if (!old) return current;
-  if (!warnedEnv.has(legacy)) {
-    warnedEnv.add(legacy);
-    onLegacy?.(`${legacy} still works but is the old name for ${name}. Set ${name} instead; ${legacy} will stop being read.`);
-  }
-  return old;
+export function envValue(env, name) {
+  return env?.[name]?.trim?.() ?? env?.[name];
 }
 
 /** The data-room domains, by id, in the data model's order (the host's `ctx.folders` names each one's folder). */
@@ -363,27 +328,10 @@ const TOOLS = [
   },
   {
     /**
-     * THE ONE TOOL NAME THAT WAS NOT USE-CASE AGNOSTIC.
-     *
-     * 58 of the 59 tools here are already neutral (`workspace_list`,
-     * `customer_create`, `connector_secrets`…). This one was `fde_status` — the
-     * base product's role name, in the most prominent identifier of the whole
-     * protocol, on a base that verticals with no engineers and no such role are
-     * stamped from. It reports the workspace, so `workspace_status` is what it
-     * does; a per-deployment name was rejected on purpose, because baking an
-     * identity into a wire contract is the mistake this is undoing.
-     *
-     * `aliases` is the migration, and it is why this is additive. A coding
-     * assistant that has already read `tools/list` in a running conversation
-     * holds `fde_status` and will keep calling it — swapping the name would
-     * break it mid-sentence, with an `unknown tool` it cannot recover from.
-     * Aliases are accepted by `tools/call` (see handleRpc) and NEVER
-     * advertised, so an assistant connecting from now on only ever learns the
-     * new name and nothing new can grow a dependency on the old one. Deleting
-     * this one line removes the alias, once no live conversation still holds it.
+     * The workspace's status. A per-deployment name was rejected on purpose: baking an identity into a wire
+     * contract is a mistake a stamped vertical inherits.
      */
     name: "workspace_status",
-    aliases: ["fde_status"],
     description:
       "START HERE. Who you are signed in as, which workspace you're operating on, what's already set up (connectors/workflows/crons), and the concrete next steps. Call this before anything else — every other tool depends on the identity and workspace it reports.",
     inputSchema: { type: "object", properties: {} },
@@ -518,7 +466,7 @@ const TOOLS = [
         lifecycleStage: { type: "string", description: "e.g. onboarding, live, renewal." },
         status: { type: "string" },
         companyDomain: { type: "string" },
-        fdeOwner: { type: "string" },
+        accountOwner: { type: "string" },
         businessOwnerEmail: { type: "string" },
         technicalOwnerEmail: { type: "string" },
         custom: customInput("account", "customer_create's answer (the stored record)"),

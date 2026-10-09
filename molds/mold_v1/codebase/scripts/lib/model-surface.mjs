@@ -243,7 +243,7 @@ const PROBES = [
   // Nested record keys and stored enum values, written the way the model is told them (v.model()).
   ["upsert_customer", (t, v) => v.model({
     id: SEED_ID,
-    fdeOwner: "analyst@example.com",
+    accountOwner: "analyst@example.com",
     implementation: { rolloutId: "large-caps", implementationStage: "Kickoff", implementationProgressPct: 10, implementationRiskLevel: "Green", blockerOwner: "Customer" },
     deployments: [{ deploymentId: "rep-1", environment: "prod", region: "customer-vpc", deployedVersion: "Q1 FY27", releaseStatus: "deployed", healthStatus: "healthy", lastDeployAt: "2026-07-01" }],
   })],
@@ -274,7 +274,9 @@ async function collectResults(root, vocab) {
   // No database: a session resolves to the default workspace, and its data room is `orgs/<id>/` like any other's.
   const { DEFAULT_ORG } = await import(pathToFileURL(join(AGENT, "lib", "org-context.ts")).href);
   await store.getDataroomStore(DEFAULT_ORG).write(`${FOLDER.accounts}/${SEED_ID}/context.md`, "# Surface Probe Co\n");
-  await store.getDataroomStore(DEFAULT_ORG).write(`${FOLDER.people}/sam-example-com/identity.json`, JSON.stringify({ kind: "internal-fde", email: "sam@example.com", name: "Sam" }));
+  // A roster entry written before MEMBER_KIND, with the value it carried then: the roster still reads it as a member.
+  const { LEGACY_MEMBER_KINDS } = await import(pathToFileURL(join(AGENT, "lib", "member-kind.ts")).href);
+  await store.getDataroomStore(DEFAULT_ORG).write(`${FOLDER.people}/sam-example-com/identity.json`, JSON.stringify({ kind: LEGACY_MEMBER_KINDS[0], email: "sam@example.com", name: "Sam" }));
   const byBase = new Map();
   for (const t of root.tools) byBase.set(t.baseName ?? t.name, t);
   for (const [base, build] of PROBES) {

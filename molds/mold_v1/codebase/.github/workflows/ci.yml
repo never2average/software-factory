@@ -767,7 +767,7 @@ jobs:
 
       # The same bug one layer in, on the identifiers rather than the words: the
       # tool names a coding assistant is served, the environment variables a person
-      # types into an MCP config, and the keys in an analyst's browser. `fde_status`
+      # types into an MCP config, and the keys in an analyst's browser. The old status tool
       # was one of 59 tools and the only one not use-case agnostic — and it survived
       # PR #46 because both existing gates exempt identifiers containing "_". This
       # covers that remainder, reading the tool names from the REAL tool list rather
@@ -792,10 +792,9 @@ jobs:
         if: always()
         run: npm run test:agent-vocabulary
 
-      # And the migration those names rest on, which is invisible in a diff: an
-      # assistant that learned the old tool name is still answered, a deployment
-      # still set with FDE_* still reads it (once, loudly), and an analyst signed in
-      # before the rename is not signed out by it.
+      # And what those names rest on, which is invisible in a diff: every variable and
+      # browser key is read by its neutral name only, the tools are advertised by theirs,
+      # and nothing reads a name the base product's word was in.
       - name: Wire-name migration (behavioural)
         if: always()
         run: npm run test:wire-names
@@ -1109,7 +1108,7 @@ jobs:
 
       # NEUTRAL OWNER COLUMNS (mold_v1-103, PR 4): drizzle/0028 adds customers.account_owner and
       # solutions.solution_owner beside the original owner columns, copies them and keeps each pair equal by a trigger
-      # (the software factory still writes the original in raw SQL). On the live shape with the journal to 0027: the
+      # (the software factory wrote the original in raw SQL then). On the live shape with the journal to 0027: the
       # drift plan after it is empty (no DROP COLUMN, no index drop), a write under either name reads under the other
       # (raw SQL and the app's own paths), and row-level security on both tables is still fail-closed.
       - name: Neutral owner columns, migration on production-shaped data
@@ -1125,6 +1124,16 @@ jobs:
       - name: Neutral second-owner column, migration on production-shaped data
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:secondary-owner-migration-db
+
+      # THE OWNER COLUMNS SWITCH (drizzle/0037): from this release the app names only account_owner and solution_owner;
+      # 0037 fills any neutral value still NULL from the original column, makes solutions' original nullable, drops the
+      # original's index (the drift step refuses an index drop) and moves the stored values that carried the base
+      # product's old word. On the live shape at 0036 with data in the old columns (and drift planted with the trigger
+      # off): every value lands in the neutral column, no row or other value is lost, RLS, policies and grants are
+      # unchanged and fail-closed, the previous release still works in the deploy window, and the drift plan is empty.
+      - name: Owner columns switch, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:owner-columns-switch-db
 
       - name: Cross-tenant isolation
         run: DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" node scripts/test-org-isolation.mjs

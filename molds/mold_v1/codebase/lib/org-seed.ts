@@ -34,7 +34,7 @@ function speaker(profile: DeploymentProfile): Speak {
  * A brand-new workspace used to land completely empty: the wizard finished, the
  * console opened, and every panel said "nothing here yet". That reads as broken
  * rather than new, and it leaves the first member with no example of the tree
- * conventions in docs/FDE_WORKFLOW.md — which is precisely the knowledge the
+ * conventions in docs/OPERATOR_WORKFLOW.md — which is precisely the knowledge the
  * data room depends on and the hardest thing to infer from an empty bucket.
  *
  * So seed the shape, not fake content. Every file below is a real, readable

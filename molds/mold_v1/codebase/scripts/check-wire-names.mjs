@@ -6,7 +6,7 @@
  * `check:ui-vocabulary` keeps the base product's words out of text a person READS in the app.
  * PR #46's own-name gate keeps it out of a published package's file names, bins,
  * README and config folder. Both deliberately exempted identifiers containing
- * `_`, and that exemption is exactly what left `fde_status` — the single most
+ * `_`, and that exemption is exactly what left the old status tool — the single most
  * prominent identifier in the whole protocol, whose description begins "START
  * HERE… every other tool depends on it" — as the one tool of 59 named after a
  * role the buying desk has never heard of.
@@ -23,18 +23,14 @@
  *   3. BROWSER-STORAGE KEYS a source file reads or writes. One of these IS a
  *      signed-in analyst's session.
  *
- * THE ONLY ALLOWANCE is the set of declared backward-compatibility aliases
- * (scripts/lib/wire-names.mjs: `aliases` on a tool definition, LEGACY_ENV_NAMES,
- * LEGACY_APP_ENV_NAMES, LEGACY_STORAGE_KEYS). Those names are read and never
- * advertised, so a connection made before the rename keeps working while nothing
- * new can learn them. Everything else fails: the old ones may stand, a new one
+ * THE ONLY ALLOWANCE is a declared backward-compatibility alias (scripts/lib/wire-names.mjs:
+ * `aliases` on a tool definition; there are none today: the old names are no longer read).
+ * Everything else fails: the old ones may stand, a new one
  * may not be born.
  *
  * The operator tooling (scripts/operator/, `npm run operator:*`) is walked like
- * the rest of scripts/: its own environment variables are read through
- * LEGACY_OPERATOR_ENV (scripts/operator/lib/operator.mjs), neutral name first.
- * Its old npm script names are kept as aliases in package.json, which this gate
- * does not read; scripts/check-neutral-names.mjs lists them as contracts.
+ * the rest of scripts/: its own environment variables are the `WORKSPACE_*` names
+ * (scripts/operator/lib/operator.mjs).
  */
 import { advertisedToolNames, declaredAliases, servedTools, tableValues, walkSources } from "./lib/wire-names.mjs";
 import { envNamesIn, identifierCarriesBaseWord, storageKeysIn, BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
@@ -64,7 +60,7 @@ for (const tool of servedTools()) {
 /* 3a. The canonical key table itself. Every call site goes through STORAGE_KEYS,
  * so a new key is born HERE — as a field name nothing below would recognise. */
 for (const key of tableValues("lib/browser-storage.ts", "STORAGE_KEYS")) {
-  if (identifierCarriesBaseWord(key)) say("lib/browser-storage.ts", `STORAGE_KEYS holds "${key}". A key a person's browser carries is named after what it stores, never after a role the deployment has never heard of; the old spelling belongs in LEGACY_STORAGE_KEYS.`);
+  if (identifierCarriesBaseWord(key)) say("lib/browser-storage.ts", `STORAGE_KEYS holds "${key}". A key a person's browser carries is named after what it stores, never after a role the deployment has never heard of.`);
 }
 
 /* 2 and 3b. Every environment variable read, and every storage key touched.
@@ -78,17 +74,17 @@ for (const file of walkSources()) {
   const deliberate = (index) => /wire-name-ok:/.test(lines[lineOf(index) - 1] ?? "");
   for (const hit of envNamesIn(file.text)) {
     if (!identifierCarriesBaseWord(hit.name) || allowed(hit.name) || deliberate(hit.index)) continue;
-    say(`${file.path}:${lineOf(hit.index)}`, `reads the environment variable ${hit.name}. Read the neutral name and fall back through compatEnv, which warns once when the old name answered.`);
+    say(`${file.path}:${lineOf(hit.index)}`, `reads the environment variable ${hit.name}. Read a neutral name (WORKSPACE_*).`);
   }
   for (const hit of storageKeysIn(file.text)) {
     if (!identifierCarriesBaseWord(hit.name) || allowed(hit.name) || deliberate(hit.index)) continue;
-    say(`${file.path}:${lineOf(hit.index)}`, `uses the browser-storage key "${hit.name}". Go through lib/browser-storage.ts, which reads the new key and falls back to the old one — renaming this outright signs every analyst out.`);
+    say(`${file.path}:${lineOf(hit.index)}`, `uses the browser-storage key "${hit.name}". Name it after what it stores, in lib/browser-storage.ts STORAGE_KEYS.`);
   }
 }
 
 if (problems.length) {
   console.error(`check-wire-names: ${problems.length} identifier(s) on the wire carry the base product's role name "${BASE_PRODUCT_WORD}".`);
-  console.error("A general-purpose base is stamped for verticals that have no such role. Migrate additively: advertise/read the neutral name, accept the old one as a declared alias.\n");
+  console.error("A general-purpose base is stamped for verticals that have no such role. Name it after what it is (WORKSPACE_*, workspace-*, workspace_*).\n");
   for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }

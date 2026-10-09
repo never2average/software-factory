@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * check:neutral-names — the base product's role word appears only where
- * scripts/neutral-names.allow.json says it may (see scripts/lib/neutral-names.mjs
- * for the three kinds of allowance and why each exists), and its record words
+ * check:neutral-names — the base product's old role word appears nowhere in the tree,
+ * in any case, as any part of any name, path or value (scripts/lib/neutral-names.mjs;
+ * it has no allowance), and its record words
  * (customer, deployment, implementation, rollout) are written as prose in base
  * text only under a per-file ceiling (scripts/lib/record-words.mjs), and no data-room
  * folder name is spelled in base code at all: the names are the deployment
@@ -12,7 +12,6 @@
  * profile, one legacy definition and the listed contracts (scripts/lib/period-words.mjs).
  *
  *   node scripts/check-neutral-names.mjs                 the gate (CI)
- *   node scripts/check-neutral-names.mjs --report        bare-word count per file, for lowering ceilings
  *   node scripts/check-neutral-names.mjs --records [prefix] [--lines]
  *                                                        the record words still written as prose, per file (and line)
  *   node scripts/check-neutral-names.mjs --folders [prefix] [--lines]
@@ -35,8 +34,8 @@ const opt = (name) => {
 const ROOT = opt("--root") ?? new URL("..", import.meta.url).pathname;
 const ALLOW = opt("--allow") ?? join(ROOT, "scripts/neutral-names.allow.json");
 
-const allow = readAllowList(ALLOW);
-const { problems, seenContracts, baseCounts } = checkTree(ROOT, allow);
+readAllowList(ALLOW);
+const { problems, files } = checkTree(ROOT);
 
 // The record words (customer, deployment, implementation, rollout) written as prose in base text.
 const recordAllow = readRecordAllow(JSON.parse(readFileSync(ALLOW, "utf8")));
@@ -59,9 +58,6 @@ if (args.includes("--folders")) {
     if (args.includes("--lines")) for (const h of hits) console.log(`        ${h.line || h.at}: [${h.kind} ${h.name}] ${h.text}`);
   }
 }
-if (args.includes("--report")) {
-  for (const [file, n] of [...baseCounts].sort((a, b) => b[1] - a[1])) console.log(`${String(n).padStart(4)}  ${file}`);
-}
 if (args.includes("--records")) {
   // Every prose record word, by file: what to turn into a placeholder (or a word from lib/ui-words.ts) next.
   const only = opt("--records");
@@ -72,7 +68,7 @@ if (args.includes("--records")) {
   }
 }
 if (problems.length) {
-  console.error(`check-neutral-names: ${problems.length} problem(s). The base product's role word is allowed only as a listed contract, under a file's ceiling, or under an exempt path.\n`);
+  console.error(`check-neutral-names: ${problems.length} problem(s). The base product's old role word is allowed nowhere: not in a name, a path, a comment, a fixture or a recorded value.\n`);
   for (const p of problems) console.error(`  - ${p}`);
 }
 if (records.problems.length) {
@@ -92,12 +88,8 @@ if (periods.problems.length) {
   for (const p of periods.problems) console.error(`  - ${p}`);
 }
 if (problems.length || records.problems.length || folders.problems.length || library.problems.length || periods.problems.length) process.exit(1);
-const total = [...baseCounts.values()].reduce((a, b) => a + b, 0);
 const recordTotal = [...records.counts.values()].reduce((a, b) => a + b, 0);
-console.log(
-  `check-neutral-names: every occurrence is accounted for: ${seenContracts.size} listed name(s) (contracts awaiting their migration, and examples), ` +
-    `${total} bare-word occurrence(s) under ${baseCounts.size} file ceiling(s), ${allow.prefixes.length} exempt path(s).`,
-);
+console.log(`check-neutral-names: ${files} file(s) read, and the base product's old role word occurs in none of them or their paths (any case, any position).`);
 console.log(`check-neutral-names: record words as prose in base text: ${recordTotal} under ${records.counts.size} file ceiling(s); every other scanned file carries none.`);
 const folderTotal = [...folders.counts.values()].reduce((a, b) => a + b, 0);
 console.log(`check-neutral-names: stored folder names (${folderNames.length} known: the former ones and the default profile's) spelled in base code: ${folderTotal} under ${folders.counts.size} file ceiling(s); every other scanned file spells none.`);

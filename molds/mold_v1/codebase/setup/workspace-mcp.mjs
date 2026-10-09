@@ -21,7 +21,6 @@
  * Config (env):
  *   BLOB_READ_WRITE_TOKEN   required for the Data Room tools (private blob store)
  *   WORKSPACE_OPS_URL       your deployment's address, e.g. https://app.example.com.
- *                          (Was FDE_OPS_URL; the old name is still read, with a warning.)
  *                          Falls back to the address saved by the login command's `--url`, then
  *                          to the one baked into this package (deployment.generated.mjs).
  *                          The generic package bakes in none — see below.
@@ -43,16 +42,10 @@ import { DEPLOYMENT } from "./deployment.generated.mjs";
 // called <that package>-tools.mjs and <that package>-login.mjs, so a desk that bought one
 // product never finds the base product's initials on a file in their node_modules. Every
 // static import above has already run by the time this does, so DEPLOYMENT is there.
-const { availableTools, compatEnv, createTools, handleRpc, serverInstructions } = await import(DEPLOYMENT.modules.tools);
+const { availableTools, envValue, createTools, handleRpc, serverInstructions } = await import(DEPLOYMENT.modules.tools);
 
-/**
- * Every configuration variable this server reads, by its CURRENT name, with the
- * name it had before the base product's role word came off the wire still
- * honoured underneath (LEGACY_ENV_NAMES in the tools module). The warning goes
- * to stderr, never stdout: stdout is the JSON-RPC transport, and one stray line
- * there desynchronises the client for the rest of the session.
- */
-const env = (name) => compatEnv(process.env, name, (m) => process.stderr.write(`[${DEPLOYMENT.commands.mcp}] ${m}\n`));
+/** Every configuration variable this server reads (all `WORKSPACE_*`). */
+const env = (name) => envValue(process.env, name);
 
 const CMD = DEPLOYMENT.commands;
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -334,8 +327,8 @@ const fail = (id, code, message) => send({ jsonrpc: "2.0", id, error: { code, me
 
 const RPC = {
   tools: TOOLS,
-  // The name the coding agent shows for this server. It was "fde-control" in every
-  // package, so an analyst's agent listed the base product beside their own product's
+  // The name the coding agent shows for this server. It used to be the base product's
+  // name in every package, so an analyst's agent listed it beside their own product's
   // tools; the hosted half of the same server (lib/mcp-server.ts) has always reported
   // this deployment's slug, and the two must not disagree about who they are.
   serverInfo: { name: DEPLOYMENT.slug, title: DEPLOYMENT.name, version: "0.4.0" },

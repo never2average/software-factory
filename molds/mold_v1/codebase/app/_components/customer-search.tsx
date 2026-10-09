@@ -28,9 +28,8 @@ export interface CustomerListItem {
   status?: string | null;
   healthScore?: number | null;
   healthReason?: string | null;
-  /** The account's owner; the API returns it under both names (accountOwner is the neutral one). */
+  /** The account's owner. */
   accountOwner?: string | null;
-  fdeOwner?: string | null;
   openTickets?: number;
   lastTouchDate?: string | null;
   lastTouch?: string | null;
@@ -62,7 +61,7 @@ function liveSummary(c: CustomerListItem): CustomerContextSummary | undefined {
     c.lifecycleStage != null ||
     c.status != null ||
     c.healthReason != null ||
-    (c.accountOwner ?? c.fdeOwner) != null ||
+    c.accountOwner != null ||
     c.lastTouchDate != null ||
     (c.openTickets ?? 0) > 0;
   if (!hasAny) return undefined;
@@ -72,7 +71,7 @@ function liveSummary(c: CustomerListItem): CustomerContextSummary | undefined {
     status: c.status ?? undefined,
     healthScore: c.healthScore ?? undefined,
     healthReason: c.healthReason ?? undefined,
-    fdeOwner: c.accountOwner ?? c.fdeOwner ?? undefined,
+    accountOwner: c.accountOwner ?? undefined,
     openTickets: c.openTickets ?? 0,
     lastTouchDate: c.lastTouchDate ?? undefined,
     lastTouch: c.lastTouch ?? undefined,
@@ -160,7 +159,7 @@ export function CustomerSearchDialog({
             const activity =
               [
                 s?.lastTouchDate ? `Last touched ${s.lastTouchDate}` : null,
-                s?.fdeOwner ? `${DEPLOYMENT_PROFILE.vocabulary.owner} ${s.fdeOwner}` : null,
+                s?.accountOwner ? `${DEPLOYMENT_PROFILE.vocabulary.owner} ${s.accountOwner}` : null,
               ]
                 .filter(Boolean)
                 .join(" · ") || null;

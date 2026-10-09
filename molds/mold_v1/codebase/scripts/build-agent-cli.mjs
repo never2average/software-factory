@@ -244,7 +244,7 @@ function walk(dir) {
 
 const license = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).license ?? "UNLICENSED";
 // Every bin, and now every file behind it, carries the package's own name. A bare `login`
-// shadows the system's on a global install (PR #28), and an `fde-*` bin would collide between
+// shadows the system's on a global install (PR #28), and a bin named for the base product would collide between
 // two deployments' packages. `npx <package> login | mcp | install-skills` is the whole surface:
 // the base product's own command names are NOT aliased here, because a package sold to one desk
 // answering to another company's command names is the leak this build exists to close.

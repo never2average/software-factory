@@ -1,20 +1,21 @@
 /**
- * An account's two owner fields, each under two KEYS (agent/lib/db/owner-columns.ts holds the columns).
+ * An account's owner fields and their KEYS (agent/lib/db/owner-columns.ts holds the columns).
  *
- *   original (the record contract's key)   neutral (the column the app reads first)
- *   fdeOwner   / fde_owner                 accountOwner   / account_owner     drizzle/0028
- *   aeOwner    / ae_owner                  secondaryOwner / secondary_owner   drizzle/0029
+ *   the owner          accountOwner / account_owner      one key (drizzle/0028, 0037)
+ *   the second owner   aeOwner / ae_owner  (original)    beside  secondaryOwner / secondary_owner  (neutral, 0029)
  *
- * The original keys carry one line of work's role words, and the agent's record contract, the workbook and existing
- * profiles still name the fields by them; the neutral keys are what the Ops API also accepts and returns. Wherever a
- * list of account keys is read (a profile's `account_fields.hidden`), naming either key of a pair names the field.
+ * The second owner's original key carries one line of work's role word, and the agent's record contract, the
+ * workbook and existing profiles still name the field by it; the neutral key is what the Ops API also accepts and
+ * returns. Wherever a list of account keys is read (a profile's `account_fields.hidden`), naming either key of a pair
+ * names the field. A profile written before the owner's rename may name the owner by its old key: that key is read
+ * as `accountOwner` (withOwnerKeyTwins).
  *
- * Pure: no imports, safe on the client, the server and in offline scripts.
+ * Pure: imports only the legacy word's one definition; safe on the client, the server and in offline scripts.
  */
+import { LEGACY_OWNER_KEYS } from "./legacy-member.ts";
 
 /** [original, neutral], camelCase, as customerSchema and the Ops API name them. */
 export const OWNER_KEY_TWINS: ReadonlyArray<readonly [original: string, neutral: string]> = [
-  ["fdeOwner", "accountOwner"],
   ["aeOwner", "secondaryOwner"],
 ];
 
@@ -23,9 +24,12 @@ export function recordOwnerKey(key: string): string {
   return OWNER_KEY_TWINS.find(([, neutral]) => neutral === key)?.[0] ?? key;
 }
 
-/** A list of account keys with both keys of every owner pair it names (order kept, no duplicates). */
+/**
+ * A list of account keys with both keys of every owner pair it names (order kept, no duplicates), and the owner's
+ * pre-rename key read as `accountOwner`.
+ */
 export function withOwnerKeyTwins(keys: readonly string[]): string[] {
-  const out = new Set(keys);
+  const out = new Set(keys.map((k) => (k === LEGACY_OWNER_KEYS.accountOwner ? "accountOwner" : k)));
   for (const pair of OWNER_KEY_TWINS) if (pair.some((k) => out.has(k))) for (const k of pair) out.add(k);
   return [...out];
 }

@@ -52,7 +52,7 @@ assert.equal(acme.openCount, 3, "acme has 3 open follow-ups");
 assert.equal(acme.overdueCount, 1);
 assert.equal(acme.dueSoonCount, 1);
 assert.equal(acme.status, "On Track", "customer status is surfaced on the section");
-assert.equal(acme.fdeOwner, "alex.rivera@example.com");
+assert.equal(acme.accountOwner, "alex.rivera@example.com");
 // Rule 3 ranking within a customer: overdue < due_soon < on_track.
 assert.deepEqual(
   idsOf(acme.topFollowUps),

@@ -89,7 +89,7 @@ validating generator; the tests use it.
 
 | File | From |
 |---|---|
-| `<name>-cli.mjs`, `<name>-login.mjs`, `<name>-mcp.mjs`, `<name>-tools.mjs`, `<name>-install-skills.mjs` | `setup/fde-*.mjs`, byte for byte, under this package's unscoped name |
+| `<name>-cli.mjs`, `<name>-login.mjs`, `<name>-mcp.mjs`, `<name>-tools.mjs`, `<name>-install-skills.mjs` | `setup/workspace-*.mjs`, byte for byte, under this package's unscoped name |
 | `deployment.generated.mjs` | generated: `packageName`, `name`, `slug`, `tagline`, `origin`, `mcpEndpoint`, `vocabulary`, `commands`, `modules`, `configDir`, `connect`, `googleSignIn` (the Google client, see below) |
 | `dm.md` | the repo's `dm.md` as this deployment shows it (below) |
 | `skills/<name>/` | the skills this deployment ships (below) |
@@ -114,10 +114,10 @@ the `~/.config` folder.
 the commands) and exits 0. `npx <package> login | mcp | install-skills` go through the
 dispatcher (`<name>-cli.mjs`). The bins all carry the package's own unscoped name: `<name>`
 (the dispatcher), `<name>-login`, `<name>-mcp` and `<name>-install-skills`. There is no bare
-`login` bin (installed globally it shadowed the system's) and no `fde-*` bin (two
-deployments' packages would collide on them).
+`login` bin (installed globally it shadowed the system's) and no bin named for the base
+product (two deployments' packages would collide on them).
 
-The base product's own command words — `fde-login`, `fde-mcp`, `fde-install-skill` — were
+The base product's own command words were
 accepted by the dispatcher as "older names" and are **not** any more. They were never a bin
 in a built package (PR #28 removed those), nothing this build writes points at them, and a
 package a research desk bought should not answer to another company's command names.
@@ -125,13 +125,10 @@ package a research desk bought should not answer to another company's command na
 The generic package in `setup/` is neutral too. Its files are `workspace-cli.mjs`,
 `workspace-login.mjs`, `workspace-mcp.mjs`, `workspace-tools.mjs` and
 `workspace-install-skill.mjs`, and its bins are `workspace-login`, `workspace-mcp` and
-`workspace-install-skill` (plus `cli`, the dispatcher). Everything it was published under
-before still works. Each old `fde-*.mjs` file stays as a one-line re-export of its new file,
-and runs it when run directly. The old bins `fde-login`, `fde-mcp` and `fde-install-skill`
-stay in `setup/package.json` beside the new ones. The dispatcher still accepts the old
-command words (`legacyCommands` in its `deployment.generated.mjs`), and its help never
-shows them. `scripts/test-agent-cli-build.mjs` proves each of these. A built package carries
-none of them.
+`workspace-install-skill` (plus `cli`, the dispatcher). Until 0.13 it also kept the files,
+bins and command words it was published under before (the base product's initials); since
+0.13 it has none of them, and `scripts/test-agent-cli-build.mjs` proves no name of the
+package carries the word.
 
 **Sign-in.** `login` is the Google installed-app flow. `login --email <address>` is for the
 many people with no Google account: it calls `POST /api/auth/email/request` on the
@@ -143,25 +140,20 @@ credentials file (mode 600). The MCP server sends that token as its bearer until
 `expires_at` (epoch seconds); after that it answers with one sentence telling the person to
 sign in again, since these sessions have no refresh. The token is never printed.
 
-**Which address, first match wins:** `--url <address>` or `WORKSPACE_OPS_URL` (the old
-`FDE_OPS_URL` is still read, with a one-line warning); the address saved
+**Which address, first match wins:** `--url <address>` or `WORKSPACE_OPS_URL`; the address saved
 at sign-in; the built-in one. A built package keeps its sign-in in its own folder,
 `~/.config/<package's unscoped name>/<deployment host>/credentials.json`, so signing in to
 a second product cannot repoint the first.
 
-The parent used to be `fde-mcp` in every package — the base product's initials in a folder
-on the customer's laptop. It is the package's own unscoped name rather than its product
+The parent used to be named with the base product's initials in every package — another
+company's name in a folder on the customer's laptop. It is the package's own unscoped name rather than its product
 slug because that is the one string the person typed to install it, and because the slug
 falls back to the base product's name when a deployment ships the default profile.
 
-**An existing sign-in survives the rename.** Every read of the credential goes through
-`readCredentials()` in the login module, which falls back to `~/.config/fde-mcp/<host>/` and,
-on first use, copies what it finds into the new folder (mode 600). The old file is left
-alone: an older copy of the package still installed somewhere keeps working, and a stale
-file costs nothing next to signing someone out with no message. The generic package in
-`setup/` moved the same way: it keeps its sign-in in `~/.config/workspace-mcp/` and reads
-one made earlier from `~/.config/fde-mcp/` (`LEGACY_CONFIG_DIR`), copying it over on first
-use.
+**A sign-in made before the rename** lived in the old folder. Until 0.13 it was read from
+there and copied over; since 0.13 only the package's own folder is read, so a sign-in that
+old needs one `login`. The generic package in `setup/` keeps its sign-in in
+`~/.config/workspace-mcp/`.
 
 **`dm.md`.** The repo's `dm.md` names each domain by a placeholder (`{folder:accounts}`);
 the package's has the folder THIS deployment stores it under (its profile's
@@ -234,22 +226,19 @@ product's role name out of text a person reads in the app; this one keeps it out
 package they install. It runs on every build under a name other than the generic package's,
 and it fails the build (and removes the output) when the base product's role name appears in:
 
-- **a shipped file name** — `fde-login.mjs` in `@example/research-desk` is another company's
-  initials in a housing-finance analyst's `node_modules`;
+- **a shipped file name** — a login module named with the base product's initials in
+  `@example/research-desk` is another company's initials in a housing-finance analyst's
+  `node_modules`;
 - **a bin name or the file it points at**, or an entry in `package.json` `files`;
 - **any line of the README** — including a skill description quoted into it;
 - **the folder it writes on the user's machine**: `configDir` and the command names in the
   built `deployment.generated.mjs` (the single source of every path this package writes),
   plus any literal `~/.config/<name>` left anywhere in the package.
 
-One deliberate exemption remains: **`LEGACY_CONFIG_DIR`** in the login module, which is
-read-only and is how a sign-in made before the rename is found. It reaches the gate as an
-identifier rather than a literal.
-
-The other exemption — tool names and `FDE_*` environment variables, on the grounds that
-renaming a wire identifier is a protocol change rather than a rename — is **gone**. It was
-true, and it was the reason `fde_status` was the one tool of 59 that named a role the buying
-desk has never heard of. A protocol change is done by MIGRATING it, not by exempting it, so
+The exemption the gate once had — tool names and environment variables carrying the word,
+on the grounds that renaming a wire identifier is a protocol change rather than a rename —
+is **gone**. It was true, and it was the reason the old status tool was the one tool of 59
+that named a role the buying desk has never heard of. A protocol change is done by MIGRATING it, not by exempting it, so
 `wireNameGate` (the same file) now covers exactly that remainder on every package, generic
 one included — a tool name and an environment variable are not the package's own name:
 
@@ -257,14 +246,12 @@ one included — a tool name and an environment variable are not the package's o
 - **an environment variable** the package reads;
 - **a browser-storage key** it names, at a call site or behind a `…KEY` constant.
 
-Its only allowance is the set of DECLARED backward-compatibility aliases, derived from the
-code that honours them and never re-typed: `aliases` on a tool definition (accepted by
-`tools/call`, never offered by `tools/list`), `LEGACY_ENV_NAMES` in the tools module, and —
-for the app rather than the package — `LEGACY_APP_ENV_NAMES` and `LEGACY_STORAGE_KEYS`. The
-repo-wide half is `npm run check:wire-names`; the behaviour the aliases promise is executed
-by `npm run test:wire-names`.
+Its only allowance is a DECLARED backward-compatibility alias, derived from the code that
+honours it and never re-typed: `aliases` on a tool definition (accepted by `tools/call`,
+never offered by `tools/list`). There are none today. The repo-wide half is
+`npm run check:wire-names`; `npm run test:wire-names` executes it.
 
-A package whose own name contains the word (`@acme/fde-desk`) names itself, not the base
+A package whose own name contains the word names itself, not the base
 product: the gate strips the package's own name before looking.
 
 `scripts/fixtures/agent-cli-before-rename.json` is the layout a real deployment was published

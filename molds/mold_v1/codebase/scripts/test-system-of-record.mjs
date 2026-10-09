@@ -69,7 +69,7 @@ assert.deepEqual(
     tier: c.tier,
     lifecycleStage: c.lifecycleStage,
     status: c.status,
-    fdeOwner: c.fdeOwner,
+    accountOwner: c.accountOwner,
     companyDomain: c.companyDomain,
     businessOwnerEmail: c.businessOwnerEmail,
     technicalOwnerEmail: c.technicalOwnerEmail,

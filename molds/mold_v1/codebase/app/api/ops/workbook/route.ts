@@ -16,7 +16,7 @@ import { orgContextForRequest } from "@/lib/org-context";
 import { isEmptyStore } from "@/lib/pg-error";
 import { sampleCustomerStore, samplePeople } from "@/agent/lib/sample-data";
 import { W } from "@/lib/ui-words";
-import { withOwnerKeys, withSolutionOwnerKeys } from "@/agent/lib/db/owner-columns";
+import { withOwnerKeys } from "@/agent/lib/db/owner-columns";
 import {
   TRUNCATED_MARK,
   WORKBOOK_ORDER,
@@ -202,14 +202,13 @@ export async function GET(request: NextRequest) {
   const platformBy = byCustomer("platform", NONE, NONE);
   const implBy = byCustomer("implementation", hidden.implementation, listed.implementation);
   const depsBy = byCustomer("deployments", hidden.deployments, listed.deployments);
-  // A solution's owner under both names, read with the fallback (agent/lib/db/owner-columns.ts).
-  const solsBy = byCustomer("solutions", NONE, NONE, withSolutionOwnerKeys);
+  const solsBy = byCustomer("solutions", NONE, NONE);
   const tixBy = byCustomer("tickets", NONE, NONE);
   const intsBy = byCustomer("interactions", NONE, NONE);
 
   const out = rowsOf("customers").map((c) => {
     const id = String(c.customerId);
-    // The account's owner under both names, read with the fallback (agent/lib/db/owner-columns.ts).
+    // The account's second owner under both names, read with the fallback (agent/lib/db/owner-columns.ts).
     const { customerId: _id, customerName, ...rest } = withOwnerKeys(c);
     return {
       id,

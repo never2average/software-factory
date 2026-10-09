@@ -4,7 +4,7 @@
  * The front door (lib/ops-auth.ts) and the agent (agent/channels/eve.ts) used to admit two desktop clients written
  * into both files, so every deployment of this code trusted one project's clients. They read
  * agent/lib/google-audiences.ts now: WORKSPACE_OAUTH_CLIENT_ID (the client the deployment's package is built with)
- * and WORKSPACE_CLI_CLIENT_ID (further clients, comma separated; FDE_CLI_CLIENT_ID still read). check:gates holds
+ * and WORKSPACE_CLI_CLIENT_ID (further clients, comma separated). check:gates holds
  * the two doors to that one helper; this proves the front door's behaviour with real signed tokens, verified
  * against keys this test made (the __setGoogleKeysForTest seam), offline.
  *
@@ -31,7 +31,7 @@ register(
   import.meta.url,
 );
 
-for (const k of ["NEXT_PUBLIC_GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_ID", "WORKSPACE_OAUTH_CLIENT_ID", "WORKSPACE_CLI_CLIENT_ID", "FDE_CLI_CLIENT_ID"]) delete process.env[k];
+for (const k of ["NEXT_PUBLIC_GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_ID", "WORKSPACE_OAUTH_CLIENT_ID", "WORKSPACE_CLI_CLIENT_ID"]) delete process.env[k];
 
 const { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } = await import("jose");
 const { verifyOpsAuthResult, verifiedGoogleAddress, __setGoogleKeysForTest } = await import("../lib/ops-auth.ts");
@@ -86,10 +86,9 @@ await check("WORKSPACE_CLI_CLIENT_ID admits further clients, comma separated", a
   assert.equal(await admits(PREVIOUS), true); assert.equal(await admits(TEAM), true);
   assert.equal(await admits("someone-else.apps.googleusercontent.com"), false);
 });
-await check("a project still set with FDE_CLI_CLIENT_ID keeps admitting that client", async () => {
-  delete process.env.WORKSPACE_CLI_CLIENT_ID; process.env.FDE_CLI_CLIENT_ID = PREVIOUS;
-  const warn = console.warn; console.warn = () => {};
-  try { assert.equal(await admits(PREVIOUS), true); } finally { console.warn = warn; }
+await check("with WORKSPACE_CLI_CLIENT_ID unset, a previous client is no longer admitted", async () => {
+  delete process.env.WORKSPACE_CLI_CLIENT_ID;
+  assert.equal(await admits(PREVIOUS), false);
 });
 
 console.log(`\ntest-google-audiences: ${passed} checks passed`);

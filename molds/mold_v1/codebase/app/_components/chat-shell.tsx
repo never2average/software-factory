@@ -257,9 +257,6 @@ function storageKey(email: string | null) {
    * A workspace you have not opened yet simply starts empty and fills from the
    * server, which is org-scoped and owns the list anyway.
    */
-  // The prefix was `fde-chats:` until the base product's role name came out of the
-  // wire. readStored falls back to it, so nobody's sidebar empties on the deploy
-  // that renamed it — see lib/browser-storage.ts.
   return `${STORAGE_KEYS.chats}:${email ?? "anon"}:${activeOrg() ?? "default"}`;
 }
 

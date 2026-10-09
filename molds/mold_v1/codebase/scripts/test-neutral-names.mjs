@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * test:neutral-names — the neutral-names ratchet catches every kind of new
- * occurrence, lets every declared allowance through, and does not mistake
- * a substring for the word. The same for the record words written as prose
+ * test:neutral-names — the base product's old role word is caught anywhere in a
+ * tree, in any case and position (a name, a path, a hex digest, an encoded URL),
+ * and an allow-list cannot bring an allowance for it back. The same for the record words written as prose
  * (customer, deployment, implementation, rollout; scripts/lib/record-words.mjs):
  * prose in a prompt, a string literal, JSX text or a JSON value is caught; an
  * identifier, a path, a code span, a quoted value, a placeholder or a listed
@@ -17,10 +17,8 @@
  * used) and the real CLI is run against it with a small allow-list. Then the
  * real repository is checked with the real list, which is what CI gates on.
  *
- * On the commit before this one it fails: the check, its library and its list
- * did not exist, and the tree carried ~80 occurrences none of them would allow
- * (the CI database name, comments, a symbol key, an exported identifier, a
- * private package's scope).
+ * The word is built from its one definition (BASE_PRODUCT_WORD), never written
+ * whole here.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -28,6 +26,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { occurrencesIn } from "./lib/neutral-names.mjs";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
+import { escapeRetiredWord } from "./lib/json-text.mjs";
 import { proseRecordWords, recordWordsInFile } from "./lib/record-words.mjs";
 import { legacyFolders } from "./lib/profile-folders.mjs";
 import { storedFolderNames, storedFoldersInFile } from "./lib/stored-folders.mjs";
@@ -40,26 +40,25 @@ const check = (name, ok, detail = "") => {
   if (!ok) failures++;
 };
 
-// The word is assembled, never written whole, so this file needs no allowance of its own
-// beyond its exempt path, and a reader can see which strings are the planted offenders.
-const w = ["f", "d", "e"].join("");
+const w = BASE_PRODUCT_WORD;
 const U = w.toUpperCase();
 const C = w[0].toUpperCase() + w.slice(1);
 
-/* 1. The matcher: words and identifier parts, never substrings. ------------------- */
+/* 1. The matcher: the three letters, anywhere, any case. ----------------------------- */
 const names = (s) => occurrencesIn(s).map((o) => o.name);
-check("a snake_case contract is one name", names(`${w}_owner`).join() === `${w}_owner`);
+check("a snake_case name is one name", names(`${w}_owner`).join() === `${w}_owner`);
 check("an env name is one name", names(`process.env.${U}_OPS_URL`).join() === `${U}_OPS_URL`);
 check("a camelCase part is found", names(`solution${C}Owner`).join() === `solution${C}Owner`);
-check("an npm script is one name", names(`npm run ${w}:new-org -- --x`).join() === `${w}:new-org`);
-check("a colon-joined claim is not an npm script", names(`owner:a:project:${w}-agent:environment:x`).join() === `${w}-agent`);
-check("the bare word is bare", occurrencesIn(`an ${U} owner`).every((o) => o.bare) && occurrencesIn(`${U}s`)[0]?.bare === true);
-check("a regex escape is a boundary", names(`/\\b${U} owner/`).join() === U);
+check("the bare word is found, singular and plural", names(`an ${U} owner, two ${U}s`).join() === `${U},${U}s`);
 check(
-  "substrings are not the word",
-  names(`con${w}ltype wf${"De"}fs Ref${"De"}tail 3${w}41 dead${"bee"}${w}adbeef`).length === 0,
+  "so is a substring: a catalog column, a hex digest, a URL-encoded path, a lockfile hash",
+  names(`con${w}ltype 3${w}41 dead${"bee"}${w}adbeef %2${"F"}${"De"}liveries A${"F"}d${"E"}W`).length === 5,
   JSON.stringify(names(`con${w}ltype 3${w}41`)),
 );
+check("a JSON escape of its first letter is not the word, and parses to the same value", (() => {
+  const text = escapeRetiredWord(JSON.stringify({ k: `x${w}y`, h: `ab${U}9` }));
+  return names(text).length === 0 && JSON.parse(text).k === `x${w}y` && JSON.parse(text).h === `ab${U}9`;
+})());
 
 /* 1b. The record-word matcher: prose, never a name. ------------------------------- */
 const prose = (s, n = new Set(["customer-context", "deployment"])) => proseRecordWords(s, n).map((h) => h.word);
@@ -109,10 +108,6 @@ const run = (dir) => {
   return { status: r.status, out: `${r.stdout}${r.stderr}` };
 };
 const baseAllow = () => ({
-  exempt_paths: { "allow.json": "the list", "history/": "immutable" },
-  contracts: { [`${w}_owner`]: { kind: "database column", plan: "a later PR" } },
-  examples: {},
-  base_word: { vocab: { why: "default profile words", files: { "prompt.md": 2 } } },
   record_words: {
     scan: { "src/**": "source", "prompt.md": "a prompt", "profile.json": "a profile" },
     skip: { "src/**/*.generated.ts": "derived" },
@@ -146,36 +141,28 @@ const clean = {
   "profiles/00-default.json": '{"dataroom": {"domains": {"accounts": {"folder": "Ledger"}}, "uploads_folder": "Inbox"}, "library": {"sources": {}}, "work_periods": {"label": {"singular": "lap", "plural": "laps"}}}\n',
   "src/schema.ts": "// A CYCLE: a time-boxed iteration (a lap).\nexport const cycles = 1;\n",
   "src/wire.ts": 'export const tools = ["lap_list", "lap_create"];\n',
-  "src/a.ts": `select ${w}_owner from customers; // the contract, anywhere\nconst owner = 1;\n`,
-  "prompt.md": `You help an ${U} and their ${U} owner.\n`,
-  "history/0001.json": `{"${w}Thing": "${U}_OLD"}\n`,
+  "src/a.ts": "select account_owner from customers;\nconst owner = 1;\n",
+  "prompt.md": "You help an analyst and their account owner.\n",
+  // A recording that holds the word's letters as a value writes the first one escaped.
+  "history/0001.json": escapeRetiredWord(JSON.stringify({ digest: `ab${w}12` })) + "\n",
 };
 
 const cases = [
-  ["a clean tree passes (contract anywhere, bare word under its ceiling, exempt path unread)", {}, null, 0, /every occurrence is accounted for/],
+  ["a clean tree passes (a recording with the letters escaped included)", {}, null, 0, /occurs in none of them/],
   ["a new identifier fails", { "src/b.ts": `const ${w}Thing = 1;\n` }, null, 1, new RegExp(`src/b\\.ts:1: "${w}Thing"`)],
-  ["a new environment variable fails", { "src/b.ts": `process.env.${U}_NEW\n` }, null, 1, new RegExp(`"${U}_NEW"`)],
-  ["a new camelCase part fails", { "src/b.ts": `x.owner${C}Id\n` }, null, 1, new RegExp(`"owner${C}Id"`)],
-  ["a new npm script fails", { "package.json": `{"scripts":{"${w}:thing":"x"}}\n` }, null, 1, new RegExp(`"${w}:thing"`)],
-  ["a file named with the word fails", { [`src/${w}-helper.ts`]: "export {};\n" }, null, 1, new RegExp(`the path carries "${w}-helper"`)],
+  ["an environment variable fails", { "src/b.ts": `process.env.${U}_NEW\n` }, null, 1, new RegExp(`"${U}_NEW"`)],
+  ["a camelCase part fails", { "src/b.ts": `x.owner${C}Id\n` }, null, 1, new RegExp(`"owner${C}Id"`)],
+  ["an npm script fails", { "package.json": `{"scripts":{"${w}:thing":"x"}}\n` }, null, 1, new RegExp(`"${w}`)],
+  ["a file named with the word fails", { [`src/${w}-helper.ts`]: "export {};\n" }, null, 1, new RegExp(`the path carries "${w}-helper`)],
   ["a directory named with the word fails", { [`src/${w}/x.ts`]: "export {};\n" }, null, 1, new RegExp(`the path carries "${w}"`)],
-  ["the bare word in a file with no ceiling fails", { "src/b.ts": `// ask the ${U}\n` }, null, 1, /in a file with no ceiling/],
-  ["the bare word over its ceiling fails", { "prompt.md": `An ${U}, an ${U} owner, and ${U}s.\n` }, null, 1, /over its ceiling of 2/],
-  ["the bare word under its ceiling fails, naming the new ceiling", { "prompt.md": `You help an ${U}.\n` }, null, 1, /Lower the ceiling .* to 1/],
-  ["a ceiling on a file that no longer has the word fails", { "prompt.md": "You help a member.\n" }, null, 1, /to 0 \(remove the entry\)/],
-  ["a listed contract that no longer occurs fails", { "src/a.ts": "const owner = 1;\n" }, null, 1, new RegExp(`contract "${w}_owner" no longer occurs`)],
-  [
-    "an example name is allowed like a contract",
-    { "src/b.ts": `plant("${w}_reindex")\n` },
-    (a) => ({ ...a, examples: { [`${w}_reindex`]: { kind: "constructed offender", plan: "stays" } } }),
-    0,
-    /accounted for/,
-  ],
-  ["a contract with no plan is refused, not ignored", {}, (a) => ({ ...a, contracts: { [`${w}_owner`]: { kind: "x" } } }), 1, /needs a "kind" and a "plan"/],
-  ["an empty contract list is refused, not treated as no allowance", {}, (a) => ({ ...a, contracts: {} }), 1, /parsed as empty/],
+  ["the bare word in a comment fails", { "src/b.ts": `// ask the ${U}\n` }, null, 1, new RegExp(`src/b\\.ts:1: "${U}"`)],
+  ["the letters inside a hex digest fail", { "data/h.json": `{"sha256": "00${w}99"}\n` }, null, 1, /data\/h\.json:1/],
+  ["an allow-list that brings back contracts is refused", {}, (a) => ({ ...a, contracts: { [`${w}_owner`]: { kind: "x", plan: "y" } } }), 1, /"contracts" is not an allowance any more/],
+  ["an allow-list that brings back a per-file ceiling is refused", {}, (a) => ({ ...a, base_word: {} }), 1, /"base_word" is not an allowance any more/],
+  ["an allow-list that brings back an exempt path is refused", {}, (a) => ({ ...a, exempt_paths: { "history/": "immutable" } }), 1, /"exempt_paths" is not an allowance any more/],
 
   // The record words (customer, deployment, implementation, rollout) written as prose in base text.
-  ["a record word in a prompt with no ceiling fails", { "prompt.md": `You help an ${U} and their ${U} owner with each customer.\n` }, null, 1, /prompt\.md: 1 record word\(s\) written as prose in a file with no ceiling/],
+  ["a record word in a prompt with no ceiling fails", { "prompt.md": "You help an analyst and their account owner with each customer.\n" }, null, 1, /prompt\.md: 1 record word\(s\) written as prose in a file with no ceiling/],
   ["a record word in a string literal fails", { "src/b.ts": 'export const m = `Customer ${id} not found`;\n' }, null, 1, /src\/b\.ts: 1 record word\(s\) written as prose in a file with no ceiling \(1: "Customer"/],
   ["a record word in JSX text fails", { "src/b.tsx": "export const A = () => <p>No deployments yet</p>;\n" }, null, 1, /src\/b\.tsx: 1 record word/],
   ["a record word in a JSON string value fails; a key and a $comment do not", { "profile.json": '{"$comment": "a customer", "customer": {"label": "Stalled customers"}}\n' }, null, 1, /profile\.json: 1 record word/],
@@ -192,9 +179,9 @@ const cases = [
     0,
     /record words as prose in base text: 0 under 0 file ceiling/,
   ],
-  ["a record word over its ceiling fails", { "prompt.md": `An ${U}, an ${U} owner, a customer and a rollout.\n` }, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { why: "another PR", files: { "prompt.md": 1 } } } } }), 1, /prompt\.md: 2 record word\(s\) written as prose, over its ceiling of 1/],
-  ["a record word under its ceiling passes", { "prompt.md": `An ${U}, an ${U} owner and a customer.\n` }, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { why: "another PR", files: { "prompt.md": 1 } } } } }), 0, /record words as prose in base text: 1 under 1 file ceiling/],
-  ["fewer than the ceiling fails, naming the new ceiling", { "prompt.md": `An ${U}, an ${U} owner and a customer.\n` }, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { why: "another PR", files: { "prompt.md": 3 } } } } }), 1, /under its ceiling of 3: lower record_words\.ceilings\["later"\]\.files\["prompt\.md"\] to 1/],
+  ["a record word over its ceiling fails", { "prompt.md": "An analyst, an account owner, a customer and a rollout.\n" }, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { why: "another PR", files: { "prompt.md": 1 } } } } }), 1, /prompt\.md: 2 record word\(s\) written as prose, over its ceiling of 1/],
+  ["a record word under its ceiling passes", { "prompt.md": "An analyst, an account owner and a customer.\n" }, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { why: "another PR", files: { "prompt.md": 1 } } } } }), 0, /record words as prose in base text: 1 under 1 file ceiling/],
+  ["fewer than the ceiling fails, naming the new ceiling", { "prompt.md": "An analyst, an account owner and a customer.\n" }, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { why: "another PR", files: { "prompt.md": 3 } } } } }), 1, /under its ceiling of 3: lower record_words\.ceilings\["later"\]\.files\["prompt\.md"\] to 1/],
   ["a ceiling on a file that carries none fails", {}, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { why: "another PR", files: { "prompt.md": 1 } } } } }), 1, /prompt\.md: has a record-word ceiling but carries none now/],
   ["a ceiling group with no reason is refused", {}, (a) => ({ ...a, record_words: { ...a.record_words, ceilings: { later: { files: { "prompt.md": 1 } } } } }), 1, /needs a "why" and "files"/],
   ["an allow-list with no record_words section is refused, not treated as nothing to check", {}, (a) => ({ ...a, record_words: undefined }), 1, /has no "record_words" section/],

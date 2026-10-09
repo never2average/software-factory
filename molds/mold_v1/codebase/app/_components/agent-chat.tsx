@@ -5017,9 +5017,8 @@ interface StarterCustomer {
   openTickets: number;
   lastTouchDate: string | null;
   lastTouch: string | null;
-  /** The account's owner; the API returns it under both names (accountOwner is the neutral one). */
-  accountOwner?: string | null;
-  fdeOwner: string | null;
+  /** The account's owner. */
+  accountOwner: string | null;
   healthReason: string | null;
 }
 
@@ -5059,7 +5058,7 @@ function useStarterCards(
         const copy = DEPLOYMENT_PROFILE.chat.starter_cards;
         /** The member who owns the account, as a contact the card can hover. */
         const ownerOf = (c: StarterCustomer) => {
-          const owner = c.accountOwner ?? c.fdeOwner;
+          const owner = c.accountOwner;
           return owner
             ? {
                 name: owner

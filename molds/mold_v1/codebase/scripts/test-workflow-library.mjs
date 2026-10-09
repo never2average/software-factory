@@ -9,7 +9,10 @@
  *      nothing provisions no workflow and no recipe;
  *   2. NOTHING WAS LOST: a build whose profile opts in (the one line in library/account-delivery/profile.json)
  *      generates exactly the thirteen workflows and five recipes base code carried on the commit before
- *      (scripts/fixtures/workflow-library/built-in-before.json), byte for byte; a later profile turns it off again;
+ *      (scripts/fixtures/workflow-library/built-in-before.json), byte for byte; a later profile turns it off again.
+ *      The before-image was edited once, in the same words as the library: two prompts name the account's owner by
+ *      `account_owner` (drizzle/0037) instead of the key it had (a stored copy is rewritten at run time,
+ *      withCurrentToolNames); their code skeletons, which the cleanup matches on, are unchanged;
  *   3. a source that cannot be used fails the build with the profile key and the reason; two sources that ship the
  *      same workflow or recipe are refused;
  *   4. recipes are spoken like every other text: placeholders filled under the default profile, the profile's words

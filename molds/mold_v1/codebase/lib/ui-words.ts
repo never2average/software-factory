@@ -51,7 +51,7 @@ export const W = {
   members: V.member.plural,
   Member: upperFirst(V.member.singular),
   Members: upperFirst(V.member.plural),
-  /** The label of the member responsible for an account ("Account owner"). Also the `fde_owner` field's label. */
+  /** The label of the member responsible for an account ("Account owner"). Also the `account_owner` field's label. */
   owner: V.owner,
   /** The label of an account's second owner ("Secondary owner"): the `ae_owner` / `secondary_owner` field's label. */
   secondaryOwner: V.secondary_owner,
@@ -96,14 +96,14 @@ export function an(word: string): string {
 }
 
 /**
- * Stored enum values that carry the member's LEGACY word (agent/lib/legacy-member.ts): a
- * ticket's `ownerTeam` and an account's `valueEvidenceStatus`. Rows keep the value as stored (other systems and
- * the workbook read it, and a write sends it back); a person reads it in this deployment's member word:
- * `ownerTeam` "<legacy>" reads "Member", `valueEvidenceStatus` "<legacy> Verified" reads "Member Verified".
- * Any other field, and any other value, is shown exactly as stored.
+ * Stored enum values that name the member: a ticket's `ownerTeam` ("Member") and an account's `valueEvidenceStatus`
+ * ("Member Verified"). A person reads them in this deployment's member word ("Analyst", "Analyst Verified" under a
+ * relabelling profile). A value stored before drizzle/0037 carries the member's LEGACY word instead
+ * (agent/lib/legacy-member.ts; 0037 rewrote those in the database, a data room or workbook may still hold one) and
+ * reads the same way. Any other field, and any other value, is shown exactly as stored.
  */
 export const LEGACY_MEMBER_VALUE_FIELDS: ReadonlySet<string> = new Set(["ownerTeam", "valueEvidenceStatus"]);
-const LEGACY_VALUE = new RegExp(`^${LEGACY_MEMBER.singular}(?= |$)`);
+const LEGACY_VALUE = new RegExp(`^(?:${LEGACY_MEMBER.singular}|Member)(?= |$)`);
 export function storedValueLabel(field: string, value: string | null | undefined): string | undefined {
   if (value == null) return undefined;
   if (!LEGACY_MEMBER_VALUE_FIELDS.has(field)) return value;

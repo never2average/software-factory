@@ -68,7 +68,7 @@ assert.deepEqual(byDomain.people.sheets.map((s) => s.name), ["Internal Staff", "
 
 const CUSTOMERS_COLUMNS = [
   "customer_id", "customer_name", "tier", "lifecycle_stage", "status", "health_score",
-  "fde_owner", "ae_owner", "arr", "arr_currency", "seats", "external_account_id",
+  "account_owner", "ae_owner", "arr", "arr_currency", "seats", "external_account_id",
   "legal_entity_name", "account_region", "contract_status", "renewal_forecast",
   "renewal_risk_reason", "expansion_potential_arr", "health_reason", "company_domain",
   "vertical", "regulatory_profile", "business_owner_email", "technical_owner_email",
@@ -123,7 +123,7 @@ assert.deepEqual(
 );
 assert.equal(custRow[CUSTOMERS_COLUMNS.indexOf("health_score")], 92, "health_score cell is the NUMBER 92");
 assert.equal(typeof custRow[CUSTOMERS_COLUMNS.indexOf("health_score")], "number", "health_score stays a number");
-assert.equal(custRow[CUSTOMERS_COLUMNS.indexOf("fde_owner")], "quinn@example.com", "fde_owner cell");
+assert.equal(custRow[CUSTOMERS_COLUMNS.indexOf("account_owner")], "quinn@example.com", "account_owner cell");
 
 // Tickets: ids in seed order.
 assert.deepEqual(

@@ -1,9 +1,9 @@
 /**
  * A tool's OLD name, called by the model, runs the tool it names now.
  *
- * A tool renamed to a neutral name (TOOL_ALIASES in agent/lib/agent-vocabulary.ts: `list_fdes` is `list_members`)
+ * A tool renamed to a neutral name (TOOL_ALIASES in agent/lib/agent-vocabulary.ts: the roster tool is `list_members`)
  * is advertised under its new name only. But a model can still ISSUE the old one: it reads it in a session's
- * history from before the rename, or in a stored workflow, app or memory that says "call list_fdes". eve has no
+ * history from before the rename, or in a stored workflow, app or memory that names the old tool. eve has no
  * hidden-but-callable tool (a tool is named by its file, and every tool it has is advertised), and the SDK answers
  * a call to a name it was not given with an "unavailable tool" error. So the call is renamed here, at the model
  * boundary, before the SDK parses it: a tool call whose name was not offered on this call, and is the old name of

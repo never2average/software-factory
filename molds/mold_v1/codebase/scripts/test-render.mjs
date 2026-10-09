@@ -126,6 +126,10 @@ const labels = (html) =>
 // scripts/fixtures/legacy-record-words), every report is byte-identical to the renderer before any label came from
 // the profile (sha256 of its output on this fixture store at NOW, taken from the pre-change code at aaec6b9). The
 // default profile's output differs from that in its words alone: the owner label and the record words.
+// Re-taken once since, for two changes that are not the renderer's words: the overdue pill's background is #fce8e8
+// (its previous hex spelled the retired word, which no file may carry), and the fixture's stored member values are
+// "Member" / "Member Verified" (drizzle/0037). Undoing exactly those two in this output gave aaec6b9's three hashes
+// back, byte for byte, before they were replaced.
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 const { LEGACY_MEMBER } = await import("../agent/lib/legacy-member.ts");
 const { spawnSync: spawnDefault } = await import("node:child_process");
@@ -146,9 +150,9 @@ const titledAsBefore = (html) => {
   assert.notEqual(out, html, "legacy words: the account report's title takes the profile's account word");
   return out;
 };
-assert.equal(sha(titledAsBefore(legacyReport)), "f05a29b032464d1a3135de89b208b3bf2570ac0f5a87d72143421b555218017d", "legacy words: the account report is byte-identical to the pre-change renderer, its title apart");
-assert.equal(sha(titledAsBefore(legacyNorthwind)), "b81ec1e1df00375ea30b20522165b2b57dfa6e84d9d06648a32ccfcac2aef174", "legacy words: a second account report is byte-identical to the pre-change renderer, its title apart");
-assert.equal(sha(legacySummary), "8470806347353e62115de9da24f550da6f8ff7b1a80209625373a28b9da62fd6", "legacy words: the data-room summary is byte-identical to the pre-change renderer");
+assert.equal(sha(titledAsBefore(legacyReport)), "00bd56dbf0d1ed078572a0722cd1a8bc0d8d57c61af34ec828e175be2a89c44c", "legacy words: the account report is byte-identical to the pre-change renderer, its title apart");
+assert.equal(sha(titledAsBefore(legacyNorthwind)), "9c27f1ccd477a6bd1d3f3871d578467e6faa68f3a6c99531abc9c7dd490659a9", "legacy words: a second account report is byte-identical to the pre-change renderer, its title apart");
+assert.equal(sha(legacySummary), "25fa215e336ac4d0e25ee1b7ceee04a33b84ceab721603e111c0413298be5346", "legacy words: the data-room summary is byte-identical to the pre-change renderer");
 const northwind = await renderAccountReport({ customerId: "northwind-cap", now: NOW });
 // The default profile against the legacy record words alone (member and owner as the default has them): the two
 // differ in LABELS only, and every label that differs is a record word swapped for the default profile's.

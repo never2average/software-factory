@@ -347,7 +347,7 @@ or stakeholder role.
 
 Core columns:
 `customer_id`, `customer_name`, `tier`, `lifecycle_stage`, `status`,
-`health_score`, `fde_owner`, `ae_owner`, `arr`, `arr_currency`, `seats`,
+`health_score`, `account_owner`, `ae_owner`, `arr`, `arr_currency`, `seats`,
 `external_account_id`, `legal_entity_name`, `account_region`,
 `contract_status`, `renewal_forecast`, `renewal_risk_reason`,
 `expansion_potential_arr`, `health_reason`, `company_domain`, `vertical`,
@@ -358,11 +358,11 @@ Core columns:
 `last_business_review_date`, `next_business_review_date`, `contract_start`,
 `renewal_date`, `industry_segment`.
 
-The owner column has a neutral twin in the database: `customers.account_owner`
-beside `fde_owner`, and `solutions.solution_owner` beside `solution_fde_owner`
-(drizzle/0028_neutral_owner_columns.sql). A trigger keeps each pair equal
-whichever side a statement writes; the app writes both and reads the neutral
-one first. The sheet columns and their names are unchanged.
+The owner columns are `customers.account_owner` and `solutions.solution_owner`.
+They replaced the original owner columns in three steps: drizzle/0028 added
+them beside the originals and keeps each pair equal by a trigger, drizzle/0037
+made the app read and write only these, and drizzle/0038 drops the originals.
+The sheet columns are `account_owner` and `solution_owner`.
 
 The second owner has one too: `customers.secondary_owner` beside `ae_owner`
 (drizzle/0029_neutral_secondary_owner.sql), kept equal by its own trigger in
@@ -442,7 +442,7 @@ Core columns include:
 `solution_value_realization_stage`, usage metrics, readiness metrics, eval
 status, eval suite/run fields, quality/safety rates, human review fields,
 `readiness_status`, `readiness_gate_failures`, `model_risk_approval_status`,
-`runbook_url`, `solution_next_step`, expansion fields, `solution_fde_owner`,
+`runbook_url`, `solution_next_step`, expansion fields, `solution_owner`,
 and `last_reviewed_date`.
 
 ### Projects
@@ -541,14 +541,14 @@ Allowed `stakeholder_role`: `key_user`, `decision_maker`, `champion`.
 
 ## Cross-sheet rules
 
-- `Accounts.fde_owner` must reference a same-customer `Internal Staff.email`
+- `Accounts.account_owner` must reference a same-customer `Internal Staff.email`
   row with `staff_role = solution_engineer`.
 - `Accounts.ae_owner` must reference a same-customer `Internal Staff.email`
   row with `staff_role = account_executive`.
 - `Accounts.business_owner_email`, `technical_owner_email`, and
   `executive_sponsor_email` should reference same-customer
   `Customer Stakeholders.email` rows.
-- `Solutions.solution_fde_owner` must reference a same-customer solution
+- `Solutions.solution_owner` must reference a same-customer solution
   engineer.
 - `Solutions.workflow_owner_email` and `risk_owner_email` should reference
   same-customer customer stakeholders.

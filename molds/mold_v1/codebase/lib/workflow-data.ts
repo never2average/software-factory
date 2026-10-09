@@ -70,9 +70,7 @@ export function workflowDataFor(orgId: string): WorkflowData {
             tier: customers.tier,
             lifecycleStage: customers.lifecycleStage,
             status: customers.status,
-            // The owner under both names, read with the fallback (agent/lib/db/owner-columns.ts).
             accountOwner: accountOwnerSql,
-            fdeOwner: accountOwnerSql,
             companyDomain: customers.companyDomain,
           })
           .from(customers)

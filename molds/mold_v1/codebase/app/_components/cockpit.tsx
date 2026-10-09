@@ -540,14 +540,14 @@ export function Cockpit({
   // Recently-AUTHORED workflows — so a script the operator just wrote (⌘K, or a
   // future agent tool) appears the moment it lands in the workflows table,
   // BEFORE any run. Polled slower than runs; the list carries the full script.
-  const [wfDefs, setWfDefs] = useState<WorkflowDef[]>([]);
+  const [workflowDefs, setWorkflowDefs] = useState<WorkflowDef[]>([]);
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       if (document.hidden) return;
       try {
         const d = await opsFetch<{ items: WorkflowDef[] }>("/api/ops/workflows");
-        if (alive) setWfDefs(d.items ?? []);
+        if (alive) setWorkflowDefs(d.items ?? []);
       } catch {
         /* best-effort */
       }
@@ -608,7 +608,7 @@ export function Cockpit({
     // as script artifacts (recently-updated + touched by this chat). A workflow
     // that merely RAN is surfaced in the Workflows section as a run — its script
     // is not an artifact of this conversation, so it's intentionally excluded.
-    const authored: CockpitArtifact[] = wfDefs
+    const authored: CockpitArtifact[] = workflowDefs
       .filter((w) => w.script && relevant(w.id) && Date.now() - Date.parse(w.updatedAt) < AUTHORED_WINDOW)
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .map((w) => ({
@@ -620,7 +620,7 @@ export function Cockpit({
         workflowId: w.id,
       }));
     return [...authored, ...merged.artifacts];
-  }, [chatDidWorkflow, chatWorkflowIds, wfDefs, merged.artifacts]);
+  }, [chatDidWorkflow, chatWorkflowIds, workflowDefs, merged.artifacts]);
 
   // The selected run's workflow: the static phase skeleton for the graph and the
   // script behind the (i). The analyzer is server-only, so both come from the API.
@@ -1808,7 +1808,7 @@ function PersonModal({
   const selAcct = d?.accounts.find((a) => a.id === acct) ?? null;
   const inAcct = (c: string | null) => !acct || c === acct;
   const fTickets = SHOW_TICKETS ? (d?.tickets ?? []).filter((t) => inAcct(t.customer)) : [];
-  const fDeps = SHOW_DEPLOYMENTS ? (d?.deployments ?? []).filter((x) => inAcct(x.customer)) : [];
+  const filteredDeps = SHOW_DEPLOYMENTS ? (d?.deployments ?? []).filter((x) => inAcct(x.customer)) : [];
   const fImpls = SHOW_IMPLEMENTATIONS ? (d?.implementations ?? []).filter((x) => inAcct(x.customer)) : [];
   const fTodos = (d?.todos ?? []).filter((t) => inAcct(t.customer));
   // Open the task in the Ops Center TODOs (same window), deep-linked to its
@@ -1927,7 +1927,7 @@ function PersonModal({
                                 {listWithAnd(
                                   [
                                     SHOW_TICKETS ? `${fTickets.length} ticket${fTickets.length === 1 ? "" : "s"}` : null,
-                                    SHOW_DEPLOYMENTS ? countOf(fDeps.length, DEP) : null,
+                                    SHOW_DEPLOYMENTS ? countOf(filteredDeps.length, DEP) : null,
                                     SHOW_IMPLEMENTATIONS ? countOf(fImpls.length, IMP) : null,
                                     `${fTodos.length} TODO${fTodos.length === 1 ? "" : "s"}`,
                                   ].filter((x): x is string => x !== null),
@@ -1971,8 +1971,8 @@ function PersonModal({
                     </OwnPanel>
                     ) : null}
                     {SHOW_DEPLOYMENTS ? (
-                    <OwnPanel icon={RocketIcon} title={DEP.title} count={fDeps.length}>
-                      {fDeps.map((x) => (
+                    <OwnPanel icon={RocketIcon} title={DEP.title} count={filteredDeps.length}>
+                      {filteredDeps.map((x) => (
                         <OwnRow
                           key={`${x.customer}-${x.id}`}
                           dot={healthDot(x.health)}

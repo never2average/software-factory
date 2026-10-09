@@ -120,7 +120,7 @@ BEGIN
        AND con.confrelid = 'public.customers'::regclass
        AND NOT (
          con.conname = (SELECT relname FROM pg_class WHERE oid = con.conrelid) || '_customer_fk'
-         AND con.confdeltype = 'c'
+         AND pg_get_constraintdef(con.oid) LIKE '% ON DELETE CASCADE%'
          AND (SELECT array_agg(a.attname ORDER BY k.n) FROM unnest(con.conkey) WITH ORDINALITY k(attnum, n)
                 JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) = ARRAY['org_id', 'customer_id']::name[]
          AND (SELECT array_agg(a.attname ORDER BY k.n) FROM unnest(con.confkey) WITH ORDINALITY k(attnum, n)

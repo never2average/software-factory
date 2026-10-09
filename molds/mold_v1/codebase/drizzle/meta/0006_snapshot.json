@@ -427,8 +427,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "fde_owner": {
-          "name": "fde_owner",
+        "\u0066de_owner": {
+          "name": "\u0066de_owner",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -621,11 +621,11 @@
         }
       },
       "indexes": {
-        "customers_fde_owner_idx": {
-          "name": "customers_fde_owner_idx",
+        "customers_\u0066de_owner_idx": {
+          "name": "customers_\u0066de_owner_idx",
           "columns": [
             {
-              "expression": "fde_owner",
+              "expression": "\u0066de_owner",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2627,8 +2627,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "solution_fde_owner": {
-          "name": "solution_fde_owner",
+        "solution_\u0066de_owner": {
+          "name": "solution_\u0066de_owner",
           "type": "text",
           "primaryKey": false,
           "notNull": true

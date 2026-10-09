@@ -34,7 +34,6 @@ import {
   type Interaction,
 } from "./customer-schema.ts";
 import { readFileSync } from "node:fs";
-import { compatEnv } from "./compat-env.ts";
 import { wordFor } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
@@ -78,12 +77,12 @@ export interface WorkbookSpec {
  * None by default: the sample staff and stakeholders (data/sample/people.json)
  * are read only in a local demo (DEMO_SAMPLE_DATA=1, ./sample-data.ts). There
  * is no upsert path for people a test can seed through, so
- * WORKSPACE_PEOPLE_SEED (once FDE_PEOPLE_SEED) lets a test point at its own
+ * WORKSPACE_PEOPLE_SEED lets a test point at its own
  * fixture. It is read once, at module load, and is never set in production.
  */
 const peopleSeed = peopleStoreSchema.parse(
-  compatEnv("WORKSPACE_PEOPLE_SEED")
-    ? JSON.parse(readFileSync(compatEnv("WORKSPACE_PEOPLE_SEED") as string, "utf8"))
+  process.env.WORKSPACE_PEOPLE_SEED
+    ? JSON.parse(readFileSync(process.env.WORKSPACE_PEOPLE_SEED, "utf8"))
     : samplePeople(),
 );
 
@@ -98,7 +97,7 @@ const CUSTOMERS_COLUMNS = [
   "lifecycle_stage",
   "status",
   "health_score",
-  "fde_owner",
+  "account_owner",
   "ae_owner",
   "arr",
   "arr_currency",
@@ -300,7 +299,7 @@ const SOLUTIONS_COLUMNS = [
   "expansion_stage",
   "expansion_potential_annual_value_usd",
   "expansion_confidence_pct",
-  "solution_fde_owner",
+  "solution_owner",
   "last_reviewed_date",
 ] as const;
 

@@ -328,7 +328,7 @@ Create a durable, DB-maintained schedule rule that runs a prompt on a cadence (o
 
 === root :: tool :: create_ticket
 create_ticket
-Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store.
+Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's account_owner. Gated on approval since it writes to the shared tickets store.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -946,7 +946,7 @@ List OPEN, URGENT tickets across all accounts from the tickets store — P0-Crit
 
 === root :: tool :: match_customer_by_email
 match_customer_by_email
-Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.
+Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, accountOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -1834,7 +1834,7 @@ Create or update an account record in the system of record (Postgres when config
       "minimum": 0,
       "maximum": 100
     },
-    "fdeOwner": {
+    "accountOwner": {
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -1964,7 +1964,7 @@ Create or update an account record in the system of record (Postgres when config
       "enum": [
         "Not Started",
         "Estimated",
-        "FDE Verified",
+        "Member Verified",
         "Customer Verified"
       ]
     },
@@ -3911,7 +3911,7 @@ Create or update an account record in the system of record (Postgres when config
               }
             ]
           },
-          "solutionFdeOwner": {
+          "solutionOwner": {
             "type": "string",
             "format": "email",
             "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -4861,7 +4861,7 @@ Create or update an account record in the system of record (Postgres when config
               {
                 "type": "string",
                 "enum": [
-                  "FDE",
+                  "Member",
                   "Support",
                   "Engineering",
                   "Data",
@@ -6269,7 +6269,7 @@ List OPEN, URGENT tickets across all accounts from the tickets store — P0-Crit
 
 === root/app-author :: tool :: match_customer_by_email
 match_customer_by_email
-Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.
+Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, accountOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6863,7 +6863,7 @@ and Slack, and write structured updates back.
   reconcile them against the current record (`get_customer`).
 - Write back precisely: append meetings/emails/calls as interactions
   (`record_interaction`), and update stable fields (`lifecycleStage`, `status`,
-  `fdeOwner`, `platform`, `deployments`, `solutions`, `implementation`, and
+  `accountOwner`, `platform`, `deployments`, `solutions`, `implementation`, and
   tickets) with `upsert_customer`. `upsert_customer` gates on approval — that is
   intentional, since you are editing the team's source of truth.
 - Capture new commitments as follow-ups so the follow-ups specialist can chase
@@ -6969,7 +6969,7 @@ Build the DETERMINISTIC workbook spec(s) for an account per docs/data-model.md: 
 
 === root/customer-context :: tool :: create_ticket
 create_ticket
-Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store.
+Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's account_owner. Gated on approval since it writes to the shared tickets store.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -7760,7 +7760,7 @@ Create or update an account record in the system of record (Postgres when config
       "minimum": 0,
       "maximum": 100
     },
-    "fdeOwner": {
+    "accountOwner": {
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -7890,7 +7890,7 @@ Create or update an account record in the system of record (Postgres when config
       "enum": [
         "Not Started",
         "Estimated",
-        "FDE Verified",
+        "Member Verified",
         "Customer Verified"
       ]
     },
@@ -9837,7 +9837,7 @@ Create or update an account record in the system of record (Postgres when config
               }
             ]
           },
-          "solutionFdeOwner": {
+          "solutionOwner": {
             "type": "string",
             "format": "email",
             "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -10787,7 +10787,7 @@ Create or update an account record in the system of record (Postgres when config
               {
                 "type": "string",
                 "enum": [
-                  "FDE",
+                  "Member",
                   "Support",
                   "Engineering",
                   "Data",
@@ -11627,7 +11627,7 @@ Complete the bounded task without waiting for chat input; make side effects idem
 
 === root/data-migration :: tool :: create_ticket
 create_ticket
-Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store.
+Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's account_owner. Gated on approval since it writes to the shared tickets store.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12387,7 +12387,7 @@ Complete the bounded task without waiting for chat input; make side effects idem
 
 === root/follow-ups :: tool :: create_ticket
 create_ticket
-Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store.
+Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's account_owner. Gated on approval since it writes to the shared tickets store.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12786,7 +12786,7 @@ List OPEN, URGENT tickets across all accounts from the tickets store — P0-Crit
 
 === root/follow-ups :: tool :: match_customer_by_email
 match_customer_by_email
-Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.
+Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, accountOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -13184,7 +13184,7 @@ workbooks" below.
 
 1. **`Customers`** — one row per account (the spine): `customer_id`,
    `customer_name`, `tier`, `lifecycle_stage`, `status`, `health_score`,
-   `fde_owner`, `ae_owner`, `arr` (number), `arr_currency`, `seats`,
+   `account_owner`, `ae_owner`, `arr` (number), `arr_currency`, `seats`,
    `external_account_id`, `legal_entity_name`, `account_region`,
    `contract_status`, `renewal_forecast`, `renewal_risk_reason`,
    `expansion_potential_arr`, `health_reason`, `company_domain`, `vertical`,
@@ -13225,7 +13225,7 @@ workbooks" below.
    fields, value metric and evidence fields, modules/status/usage fields,
    eval status/run/pass/coverage fields, quality/safety rates,
    human-review fields, readiness fields, solution-level expansion fields,
-   `solution_fde_owner`, `last_reviewed_date`.
+   `solution_owner`, `last_reviewed_date`.
    Eval results live here (per solution/workflow) — there is no separate Evals sheet.
 5. **`Implementation`** — one row per account: `customer_id`,
    `rollout_id`, `launch_scope_solution_ids`, `implementation_stage`,
@@ -13256,8 +13256,8 @@ workbooks" below.
    `customer_id`, `stakeholder_role`, `name`, `title`, `employer_org`,
    `email`, `last_contact`. This is NOT the same schema as internal staff.
 
-Ownership is single-source: `Customers.fde_owner` / `ae_owner` (emails) are
-canonical account pointers — `Solutions.solution_fde_owner`,
+Ownership is single-source: `Customers.account_owner` / `ae_owner` (emails) are
+canonical account pointers — `Solutions.solution_owner`,
 `Tickets.ticket_owner_email`, and `Internal Staff` rows must resolve to the same
 account-scoped internal staff emails.
 
@@ -13287,7 +13287,7 @@ canonical mapping and the supporting file system per domain.
 ## Write it back, then deliver
 
 1. **Persist** what belongs in the source of truth: `upsert_customer` for record
-   fields (tier, lifecycleStage, status, fdeOwner, aeOwner, platform,
+   fields (tier, lifecycleStage, status, accountOwner, aeOwner, platform,
    deliveries, solutions, projects, and tickets), and
    `record_interaction` for anything you learned from a meeting/call/email so it
    isn't lost.
@@ -14014,7 +14014,7 @@ Create or update an account record in the system of record (Postgres when config
       "minimum": 0,
       "maximum": 100
     },
-    "fdeOwner": {
+    "accountOwner": {
       "type": "string",
       "format": "email",
       "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -14144,7 +14144,7 @@ Create or update an account record in the system of record (Postgres when config
       "enum": [
         "Not Started",
         "Estimated",
-        "FDE Verified",
+        "Member Verified",
         "Customer Verified"
       ]
     },
@@ -16091,7 +16091,7 @@ Create or update an account record in the system of record (Postgres when config
               }
             ]
           },
-          "solutionFdeOwner": {
+          "solutionOwner": {
             "type": "string",
             "format": "email",
             "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
@@ -17041,7 +17041,7 @@ Create or update an account record in the system of record (Postgres when config
               {
                 "type": "string",
                 "enum": [
-                  "FDE",
+                  "Member",
                   "Support",
                   "Engineering",
                   "Data",

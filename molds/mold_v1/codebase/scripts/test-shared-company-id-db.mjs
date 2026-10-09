@@ -169,7 +169,7 @@ try {
   /** Everything one desk holds for the id, as the database has it: a write in the other must leave this identical. */
   const snapshot = async (org) => {
     const out = {};
-    out.customers = await admin`SELECT customer_name, health_reason, fde_owner, status FROM customers WHERE customer_id = ${ID} AND org_id = ${org}`;
+    out.customers = await admin`SELECT customer_name, health_reason, account_owner, status FROM customers WHERE customer_id = ${ID} AND org_id = ${org}`;
     for (const t of TABLES) out[t] = await admin.unsafe(`SELECT to_jsonb(x) - 'created_at' - 'updated_at' AS r FROM ${t} x WHERE customer_id = $1 AND org_id = $2 ORDER BY 1::text`, [ID, org]);
     return JSON.stringify(out);
   };

@@ -56,10 +56,10 @@ for (const person of [
 }
 
 for (const customer of customerStore.customers) {
-  if (customer.fdeOwner) {
+  if (customer.accountOwner) {
     assert(
-      hasInternalStaff(customer.id, customer.fdeOwner, "solution_engineer"),
-      `${customer.id} fdeOwner is not a same-customer solution_engineer: ${customer.fdeOwner}`,
+      hasInternalStaff(customer.id, customer.accountOwner, "solution_engineer"),
+      `${customer.id} accountOwner is not a same-customer solution_engineer: ${customer.accountOwner}`,
     );
   }
   if (customer.aeOwner) {
@@ -106,8 +106,8 @@ for (const customer of customerStore.customers) {
   for (const solution of customer.solutions ?? []) {
     assert(solution.solutionId, `${customer.id} solution missing solutionId`);
     assert(
-      hasInternalStaff(customer.id, solution.solutionFdeOwner, "solution_engineer"),
-      `${customer.id}/${solution.solutionId} solutionFdeOwner is not a same-customer solution_engineer`,
+      hasInternalStaff(customer.id, solution.solutionOwner, "solution_engineer"),
+      `${customer.id}/${solution.solutionId} solutionOwner is not a same-customer solution_engineer`,
     );
     for (const ownerField of ["workflowOwnerEmail", "riskOwnerEmail"]) {
       if (solution[ownerField]) {

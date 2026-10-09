@@ -176,7 +176,7 @@ try {
   assert.equal(seeded?.org_id, A, "the probe account must be seeded in the default workspace");
   // A's company by its whole key (org_id, customer_id): another workspace may hold the same id (mold_v1-118).
   const snapshot = async () =>
-    JSON.stringify(await admin`SELECT c.customer_name, c.health_reason, c.fde_owner,
+    JSON.stringify(await admin`SELECT c.customer_name, c.health_reason, c.account_owner,
       (SELECT count(*) FROM interactions i WHERE i.customer_id = c.customer_id AND i.org_id = c.org_id)::int AS interactions,
       (SELECT json_agg(json_build_array(t.ticket_id, t.ticket_status) ORDER BY t.ticket_id) FROM tickets t WHERE t.customer_id = c.customer_id AND t.org_id = c.org_id) AS tickets
       FROM customers c WHERE c.customer_id = ${X} AND c.org_id = ${A}`);

@@ -5,11 +5,6 @@
     "why": "Design previews with mock records (cards, domain forms, stickloop). app/preview/layout.tsx calls notFound() in production, so no person of any deployment reaches them."
   },
   {
-    "source": "^agent/lib/legacy-member\\.ts$",
-    "literal": "^FDE(s| owner)?$",
-    "why": "The member's legacy word as DATA, in the one module that spells it: the UI matches stored values (a ticket's ownerTeam, a value-evidence status) and the stored owner key against it, and shows the profile's member word or owner label in its place (lib/ui-words.ts storedValueLabel, lib/ui-keys.ts humanizeKey). It is never displayed itself; the rendered-page pass and the default-profile pass prove what a person reads."
-  },
-  {
     "source": "^app/_components/ops/workflows-panel\\.tsx$",
     "literal": "subagent: \"customer-context\"",
     "why": "The base starter workflow script, used only when this deployment keeps the customer-context and follow-ups specialists (STARTER_SCRIPT); a specialist is delegated to by its directory name, which never moves. A deployment that excludes either starts from a one-step script naming a specialist it has."
@@ -53,7 +48,7 @@
   {
     "source": ".*",
     "literal": "^[a-z][a-z0-9]*(?:(?:[A-Z][a-z0-9]*)+|(?:_[a-z0-9]+)+)$",
-    "why": "A key: a record field, API parameter or workbook column (customerId, customer_id, implementationStage, fdeOwner, rollout_id), a base tool name matched in a transcript (list_customers, get_customer), or a code property. Keys never move: the API, the database and the workbook key on them. Where a person reads one — a data-room sheet's header, a Markdown export's field — it is spoken through lib/ui-keys.ts (company_id, \"Covering analyst\")."
+    "why": "A key: a record field, API parameter or workbook column (customerId, customer_id, implementationStage, accountOwner, rollout_id), a base tool name matched in a transcript (list_customers, get_customer), or a code property. Keys never move: the API, the database and the workbook key on them. Where a person reads one — a data-room sheet's header, a Markdown export's field — it is spoken through lib/ui-keys.ts (company_id, \"Covering analyst\")."
   },
   {
     "source": ".*",
@@ -64,11 +59,6 @@
     "source": ".*",
     "literal": "^(customer-context|customer-stakeholders|customer-vpc|impl-customer)$",
     "why": "An identifier: the customer-context specialist's directory name (delegated to by name, never translated; it is listed only when the profile keeps it), the stakeholders tab key, a stored enum value (customer-vpc), or a data-testid (impl-customer)."
-  },
-  {
-    "source": "^lib/browser-storage\\.ts$",
-    "literal": "^fde-[a-z-]+$",
-    "why": "A localStorage / sessionStorage key. Renaming one would drop every person's saved chats, workspace and theme on the next load; a key is never shown."
   },
   {
     "source": ".*",
@@ -102,7 +92,7 @@
   },
   {
     "source": "^lib/ui-keys\\.ts$",
-    "literal": "^(customers?|fdes?|deployments?|implementations?|rollouts?)$",
+    "literal": "^(customers?|deployments?|implementations?|rollouts?)$",
     "why": "lib/ui-keys.ts's own table of which base words a KEY may carry: what it translates FROM, never rendered."
   }
 ]

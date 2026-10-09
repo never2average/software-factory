@@ -306,7 +306,7 @@ function readToken() {
 
 const HOW_TO_GET_A_TOKEN =
   `  Sign in at ${FRONT}, open the browser console and run:\n` +
-  `    copy(localStorage.getItem("workspace-google-token") || localStorage.getItem("fde-google-token"))\n` +
+  `    copy(localStorage.getItem("workspace-google-token"))\n` +
   `  then pass it (Google ID tokens live ~1h, so re-copy when it expires):\n` +
   `    npm run operator:thread-open-perf -- --token "<paste>"\n` +
   `  or:  WORKSPACE_GOOGLE_TOKEN=<paste> npm run operator:thread-open-perf\n` +

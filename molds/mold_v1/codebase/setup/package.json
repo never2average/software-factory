@@ -1,6 +1,6 @@
 {
   "name": "@delivery-agents/cli",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Sign in and connect your coding agent to your workspace over MCP.",
   "type": "module",
   "license": "UNLICENSED",
@@ -8,10 +8,7 @@
     "cli": "./workspace-cli.mjs",
     "workspace-login": "./workspace-login.mjs",
     "workspace-mcp": "./workspace-mcp.mjs",
-    "workspace-install-skill": "./workspace-install-skill.mjs",
-    "fde-login": "./workspace-login.mjs",
-    "fde-mcp": "./workspace-mcp.mjs",
-    "fde-install-skill": "./workspace-install-skill.mjs"
+    "workspace-install-skill": "./workspace-install-skill.mjs"
   },
   "files": [
     "workspace-cli.mjs",
@@ -19,11 +16,6 @@
     "workspace-mcp.mjs",
     "workspace-tools.mjs",
     "workspace-install-skill.mjs",
-    "fde-cli.mjs",
-    "fde-login.mjs",
-    "fde-mcp.mjs",
-    "fde-tools.mjs",
-    "fde-install-skill.mjs",
     "deployment.generated.mjs",
     "dm.md",
     "README.md",

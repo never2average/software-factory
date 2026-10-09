@@ -5,11 +5,11 @@
     "README.md",
     "deployment.generated.mjs",
     "dm.md",
-    "fde-cli.mjs",
-    "fde-install-skill.mjs",
-    "fde-login.mjs",
-    "fde-mcp.mjs",
-    "fde-tools.mjs",
+    "\u0066de-cli.mjs",
+    "\u0066de-install-skill.mjs",
+    "\u0066de-login.mjs",
+    "\u0066de-mcp.mjs",
+    "\u0066de-tools.mjs",
     "package.json",
     "skills/delivered-setup/SKILL.md"
   ],
@@ -17,17 +17,17 @@
     "name": "@probe-scope/research-kit",
     "version": "1.2.3",
     "bin": {
-      "research-kit": "./fde-cli.mjs",
-      "research-kit-login": "./fde-login.mjs",
-      "research-kit-mcp": "./fde-mcp.mjs",
-      "research-kit-install-skills": "./fde-install-skill.mjs"
+      "research-kit": "./\u0066de-cli.mjs",
+      "research-kit-login": "./\u0066de-login.mjs",
+      "research-kit-mcp": "./\u0066de-mcp.mjs",
+      "research-kit-install-skills": "./\u0066de-install-skill.mjs"
     },
     "files": [
-      "fde-cli.mjs",
-      "fde-login.mjs",
-      "fde-mcp.mjs",
-      "fde-tools.mjs",
-      "fde-install-skill.mjs",
+      "\u0066de-cli.mjs",
+      "\u0066de-login.mjs",
+      "\u0066de-mcp.mjs",
+      "\u0066de-tools.mjs",
+      "\u0066de-install-skill.mjs",
       "deployment.generated.mjs",
       "dm.md",
       "README.md",
@@ -35,15 +35,15 @@
     ]
   },
   "readmeLines": [
-    "`npx @probe-scope/research-kit fde-login`, `fde-mcp` and `fde-install-skill` are the same commands under their older",
-    "Which address is used, first match wins: `--url <address>` or `FDE_OPS_URL`, then the address saved",
-    "- `delivered-setup` - Set up a Delivered workspace end to end — verify the fde MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first customer. Use when someone is invited to a Delivered workspace, says \"set up my Delivered workspace\", \"finish the Delivered setup checks\", \"run the Delivered onboarding\", or when the fde MCP tools return 401 / are not wired yet.",
-    "- The sign-in is stored only on your machine (`~/.config/fde-mcp/research.probe-deployment.dev/credentials.json`,",
-    "- The Google client id and secret inside `fde-login.mjs` are for an installed-app client. Google does"
+    "`npx @probe-scope/research-kit \u0066de-login`, `\u0066de-mcp` and `\u0066de-install-skill` are the same commands under their older",
+    "Which address is used, first match wins: `--url <address>` or `\u0046DE_OPS_URL`, then the address saved",
+    "- `delivered-setup` - Set up a Delivered workspace end to end — verify the \u0066de MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first customer. Use when someone is invited to a Delivered workspace, says \"set up my Delivered workspace\", \"finish the Delivered setup checks\", \"run the Delivered onboarding\", or when the \u0066de MCP tools return 401 / are not wired yet.",
+    "- The sign-in is stored only on your machine (`~/.config/\u0066de-mcp/research.probe-deployment.dev/credentials.json`,",
+    "- The Google client id and secret inside `\u0066de-login.mjs` are for an installed-app client. Google does"
   ],
   "loginConfigLines": [
-    " * ~/.config/fde-mcp/credentials.json (mode 600). After that, `fde-mcp.mjs` mints",
-    "  ? join(homedir(), \".config\", \"fde-mcp\", BAKED_HOST)",
-    "  : join(homedir(), \".config\", \"fde-mcp\");"
+    " * ~/.config/\u0066de-mcp/credentials.json (mode 600). After that, `\u0066de-mcp.mjs` mints",
+    "  ? join(homedir(), \".config\", \"\u0066de-mcp\", BAKED_HOST)",
+    "  : join(homedir(), \".config\", \"\u0066de-mcp\");"
   ]
 }

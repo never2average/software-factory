@@ -17,7 +17,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LEGACY_GENERIC_COMMANDS, defaultDeployment, googleSignInGate, googleSignInSettings, isSemver, moduleFileNames, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter, renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate } from "./lib/agent-cli.mjs";
+import { defaultDeployment, googleSignInGate, googleSignInSettings, isSemver, moduleFileNames, npmNameProblems, ownNameGate, parseOrigin, parseSkillFrontmatter, renderDeploymentModule, renderDmMd, safetyGate, unscopedName, wireNameGate } from "./lib/agent-cli.mjs";
 import { hasPlaceholder } from "./lib/profile-words.mjs";
 import { declaredAliases } from "./lib/wire-names.mjs";
 import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
@@ -25,6 +25,11 @@ import { DEFAULT_ORG_SLUG } from "./lib/default-org.mjs";
 import { FOLDER, fillFolders } from "../agent/lib/dataroom-folders.ts";
 /** The base product's role word as a word (not inside an identifier), built from its one spelling. */
 const ROLE_WORD = new RegExp(`(^|[^A-Za-z0-9_])${BASE_PRODUCT_WORD}([^A-Za-z0-9_]|$)`, "i");
+/** The word, lower and upper case, for the names this file plants or proves gone (never written whole here). */
+const OLD = BASE_PRODUCT_WORD;
+const OLD_UP = OLD.toUpperCase();
+/** The old-prefixed variables a developer's own shell may still carry: cleared, like every other address setting. */
+const OLD_ENV = new RegExp(`^(${OLD_UP}_|WORKSPACE_OAUTH_|WEB_ORIGIN$|BLOB_READ_WRITE_TOKEN$)`);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = join(ROOT, "scripts/build-agent-cli.mjs");
@@ -66,13 +71,13 @@ function build(out, { env = {}, args = [] } = {}) {
   });
 }
 function run(file, args = [], env = {}) {
-  // FDE_* cleared: a developer's own shell must not decide which address this resolves to.
-  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FDE_|WORKSPACE_OAUTH_|WEB_ORIGIN$|BLOB_READ_WRITE_TOKEN$)/.test(k)));
+  // Cleared: a developer's own shell must not decide which address this resolves to.
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !OLD_ENV.test(k)));
   return spawnSync(process.execPath, [file, ...args], { encoding: "utf8", input: "", env: { ...clean, HOME, USERPROFILE: HOME, ...env } });
 }
 /** `run`, without blocking this process: the stub server below answers from this event loop. */
 function runAsync(file, args = [], { env = {}, input = "" } = {}) {
-  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FDE_|WORKSPACE_OAUTH_|WEB_ORIGIN$|BLOB_READ_WRITE_TOKEN$)/.test(k)));
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !OLD_ENV.test(k)));
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, [file, ...args], { env: { ...clean, HOME, USERPROFILE: HOME, ...env } });
     let stdout = ""; let stderr = "";
@@ -119,7 +124,7 @@ try {
     assert.ok(pkg.engines.node);
     assert.ok(!("repository" in pkg) && !("homepage" in pkg) && !("scripts" in pkg) && !("dependencies" in pkg));
     // Every bin AND the file behind it carry the package's name: a bare `login` would shadow the
-    // system's on a global install, and an fde-* file is another company's name in node_modules.
+    // system's on a global install, and a file named for the base product is another company's name in node_modules.
     assert.deepEqual(pkg.bin, { "research-kit": "./research-kit-cli.mjs", "research-kit-login": "./research-kit-login.mjs", "research-kit-mcp": "./research-kit-mcp.mjs", "research-kit-install-skills": "./research-kit-install-skills.mjs" });
     assert.deepEqual(pkg.files.slice().sort(), ["README.md", "deployment.generated.mjs", "dm.md", "research-kit-cli.mjs", "research-kit-install-skills.mjs", "research-kit-login.mjs", "research-kit-mcp.mjs", "research-kit-tools.mjs", "skills"]);
   });
@@ -154,10 +159,10 @@ try {
     }
     // The old aliases are gone on purpose: a package a research desk bought must not answer to
     // another company's command names, and nothing this build writes points at them any more.
-    for (const cmd of ["fde-login", "fde-mcp", "fde-install-skill"]) {
+    for (const cmd of [`${OLD}-login`, `${OLD}-mcp`, `${OLD}-install-skill`]) {
       const r = run(join(D, MODULES.cli), [cmd, "--help"]);
       assert.equal(r.status, 1, `${cmd} should not be a command of this package`);
-      assert.match(r.stderr, /Unknown command "fde-/);
+      assert.match(r.stderr, new RegExp(`Unknown command "${OLD}-`));
     }
     assert.match(run(join(D, MODULES.login), ["--help"]).stderr, /--email <address>/);
   });
@@ -170,9 +175,8 @@ try {
     assert.equal(baked.origin, ORIGIN); assert.equal(baked.packageName, NAME); assert.equal(baked.name, baseProfile.product.name);
     assert.deepEqual(baked.vocabulary.account, baseProfile.vocabulary.account);
     assert.ok(c.packageAlternative.login === `npx ${NAME} login` && !new RegExp(`(?:WORKSPACE|${BASE_PRODUCT_WORD.toUpperCase()})_OPS_URL`).test(c.packageAlternative.claudeCommand));
-    // WORKSPACE_OPS_URL since the wire names became use-case agnostic. The package still READS
-    // FDE_OPS_URL, so an instruction copied into a config last month keeps working; what it PRINTS
-    // is the neutral name, because what is printed today is what someone runs next year.
+    // WORKSPACE_OPS_URL since the wire names became use-case agnostic: what is printed today is what
+    // someone runs next year.
     assert.ok(mcpConnect({ origin: ORIGIN, productName: "X" }).packageAlternative.claudeCommand.includes(`WORKSPACE_OPS_URL=${ORIGIN}`), "without a package of its own the alternative still spells the address out");
   });
   const ready = (r) => /Ops API: (\S*) \(([^)]*)\)/.exec(r.stderr);
@@ -184,21 +188,9 @@ try {
     const m = ready(run(join(D, MODULES.mcp), [], { WORKSPACE_OPS_URL: `${OTHER}/` }));
     assert.equal(m[1], OTHER); assert.equal(m[2], "WORKSPACE_OPS_URL");
   });
-  /**
-   * The SAME variable under the name it had before the wire names became use-case
-   * agnostic. Somebody's MCP config has `FDE_OPS_URL` in it and has had for months;
-   * a rename that stopped reading it would point their agent at the baked-in address
-   * instead of the one they chose — silently, and successfully, which is the exact
-   * shape of the bug that made this package refuse to have a default at all.
-   */
-  await check("address: the pre-rename FDE_OPS_URL still overrides it, and says which name answered", () => {
-    const r = run(join(D, MODULES.mcp), [], { FDE_OPS_URL: `${OTHER}/` });
-    const m = ready(r);
-    assert.equal(m[1], OTHER); assert.equal(m[2], "WORKSPACE_OPS_URL");
-    assert.match(r.stderr, /FDE_OPS_URL still works but is the old name for WORKSPACE_OPS_URL/);
-  });
-  await check("address: the new name wins when a config sets both", () => {
-    assert.equal(ready(run(join(D, MODULES.mcp), [], { WORKSPACE_OPS_URL: OTHER, FDE_OPS_URL: "https://stale.probe-deployment.dev" }))[1], OTHER);
+  await check("address: the variable's pre-rename name is not read", () => {
+    const m = ready(run(join(D, MODULES.mcp), [], { [`${OLD_UP}_OPS_URL`]: `${OTHER}/` }));
+    assert.equal(m[1], ORIGIN); assert.equal(m[2], "built into this package");
   });
   await check("address: a saved login outranks the baked-in origin, and WORKSPACE_OPS_URL outranks both", () => {
     const dir = join(HOME, ".config", OWN, new URL(ORIGIN).host);
@@ -243,7 +235,7 @@ try {
   const STUB = `http://127.0.0.1:${stub.address().port}`;
   // ~/.config/<the package's own name>/<the deployment's host>/: see "the credentials folder" below.
   const CRED = join(HOME, ".config", OWN, new URL(ORIGIN).host, "credentials.json");
-  const LEGACY_CRED = join(HOME, ".config", "fde-mcp", new URL(ORIGIN).host, "credentials.json");
+  const LEGACY_CRED = join(HOME, ".config", `${OLD}-mcp`, new URL(ORIGIN).host, "credentials.json");
   const LOGIN = join(D, MODULES.login);
   try {
     await check("happy path: asks for a code, reads it from stdin, stores an email session (mode 600), never prints the token", async () => {
@@ -298,10 +290,7 @@ try {
       assert.equal(emailSessionBearer(null), null);
       assert.equal(parseCode(" 123-456\n"), "123456"); assert.equal(parseCode("12345"), null); assert.equal(parseCode("1234567"), null);
     });
-    // Called by its PRE-RENAME name on purpose: this is a real built package over its real
-    // stdio transport, which is the only place the unadvertised alias can be proven to still
-    // reach the handler an in-flight coding assistant is depending on.
-    const statusCall = [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "fde_status", arguments: {} } }].map((m) => JSON.stringify(m)).join("\n") + "\n";
+    const statusCall = [{ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "workspace_status", arguments: {} } }].map((m) => JSON.stringify(m)).join("\n") + "\n";
     const writeCreds = (expiresAt) => { mkdirSync(dirname(CRED), { recursive: true }); writeFileSync(CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "person@probe-deployment.dev", expires_at: expiresAt, ops_url: STUB }), { mode: 0o600 }); };
     await check("the MCP server sends an unexpired email session as its bearer", async () => {
       calls.length = 0; writeCreds(Math.floor(Date.now() / 1000) + 3600);
@@ -317,25 +306,17 @@ try {
       assert.match(r.stdout, /Your email sign-in has expired\. Run `npx @probe-scope\/research-kit login --email person@probe-deployment\.dev`/);
       assert.deepEqual(calls, []); assert.ok(!r.stdout.includes(SESSION));
     });
-    // THE MIGRATION. Renaming the config folder without this signs out everyone who signed in
-    // before the upgrade - no error, no message, just "please sign in again" on a package they
-    // had working yesterday. The whole rename is not worth one of those.
-    await check("a sign-in made before the folder was renamed still works, and is moved up on first use", async () => {
+    // The folder sign-ins were kept in before the rename is no longer read (0.13): a sign-in that old needs one login.
+    await check("a sign-in left in the folder it had before the rename is not read", async () => {
       rmSync(join(HOME, ".config"), { recursive: true, force: true });
       mkdirSync(dirname(LEGACY_CRED), { recursive: true });
-      writeFileSync(LEGACY_CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "person@probe-deployment.dev", expires_at: Math.floor(Date.now() / 1000) + 3600, ops_url: STUB }), { mode: 0o600 });
-      assert.ok(!existsSync(CRED), "the new folder starts empty");
-      calls.length = 0;
-      const r = await runAsync(join(D, MODULES.mcp), [], { input: statusCall });
-      const text = JSON.parse(r.stdout.trim().split("\n")[0]).result.content[0].text;
-      assert.equal(JSON.parse(text).identity.email, "person@probe-deployment.dev", "the old sign-in still authenticates");
-      assert.ok(calls.every((c) => c.authorization === `Bearer ${SESSION}`));
-      assert.equal(statSync(CRED).mode & 0o777, 0o600, "the copy is as private as the original");
-      assert.deepEqual(JSON.parse(readFileSync(CRED, "utf8")), JSON.parse(readFileSync(LEGACY_CRED, "utf8")));
-      assert.ok(existsSync(LEGACY_CRED), "the old file is left alone: an older installed copy of the package still reads it");
+      writeFileSync(LEGACY_CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "person@probe-deployment.dev", expires_at: Math.floor(Date.now() / 1000) + 3600, ops_url: OTHER }), { mode: 0o600 });
+      const m = /Ops API: (\S*) \(([^)]*)\)/.exec((await runAsync(join(D, MODULES.mcp), [])).stderr);
+      assert.equal(m[1], ORIGIN, "the old file's address is not used"); assert.equal(m[2], "built into this package");
+      assert.ok(!existsSync(CRED), "and nothing is copied out of it");
     });
-    await check("the login command finds it too, and the new file wins once both exist", async () => {
-      // Two different sessions: whichever address comes back proves which file was read.
+    await check("the saved login in the package's own folder is read", async () => {
+      mkdirSync(dirname(CRED), { recursive: true });
       writeFileSync(CRED, JSON.stringify({ kind: "email-session", session_token: SESSION, email: "new@probe-deployment.dev", expires_at: Math.floor(Date.now() / 1000) + 3600, ops_url: OTHER }), { mode: 0o600 });
       const m = /Ops API: (\S*) \(([^)]*)\)/.exec((await runAsync(join(D, MODULES.mcp), [])).stderr);
       assert.equal(m[1], OTHER); assert.equal(m[2], "saved login");
@@ -423,43 +404,41 @@ try {
       ...before.paths.filter((p) => p !== "package.json" && p !== "README.md").map((p) => ({ path: p, bytes: Buffer.alloc(0) })),
       { path: "package.json", bytes: Buffer.from(JSON.stringify(before.packageJson)) },
       { path: "README.md", bytes: Buffer.from(before.readmeLines.join("\n")) },
-      { path: "fde-login.mjs", bytes: Buffer.from(before.loginConfigLines.join("\n")) },
+      { path: `${OLD}-login.mjs`, bytes: Buffer.from(before.loginConfigLines.join("\n")) },
     ];
     const found = ownNameGate(asFiles, { name: before.name });
     const hits = (re) => found.filter((o) => re.test(o));
-    assert.ok(hits(/^fde-(cli|login|mcp|tools|install-skill)\.mjs: a shipped file name/).length >= 5, "the five file names");
-    assert.ok(hits(/the bin "research-kit(-login|-mcp|-install-skills)?" -> \.\/fde-/).length >= 4, "every bin's target");
-    assert.ok(hits(/the packed path "fde-/).length >= 5, "package.json files\\[\\]");
-    assert.ok(hits(/README\.md:\d+: "`npx @probe-scope\/research-kit fde-login`/).length === 1, "the older-names line");
-    assert.ok(hits(/the folder "~\/\.config\/fde-mcp\/" it writes/).length >= 2, "the credentials folder, in the README and in the code");
+    assert.ok(hits(new RegExp(`^${OLD}-(cli|login|mcp|tools|install-skill)\\.mjs: a shipped file name`)).length >= 5, "the five file names");
+    assert.ok(hits(new RegExp(`the bin "research-kit(-login|-mcp|-install-skills)?" -> \\./${OLD}-`)).length >= 4, "every bin's target");
+    assert.ok(hits(new RegExp(`the packed path "${OLD}-`)).length >= 5, "package.json files[]");
+    assert.ok(hits(new RegExp(`README\\.md:\\d+: "\`npx @probe-scope/research-kit ${OLD}-login\``)).length === 1, "the older-names line");
+    assert.ok(hits(new RegExp(`the folder "~/\\.config/${OLD}-mcp/" it writes`)).length >= 2, "the credentials folder, in the README and in the code");
   });
   /**
    * THE REMAINDER #46 LEFT. ownNameGate excludes `_` on both sides, which is why the
-   * package it passed still shipped a tool called `fde_status` and read `FDE_OPS_URL`
-   * from the analyst's MCP config. That exemption is spent: what a package advertises
-   * and what it reads are checked too, with the declared aliases — and only those —
-   * allowed to stand.
+   * package it passed still shipped a status tool and read an `_OPS_URL` variable named
+   * for the base product from the analyst's MCP config. That exemption is spent: what a
+   * package advertises and what it reads are checked too.
    */
   await check("the wire gate passes on this build, and catches a new offender of each kind", () => {
     assert.deepEqual(wireNameGate(builtFiles(D), { aliases: declaredAliases() }), []);
     const plant = (path, body) => wireNameGate([{ path, bytes: Buffer.from(body, "utf8") }], { aliases: declaredAliases() });
-    assert.match(plant(`${OWN}-tools.mjs`, '    name: "fde_reindex",\n')[0] ?? "", /an advertised tool name/);
-    assert.match(plant(`${OWN}-mcp.mjs`, "process.env.FDE_NEW_THING;\n")[0] ?? "", /an environment variable/); // wire-name-ok: the offender this proves the gate catches
-    assert.match(plant(`${OWN}-cli.mjs`, 'localStorage.setItem("fde-new-thing", v);\n')[0] ?? "", /a browser-storage key/); // wire-name-ok: the offender this proves the gate catches
-    // The three the package legitimately still carries, because something still honours them.
-    assert.deepEqual(plant(`${OWN}-tools.mjs`, '    name: "workspace_status",\n    aliases: ["fde_status"],\n'), []);
+    assert.match(plant(`${OWN}-tools.mjs`, `    name: "${OLD}_reindex",\n`)[0] ?? "", /an advertised tool name/);
+    assert.match(plant(`${OWN}-mcp.mjs`, `process.env.${OLD_UP}_NEW_THING;\n`)[0] ?? "", /an environment variable/);
+    assert.match(plant(`${OWN}-cli.mjs`, `localStorage.setItem("${OLD}-new-thing", v);\n`)[0] ?? "", /a browser-storage key/);
+    assert.deepEqual(plant(`${OWN}-tools.mjs`, '    name: "workspace_status",\n'), []);
     assert.deepEqual(plant(`${OWN}-mcp.mjs`, "const a = process.env.WORKSPACE_OPS_URL;\n"), []);
   });
-  await check("the built package advertises the neutral tool name and still answers the old one", () => {
+  await check("the built package advertises the neutral tool name and carries no other", () => {
     const tools = readFileSync(join(D, MODULES.tools), "utf8");
     assert.ok(tools.includes('name: "workspace_status"'), "the advertised name");
-    assert.ok(tools.includes('aliases: ["fde_status"]'), "the unadvertised alias an in-flight assistant still calls");
-    // The README an analyst reads names neither: a tool name is not instructions.
-    assert.ok(!/fde_status/.test(readFileSync(join(D, "README.md"), "utf8")));
+    assert.ok(!tools.includes("aliases: ["), "no alias");
+    // Nothing the package ships carries the word at all, in any case or position.
+    for (const f of builtFiles(D)) assert.ok(!f.bytes.toString("utf8").toLowerCase().includes(OLD), f.path);
   });
   await check("a package whose own name contains the word is not accused of naming the base product", () => {
-    const own = { path: "fde-desk-login.mjs", bytes: Buffer.from(`stored in ~/.config/fde-desk/host/credentials.json`) };
-    assert.deepEqual(ownNameGate([own], { name: "@acme/fde-desk" }), []);
+    const own = { path: `${OLD}-desk-login.mjs`, bytes: Buffer.from(`stored in ~/.config/${OLD}-desk/host/credentials.json`) };
+    assert.deepEqual(ownNameGate([own], { name: `@acme/${OLD}-desk` }), []);
     assert.equal(ownNameGate([own], { name: "@acme/research-kit" }).length, 2);
   });
   const packList = (dir) => JSON.parse(spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: dir, encoding: "utf8" }).stdout)[0].files.map((f) => f.path).sort();
@@ -501,7 +480,7 @@ try {
     const bin = join(TMP, "bin"); mkdirSync(bin, { recursive: true });
     for (const opener of ["xdg-open", "open"]) { writeFileSync(join(bin, opener), "#!/bin/sh\nexit 0\n"); chmodSync(join(bin, opener), 0o755); }
     const authUrl = (env = {}) => new Promise((done, fail) => {
-      const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(FDE_|WORKSPACE_OAUTH_)/.test(k)));
+      const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith(`${OLD_UP}_`) && !k.startsWith("WORKSPACE_OAUTH_")));
       const child = spawn(process.execPath, [join(D, MODULES.login)], { env: { ...clean, HOME, USERPROFILE: HOME, PATH: `${bin}:${process.env.PATH}`, ...env } });
       let err = "";
       const timer = setTimeout(() => { child.kill(); fail(new Error(`no sign-in address printed: ${err}`)); }, 15000);
@@ -576,67 +555,43 @@ try {
     const expected = renderDeploymentModule(defaultDeployment({ packageName: "@delivery-agents/cli", profile: base, slug: productSlug(base.product.name) }));
     assert.equal(readFileSync(join(ROOT, "setup/deployment.generated.mjs"), "utf8"), expected);
   });
-  // The generic package's names were the base product's until PR 3 of the neutral-names plan.
-  // The new ones are what a person is shown; every old one still works.
+  // The generic package's names were the base product's until PR 3 of the neutral-names plan, kept as aliases until
+  // 0.13. Since then it carries only the workspace-* names.
   const NEW_FILES = ["workspace-cli.mjs", "workspace-login.mjs", "workspace-mcp.mjs", "workspace-tools.mjs", "workspace-install-skill.mjs"];
-  const OLD_FILES = ["fde-cli.mjs", "fde-login.mjs", "fde-mcp.mjs", "fde-tools.mjs", "fde-install-skill.mjs"];
+  const OLD_COMMANDS = [`${OLD}-login`, `${OLD}-mcp`, `${OLD}-install-skill`];
   const S = (f) => join(ROOT, "setup", f);
-  await check("its pack list: the five workspace-* files, the five old-name re-exports, the generated module", () => {
-    assert.deepEqual(packList(join(ROOT, "setup")), ["README.md", "deployment.generated.mjs", "dm.md", ...OLD_FILES, "package.json", "skills/delivered-setup/SKILL.md", ...NEW_FILES].sort());
+  await check("its pack list: the five workspace-* files and the generated module, and no file carries the word", () => {
+    const list = packList(join(ROOT, "setup"));
+    assert.deepEqual(list, ["README.md", "deployment.generated.mjs", "dm.md", "package.json", "skills/delivered-setup/SKILL.md", ...NEW_FILES].sort());
+    for (const f of list) assert.ok(!readFileSync(S(f), "utf8").toLowerCase().includes(OLD), `${f} carries the word`);
   });
-  await check("its bins: workspace-* are the commands, and every old bin still runs the same file", () => {
+  await check("its bins: the workspace-* commands and the dispatcher, nothing else", () => {
     const { bin } = JSON.parse(readFileSync(S("package.json"), "utf8"));
     assert.deepEqual(bin, {
       cli: "./workspace-cli.mjs",
       "workspace-login": "./workspace-login.mjs", "workspace-mcp": "./workspace-mcp.mjs", "workspace-install-skill": "./workspace-install-skill.mjs",
-      "fde-login": "./workspace-login.mjs", "fde-mcp": "./workspace-mcp.mjs", "fde-install-skill": "./workspace-install-skill.mjs",
     });
     for (const target of Object.values(bin)) assert.ok(statSync(S(target)).mode & 0o100, `${target} is executable`);
   });
-  await check("it still has no default address and says so, under the new names", () => {
+  await check("it still has no default address and says so", () => {
     const r = run(S("workspace-mcp.mjs"));
     assert.match(r.stderr, /WORKSPACE_OPS_URL is not set/);
-    assert.match(r.stderr, /^\[workspace-mcp\]/m, "the server names itself by the new command");
+    assert.match(r.stderr, /^\[workspace-mcp\]/m, "the server names itself by its command");
     const help = run(S("workspace-cli.mjs"), ["--help"]);
     assert.equal(help.status, 0); assert.match(help.stderr, /NO default address/); assert.match(help.stderr, /npx @delivery-agents\/cli workspace-login --url <address>/);
     assert.match(help.stderr, /npx @delivery-agents\/cli workspace-mcp /);
-    for (const old of Object.values(LEGACY_GENERIC_COMMANDS)) assert.ok(!help.stderr.includes(old), `the help shows only the new names, not ${old}`);
     assert.equal(run(S("workspace-cli.mjs")).status, 1, "bare invocation of the generic package is still an error");
     assert.equal(ready(run(S("workspace-mcp.mjs"), [], { WORKSPACE_OPS_URL: OTHER }))[1], OTHER);
-    assert.equal(ready(run(S("workspace-mcp.mjs"), [], { FDE_OPS_URL: OTHER }))[1], OTHER, "and under the name that variable had before the rename");
+    assert.match(run(S("workspace-mcp.mjs"), [], { [`${OLD_UP}_OPS_URL`]: OTHER }).stderr, /WORKSPACE_OPS_URL is not set/, "the variable's old name is not read");
     assert.match(run(S("workspace-login.mjs"), ["--help"]).stderr, /^workspace-login - sign in/);
   });
-  await check("the old file names still run: node setup/fde-mcp.mjs, fde-cli.mjs, fde-login.mjs, fde-install-skill.mjs", () => {
-    assert.equal(ready(run(S("fde-mcp.mjs"), [], { WORKSPACE_OPS_URL: OTHER }))[1], OTHER, "an MCP config naming setup/fde-mcp.mjs starts the same server");
-    assert.equal(run(S("fde-cli.mjs"), ["--help"]).stderr, run(S("workspace-cli.mjs"), ["--help"]).stderr);
-    const login = run(S("fde-login.mjs"), ["--help"]);
-    assert.equal(login.status, 0, login.stderr); assert.equal(login.stderr, run(S("workspace-login.mjs"), ["--help"]).stderr, "run directly, the old login file runs the login command");
-    const skills = run(S("fde-install-skill.mjs"), ["--help"]);
-    assert.equal(skills.status, 0, skills.stderr); assert.match(skills.stderr, /install the Delivered agent skills/);
-  });
-  await check("the dispatcher answers the old command words too, and never shows them", () => {
-    for (const [old, now] of [["fde-login", "workspace-login"], ["fde-install-skill", "workspace-install-skill"]]) {
-      const a = run(S("workspace-cli.mjs"), [old, "--help"]);
-      const b = run(S("workspace-cli.mjs"), [now, "--help"]);
-      assert.equal(a.status, 0, `${old}: ${a.stderr}`); assert.equal(a.stderr, b.stderr, `${old} runs what ${now} runs`);
-    }
-    for (const cmd of ["fde-mcp", "workspace-mcp", "mcp"]) assert.equal(ready(run(S("workspace-cli.mjs"), [cmd], { WORKSPACE_OPS_URL: OTHER }))?.[1], OTHER, cmd);
+  await check("the dispatcher answers the workspace-* words and the short ones, and not the old command words", () => {
+    for (const cmd of ["workspace-mcp", "mcp"]) assert.equal(ready(run(S("workspace-cli.mjs"), [cmd], { WORKSPACE_OPS_URL: OTHER }))?.[1], OTHER, cmd);
+    for (const old of OLD_COMMANDS) assert.equal(run(S("workspace-cli.mjs"), [old, "--help"]).status, 1, `${old} is not a command`);
     const unknown = run(S("workspace-cli.mjs"), ["nope"]);
     assert.match(unknown.stderr, /Try: workspace-login, workspace-mcp, workspace-install-skill/);
   });
-  await check("each old file re-exports exactly the new module's bindings, and importing the old login runs no sign-in", async () => {
-    const pairs = [["fde-tools.mjs", "workspace-tools.mjs"], ["fde-login.mjs", "workspace-login.mjs"]];
-    for (const [old, now] of pairs) {
-      const a = await import(S(old));
-      const b = await import(S(now));
-      assert.deepEqual(Object.keys(a).sort(), Object.keys(b).sort(), `${old} exports what ${now} does`);
-      for (const k of Object.keys(b)) assert.equal(a[k], b[k], `${old}.${k} is the same binding`);
-    }
-    // An import (here, from this test) is not a run: the guard only fires for the file node was asked to run.
-    const { createTools } = await import(S("fde-tools.mjs"));
-    assert.equal(typeof createTools, "function");
-  });
-  await check("installed from the packed tarball, the new bins and the old ones run the same commands", () => {
+  await check("installed from the packed tarball, the bins run their commands", () => {
     const inst = join(TMP, "generic-install"); mkdirSync(inst);
     const pack = spawnSync("npm", ["pack", "--json", "--pack-destination", inst], { cwd: join(ROOT, "setup"), encoding: "utf8" });
     assert.equal(pack.status, 0, pack.stderr);
@@ -644,48 +599,38 @@ try {
     const add = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--offline", "--ignore-scripts", "--prefix", inst, tgz], { encoding: "utf8" });
     assert.equal(add.status, 0, add.stderr);
     const binDir = join(inst, "node_modules", ".bin");
-    for (const [old, now] of [["fde-login", "workspace-login"], ["fde-install-skill", "workspace-install-skill"]]) {
-      const a = run(join(binDir, old), ["--help"]);
-      const b = run(join(binDir, now), ["--help"]);
-      assert.equal(b.status, 0, `${now}: ${b.stderr}`); assert.equal(a.status, 0, `${old}: ${a.stderr}`);
-      assert.equal(a.stderr, b.stderr);
-    }
-    for (const cmd of ["fde-mcp", "workspace-mcp"]) assert.equal(ready(run(join(binDir, cmd), [], { WORKSPACE_OPS_URL: OTHER }))?.[1], OTHER, cmd);
+    for (const now of ["workspace-login", "workspace-install-skill"]) assert.equal(run(join(binDir, now), ["--help"]).status, 0, now);
+    assert.equal(ready(run(join(binDir, "workspace-mcp"), [], { WORKSPACE_OPS_URL: OTHER }))?.[1], OTHER);
+    for (const old of OLD_COMMANDS) assert.ok(!existsSync(join(binDir, old)), `no ${old} bin`);
   });
   await check("no product word is left in setup/*.mjs outside the generated module", () => {
-    for (const f of [...NEW_FILES, ...OLD_FILES]) {
+    for (const f of NEW_FILES) {
       const t = readFileSync(S(f), "utf8");
       assert.ok(!new RegExp(`delivery-agents|Delivered|${DEFAULT_ORG_SLUG}`, "i").test(t), `${f} names a product`);
     }
   });
   await check("and no sibling module's FILE NAME either: they come from the generated module", () => {
     // If a source spelled "./workspace-tools.mjs", a package built under another name would import a
-    // file that is not in it. This is what lets the five sources be copied byte for byte. (The
-    // old-name re-exports name their new file; they are never copied into a built package.)
+    // file that is not in it. This is what lets the five sources be copied byte for byte.
     for (const f of NEW_FILES.filter((x) => x !== "workspace-tools.mjs")) {
       const code = readFileSync(S(f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       const imports = [...code.matchAll(/from\s+"(\.\/[^"]+)"|import\(\s*"(\.\/[^"]+)"/g)].map((m) => m[1] ?? m[2]);
       assert.deepEqual(imports, ["./deployment.generated.mjs"], `${f} imports a sibling by name: ${imports.join(", ")}`);
     }
   });
-  await check("its sign-in folder is ~/.config/workspace-mcp/, and a sign-in in the old ~/.config/fde-mcp/ is read and copied over", async () => {
+  await check("its sign-in folder is ~/.config/workspace-mcp/, and nothing else is read", async () => {
     const login = await import(S("workspace-login.mjs"));
     const { homedir } = await import("node:os");
     assert.equal(login.CRED_PATH, join(homedir(), ".config", "workspace-mcp", "credentials.json"));
-    assert.equal(login.LEGACY_CRED_PATH, join(homedir(), ".config", "fde-mcp", "credentials.json"));
-    // In a child with its own HOME, through the real default paths: nobody who signed in before is signed out.
+    assert.ok(!("LEGACY_CRED_PATH" in login), "no second folder");
     const home = join(TMP, "generic-home");
-    const legacy = join(home, ".config", "fde-mcp", "credentials.json");
-    mkdirSync(dirname(legacy), { recursive: true });
-    writeFileSync(legacy, JSON.stringify({ email: "before@example.com", refresh_token: "r" }));
-    const probe = `const l = await import(${JSON.stringify(S("fde-login.mjs"))}); process.stdout.write(JSON.stringify(await l.readCredentials()));`;
+    const old = join(home, ".config", `${OLD}-mcp`, "credentials.json");
+    mkdirSync(dirname(old), { recursive: true });
+    writeFileSync(old, JSON.stringify({ email: "before@example.com", refresh_token: "r" }));
+    const probe = `const l = await import(${JSON.stringify(S("workspace-login.mjs"))}); process.stdout.write(JSON.stringify(await l.readCredentials()));`;
     const r = spawnSync(process.execPath, ["--input-type=module", "-e", probe], { encoding: "utf8", env: { ...process.env, HOME: home, USERPROFILE: home } });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(JSON.parse(r.stdout).email, "before@example.com");
-    const moved = join(home, ".config", "workspace-mcp", "credentials.json");
-    assert.equal(JSON.parse(readFileSync(moved, "utf8")).email, "before@example.com", "copied to the new folder on first use");
-    assert.equal(statSync(moved).mode & 0o777, 0o600);
-    assert.ok(existsSync(legacy), "the old file is left alone, for an older copy of the package");
+    assert.equal(JSON.parse(r.stdout), null, "a sign-in in the folder it had before the rename is not read");
   });
 
   console.log("probe profile + agent-kit");
@@ -824,11 +769,11 @@ try {
   await plant("a disallowed file type", { "run.sh": "#!/bin/sh\necho hi\n" }, /run\.sh: not on the allowlist/);
   await plant("an environment file", { ".env.local": "A=1\n" }, /\.env\.local: an environment file/);
   await plant("an email address", { "notes.md": "Ask priya.sharma@somebank.co.in for access.\n" }, /an email address that is not on the allowlist/);
-  await plant("the generic package's name", { "notes.md": "Run npx @delivery-agents/cli fde-login.\n" }, /names another package/);
+  await plant("the generic package's name", { "notes.md": `Run npx @delivery-agents/cli ${OLD}-login.\n` }, /names another package/);
   // End to end through the real builder, not just the pure gate: a pack that adds a file named
   // after the base product, or that tells the person to look in the old folder, fails the build.
-  await plant("a shipped file named after the base product", { "fde-notes.md": "# Notes\n" }, /fde-notes\.md: a shipped file name carries the base product's name/);
-  await plant("a pack naming the old credentials folder", { "notes.md": "Your login is in ~/.config/fde-mcp/.\n" }, /the folder "~\/\.config\/fde-mcp\/" it writes on the user's machine/);
+  await plant("a shipped file named after the base product", { [`${OLD}-notes.md`]: "# Notes\n" }, new RegExp(`${OLD}-notes\\.md: a shipped file name carries the base product's name`));
+  await plant("a pack naming the old credentials folder", { "notes.md": `Your login is in ~/.config/${OLD}-mcp/.\n` }, new RegExp(`the folder "~/\\.config/${OLD}-mcp/" it writes on the user's machine`));
   await check("each secret shape is recognised, placeholders and this deployment's own address are not", () => {
     const j = (...parts) => parts.join("");
     const shapes = {

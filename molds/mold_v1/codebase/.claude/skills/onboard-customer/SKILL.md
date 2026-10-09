@@ -14,7 +14,7 @@ Create the account so every later stage (research, deploy, migrate, operate) has
 of the operator lifecycle — see [`docs/OPERATOR_WORKFLOW.md`](../../../docs/OPERATOR_WORKFLOW.md).
 
 You must be onboarded yourself first (`onboard-self`), so your `@example.com`
-identity is the account's owner (`fde_owner`, shown under the deployment's own owner label).
+identity is the account's owner (`account_owner`, shown under the deployment's own owner label).
 
 ## Working style
 
@@ -38,7 +38,7 @@ npm run operator:new-customer -- --name "Contoso Bank" --tier Enterprise --org <
   --vertical banking --region APAC \
   --business-owner cfo@contoso.com --technical-owner cto@contoso.com
 ```
-This writes the `customers` row (lifecycle `Onboarding`, `fde_owner` = you), assigns
+This writes the `customers` row (lifecycle `Onboarding`, `account_owner` = you), assigns
 you as `solution_engineer` in `internal_staff`, seeds `{folder:accounts}/{id}/context.md`,
 and logs an `account_created` interaction. It refuses if the id exists — pass
 `--force` only to intentionally update.
@@ -57,7 +57,7 @@ workbooks), and if the customer has prior state, reconstruct it with
 READ: your identity (`onboard-self`), existing `customers` rows (to refuse dupes).
 
 WRITE:
-- `customers` row (id, name, tier, vertical, region, lifecycle, fde_owner, owners)
+- `customers` row (id, name, tier, vertical, region, lifecycle, account_owner, owners)
 - `internal_staff` — you as `solution_engineer`
 - `{folder:accounts}/{id}/context.md` — seeded once, never clobbered without `--force`
 - `{folder:accounts}/{id}/interactions.jsonl` — an `account_created` event

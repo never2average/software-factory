@@ -65,7 +65,7 @@ import { pathToFileURL } from "node:url";
 import { removeCopy, temporaryCopy } from "./lib/checkout-copy.mjs";
 import { clientLiterals } from "./lib/client-literals.mjs";
 import { CANARY, HIDDEN_MARK, PAGE_SPECS, PAGES, renderedText } from "./lib/rendered-text.mjs";
-import { LEGACY_MEMBER, LEGACY_OWNER_KEY } from "../agent/lib/legacy-member.ts";
+import { LEGACY_MEMBER, LEGACY_OWNER_KEY, LEGACY_OWNER_KEYS } from "../agent/lib/legacy-member.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 /** The period words of the default profile as recorded before they were a profile setting (W.period, W.periodList, W.periodItem). */
@@ -391,22 +391,25 @@ async function defaultWords() {
   if (Object.keys(W).some((k) => !(k in want))) wrong.push(`lib/ui-words.ts has words this check does not pin: ${Object.keys(W).filter((k) => !(k in want)).join(", ")}`);
   for (const [w, a] of [["customer", "a"], ["member", "a"], [LEGACY_MEMBER.singular, "an"], ["deployment", "a"], ["implementation", "an"], ["analyst", "an"], ["company", "a"]]) if (an(w) !== a) wrong.push(`an("${w}") is "${an(w)}", not "${a}"`);
   const { speakKey, humanizeKey } = await import(pathToFileURL(join(ROOT, "lib/ui-keys.ts")).href);
-  for (const k of ["customer_id", "customerId", "fdeOwner", "fde_owner", "deploymentId", "implementation"]) {
+  for (const k of ["customer_id", "customerId", "accountOwner", "account_owner", "deploymentId", "implementation"]) {
     if (speakKey(k) !== k) wrong.push(`speakKey("${k}") is "${speakKey(k)}" under the default profile`);
   }
-  // The owner key keeps its stored name, and a person reads the profile's owner label for it, the default included.
-  for (const k of ["fdeOwner", "fde_owner"]) if (!LEGACY_OWNER_KEY.test(k) || humanizeKey(k) !== "Account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default owner label "Account owner"`);
+  // The owner key under the name it was stored under before drizzle/0037 (an older workbook or export may carry it)
+  // reads the profile's owner label too, the default included.
+  for (const k of [LEGACY_OWNER_KEYS.accountOwner, LEGACY_OWNER_KEYS.account_owner]) if (!LEGACY_OWNER_KEY.test(k) || humanizeKey(k) !== "Account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default owner label "Account owner"`);
   for (const k of ["accountOwner", "account_owner"]) if (humanizeKey(k) !== "Account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default owner label "Account owner"`);
   // The second owner's key, under its original name and the neutral one beside it, reads the profile's label for it.
   for (const k of ["aeOwner", "ae_owner", "secondaryOwner", "secondary_owner"]) if (humanizeKey(k) !== "Secondary owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not the default second-owner label "Secondary owner"`);
-  for (const k of ["solutionFdeOwner", "solution_fde_owner", "solutionOwner", "solution_owner"]) if (humanizeKey(k) !== "Solution account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not "Solution account owner"`);
+  for (const k of [LEGACY_OWNER_KEYS.solutionOwner, LEGACY_OWNER_KEYS.solution_owner, "solutionOwner", "solution_owner"]) if (humanizeKey(k) !== "Solution account owner") wrong.push(`humanizeKey("${k}") is "${humanizeKey(k)}", not "Solution account owner"`);
   if (humanizeKey("customerId") !== "Customer Id") wrong.push("humanizeKey changed the default export labels");
-  // Stored values that carry the legacy member word keep it in the row and read the profile's member word.
+  // Stored values that name the member read the profile's member word: today's ("Member") and the legacy one a
+  // record stored before drizzle/0037 may still carry.
   const { storedValueLabel } = await import(pathToFileURL(join(ROOT, "lib/ui-words.ts")).href);
   const legacyVerified = `${LEGACY_MEMBER.singular} Verified`;
   if (storedValueLabel("ownerTeam", LEGACY_MEMBER.singular) !== "Member") wrong.push(`the stored ownerTeam "${LEGACY_MEMBER.singular}" reads "${storedValueLabel("ownerTeam", LEGACY_MEMBER.singular)}", not "Member"`);
   if (storedValueLabel("valueEvidenceStatus", legacyVerified) !== "Member Verified") wrong.push(`the stored valueEvidenceStatus "${legacyVerified}" reads "${storedValueLabel("valueEvidenceStatus", legacyVerified)}"`);
   if (storedValueLabel("summary", legacyVerified) !== legacyVerified) wrong.push("storedValueLabel touched a field it does not own");
+  if (storedValueLabel("ownerTeam", "Member") !== "Member" || storedValueLabel("valueEvidenceStatus", "Member Verified") !== "Member Verified") wrong.push("the stored member values do not read the default member word");
   // The default deployment's own generated text (the roster a person reads) carries no legacy member word as a word.
   const roster = readFileSync(join(ROOT, "app/_components/subagent-meta.generated.ts"), "utf8");
   const legacyWord = new RegExp(`(?<![A-Za-z0-9_-])(${LEGACY_MEMBER.singular}|${LEGACY_MEMBER.plural})(?![A-Za-z0-9_-])`, "i");

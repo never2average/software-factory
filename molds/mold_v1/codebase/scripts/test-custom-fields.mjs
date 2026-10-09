@@ -322,7 +322,7 @@ assert.ok(accountEntry.when > journal[accountEntry.idx - 1].when, "…later than
 const accountStatements = readFileSync(join(ROOT, "drizzle/0019_account_custom_fields.sql"), "utf8").split("--> statement-breakpoint").map((s) => s.replace(/^--.*$/gm, "").trim()).filter(Boolean);
 assert.deepEqual(accountStatements, [`ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "custom" jsonb;`], "nullable, no default: a catalogue-only change that rewrites no row");
 // customers' table config opens with its key (org_id, customer_id) since mold_v1-118; the column is the last one before it.
-assert.match(schema, /custom: jsonb\("custom"\)\.\$type<Record<string, string \| number>>\(\),\n  \},\n  \(t\) => \[\n[\s\S]*?primaryKey\(\{ name: "customers_org_id_customer_id_pk"[^\n]*\n    index\("customers_fde_owner_idx"\)/, "schema.ts declares the same nullable column on customers");
+assert.match(schema, /custom: jsonb\("custom"\)\.\$type<Record<string, string \| number>>\(\),\n    \.\.\.extra,\n  \},\n  \(t\) => \[\n[\s\S]*?primaryKey\(\{ name: "customers_org_id_customer_id_pk"[^\n]*\n[\s\S]*?index\("customers_account_owner_idx"\)/, "schema.ts declares the same nullable column on customers");
 // The Ops API's customer write validates `custom` with the same validator, and its list returns the listed ones.
 const customersRoute = readFileSync(join(ROOT, "app/api/ops/customers/route.ts"), "utf8");
 assert.match(customersRoute, /customForWrite\("account", customInput, existing \?\? null\)/);

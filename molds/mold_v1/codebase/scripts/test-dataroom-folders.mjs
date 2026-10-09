@@ -17,7 +17,9 @@
  *        - the stored-path census (scripts/lib/dataroom-path-census.mjs: the path grammar, a real file written,
  *          listed and read at every template, the agent's tools run offline, the workbooks, the web guards, a new
  *          workspace's starter files, both seeders' trees) is byte for byte the one taken on the last commit before
- *          the names were a setting (stored-paths-before.json);
+ *          the names were a setting (stored-paths-before.json). Seven of its content hashes were re-taken once, for a
+ *          change of what the sample data says, not of where it is stored: the local seeder's two context.md files
+ *          name the owner `account_owner`, and the five sample tickets' stored ownerTeam is "Member" (drizzle/0037);
  *        - every door to the store, driven for real by scripts/test-dataroom-isolation.mjs (the agent's store on
  *          both drivers, the web routes: read, list, upload, export, versions, PDF preview, the workflow reader, the
  *          root migration), asks for exactly the object keys it asked for then (keys-before.json);

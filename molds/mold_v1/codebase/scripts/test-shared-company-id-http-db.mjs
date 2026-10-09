@@ -27,6 +27,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import postgres from "postgres";
 import { freePort, waitForNextStart } from "./lib/own-listener.mjs";
+import { LEGACY_OWNER_KEYS } from "../agent/lib/legacy-member.ts";
+/** The key the owner had before drizzle/0037, which an older client may still send. */
+const OLD_OWNER_KEY = LEGACY_OWNER_KEYS.accountOwner;
 
 const adminUrl = process.env.ADMIN_URL;
 const url = process.env.DATABASE_URL;
@@ -215,22 +218,22 @@ try {
   check("…A's rows carry every change", aDep?.deployed_version === "A-v3" && aDep?.health_status === "degraded" && (await rowOf("customers", A))[0]?.customer_name === "ABHFL A desk (renamed)" && (await rowOf("implementation", A))[0]?.implementation_risk_level === "Red" && (await rowOf("tickets", A))[0]?.ticket_status === "Resolved", aDep);
   check("…and B's company, deployment, implementation and ticket are byte-for-byte unchanged", (await snapshot(B)) === bBefore);
 
-  console.log("3b. The owner, under either name (drizzle/0028_neutral_owner_columns.sql), in A only");
+  console.log("3b. The owner (account_owner; drizzle/0037), in A only");
   bBefore = await snapshot(B);
   const o1 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", accountOwner: "neutral@shared-http.test" });
   const r1 = (await rowOf("customers", A))[0];
-  check("POST customers with accountOwner stores it in both columns and returns it under both names", o1.status === 200 && r1?.account_owner === "neutral@shared-http.test" && r1?.fde_owner === "neutral@shared-http.test" && o1.body?.item?.accountOwner === "neutral@shared-http.test" && o1.body?.item?.fdeOwner === "neutral@shared-http.test", { o1: o1.body, r1 });
-  const o2 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", fdeOwner: "original@shared-http.test" });
+  check("POST customers with accountOwner stores it in account_owner and returns it under that key only", o1.status === 200 && r1?.account_owner === "neutral@shared-http.test" && o1.body?.item?.accountOwner === "neutral@shared-http.test" && !(OLD_OWNER_KEY in (o1.body?.item ?? {})), { o1: o1.body, r1 });
+  const o2 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", [OLD_OWNER_KEY]: "original@shared-http.test" });
   const r2 = (await rowOf("customers", A))[0];
-  check("POST customers with fdeOwner (the original key) stores it in both columns", o2.status === 200 && r2?.account_owner === "original@shared-http.test" && r2?.fde_owner === "original@shared-http.test", { o2: o2.body, r2 });
-  const o3 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", accountOwner: "one@shared-http.test", fdeOwner: "two@shared-http.test" });
+  check("POST customers from an older client, naming the owner by its old key, stores it in account_owner", o2.status === 200 && r2?.account_owner === "original@shared-http.test" && o2.body?.item?.accountOwner === "original@shared-http.test", { o2: o2.body, r2 });
+  const o3 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", accountOwner: "one@shared-http.test", [OLD_OWNER_KEY]: "two@shared-http.test" });
   check("…a body naming two different owners is refused and writes nothing", o3.status === 400 && (await rowOf("customers", A))[0]?.account_owner === "original@shared-http.test", o3);
   const l3 = await call(A, "GET", "/api/ops/customers");
   const mine = (l3.body?.customers ?? []).find((c) => c.id === ID);
-  check("GET customers returns the owner under both names", mine?.accountOwner === "original@shared-http.test" && mine?.fdeOwner === "original@shared-http.test", mine);
+  check("GET customers returns the owner as accountOwner, and no other key", mine?.accountOwner === "original@shared-http.test" && !(OLD_OWNER_KEY in (mine ?? {})), mine);
   const w3 = await call(A, "GET", "/api/ops/workbook");
   const wmine = (w3.body?.customers ?? []).find((c) => c.id === ID);
-  check("GET workbook returns the owner under both names", wmine?.accountOwner === "original@shared-http.test" && wmine?.fdeOwner === "original@shared-http.test", wmine);
+  check("GET workbook returns the owner as accountOwner, and no other key", wmine?.accountOwner === "original@shared-http.test" && !(OLD_OWNER_KEY in (wmine ?? {})), wmine);
   check("…and B's company is byte-for-byte unchanged", (await snapshot(B)) === bBefore);
 
   console.log("3c. The second owner, under either name (drizzle/0029_neutral_secondary_owner.sql), in A only");
@@ -238,7 +241,7 @@ try {
   const s1 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", secondaryOwner: "neutral2@shared-http.test" });
   const q1 = (await rowOf("customers", A))[0];
   check("POST customers with secondaryOwner stores it in both columns and returns it under both names", s1.status === 200 && q1?.secondary_owner === "neutral2@shared-http.test" && q1?.ae_owner === "neutral2@shared-http.test" && s1.body?.item?.secondaryOwner === "neutral2@shared-http.test" && s1.body?.item?.aeOwner === "neutral2@shared-http.test", { s1: s1.body, q1 });
-  check("…and leaves the owner as it was, under both of its names", q1?.account_owner === "original@shared-http.test" && q1?.fde_owner === "original@shared-http.test", q1);
+  check("…and leaves the owner as it was", q1?.account_owner === "original@shared-http.test", q1);
   const s2 = await call(A, "POST", "/api/ops/customers", { customerId: ID, customerName: "ABHFL A desk (renamed)", aeOwner: "original2@shared-http.test" });
   const q2 = (await rowOf("customers", A))[0];
   check("POST customers with aeOwner (the original key) stores it in both columns and returns both", s2.status === 200 && q2?.secondary_owner === "original2@shared-http.test" && q2?.ae_owner === "original2@shared-http.test" && s2.body?.item?.secondaryOwner === "original2@shared-http.test" && s2.body?.item?.aeOwner === "original2@shared-http.test", { s2: s2.body, q2 });

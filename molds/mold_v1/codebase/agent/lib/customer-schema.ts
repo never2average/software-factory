@@ -237,7 +237,7 @@ export const solutionSchema = z.object({
   expansionStage: z.enum(["none", "identified", "qualified", "proposal", "pilot_requested", "approved", "closed_won", "closed_lost"]).optional(),
   expansionPotentialAnnualValueUsd: z.number().nonnegative().optional(),
   expansionConfidencePct: percentSchema.optional(),
-  solutionFdeOwner: z.string().email(),
+  solutionOwner: z.string().email(),
   lastReviewedDate: z.string().optional(),
 });
 
@@ -356,7 +356,7 @@ export const ticketSchema = z.object({
   ticketPriority: z.enum(["P0-Critical", "P1-High", "P2-Medium", "P3-Low"]),
   severity: z.enum(["S0", "S1", "S2", "S3"]).optional(),
   supportQueue: z.string().optional(),
-  ownerTeam: z.enum(["FDE", "Support", "Engineering", "Data", "Security", "Customer", "Vendor"]).optional(),
+  ownerTeam: z.enum(["Member", "Support", "Engineering", "Data", "Security", "Customer", "Vendor"]).optional(),
   reportedByEmail: z.string().email().optional(),
   customerContactEmail: z.string().email().optional(),
   ticketOpenedDate: z.string(),
@@ -461,7 +461,7 @@ export const customerSchema = z.object({
     ])
     .optional(),
   healthScore: z.number().min(0).max(100).optional(),
-  fdeOwner: z.string().email().optional(),
+  accountOwner: z.string().email().optional(),
   aeOwner: z.string().email().optional(),
   arr: z.number().nonnegative().optional(),
   arrCurrency: z.enum(["USD", "EUR", "GBP", "INR"]).optional(),
@@ -486,7 +486,7 @@ export const customerSchema = z.object({
   successCriteria: z.string().optional(),
   valuePeriodStart: z.string().optional(),
   valuePeriodEnd: z.string().optional(),
-  valueEvidenceStatus: z.enum(["Not Started", "Estimated", "FDE Verified", "Customer Verified"]).optional(),
+  valueEvidenceStatus: z.enum(["Not Started", "Estimated", "Member Verified", "Customer Verified"]).optional(),
   valueEvidenceUrl: urlOrEmptySchema.optional(),
   lastBusinessReviewDate: z.string().optional(),
   nextBusinessReviewDate: z.string().optional(),
@@ -509,8 +509,8 @@ export const customerSchema = z.object({
 /*                                                                            */
 /* Rows already in the database can carry string values outside today's       */
 /* contract (data-quality drift, e.g. customers.status = "In Progress", or    */
-/* fde_owner holding a person's name instead of an email). Throwing on READ   */
-/* makes those records unreachable — get_customer errors on every call — so   */
+/* account_owner holding a person's name instead of an email). Throwing on   */
+/* READ makes those records unreachable — get_customer errors on every call — so   */
 /* the read path parses with a variant where every z.enum and every           */
 /* constrained z.string (email/url/min-length/regex) falls back to carrying   */
 /* the raw string (`.or(z.string())`). WRITE paths (upsertCustomer /          */

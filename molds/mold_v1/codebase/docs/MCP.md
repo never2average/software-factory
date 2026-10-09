@@ -26,7 +26,7 @@ Two fixes, both in this change:
 1. The app hosts the MCP server itself, so the address is never a setting.
 2. The package has **no default address** any more. It requires `WORKSPACE_OPS_URL`
    (or an address saved by `workspace-login --url`) and fails with a message naming
-   the variable. (That variable was `FDE_OPS_URL`; the old name is still read.)
+   the variable.
 
 Since then: **each deployment builds its own package** with its own address, name, skills
 and data-room description baked in (`npm run build:agent-cli`,
@@ -152,13 +152,10 @@ are the wire contract the two hosts share and do not change with the package.
 |---|---|
 | Orientation | `workspace_status` (start here), `workspace_list`, `workspace_use` |
 
-`workspace_status` was called `fde_status` until the base product's role name came
-off the wire. Renaming a tool is a contract change — an assistant reads `tools/list`
-once per connection and then holds those names for the rest of a conversation — so the
-old name is still ACCEPTED by `tools/call` as an unadvertised alias (`aliases` on the
-definition in `setup/workspace-tools.mjs`). It is never listed, so nothing new learns it, and
-`scripts/check-wire-names.mjs` fails the build if any other advertised name, environment
-variable or storage key grows the word back.
+`workspace_status` once had a name carrying the base product's role word. That name was
+accepted as an unadvertised alias while assistants holding it in a conversation moved over, and
+is no longer accepted. `scripts/check-wire-names.mjs` fails the build if any advertised name,
+environment variable or storage key grows the word back.
 | Customers | `customer_create`, `customer_list` |
 | People | `people_list`, `people_invite`, `people_set_role` |
 | Subagents | `agent_list`, `agent_configure` |

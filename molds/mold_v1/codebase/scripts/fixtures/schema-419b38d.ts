@@ -1,9 +1,12 @@
 // FIXTURE — do not edit. agent/lib/db/schema.ts exactly as it was at 419b38d, before the company key became
 // (org_id, customer_id) (mold_v1-118). Every live database was pushed from a schema of this shape; the migration
 // test pushes this file to build one (scripts/test-company-key-migration-db.mjs), so drizzle/0025 is proven on the
-// column order and constraints production actually has.
+// column order and constraints production actually has. Exactly, but for one thing: the three names that carried the
+// base product's old role word (two owner columns and an index) are built from that word's one definition
+// (agent/lib/legacy-member.ts), and the comments that named it say "the base product's" instead. Same names, same
+// order, same shape on the database.
 /**
- * Drizzle Postgres schema for the FDE system of record.
+ * Drizzle Postgres schema for the base product's system of record.
  *
  * Mirrors the canonical Zod contracts in `agent/lib/customer-schema.ts` and
  * the sheet column contracts in `docs/data-model.md` (snake_case columns,
@@ -39,6 +42,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { LEGACY_OWNER_KEYS } from "../../agent/lib/legacy-member.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Customers — one row per customer account (the account spine)               */
@@ -57,7 +61,7 @@ export const customers = pgTable(
     lifecycleStage: text("lifecycle_stage"),
     status: text("status"),
     healthScore: doublePrecision("health_score"),
-    fdeOwner: text("fde_owner"),
+    retiredAccountOwner: text(LEGACY_OWNER_KEYS.account_owner),
     aeOwner: text("ae_owner"),
     arr: doublePrecision("arr"),
     arrCurrency: text("arr_currency"),
@@ -95,7 +99,7 @@ export const customers = pgTable(
     custom: jsonb("custom").$type<Record<string, string | number>>(),
   },
   (t) => [
-    index("customers_fde_owner_idx").on(t.fdeOwner),
+    index(`customers_${LEGACY_OWNER_KEYS.account_owner}_idx`).on(t.retiredAccountOwner),
     index("customers_lifecycle_stage_idx").on(t.lifecycleStage),
   ],
 );
@@ -305,7 +309,7 @@ export const solutions = pgTable(
     expansionStage: text("expansion_stage"),
     expansionPotentialAnnualValueUsd: doublePrecision("expansion_potential_annual_value_usd"),
     expansionConfidencePct: doublePrecision("expansion_confidence_pct"),
-    solutionFdeOwner: text("solution_fde_owner").notNull(),
+    retiredSolutionOwner: text(LEGACY_OWNER_KEYS.solution_owner).notNull(),
     lastReviewedDate: text("last_reviewed_date"),
   },
   (t) => [
@@ -873,7 +877,7 @@ export const appVersions = pgTable(
 );
 
 /**
- * An operator TODO — the FDE team's lightweight internal action list. This is
+ * An operator TODO — the team's lightweight internal action list. This is
  * DELIBERATELY NOT the `tickets` system: no customer FK, no SLA, no ITSM fields.
  * A flat checklist that optionally hangs off a platform "epic" (a Deployment or
  * Implementation) and can point at a related object (a ticket, customer, app…).
@@ -907,7 +911,7 @@ export const cycles = pgTable("cycles", {
 });
 
 /**
- * The FDE org roster — who's on which team and who they report to. Powers the
+ * The org roster — who's on which team and who they report to. Powers the
  * "me / my reportees / my team / everyone" scope filters in the TODOs
  * workspace. Keyed by email (the same email that appears as an owner on
  * tickets/deployments/implementations). Backfilled from internal_staff; team +

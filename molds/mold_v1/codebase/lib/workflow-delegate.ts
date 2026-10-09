@@ -90,7 +90,7 @@ const MACHINE_READER =
  * text ever crossed the boundary.
  */
 export function composeStepMessage(stored: string, subagent?: string, ctx?: StepContext): string {
-  // A script stored before a tool was renamed names it by its old name ("Call list_fdes…"), and one seeded raw
+  // A script stored before a tool was renamed names it by its old name (TOOL_ALIASES), and one seeded raw
   // carries role placeholders (`{owner}`, `{member}`): both reach the model in this deployment's words.
   const prompt = withCurrentToolNames(fill(stored));
   const id = identity(ctx);

@@ -13,7 +13,7 @@
       "ticketCategory": "Configuration Change Request",
       "ticketStatus": "Waiting on Customer",
       "ticketPriority": "P1-High",
-      "ownerTeam": "FDE",
+      "ownerTeam": "Member",
       "reportedByEmail": "sam@examplebank.com",
       "ticketOpenedDate": "2026-06-12",
       "ticketDueDate": "2026-06-30",

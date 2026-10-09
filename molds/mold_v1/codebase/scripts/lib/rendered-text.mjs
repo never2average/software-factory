@@ -153,7 +153,7 @@ export const MOCKS = () => ({
   // (custom) fields are those a profile may declare; the ones it lists show as columns in its labels.
   "/api/ops/workbook": {
     customers: [{
-      id: "acme", name: "Acme Housing", tier: "Enterprise", status: "On Track", lifecycleStage: "Live", fdeOwner: "reviewer@example.com",
+      id: "acme", name: "Acme Housing", tier: "Enterprise", status: "On Track", lifecycleStage: "Live", accountOwner: "reviewer@example.com",
       ...hiddenMarks(HIDEABLE.account),
       custom: { house_view: "Positive", notes: "Filings read through Q2." },
       platform: { tenantId: "t1" }, solutions: [],

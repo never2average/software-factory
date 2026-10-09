@@ -114,9 +114,9 @@ this codebase is stamped into many applications, and a built-in address sent
 everyone but one product to somebody else's app. `node setup/workspace-login.mjs --url
 <address>` saves it instead, if you prefer.
 
-An MCP config written before the rename (one running `setup/fde-mcp.mjs`) still
-works unchanged: the old file starts the same server, and a
-sign-in kept in `~/.config/fde-mcp/` is read and copied to the new folder on first use.
+An MCP config written before the rename (one naming the server file by its old name) needs
+the new path, `setup/workspace-mcp.mjs`, and a sign-in made then needs one
+`node setup/workspace-login.mjs`.
 
 Restart your agent. First check `connector_list` works — if it says you're not
 signed in, run `node setup/workspace-login.mjs` and retry. You get **19 tools** in four
@@ -209,7 +209,6 @@ first.
 | `workspace-mcp.mjs` | the stdio MCP server (the host: sign-in, which deployment, blob store) |
 | `workspace-tools.mjs` | the tools themselves — shared with the hosted endpoint at `/api/mcp` |
 | `workspace-login.mjs` | one-time Google sign-in (`node setup/workspace-login.mjs`) — stores your refresh token for per-user Ops API identity |
-| `fde-mcp.mjs`, `fde-tools.mjs`, `fde-login.mjs`, `fde-cli.mjs`, `fde-install-skill.mjs` | the same five files under the names they had before; each re-exports (and, run directly, runs) its `workspace-*` file, so an MCP config or a note that names the old path keeps working |
 | `test-coding-sessions.mjs` | tests for the redactor + transcript parser (`node --experimental-strip-types setup/test-coding-sessions.mjs`) |
 
 The redactor/parser that `record_coding_session` relies on is

@@ -2048,9 +2048,8 @@ interface CustomerLite {
   lifecycleStage: string | null;
   status: string | null;
   healthScore: number | null;
-  /** The account's owner; the API returns it under both names (accountOwner is the neutral one). */
-  accountOwner?: string | null;
-  fdeOwner: string | null;
+  /** The account's owner. */
+  accountOwner: string | null;
   openTickets?: number;
 }
 
@@ -2142,7 +2141,7 @@ function PersonContext({
       })
     : null;
   const reports = people.filter((x) => x.managerEmail?.toLowerCase() === email);
-  const owned = (accounts ?? []).filter((c) => (c.accountOwner ?? c.fdeOwner)?.toLowerCase() === email);
+  const owned = (accounts ?? []).filter((c) => c.accountOwner?.toLowerCase() === email);
 
   const PersonChip = ({ p }: { p: PersonRow }) => (
     <button
@@ -2297,7 +2296,7 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
    * A person record that says only "team —, manager —" answers nothing anyone
    * opens it to ask. What a colleague actually wants is who they report to and
    * which customers they are on, and both already exist — the roster carries
-   * the manager, `customers.fde_owner` carries the accounts. They were simply
+   * the manager, `customers.account_owner` carries the accounts. They were simply
    * never joined up in the panel.
    */
   const [accounts, setAccounts] = useState<CustomerLite[] | null>(null);

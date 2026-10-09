@@ -14,6 +14,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { FOLDER } from "../agent/lib/dataroom-folders.ts";
+import { BASE_PRODUCT_WORD } from "./lib/agent-cli.mjs";
 
 let passed = 0;
 const check = (label, condition) => {
@@ -149,7 +150,10 @@ check("there are tools at all", hosted.length > 50 && hosted.includes("workspace
 /* The orientation tool is `workspace_status` on both transports, and NEITHER advertises the
  * name it had before — an alias exists to be accepted by tools/call, never offered by
  * tools/list, or a newly connected assistant learns the old name all over again. */
-check("neither transport advertises the pre-rename tool name", !hosted.includes("fde_status") && !cliNames.includes("fde_status"));
+{
+  const old = `${BASE_PRODUCT_WORD}_status`; // the pre-rename tool name, built from the word's one definition
+  check("neither transport advertises the pre-rename tool name", !hosted.includes(old) && !cliNames.includes(old));
+}
 check("every tool has a schema and a description", body.result.tools.every((t) => t.description && t.inputSchema?.type === "object"));
 check("no tool description carries a credential or a foreign address", !/GOCSPX|[a-z0-9-]+\.vercel\.app|Bearer ey/.test(JSON.stringify(body.result.tools)));
 

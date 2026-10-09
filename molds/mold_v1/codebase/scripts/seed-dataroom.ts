@@ -154,7 +154,7 @@ async function seedCustomer(store: DataroomStore, customer: Customer, counts: Co
     `- customer_id: \`${cid}\``,
     customer.lifecycleStage ? `- lifecycle_stage: ${customer.lifecycleStage}` : null,
     customer.status ? `- status: ${customer.status}` : null,
-    customer.fdeOwner ? `- fde_owner: ${customer.fdeOwner}` : null,
+    customer.accountOwner ? `- account_owner: ${customer.accountOwner}` : null,
     "",
     "_Seeded stub. Owned by the customer-context subagent; expand with the real brief._",
     "",

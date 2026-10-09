@@ -149,7 +149,7 @@ export async function runEmailIntake(
       ticketCategory: cls.ticketCategory,
       ticketPriority: cls.ticketPriority,
       ticketStatus: "Needs Triage",
-      ticketOwnerEmail: isEmail(m.fdeOwner) ? m.fdeOwner : UNASSIGNED_OWNER_EMAIL,
+      ticketOwnerEmail: isEmail(m.accountOwner) ? m.accountOwner : UNASSIGNED_OWNER_EMAIL,
       ticketNextStep: "Review inbound email and triage.",
       sourceChannel: "Email",
       externalId: e.messageId,

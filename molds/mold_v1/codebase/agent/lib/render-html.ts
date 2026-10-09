@@ -186,7 +186,7 @@ tbody tr:last-child td { border-bottom: none; }
   display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
   font-size: 0.72rem; font-weight: 600; border: 1px solid transparent;
 }
-.pill.overdue { background: #fde8e8; color: #b42318; border-color: #f4c7c3; }
+.pill.overdue { background: #fce8e8; color: #b42318; border-color: #f4c7c3; }
 .pill.due_soon { background: #fef3d7; color: #b54708; border-color: #f2d79b; }
 .pill.on_track { background: #e6f4ea; color: #067647; border-color: #b9e3c6; }
 .pill.no_due_date { background: #eef1f4; color: #475467; border-color: #dfe3e8; }
@@ -384,7 +384,7 @@ ${metaItem("Tier", customer.tier)}
 ${metaItem("Lifecycle Stage", customer.lifecycleStage)}
 ${metaItem("Status", customer.status)}
 ${metaItem("Health Score", customer.healthScore)}
-${metaItem(w.owner, customer.fdeOwner)}
+${metaItem(w.owner, customer.accountOwner)}
 </div>
 </header>`;
 
@@ -434,7 +434,7 @@ export async function renderDataroomSummary(opts: {
 <td>${cell(c.tier)}</td>
 <td>${cell(c.lifecycleStage)}</td>
 <td>${cell(c.status)}</td>
-<td>${cell(c.fdeOwner)}</td>
+<td>${cell(c.accountOwner)}</td>
 <td>${c.openTickets}</td>
 <td>${overdueByCustomer.get(c.id) ?? 0}</td>
 </tr>`,

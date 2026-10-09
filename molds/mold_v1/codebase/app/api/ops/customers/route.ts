@@ -13,6 +13,7 @@ import { asCustomValues, customDelta, customFieldsOf, type CustomValues } from "
 import { customForNewRow, customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { W } from "@/lib/ui-words";
 import { speakKey } from "@/lib/ui-keys";
+import { LEGACY_OWNER_KEYS, withCurrentOwnerKeys } from "@/agent/lib/legacy-member";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,10 +37,8 @@ export interface CustomerOption {
   status: string | null;
   healthScore: number | null;
   healthReason: string | null;
-  /** The account's owner (an email). Under both names, always equal: `accountOwner` is the neutral one to read. */
+  /** The account's owner (an email). */
   accountOwner: string | null;
-  /** The same value as accountOwner, under the original name existing callers read. */
-  fdeOwner: string | null;
   openTickets: number;
   lastTouchDate: string | null;
   lastTouch: string | null;
@@ -81,7 +80,7 @@ async function listCustomers(request: NextRequest) {
           status: customers.status,
           healthScore: customers.healthScore,
           healthReason: customers.healthReason,
-          // The neutral column, else the original (agent/lib/db/owner-columns.ts); returned under both names below.
+          // The account's owner (agent/lib/db/owner-columns.ts), returned as accountOwner below.
           owner: accountOwnerSql,
           custom: customers.custom,
         })
@@ -129,7 +128,6 @@ async function listCustomers(request: NextRequest) {
       return {
         ...r,
         accountOwner: owner,
-        fdeOwner: owner,
         ...listedCustom(custom),
         openTickets: openByCustomer.get(r.id) ?? 0,
         lastTouchDate: lt?.date ?? null,
@@ -200,10 +198,9 @@ const upsertCustomerSchema = z.object({
   vertical: z.string().max(80).nullable().optional(),
   regulatoryProfile: z.string().max(200).nullable().optional(),
   companyDomain: z.string().max(120).nullable().optional(),
-  // The account's owner, under either name (both are accepted; a body naming both must name the same person). Stored
-  // in both columns (drizzle/0028_neutral_owner_columns.sql).
+  // The account's owner. A body from an older client may name it by the key it had before drizzle/0028; POST moves
+  // that key onto this one before parsing (withCurrentOwnerKeys), and a body naming both must name the same person.
   accountOwner: z.string().max(200).nullable().optional(),
-  fdeOwner: z.string().max(200).nullable().optional(),
   // The account's second owner, under either name, by the same rule (drizzle/0029_neutral_secondary_owner.sql).
   secondaryOwner: z.string().max(200).nullable().optional(),
   aeOwner: z.string().max(200).nullable().optional(),
@@ -222,15 +219,17 @@ export async function POST(request: NextRequest) {
   if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
-  const parsed = upsertCustomerSchema.safeParse(await request.json().catch(() => null));
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  const oldKey = LEGACY_OWNER_KEYS.accountOwner;
+  if (body && typeof body === "object" && oldKey in body && "accountOwner" in body && (body[oldKey] ?? null) !== (body.accountOwner ?? null)) {
+    // The keys as a person reads them (lib/ui-keys.ts), as every ops API error names a field.
+    return NextResponse.json({ error: `${speakKey("accountOwner")} was sent twice, under its current key and the key it had before, with two different values; send it once.` }, { status: 400 });
+  }
+  const parsed = upsertCustomerSchema.safeParse(withCurrentOwnerKeys(body));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
   }
   const { actor, custom: customInput, ...named } = parsed.data;
-  if (named.accountOwner !== undefined && named.fdeOwner !== undefined && named.accountOwner !== named.fdeOwner) {
-    // The keys as a person reads them (lib/ui-keys.ts), as every ops API error names a field.
-    return NextResponse.json({ error: `${speakKey("accountOwner")} and ${speakKey("fdeOwner")} are the same field (the ${W.owner}); send one, or the same value in both.` }, { status: 400 });
-  }
   if (named.secondaryOwner !== undefined && named.aeOwner !== undefined && named.secondaryOwner !== named.aeOwner) {
     return NextResponse.json({ error: `${speakKey("secondaryOwner")} and ${speakKey("aeOwner")} are the same field (the ${W.secondaryOwner}); send one, or the same value in both.` }, { status: 400 });
   }

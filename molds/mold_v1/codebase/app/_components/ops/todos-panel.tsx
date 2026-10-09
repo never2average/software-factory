@@ -58,7 +58,7 @@ import {
   useOpsList,
   type ApiCycle,
   type ApiMemberGoal,
-  type ApiRefDeployment,
+  type ApiDeploymentRef,
   type ApiRefImplementation,
   type ApiRosterMember,
   type ApiTodo,
@@ -755,7 +755,7 @@ export function TodosPanel({
             onOpenTodo={openTodo}
           />
         ) : view === "deployments" ? (
-          <MineList<ApiRefDeployment>
+          <MineList<ApiDeploymentRef>
             endpoint="/api/ops/deployments"
             authorEmail={authorEmail}
             noun={DEP.noun}
@@ -800,13 +800,13 @@ export function TodosPanel({
               table: [
                 { key: "customer", label: ACCOUNT_LABEL, render: (d) => <span className="font-medium">{d.customerLabel ?? d.customer ?? d.id}</span> },
                 // A redefined area names its records by id (a report id), so the id earns a column.
-                ...(DEP.redefined ? [{ key: "id", label: DEP.idLabel, render: (d: ApiRefDeployment) => <span className="font-mono">{d.recordId ?? d.id}</span> }] : []),
-                ...(DEP.spec.kind_field ? [{ key: "kind", label: DEP.label(DEP.spec.kind_field, DEP.spec.kind_field, "short"), render: (d: ApiRefDeployment) => kindOf(DEP, d.fields) ?? "—" }] : []),
-                ...(DEP.hidden("environment") ? [] : [{ key: "env", label: DEP.label("environment", "Env", "short"), render: (d: ApiRefDeployment) => d.env }]),
+                ...(DEP.redefined ? [{ key: "id", label: DEP.idLabel, render: (d: ApiDeploymentRef) => <span className="font-mono">{d.recordId ?? d.id}</span> }] : []),
+                ...(DEP.spec.kind_field ? [{ key: "kind", label: DEP.label(DEP.spec.kind_field, DEP.spec.kind_field, "short"), render: (d: ApiDeploymentRef) => kindOf(DEP, d.fields) ?? "—" }] : []),
+                ...(DEP.hidden("environment") ? [] : [{ key: "env", label: DEP.label("environment", "Env", "short"), render: (d: ApiDeploymentRef) => d.env }]),
                 { key: "version", label: DEP.label("deployedVersion", "Version", "short"), render: (d) => <span className="font-mono">{d.version}</span> },
                 { key: "health", label: DEP.label("healthStatus", "Health", "short"), render: (d) => <span className={cn("inline-flex items-center gap-1.5", DEP.display("healthStatus", d.health, "") ? null : "capitalize")}><span className={cn("size-1.5 rounded-full", healthDot(d.health))} />{DEP.display("healthStatus", d.health)}</span> },
                 { key: "status", label: DEP.label("releaseStatus", "Release", "short"), render: (d) => DEP.display("releaseStatus", d.status) },
-                ...customColumns<ApiRefDeployment>(DEP),
+                ...customColumns<ApiDeploymentRef>(DEP),
                 { key: "owner", label: DEP.label("deployOwnerEmail", "Owner", "short"), render: (d) => (d.owner ? d.owner.split("@")[0] : "—") },
               ],
               timeline: {
@@ -816,7 +816,7 @@ export function TodosPanel({
               },
             })}
             renderDetail={(d, api) => (
-              <RefDetail
+              <ReferenceDetail
                 entity="deployment"
                 eyebrow={DEP.noun}
                 entityId={d.id}
@@ -931,7 +931,7 @@ export function TodosPanel({
               },
             })}
             renderDetail={(r, api) => (
-              <RefDetail
+              <ReferenceDetail
                 entity="implementation"
                 eyebrow={IMP.noun}
                 entityId={r.id}
@@ -1041,7 +1041,7 @@ function riskTone(risk: string): string {
  * list, the selection and the activity feed key on `id`, so a repeated id becomes customer + id and the real one
  * is kept in `recordId` for the API. Ids that are already unique are untouched.
  */
-function uniqueDeploymentIds(items: ApiRefDeployment[]): ApiRefDeployment[] {
+function uniqueDeploymentIds(items: ApiDeploymentRef[]): ApiDeploymentRef[] {
   const seen = new Map<string, number>();
   for (const d of items) seen.set(d.id, (seen.get(d.id) ?? 0) + 1);
   return items.map((d) => ((seen.get(d.id) ?? 0) > 1 ? { ...d, recordId: d.id, id: `${d.customer ?? ""}::${d.id}` } : d));
@@ -1620,7 +1620,7 @@ type RefEdit = {
  * A few key fields write back to the system-of-record; the body is that
  * record's related TODOs — a plain list, or a timeline for deployments.
  */
-function RefDetail({
+function ReferenceDetail({
   entity,
   eyebrow,
   entityId,

@@ -28,7 +28,7 @@ workbooks" below.
 
 1. **`{domain:accounts}`** — one row per {account} (the spine): `customer_id`,
    `customer_name`, `tier`, `lifecycle_stage`, `status`, `health_score`,
-   `fde_owner`, `ae_owner`, `arr` (number), `arr_currency`, `seats`,
+   `account_owner`, `ae_owner`, `arr` (number), `arr_currency`, `seats`,
    `external_account_id`, `legal_entity_name`, `account_region`,
    `contract_status`, `renewal_forecast`, `renewal_risk_reason`,
    `expansion_potential_arr`, `health_reason`, `company_domain`, `vertical`,
@@ -69,7 +69,7 @@ workbooks" below.
    fields, value metric and evidence fields, modules/status/usage fields,
    eval status/run/pass/coverage fields, quality/safety rates,
    human-review fields, readiness fields, solution-level expansion fields,
-   `solution_fde_owner`, `last_reviewed_date`.
+   `solution_owner`, `last_reviewed_date`.
    Eval results live here (per solution/workflow) — there is no separate Evals sheet.
 5. **`{domain:projects}`** — one row per {account}: `customer_id`,
    `rollout_id`, `launch_scope_solution_ids`, `implementation_stage`,
@@ -100,8 +100,8 @@ workbooks" below.
    `customer_id`, `stakeholder_role`, `name`, `title`, `employer_org`,
    `email`, `last_contact`. This is NOT the same schema as internal staff.
 
-Ownership is single-source: `{domain:accounts}.fde_owner` / `ae_owner` (emails) are
-canonical {account} pointers — `{domain:solutions}.solution_fde_owner`,
+Ownership is single-source: `{domain:accounts}.account_owner` / `ae_owner` (emails) are
+canonical {account} pointers — `{domain:solutions}.solution_owner`,
 `{domain:tickets}.ticket_owner_email`, and `Internal Staff` rows must resolve to the same
 {account}-scoped internal staff emails.
 
@@ -131,7 +131,7 @@ canonical mapping and the supporting file system per domain.
 ## Write it back, then deliver
 
 1. **Persist** what belongs in the source of truth: `upsert_customer` for record
-   fields (tier, lifecycleStage, status, fdeOwner, aeOwner, platform,
+   fields (tier, lifecycleStage, status, accountOwner, aeOwner, platform,
    {deployments}, solutions, {implementations}, and tickets), and
    `record_interaction` for anything you learned from a meeting/call/email so it
    isn't lost.

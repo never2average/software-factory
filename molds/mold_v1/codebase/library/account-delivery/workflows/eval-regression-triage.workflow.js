@@ -13,7 +13,7 @@ const findings = await agent(
 
 phase("Triage");
 const triage = await agent(
-  "From these eval regressions for " + c + ", file a fix ticket per real regression (owned by the {account}'s fde_owner, priority by severity) and post a short triage summary. Regressions follow.\n\n" + findings,
+  "From these eval regressions for " + c + ", file a fix ticket per real regression (owned by the {account}'s account_owner, priority by severity) and post a short triage summary. Regressions follow.\n\n" + findings,
   { subagent: "follow-ups" },
 );
 

@@ -12,6 +12,7 @@ import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 // results carry its keys (`companies`, `analystOwner`): recognise both, by the BASE name (agent-vocabulary.ts).
 import { isDetachedOutput, isDetachedResult } from "../../lib/detached-delegation.ts";
 import { baseNameAmong, fieldOf } from "../../agent/lib/agent-vocabulary.ts";
+import { LEGACY_OWNER_KEYS } from "../../agent/lib/legacy-member.ts";
 
 const RECORD_TOOLS = ["list_customers", "get_customer", "list_followups", "trigger_workflow", "run_app"] as const;
 export interface SubagentRun {
@@ -191,7 +192,7 @@ function splitPeople(raw: string): Array<{ id: string; label: string }> {
     .map((piece) => piece.replace(/\s+/g, " ").trim())
     .filter((piece) => piece.length >= 2)
     .map((piece) => {
-      // fde_owner now carries emails (firstname@example.com after the roster
+      // account_owner now carries emails (firstname@example.com after the roster
       // normalization) — display the human, not the address: local part in
       // Title Case, identity keyed on the full lowercase address.
       const emailMatch = piece.match(/^([^@\s]+)@[^@\s]+\.[^@\s]+$/);
@@ -282,7 +283,7 @@ function applyToolResult(state: Insights, modelTool: string, out: Record<string,
             sub: [c.lifecycleStage, c.status, c.tier].filter(Boolean).join(" · ") || undefined,
           }),
         };
-        // NB: intentionally NOT adding each customer's fdeOwner here. A bulk
+        // NB: intentionally NOT adding each customer's accountOwner here. A bulk
         // directory scan returns dozens of customers, and surfacing every owner
         // floods the People rail with people who are not in this conversation's
         // context. People come from FOCUSED lookups (get_customer) instead.
@@ -302,7 +303,8 @@ function applyToolResult(state: Insights, modelTool: string, out: Record<string,
       // The owner's label is the deployment's word ("Account owner" by default, "Covering analyst" on a research
       // deployment): it is shown next to a person's name and email, where the old product's word read as a
       // status the person had not earned yet.
-      addPerson(fieldOf(c, "fdeOwner"), DEPLOYMENT_PROFILE.vocabulary.owner, String(c.name ?? c.id));
+      // A transcript stored before drizzle/0037 names the owner by the key it had then (LEGACY_OWNER_KEYS).
+      addPerson(fieldOf(c, "accountOwner") ?? fieldOf(c, LEGACY_OWNER_KEYS.accountOwner), DEPLOYMENT_PROFILE.vocabulary.owner, String(c.name ?? c.id));
       if (Array.isArray(c.tickets)) {
         for (const ticket of c.tickets as Array<Record<string, unknown>>) {
           if (typeof ticket.ticketId === "string") {

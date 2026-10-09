@@ -29,21 +29,16 @@ const [cmd, ...rest] = process.argv.slice(2);
 /**
  * What this package answers to: the neutral names, plus whatever this package calls
  * them. In the generic package those are `workspace-login` / `workspace-mcp` /
- * `workspace-install-skill`, and also the names it was published under before
- * (`legacyCommands`), so an MCP config or a note written then keeps working; the help
- * never shows those. A package built for one deployment calls them `login` / `mcp` /
- * `install-skills` and has no legacy names — a package a desk of analysts bought
- * should not take another company's command names, and nothing published points at them.
+ * `workspace-install-skill`; a package built for one deployment calls them `login` /
+ * `mcp` / `install-skills`.
  */
 const C = DEPLOYMENT.commands;
-const L = DEPLOYMENT.legacyCommands ?? {};
 const M = DEPLOYMENT.modules;
 const COMMANDS = {
   login: M.login, [C.login]: M.login,
   mcp: M.mcp, [C.mcp]: M.mcp,
   "install-skills": M.installSkills, "install-skill": M.installSkills, skills: M.installSkills, [C.installSkills]: M.installSkills,
 };
-for (const [role, old] of Object.entries(L)) if (old && M[role] && !(old in COMMANDS)) COMMANDS[old] = M[role];
 
 /** The help text. A package with a baked-in address names its product and leads with the hosted endpoint. */
 function helpText(d = DEPLOYMENT) {

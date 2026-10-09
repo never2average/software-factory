@@ -79,7 +79,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "match_customer_by_email",
-        "description": "Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
+        "description": "Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, accountOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
       },
       {
         "name": "read_customer_slas",
@@ -166,7 +166,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "create_ticket",
-        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store."
+        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's account_owner. Gated on approval since it writes to the shared tickets store."
       },
       {
         "name": "dataroom_append_jsonl",
@@ -255,7 +255,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     "tools": [
       {
         "name": "create_ticket",
-        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store."
+        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's account_owner. Gated on approval since it writes to the shared tickets store."
       },
       {
         "name": "dataroom_list",
@@ -350,7 +350,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     "tools": [
       {
         "name": "create_ticket",
-        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's fde_owner. Gated on approval since it writes to the shared tickets store."
+        "description": "Create a ticket in the system of record for an account — e.g. an account doubt/error raised over email, an SLA breach, or an out-of-touch flag. Idempotent on externalId (pass an email Message-ID / stable key so re-runs don't duplicate — returns the existing ticket with created:false). Set ticketOwnerEmail to the account's account_owner. Gated on approval since it writes to the shared tickets store."
       },
       {
         "name": "create_triage_ticket",
@@ -402,7 +402,7 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "match_customer_by_email",
-        "description": "Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, fdeOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
+        "description": "Deterministically match an inbound email sender to an account — use this instead of scanning list_customers by eye. Exact (case-insensitive) match on an account's business/technical/executive contact email, else (for a corporate, non-freemail sender) on company_domain. Returns { matched:true, customerId, customerName, accountOwner, matchedOn } or { matched:false }. If matched:false, do NOT guess — route the sender to manual triage."
       },
       {
         "name": "page_oncall",

@@ -113,7 +113,7 @@ try {
     VALUES (${ORG}, ${THREAD}, ${EX}, 'participant', 'revoked', ${OWNER}, now())`;
   await admin`
     INSERT INTO automation_audit (org_id, automation_type, automation_id, actor, event)
-    VALUES (${ORG}, 'chat', 'chat_deadbeefdeadbeef', 'web', 'The stream stopped mid-reply')`;
+    VALUES (${ORG}, 'chat', 'chat_0123456789abcdef', 'web', 'The stream stopped mid-reply')`;
 
   /* ---- 1. the bug, reproduced ------------------------------------------- */
 

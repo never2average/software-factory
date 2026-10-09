@@ -63,24 +63,13 @@ export const advertisedToolNames = () => servedTools().map((t) => t.name);
 /**
  * Every deliberate backward-compatibility alias in the whole system, derived
  * from the code that honours it. This is the gate's ONLY allowance, and a name
- * is on it only because something really still answers to it:
- *   - `aliases` on a tool definition (setup/workspace-tools.mjs) — accepted by
- *     tools/call, never advertised;
- *   - `LEGACY_ENV_NAMES` (setup/workspace-tools.mjs) — the package's old variables;
- *   - `LEGACY_APP_ENV_NAMES` (agent/lib/compat-env.ts) — the two the deployed
- *     app and agent read;
- *   - `LEGACY_STORAGE_KEYS` (lib/browser-storage.ts) — the browser keys.
- * The last two are TypeScript, so they are read as text rather than imported.
- * A table that is ABSENT contributes nothing — that is a tree from before the
- * migration, and the gate should report its offenders rather than crash on the
- * way to doing so. A table that EXISTS but parses empty throws, because a
- * silently blank allowlist is how a gate turns into false green.
+ * is on it only because something really still answers to it: `aliases` on a
+ * tool definition (setup/workspace-tools.mjs) — accepted by tools/call, never
+ * advertised. There are none today: the old environment variables, browser keys
+ * and tool name are no longer read.
  */
 export function declaredAliases() {
-  const out = [...servedTools().flatMap((t) => t.aliases ?? []), ...Object.values(tools.LEGACY_ENV_NAMES ?? {})];
-  out.push(...tableValues("agent/lib/compat-env.ts", "LEGACY_APP_ENV_NAMES"));
-  out.push(...tableValues("lib/browser-storage.ts", "LEGACY_STORAGE_KEYS"));
-  return out;
+  return servedTools().flatMap((t) => t.aliases ?? []);
 }
 
 /**

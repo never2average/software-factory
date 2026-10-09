@@ -45,10 +45,6 @@
  *   WORKSPACE_OAUTH_CLIENT_ID      use this Google installed-app client instead of the built-in one
  *   WORKSPACE_OAUTH_CLIENT_SECRET  ...and its secret
  *
- * (These were FDE_OAUTH_CLIENT_ID / FDE_OAUTH_CLIENT_SECRET, as WORKSPACE_OPS_URL
- * was FDE_OPS_URL. The old names are still read — an MCP config written months
- * ago keeps working — and using one prints a line saying which name to move to.)
- *
  * The built-in client is the one the package was BUILT with: its id and secret
  * live in deployment.generated.mjs, written by scripts/build-agent-cli.mjs from
  * the deployment's own settings, and never in this file. It is a Google *desktop
@@ -71,14 +67,11 @@ import { dirname, join } from "node:path";
 import { DEPLOYMENT } from "./deployment.generated.mjs";
 
 /**
- * Configuration variables, read by their CURRENT name with the pre-rename name
- * still honoured (LEGACY_ENV_NAMES in the tools module). Loaded by ROLE like
- * every other sibling here, so a package built for a deployment finds its own
- * file. stderr, not stdout: the MCP server imports this module.
+ * Configuration variables. Loaded by ROLE like every other sibling here, so a package built for a deployment finds
+ * its own file.
  */
-const { compatEnv } = await import(DEPLOYMENT.modules.tools);
-const envValue = (name, env = process.env) =>
-  compatEnv(env, name, (m) => process.stderr.write(`[${DEPLOYMENT.commands.login}] ${m}\n`));
+const tools = await import(DEPLOYMENT.modules.tools);
+const envValue = (name, env = process.env) => tools.envValue(env, name);
 
 /**
  * The Google installed-app client: the environment first (a team that mints its
@@ -103,46 +96,14 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
  * another company's name in a folder on their laptop.
  */
 const BAKED_HOST = DEPLOYMENT.origin ? new URL(DEPLOYMENT.origin).host.replace(/[^a-z0-9.-]/gi, "_") : null;
-/**
- * The folder sign-ins were kept in before that rename. READ ONLY, and deliberately
- * not derived from anything: the alternative to reading it is silently signing out
- * everyone who signed in before the upgrade, which is the kind of "cosmetic" change
- * that turns into a support queue. See readCredentials below.
- */
-const LEGACY_CONFIG_DIR = "fde-mcp";
-const CONFIG_DIR = DEPLOYMENT.configDir ?? LEGACY_CONFIG_DIR;
+const CONFIG_DIR = DEPLOYMENT.configDir;
 const under = (parent) => (BAKED_HOST ? join(homedir(), ".config", parent, BAKED_HOST) : join(homedir(), ".config", parent));
 export const CRED_DIR = under(CONFIG_DIR);
 export const CRED_PATH = join(CRED_DIR, "credentials.json");
-/** Null only when this package's folder IS the old one. */
-export const LEGACY_CRED_PATH = CONFIG_DIR === LEGACY_CONFIG_DIR ? null : join(under(LEGACY_CONFIG_DIR), "credentials.json");
 
-/**
- * The stored sign-in, from wherever it is, or null. Callers must use this rather
- * than reading CRED_PATH: an upgrade that moves the folder and reads only the new
- * one signs out every person who was already signed in, with no message and no way
- * to tell that is what happened.
- *
- * Found in the old folder, it is COPIED to the new one on first use (mode 600) and
- * the old file is left alone — an older copy of the package still installed
- * somewhere keeps working, and one stale file costs nothing. A home directory that
- * cannot be written is not a sign-in failure: the credential still works from where
- * it is, so the copy is best-effort.
- */
-export async function readCredentials({ path = CRED_PATH, legacyPath = LEGACY_CRED_PATH } = {}) {
-  const read = async (p) => (p ? await readFile(p, "utf8").then(JSON.parse).catch(() => null) : null);
-  const current = await read(path);
-  if (current) return current;
-  const legacy = await read(legacyPath);
-  if (!legacy) return null;
-  try {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(path, JSON.stringify(legacy, null, 2), { mode: 0o600 });
-    await chmod(path, 0o600);
-  } catch {
-    /* keep going: the credential we just read is still good */
-  }
-  return legacy;
+/** The stored sign-in, or null. */
+export async function readCredentials({ path = CRED_PATH } = {}) {
+  return readFile(path, "utf8").then(JSON.parse).catch(() => null);
 }
 
 /** "app.example.com/x" -> "https://app.example.com". Null when it is not an address. */
@@ -158,7 +119,7 @@ export function toOrigin(raw) {
 
 /**
  * Which deployment, and how we know. ONE rule for login and the MCP server:
- *   1. explicit: `--url <address>`, else WORKSPACE_OPS_URL (or the old FDE_OPS_URL)
+ *   1. explicit: `--url <address>`, else WORKSPACE_OPS_URL
  *   2. the address saved at sign-in
  *   3. the address baked into this package (none in the generic package)
  * Returns { origin, source } with origin null when nothing says.

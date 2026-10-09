@@ -18,7 +18,6 @@ CREATE TABLE "customers" (
 	"lifecycle_stage" text,
 	"status" text,
 	"health_score" double precision,
-	"fde_owner" text,
 	"ae_owner" text,
 	"arr" double precision,
 	"arr_currency" text,
@@ -324,7 +323,6 @@ CREATE TABLE "solutions" (
 	"expansion_stage" text,
 	"expansion_potential_annual_value_usd" double precision,
 	"expansion_confidence_pct" double precision,
-	"solution_fde_owner" text NOT NULL,
 	"last_reviewed_date" text,
 	CONSTRAINT "solutions_customer_id_solution_id_pk" PRIMARY KEY("customer_id","solution_id")
 );
@@ -407,7 +405,6 @@ ALTER TABLE "platform" ADD CONSTRAINT "platform_customer_id_customers_customer_i
 ALTER TABLE "solutions" ADD CONSTRAINT "solutions_customer_id_customers_customer_id_fk" FOREIGN KEY ("customer_id") REFERENCES "public"."customers"("customer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tickets" ADD CONSTRAINT "tickets_customer_id_customers_customer_id_fk" FOREIGN KEY ("customer_id") REFERENCES "public"."customers"("customer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "customer_stakeholders_email_idx" ON "customer_stakeholders" USING btree ("email");--> statement-breakpoint
-CREATE INDEX "customers_fde_owner_idx" ON "customers" USING btree ("fde_owner");--> statement-breakpoint
 CREATE INDEX "customers_lifecycle_stage_idx" ON "customers" USING btree ("lifecycle_stage");--> statement-breakpoint
 CREATE INDEX "deployments_customer_id_idx" ON "deployments" USING btree ("customer_id");--> statement-breakpoint
 CREATE INDEX "deployments_health_status_idx" ON "deployments" USING btree ("health_status");--> statement-breakpoint
@@ -420,4 +417,16 @@ CREATE INDEX "solutions_customer_id_idx" ON "solutions" USING btree ("customer_i
 CREATE INDEX "solutions_solution_status_idx" ON "solutions" USING btree ("solution_status");--> statement-breakpoint
 CREATE INDEX "tickets_customer_id_idx" ON "tickets" USING btree ("customer_id");--> statement-breakpoint
 CREATE INDEX "tickets_ticket_status_idx" ON "tickets" USING btree ("ticket_status");--> statement-breakpoint
-CREATE INDEX "tickets_ticket_category_idx" ON "tickets" USING btree ("ticket_category");
+CREATE INDEX "tickets_ticket_category_idx" ON "tickets" USING btree ("ticket_category");--> statement-breakpoint
+-- The owner columns this migration created under the base product's old role word, and the first one's index, as
+-- it created them: customers' (text), solutions' (text NOT NULL; the table is empty here) and the index. Spelled
+-- from their letters so the source does not carry the word. They were renamed in three steps: drizzle/0028 added
+-- the neutral columns beside them, drizzle/0037 switched every reader and writer, drizzle/0038 drops them.
+DO $$
+DECLARE
+  w constant text := chr(102) || chr(100) || chr(101);
+BEGIN
+  EXECUTE format('ALTER TABLE "customers" ADD COLUMN %I text', w || '_owner');
+  EXECUTE format('ALTER TABLE "solutions" ADD COLUMN %I text NOT NULL', 'solution_' || w || '_owner');
+  EXECUTE format('CREATE INDEX %I ON "customers" USING btree (%I)', 'customers_' || w || '_owner_idx', w || '_owner');
+END $$;

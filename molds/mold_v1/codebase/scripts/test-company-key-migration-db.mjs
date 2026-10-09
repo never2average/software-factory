@@ -33,6 +33,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
+// The owner columns of the live shape (the fixture schema), by the names they had: built from the legacy word.
+import { LEGACY_OWNER_KEYS as LK } from "../agent/lib/legacy-member.ts";
 import { driftPlan, kit } from "./lib/drift-plan.mjs";
 
 const adminUrl = process.env.ADMIN_URL;
@@ -125,10 +127,10 @@ async function seed(db) {
   await db`insert into orgs (org_id, name, status, created_at) values (${W1}, 'One', 'active', now() - interval '2 years'), (${W2}, 'Two', 'active', now())`;
   const cos = Array.from({ length: 100 }, (_, i) => ({ org: i < 50 ? W1 : W2, id: `co-${String(i + 1).padStart(3, "0")}` }));
   for (const { org, id } of cos) {
-    await db`insert into customers (org_id, customer_id, customer_name, tier, fde_owner, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@mig.test', ${db.json({ notes: `n-${id}` })})`;
+    await db`insert into customers (org_id, customer_id, customer_name, tier, ${db(LK.account_owner)}, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@mig.test', ${db.json({ notes: `n-${id}` })})`;
     await db`insert into platform (org_id, customer_id, deployment_model, data_residency_constraint, primary_model, enabled_connectors, feature_flags, primary_use_case) values (${org}, ${id}, 'saas', 'none', 'm', '[]', '{}', 'research')`;
     for (const d of ["prod", "uat"]) await db`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, custom) values (${org}, ${id}, ${`DEP-${d}`}, ${d}, 'ap-south-1', ${`v-${id}-${d}`}, 'deployed', 'healthy', ${db.json({ rating: "Buy" })})`;
-    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, solution_fde_owner) values (${org}, ${id}, 'SOL-1', 'Research Copilot', '[]', 'live', 'owner@mig.test')`;
+    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, ${db(LK.solution_owner)}) values (${org}, ${id}, 'SOL-1', 'Research Copilot', '[]', 'live', 'owner@mig.test')`;
     await db`insert into implementation (org_id, customer_id, rollout_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner) values (${org}, ${id}, ${`ROLL-${id}`}, 'UAT', 50, 'Green', 'None')`;
     for (const n of [1, 2, 3]) {
       await db`insert into tickets (org_id, customer_id, ticket_id, summary, ticket_type, ticket_category, ticket_status, ticket_priority, ticket_opened_date, ticket_owner_email, source_channel, last_activity_date, ticket_next_step) values (${org}, ${id}, ${`TCK-${n}`}, ${`t${n} ${id}`}, 'Question', 'Feature Request', 'Open', 'P2-Medium', '2026-09-01', 'owner@mig.test', 'Email', '2026-09-01', 'look')`;
@@ -169,7 +171,7 @@ const fingerprint = async (db) => {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 /** The key constraints as the database has them. */
 const shape = async (db) => db`
-    select con.conrelid::regclass::text as tbl, con.contype, con.conname, con.confdeltype,
+    select con.conrelid::regclass::text as tbl, con.contype, con.conname, pg_get_constraintdef(con.oid) like '% ON DELETE CASCADE%' as cascades,
            (select string_agg(a.attname, ',' order by k.n) from unnest(con.conkey) with ordinality k(attnum, n) join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.attnum) as cols,
            case when con.contype = 'f' then (select string_agg(a.attname, ',' order by k.n) from unnest(con.confkey) with ordinality k(attnum, n) join pg_attribute a on a.attrelid = con.confrelid and a.attnum = k.attnum) end as fcols,
            con.confrelid::regclass::text as ftbl
@@ -185,7 +187,7 @@ const checkShape = async (db, label) => {
   }
   for (const t of CHILDREN) {
     const fks = rows.filter((r) => r.tbl === t && r.contype === "f");
-    if (fks.length !== 1 || fks[0].conname !== `${t}_customer_fk` || fks[0].cols !== "org_id,customer_id" || fks[0].fcols !== "org_id,customer_id" || fks[0].ftbl !== "customers" || fks[0].confdeltype !== "c") bad.push({ t, fks });
+    if (fks.length !== 1 || fks[0].conname !== `${t}_customer_fk` || fks[0].cols !== "org_id,customer_id" || fks[0].fcols !== "org_id,customer_id" || fks[0].ftbl !== "customers" || fks[0].cascades !== true) bad.push({ t, fks });
   }
   const single = rows.filter((r) => r.contype === "f" && r.ftbl === "customers" && r.fcols === "customer_id");
   check(`${label}: every key starts (org_id, customer_id) and every foreign key names both columns, under schema.ts's names`, bad.length === 0 && single.length === 0, { bad, single });

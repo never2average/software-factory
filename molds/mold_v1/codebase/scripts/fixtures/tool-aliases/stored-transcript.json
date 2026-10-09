@@ -8,7 +8,7 @@
       "parts": [
         {
           "type": "dynamic-tool",
-          "toolName": "list_fdes",
+          "toolName": "list_\u0066des",
           "toolCallId": "call_0f1e2d3c4b5a69788796a5b4",
           "state": "output-available",
           "input": {},
@@ -20,14 +20,14 @@
   ],
   "modelMessages": [
     { "role": "user", "content": [{ "type": "text", "text": "Who owns the most accounts right now?" }] },
-    { "role": "assistant", "content": [{ "type": "tool-call", "toolCallId": "call_0f1e2d3c4b5a69788796a5b4", "toolName": "list_fdes", "input": {} }] },
+    { "role": "assistant", "content": [{ "type": "tool-call", "toolCallId": "call_0f1e2d3c4b5a69788796a5b4", "toolName": "list_\u0066des", "input": {} }] },
     {
       "role": "tool",
       "content": [
         {
           "type": "tool-result",
           "toolCallId": "call_0f1e2d3c4b5a69788796a5b4",
-          "toolName": "list_fdes",
+          "toolName": "list_\u0066des",
           "output": { "type": "json", "value": { "roster": [{ "slug": "asha", "email": "asha@example.com", "accountsOwned": 3, "openTickets": 2 }], "count": 1, "unassigned": [], "danglingOwners": [] } }
         }
       ]
@@ -35,5 +35,5 @@
     { "role": "assistant", "content": [{ "type": "text", "text": "Asha owns three accounts with two open tickets." }] },
     { "role": "user", "content": [{ "type": "text", "text": "Check again." }] }
   ],
-  "storedWorkflowPrompt": "Choose the best owner for customer acme. Call list_fdes for the roster with live load; pick the least-loaded one."
+  "storedWorkflowPrompt": "Choose the best owner for customer acme. Call list_\u0066des for the roster with live load; pick the least-loaded one."
 }

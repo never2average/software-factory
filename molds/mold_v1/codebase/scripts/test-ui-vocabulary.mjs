@@ -49,7 +49,7 @@ const STAMPED = process.argv.includes("--stamped");
 const RECORDS_ONLY = process.argv.includes("--records-only");
 const NEUTRAL_FIXTURE = join(new URL("..", import.meta.url).pathname, "scripts/fixtures/ui-vocabulary/50-neutral-records.json");
 const FIXTURE = join(new URL("..", import.meta.url).pathname, "scripts/fixtures/agent-vocabulary/50-relabelled.json");
-const { LEGACY_MEMBER } = await import(pathToFileURL(join(process.cwd(), "agent/lib/legacy-member.ts")).href);
+const { LEGACY_MEMBER, LEGACY_OWNER_KEYS: LK } = await import(pathToFileURL(join(process.cwd(), "agent/lib/legacy-member.ts")).href);
 const { auditRecordLiterals, recordProseWords, recordTokens, STORED_RECORDS } = await import(pathToFileURL(join(process.cwd(), "scripts/lib/record-literals.mjs")).href);
 const BASE = new Set(["customer", "customers", "deployment", "deployments", "implementation", "implementations", "rollout", "rollouts", LEGACY_MEMBER.singular.toLowerCase(), LEGACY_MEMBER.plural.toLowerCase()]);
 const baseWords = (t) => [...String(t).matchAll(/[A-Za-z0-9]+/g)].flatMap((m) => m[0].split(/(?<=[a-z0-9])(?=[A-Z])/)).filter((p) => BASE.has(p.toLowerCase()));
@@ -78,7 +78,7 @@ const zodIssue = (path, message) => ({ name: "ZodError", issues: [{ path, messag
 const BASE_VOCAB = JSON.parse(readFileSync(join(ROOT, "profiles/00-default.json"), "utf8")).vocabulary;
 const [BASE_MEMBER, BASE_MEMBERS] = [BASE_VOCAB.member.singular, BASE_VOCAB.member.plural];
 const ROLE_WORD = new RegExp(`\\b(${LEGACY_MEMBER.singular}|${LEGACY_MEMBER.plural})\\b|forward-deployed`, "i");
-const RECORD = { customerId: "acme", deploymentId: "dep-1", implementationStage: "UAT", rolloutId: "r-1", deployment_model: "k8s", fdeOwner: "a@x.io", note: "the customer asked for a deployment" };
+const RECORD = { customerId: "acme", deploymentId: "dep-1", implementationStage: "UAT", rolloutId: "r-1", deployment_model: "k8s", accountOwner: "a@x.io", note: "the customer asked for a deployment" };
 
 async function relabelled() {
   console.log("\nrelabelled profile (the fixture):");
@@ -97,8 +97,8 @@ async function relabelled() {
     assert.equal(keys.speakKey("deployment_strategy"), "deployment_strategy");
     assert.notEqual(keys.speakKey("deployment_id"), "deployment_id");
     assert.notEqual(keys.speakKey("implementation_stage"), "implementation_stage");
-    assert.equal(keys.humanizeKey("fdeOwner"), "Covering analyst");
-    assert.equal(keys.humanizeKey("accountOwner"), "Covering analyst", "the owner's neutral key reads the same label");
+    assert.equal(keys.humanizeKey(LK.accountOwner), "Covering analyst", "the key the owner was stored under before reads the same label");
+    assert.equal(keys.humanizeKey("accountOwner"), "Covering analyst");
     assert.equal(keys.humanizeKey("account_owner"), "Covering analyst");
     // The second owner: this profile does not name it, so it reads the default's neutral label under both keys.
     for (const k of ["aeOwner", "ae_owner", "secondaryOwner", "secondary_owner"]) assert.equal(keys.humanizeKey(k), "Secondary owner", k);
@@ -265,12 +265,13 @@ async function defaults() {
     assert.equal(keys.jsonForPeople(RECORD), JSON.stringify(RECORD));
   });
   await check("D speakKey is the identity; the owner key keeps its name and reads the profile's owner label", () => {
-    for (const k of ["customer_id", "deployment_model", "deploymentId", "fdeOwner"]) assert.equal(keys.speakKey(k), k);
-    assert.equal(keys.humanizeKey("fdeOwner"), "Account owner");
-    assert.equal(keys.humanizeKey("fde_owner"), "Account owner");
-    assert.equal(keys.humanizeKey("solutionFdeOwner"), "Solution account owner");
-    assert.equal(keys.humanizeKey("solution_fde_owner"), "Solution account owner");
-    assert.equal(keys.humanizeKey("accountOwner"), "Account owner", "the owner's neutral key reads the same label");
+    for (const k of ["customer_id", "deployment_model", "deploymentId", "accountOwner"]) assert.equal(keys.speakKey(k), k);
+    // The keys the owners were stored under before drizzle/0037 (an older workbook or export) read the same labels.
+    assert.equal(keys.humanizeKey(LK.accountOwner), "Account owner");
+    assert.equal(keys.humanizeKey(LK.account_owner), "Account owner");
+    assert.equal(keys.humanizeKey(LK.solutionOwner), "Solution account owner");
+    assert.equal(keys.humanizeKey(LK.solution_owner), "Solution account owner");
+    assert.equal(keys.humanizeKey("accountOwner"), "Account owner");
     assert.equal(keys.humanizeKey("solution_owner"), "Solution account owner");
     assert.equal(keys.humanizeKey("customerId"), "Customer Id");
   });
@@ -279,19 +280,20 @@ async function defaults() {
     for (const k of ["aeOwner", "ae_owner", "secondaryOwner"]) assert.equal(keys.speakKey(k), k, "the stored key itself never moves");
     const wbf = await imp("lib/workbook-fields.ts");
     assert.equal(wbf.sheetColumnKey(F.accounts, "ae_owner"), "secondary_owner");
-    assert.equal(wbf.sheetColumnKey(F.accounts, "fde_owner"), "fde_owner");
+    assert.equal(wbf.sheetColumnKey(F.accounts, "account_owner"), "account_owner");
     assert.equal(wbf.sheetColumnKey(F.accounts, "arr"), "arr");
     const ok = await imp("agent/lib/owner-keys.ts");
     assert.equal(ok.secondaryOwnerKeyLabel("ae_owner", "Relationship manager"), "Relationship manager", "the label is the profile's");
     assert.equal(ok.secondaryOwnerKeyLabel("businessOwnerEmail", "x"), null);
-    assert.equal(ok.secondaryOwnerKeyLabel("fdeOwner", "x"), null);
+    assert.equal(ok.secondaryOwnerKeyLabel("accountOwner", "x"), null);
     // account_fields.hidden: either key of an owner pair hides the field under both keys, here and for the model.
     const base = { domains: { deployments: {}, implementations: {} } };
     for (const named of ["aeOwner", "secondaryOwner"]) {
       const h = wbf.workbookHidden({ ...base, account_fields: { hidden: [named, "arr"] } });
       assert.deepEqual([...h.account].sort(), ["aeOwner", "arr", "secondaryOwner"], `hidden: ["${named}"]`);
     }
-    assert.deepEqual([...wbf.workbookHidden({ ...base, account_fields: { hidden: ["accountOwner"] } }).account].sort(), ["accountOwner", "fdeOwner"]);
+    assert.deepEqual([...wbf.workbookHidden({ ...base, account_fields: { hidden: ["accountOwner"] } }).account], ["accountOwner"]);
+    assert.deepEqual([...wbf.workbookHidden({ ...base, account_fields: { hidden: [LK.accountOwner] } }).account], ["accountOwner"], "a profile naming the owner by its old key hides the owner");
     assert.deepEqual([...wbf.workbookHidden({ ...base, account_fields: { hidden: ["arr"] } }).account], ["arr"], "no owner key is added when none is named");
     const av = await imp("agent/lib/agent-vocabulary.ts");
     for (const named of ["aeOwner", "secondaryOwner"]) {
@@ -341,7 +343,7 @@ async function defaults() {
   });
 
   const exp = await imp("lib/record-export.ts");
-  const B = { type: "deployment", record: { containerType: "deployment", blockerOwner: "Customer", fdeOwner: "a@x", custom: { customer_tier: "gold" } }, resolved: { comments: [{ author: "a", body: "b" }] }, dataroom: { customerId: "acme", context: "ctx", files: { "s.json": { type: "deployment" } } } };
+  const B = { type: "deployment", record: { containerType: "deployment", blockerOwner: "Customer", accountOwner: "a@x", custom: { customer_tier: "gold" } }, resolved: { comments: [{ author: "a", body: "b" }] }, dataroom: { customerId: "acme", context: "ctx", files: { "s.json": { type: "deployment" } } } };
   await check("D Copy as JSON is the API's bundle, a record kind in the profile's word; Markdown is the former rendering", () => {
     // A record kind (`type`, `containerType`) reads the profile's word for the record under every profile; where
     // that is the stored word the copy is byte-identical to the API's bundle. The data-room files are data.
@@ -446,7 +448,7 @@ async function records(name) {
     assert.equal(keys.keyLabel("implementation"), title(W.implementation));
     assert.equal(keys.keyLabel("deploymentModel"), "Deployment Model", "a platform's software-deployment setting is not the record");
     assert.equal(keys.keyLabel("notes"), "Notes");
-    assert.equal(keys.keyLabel("fdeOwner"), W.owner);
+    assert.equal(keys.keyLabel("accountOwner"), W.owner);
     for (const k of ["customerId", "customers", "deploymentId", "deploymentIds", "relatedDeploymentIds", "implementationStage", "implementationRiskLevel", "rolloutId"]) {
       assert.deepEqual(recordTokens(keys.keyLabel(k)).filter((w) => unused.includes(w.toLowerCase())), [], `${k} reads ${keys.keyLabel(k)}`);
     }
@@ -456,7 +458,7 @@ async function records(name) {
     assert.equal(keys.headerLabel("customerId"), `${title(W.account)} ID`);
     assert.equal(keys.headerLabel("deployment_id"), `${title(W.deployment)} ID`);
     assert.equal(keys.headerLabel("implementation_stage"), `${title(W.implementation)} Stage`);
-    assert.equal(keys.headerLabel("fde_owner"), W.owner);
+    assert.equal(keys.headerLabel("account_owner"), W.owner);
     assert.equal(keys.headerLabel("ae_owner"), W.secondaryOwner, "the second owner's column reads the profile's label");
     assert.equal(keys.headerLabel("secondaryOwner"), W.secondaryOwner);
     assert.equal(keys.headerLabel("deployment_model"), "Deployment Model");

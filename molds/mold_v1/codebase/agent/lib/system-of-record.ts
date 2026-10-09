@@ -42,7 +42,7 @@ import {
   type Ticket,
 } from "./customer-schema.ts";
 import { getDb, withOrgDb, type Db } from "./db/index.ts";
-import { accountOwnerSql, ownerOf, pairOwners, pairSolutionOwners, secondaryOwnerOf, solutionOwnerOf } from "./db/owner-columns.ts";
+import { accountOwnerSql, pairOwners, secondaryOwnerOf } from "./db/owner-columns.ts";
 import {
   customers as customersTable,
   deployments as deploymentsTable,
@@ -192,12 +192,12 @@ export function customerToDbRows(customer: Customer): {
   // exactly as it did before the column existed.
   const accountCustom = asCustomValues(custom);
   return {
-    // Both owner columns, from the record's one owner (agent/lib/db/owner-columns.ts).
+    // Both second-owner columns, from the record's one second owner (agent/lib/db/owner-columns.ts).
     customer: fullRow(customersTable, pairOwners({ customerId: id, customerName: name, ...scalar, custom: Object.keys(accountCustom).length ? accountCustom : null })),
     platform: platform ? fullRow(platformTable, { customerId: id, ...platform }) : null,
     // `custom` is NOT NULL, so an absent one is {} rather than fullRow's null.
     deployments: (deployments ?? []).map((d) => fullRow(deploymentsTable, { customerId: id, ...d, custom: asCustomValues(d.custom) })),
-    solutions: (solutions ?? []).map((s) => fullRow(solutionsTable, pairSolutionOwners({ customerId: id, ...s }))),
+    solutions: (solutions ?? []).map((s) => fullRow(solutionsTable, { customerId: id, ...s })),
     implementation: implementation
       ? fullRow(implementationTable, { customerId: id, ...implementation, custom: asCustomValues(implementation.custom) })
       : null,
@@ -239,13 +239,13 @@ async function dbGetCustomer(db: Db, id: string, orgId: string | null | undefine
     ]);
   const row = customerRows[0];
   if (!row) return null;
-  const { customerId, customerName, custom, orgId: _org, accountOwner: _neutral, secondaryOwner: _neutralSecond, ...scalar } = row;
+  const { customerId, customerName, custom, orgId: _org, secondaryOwner: _neutralSecond, ...scalar } = row;
   const candidate: Record<string, unknown> = {
     id: customerId,
     name: customerName,
-    // The record's one owner, and its one second owner: the neutral column, else the original
-    // (agent/lib/db/owner-columns.ts). The record contract names them by the original keys.
-    ...stripNulls({ ...scalar, fdeOwner: ownerOf(row), aeOwner: secondaryOwnerOf(row) }),
+    // The record's one second owner: the neutral column, else the original (agent/lib/db/owner-columns.ts). The
+    // record contract names it by the original key.
+    ...stripNulls({ ...scalar, aeOwner: secondaryOwnerOf(row) }),
   };
   // The account's own fields (account_fields.custom_fields): left off when there are none, as on the nested rows.
   const accountCustom = asCustomValues(custom);
@@ -253,10 +253,7 @@ async function dbGetCustomer(db: Db, id: string, orgId: string | null | undefine
   if (platformRows[0]) candidate.platform = rowToEntity(platformRows[0]);
   if (implementationRows[0]) candidate.implementation = rowToEntity(implementationRows[0]);
   if (deploymentRows.length > 0) candidate.deployments = deploymentRows.map(rowToEntity);
-  if (solutionRows.length > 0) {
-    // Each solution's one owner: the neutral column, else the original (the entity names it solutionFdeOwner).
-    candidate.solutions = solutionRows.map((r) => rowToEntity({ ...r, solutionOwner: undefined, solutionFdeOwner: solutionOwnerOf(r) }));
-  }
+  if (solutionRows.length > 0) candidate.solutions = solutionRows.map(rowToEntity);
   if (ticketRows.length > 0) candidate.tickets = ticketRows.map(rowToEntity);
   if (interactionRows.length > 0) {
     // Mirror the fallback's newest-first interaction ordering.
@@ -361,7 +358,7 @@ export async function listCustomers(orgId?: string | null): Promise<
       | "tier"
       | "lifecycleStage"
       | "status"
-      | "fdeOwner"
+      | "accountOwner"
       | "companyDomain"
       | "businessOwnerEmail"
       | "technicalOwnerEmail"
@@ -399,7 +396,7 @@ tx
           tier: customersTable.tier,
           lifecycleStage: customersTable.lifecycleStage,
           status: customersTable.status,
-          fdeOwner: accountOwnerSql,
+          accountOwner: accountOwnerSql,
           companyDomain: customersTable.companyDomain,
           businessOwnerEmail: customersTable.businessOwnerEmail,
           technicalOwnerEmail: customersTable.technicalOwnerEmail,
@@ -428,7 +425,7 @@ tx
       tier: row.tier ?? undefined,
       lifecycleStage: (row.lifecycleStage ?? undefined) as Customer["lifecycleStage"],
       status: (row.status ?? undefined) as Customer["status"],
-      fdeOwner: row.fdeOwner ?? undefined,
+      accountOwner: row.accountOwner ?? undefined,
       companyDomain: row.companyDomain ?? undefined,
       businessOwnerEmail: row.businessOwnerEmail ?? undefined,
       technicalOwnerEmail: row.technicalOwnerEmail ?? undefined,
@@ -443,7 +440,7 @@ tx
     tier: c.tier,
     lifecycleStage: c.lifecycleStage,
     status: c.status,
-    fdeOwner: c.fdeOwner,
+    accountOwner: c.accountOwner,
     companyDomain: c.companyDomain,
     businessOwnerEmail: c.businessOwnerEmail,
     technicalOwnerEmail: c.technicalOwnerEmail,
@@ -786,7 +783,7 @@ export async function writeCustomerPatchToPostgres(
           if (!gone.length) throw new Error(`Nothing was written. ${name}: there is no such ${part.noun} to remove (it was removed after it was read).`);
           continue;
         }
-        const set: Row = part.key === "solutions" ? pairSolutionOwners(namedFields(row, part.id)) : namedFields(row, part.id);
+        const set: Row = namedFields(row, part.id);
         const delta = part.key === "deployments" ? deltas.rows?.deployments.get(String(row.deploymentId)) : part.key === "implementation" ? deltas.rows?.implementation : undefined;
         if (delta) set.custom = customMergeSql(t.custom, delta, { empty: "object" });
         if (stored.some(sameRow(part)(row))) {
@@ -796,7 +793,7 @@ export async function writeCustomerPatchToPostgres(
         } else {
           const full = part.schema.parse(mergeRow(undefined, row, part.id)) as Row;
           const values = "custom" in full || part.key === "deployments" || part.key === "implementation" ? { ...full, custom: asCustomValues(full.custom) } : full;
-          const insertRow = stamp(fullRow(part.table, part.key === "solutions" ? pairSolutionOwners({ customerId: id, ...values }) : { customerId: id, ...values }) as Row);
+          const insertRow = stamp(fullRow(part.table, { customerId: id, ...values }) as Row);
           // The row's whole key: (org_id, customer_id[, its id]).
           const target = part.id ? [t.orgId, t.customerId, t[part.id]] : [t.orgId, t.customerId];
           // Written by someone else since the read: the named fields are applied onto it, as for a stored row.
@@ -955,7 +952,7 @@ export interface StaleCustomer {
   lifecycleStage: string | null;
   status: string | null;
   healthReason: string | null;
-  fdeOwner: string | null;
+  accountOwner: string | null;
   lastInteractionAt: string | null;
   daysQuiet: number | null;
 }
@@ -990,7 +987,7 @@ export async function listStaleCustomers(
         lifecycleStage: customersTable.lifecycleStage,
         status: customersTable.status,
         healthReason: customersTable.healthReason,
-        fdeOwner: accountOwnerSql,
+        accountOwner: accountOwnerSql,
       })
       .from(customersTable)
       .where(eq(customersTable.orgId, org)),
@@ -1114,7 +1111,7 @@ export async function listUrgentTickets(
 }
 
 /**
- * Reassign a customer's durable owner: update `customers.fde_owner` and upsert
+ * Reassign a customer's durable owner: update `customers.account_owner` and upsert
  * the `internal_staff` solution_engineer row, in one call. Returns the previous +
  * new owner so the caller can log the change. Requires Postgres.
  */
@@ -1141,7 +1138,7 @@ export async function reassignOwner(
     tx
       .update(customersTable)
       // Both owner columns (agent/lib/db/owner-columns.ts).
-      .set(pairOwners({ accountOwner: newOwnerEmail }))
+      .set({ accountOwner: newOwnerEmail })
       .where(ofCompany(staffOrg, customerId)),
   );
   // The customer owns the workspace answer here — a staff row belongs to the
@@ -1449,7 +1446,7 @@ export type CustomerMatch =
       matched: true;
       customerId: string;
       customerName: string;
-      fdeOwner?: string;
+      accountOwner?: string;
       matchedOn: "contact" | "domain";
     }
   | { matched: false };
@@ -1478,12 +1475,12 @@ export async function matchCustomerByEmail(
     const org = listScope(`${wordFor("accounts")} to match a sender against`, orgId);
     const run = <T>(fn: (tx: Db, org: string) => Promise<T[]>): Promise<T[]> =>
       withOrgDb(org, (tx) => fn(tx, org));
-    const pick = { orgId: customersTable.orgId, id: customersTable.customerId, name: customersTable.customerName, fdeOwner: accountOwnerSql };
-    const found = (row: { orgId: string; id: string; name: string; fdeOwner: string | null }, matchedOn: "contact" | "domain"): CustomerMatch => ({
+    const pick = { orgId: customersTable.orgId, id: customersTable.customerId, name: customersTable.customerName, accountOwner: accountOwnerSql };
+    const found = (row: { orgId: string; id: string; name: string; accountOwner: string | null }, matchedOn: "contact" | "domain"): CustomerMatch => ({
       matched: true,
       customerId: row.id,
       customerName: row.name,
-      fdeOwner: row.fdeOwner ?? undefined,
+      accountOwner: row.accountOwner ?? undefined,
       matchedOn,
     });
     const [byContact] = await run((tx, org) =>
@@ -1525,6 +1522,6 @@ export async function matchCustomerByEmail(
       (!FREEMAIL_DOMAINS.has(domain) && c.companyDomain?.toLowerCase() === domain),
   );
   return hit
-    ? { matched: true, customerId: hit.id, customerName: hit.name, fdeOwner: hit.fdeOwner, matchedOn: "contact" }
+    ? { matched: true, customerId: hit.id, customerName: hit.name, accountOwner: hit.accountOwner, matchedOn: "contact" }
     : { matched: false };
 }

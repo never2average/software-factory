@@ -14,8 +14,7 @@
  *     package and the server that verifies its tokens.
  *   - `WORKSPACE_CLI_CLIENT_ID` — further CLI clients still admitted, comma
  *     separated: the previous client while people move off it, a client a team
- *     minted for itself. Read through compatEnv, so a project still set with its
- *     old name (FDE_CLI_CLIENT_ID) keeps admitting those tokens.
+ *     minted for itself.
  *
  * Unset, no CLI token is admitted: Google sign-in from the package is off and
  * the emailed-code sign-in still works. That is the failure to want — closed,
@@ -24,8 +23,6 @@
  *
  * Edge-safe (lib/ops-auth.ts runs in middleware): no Node built-ins.
  */
-import { compatEnv } from "./compat-env.ts";
-
 /** A comma- or whitespace-separated list, trimmed, empties and repeats dropped. */
 export function splitClientIds(value: string | undefined): string[] {
   return [...new Set((value ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))];
@@ -33,5 +30,5 @@ export function splitClientIds(value: string | undefined): string[] {
 
 /** The CLI audiences this deployment admits, read at call time (a test sets the env after import). */
 export function cliClientIds(): string[] {
-  return [...new Set([...splitClientIds(process.env.WORKSPACE_OAUTH_CLIENT_ID), ...splitClientIds(compatEnv("WORKSPACE_CLI_CLIENT_ID"))])];
+  return [...new Set([...splitClientIds(process.env.WORKSPACE_OAUTH_CLIENT_ID), ...splitClientIds(process.env.WORKSPACE_CLI_CLIENT_ID)])];
 }
