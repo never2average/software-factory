@@ -1,0 +1,61 @@
+{
+  "app_id": "beta_app",
+  "mold_id": "mold_v1",
+  "status": "deployed",
+  "brief": "briefs/beta_app.md",
+  "mold_commit": "c0ffee1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b",
+  "surface": {
+    "branding": {
+      "product_name": "Beta Desk",
+      "brand_color": "#1F4FD8"
+    },
+    "flags": {
+      "web_search": false,
+      "browser": false
+    }
+  },
+  "workspace": {
+    "org": {
+      "org_id": "beta-ops",
+      "name": "Beta Ops"
+    },
+    "owner": "owner@beta.example",
+    "members": [
+      {
+        "email": "owner@beta.example",
+        "role": "owner"
+      }
+    ]
+  },
+  "testing": {
+    "functional": {
+      "status": "pass",
+      "run_at": "2026-09-28T10:00:00Z",
+      "report": "reports/lanes/beta_app/functional.md"
+    },
+    "context": {
+      "status": "pass",
+      "run_at": "2026-09-28T10:00:00Z",
+      "report": "reports/lanes/beta_app/context.md"
+    },
+    "load": {
+      "status": "pass",
+      "run_at": "2026-09-28T10:00:00Z",
+      "report": "reports/lanes/beta_app/load.md"
+    },
+    "accessibility": {
+      "status": "pass",
+      "run_at": "2026-09-28T10:00:00Z",
+      "report": "reports/lanes/beta_app/accessibility.md"
+    },
+    "responsiveness": {
+      "status": "pass",
+      "run_at": "2026-09-28T10:00:00Z",
+      "report": "reports/lanes/beta_app/responsiveness.md"
+    }
+  },
+  "live": {
+    "users": 38,
+    "since": "2026-09-15"
+  }
+}

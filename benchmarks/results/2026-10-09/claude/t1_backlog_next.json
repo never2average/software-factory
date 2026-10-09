@@ -1,0 +1,84 @@
+{
+  "agent": "claude",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 10.6,
+    "turns": 3,
+    "cost_usd": 0.10701,
+    "tokens": {
+      "input": 6,
+      "output": 671,
+      "cache_read": 55110,
+      "cache_write": 10318
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "The next task on the `mold_v1` backlog is **mold_v1-005: Load lane: raise the concurrency target to 50 chats** (P2, test). It's done when the change is verified and the evidence is recorded.\n\nHow the rest of the backlog stands:\n- **mold_v1-003** (P1, release gate) has a higher priority, but it can't start until mold_v1-006 is done, so it isn't next.\n- **mold_v1-004** (P1, keyboard focus ring on the chat composer) is already in progress. You may want to finish it before starting anything new.\n- **mold_v1-006** (P2, operator runbook) is also ready to start. Finishing it will unblock the release gate (003).\n- **mold_v1-008** (P2, CSV export) is marked blocked.\n- **mold_v1-007** (P3, 320 px viewport in the responsiveness lane) is ready but lowest priority.\n\nI only read the backlog and didn't change anything. Tell me if you want me to start mold_v1-005; that would mark it in progress.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Read",
+      "input": {
+        "file_path": "/tmp/sf-bench-t1_backlog_next-twbbti9j/factory/.claude/skills/task/SKILL.md"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "python3 .claude/scripts/factory.py next mold_v1; echo ---; python3 .claude/scripts/factory.py tasks mold_v1",
+        "description": "Show next task and backlog for mold_v1"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T13:00:57Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T13:00:57Z",
+      "tool": "factory.py",
+      "argv": [
+        "tasks",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

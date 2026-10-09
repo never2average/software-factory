@@ -1,0 +1,14 @@
+{
+  "lane": "functional",
+  "checks": [
+    {
+      "name": "health: the app answers",
+      "kind": "health"
+    },
+    {
+      "name": "signed-in chat turn",
+      "kind": "chat",
+      "signed_in": true
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+Vercel CLI 99.0.0 (rehearsal)
+Deploying rehearsal-team/delta_app
+https://delta-app.rehearsal.invalid

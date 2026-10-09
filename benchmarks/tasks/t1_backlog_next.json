@@ -1,0 +1,35 @@
+{
+  "id": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "difficulty": "easy",
+  "category": "read-only",
+  "prompt": [
+    "What's next on the backlog?"
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "kind": "answer_has",
+      "all_of": [
+        "mold_v1-005"
+      ],
+      "group": "task",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "kind": "unchanged",
+      "paths": [
+        "state"
+      ],
+      "group": "task",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ]
+}

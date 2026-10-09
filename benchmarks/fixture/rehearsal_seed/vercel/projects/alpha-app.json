@@ -1,0 +1,19 @@
+{
+  "env": {
+    "MODEL_API_KEY": {
+      "sha": "a11ce0000001"
+    },
+    "RESEND_API_KEY": {
+      "sha": "a11ce0000002"
+    }
+  },
+  "deployments": [
+    {
+      "n": 1,
+      "state": "READY",
+      "framework": "nextjs",
+      "url": "https://alpha-app.rehearsal.invalid"
+    }
+  ],
+  "framework": "nextjs"
+}

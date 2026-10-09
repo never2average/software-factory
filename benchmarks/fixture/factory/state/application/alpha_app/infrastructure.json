@@ -1,0 +1,18 @@
+{
+  "target": "vercel",
+  "vercel": {
+    "project": "alpha-app",
+    "framework": "nextjs",
+    "production_url": "https://alpha-app.rehearsal.invalid"
+  },
+  "secrets_user": [
+    "MODEL_API_KEY",
+    "RESEND_API_KEY"
+  ],
+  "deployed_at": "2026-10-01T09:00:00Z",
+  "last_deploy": {
+    "status": "ready",
+    "at": "2026-10-01T09:00:00Z",
+    "log": "state/application/alpha_app/deploy-log.txt"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "app_id": "gamma_app",
+  "mold_id": "mold_v1",
+  "status": "stamped",
+  "brief": "briefs/gamma_app.md",
+  "mold_commit": null,
+  "surface": {
+    "branding": {
+      "product_name": "Gamma Research",
+      "brand_color": "#6B2FB3"
+    },
+    "flags": {
+      "web_search": false,
+      "browser": false
+    }
+  },
+  "workspace": {
+    "org": {
+      "org_id": "gamma-lab",
+      "name": "Gamma Lab"
+    },
+    "owner": "owner@gamma.example",
+    "members": [
+      {
+        "email": "owner@gamma.example",
+        "role": "owner"
+      }
+    ]
+  },
+  "testing": {}
+}

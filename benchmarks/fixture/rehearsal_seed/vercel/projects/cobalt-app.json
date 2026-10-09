@@ -1,0 +1,9 @@
+{
+  "env": {
+    "MODEL_API_KEY": {
+      "sha": "a11ce0000001"
+    }
+  },
+  "deployments": [],
+  "framework": null
+}
