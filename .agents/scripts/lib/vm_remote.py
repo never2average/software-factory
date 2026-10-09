@@ -1619,7 +1619,10 @@ def bundle_copies():
     out = [(os.path.join(SCRIPTS, "provision.py"), ".claude/scripts/provision.py"), (os.path.abspath(__file__), ".claude/scripts/lib/vm_remote.py"),
            (os.path.join(SCRIPTS, "library.py"), ".claude/scripts/library.py")]     # the library cleanup's and apply's rules and words (library-cleanup, library-apply, below)
     for f in sorted(os.listdir(HERE)):
-        if f.endswith(".mjs"): out.append((os.path.join(HERE, f), f".claude/scripts/lib/{f}"))
+        # .mjs: the database chain's node helpers. .py: the helpers provision.py and this file import (agent_result,
+        # runs, services, legacy, factory_local, ...); a helper missing here stops the deploy on the server.
+        if f.endswith(".mjs") or (f.endswith(".py") and not f.endswith("_selftest.py") and f != os.path.basename(__file__)):
+            out.append((os.path.join(HERE, f), f".claude/scripts/lib/{f}"))
     return out
 def write_bundle(S, crons, out_dir):
     for rel, (text, mode) in bundle(S, crons).items():
