@@ -1,0 +1,15 @@
+{
+  "$comment": "THE PIN: what a deployment that already holds files adds to its profile, so every file stays where it is. Each domain's stored folder is the name it had while folder names were written into the base code (scripts/lib/legacy-dataroom-folders.json, which a test holds this file equal to). A label is not given, so people and the model read the folder's own name: with this file and nothing else, a deployment reads, writes and lists exactly the paths it did before folder names became a profile setting (npm run test:dataroom-folders, npm run check:agent-vocabulary).",
+  "dataroom": {
+    "domains": {
+      "accounts": { "folder": "Customers" },
+      "platform": { "folder": "Platform" },
+      "deliveries": { "folder": "Deployments" },
+      "solutions": { "folder": "Solutions" },
+      "projects": { "folder": "Implementation" },
+      "tickets": { "folder": "Tickets" },
+      "people": { "folder": "People" }
+    },
+    "uploads_folder": "Uploads"
+  }
+}

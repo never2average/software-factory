@@ -1,0 +1,12 @@
+-- A workspace's own work-period length (the deployment profile's `work_periods.length_days` is the default): how
+-- long a NEW period of this workspace runs, in days, as its admin chose it in the workspace's settings
+-- (PUT /api/ops/orgs/{id}/period-length; the allowed range is the profile's `length_days_range`). NULL = the
+-- profile's default, which is every existing workspace: nothing a workspace does changes until its admin sets it.
+-- Periods that already exist keep their dates; only the ones opened afterwards read this.
+--
+-- One nullable column on `orgs`, the workspace's own settings row (beside branding, plan and limits). `orgs` carries
+-- no row-level security by design (identity resolution reads across it); every read and write of this column names
+-- the workspace by its primary key. Additive: no row is written, nothing else is altered or dropped.
+--
+-- Idempotent (IF NOT EXISTS). Applied by `npm run db:migrate:production` before the deploy's code reads the column.
+ALTER TABLE "orgs" ADD COLUMN IF NOT EXISTS "period_length_days" integer;

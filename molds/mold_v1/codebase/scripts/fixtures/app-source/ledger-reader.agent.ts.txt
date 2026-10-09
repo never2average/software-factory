@@ -1,0 +1,11 @@
+// A FIXTURE specialist, as a subagent pack ships one: scripts/test-app-source-db.mjs copies this to
+// agent/subagents/ledger-reader/agent.ts in a stamped copy of the tree and regenerates the registry, so the routes
+// under test see a deployment that has a specialist the base product does not. Never built, never deployed.
+import { defineAgent } from "eve";
+import { agentModel, modelContextWindowTokens } from "#lib/model.js";
+
+export default defineAgent({
+  description: "Read a company's ledgers and write the tables an analyst asks for, each figure cited to its page.",
+  model: agentModel("specialist"),
+  modelContextWindowTokens: modelContextWindowTokens("specialist"),
+});

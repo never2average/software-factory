@@ -1,0 +1,571 @@
+{
+ "_about": "What GitHub's hosted MCP server advertised (tools/list) on 2026-10-04: each tool's name and its readOnlyHint annotation. `default` is https://api.githubcopilot.com/mcp/ (the URL agent/lib/connections.ts uses unless GITHUB_MCP_URL is set), `all` is https://api.githubcopilot.com/mcp/x/all (every toolset). scripts/test-github-mcp-readonly.mjs has a stand-in server advertise these to eve's real MCP client. Names and one boolean only; no schema, no repository data.",
+ "default": [
+  {
+   "name": "add_comment_to_pending_review",
+   "readOnlyHint": false
+  },
+  {
+   "name": "add_issue_comment",
+   "readOnlyHint": false
+  },
+  {
+   "name": "add_reply_to_pull_request_comment",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_branch",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_or_update_file",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_pull_request",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_repository",
+   "readOnlyHint": false
+  },
+  {
+   "name": "delete_file",
+   "readOnlyHint": false
+  },
+  {
+   "name": "fork_repository",
+   "readOnlyHint": false
+  },
+  {
+   "name": "get_commit",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_file_contents",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_label",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_latest_release",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_me",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_release_by_tag",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_tag",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_team_members",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_teams",
+   "readOnlyHint": true
+  },
+  {
+   "name": "issue_read",
+   "readOnlyHint": true
+  },
+  {
+   "name": "issue_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "list_branches",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_commits",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_issue_fields",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_issue_types",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_issues",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_pull_requests",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_releases",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_repository_collaborators",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_tags",
+   "readOnlyHint": true
+  },
+  {
+   "name": "merge_pull_request",
+   "readOnlyHint": false
+  },
+  {
+   "name": "pull_request_read",
+   "readOnlyHint": true
+  },
+  {
+   "name": "pull_request_review_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "push_files",
+   "readOnlyHint": false
+  },
+  {
+   "name": "request_copilot_review",
+   "readOnlyHint": false
+  },
+  {
+   "name": "run_secret_scanning",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_code",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_commits",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_issues",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_pull_requests",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_repositories",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_users",
+   "readOnlyHint": true
+  },
+  {
+   "name": "sub_issue_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "ui_get",
+   "readOnlyHint": true
+  },
+  {
+   "name": "update_issue_comment",
+   "readOnlyHint": false
+  },
+  {
+   "name": "update_pull_request",
+   "readOnlyHint": false
+  },
+  {
+   "name": "update_pull_request_branch",
+   "readOnlyHint": false
+  }
+ ],
+ "all": [
+  {
+   "name": "actions_get",
+   "readOnlyHint": true
+  },
+  {
+   "name": "actions_list",
+   "readOnlyHint": true
+  },
+  {
+   "name": "actions_run_trigger",
+   "readOnlyHint": false
+  },
+  {
+   "name": "add_comment_to_pending_review",
+   "readOnlyHint": false
+  },
+  {
+   "name": "add_issue_comment",
+   "readOnlyHint": false
+  },
+  {
+   "name": "add_reply_to_pull_request_comment",
+   "readOnlyHint": false
+  },
+  {
+   "name": "check_dependency_vulnerabilities",
+   "readOnlyHint": true
+  },
+  {
+   "name": "create_branch",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_gist",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_or_update_file",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_pull_request",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_repository",
+   "readOnlyHint": false
+  },
+  {
+   "name": "create_repository_ruleset",
+   "readOnlyHint": false
+  },
+  {
+   "name": "custom_properties_read",
+   "readOnlyHint": true
+  },
+  {
+   "name": "custom_properties_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "delete_file",
+   "readOnlyHint": false
+  },
+  {
+   "name": "discussion_comment_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "dismiss_notification",
+   "readOnlyHint": false
+  },
+  {
+   "name": "fork_repository",
+   "readOnlyHint": false
+  },
+  {
+   "name": "get_code_quality_finding",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_code_scanning_alert",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_commit",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_copilot_space",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_dependabot_alert",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_discussion",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_discussion_comments",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_file_contents",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_gist",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_global_security_advisory",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_job_logs",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_label",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_latest_release",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_me",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_notification_details",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_release_by_tag",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_repository_tree",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_secret_scanning_alert",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_tag",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_team_members",
+   "readOnlyHint": true
+  },
+  {
+   "name": "get_teams",
+   "readOnlyHint": true
+  },
+  {
+   "name": "github_support_docs_search",
+   "readOnlyHint": true
+  },
+  {
+   "name": "issue_read",
+   "readOnlyHint": true
+  },
+  {
+   "name": "issue_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "label_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "list_branches",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_code_scanning_alerts",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_commits",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_copilot_spaces",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_dependabot_alerts",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_discussion_categories",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_discussions",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_gists",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_global_security_advisories",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_issue_fields",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_issue_types",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_issues",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_label",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_notifications",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_org_repository_security_advisories",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_pull_requests",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_releases",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_repository_collaborators",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_repository_security_advisories",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_secret_scanning_alerts",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_starred_repositories",
+   "readOnlyHint": true
+  },
+  {
+   "name": "list_tags",
+   "readOnlyHint": true
+  },
+  {
+   "name": "manage_notification_subscription",
+   "readOnlyHint": false
+  },
+  {
+   "name": "manage_repository_notification_subscription",
+   "readOnlyHint": false
+  },
+  {
+   "name": "mark_all_notifications_read",
+   "readOnlyHint": false
+  },
+  {
+   "name": "merge_pull_request",
+   "readOnlyHint": false
+  },
+  {
+   "name": "projects_get",
+   "readOnlyHint": true
+  },
+  {
+   "name": "projects_list",
+   "readOnlyHint": true
+  },
+  {
+   "name": "projects_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "pull_request_read",
+   "readOnlyHint": true
+  },
+  {
+   "name": "pull_request_review_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "push_files",
+   "readOnlyHint": false
+  },
+  {
+   "name": "repository_ruleset_read",
+   "readOnlyHint": true
+  },
+  {
+   "name": "request_copilot_review",
+   "readOnlyHint": false
+  },
+  {
+   "name": "run_secret_scanning",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_code",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_commits",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_issues",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_orgs",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_pull_requests",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_repositories",
+   "readOnlyHint": true
+  },
+  {
+   "name": "search_users",
+   "readOnlyHint": true
+  },
+  {
+   "name": "semantic_issue_similarity_search",
+   "readOnlyHint": true
+  },
+  {
+   "name": "star_repository",
+   "readOnlyHint": false
+  },
+  {
+   "name": "sub_issue_write",
+   "readOnlyHint": false
+  },
+  {
+   "name": "ui_get",
+   "readOnlyHint": true
+  },
+  {
+   "name": "unstar_repository",
+   "readOnlyHint": false
+  },
+  {
+   "name": "update_gist",
+   "readOnlyHint": false
+  },
+  {
+   "name": "update_issue_comment",
+   "readOnlyHint": false
+  },
+  {
+   "name": "update_pull_request",
+   "readOnlyHint": false
+  },
+  {
+   "name": "update_pull_request_branch",
+   "readOnlyHint": false
+  }
+ ]
+}

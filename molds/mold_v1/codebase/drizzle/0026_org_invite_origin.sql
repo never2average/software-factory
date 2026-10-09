@@ -1,0 +1,13 @@
+-- Where a workspace invite came from (mold_v1-144, review of #85): 'workspace' (the workspace's own settings) or
+-- 'chat_share' (the pre-#85 thread-share flow, which invited every outside invitee into the WORKSPACE).
+--
+-- A chat share makes an outside person a read-only guest of ONE chat, never a member. Invites the old share flow
+-- sent are still pending (14-day TTL), and claiming one made the guest a full member. The app refuses to list,
+-- claim or accept an invite whose origin is 'chat_share'; every new invite is 'workspace' (the default).
+--
+-- No row is re-labelled here: which pending invites came from a share is the operator's call, made with
+-- scripts/chat-share-invites.mjs (it lists the candidates — pending invites whose address also holds a chat
+-- membership in that workspace — and marks or expires the ids it is given, dry run by default).
+--
+-- Idempotent (IF NOT EXISTS). Applied by `npm run db:migrate:production` before the deploy's code reads the column.
+ALTER TABLE "org_invites" ADD COLUMN IF NOT EXISTS "origin" text DEFAULT 'workspace' NOT NULL;

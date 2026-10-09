@@ -1,0 +1,22 @@
+{
+  "note": "MSG-2 POSTed while the configuration specialist was parked on ask_question (no events at all); the answer then releases the delegation's reply AND MSG-2's turn: two session.waiting for one POST.",
+  "deliveries": [
+    {
+      "at": 0,
+      "message": "MSG-1 ASK please delegate"
+    },
+    {
+      "at": 10,
+      "message": "MSG-2 unrelated while the specialist waits"
+    },
+    {
+      "at": 10,
+      "inputResponses": [
+        {
+          "requestId": "call_a4dd2d6e8d7815b7c25edfdb",
+          "optionId": "fy26"
+        }
+      ]
+    }
+  ]
+}

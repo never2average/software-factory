@@ -1,0 +1,1507 @@
+{
+  "grammar": {
+    "templates": [
+      "Customers/Master.xlsx",
+      "Customers/{customer_id}/interactions.jsonl",
+      "Customers/{customer_id}/context.md",
+      "Customers/{customer_id}/personas.jsonl",
+      "Customers/{customer_id}/agreements/**",
+      "Customers/syncs/**",
+      "Platform/Master.xlsx",
+      "Platform/{platform_version_id}/{date}_changelog_manager.md",
+      "Platform/{platform_version_id}/architecture/helm/**",
+      "Platform/{platform_version_id}/architecture/diagrams/**",
+      "Platform/{platform_version_id}/architecture/infrastructure/**",
+      "Platform/{platform_version_id}/design_decisions/{design_doc}.schemas.json",
+      "Platform/{platform_version_id}/tests/**",
+      "Platform/{platform_version_id}/security/**",
+      "Platform/{platform_version_id}/integromat/**",
+      "Platform/syncs/**",
+      "Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/customizations.tf",
+      "Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/rationale.md",
+      "Deployments/{customer_id}/{platform_version_id}/infrastructure/{component}/signoff/{signoff_role}.md",
+      "Deployments/{customer_id}/{platform_version_id}/platform/organization.json",
+      "Deployments/{customer_id}/{platform_version_id}/platform/dataplatform.json",
+      "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/dataengineering.approach.json",
+      "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/context.md",
+      "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/interactions.jsonl",
+      "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/codebase/**",
+      "Deployments/{customer_id}/{platform_version_id}/platform/migrations/{migration_id}/credentials/**",
+      "Deployments/{customer_id}/{platform_version_id}/platform/agents/{agent_id}/**",
+      "Deployments/{customer_id}/{platform_version_id}/platform/pipelines/{pipeline_id}/pipeline_config.json",
+      "Deployments/{customer_id}/{platform_version_id}/platform/pipelines/{pipeline_id}/private.integromat.json",
+      "Deployments/{customer_id}/{platform_version_id}/platform/integromat.json",
+      "Deployments/syncs/**",
+      "Solutions/{platform_version_id}/supported.personas.jsonl",
+      "Solutions/{platform_version_id}/agents/{agent_id}/dataplatform.schemas.json",
+      "Solutions/{platform_version_id}/agents/{agent_id}/run_configs.schema.json",
+      "Solutions/{platform_version_id}/agents/{agent_id}/recipe.md",
+      "Solutions/{platform_version_id}/agents/{agent_id}/recipe/**",
+      "Solutions/{platform_version_id}/agents/{agent_id}/evals/dataset.jsonl",
+      "Solutions/{platform_version_id}/agents/{agent_id}/evals/benchmark.jsonl",
+      "Solutions/{platform_version_id}/agents/{agent_id}/evals/{run_id}/run_configs.json",
+      "Solutions/{platform_version_id}/agents/{agent_id}/evals/{run_id}/output.jsonl",
+      "Solutions/{platform_version_id}/agents/{agent_id}/evals/{run_id}/trace.jsonl",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/pipeline_config.json",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/run_configs.schema.json",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/integromat.schema.json",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/dataengineering.approach.json",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/context.md",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/migrations/{migration_id}/interactions.jsonl",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/run_configs.json",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/output.jsonl",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/evals/{run_id}/trace.jsonl",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/background_research/{person_id}/context.md",
+      "Solutions/{platform_version_id}/pipelines/{pipeline_id}/background_research/{person_id}/interaction.jsonl",
+      "Implementation/{customer_id}/migrations/{migration_id}/dataengineering.approach.json",
+      "Implementation/{customer_id}/migrations/{migration_id}/context.md",
+      "Implementation/{customer_id}/migrations/{migration_id}/interactions.jsonl",
+      "Implementation/{customer_id}/migrations/{migration_id}/credentials/**",
+      "Implementation/{customer_id}/migrations/{migration_id}/codebase/**",
+      "Implementation/{customer_id}/agents/{agent_id}/**",
+      "Implementation/{customer_id}/pipelines/{pipeline_id}/pipeline_config.json",
+      "Implementation/{customer_id}/pipelines/{pipeline_id}/private.integromat.json",
+      "Implementation/{customer_id}/integromat.json",
+      "Implementation/{customer_id}/evals/agents/**",
+      "Implementation/{customer_id}/evals/pipelines/**",
+      "Tickets/{ticket_folder}/{customer_id}/{platform_id}/tickets_{id}.jsonl",
+      "Tickets/syncs/**",
+      "People/Master.xlsx",
+      "People/{person_id}/interactions.jsonl",
+      "People/{person_id}/context.md",
+      "People/{person_id}/identity.json",
+      "People/{person_id}/roles_and_responsibilities.md",
+      "People/{person_id}/agreements/**",
+      "People/syncs/**",
+      "Uploads/{person_id}/**"
+    ],
+    "topLevelFolders": [
+      "Customers",
+      "Platform",
+      "Deployments",
+      "Solutions",
+      "Implementation",
+      "Tickets",
+      "People",
+      "Uploads"
+    ],
+    "syncDomains": [
+      "Customers",
+      "Platform",
+      "Deployments",
+      "Tickets",
+      "People"
+    ],
+    "syncLandingPaths": [
+      "Customers/syncs/manual_entry/acme-bank/2026-07-10.jsonl",
+      "Customers/syncs/email/acme-bank/2026-07-10.jsonl",
+      "Customers/syncs/slack/acme-bank/2026-07-10.jsonl",
+      "Customers/syncs/meeting_notes/granola/acme-bank/2026-07-10.jsonl",
+      "Platform/syncs/manual_entry/acme-bank/2026-07-10.jsonl",
+      "Platform/syncs/github/acme-bank/2026-07-10.jsonl",
+      "Platform/syncs/aws/acme-bank/2026-07-10.jsonl",
+      "Platform/syncs/slack/acme-bank/2026-07-10.jsonl",
+      "Platform/syncs/miro/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/manual_input/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/claude/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/codex/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/email/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/github/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/aws/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/azure/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/gcp/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/oci/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/bare_metal/oc/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/bare_metal/nkp/acme-bank/2026-07-10.jsonl",
+      "Deployments/syncs/bare_metal/custom_k8s/acme-bank/2026-07-10.jsonl",
+      "Tickets/syncs/manual_entry/acme-bank/2026-07-10.jsonl",
+      "Tickets/syncs/call/acme-bank/2026-07-10.jsonl",
+      "Tickets/syncs/email/acme-bank/2026-07-10.jsonl",
+      "Tickets/syncs/slack/acme-bank/2026-07-10.jsonl",
+      "People/syncs/manual_entry/acme-bank/2026-07-10.jsonl",
+      "People/syncs/email/acme-bank/2026-07-10.jsonl",
+      "People/syncs/slack/acme-bank/2026-07-10.jsonl",
+      "People/syncs/analytics/acme-bank/2026-07-10.jsonl",
+      "People/syncs/observability/acme-bank/2026-07-10.jsonl",
+      "People/syncs/meeting_notes/granola/acme-bank/2026-07-10.jsonl"
+    ],
+    "workbookDomains": [
+      "Customers",
+      "Platform",
+      "Deployments",
+      "Solutions",
+      "Implementation",
+      "Tickets",
+      "People"
+    ],
+    "ticketAffectedSchema": [
+      "Customers",
+      "Platform",
+      "Deployments",
+      "Solutions",
+      "Implementation",
+      "Tickets",
+      "Interactions",
+      "Internal Staff",
+      "Customer Stakeholders",
+      "Unknown"
+    ]
+  },
+  "store": {
+    "written": [
+      "Customers/Master.xlsx",
+      "Customers/acme-bank/interactions.jsonl",
+      "Customers/acme-bank/context.md",
+      "Customers/acme-bank/personas.jsonl",
+      "Customers/acme-bank/agreements/notes/readme.md",
+      "Customers/syncs/notes/readme.md",
+      "Platform/Master.xlsx",
+      "Platform/2026.06.3/2026-07-10_changelog_manager.md",
+      "Platform/2026.06.3/architecture/helm/notes/readme.md",
+      "Platform/2026.06.3/architecture/diagrams/notes/readme.md",
+      "Platform/2026.06.3/architecture/infrastructure/notes/readme.md",
+      "Platform/2026.06.3/design_decisions/tenancy.schemas.json",
+      "Platform/2026.06.3/tests/notes/readme.md",
+      "Platform/2026.06.3/security/notes/readme.md",
+      "Platform/2026.06.3/integromat/notes/readme.md",
+      "Platform/syncs/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/customizations.tf",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/rationale.md",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+      "Deployments/acme-bank/2026.06.3/platform/organization.json",
+      "Deployments/acme-bank/2026.06.3/platform/dataplatform.json",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/dataengineering.approach.json",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/context.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/interactions.jsonl",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/codebase/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/credentials/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/agents/agent-1/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/pipeline_config.json",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/private.integromat.json",
+      "Deployments/acme-bank/2026.06.3/platform/integromat.json",
+      "Deployments/syncs/notes/readme.md",
+      "Solutions/2026.06.3/supported.personas.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/dataplatform.schemas.json",
+      "Solutions/2026.06.3/agents/agent-1/run_configs.schema.json",
+      "Solutions/2026.06.3/agents/agent-1/recipe.md",
+      "Solutions/2026.06.3/agents/agent-1/recipe/notes/readme.md",
+      "Solutions/2026.06.3/agents/agent-1/evals/dataset.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/benchmark.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/run_configs.json",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/output.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/trace.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/pipeline_config.json",
+      "Solutions/2026.06.3/pipelines/pl-1/run_configs.schema.json",
+      "Solutions/2026.06.3/pipelines/pl-1/integromat.schema.json",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/dataengineering.approach.json",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/context.md",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/interactions.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/run_configs.json",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/output.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/trace.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/context.md",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/interaction.jsonl",
+      "Implementation/acme-bank/migrations/mig-1/dataengineering.approach.json",
+      "Implementation/acme-bank/migrations/mig-1/context.md",
+      "Implementation/acme-bank/migrations/mig-1/interactions.jsonl",
+      "Implementation/acme-bank/migrations/mig-1/credentials/notes/readme.md",
+      "Implementation/acme-bank/migrations/mig-1/codebase/notes/readme.md",
+      "Implementation/acme-bank/agents/agent-1/notes/readme.md",
+      "Implementation/acme-bank/pipelines/pl-1/pipeline_config.json",
+      "Implementation/acme-bank/pipelines/pl-1/private.integromat.json",
+      "Implementation/acme-bank/integromat.json",
+      "Implementation/acme-bank/evals/agents/notes/readme.md",
+      "Implementation/acme-bank/evals/pipelines/notes/readme.md",
+      "Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1.jsonl",
+      "Tickets/syncs/notes/readme.md",
+      "People/Master.xlsx",
+      "People/sam-example-com/interactions.jsonl",
+      "People/sam-example-com/context.md",
+      "People/sam-example-com/identity.json",
+      "People/sam-example-com/roles_and_responsibilities.md",
+      "People/sam-example-com/agreements/notes/readme.md",
+      "People/syncs/notes/readme.md",
+      "Uploads/sam-example-com/notes/readme.md"
+    ],
+    "listed": [
+      "Customers/Master.xlsx",
+      "Customers/acme-bank/agreements/notes/readme.md",
+      "Customers/acme-bank/context.md",
+      "Customers/acme-bank/interactions.jsonl",
+      "Customers/acme-bank/personas.jsonl",
+      "Customers/syncs/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/customizations.tf",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/rationale.md",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+      "Deployments/acme-bank/2026.06.3/platform/agents/agent-1/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/dataplatform.json",
+      "Deployments/acme-bank/2026.06.3/platform/integromat.json",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/codebase/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/context.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/credentials/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/dataengineering.approach.json",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/interactions.jsonl",
+      "Deployments/acme-bank/2026.06.3/platform/organization.json",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/pipeline_config.json",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/private.integromat.json",
+      "Deployments/syncs/notes/readme.md",
+      "Implementation/acme-bank/agents/agent-1/notes/readme.md",
+      "Implementation/acme-bank/evals/agents/notes/readme.md",
+      "Implementation/acme-bank/evals/pipelines/notes/readme.md",
+      "Implementation/acme-bank/integromat.json",
+      "Implementation/acme-bank/migrations/mig-1/codebase/notes/readme.md",
+      "Implementation/acme-bank/migrations/mig-1/context.md",
+      "Implementation/acme-bank/migrations/mig-1/credentials/notes/readme.md",
+      "Implementation/acme-bank/migrations/mig-1/dataengineering.approach.json",
+      "Implementation/acme-bank/migrations/mig-1/interactions.jsonl",
+      "Implementation/acme-bank/pipelines/pl-1/pipeline_config.json",
+      "Implementation/acme-bank/pipelines/pl-1/private.integromat.json",
+      "People/Master.xlsx",
+      "People/sam-example-com/agreements/notes/readme.md",
+      "People/sam-example-com/context.md",
+      "People/sam-example-com/identity.json",
+      "People/sam-example-com/interactions.jsonl",
+      "People/sam-example-com/roles_and_responsibilities.md",
+      "People/syncs/notes/readme.md",
+      "Platform/2026.06.3/2026-07-10_changelog_manager.md",
+      "Platform/2026.06.3/architecture/diagrams/notes/readme.md",
+      "Platform/2026.06.3/architecture/helm/notes/readme.md",
+      "Platform/2026.06.3/architecture/infrastructure/notes/readme.md",
+      "Platform/2026.06.3/design_decisions/tenancy.schemas.json",
+      "Platform/2026.06.3/integromat/notes/readme.md",
+      "Platform/2026.06.3/security/notes/readme.md",
+      "Platform/2026.06.3/tests/notes/readme.md",
+      "Platform/Master.xlsx",
+      "Platform/syncs/notes/readme.md",
+      "Solutions/2026.06.3/agents/agent-1/dataplatform.schemas.json",
+      "Solutions/2026.06.3/agents/agent-1/evals/benchmark.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/dataset.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/output.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/run_configs.json",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/trace.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/recipe.md",
+      "Solutions/2026.06.3/agents/agent-1/recipe/notes/readme.md",
+      "Solutions/2026.06.3/agents/agent-1/run_configs.schema.json",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/context.md",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/interaction.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/output.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/run_configs.json",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/trace.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/integromat.schema.json",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/context.md",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/dataengineering.approach.json",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/interactions.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/pipeline_config.json",
+      "Solutions/2026.06.3/pipelines/pl-1/run_configs.schema.json",
+      "Solutions/2026.06.3/supported.personas.jsonl",
+      "Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1.jsonl",
+      "Tickets/syncs/notes/readme.md",
+      "Uploads/sam-example-com/notes/readme.md"
+    ],
+    "listedPerFolder": {
+      "Customers": [
+        "Customers/Master.xlsx",
+        "Customers/acme-bank/agreements/notes/readme.md",
+        "Customers/acme-bank/context.md",
+        "Customers/acme-bank/interactions.jsonl",
+        "Customers/acme-bank/personas.jsonl",
+        "Customers/syncs/notes/readme.md"
+      ],
+      "Platform": [
+        "Platform/2026.06.3/2026-07-10_changelog_manager.md",
+        "Platform/2026.06.3/architecture/diagrams/notes/readme.md",
+        "Platform/2026.06.3/architecture/helm/notes/readme.md",
+        "Platform/2026.06.3/architecture/infrastructure/notes/readme.md",
+        "Platform/2026.06.3/design_decisions/tenancy.schemas.json",
+        "Platform/2026.06.3/integromat/notes/readme.md",
+        "Platform/2026.06.3/security/notes/readme.md",
+        "Platform/2026.06.3/tests/notes/readme.md",
+        "Platform/Master.xlsx",
+        "Platform/syncs/notes/readme.md"
+      ],
+      "Deployments": [
+        "Deployments/acme-bank/2026.06.3/infrastructure/inference/customizations.tf",
+        "Deployments/acme-bank/2026.06.3/infrastructure/inference/rationale.md",
+        "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+        "Deployments/acme-bank/2026.06.3/platform/agents/agent-1/notes/readme.md",
+        "Deployments/acme-bank/2026.06.3/platform/dataplatform.json",
+        "Deployments/acme-bank/2026.06.3/platform/integromat.json",
+        "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/codebase/notes/readme.md",
+        "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/context.md",
+        "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/credentials/notes/readme.md",
+        "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/dataengineering.approach.json",
+        "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/interactions.jsonl",
+        "Deployments/acme-bank/2026.06.3/platform/organization.json",
+        "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/pipeline_config.json",
+        "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/private.integromat.json",
+        "Deployments/syncs/notes/readme.md"
+      ],
+      "Solutions": [
+        "Solutions/2026.06.3/agents/agent-1/dataplatform.schemas.json",
+        "Solutions/2026.06.3/agents/agent-1/evals/benchmark.jsonl",
+        "Solutions/2026.06.3/agents/agent-1/evals/dataset.jsonl",
+        "Solutions/2026.06.3/agents/agent-1/evals/run-1/output.jsonl",
+        "Solutions/2026.06.3/agents/agent-1/evals/run-1/run_configs.json",
+        "Solutions/2026.06.3/agents/agent-1/evals/run-1/trace.jsonl",
+        "Solutions/2026.06.3/agents/agent-1/recipe.md",
+        "Solutions/2026.06.3/agents/agent-1/recipe/notes/readme.md",
+        "Solutions/2026.06.3/agents/agent-1/run_configs.schema.json",
+        "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/context.md",
+        "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/interaction.jsonl",
+        "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/output.jsonl",
+        "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/run_configs.json",
+        "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/trace.jsonl",
+        "Solutions/2026.06.3/pipelines/pl-1/integromat.schema.json",
+        "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/context.md",
+        "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/dataengineering.approach.json",
+        "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/interactions.jsonl",
+        "Solutions/2026.06.3/pipelines/pl-1/pipeline_config.json",
+        "Solutions/2026.06.3/pipelines/pl-1/run_configs.schema.json",
+        "Solutions/2026.06.3/supported.personas.jsonl"
+      ],
+      "Implementation": [
+        "Implementation/acme-bank/agents/agent-1/notes/readme.md",
+        "Implementation/acme-bank/evals/agents/notes/readme.md",
+        "Implementation/acme-bank/evals/pipelines/notes/readme.md",
+        "Implementation/acme-bank/integromat.json",
+        "Implementation/acme-bank/migrations/mig-1/codebase/notes/readme.md",
+        "Implementation/acme-bank/migrations/mig-1/context.md",
+        "Implementation/acme-bank/migrations/mig-1/credentials/notes/readme.md",
+        "Implementation/acme-bank/migrations/mig-1/dataengineering.approach.json",
+        "Implementation/acme-bank/migrations/mig-1/interactions.jsonl",
+        "Implementation/acme-bank/pipelines/pl-1/pipeline_config.json",
+        "Implementation/acme-bank/pipelines/pl-1/private.integromat.json"
+      ],
+      "Tickets": [
+        "Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1.jsonl",
+        "Tickets/syncs/notes/readme.md"
+      ],
+      "People": [
+        "People/Master.xlsx",
+        "People/sam-example-com/agreements/notes/readme.md",
+        "People/sam-example-com/context.md",
+        "People/sam-example-com/identity.json",
+        "People/sam-example-com/interactions.jsonl",
+        "People/sam-example-com/roles_and_responsibilities.md",
+        "People/syncs/notes/readme.md"
+      ],
+      "Uploads": [
+        "Uploads/sam-example-com/notes/readme.md"
+      ]
+    },
+    "readBack": {
+      "Customers/Master.xlsx": "348e5af468c12a50b4b35a1c2980d2254c6875ed88edee06f0980e52fdbc6c17",
+      "Customers/acme-bank/interactions.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Customers/acme-bank/context.md": "22af277ba7e1a2cf0d5d04bd7e0c43ccc80383ca315b39a873609328fb94d7da",
+      "Customers/acme-bank/personas.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Customers/acme-bank/agreements/notes/readme.md": "0fdd545b220b48ce7224cb7aa4b740143a546eb5843cf8bde263638367fb30af",
+      "Customers/syncs/notes/readme.md": "2b0459f5cb7cb07c4ef8f384d2e5e0dcb0887f409a9955c7cea6283a77dcebf6",
+      "Platform/Master.xlsx": "1dddfb9958e2df01a2dd98dfc7f77574e810e74a39ba331835a851f791bcd6fb",
+      "Platform/2026.06.3/2026-07-10_changelog_manager.md": "71f66ac29e2cfc85dfeedfcc8f55c79e59902705a54d9b11fad19f1ec5078ccb",
+      "Platform/2026.06.3/architecture/helm/notes/readme.md": "ea4f3ff11903cf93084f81c591229eff62ab23b3556be9baed9bf22974fd59e1",
+      "Platform/2026.06.3/architecture/diagrams/notes/readme.md": "a855b94ed13f9124472e2d493de7542bac5efef42b1f49c01a4f2be7712b3900",
+      "Platform/2026.06.3/architecture/infrastructure/notes/readme.md": "03e80dce89ac5f13d21f3ed8500096e5f6625efae2a305517afc0fc8119546f6",
+      "Platform/2026.06.3/design_decisions/tenancy.schemas.json": "b5a8b7e160c7d82141daa59ac8f48eba8d0f03f0405b5bfd9a30a8058bbbe18d",
+      "Platform/2026.06.3/tests/notes/readme.md": "2856e8652e36ad46ffbf2586ef1f116fb88e398dd5f262d818b70e9568dcb297",
+      "Platform/2026.06.3/security/notes/readme.md": "1eff178bec358b9ec5c7a43c71e0b989cb2a0a0251a80c6eb79a3ebb1aff04e5",
+      "Platform/2026.06.3/integromat/notes/readme.md": "ec9a9141bb986d80062cae385426e602ebe66990860d6bc31486988eb574e023",
+      "Platform/syncs/notes/readme.md": "1155c7a3c14384cbc060774488eab04e5d293a2c5a52c7189c1e3ee5d70176dd",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/customizations.tf": "e9097dcf4e0cfebd859642380dae8d9c12686bfbc136d95dd05a869d7f99bf6c",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/rationale.md": "2b146f2750a2a4ef2f4e40137f2f61129b4cccad4be02e0f3ef62b630a0f324f",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md": "bd7735737ee8151ff93c895fdceccb66441dc9a6c84ede9f9646f9d3fd764588",
+      "Deployments/acme-bank/2026.06.3/platform/organization.json": "cb543f7202be84abf6242b38aaaae02faa96be1fdce2a3b684bf42a0c85925f8",
+      "Deployments/acme-bank/2026.06.3/platform/dataplatform.json": "81fa870a4ab8fb301f6b63d0e98808d5d9bdbac653d0e9660db64dffcac89b60",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/dataengineering.approach.json": "5c9e0ae373aaddbc9eb00b52cab52f634f4466a31f1c181a802f1c36109f5bb2",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/context.md": "58c9a9bf3e98cdfc337533a7f6be09e6eac45370a6acf229efc2288788534eaf",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/interactions.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/codebase/notes/readme.md": "2baeb77a7350c71dd52c523156e1064f23470871f135fd6301e8dccd5a851402",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/credentials/notes/readme.md": "3d83672891a6bf86b4fc0104c7dc4ea1cb0f9bb2f56e84da2e793460c12106c7",
+      "Deployments/acme-bank/2026.06.3/platform/agents/agent-1/notes/readme.md": "7844cd9c7a95a042c3c496a509383a043b2961cad7a36430645ffe55a10f4812",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/pipeline_config.json": "d6323d6247a0fba83268965d58bd6b8de17c91329a1b5e8525d5ef0fa10f85f6",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/private.integromat.json": "5ff5aec2ce023fc3e1571ffe32fbfa0f4b96921c09e59fe5a562a51ecc9ece2d",
+      "Deployments/acme-bank/2026.06.3/platform/integromat.json": "ba5ce0cd34893372de086a2f14aaa8a0afd0114ad1b45b3bbebda4a1cc6426c9",
+      "Deployments/syncs/notes/readme.md": "f34cf156a5b789240ef03e6719a5cc69a944c080e053b68d0e020ba5957b1534",
+      "Solutions/2026.06.3/supported.personas.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/agents/agent-1/dataplatform.schemas.json": "12c3a1b8a6da1491996818a373455ace50b6008f96d4a8c0421ef576887702aa",
+      "Solutions/2026.06.3/agents/agent-1/run_configs.schema.json": "4beddbd82c1188451808b429ede8bf72d759e7c4e9d4f89a95f956f4b3690078",
+      "Solutions/2026.06.3/agents/agent-1/recipe.md": "bf94085b3f888e094a2a328f1ab72e09f74d1c9f8380c9560add0bbde7e3707a",
+      "Solutions/2026.06.3/agents/agent-1/recipe/notes/readme.md": "a280e1450a59d897be9e940ad0d760a12f5dc8ce8042559fb76488f2e613ae61",
+      "Solutions/2026.06.3/agents/agent-1/evals/dataset.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/agents/agent-1/evals/benchmark.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/run_configs.json": "705d213fc643eaec757009c3c05a83d21fd34946035fac8261f24ea20bdb5520",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/output.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/trace.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/pipelines/pl-1/pipeline_config.json": "cc2ba19765d33e62da713bcbdbfcadfe15da9eab24eda8b6c3654dc7956f35d4",
+      "Solutions/2026.06.3/pipelines/pl-1/run_configs.schema.json": "dedea226ff9d075ec04bc875f42100c956717057904d64a357ee555d8b6b1346",
+      "Solutions/2026.06.3/pipelines/pl-1/integromat.schema.json": "2e2b0da9474509e83dabacf2d4185179736531388b0098c5827b139c1ab47e64",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/dataengineering.approach.json": "32b5172fad1431fa051a3d6c55cce20e3c34ce2224ffd438c549906271c948ec",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/context.md": "d1bb9453b5aff44ce6311c17b5432e7530d6458719602fc7b0877820be7d079c",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/interactions.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/run_configs.json": "56c4dd8990e93fff2a01d6100f641c17c3b7aab02a6d64e72f93543585bbb66d",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/output.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/trace.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/context.md": "c127434e575a8a9a0de54e79bd411acc5b30d53bc2fcd0c399028c7c16705751",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/interaction.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Implementation/acme-bank/migrations/mig-1/dataengineering.approach.json": "5a0d29d172cd9a9130c42cd0abc45267615e7e94af2a00ae0c0f9b08e9f60068",
+      "Implementation/acme-bank/migrations/mig-1/context.md": "aa858e1407f376f2f6591d7c485a6fce8697bb64ba9ff02cae44d1edefc6a168",
+      "Implementation/acme-bank/migrations/mig-1/interactions.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Implementation/acme-bank/migrations/mig-1/credentials/notes/readme.md": "909616396b12d463d3e4bfa4358d9284402244403169eeab1294f479f94b4499",
+      "Implementation/acme-bank/migrations/mig-1/codebase/notes/readme.md": "2c785ca587ad9da8e1c8f8853b54b5baca1a4940b15be1adbd99c4ef6164687b",
+      "Implementation/acme-bank/agents/agent-1/notes/readme.md": "ec937c6ba83534126a3064c11c9f13680020ebe983d098707b6abbd7b1d1d4a8",
+      "Implementation/acme-bank/pipelines/pl-1/pipeline_config.json": "1ab55ef4b4d26bab9c7125d1d1138ae79e740f2397b3cc0334b52e333e5af5e4",
+      "Implementation/acme-bank/pipelines/pl-1/private.integromat.json": "35db16ae4dabcdc7ce06abd3de40d47b4c42b781bf351095845d8e21003d453f",
+      "Implementation/acme-bank/integromat.json": "8bb338300b643bda18682463f50c3e6a834d02bdbf811fe3a63e43b4fbd0893f",
+      "Implementation/acme-bank/evals/agents/notes/readme.md": "d4b1ec4ad96b75c8bc9fa2a293a61fee53f16cde92a15ce1994be74b95845507",
+      "Implementation/acme-bank/evals/pipelines/notes/readme.md": "8a4d74122d1415036f39b00edadfa2a6a8406c708cf4e78cc9d053e19a9cd2f9",
+      "Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "Tickets/syncs/notes/readme.md": "a37e5b490e76fd4528a2f7f93fe383ece89abc9b6f428da846e08f584da4e3ad",
+      "People/Master.xlsx": "cb44b176b1bb5e53f1d0c270b2e040f40707999d2d981e8a077ff88d95530e3c",
+      "People/sam-example-com/interactions.jsonl": "cedf74272c9fc8db5448283a93277e7e7eb7534b71df3bd8ab35fd9b1b73404c",
+      "People/sam-example-com/context.md": "a7e843d6586f27e67de6938ad04520a6df379818eedc2bcd9f36db72903f2896",
+      "People/sam-example-com/identity.json": "93c22e5755c7590dd57304fc8efe83213c789b0be2ffcdccd22d8887836cc6a2",
+      "People/sam-example-com/roles_and_responsibilities.md": "b3f48157fc522fccd14c27c64572dbd7aca181a64de0d3814e8f6009a08723c1",
+      "People/sam-example-com/agreements/notes/readme.md": "193ad2f801709d290c00011885c3751c6854557f5f6c5ef416155f3336250ea7",
+      "People/syncs/notes/readme.md": "4c2d2c17ef7d00ef3f8f6ea89b054f17d0aa30b28a3417e6d70ac3e75a261b87",
+      "Uploads/sam-example-com/notes/readme.md": "74dcabca7bcc54c2345b3ec0a5441bd94d5d5db2626c6022629a7991e56ac923"
+    },
+    "refused": [
+      [
+        "Nowhere/x/y.md",
+        "DataroomPathError"
+      ],
+      [
+        "Customers",
+        "DataroomPathError"
+      ],
+      [
+        "../Customers/x.md",
+        "DataroomPathError"
+      ],
+      [
+        "README.md",
+        "DataroomPathError"
+      ]
+    ],
+    "onDisk": [
+      "Customers/Master.xlsx",
+      "Customers/acme-bank/agreements/notes/readme.md",
+      "Customers/acme-bank/context.md",
+      "Customers/acme-bank/interactions.jsonl",
+      "Customers/acme-bank/personas.jsonl",
+      "Customers/syncs/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/customizations.tf",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/rationale.md",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+      "Deployments/acme-bank/2026.06.3/platform/agents/agent-1/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/dataplatform.json",
+      "Deployments/acme-bank/2026.06.3/platform/integromat.json",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/codebase/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/context.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/credentials/notes/readme.md",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/dataengineering.approach.json",
+      "Deployments/acme-bank/2026.06.3/platform/migrations/mig-1/interactions.jsonl",
+      "Deployments/acme-bank/2026.06.3/platform/organization.json",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/pipeline_config.json",
+      "Deployments/acme-bank/2026.06.3/platform/pipelines/pl-1/private.integromat.json",
+      "Deployments/syncs/notes/readme.md",
+      "Implementation/acme-bank/agents/agent-1/notes/readme.md",
+      "Implementation/acme-bank/evals/agents/notes/readme.md",
+      "Implementation/acme-bank/evals/pipelines/notes/readme.md",
+      "Implementation/acme-bank/integromat.json",
+      "Implementation/acme-bank/migrations/mig-1/codebase/notes/readme.md",
+      "Implementation/acme-bank/migrations/mig-1/context.md",
+      "Implementation/acme-bank/migrations/mig-1/credentials/notes/readme.md",
+      "Implementation/acme-bank/migrations/mig-1/dataengineering.approach.json",
+      "Implementation/acme-bank/migrations/mig-1/interactions.jsonl",
+      "Implementation/acme-bank/pipelines/pl-1/pipeline_config.json",
+      "Implementation/acme-bank/pipelines/pl-1/private.integromat.json",
+      "People/Master.xlsx",
+      "People/sam-example-com/agreements/notes/readme.md",
+      "People/sam-example-com/context.md",
+      "People/sam-example-com/identity.json",
+      "People/sam-example-com/interactions.jsonl",
+      "People/sam-example-com/roles_and_responsibilities.md",
+      "People/syncs/notes/readme.md",
+      "Platform/2026.06.3/2026-07-10_changelog_manager.md",
+      "Platform/2026.06.3/architecture/diagrams/notes/readme.md",
+      "Platform/2026.06.3/architecture/helm/notes/readme.md",
+      "Platform/2026.06.3/architecture/infrastructure/notes/readme.md",
+      "Platform/2026.06.3/design_decisions/tenancy.schemas.json",
+      "Platform/2026.06.3/integromat/notes/readme.md",
+      "Platform/2026.06.3/security/notes/readme.md",
+      "Platform/2026.06.3/tests/notes/readme.md",
+      "Platform/Master.xlsx",
+      "Platform/syncs/notes/readme.md",
+      "Solutions/2026.06.3/agents/agent-1/dataplatform.schemas.json",
+      "Solutions/2026.06.3/agents/agent-1/evals/benchmark.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/dataset.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/output.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/run_configs.json",
+      "Solutions/2026.06.3/agents/agent-1/evals/run-1/trace.jsonl",
+      "Solutions/2026.06.3/agents/agent-1/recipe.md",
+      "Solutions/2026.06.3/agents/agent-1/recipe/notes/readme.md",
+      "Solutions/2026.06.3/agents/agent-1/run_configs.schema.json",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/context.md",
+      "Solutions/2026.06.3/pipelines/pl-1/background_research/sam-example-com/interaction.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/output.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/run_configs.json",
+      "Solutions/2026.06.3/pipelines/pl-1/evals/run-1/trace.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/integromat.schema.json",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/context.md",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/dataengineering.approach.json",
+      "Solutions/2026.06.3/pipelines/pl-1/migrations/mig-1/interactions.jsonl",
+      "Solutions/2026.06.3/pipelines/pl-1/pipeline_config.json",
+      "Solutions/2026.06.3/pipelines/pl-1/run_configs.schema.json",
+      "Solutions/2026.06.3/supported.personas.jsonl",
+      "Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1.jsonl",
+      "Tickets/syncs/notes/readme.md",
+      "Uploads/sam-example-com/notes/readme.md"
+    ]
+  },
+  "tools": {
+    "calls": [
+      {
+        "tool": "dataroom_write",
+        "input": {
+          "path": "Customers/acme-bank/context.md",
+          "content": "# Acme Bank\n"
+        },
+        "output": {
+          "written": true,
+          "path": "Customers/acme-bank/context.md"
+        }
+      },
+      {
+        "tool": "dataroom_write",
+        "input": {
+          "path": "Customers/acme-bank/agreements/sla.json",
+          "content": "{\"tiers\": {}}\n"
+        },
+        "output": {
+          "written": true,
+          "path": "Customers/acme-bank/agreements/sla.json"
+        }
+      },
+      {
+        "tool": "dataroom_write",
+        "input": {
+          "path": "Implementation/acme-bank/integromat.json",
+          "content": "{}\n"
+        },
+        "output": {
+          "written": true,
+          "path": "Implementation/acme-bank/integromat.json"
+        }
+      },
+      {
+        "tool": "dataroom_write",
+        "input": {
+          "path": "People/sam-example-com/identity.json",
+          "content": "{\"kind\":\"internal-member\",\"email\":\"sam@example.com\",\"name\":\"Sam\"}"
+        },
+        "output": {
+          "written": true,
+          "path": "People/sam-example-com/identity.json"
+        }
+      },
+      {
+        "tool": "dataroom_write",
+        "input": {
+          "path": "Uploads/sam-example-com/notes.md",
+          "content": "hi\n"
+        },
+        "output": {
+          "written": true,
+          "path": "Uploads/sam-example-com/notes.md"
+        }
+      },
+      {
+        "tool": "dataroom_write",
+        "input": {
+          "path": "Nowhere/acme-bank/context.md",
+          "content": "x\n"
+        },
+        "output": {
+          "written": false,
+          "path": "Nowhere/acme-bank/context.md",
+          "error": "invalid data-room path \"Nowhere/acme-bank/context.md\": does not match any dm.md data-room template"
+        }
+      },
+      {
+        "tool": "dataroom_append_jsonl",
+        "input": {
+          "path": "Tickets/syncs/call/acme-bank/notes.jsonl",
+          "records": {
+            "note": "appended"
+          }
+        },
+        "output": {
+          "appended": 1,
+          "path": "Tickets/syncs/call/acme-bank/notes.jsonl"
+        }
+      },
+      {
+        "tool": "dataroom_read",
+        "input": {
+          "path": "Customers/acme-bank/context.md"
+        },
+        "output": {
+          "path": "Customers/acme-bank/context.md",
+          "content": "# Acme Bank\n"
+        }
+      },
+      {
+        "tool": "dataroom_list",
+        "input": {
+          "prefix": "Customers/acme-bank"
+        },
+        "output": {
+          "paths": [
+            "Customers/acme-bank/agreements/sla.json",
+            "Customers/acme-bank/context.md"
+          ]
+        }
+      },
+      {
+        "tool": "dataroom_list",
+        "input": {},
+        "output": {
+          "paths": [
+            "Customers/acme-bank/agreements/sla.json",
+            "Customers/acme-bank/context.md",
+            "Implementation/acme-bank/integromat.json",
+            "People/sam-example-com/identity.json",
+            "Tickets/syncs/call/acme-bank/notes.jsonl",
+            "Uploads/sam-example-com/notes.md"
+          ]
+        }
+      },
+      {
+        "tool": "record_interaction",
+        "input": {
+          "customerId": "acme-bank",
+          "date": "<date>",
+          "type": "call",
+          "source": "manual",
+          "note": "Census call."
+        },
+        "output": {
+          "ok": true,
+          "interactions": [
+            {
+              "interactionId": "INT-<id>",
+              "interactionAt": "<date>",
+              "interactionType": "call",
+              "sourceSystem": "manual",
+              "recordedAt": "<timestamp>",
+              "note": "Census call."
+            },
+            {
+              "interactionId": "INT-<id>07-03-QBR",
+              "interactionAt": "<timestamp>",
+              "interactionType": "qbr",
+              "sourceSystem": "granola",
+              "sourceId": "granola-acme-qbr-<date>",
+              "sourceLink": "",
+              "summary": "QBR expansion planning",
+              "note": "QBR: expansion to wealth-management desk discussed; wants latency under 2s.",
+              "outcome": "Customer aligned on KYC guardrails expansion scoping.",
+              "participantEmails": [
+                "dana@acmebank.com",
+                "sam@acmebank.com",
+                "quinn@example.com"
+              ],
+              "relatedTicketIds": [
+                "TCK-1001"
+              ],
+              "relatedSolutionIds": [
+                "SOL-1001"
+              ],
+              "relatedDeploymentIds": [
+                "DEP-ACME-PROD"
+              ],
+              "nextAction": "Send guardrails-on-KYC expansion proposal.",
+              "nextActionOwnerEmail": "quinn@example.com",
+              "nextActionDueDate": "<date>",
+              "sentiment": "positive",
+              "sensitivity": "customer_shareable",
+              "recordedByEmail": "quinn@example.com",
+              "recordedAt": "<timestamp>"
+            }
+          ]
+        }
+      },
+      {
+        "tool": "read_customer_slas",
+        "input": {},
+        "output": {
+          "slas": {
+            "acme-bank": {
+              "tiers": {}
+            }
+          },
+          "customizations": {
+            "acme-bank": [
+              "Implementation/acme-bank/integromat.json"
+            ]
+          },
+          "missing": [
+            "northwind-cap"
+          ],
+          "invalid": [],
+          "present": 1,
+          "total": 2
+        }
+      },
+      {
+        "tool": "list_members",
+        "input": {},
+        "output": {
+          "roster": [
+            {
+              "kind": "internal-member",
+              "email": "sam@example.com",
+              "name": "Sam",
+              "slug": "sam-example-com",
+              "accountsOwned": 0,
+              "openTickets": 0
+            }
+          ],
+          "count": 1,
+          "unassigned": [],
+          "danglingOwners": [
+            {
+              "customerId": "acme-bank",
+              "owner": "quinn@example.com"
+            },
+            {
+              "customerId": "northwind-cap",
+              "owner": "quinn@example.com"
+            }
+          ]
+        }
+      },
+      {
+        "tool": "record_signoff",
+        "input": {
+          "customerId": "acme-bank",
+          "platformVersionId": "2026.06.3",
+          "component": "inference",
+          "party": "internal",
+          "status": "requested"
+        },
+        "output": {
+          "recorded": true,
+          "path": "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+          "status": "requested"
+        }
+      },
+      {
+        "tool": "get_signoff_status",
+        "input": {
+          "customerId": "acme-bank",
+          "platformVersionId": "2026.06.3"
+        },
+        "output": {
+          "customerId": "acme-bank",
+          "platformVersionId": "2026.06.3",
+          "components": [
+            {
+              "component": "inference",
+              "complete": false,
+              "parties": {
+                "internal": {
+                  "status": "requested",
+                  "requestedAt": "<timestamp>",
+                  "documentPath": "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md"
+                },
+                "customer.infra": {
+                  "status": "not_requested"
+                },
+                "customer.infosec": {
+                  "status": "not_requested"
+                },
+                "customer.cloudvendor": {
+                  "status": "not_requested"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tool": "sync_pull",
+        "input": {
+          "domain": "Customers",
+          "customerId": "acme-bank",
+          "source": "manual_entry",
+          "items": [
+            {
+              "id": "m1",
+              "note": "landed by the census"
+            }
+          ],
+          "normalize": false
+        },
+        "output": {
+          "ok": true,
+          "domain": "Customers",
+          "source": "manual_entry",
+          "customerId": "acme-bank",
+          "landingPath": "Customers/syncs/manual_entry/acme-bank/<date>.jsonl",
+          "landed": 1,
+          "normalized": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "tool": "list_syncs",
+        "input": {
+          "domain": "Customers",
+          "source": "manual_entry",
+          "customerId": "acme-bank"
+        },
+        "output": {
+          "prefix": "Customers/syncs/manual_entry/acme-bank",
+          "paths": [
+            "Customers/syncs/manual_entry/acme-bank/<date>.jsonl"
+          ]
+        }
+      },
+      {
+        "tool": "sync_pull",
+        "input": {
+          "domain": "Platform",
+          "customerId": "acme-bank",
+          "source": "manual_entry",
+          "items": [
+            {
+              "id": "m1",
+              "note": "landed by the census"
+            }
+          ],
+          "normalize": false
+        },
+        "output": {
+          "ok": true,
+          "domain": "Platform",
+          "source": "manual_entry",
+          "customerId": "acme-bank",
+          "landingPath": "Platform/syncs/manual_entry/acme-bank/<date>.jsonl",
+          "landed": 1,
+          "normalized": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "tool": "list_syncs",
+        "input": {
+          "domain": "Platform",
+          "source": "manual_entry",
+          "customerId": "acme-bank"
+        },
+        "output": {
+          "prefix": "Platform/syncs/manual_entry/acme-bank",
+          "paths": [
+            "Platform/syncs/manual_entry/acme-bank/<date>.jsonl"
+          ]
+        }
+      },
+      {
+        "tool": "sync_pull",
+        "input": {
+          "domain": "Deployments",
+          "customerId": "acme-bank",
+          "source": "manual_entry",
+          "items": [
+            {
+              "id": "m1",
+              "note": "landed by the census"
+            }
+          ],
+          "normalize": false
+        },
+        "output": {
+          "ok": true,
+          "domain": "Deployments",
+          "source": "manual_entry",
+          "customerId": "acme-bank",
+          "landingPath": "Deployments/syncs/manual_input/acme-bank/<date>.jsonl",
+          "landed": 1,
+          "normalized": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "tool": "list_syncs",
+        "input": {
+          "domain": "Deployments",
+          "source": "manual_entry",
+          "customerId": "acme-bank"
+        },
+        "output": {
+          "prefix": "Deployments/syncs/manual_input/acme-bank",
+          "paths": [
+            "Deployments/syncs/manual_input/acme-bank/<date>.jsonl"
+          ]
+        }
+      },
+      {
+        "tool": "sync_pull",
+        "input": {
+          "domain": "Tickets",
+          "customerId": "acme-bank",
+          "source": "manual_entry",
+          "items": [
+            {
+              "id": "m1",
+              "note": "landed by the census"
+            }
+          ],
+          "normalize": false
+        },
+        "output": {
+          "ok": true,
+          "domain": "Tickets",
+          "source": "manual_entry",
+          "customerId": "acme-bank",
+          "landingPath": "Tickets/syncs/manual_entry/acme-bank/<date>.jsonl",
+          "landed": 1,
+          "normalized": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "tool": "list_syncs",
+        "input": {
+          "domain": "Tickets",
+          "source": "manual_entry",
+          "customerId": "acme-bank"
+        },
+        "output": {
+          "prefix": "Tickets/syncs/manual_entry/acme-bank",
+          "paths": [
+            "Tickets/syncs/manual_entry/acme-bank/<date>.jsonl"
+          ]
+        }
+      },
+      {
+        "tool": "sync_pull",
+        "input": {
+          "domain": "People",
+          "customerId": "acme-bank",
+          "source": "manual_entry",
+          "items": [
+            {
+              "id": "m1",
+              "note": "landed by the census"
+            }
+          ],
+          "normalize": false
+        },
+        "output": {
+          "ok": true,
+          "domain": "People",
+          "source": "manual_entry",
+          "customerId": "acme-bank",
+          "landingPath": "People/syncs/manual_entry/acme-bank/<date>.jsonl",
+          "landed": 1,
+          "normalized": 0,
+          "skipped": 0
+        }
+      },
+      {
+        "tool": "list_syncs",
+        "input": {
+          "domain": "People",
+          "source": "manual_entry",
+          "customerId": "acme-bank"
+        },
+        "output": {
+          "prefix": "People/syncs/manual_entry/acme-bank",
+          "paths": [
+            "People/syncs/manual_entry/acme-bank/<date>.jsonl"
+          ]
+        }
+      },
+      {
+        "tool": "sync_pull",
+        "input": {
+          "domain": "Solutions",
+          "customerId": "acme-bank",
+          "source": "manual_entry",
+          "items": [
+            {
+              "id": "m1"
+            }
+          ]
+        },
+        "output": {
+          "ok": false,
+          "domain": "Solutions",
+          "source": "manual_entry",
+          "customerId": "acme-bank",
+          "landingPath": null,
+          "landed": 0,
+          "normalized": 0,
+          "skipped": 0,
+          "reason": "domain \"Solutions\" has no dm.md syncs subtree"
+        }
+      },
+      {
+        "tool": "build_workbook_spec",
+        "input": {
+          "customerId": "acme-bank"
+        },
+        "output": {
+          "customerId": "acme-bank",
+          "workbooks": [
+            {
+              "workbook": "Customers/Master.xlsx",
+              "domain": "Customers",
+              "sheets": [
+                "Customers"
+              ]
+            },
+            {
+              "workbook": "Platform/Master.xlsx",
+              "domain": "Platform",
+              "sheets": [
+                "Platform"
+              ]
+            },
+            {
+              "workbook": "Deployments/Master.xlsx",
+              "domain": "Deployments",
+              "sheets": [
+                "Deployments"
+              ]
+            },
+            {
+              "workbook": "Solutions/Master.xlsx",
+              "domain": "Solutions",
+              "sheets": [
+                "Solutions"
+              ]
+            },
+            {
+              "workbook": "Implementation/Master.xlsx",
+              "domain": "Implementation",
+              "sheets": [
+                "Implementation"
+              ]
+            },
+            {
+              "workbook": "Tickets/Master.xlsx",
+              "domain": "Tickets",
+              "sheets": [
+                "Tickets",
+                "Interactions",
+                "Interaction Digest"
+              ]
+            },
+            {
+              "workbook": "People/Master.xlsx",
+              "domain": "People",
+              "sheets": [
+                "Internal Staff",
+                "Customer Stakeholders"
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "onDisk": [
+      "Customers/acme-bank/agreements/sla.json",
+      "Customers/acme-bank/context.md",
+      "Customers/acme-bank/interactions.jsonl",
+      "Customers/syncs/manual_entry/acme-bank/<date>.jsonl",
+      "Deployments/acme-bank/2026.06.3/infrastructure/inference/signoff/internal.md",
+      "Deployments/syncs/manual_input/acme-bank/<date>.jsonl",
+      "Implementation/acme-bank/integromat.json",
+      "People/sam-example-com/identity.json",
+      "People/syncs/manual_entry/acme-bank/<date>.jsonl",
+      "Platform/syncs/manual_entry/acme-bank/<date>.jsonl",
+      "Tickets/syncs/call/acme-bank/notes.jsonl",
+      "Tickets/syncs/manual_entry/acme-bank/<date>.jsonl",
+      "Uploads/sam-example-com/notes.md"
+    ]
+  },
+  "workbooks": [
+    {
+      "workbook": "Customers/Master.xlsx",
+      "domain": "Customers",
+      "sheets": [
+        "Customers"
+      ]
+    },
+    {
+      "workbook": "Platform/Master.xlsx",
+      "domain": "Platform",
+      "sheets": [
+        "Platform"
+      ]
+    },
+    {
+      "workbook": "Deployments/Master.xlsx",
+      "domain": "Deployments",
+      "sheets": [
+        "Deployments"
+      ]
+    },
+    {
+      "workbook": "Solutions/Master.xlsx",
+      "domain": "Solutions",
+      "sheets": [
+        "Solutions"
+      ]
+    },
+    {
+      "workbook": "Implementation/Master.xlsx",
+      "domain": "Implementation",
+      "sheets": [
+        "Implementation"
+      ]
+    },
+    {
+      "workbook": "Tickets/Master.xlsx",
+      "domain": "Tickets",
+      "sheets": [
+        "Tickets",
+        "Interactions",
+        "Interaction Digest"
+      ]
+    },
+    {
+      "workbook": "People/Master.xlsx",
+      "domain": "People",
+      "sheets": [
+        "Internal Staff",
+        "Customer Stakeholders"
+      ]
+    }
+  ],
+  "web": {
+    "isSafeDataroomPath": [
+      [
+        "Customers",
+        true
+      ],
+      [
+        "Platform",
+        true
+      ],
+      [
+        "Deployments",
+        true
+      ],
+      [
+        "Solutions",
+        true
+      ],
+      [
+        "Implementation",
+        true
+      ],
+      [
+        "Tickets",
+        true
+      ],
+      [
+        "People",
+        true
+      ],
+      [
+        "Uploads",
+        true
+      ],
+      [
+        "Nowhere",
+        false
+      ]
+    ],
+    "isDataroomPath": [
+      [
+        "Customers",
+        true
+      ],
+      [
+        "Platform",
+        true
+      ],
+      [
+        "Deployments",
+        true
+      ],
+      [
+        "Solutions",
+        true
+      ],
+      [
+        "Implementation",
+        true
+      ],
+      [
+        "Tickets",
+        true
+      ],
+      [
+        "People",
+        true
+      ],
+      [
+        "Uploads",
+        true
+      ],
+      [
+        "Nowhere",
+        false
+      ]
+    ]
+  },
+  "starter": [
+    [
+      "README.md",
+      "5ab69e927979feb8a60a6ebaa872e1ea45aad769d4b3daff669a64e087e1ec33"
+    ],
+    [
+      "Customers/README.md",
+      "247348be78e8e73aa5f6d13da3463a356ceb5a3809a8cf730bc1655a2cfb89cf"
+    ],
+    [
+      "People/README.md",
+      "afff81b0a27957ee4cf915e202ad13e5a5f159eb141dbaabdef82b73015ffb30"
+    ]
+  ],
+  "seeders": {
+    "local": [
+      [
+        "Customers/acme-bank/agreements/README.md",
+        "8887efc2daddabd87b29ba70c7c7dd886868445a8f07b3ccac5bdbe0c1ee7d64"
+      ],
+      [
+        "Customers/acme-bank/context.md",
+        "8d140704442984c6493e8da848a7d61a514ab22eba556604472093c048b535cd"
+      ],
+      [
+        "Customers/acme-bank/interactions.jsonl",
+        "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      ],
+      [
+        "Customers/northwind-cap/agreements/README.md",
+        "b18bac80337016b4badc3d6646bda2fcdb990f04682bf41c2d73b93ea4b34f53"
+      ],
+      [
+        "Customers/northwind-cap/context.md",
+        "f832d539f69d0aac7bd61fa851ab0c76fd1d8fddc51762b0246437e239554e94"
+      ],
+      [
+        "Customers/northwind-cap/interactions.jsonl",
+        "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      ],
+      [
+        "People/alex.rivera-example.com/context.md",
+        "35cd20abbb20b4b1473821d754f28703edbe9c4f201eae9b11202bb97e030f82"
+      ],
+      [
+        "People/alex.rivera-example.com/identity.json",
+        "438b8d4294108963e2a7216b3a0565ca6f0006a004ab3ba1c2220929ce2029bb"
+      ],
+      [
+        "People/rea.vogel-northwind-cap.example/context.md",
+        "50e67547f4b5fe9fa12ac59804814f1c6fa443ab59fd1c093733c30834be4db1"
+      ],
+      [
+        "People/rea.vogel-northwind-cap.example/identity.json",
+        "5b65f61a233eeee1e6785654bb440c3e6a2f950c6a01ecab2f65526e1e03ed48"
+      ],
+      [
+        "People/sam.cole-acme-bank.example/context.md",
+        "ea968cf4d2977c891cac23b68cc448ab5448e37a0dfd2742cabdf8b93d837dd1"
+      ],
+      [
+        "People/sam.cole-acme-bank.example/identity.json",
+        "71f779979ec297fed7308f704b2bf511d77191b567b8d0372af28ab5ca608301"
+      ],
+      [
+        "Tickets/bug/acme-bank/v1/tickets_TCK-1003.jsonl",
+        "e022c79f1cfd166373067290b35529bb8e678215d867c3eeff8c69affe994bd3"
+      ],
+      [
+        "Tickets/bug/northwind-cap/v1/tickets_TCK-2031.jsonl",
+        "0257189d0e9a4eb2c89f88e8202f601d940add58912dab1641ce25ae69746fec"
+      ],
+      [
+        "Tickets/config_changes/acme-bank/v1/tickets_TCK-1001.jsonl",
+        "09c9443530853760b1cf78c36c5678191328fb3b78355ea4699592edf8133f29"
+      ],
+      [
+        "Tickets/config_changes/northwind-cap/v1/tickets_TCK-2032.jsonl",
+        "ad1fa7d23d342c14b285904ae405659845325dbd8d7bff5d45ff13c1b0c2497e"
+      ],
+      [
+        "Tickets/feat/acme-bank/v1/tickets_TCK-1002.jsonl",
+        "12767109c446216bcab311e482b12f1f85cfc11e3bc876976e27233f9ad86f41"
+      ]
+    ],
+    "blob": [
+      [
+        "Customers/acme-bank/context.md",
+        "479048d6682f933af2bd700cde762a36a56d582c3f62ed43d784a4c3e4116742"
+      ],
+      [
+        "Customers/acme-bank/interactions.jsonl",
+        "32976059744aed157a3e6884a490f08c46a4035254a25fafb82f92b73be21dcc"
+      ],
+      [
+        "Customers/acme-bank/agreements/msa.md",
+        "586a4fb6a7678e23fce96db5c17ca3795bb0ea1d584a3ad9cb28a300c6e824a6"
+      ],
+      [
+        "Customers/northwind-capital/context.md",
+        "2062a1d4011f6eacae79e5ebc6930ab847802307d7fc5b686732ce36300dfef5"
+      ],
+      [
+        "Customers/northwind-capital/interactions.jsonl",
+        "b7f03f6252c3e5da75c4d303484932da81fe0b215e344126e9aff10159d50736"
+      ],
+      [
+        "Customers/northwind-capital/agreements/msa.md",
+        "d66bc18e00c502cd6fe8cba120986f314efa354d86e77c184a8b2ca92e44695b"
+      ],
+      [
+        "Platform/v2.4.0/2026-07-01_changelog_manager.md",
+        "c5472031a867a5beba0864b70b34f75bf49174667b31f2ffcc4eb950ebeb9cd9"
+      ],
+      [
+        "Platform/v2.4.0/architecture/helm/values.yaml",
+        "cc5648df3307a19a4a7e2b4142f15b074cf7957f3b57c5dcbc2f42ed95b135a9"
+      ],
+      [
+        "Platform/v2.4.0/architecture/infrastructure/main.tf",
+        "b5f1aac8de698f2e185e0f37785f502817ec0caf3a9dfce6af2a908e94714111"
+      ],
+      [
+        "Platform/v2.4.0/design_decisions/tenancy.schemas.json",
+        "ac811791ac372639eac82d9ea1110a690de05756790ea65e4c73e6b8433afb6b"
+      ],
+      [
+        "Platform/v2.4.0/design_decisions/dataengineering.schemas.json",
+        "44101ece1372a639df80e662566486cc47d75ade97847332bc8df78697216b61"
+      ],
+      [
+        "Platform/v2.4.0/security/sbom.json",
+        "99f027879ffa721a4c99dea878cc187f32c07d1b233c4ff1c42219e209988306"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/infrastructure/inference/customizations.tf",
+        "946c28fb3ee8a09c50053f20fefba80980898eb82136b269af1d1e117868b548"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/infrastructure/inference/rationale.md",
+        "b16b26e1d8a96c5f15db8eeed9864ee93f6c0b85217828ce9bf50c46b0c36bad"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/internal.md",
+        "83f61c0c84792091c234116fbfd250b851b7e79f4f61e11b654429cae70cc3e2"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infra.md",
+        "8306b092c17881b8ae442511e388e55837a064113f01337671d1035e88d56470"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.infosec.md",
+        "17338c1cb33928c601ea8bdeeb7cb6bc3ab4ab3c4c95b1103c77a9a64f8fb04a"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/infrastructure/inference/signoff/customer.cloudvendor.md",
+        "427bd81a58c736e87e1f920e4b8a4333100fcf3265e4ef4b56a77876cf9a9dcf"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/platform/organization.json",
+        "f4c8ee38ece1fcaace312afb3fdc3c2c75b44f53688aadd391a262da4152134d"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/platform/pipelines/pl-001/pipeline_config.json",
+        "7d00bbe3eb4e5c1921313fe9e632d565b51ee0b099efb9658a3e9ae245ff9939"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/dataengineering.approach.json",
+        "8608c6967af2a2ae643444a0d218f01ac03aa8b9d9960056d192a3c9ffaf9c70"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/context.md",
+        "09c3dce51a5fd2500cea236568e52ef18d0a5d42d8bc3163fa20c343837a3a5f"
+      ],
+      [
+        "Deployments/acme-bank/v2.4.0/platform/migrations/mig-001/interactions.jsonl",
+        "32024af30d4a447a8fa146c2516da05ec9c9ba8b1c515f655843d716d0da91ff"
+      ],
+      [
+        "Solutions/v2.4.0/agents/collections-agent/recipe.md",
+        "6b2e3751c9df17854a3cd6accac39351f16c64076262249a9703023f89fe4095"
+      ],
+      [
+        "Solutions/v2.4.0/agents/collections-agent/evals/dataset.jsonl",
+        "2917783b11af7d008fc47823f49a365e70ce9dd1008e6130de9a986f4abb3bf3"
+      ],
+      [
+        "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/dataengineering.approach.json",
+        "2aa49958ed5f08531ae277ce77ea485698e73cf1a3fd0313b084b8b4af80f422"
+      ],
+      [
+        "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/context.md",
+        "93fcc7b812f59b406a6c2d0df09586d77c16539834740409276974e27da781a9"
+      ],
+      [
+        "Solutions/v2.4.0/pipelines/pl-001/migrations/mig-001/interactions.jsonl",
+        "ceed788ab18e608832bf07f024a36d2c09b05615ecba0bd047579909f10d46b8"
+      ],
+      [
+        "Implementation/acme-bank/integromat.json",
+        "f487aa377cd3208521045008a264d2da46826be2d7d62f17ec68f178a5e5f502"
+      ],
+      [
+        "Implementation/acme-bank/pipelines/pl-001/pipeline_config.json",
+        "ef62b7b45fdd89f7187b5ed356895f5be9294ac3c584e8bd646fb98dac4a33c1"
+      ],
+      [
+        "Implementation/acme-bank/migrations/mig-001/dataengineering.approach.json",
+        "c79c88de5aec7b6f95a4a7026f810fcdc22c63ac4b115a4d9d8d711180266d9f"
+      ],
+      [
+        "Implementation/acme-bank/migrations/mig-001/context.md",
+        "3c60073a4ebb0ac8428f2b4865e9011674cc20747056cd4823d3eebaf1cd2d86"
+      ],
+      [
+        "Implementation/acme-bank/migrations/mig-001/interactions.jsonl",
+        "bf7e04620ff0f1765aeb70ed677eb41e78c81ecefe7c5384744014fb020b660d"
+      ],
+      [
+        "Tickets/feat/acme-bank/v2.4.0/tickets_TCK-1002.jsonl",
+        "992329a31a2597ad80067be9ab3308e4dd1a90ad813d891d11f9f4ca81c83f52"
+      ],
+      [
+        "Tickets/bug/northwind-capital/v2.4.0/tickets_TCK-2031.jsonl",
+        "5e435583cb69d706cb5f79a937f89f0ba6d5808c96edc822b129fd00ea151b60"
+      ],
+      [
+        "People/sam-cole/identity.json",
+        "65501818eb9ea02bafaea86a2014b0e6b25d5a45d132f7e38c5462ac5c0d6d1b"
+      ],
+      [
+        "People/sam-cole/context.md",
+        "966588cc15cc1a60299b3efe3c43562b282429e8b1fd0466ff7e1bd1ec386a87"
+      ],
+      [
+        "People/sam-cole/interactions.jsonl",
+        "8ba3bc38342fb98e2f1ab0de022dad7e1ef5e9031e68e0e712cf457364b83a42"
+      ],
+      [
+        "People/sam-cole/roles_and_responsibilities.md",
+        "4130b250a43b19c6b5995f8df9507ad5d0bd2c43863b7f0f3d9a45133c1fb044"
+      ]
+    ]
+  }
+}

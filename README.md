@@ -160,13 +160,9 @@ cp state/factory.local.example.json state/factory.local.json   # then put your o
 
 `state/factory.local.json` holds your own values (operator email, notification domain, Vercel team, machine address). It is git-ignored and never committed.
 
-### 3. Fetch the mold
+### 3. The mold
 
-Put the mold's source address in `state/factory.local.json` (`mold_sources`), then ask your agent:
-
-> Fetch mold_v1.
-
-It downloads the mold at its pinned commit and checks the copy matches. [`molds/mold_v1/MOLD.md`](molds/mold_v1/MOLD.md) describes what the mold contains.
+mold_v1's full source code is included, in [`molds/mold_v1/codebase`](molds/mold_v1/codebase), at its pinned version. [`molds/mold_v1/MOLD.md`](molds/mold_v1/MOLD.md) describes what it contains. If you keep your own fork of a mold, put its address in `state/factory.local.json` (`mold_sources`) and ask your agent to "refresh mold_v1".
 
 ### 4. Mint an app
 
@@ -227,7 +223,7 @@ To use the board outside the factory folder:
 
 | Folder | What's in it |
 |---|---|
-| `molds/` | each mold's `MOLD.md` (pinned source commit), its five test-suite definitions under `testing/`, and its branding rules. The codebase itself is fetched, not committed. |
+| `molds/` | each mold's full source code (`codebase/`), its `MOLD.md` (pinned version), its five test-suite definitions under `testing/`, and its branding rules |
 | `packs/` | *(yours, not committed)* an app's own agents, instructions and starter content, applied on top of the mold. Molds are never edited or forked. |
 | `state/` | `factory.json` (molds, defaults), `products.json` (products and their stage gates), `tasks/` (one ticket list per mold), `application/app_id/` (the schemas every app's records follow) |
 | `.claude/` | Claude Code agents (`intake`, `provisioner`, `mold-engineer`, `lane-tester`, `product-packager`), skills (`mint`, `provision`, `run-lanes`, `productize`, `task`, `repo`, …) and the scripts they run |

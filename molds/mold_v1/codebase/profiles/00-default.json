@@ -1,0 +1,139 @@
+{
+  "$comment": "The deployment profile: everything a person or the model READS that is specific to what this deployment is for. These defaults are the base product in NEUTRAL words: an account, a member, its account owner, a delivery, a project and its plan. Base text never spells a role or a record word; it writes a placeholder ({account}, {deployment}, {implementation}, {rollout}, {member}, {owner}) filled from here, and a deployment's own profile supplies its domain's words. A deployment changes them by ADDING profiles/NN-<name>.json files (later files win, objects merge deeply, arrays replace); nothing here is edited. Identifiers never change with a profile: database columns, API routes, tool names and data-room path tokens stay as they are. The data-room folder names are the profile's too (dataroom.domains.<id>.folder): neutral here, and pinned by a deployment that already stores files under other names. See docs/DEPLOYMENT_PROFILE.md.",
+  "product": {
+    "name": "Delivered",
+    "tagline": "The operations console for teams that run account work.",
+    "description": "{product} — an operations console: an eve-powered agent that runs account onboarding, deliveries, and the data room for your team."
+  },
+  "vocabulary": {
+    "account": { "singular": "account", "plural": "accounts" },
+    "member": { "singular": "member", "plural": "members" },
+    "owner": "Account owner",
+    "secondary_owner": "Secondary owner",
+    "account_context": "Account context"
+  },
+  "chat": {
+    "hero_lines": ["{product}", "What needs doing today?", "Prep the stand-up", "Chase the follow-ups", "Keep every account close"],
+    "empty_sections": { "urgent": "Urgent tickets", "stalled": "Stalled accounts" },
+    "user_messages": { "collapse": true, "collapsed_lines": 6 },
+    "sandbox_wait": { "line": "Waiting for a free sandbox ({place} in line)…", "next": "Waiting for a free sandbox (next in line)…" },
+    "specialist_sweep": {
+      "frozen": "{name} showed no progress for {minutes} minutes, so it was stopped. The main agent has been told.",
+      "undelivered": "{name} had finished, but its result had not reached the main agent. It has been handed back.",
+      "stopped": "{name} stopped without reporting back. The main agent has been told.",
+      "failed": "{name} failed without reporting back. The main agent has been told.",
+      "waiting": "{name} has been waiting for your answer for {waited}."
+    },
+    "starter_cards": {
+      "owner_label": "Account owner",
+      "ticket_waiting": "One open ticket is waiting on us.",
+      "tickets_waiting": "{count} open tickets are waiting on us.",
+      "ticket_badge": "1 open",
+      "tickets_badge": "{count} open",
+      "triage_title": "Triage the open tickets",
+      "triage_prompt": "Triage the open tickets for {name}: what is blocking each one, who owns it, and what should we do next?",
+      "quiet_summary": "No contact logged in {days} days.",
+      "quiet_summary_long": "No contact logged for over a month.",
+      "quiet_badge": "{days}d quiet",
+      "quiet_title": "Draft a check-in",
+      "quiet_prompt": "{name} has been quiet for {days} days. Summarise where we left off and draft a check-in to their main contact."
+    },
+    "account_search": {
+      "title": "Account context",
+      "description": "Pick the accounts this conversation is about — the agent grounds itself in their record.",
+      "placeholder": "Search accounts…",
+      "empty": "No accounts found.",
+      "pill_empty": "Set the account context for this chat",
+      "pill_active": "{context}: {names} — click to change",
+      "pill_locked": "{context} is locked for this chat: {names}"
+    }
+  },
+  "dataroom": {
+    "$comment": "Each data-room domain has an id (the key below: what code and other profiles call it), a `folder` (the name its files are STORED under, the first segment of every path in it) and a `label` (what people and the model read; when a profile gives none it is the folder's name). The folder is a setting of the deployment, not of the code: a deployment that already holds files states the folder names it has, and they are never moved. `uploads_folder` is where files a person attaches are stored. See docs/DEPLOYMENT_PROFILE.md, \"Stored folder names\".",
+    "root_label": "Data Room",
+    "domains": {
+      "accounts": { "folder": "Accounts", "visible": true },
+      "platform": { "folder": "Platform", "visible": true },
+      "deliveries": { "folder": "Deliveries", "visible": true },
+      "solutions": { "folder": "Solutions", "visible": true },
+      "projects": { "folder": "Projects", "visible": true },
+      "tickets": { "folder": "Tickets", "visible": true },
+      "people": { "folder": "People", "visible": true }
+    },
+    "uploads_folder": "Uploads",
+    "seed": null
+  },
+  "domains": {
+    "$comment": "The two record areas a deployment may REDEFINE rather than hide: what each is called, what its fields and enum values are shown as, which fields are not used (hidden; a hidden required field carries a fixed value the forms submit). Field keys are the real ones (agent/lib/customer-schema.ts, agent/lib/db/schema.ts) and option keys are real enum values; both are checked at build. custom_fields are the deployment's OWN fields on an area (key, label, type, required, options, help, show_in_list), stored by key in the table's `custom` column; the default declares none. These defaults are today's labels.",
+    "deployments": {
+      "label": {"singular": "Delivery", "plural": "Deliveries"},
+      "description": "Deliveries, filtered by owner.",
+      "id_label": "Delivery id",
+      "kind_field": null,
+      "kinds": [],
+      "create_fields": [],
+      "detail_fields": [],
+      "custom_fields": [],
+      "fields": {
+        "deploymentId": {"placeholder": "DEP-…"},
+        "environment": {"label": "Environment"},
+        "region": {"label": "Region", "placeholder": "ap-south-1"},
+        "deployedVersion": {"label": "Version", "placeholder": "1.0.0"},
+        "releaseStatus": {"label": "Release status", "options": {"deployed": "Deployed", "in-progress": "In progress", "pending-approval": "Pending approval", "rolled-back": "Rolled back", "failed": "Failed"}},
+        "healthStatus": {"label": "Health", "options": {"healthy": "Healthy", "degraded": "Degraded", "down": "Down"}},
+        "deployOwnerEmail": {"label": "Owner", "placeholder": "name@company.com"}
+      }
+    },
+    "implementations": {
+      "label": {"singular": "Project", "plural": "Projects"},
+      "description": "Plans, filtered by owner.",
+      "id_label": "Plan id",
+      "kind_field": null,
+      "kinds": [],
+      "create_fields": [],
+      "detail_fields": [],
+      "custom_fields": [],
+      "group_by": null,
+      "group_label": {"singular": "Plan", "plural": "Plans"},
+      "fields": {
+        "implementationStage": {"label": "Stage", "options": {"Kickoff": "Kickoff", "Discovery": "Discovery", "Configuration": "Configuration", "Integration": "Integration", "UAT": "UAT", "Pilot": "Pilot", "Go-Live": "Go-Live", "Stabilization": "Stabilization", "Steady State": "Steady State", "On Hold": "On Hold"}},
+        "implementationRiskLevel": {"label": "Risk"},
+        "implementationProgressPct": {"label": "Progress"},
+        "implementationOwnerEmail": {"label": "Owner", "placeholder": "name@company.com"},
+        "launchScopeSolutionIds": {"label": "Solution"},
+        "targetGoLiveDate": {"label": "Go-live"}
+      }
+    }
+  },
+  "agent": {
+    "briefing": null
+  },
+  "persona": {
+    "$comment": "base: the root agent's built-in persona (the operations orchestrator, its specialist roster, the system-of-record and stand-up sections). false drops it: the root prompt keeps only its neutral rules, and a pack's agent/instructions/50-pack-*.md supplies who the agent is.",
+    "base": true
+  },
+  "specialists": {
+    "$comment": "exclude: base specialists (directory names under agent/subagents/) this deployment does not use. Nothing is moved: their directories stay; they are left out of the subagent registry, every prompt's roster and list of names, the provisioned workflow library, and the eve build (scripts/eve-build.mjs hides them from eve only while it builds).",
+    "exclude": []
+  },
+  "library": {
+    "$comment": "What every NEW workspace of this deployment is provisioned with: workflow scripts, the onboarding recipe catalog and starter apps (the apps its Apps tab opens with). sources maps an id to a directory in the repository holding workflows/*.workflow.js, recipes.json and apps.json. Base code ships no library of its own, so this is EMPTY: a deployment opts into one by adding a profile file that names it (the workflows and recipes this product once carried as built-ins are library/account-delivery: cp library/account-delivery/profile.json profiles/40-library-account-delivery.json), and a subagent pack ships its own beside its specialists. A later profile turns a source off by setting its id to null. Workspaces that already exist are never changed by this: see npm run operator:seed-workflows, npm run operator:library-apply (starter apps) and npm run operator:library-cleanup.",
+    "sources": {}
+  },
+  "work_periods": {
+    "$comment": "Time-boxed periods that group tasks (the `cycles` table; a task's cycleId). mode: \"team\" = one shared period with a lead, a capacity and a burndown; \"individual\" = each person has their own items within the period (their own goal and planned count, no shared lead or capacity; the view groups by person, the signed-in person first); \"off\" = the feature does not exist in this deployment: no view, no tools for the model, the cycles routes answer 404, exports omit it, and stored rows are kept untouched. label: what a period is called. list_label: what it is called where tasks are grouped and filtered by it (the filter, the task's field, the New button); the base product has always used a second word there, and a profile that states only `label` gets its label in both places. item_label: what one task in a period is called under mode individual. length_days: how long a new period runs (null = a new period has no dates until someone sets them; required by mode individual and by auto_rollover). auto_rollover: when a period has ended, the next one is opened (created when there is none) and every unfinished task is carried into it, each keeping its assignee; false = someone rolls over by hand. length_days_range: [min, max], the whole numbers of days a workspace admin may choose from for their own workspace's length (the workspace's settings screen; the length_days above stays the default and must lie inside it). workspace_can_set_length: whether a workspace admin may change the length for their workspace at all; null = yes unless mode is \"off\". A workspace's length applies to the periods it opens from then on (by hand, by the model's tools, by auto_rollover); periods that already exist keep their dates.",
+    "mode": "team",
+    "label": { "singular": "sprint", "plural": "sprints" },
+    "list_label": { "singular": "cycle", "plural": "cycles" },
+    "item_label": { "singular": "target", "plural": "targets" },
+    "length_days": null,
+    "auto_rollover": false,
+    "length_days_range": [1, 90],
+    "workspace_can_set_length": null
+  },
+  "account_fields": {
+    "$comment": "hidden: fields of the account record itself (the customer row: arr, seats, aeOwner, renewalDate, platform, tickets, …) this deployment does not use. They are removed from what the MODEL reads and writes: the record tools' parameters and every record they return. Storage, the API, the CLI and the forms are unchanged, and a value already stored is kept when the model writes the record. Keys are customerSchema keys in agent/lib/customer-schema.ts; id and name cannot be hidden. The two redefinable areas hide their own fields under domains.<area>.fields.<key>.hidden. custom_fields: the deployment's OWN fields on the account record (a company's notes, a site's permit number), with the same spec as domains.<area>.custom_fields (key, label, type, required, options, help, show_in_list). Their values live by key in the customers table's custom jsonb column and every write is validated by agent/lib/custom-fields.ts. None by default.",
+    "hidden": [],
+    "custom_fields": []
+  }
+}

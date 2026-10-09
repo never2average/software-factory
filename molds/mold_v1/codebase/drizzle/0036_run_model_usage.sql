@@ -1,0 +1,16 @@
+-- Which model served a workflow run's steps, and their tokens per model (agent/lib/workflow-usage.ts,
+-- agent/lib/served-model.ts):
+--   { "<model id>": { "steps", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens" } }
+-- so a specialist run on a provider that reports no cost (Cloudflare Workers AI) is priced from its tokens at the
+-- model that answered each call, and a run that two models answered (the empty-response fallback) is priced per model.
+-- NULL = not recorded: every row written before this column, and a step whose model was not noted.
+--
+-- One nullable column on `automation_runs`, which already carries the workspace boundary every org-scoped table has
+-- (org_id, row-level security ENABLED and FORCED, the org_isolation policy): a column inherits the table's policy, so
+-- nothing about who may read or write a row changes and no policy is touched here. Additive: no row is written,
+-- nothing else is altered or dropped.
+--
+-- DEPLOY ORDER: apply this BEFORE deploying the agent that writes it; until then every write of a run row names a column
+-- that does not exist, so specialist runs are not recorded (the recorder never throws into the turn). Idempotent
+-- (IF NOT EXISTS). Applied by `npm run db:migrate:production` (scripts/migrate-production.mjs).
+ALTER TABLE "automation_runs" ADD COLUMN IF NOT EXISTS "model_usage" jsonb;

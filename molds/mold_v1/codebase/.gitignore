@@ -1,0 +1,51 @@
+node_modules
+.env*
+# …but the reference file is documentation, not a secret, and must be tracked.
+!.env.example
+.eve
+.vercel
+.workflow-data
+.next
+.output
+.nitro
+dist
+.DS_Store
+*.tsbuildinfo
+.dataroom/
+scripts/.browser-profile/
+scripts/.shots/
+scripts/.ui-cmd
+scripts/.ui-log
+.env.supabase
+.env.local.bak-*
+
+# Local-only ES256 keypair for email sign-in tokens (never commit the private key).
+.auth-jwt-private.b64
+.auth-jwt-public.b64
+
+# One-off production dumps taken before destructive cleanups.
+.org-wipe-backup-*.json
+.org-wipe-backup-customers-*.json
+.vercel/.agent-oidc.env
+
+# Playwright output (screenshots, traces).
+test-results
+
+# python bytecode (subagent workspace scripts)
+__pycache__/
+*.pyc
+
+# pdf.js runtime data (wasm decoders, cmaps, fonts) copied from node_modules by
+# scripts/copy-pdfjs-assets.mjs on prebuild/predev.
+public/pdfjs/
+
+# scripts/eve-build.mjs: a deployment profile's excluded specialists, hidden from eve only while it builds.
+.eve-build-hidden/
+
+# scripts/check-ui-vocabulary.mjs builds a relabelled copy of the checkout here, and removes it.
+.ui-vocabulary/
+.next-budget
+
+# A deployment's own names (Makefile): its Vercel team/projects and the dashboard's link. Never committed.
+deploy.local.mk
+scripts/vercel-projects/*.local.json

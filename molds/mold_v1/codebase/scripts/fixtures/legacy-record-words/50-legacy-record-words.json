@@ -1,0 +1,55 @@
+{
+  "$comment": "The record words the default profile carried before it spoke neutrally (customer, deployment, implementation, rollout), as a profile overlay: profiles/00-default.json plus this file is the product as it read before mold_v1-103 PR 7. Tests merge it with the real generator to hold the renderers and the UI words byte-identical to their pre-change output, and it is what a deployment that wants the base product's own words would add. Not relabelling: these are the words the identifiers already carry (agent/lib/agent-vocabulary.ts LEGACY_RECORDS).",
+  "product": {
+    "tagline": "The operations console for teams that run customer work.",
+    "description": "{product} — an operations console: an eve-powered agent that runs customer onboarding, deployments, and the data room for your team."
+  },
+  "vocabulary": {
+    "account": {
+      "singular": "customer",
+      "plural": "customers"
+    },
+    "account_context": "Customer context"
+  },
+  "chat": {
+    "hero_lines": [
+      "{product}",
+      "What needs doing today?",
+      "Prep the stand-up",
+      "Chase the follow-ups",
+      "Keep every customer close"
+    ],
+    "empty_sections": {
+      "stalled": "Stalled customers"
+    },
+    "account_search": {
+      "title": "Customer context",
+      "description": "Pick the customers this conversation is about — the agent grounds itself in their record.",
+      "placeholder": "Search customers…",
+      "empty": "No customers found.",
+      "pill_empty": "Set the customer context for this chat"
+    }
+  },
+  "domains": {
+    "deployments": {
+      "label": {
+        "singular": "Deployment",
+        "plural": "Deployments"
+      },
+      "description": "Deployments, filtered by owner.",
+      "id_label": "Deployment id"
+    },
+    "implementations": {
+      "label": {
+        "singular": "Implementation",
+        "plural": "Implementations"
+      },
+      "description": "Rollouts, filtered by owner.",
+      "id_label": "Rollout id",
+      "group_label": {
+        "singular": "Rollout",
+        "plural": "Rollouts"
+      }
+    }
+  }
+}

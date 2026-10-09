@@ -1,0 +1,39 @@
+name: Chromium for the rendered-page checks
+description: >
+  Playwright's Chromium, restored from a cache keyed on the Playwright version, and proved to start. Downloading it
+  (and the apt packages `--with-deps` asks for) took 37 s on a good day and several minutes on a bad one, which
+  cancelled the verify job at its limit more than once. Run after `npm ci`.
+
+runs:
+  using: composite
+  steps:
+    # The version of the CLI that does the install: a Playwright upgrade asks for a different browser build, and
+    # gets a different key.
+    - id: version
+      shell: bash
+      run: echo "playwright=$(npx playwright --version | tr -dc '0-9.')" >> "$GITHUB_OUTPUT"
+
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.playwright }}
+
+    # A restored browser is used only if it really starts: its system libraries come from the runner image, not
+    # from the cache, and an image update can remove one. Anything else is the full install it always was, tried
+    # three times, each attempt cut at four minutes so a stalled download fails by name instead of eating the job.
+    - shell: bash
+      run: |
+        starts() { node -e "require('@playwright/test').chromium.launch().then((b) => b.close()).then(() => process.exit(0), (e) => { console.error(String(e.message).split('\n')[0]); process.exit(1); })"; }
+        if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ] && starts; then
+          echo "Chromium for Playwright ${{ steps.version.outputs.playwright }}: restored from the cache, and it starts."
+          exit 0
+        fi
+        for attempt in 1 2 3; do
+          if timeout 240 npx playwright install --with-deps chromium; then
+            starts && exit 0
+          fi
+          echo "::warning::playwright install chromium: attempt $attempt failed or passed four minutes"
+        done
+        echo "::error::Chromium could not be installed in three attempts"
+        exit 1

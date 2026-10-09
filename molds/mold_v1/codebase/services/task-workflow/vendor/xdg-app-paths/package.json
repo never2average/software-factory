@@ -1,0 +1,11 @@
+{
+  "name": "xdg-app-paths",
+  "version": "5.1.0",
+  "description": "Next-worker-compatible xdg-app-paths 5.1.0",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "dependencies": {
+    "xdg-portable": "^7.0.0"
+  }
+}

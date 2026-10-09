@@ -1,0 +1,28 @@
+{
+  "$comment": "The STARTER APPS of the account-delivery library: the apps every new workspace of a deployment that opts in is created with (agent/lib/provision-workspace.ts), shown in its Apps tab. key: stable and unique in this file; it is what keeps provisioning from creating an app twice, and what stops one a person deleted from coming back, so it never changes. source: a specialist the build has ({ \"specialist\": \"<id>\" }) or a workflow of this library ({ \"workflow\": \"<name>\" }); the build fails on one it does not have. refresh: optional 5-field UTC cron. first_content: \"on_open\" (the default: the first document is written when a person first opens the app, or when its schedule first comes due, so creating a workspace runs no model) or \"on_create\". Text may write the placeholders the deployment profile fills ({account}, {accounts}, {owner}, …). scripts/lib/profile-library.mjs holds the rules.",
+  "apps": [
+    {
+      "key": "open-follow-ups",
+      "name": "Open follow-ups",
+      "description": "Every open follow-up and commitment, oldest first, with who owes it.",
+      "brief": "List every open follow-up, commitment and action item across all {accounts}, oldest first. One table: the {account}, what was promised, who owes it, when it was promised, when it is due, and how many days it is overdue. Put anything overdue at the top under its own heading. End with a count per {owner}. Use only what is recorded; where a follow-up has no due date, say so in the table.",
+      "source": { "specialist": "follow-ups" },
+      "refresh": "0 7 * * 1-5"
+    },
+    {
+      "key": "quiet-accounts",
+      "name": "{Accounts} gone quiet",
+      "description": "{Accounts} with nothing logged in the last 30 days, and the last thing that happened with each.",
+      "brief": "Find every {account} with no interaction, note or ticket activity in the last 30 days. One table, longest silence first: the {account}, its {owner}, the date and a one-line summary of the last recorded touchpoint, and the days since. For each, one suggested next step. If every {account} has recent activity, say that in one sentence instead of an empty table.",
+      "source": { "specialist": "follow-ups" },
+      "refresh": "0 7 * * 1"
+    },
+    {
+      "key": "evaluation-regressions",
+      "name": "Evaluation regressions",
+      "description": "What the latest evaluation runs regressed on, by {account}, with the open fix tickets.",
+      "brief": "Summarise the most recent evaluation run of each {account} that has one. One table: the {account}, the suite, the date of the run, the pass rate against the run before it, and the cases that newly fail. Below it, the open tickets filed for those regressions and who owns each. An {account} with no evaluation suite is listed in one closing line, not in the table.",
+      "source": { "specialist": "evals" }
+    }
+  ]
+}

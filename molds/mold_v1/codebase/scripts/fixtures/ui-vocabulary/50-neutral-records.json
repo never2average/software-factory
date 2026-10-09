@@ -1,0 +1,10 @@
+{
+  "$comment": "A profile that calls each record by a neutral word that is NOT its stored name (account, delivery, project, plan) and changes nothing else: no domain label, no field, no specialist. scripts/test-ui-vocabulary.mjs stamps a copy with it to prove that text the product writes takes each record word from the profile, and never spells the stored one, under a profile that relabels no folder and no identifier.",
+  "vocabulary": {
+    "account": { "singular": "account", "plural": "accounts" }
+  },
+  "domains": {
+    "deployments": { "label": { "singular": "Delivery", "plural": "Deliveries" } },
+    "implementations": { "label": { "singular": "Project", "plural": "Projects" }, "group_label": { "singular": "Plan", "plural": "Plans" } }
+  }
+}

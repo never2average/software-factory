@@ -1,0 +1,49 @@
+{
+  "$comment": "Verbatim from a package built by scripts/build-agent-cli.mjs at commit a586846 (before fix/agent-cli-neutral-names), with --name @probe-scope/research-kit --origin https://research.probe-deployment.dev. scripts/test-agent-cli-build.mjs replays it through ownNameGate: this is the layout the gate must refuse, and it is what a real deployment published.",
+  "name": "@probe-scope/research-kit",
+  "paths": [
+    "README.md",
+    "deployment.generated.mjs",
+    "dm.md",
+    "redacted-cli.mjs",
+    "redacted-install-skill.mjs",
+    "redacted-login.mjs",
+    "redacted-mcp.mjs",
+    "redacted-tools.mjs",
+    "package.json",
+    "skills/delivered-setup/SKILL.md"
+  ],
+  "packageJson": {
+    "name": "@probe-scope/research-kit",
+    "version": "1.2.3",
+    "bin": {
+      "research-kit": "./redacted-cli.mjs",
+      "research-kit-login": "./redacted-login.mjs",
+      "research-kit-mcp": "./redacted-mcp.mjs",
+      "research-kit-install-skills": "./redacted-install-skill.mjs"
+    },
+    "files": [
+      "redacted-cli.mjs",
+      "redacted-login.mjs",
+      "redacted-mcp.mjs",
+      "redacted-tools.mjs",
+      "redacted-install-skill.mjs",
+      "deployment.generated.mjs",
+      "dm.md",
+      "README.md",
+      "skills"
+    ]
+  },
+  "readmeLines": [
+    "`npx @probe-scope/research-kit redacted-login`, `redacted-mcp` and `redacted-install-skill` are the same commands under their older",
+    "Which address is used, first match wins: `--url <address>` or `redacted_OPS_URL`, then the address saved",
+    "- `delivered-setup` - Set up a Delivered workspace end to end — verify the redacted MCP wiring, choose and install a vertical data room, connect the first source, and onboard the first customer. Use when someone is invited to a Delivered workspace, says \"set up my Delivered workspace\", \"finish the Delivered setup checks\", \"run the Delivered onboarding\", or when the redacted MCP tools return 401 / are not wired yet.",
+    "- The sign-in is stored only on your machine (`~/.config/redacted-mcp/research.probe-deployment.dev/credentials.json`,",
+    "- The Google client id and secret inside `redacted-login.mjs` are for an installed-app client. Google does"
+  ],
+  "loginConfigLines": [
+    " * ~/.config/redacted-mcp/credentials.json (mode 600). After that, `redacted-mcp.mjs` mints",
+    "  ? join(homedir(), \".config\", \"redacted-mcp\", BAKED_HOST)",
+    "  : join(homedir(), \".config\", \"redacted-mcp\");"
+  ]
+}

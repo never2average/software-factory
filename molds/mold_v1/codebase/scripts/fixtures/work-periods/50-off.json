@@ -1,0 +1,4 @@
+{
+  "$comment": "A deployment without work periods: the feature does not exist anywhere (scripts/test-work-periods.mjs).",
+  "work_periods": { "mode": "off" }
+}

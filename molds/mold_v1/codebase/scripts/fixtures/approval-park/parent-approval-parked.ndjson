@@ -1,0 +1,14 @@
+{"type":"session.started","data":{"runtime":{}},"meta":{"at":"2026-09-23T16:08:02.000Z"}}
+{"type":"turn.started","data":{"sequence":1,"turnId":"turn_1"},"meta":{"at":"2026-09-23T19:10:33.521Z"}}
+{"type":"message.received","data":{"sequence":1,"turnId":"turn_1","message":"[redacted]","parts":[{"type":"text","text":"[redacted]"}]},"meta":{"at":"2026-09-23T19:10:33.980Z"}}
+{"type":"step.started","data":{"sequence":1,"turnId":"turn_1","stepIndex":0},"meta":{"at":"2026-09-23T19:10:33.984Z"}}
+{"type":"actions.requested","data":{"sequence":1,"turnId":"turn_1","stepIndex":0,"actions":[{"kind":"tool-call","callId":"call_000000000000000000000001","toolName":"list_customers","input":{}}]},"meta":{"at":"2026-09-23T19:12:05.824Z"}}
+{"type":"action.result","data":{"sequence":1,"turnId":"turn_1","stepIndex":0,"status":"completed","result":{"kind":"tool-result","callId":"call_000000000000000000000001","toolName":"list_customers","output":"[redacted]"}},"meta":{"at":"2026-09-23T19:12:05.887Z"}}
+{"type":"step.completed","data":{"sequence":1,"turnId":"turn_1","stepIndex":0,"finishReason":"tool-calls","usage":{}},"meta":{"at":"2026-09-23T19:12:06.026Z"}}
+{"type":"step.started","data":{"sequence":1,"turnId":"turn_1","stepIndex":1},"meta":{"at":"2026-09-23T19:13:37.179Z"}}
+{"type":"message.completed","data":{"sequence":1,"turnId":"turn_1","stepIndex":1,"finishReason":"tool-calls","message":"[redacted]"},"meta":{"at":"2026-09-23T19:14:04.477Z"}}
+{"type":"actions.requested","data":{"sequence":1,"turnId":"turn_1","stepIndex":1,"actions":[{"kind":"tool-call","callId":"call_000000000000000000000002","toolName":"upsert_customer","input":{}}]},"meta":{"at":"2026-09-23T19:14:04.477Z"}}
+{"type":"step.completed","data":{"sequence":1,"turnId":"turn_1","stepIndex":1,"finishReason":"tool-calls","usage":{}},"meta":{"at":"2026-09-23T19:14:04.567Z"}}
+{"type":"input.requested","data":{"sequence":1,"turnId":"turn_1","stepIndex":1,"requests":[{"requestId":"aitxt-000000000000000000000001","prompt":"[redacted]","display":"confirmation","allowFreeform":false,"options":[{"id":"approve","label":"Yes"},{"id":"deny","label":"No"}],"action":{"kind":"tool-call","callId":"call_000000000000000000000002","toolName":"upsert_customer","input":{}}}]},"meta":{"at":"2026-09-23T19:14:04.698Z"}}
+{"type":"turn.completed","data":{"sequence":1,"turnId":"turn_1"},"meta":{"at":"2026-09-23T19:14:04.705Z"}}
+{"type":"session.waiting","data":{"wait":"next-user-message","continuationToken":"ct_redacted_1"},"meta":{"at":"2026-09-23T19:14:04.783Z"}}

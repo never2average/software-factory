@@ -1,0 +1,7 @@
+{
+  "note": "MSG-1 whose model has not produced its first token (the scripted model waits 10 s); POST /cancel {turnId: \"turn_0\"} 1.5 s after step.started answered 202 accepted. eve emits turn.cancelled then session.waiting; nothing of the turn's own was ever on screen.",
+  "deliveries": [
+    { "at": 0, "message": "MSG-1 SLOWSTART please answer" },
+    { "at": 4, "cancel": { "turnId": "turn_0" } }
+  ]
+}

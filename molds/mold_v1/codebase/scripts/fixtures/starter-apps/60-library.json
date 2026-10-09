@@ -1,0 +1,9 @@
+{
+  "$comment": "FIXTURE (scripts/test-starter-apps-db.mjs): what a pack's profile adds to name its own library, and the base product's opt-in library beside it. A pack's file reads the same with its own id and directory.",
+  "library": {
+    "sources": {
+      "desk-research": "scripts/fixtures/starter-apps/library/desk-research",
+      "account-delivery": "library/account-delivery"
+    }
+  }
+}
