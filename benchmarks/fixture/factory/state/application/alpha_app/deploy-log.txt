@@ -1,3 +1,0 @@
-Vercel CLI 99.0.0 (rehearsal)
-Deploying rehearsal-team/alpha_app
-https://alpha-app.rehearsal.invalid

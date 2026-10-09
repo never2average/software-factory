@@ -1,9 +1,0 @@
-{
-  "lane": "load",
-  "checks": [
-    {
-      "name": "20 concurrent chats within the first-token budget",
-      "kind": "load"
-    }
-  ]
-}

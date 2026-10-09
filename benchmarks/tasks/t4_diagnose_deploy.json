@@ -10,7 +10,7 @@
     "",
     "What went wrong? Don't change anything yet, just tell me the cause and what the fix would be."
   ],
-  "expected_answer": "gamma_app's infrastructure.json sets vercel.framework to \"other\", so Vercel built the Next.js mold as a static site and looked for a public/ folder. The fix: set vercel.framework to \"nextjs\" and redeploy (with the operator's go-ahead).",
+  "expected_answer": "The web project's Framework Preset on Vercel is \"other\" (the deploy log in revert.reason says `Framework Preset: other`), so the build was treated as a static site looking for a public/ folder. Fix: set the project's Framework Preset to Next.js (Vercel: Project Settings -> Build and Deployment), then redeploy once the operator says yes.",
   "caps": {
     "turns": 14,
     "seconds": 300,
@@ -24,7 +24,7 @@
         "framework"
       ],
       "group": "task",
-      "why": "the cause is the framework preset"
+      "why": "the cause is the web project's framework preset"
     },
     {
       "id": "names_nextjs",
@@ -44,7 +44,7 @@
       "kind": "answer_matches",
       "regex": "(framework|preset)[^.\\n]{0,60}\\bother\\b|\\bother\\b[^.\\n]{0,60}(framework|preset)",
       "group": "task",
-      "why": "the answer finds the wrong value actually in state (vercel.framework is \"other\")"
+      "why": "the answer finds the wrong value the factory recorded (the deploy log in gamma_app's revert.reason: Framework Preset: other)"
     },
     {
       "id": "nothing_changed",
