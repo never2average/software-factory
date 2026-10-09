@@ -25,3 +25,14 @@ reports/usage/
 # app_usage.py --self-test: a stand-in `postgres` package (fixture code, not an install)
 !.claude/scripts/fixtures/app_usage/fake-app/node_modules/
 !.agents/scripts/fixtures/app_usage/fake-app/node_modules/
+
+# Kept on the factory machine, never in the repository (open-source split, 2026-10-09): each application's own code,
+# records and results. The factory reads them from disk; the mold's codebase is re-fetched by its MOLD.md refresh.
+/molds/*/codebase/
+/packs/
+/brands/
+/briefs/
+/reports/
+/molds/*/testing/*/reports/
+/state/application/*
+!/state/application/app_id/

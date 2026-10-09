@@ -111,6 +111,31 @@ export type Usage = {
   error?: string
 }
 
+/** How an app's build figures were arrived at (mint_report.py): own, every session that names the app names no other;
+ * apportioned, a session shared with other apps was split and this is the app's share (shown as "shared", dimmed). */
+export type BuildBasis = 'own' | 'apportioned'
+
+/** What it took to build one app, or the sum over a product's apps: reports/mint/<app>.json's summary. */
+export type Build = {
+  /** Measured by the sessions' own cost counters (then apportioned when basis says so); null: not measured. */
+  cost_usd: Measured
+  basis: BuildBasis | null
+  /** Agent work after a session's last cost record: always an estimate, never added into cost_usd. */
+  uncounted_est_usd: Measured
+  agent_model_s: Measured
+  agent_tool_s: Measured
+  active_s: Measured
+  first_message: string
+  first_deploy: string
+  latest_deploy: string
+  deploys: Measured
+  calendar_to_first_deploy_s: Measured
+  sessions: Measured
+  /** Each session's share of it, when apportioned. */
+  shares: { session: string; basis: BuildBasis | null; share: Measured }[]
+  generated_at: string
+}
+
 export type Tab = 'products' | 'molds' | 'tickets' | 'analytics'
 
 declare module 'claude-code' {
@@ -125,6 +150,9 @@ declare module 'claude-code' {
       collectError: string
       openTicket: string
       ticketFilter: string
+      builds: Record<string, Build>
+      isComputing: boolean
+      computeError: string
     }
   }
 }

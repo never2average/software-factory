@@ -1,11 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AppRow, Board, Check, Tab, Ticket, Usage } from '../types'
+import type { AppRow, Board, Build, Check, Tab, Ticket, Usage } from '../types'
 import {
   STAGES,
   STAGE_WORDS,
   ago,
+  buildParts,
+  parseBuild,
+  sumBuilds,
   fit,
   plainTitle,
   ticketMatches,
@@ -32,6 +35,8 @@ const EVERY_MS = 5 * 60_000
 const USAGE_EVERY_MS = 30 * 60_000
 const PROBE_MS = 10_000
 const COLLECT_MS = 5 * 60_000
+const BUILD_EVERY_MS = 60 * 60_000
+const COMPUTE_MS = 10 * 60_000
 
 const board = atom({ plugin: 'factory-board', key: 'board' } as const, null)
 const isRefreshing = atom({ plugin: 'factory-board', key: 'isRefreshing' } as const, false)
@@ -42,6 +47,9 @@ const isCollecting = atom({ plugin: 'factory-board', key: 'isCollecting' } as co
 const collectError = atom({ plugin: 'factory-board', key: 'collectError' } as const, '')
 const openTicket = atom({ plugin: 'factory-board', key: 'openTicket' } as const, '')
 const ticketFilter = atom({ plugin: 'factory-board', key: 'ticketFilter' } as const, 'all')
+const builds = atom({ plugin: 'factory-board', key: 'builds' } as const, {})
+const isComputing = atom({ plugin: 'factory-board', key: 'isComputing' } as const, false)
+const computeError = atom({ plugin: 'factory-board', key: 'computeError' } as const, '')
 
 type $ = EngineInterface
 
@@ -52,6 +60,7 @@ let root = FALLBACK_ROOT
 // "Reading…"). A reload starts the module over, and these with it.
 let refreshing = false
 let collecting = false
+let computing = false
 const STORE_KEY = 'last-board'
 
 async function readJson($: $, path: string): Promise<any> {
@@ -129,6 +138,7 @@ async function refresh($: $): Promise<void> {
       if (first) await update($, selectedApp, () => first.id)
     }
     await readUsage($, apps)
+    await readBuilds($, apps)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await update($, board, current => ({
@@ -180,6 +190,44 @@ async function collect($: $): Promise<void> {
   }
 }
 
+/* ---- build cost and time: reports/mint/<app>.json, written by .claude/scripts/mint_report.py --all -------------------- */
+
+async function readBuilds($: $, apps: readonly AppRow[]): Promise<void> {
+  const found: Record<string, Build> = {}
+  for (const app of apps) {
+    const raw = await readJson($, `${root}/reports/mint/${app.id}.json`).catch(() => null)
+    if (raw) found[app.id] = parseBuild(raw)
+  }
+  await update($, builds, () => found)
+}
+
+/** Recomputes every app's build cost and time from the agent sessions and git (offline, read-only), then reads them. */
+async function computeBuilds($: $): Promise<void> {
+  if (computing) return
+  computing = true
+  await update($, isComputing, () => true)
+  await update($, computeError, () => '')
+  try {
+    const script = `${root}/.claude/scripts/mint_report.py`
+    if (!(await $.fs.exists(script))) {
+      await update($, computeError, () => 'The build report (.claude/scripts/mint_report.py) is not in this factory yet.')
+      return
+    }
+    const ran = await $.process.run(['python3', script, '--all', '--json'], { cwd: root, timeoutMs: COMPUTE_MS })
+    if (ran.exitCode !== 0) {
+      const why = (ran.stderr || ran.stdout).trim().split('\n').slice(-1)[0] ?? ''
+      await update($, computeError, () => `The build report stopped (exit ${ran.exitCode}). ${why}`.trim())
+    }
+    const current = await read($, board)
+    if (current) await readBuilds($, current.apps)
+  } catch (error) {
+    await update($, computeError, () => (error instanceof Error ? error.message : String(error)))
+  } finally {
+    computing = false
+    await update($, isComputing, () => false)
+  }
+}
+
 function summary(apps: readonly AppRow[], open: number): string {
   const live = apps.filter(a => a.checks.length > 0)
   const healthy = live.filter(a => verdict(a.checks) === 'healthy').length
@@ -209,6 +257,7 @@ export const register: Register = on => {
     if (e.cwd && (await $.fs.exists(`${e.cwd}/state/factory.json`))) root = e.cwd
     await update($, isRefreshing, () => false)
     await update($, isCollecting, () => false)
+    await update($, isComputing, () => false)
     if (!(await read($, board))) {
       const last = (await $.store.get(STORE_KEY).catch(() => undefined)) as Board | undefined
       if (last && last.root === root) await update($, board, () => last)
@@ -220,6 +269,7 @@ export const register: Register = on => {
     void refresh($)
     $.clock.every(EVERY_MS, () => void refresh($))
     $.clock.every(USAGE_EVERY_MS, () => void collect($))
+    $.clock.every(BUILD_EVERY_MS, () => void computeBuilds($))
     return started
   })
 
@@ -262,6 +312,20 @@ export const register: Register = on => {
       </Box>
     )
 
+    /* -- What it took to build an app (or a product): apportioned and estimated parts are dimmed ------------------ */
+    const buildsByApp = await read($, builds)
+    const computingBuilds = await read($, isComputing)
+    const computeProblem = await read($, computeError)
+    const buildLine = (key: string, b: Build | null | undefined, indent = 2) => (
+      <Box key={key} flexDirection="row" gap={1} paddingLeft={indent}>
+        {buildParts(b).map((part, i) => (
+          <Text key={`${key}-${i}`} dimColor={part.dim}>
+            {part.text}
+          </Text>
+        ))}
+      </Box>
+    )
+
     /* -- One app: its health checks, deploy, base code and address ------------------------------------------------ */
     const appCard = (app: AppRow) => {
       const health = verdict(app.checks)
@@ -295,6 +359,7 @@ export const register: Register = on => {
               {app.url}
             </Text>
           )}
+          {buildLine(`build-${app.id}`, buildsByApp[app.id])}
         </Box>
       )
     }
@@ -342,6 +407,12 @@ export const register: Register = on => {
                 {soon && <Text color="claude">coming soon</Text>}
                 <Text dimColor>{p.moldId}</Text>
               </Box>
+              {p.appIds.length > 0 &&
+                buildLine(
+                  `pbuild-${p.id}`,
+                  sumBuilds(p.appIds.map(id => buildsByApp[id]).filter((b): b is Build => b !== undefined)),
+                  0,
+                )}
               {!soon && (
                 <Box flexDirection="row">
                   {STAGES.map((s, i) => {
@@ -367,6 +438,11 @@ export const register: Register = on => {
             {unowned.map(a => appCard(a))}
           </Box>
         )}
+        <Text dimColor wrap="wrap">
+          built: the AI the factory spent making it, at list prices. (shared): split from sessions that also built other apps;
+          ~ est.: work not yet counted, estimated.
+        </Text>
+        {computeProblem && <Text color="error">{computeProblem}</Text>}
       </Box>
     )
 
@@ -677,6 +753,13 @@ export const register: Register = on => {
         {shown === 'analytics' && analyticsTab}
         <Box flexDirection="row" gap={1}>
           <Button key="refresh" label={busy ? 'Refreshing…' : 'Refresh'} onPress={() => void refresh($)} />
+          {shown === 'products' && (
+            <Button
+              key="compute"
+              label={computingBuilds ? 'Computing build costs…' : 'Recompute build costs'}
+              onPress={() => void computeBuilds($)}
+            />
+          )}
           {shown === 'analytics' && (
             <Button key="collect" label={collecting ? 'Collecting…' : 'Collect usage'} onPress={() => void collect($)} />
           )}
