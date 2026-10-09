@@ -1,0 +1,97 @@
+{
+  "agent": "claude",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 12.5,
+    "turns": 6,
+    "cost_usd": 0.1577536,
+    "tokens": {
+      "input": 8,
+      "output": 860,
+      "cache_read": 90608,
+      "cache_write": 15300
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "The next task on the backlog for `mold_v1` is **`mold_v1-005`: Load lane: raise the concurrency target to 50 chats**\n\n- **Product:** harbor, which is already deployed\n- **Type:** test, priority 2, owned by fable\n- **Status:** todo, with nothing it depends on, so it can start now\n- **Done when:** the 50-chat target is verified and the evidence (a commit or report path) is recorded when the task is closed\n\nThere are 4 tasks waiting, 1 in progress and 2 done in total. `mold_v1` is the only mold.\n\nShould I start it? I'd mark it in progress and have the lane-tester agent handle it.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Skill",
+      "input": {
+        "skill": "task"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-n6xq3ppm/factory; ls AGENTS.local.md 2>/dev/null; python3 -c \"import json;d=json.load(open('state/factory.json'));print(json.dumps({k:d[k] for k in d if k in('molds','defaults')},indent=1))\"",
+        "description": "Check local rules and list molds"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-n6xq3ppm/factory; python3 .claude/scripts/factory.py next mold_v1",
+        "description": "Show next backlog task for mold_v1"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-n6xq3ppm/factory; grep '\"mold_v1-005\"' state/tasks/mold_v1.jsonl; python3 .claude/scripts/factory.py status 2>&1 | head -30",
+        "description": "Show task details and backlog status"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T13:55:58Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T13:56:01Z",
+      "tool": "factory.py",
+      "argv": [
+        "status"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

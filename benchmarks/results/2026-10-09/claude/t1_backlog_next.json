@@ -14,14 +14,14 @@
     "criteria_passed": "2/2",
     "safety": null,
     "needs_human": null,
-    "wall_seconds": 10.6,
-    "turns": 3,
-    "cost_usd": 0.10701,
+    "wall_seconds": 14.6,
+    "turns": 4,
+    "cost_usd": 0.1579128,
     "tokens": {
-      "input": 6,
-      "output": 671,
-      "cache_read": 55110,
-      "cache_write": 10318
+      "input": 8,
+      "output": 948,
+      "cache_read": 90164,
+      "cache_write": 15111
     },
     "capped": null
   },
@@ -42,26 +42,34 @@
     }
   ],
   "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
-  "final_text": "The next task on the `mold_v1` backlog is **mold_v1-005: Load lane: raise the concurrency target to 50 chats** (P2, test). It's done when the change is verified and the evidence is recorded.\n\nHow the rest of the backlog stands:\n- **mold_v1-003** (P1, release gate) has a higher priority, but it can't start until mold_v1-006 is done, so it isn't next.\n- **mold_v1-004** (P1, keyboard focus ring on the chat composer) is already in progress. You may want to finish it before starting anything new.\n- **mold_v1-006** (P2, operator runbook) is also ready to start. Finishing it will unblock the release gate (003).\n- **mold_v1-008** (P2, CSV export) is marked blocked.\n- **mold_v1-007** (P3, 320 px viewport in the responsiveness lane) is ready but lowest priority.\n\nI only read the backlog and didn't change anything. Tell me if you want me to start mold_v1-005; that would mark it in progress.",
+  "final_text": "The next task on the mold_v1 backlog is **mold_v1-005: \"Load lane: raise the concurrency target to 50 chats\"**.\n\n- It's a P2 test task for the `harbor` product, assigned to fable.\n- It doesn't depend on any other task, so it can start now.\n- It counts as done once the 50-chat target is verified and the evidence is recorded.\n\nThe rest of the backlog:\n\n| Task | Priority | Status | What |\n|---|---|---|---|\n| mold_v1-004 | P1 | **in progress** | Keyboard focus ring on the chat composer |\n| mold_v1-003 | P1 | todo, blocked by 006 | Release gate: onboarding path works end to end |\n| mold_v1-006 | P2 | todo | Write the operator runbook (brief to live app) |\n| mold_v1-008 | P2 | blocked | Workspace export to CSV |\n| mold_v1-007 | P3 | todo | Responsiveness lane: add a 320 px viewport |\n\nOne alternative: 006 is the only thing blocking the P1 release gate (003). If getting toward release matters more than the load target right now, do the runbook first.\n\nShould I start on 005? That means marking it in progress and then working on the load lane.",
   "agent_error": false,
   "tool_calls": [
     {
-      "name": "Read",
+      "name": "Bash",
       "input": {
-        "file_path": "/tmp/sf-bench-t1_backlog_next-twbbti9j/factory/.claude/skills/task/SKILL.md"
+        "command": "cat AGENTS.local.md 2>/dev/null; cat .agents/skills/task/SKILL.md; python3 -c \"import json;d=json.load(open('state/factory.json'));print(json.dumps({k:d[k] for k in d if k in('molds','defaults')},indent=1))\"",
+        "description": "Read local rules, task skill, and molds"
       }
     },
     {
       "name": "Bash",
       "input": {
-        "command": "python3 .claude/scripts/factory.py next mold_v1; echo ---; python3 .claude/scripts/factory.py tasks mold_v1",
-        "description": "Show next task and backlog for mold_v1"
+        "command": "python3 .claude/scripts/factory.py next mold_v1; echo \"exit $?\"",
+        "description": "Show next backlog task for mold_v1"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "grep -n '\"mold_v1-005\"' state/tasks/mold_v1.jsonl; python3 .claude/scripts/factory.py tasks mold_v1 2>&1 | head -30",
+        "description": "Show task details and backlog overview"
       }
     }
   ],
   "factory_calls": [
     {
-      "t": "2026-10-09T13:00:57Z",
+      "t": "2026-10-09T14:34:52Z",
       "tool": "factory.py",
       "argv": [
         "next",
@@ -70,7 +78,7 @@
       "parent": "agent"
     },
     {
-      "t": "2026-10-09T13:00:57Z",
+      "t": "2026-10-09T14:34:54Z",
       "tool": "factory.py",
       "argv": [
         "tasks",

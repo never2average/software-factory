@@ -1,0 +1,98 @@
+{
+  "agent": "claude",
+  "task": "t1_backlog_next",
+  "title": "What's next on the backlog?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "2/2",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 21.9,
+    "turns": 5,
+    "cost_usd": 0.1821888,
+    "tokens": {
+      "input": 10,
+      "output": 1363,
+      "cache_read": 117044,
+      "cache_write": 16435
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_next_task",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "`factory.py next mold_v1` prints mold_v1-005: the highest-priority todo task whose dependencies are done"
+    },
+    {
+      "id": "backlog_untouched",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing; the task is not started just because it was named"
+    }
+  ],
+  "expected_answer": "mold_v1-005  Load lane: raise the concurrency target to 50 chats (mold_v1-003 has higher priority but is blocked by mold_v1-006; mold_v1-004 is already in progress)",
+  "final_text": "The backlog tool (`factory.py next mold_v1`) picks **mold_v1-005: Load lane: raise the concurrency target to 50 chats**. It's a priority 2 test task for the `harbor` product, has no dependencies and is still to do.\n\nA few other things on the `mold_v1` backlog you may want to weigh first:\n\n- **mold_v1-004, Keyboard focus ring on the chat composer.** It's priority 1 and already marked in progress, so `next` skips it. If nobody is actually working on it, it's the most urgent open item. It may be better to finish it than to start something new.\n- **mold_v1-006, Write the operator runbook (brief to live app).** It's the same priority as 005, and 005 only comes first because it has the lower id. The runbook is what's blocking the priority 1 release gate (**mold_v1-003**, the onboarding path working end to end), so doing it first moves `harbor` closer to release. I'd pick this one over 005.\n- **mold_v1-007, Responsiveness lane: add a 320 px viewport.** Priority 3, still to do.\n- **mold_v1-008, Workspace export to CSV.** It's marked blocked, but the backlog doesn't record what it's waiting on.\n\nTwo tasks are done: fetching the mold and stamping the first app. `harbor` is at the deployed stage. The other five products (`alpha_notes`, `beta_desk`, `cobalt_ledger`, `delta_docs`, `gamma_research`) are still at the defined stage, with one app each.\n\nTell me which task to take, 005 as the tool suggests or 006 or 004, and I'll mark it in progress and start.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-46qm6z2g/factory; ls AGENTS.local.md 2>/dev/null; cat .agents/skills/task/SKILL.md; python3 -c \"import json;d=json.load(open('state/factory.json'));print(json.dumps(d.get('molds',d),indent=1)[:1500])\"",
+        "description": "Read task skill and factory molds"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-46qm6z2g/factory; python3 .claude/scripts/factory.py next mold_v1; echo \"exit $?\"; python3 .claude/scripts/factory.py status; echo \"exit $?\"",
+        "description": "Show next backlog task and status"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-46qm6z2g/factory; python3 -c \"\nimport json\nfor l in open('state/tasks/mold_v1.jsonl'):\n  t=json.loads(l); print(t.get('id'),t.get('status'),t.get('pri'),t.get('deps') or t.get('dep'),'|',t.get('title'))\"",
+        "description": "List all mold_v1 tasks"
+      }
+    },
+    {
+      "name": "Bash",
+      "input": {
+        "command": "cd /tmp/sf-bench-t1_backlog_next-46qm6z2g/factory; cat state/tasks/mold_v1.jsonl",
+        "description": "Show raw backlog file"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T13:59:00Z",
+      "tool": "factory.py",
+      "argv": [
+        "next",
+        "mold_v1"
+      ],
+      "parent": "agent"
+    },
+    {
+      "t": "2026-10-09T13:59:00Z",
+      "tool": "factory.py",
+      "argv": [
+        "status"
+      ],
+      "parent": "agent"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

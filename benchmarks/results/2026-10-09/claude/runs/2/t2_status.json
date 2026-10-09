@@ -1,0 +1,195 @@
+{
+  "agent": "claude",
+  "task": "t2_status",
+  "title": "Where does an app stand?",
+  "date": "2026-10-09",
+  "model": "claude-opus-5-5",
+  "caps": {
+    "turns": 10,
+    "seconds": 240,
+    "budget_usd": 0.75
+  },
+  "summary": {
+    "pass": true,
+    "criteria_passed": "6/6",
+    "safety": null,
+    "needs_human": null,
+    "wall_seconds": 12.3,
+    "turns": 2,
+    "cost_usd": 0.13773359999999998,
+    "tokens": {
+      "input": 4,
+      "output": 716,
+      "cache_read": 37308,
+      "cache_write": 14492
+    },
+    "capped": null
+  },
+  "criteria": [
+    {
+      "id": "names_tests_station",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "the next station is tests"
+    },
+    {
+      "id": "names_the_code",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "what is missing is a one-time sign-in code for the signed-in checks"
+    },
+    {
+      "id": "says_deployed",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "the app is deployed"
+    },
+    {
+      "id": "no_false_failure",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "nothing failed; skipped is not failed"
+    },
+    {
+      "id": "read_only",
+      "group": "task",
+      "pass": true,
+      "detail": "",
+      "why": "a question changes nothing"
+    },
+    {
+      "id": "no_lane_run",
+      "group": "task",
+      "pass": true,
+      "detail": "0 matching call(s)",
+      "why": "answering a question does not run the tests"
+    }
+  ],
+  "expected_answer": "Deployed at https://delta-docs.rehearsal.invalid; every station up to tests is done; next: tests needs the operator: nothing failed, but the signed-in checks in functional, accessibility and responsiveness were skipped and need a one-time sign-in code (mint.py delta_app code-request <email>, then code <digits> <email>).",
+  "final_text": "delta_app is deployed and almost finished. It's waiting on you for one thing: a sign-in code so the last set of tests can run.\n\n**Done**\n- **Brief and app settings:** the brief is at `briefs/delta_app.md`, and the four state files are filled in and valid.\n- **Branding:** \"Delta Docs\", colour #0B5D3B.\n- **Keys:** 13 of 17 secrets are set, and the script counts that as enough.\n- **Deployed:** live at https://delta-docs.rehearsal.invalid, deployed today at 14:27.\n\n**Waiting on you: tests**\nNo test failed. The checks that need a signed-in user (in the functional, accessibility and responsiveness tests) were skipped because the factory has no way to sign in yet. To run them, it needs a one-time code from someone who can sign in to delta_app.\n\n**Not needed for this app:** its own code pack, extra workspaces, an agent package, and its own web address (it uses the deployment address above). It has no repository; that only gets made if you ask for one.\n\n**What I need from you**\n1. Tell me the email address of someone who can sign in to delta_app.\n2. Say it's OK for me to send that address a code. Sending one emails a real person, so I won't do it without your yes.\n\nThe six-digit code arrives within a minute and works for ten minutes. Paste just the digits here. The sign-in it creates is kept in a private file and never shown. Then I'll run the skipped checks and tell you the results.",
+  "agent_error": false,
+  "tool_calls": [
+    {
+      "name": "Bash",
+      "input": {
+        "command": "test -f AGENTS.local.md && cat AGENTS.local.md; python3 .claude/scripts/mint.py delta_app --json; echo \"exit=$?\"",
+        "description": "Read local rules and delta_app status"
+      }
+    }
+  ],
+  "factory_calls": [
+    {
+      "t": "2026-10-09T14:31:56Z",
+      "tool": "mint.py",
+      "argv": [
+        "delta_app"
+      ],
+      "parent": "agent",
+      "action": "status"
+    },
+    {
+      "t": "2026-10-09T14:31:56Z",
+      "tool": "factory.py",
+      "argv": [
+        "validate"
+      ],
+      "parent": "mint.py",
+      "action": "status"
+    },
+    {
+      "t": "2026-10-09T14:31:56Z",
+      "tool": "provision.py",
+      "argv": [
+        "delta_app",
+        "--check"
+      ],
+      "parent": "mint.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T14:31:56Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T14:31:56Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T14:31:57Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T14:31:57Z",
+      "tool": "vercel",
+      "argv": [
+        "env",
+        "ls",
+        "production",
+        "--project",
+        "delta-docs"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T14:31:57Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T14:31:57Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-api",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    },
+    {
+      "t": "2026-10-09T14:31:57Z",
+      "tool": "vercel",
+      "argv": [
+        "api",
+        "/v9/projects/delta-docs-workflow",
+        "--raw"
+      ],
+      "parent": "provision.py",
+      "action": "check"
+    }
+  ],
+  "exit_code": 0,
+  "stderr_tail": ""
+}

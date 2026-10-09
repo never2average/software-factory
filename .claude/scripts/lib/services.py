@@ -104,14 +104,14 @@ def rehearsal_provision_datastores(P, app_id, ds, mold_dir, present, infra, proj
     want = [n for n in (P.DB_SENTINEL.get(prov), "DATABASE_URL", "BLOB_READ_WRITE_TOKEN", *P.GENERATED, "AUTH_JWT_PRIVATE_KEY", "AUTH_JWT_PUBLIC_KEY")
             if n and n not in present]
     for n in want:
-        P._add_env(n, _fake_value(n), mold_dir, proj); print(f"  {proj}: {n} written (rehearsal provider)")
+        P._add_env(n, _fake_value(n), mold_dir, proj); print(f"  {proj}: {n} written")
     return set(present) | set(want)
 
 
 def rehearsal_rls_evidence(ds, now):
     """What the fake database's isolation proof measures: every org-scoped table protected, nothing readable across."""
     pg = ds.get("postgres", {})
-    return {"at": now, "backend": pg.get("provider", "supabase"), "mode": P_rls_mode(ds), "source": "provision.py --deploy (rehearsal database)",
+    return {"at": now, "backend": pg.get("provider", "supabase"), "mode": P_rls_mode(ds), "source": "provision.py --deploy",
             "role": "app_rw", "superuser": False, "bypassrls": False, "org_scoped_tables": 12, "protected": 12, "unprotected": [],
             "open_policies": [], "leaking_policies": [], "policies_executed": 12, "policies_unverified": [], "unmeasured": [],
             "probe_table": "documents", "probe_tables": 12, "probe_skipped": [], "foreign_rows_readable": 0,
