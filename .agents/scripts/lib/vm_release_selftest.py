@@ -12,6 +12,8 @@ cannot take the site down.
              server deployed before releases is adopted and moved over with nothing stopped; the disk is checked; the
              prewarm runs before the switch and a failed one switches nothing; old releases and their template
              snapshots are removed, never the current or the previous one
+  carry      a new release's prewarm reuses the template snapshots the serving release uses (its records carried over
+             first, as the API's user) instead of rebuilding them under it; keep still removes what no plan uses
   factory    deploy() against recorded answers: what it says and runs when the switch switched back, when the health
              check after it fails, when the prewarm or the build fails; --rollback-remote
 
@@ -137,6 +139,13 @@ class Server:
         # a stand-in for the API's prestart: it fails when told to, else marks the release prewarmed as the real one does
         open(os.path.join(self.F, "api-prestart.sh"), "w").write(
             f'#!/bin/bash\nset -eu\ncd "$1"\nif [ -e {self.d}/prewarm-hangs ]; then echo "template eve-sbx-tpl-x timed out after 600s" >&2; exit 1; fi\n'
+            # eve's prewarmMicrosandboxTemplate, when the fixture names templates (eve-keys: "<key> <snapshot>" lines): a
+            # record in THIS release's cache naming a snapshot the store has is reused; anything else is rebuilt, and eve
+            # removes the snapshot of that name first (removeSnapshotIfExists), which a chat on the serving release may need
+            f'if [ -f {self.d}/eve-keys ]; then t="$1/.eve/sandbox-cache/microsandbox/templates"; s="{self.root}{V.SERVICE_HOME}/.microsandbox/snapshots"\n'
+            f'  while read -r k n; do if [ -f "$t/$k/metadata.json" ] && grep -q "\\"$n\\"" "$t/$k/metadata.json" && [ -d "$s/$n" ]; then echo "reused $k" >> {self.d}/eve\n'
+            f'  else echo "rebuilt $n" >> {self.d}/eve; rm -rf "${{s:?}}/$n"; mkdir -p "$s/$n" "$t/$k"; printf \'{{"optionsHash": "ffdd1712e872da6aa9b0", "snapshotName": "%s", "version": 2}}\\n\' "$n" > "$t/$k/metadata.json"; fi\n'
+            f'  done < {self.d}/eve-keys\nfi\n'
             f'echo "6 sandbox template(s) ready"\ntouch "{self.root}{S["marks"]}/$(basename "$(pwd -P)")"\n')
         os.makedirs(self.root + S["data"] + "/build-stamps"); open(self.root + S["data"] + "/build-stamps/app.lock", "w").write("legacy-lock\n")
         os.makedirs(self.root + V.SERVICE_HOME + "/.microsandbox/bin")
@@ -366,6 +375,7 @@ def release(check, tmp):
     check("keep: with no `current` nothing at all is removed", os.path.isdir(os.path.join(empty, "releases", A_)) and "none was removed" in said[-1])
 
     unused(check, tmp, S, crons)
+    carry(check, tmp, S, crons)
 
 # ---- mold_v1-224: template snapshots no kept release uses ------------------------------------------------------------
 OLD = 1_700_000_000.0          # a snapshot made long ago
@@ -554,3 +564,76 @@ def factory(check, tmp):
     rc, printed = B.quiet(V.main_for, "vm_remote_fixture", ["vm_remote_fixture", "--rollback-remote", "--dry-run"], d["application"], d["infrastructure"], d["datastores"], V.FIXTURE, B.P)
     check("--rollback-remote --dry-run through provision's entry", rc == 0 and "release.sh detach rollback" in printed, printed[-300:])
     check("provision.py holds the app's deploy lock for --rollback-remote, as for a deploy", "--rollback-remote" in B.P.DEPLOY_FLAGS)
+
+# ---- mold_v1-227: a new release reuses the serving release's template snapshots, never rebuilds them under it ----------
+def carry(check, tmp, S, crons):
+    # eve names a template snapshot createProviderName("eve-sbx-tpl", templateKey, optionsHash), and the template key
+    # does not hold the release's path (first server, 2026-10-10: five of six keys, and so snapshot names, identical in
+    # two releases). Before the fix the new release's empty cache made eve rebuild each one: removeSnapshotIfExists on
+    # the very snapshot the serving release's chats start from, then seconds to minutes until the new one existed.
+    base = os.path.join(tmp, "carry"); inst = os.path.join(base, "opt", "app"); home = os.path.join(base, "home"); store = os.path.join(home, ".microsandbox")
+    tdir = lambda n: os.path.join(inst, "releases", n, ".eve/sandbox-cache/microsandbox/templates")
+    for n in (A_, B_): os.makedirs(os.path.join(inst, "releases", n, ".eve"))
+    os.symlink(f"releases/{A_}", os.path.join(inst, "current"))
+    _cache(os.path.join(inst, "releases", A_), {_key(1): _tpl(1), _key(2): _tpl(2), _key(4): _tpl(4)})       # 4: its snapshot is gone
+    for i in (1, 2): _snap(store, _tpl(i))
+    os.makedirs(os.path.join(tdir(A_), _key(5))); json.dump({"optionsHash": "h", "snapshotName": "../../../etc", "version": 2}, open(os.path.join(tdir(A_), _key(5), "metadata.json"), "w"))
+    os.makedirs(os.path.join(tdir(A_), _key(6) + ".abc.tmp")); json.dump({"optionsHash": "h", "snapshotName": _tpl(1), "version": 2}, open(os.path.join(tdir(A_), _key(6) + ".abc.tmp", "metadata.json"), "w"))
+    outside = os.path.join(base, "elsewhere"); os.makedirs(outside); json.dump({"optionsHash": "h", "snapshotName": _tpl(2), "version": 2}, open(os.path.join(outside, "metadata.json"), "w"))
+    os.symlink(outside, os.path.join(tdir(A_), _key(7)))
+    os.makedirs(os.path.join(tdir(B_), _key(2))); json.dump({"optionsHash": "other", "snapshotName": _tpl(9), "version": 2}, open(os.path.join(tdir(B_), _key(2), "metadata.json"), "w"))
+    served = digest(os.path.join(inst, "releases", A_)); said = []
+    carry_ = getattr(V, "release_carry", None)
+    n = carry_(inst, B_, home, say=said.append) if carry_ else None
+    got = sorted(os.listdir(tdir(B_)))
+    check("carry: a new release gets the serving release's template records, so eve reuses those snapshots instead of rebuilding them under the serving release (mold_v1-227)",
+          n == 1 and got == [_key(1), _key(2)] and json.load(open(os.path.join(tdir(B_), _key(1), "metadata.json"))) == json.load(open(os.path.join(tdir(A_), _key(1), "metadata.json"))), (n, got, said))
+    check("carry:   ...never a record whose snapshot is gone, one that does not name a template snapshot, eve's own temporary one, or a link; the new release's own record is kept",
+          json.load(open(os.path.join(tdir(B_), _key(2), "metadata.json")))["optionsHash"] == "other" and digest(os.path.join(inst, "releases", A_)) == served, got)
+    if carry_:
+        said.clear()
+        check("carry: nothing to carry when the release is the serving one, is not a release id, or nothing serves", carry_(inst, A_, home, say=said.append) == 0
+              and carry_(inst, "../x", home, say=said.append) == 0 and carry_(os.path.join(tmp, "nothing"), B_, home, say=said.append) == 0, said)
+
+    # ---- keep's "a prewarm is running" guard counts only a prewarm that uses this store (started with its HOME)
+    other = os.path.join(base, "other-home"); os.makedirs(other)
+    ps = [subprocess.Popen(["bash", "-c", "sleep 60; true", f"sandbox-prewarm-serial.mjs-{h}"], env={"PATH": "/usr/bin:/bin", "HOME": h}) for h in (home, other)]
+    try:
+        mine, theirs = V._proc_cmdlines(home), V._proc_cmdlines(other)
+        check("keep: a prewarm counts as running only when it uses this store (its HOME); one for another store, such as another app's, is not",
+              any(f"-{home}" in c for c in mine) and not any(f"-{other}" in c for c in mine) and any(f"-{other}" in c for c in theirs)
+              and all(any(f"-{h}" in c for c in V._proc_cmdlines()) for h in (home, other)), (mine[-3:], theirs[-3:]))
+    finally:
+        for p_ in ps: p_.kill(); p_.wait()
+
+    # ---- through release.sh prewarm, then keep: the serving release's snapshots are reused, and keep still cleans up
+    sv = Server(tmp, "rel-carry", S, crons, releases=(A_, B_), current=A_)
+    sstore = sv.root + V.SERVICE_HOME + "/.microsandbox"
+    open(sstore + "/bin/msb", "w").write('#!/bin/bash\necho "msb $*" >> "%s/calls"\n[ "$1 $2" = "snapshot remove" ] && rm -r "$HOME/.microsandbox/snapshots/$3"\nexit 0\n' % sv.d); os.chmod(sstore + "/bin/msb", 0o755)
+    def plannable(r_): os.makedirs(sv.rdir(r_) + "/scripts", exist_ok=True); open(sv.rdir(r_) + "/scripts/sandbox-prewarm-serial.mjs", "w").write('if (has("--plan")) {}\n')
+    for r_ in (A_, B_): plannable(r_)
+    _cache(sv.rdir(A_), {_key(1): _tpl(1), _key(2): _tpl(2), _key(3): _tpl(3)})                   # 3: a template the new code no longer has
+    for i in (1, 2, 3): _snap(sstore, _tpl(i))
+    sv.put("eve-keys", f"{_key(1)} {_tpl(1)}", f"{_key(2)} {_tpl(2)}", f"{_key(9)} {_tpl(9)}")
+    served = digest(sv.rdir(A_))
+    r, kv = sv.run("prewarm", B_)
+    eve = sv.lines("eve") if os.path.exists(os.path.join(sv.d, "eve")) else []
+    check("carry (release.sh prewarm): the templates the serving release uses are reused, so no snapshot a chat on it starts from is removed and rebuilt; only the new one is built",
+          r.returncode == 0 and kv.get("PREWARMED") == B_ and eve == [f"reused {_key(1)}", f"reused {_key(2)}", f"rebuilt {_tpl(9)}"] and digest(sv.rdir(A_)) == served, (eve, r.stdout[-300:], r.stderr[-300:]))
+    c = sv.lines("calls"); cl = next((i for i, l in enumerate(c) if "release-carry" in l), None); sr = next((i for i, l in enumerate(c) if l.startswith("systemd-run")), None)
+    check("carry (release.sh prewarm):   ...the records are carried as the API's user (it owns both caches), before the prewarm starts",
+          cl is not None and sr is not None and cl < sr and c[cl].startswith(f"runuser -u {V.SERVICE_USER} --") and f"--to {B_}" in c[cl], c)
+    sv.point("current", B_); sv.point("previous", A_)
+    os.remove(os.path.join(sv.d, "eve"))
+    r, kv = sv.run("prepare", C_); sv.build(C_); plannable(C_); r2, kv2 = sv.run("prewarm", C_)
+    check("carry (release.sh prewarm):   ...and a later release reuses them again, the reruns' mark logic unchanged",
+          r.returncode == 0 and r2.returncode == 0 and sv.lines("eve") == [f"reused {_key(1)}", f"reused {_key(2)}", f"reused {_key(9)}"] and os.path.exists(sv.root + S["marks"] + "/" + C_), (sv.lines("eve"), r2.stderr[-300:]))
+    sv.point("current", C_); sv.point("previous", B_)
+    for r_ in (B_, C_): json.dump(_plan([_key(1), _key(2), _key(9)]), open(os.path.join(sv.d, f"plan-{r_}.json"), "w"))
+    r, kv = sv.run("keep")
+    left = sorted(os.listdir(sstore + "/snapshots"))
+    check("carry (release.sh keep): keep removes the old release and the snapshot no kept release's plan uses, even though its record was carried; shared ones stay",
+          r.returncode == 0 and not os.path.exists(sv.rdir(A_)) and left == [_tpl(1), _tpl(2), _tpl(9)], (left, r.stdout[-500:], r.stderr[-300:]))
+    r, kv = sv.run("prepare", D_); sv.build(D_); os.makedirs(sv.rdir(D_) + "/.eve", exist_ok=True); sv.run("prewarm", D_)
+    check("carry (release.sh prewarm): a record whose snapshot keep removed is not carried on", sorted(os.listdir(sv.rdir(D_) + "/.eve/sandbox-cache/microsandbox/templates")) == sorted([_key(1), _key(2), _key(9)]),
+          os.listdir(sv.rdir(D_) + "/.eve/sandbox-cache/microsandbox/templates"))
