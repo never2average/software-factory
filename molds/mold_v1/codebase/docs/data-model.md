@@ -361,7 +361,7 @@ Core columns:
 The owner columns are `customers.account_owner` and `solutions.solution_owner`.
 They replaced the original owner columns in three steps: drizzle/0028 added
 them beside the originals and keeps each pair equal by a trigger, drizzle/0037
-made the app read and write only these, and drizzle/0038 drops the originals.
+made the app read and write only these, and drizzle/0038 dropped the originals.
 The sheet columns are `account_owner` and `solution_owner`.
 
 The second owner has one too: `customers.secondary_owner` beside `ae_owner`

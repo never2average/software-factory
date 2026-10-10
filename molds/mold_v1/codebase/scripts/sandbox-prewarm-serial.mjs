@@ -24,18 +24,26 @@
  * (scripts/lib/sandbox-overlay.mjs); a node without it would start on eve's default of 1 vCPU and allow-all egress,
  * which on the first real server hung a template for 1h50m. Such a node is named and nothing is started.
  *
- * AND IT DOES NOT HANG. A template that is not ready within --template-timeout seconds (default 600) has its VM
- * killed and is reported with its node and the settings it was started with; the templates after it are not tried.
+ * AND IT DOES NOT HANG. An attempt that is not ready within --template-timeout seconds (default 600) has its VM
+ * killed, and under microsandbox so does one whose VM stops responding (no heartbeat and no command output for
+ * --stall seconds, default 90: a wedged guest kernel). The template is then started again on a fresh VM, up to
+ * --retries more times (mold_v1-226). If its last attempt hangs too, it is reported with its node and the settings it
+ * was started with, and the templates after it are not tried.
  *
  *   npm run build:eve          # on the server, at its final path (the build output is not relocatable)
  *   npm run sandbox:prewarm    # this script
  *
- *   --retries <n>     extra attempts per template after a failure (default 1)
+ *   --retries <n>     extra attempts per template after a failure or a hang, each on a fresh VM (default 1, at most
+ *                     5; or SANDBOX_PREWARM_RETRIES). At most retries + 1 attempts of --template-timeout each.
  *   --link-runtime    SANDBOX_BACKEND=microsandbox only: if the microsandbox runtime is not installed for this user,
  *                     link the copy npm already installed (node_modules/@superradcompany/microsandbox-*) into
  *                     ~/.microsandbox/{bin,lib}. No download, no system package.
- *   --template-timeout <s>  seconds one template may take per attempt (default 600; or SANDBOX_PREWARM_TIMEOUT_S).
- *                     A template that takes longer is not retried: its VM is killed and the run stops, exit 1.
+ *   --template-timeout <s>  seconds one attempt may take (default 600; or SANDBOX_PREWARM_TIMEOUT_S). An attempt that
+ *                     takes longer has its VM killed and the template is started again on a fresh VM while attempts
+ *                     remain; after the last one the run stops, exit 1.
+ *   --stall <s>       SANDBOX_BACKEND=microsandbox only: an attempt whose VM shows no sign of life (heartbeat, command
+ *                     output) for this long is ended the same way, without waiting out --template-timeout (default
+ *                     90, or 0 when --template-timeout is 90 or less; 0 turns it off; or SANDBOX_PREWARM_STALL_S).
  *   --plan            start nothing: print, as JSON, every agent node's sandbox in the built agent (definition,
  *                     backend, template key, the SANDBOX_* settings it carries) and which would be refused. Exit 1
  *                     if any would be.
@@ -59,10 +67,6 @@ import { pathToFileURL } from "node:url";
 const APP_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const args = process.argv.slice(2);
 const has = (name) => args.includes(name);
-const valueOf = (name, fallback) => {
-  const i = args.indexOf(name);
-  return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback;
-};
 
 /* ---- stale locks ------------------------------------------------------------------------------------------------ */
 
@@ -136,16 +140,34 @@ export function clearStaleLocks(appRoot, { alive = pidAlive, now = Date.now(), s
  *
  * eve calls `dispatch` for every template at once and awaits them all, so the first rejection ends ITS wait while the
  * queue here is still running; `settled()` resolves when the queue is empty, with every outcome.
+ *
+ * A HUNG ATTEMPT IS RETRIED ON A FRESH VM (mold_v1-226). An attempt ends early in two ways: it is still running after
+ * `timeoutMs`, or `watchGuest` (below: the VM's heartbeat and command log) says its guest stopped responding. Either
+ * way its VM is killed (`onTimeout`), the abandoned attempt is given `settleMs` to finish its own cleanup, and the
+ * template is started again: eve's prewarm boots a new VM under a new name for every call. Every such hang on record
+ * was one guest that wedged seconds after boot, and the next VM built the same template in under a minute. Attempts
+ * are bounded: `retries + 1` in all, for failures and hangs alike, each at most `timeoutMs`. A template whose LAST
+ * attempt hung is reported timed out and nothing is started after it: what hung it that many times will hang the next.
  */
-export function serialDispatch({ retries = 1, log = () => {}, beforeRetry = () => {}, timeoutMs = 0, onTimeout = async () => {}, describe = () => "" } = {}) {
+export function serialDispatch({
+  retries = 1,
+  log = () => {},
+  beforeRetry = () => {},
+  timeoutMs = 0,
+  onTimeout = async () => {},
+  describe = () => "",
+  watchGuest = null,
+  settleMs = 30_000,
+} = {}) {
   // No lock is touched here: eve takes each template's lock (in this process) before it calls dispatch and releases
   // it when the returned promise settles, so a retry runs inside the lock it already holds.
   let chain = Promise.resolve();
   const outcomes = [];
   let running = 0;
   let maxRunning = 0;
-  /** Set by the first template that timed out. Nothing is started after it: what hung one will hang the next. */
+  /** Set by the first template whose last attempt hung. Nothing is started after it. */
   let stopped = null;
+  const attempts = retries + 1;
   const dispatch = ({ backend, input }) => {
     const run = async () => {
       const started = Date.now();
@@ -155,49 +177,66 @@ export function serialDispatch({ retries = 1, log = () => {}, beforeRetry = () =
         throw error;
       }
       let lastError;
-      for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      const hangs = [];
+      for (let attempt = 1; attempt <= attempts; attempt++) {
         running++;
         maxRunning = Math.max(maxRunning, running);
         let timer;
+        let watch = null;
+        let work = null;
         try {
-          const work = Promise.resolve().then(() => backend.prewarm(input));
-          work.catch(() => {}); // after a timeout nobody awaits it: its late rejection (the VM was killed) must not crash the report
-          const result = await (timeoutMs > 0
-            ? Promise.race([
-                work,
-                new Promise((_, reject) => {
-                  timer = setTimeout(() => reject(new PrewarmTimeout(timeoutMs)), timeoutMs);
-                }),
-              ])
-            : work);
-          outcomes.push({ templateKey: input.templateKey, backend: backend.name, ok: true, reused: Boolean(result?.reused), attempts: attempt, ms: Date.now() - started });
+          work = Promise.resolve().then(() => backend.prewarm(input));
+          work.catch(() => {}); // after a hang nobody awaits it: its late rejection (the VM was killed) must not crash the report
+          const ends = [work];
+          if (timeoutMs > 0) ends.push(new Promise((_, reject) => (timer = setTimeout(() => reject(new PrewarmTimeout(timeoutMs)), timeoutMs))));
+          if (watchGuest) {
+            watch = watchGuest({ backend, input, attempt });
+            ends.push(watch.stalled.then((stall) => Promise.reject(new PrewarmStalled(stall))));
+          }
+          const result = await Promise.race(ends);
+          outcomes.push({ templateKey: input.templateKey, backend: backend.name, ok: true, reused: Boolean(result?.reused), attempts: attempt, ms: Date.now() - started, ...(hangs.length ? { hangs: [...hangs] } : {}) });
           return result;
         } catch (error) {
           lastError = error;
-          if (error instanceof PrewarmTimeout) {
-            // The attempt is still running somewhere behind `work`: kill what it started, then stop. No retry: a
-            // template that produced nothing in this long is not a flake, and the operator is waiting.
-            stopped = input.templateKey;
+          if (error instanceof PrewarmTimeout || error instanceof PrewarmStalled) {
+            // The attempt is still running somewhere behind `work`: kill what it started, and let eve's own cleanup of
+            // it (it removes the dead VM) finish before a new VM is booted for the same template.
+            const stall = error instanceof PrewarmStalled ? error.stall : null;
+            clearTimeout(timer);
+            watch?.stop();
             let killed = "";
             try {
-              killed = String((await onTimeout({ backend, input })) ?? "");
+              killed = String((await onTimeout({ backend, input, vm: stall?.vm ?? null })) ?? "");
             } catch (killError) {
               killed = `could not kill its VM: ${String(killError?.message ?? killError)}`;
             }
+            await settle(work, settleMs);
             const settings = describe({ backend, input });
-            const message = `timed out after ${Math.round(timeoutMs / 1000)}s on attempt ${attempt}${settings ? ` (${settings})` : ""}${killed ? `; ${killed}` : ""}`;
+            const what = stall
+              ? `stopped responding on attempt ${attempt} of ${attempts}, ${Math.round((Date.now() - started) / 1000)}s in: ${stall.why}`
+              : `timed out after ${Math.round(timeoutMs / 1000)}s on attempt ${attempt} of ${attempts}`;
+            const message = `${what}${settings ? ` (${settings})` : ""}${killed ? `; ${killed}` : ""}`;
+            hangs.push(stall ? `attempt ${attempt}: stopped responding (${stall.why})` : `attempt ${attempt}: timed out after ${Math.round(timeoutMs / 1000)}s`);
+            if (attempt < attempts) {
+              log(`template ${input.templateKey} (${backend.name}) ${message}; starting it again on a fresh VM`);
+              await beforeRetry({ backend, input, attempt, hung: true });
+              continue;
+            }
+            stopped = input.templateKey;
             log(`template ${input.templateKey} (${backend.name}) ${message}`);
-            outcomes.push({ templateKey: input.templateKey, backend: backend.name, ok: false, timedOut: true, attempts: attempt, ms: Date.now() - started, error: message });
+            const earlier = hangs.length > 1 ? ` (earlier: ${hangs.slice(0, -1).join("; ")})` : "";
+            outcomes.push({ templateKey: input.templateKey, backend: backend.name, ok: false, timedOut: true, stalled: Boolean(stall), attempts: attempt, ms: Date.now() - started, error: `${message}${earlier}`, hangs: [...hangs] });
             throw new Error(`template ${input.templateKey} ${message}`);
           }
           log(`template ${input.templateKey} (${backend.name}) failed on attempt ${attempt}: ${String(error?.message ?? error).slice(0, 300)}`);
-          if (attempt <= retries) await beforeRetry({ backend, input, attempt });
+          if (attempt < attempts) await beforeRetry({ backend, input, attempt, hung: false });
         } finally {
           clearTimeout(timer);
+          watch?.stop();
           running--;
         }
       }
-      outcomes.push({ templateKey: input.templateKey, backend: backend.name, ok: false, attempts: retries + 1, ms: Date.now() - started, error: String(lastError?.message ?? lastError) });
+      outcomes.push({ templateKey: input.templateKey, backend: backend.name, ok: false, attempts, ms: Date.now() - started, error: String(lastError?.message ?? lastError), ...(hangs.length ? { hangs: [...hangs] } : {}) });
       throw lastError;
     };
     const next = chain.then(run);
@@ -207,10 +246,140 @@ export function serialDispatch({ retries = 1, log = () => {}, beforeRetry = () =
   return { dispatch, outcomes, settled: async () => { await chain; return outcomes; }, maxConcurrency: () => maxRunning, stoppedAt: () => stopped };
 }
 
+/** Wait for `promise` to settle, at most `ms`. Never throws. */
+async function settle(promise, ms) {
+  if (!promise || !(ms > 0)) return;
+  let timer;
+  await Promise.race([promise.then(() => {}, () => {}), new Promise((r) => (timer = setTimeout(r, ms)))]);
+  clearTimeout(timer);
+}
+
 class PrewarmTimeout extends Error {
   constructor(ms) {
     super(`no result after ${ms} ms`);
   }
+}
+
+class PrewarmStalled extends Error {
+  constructor(stall) {
+    super(`the template VM stopped responding: ${stall.why}`);
+    this.stall = stall;
+  }
+}
+
+/* ---- a guest that stopped responding (microsandbox) -------------------------------------------------------------- */
+
+/**
+ * WHY. A template VM whose guest kernel wedges ("BUG: scheduling while atomic", then an oops; mold_v1-190) never says
+ * so: eve's prewarm just waits, and the run sat out the whole --template-timeout with "sandbox started" as the only
+ * line in the VM's command log. Measured on the first self-hosted server (2026-10-09 and 10-10): the guest's heartbeat
+ * stopped about 4 s after boot, or never started. A live guest writes it about once a second, busy or idle.
+ *
+ * WHAT IS READ, per VM, under `<MSB_HOME or ~/.microsandbox>/sandboxes/<name>/` (read only, never written):
+ *   runtime/heartbeat.json   rewritten by the guest's agent about once a second; its modification time is the beat
+ *   logs/exec.log            the command log: a line per output chunk, "--- sandbox started/stopped ---"
+ *   logs/runtime.log         the VM runner's log ("Vmm is stopping." when it ends)
+ *
+ * WHICH VMS. Those that appear under sandboxes/ while the attempt runs (eve names them eve-sbx-…; a template is built
+ * on an eve-sbx-tpl-tmp VM and, once its network policy is applied, on an eve-sbx-ses VM restored from it). A VM that
+ * has stopped (eve stops the first one to snapshot it) is not judged. Neither is anything that was already there.
+ *
+ * THE VERDICT. A running VM with no sign of life (a heartbeat, a command-log line) for `stallMs` has stopped
+ * responding. A template build that is merely slow keeps beating, so it runs on to --template-timeout as before.
+ */
+export const microsandboxHome = (env = process.env) => env.MSB_HOME?.trim() || join(homedir(), ".microsandbox");
+
+const VM_PREFIX = "eve-sbx-";
+const mtimeOf = (path) => {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+const tailOf = (path, bytes = 4096) => {
+  try {
+    const text = readFileSync(path, "utf8");
+    return text.length > bytes ? text.slice(-bytes) : text;
+  } catch {
+    return "";
+  }
+};
+
+/** What one VM's directory says: `{ heartbeatMs, execLogMs, stopped, onlyStarted }` (times are host clock, ms). */
+export function readGuest(dir) {
+  const exec = tailOf(join(dir, "logs", "exec.log"));
+  const runtime = tailOf(join(dir, "logs", "runtime.log"));
+  const lines = exec.split("\n").filter((l) => l.trim());
+  return {
+    heartbeatMs: mtimeOf(join(dir, "runtime", "heartbeat.json")),
+    execLogMs: mtimeOf(join(dir, "logs", "exec.log")),
+    stopped: exec.includes("--- sandbox stopped ---") || /Vmm is stopping/.test(runtime),
+    onlyStarted: lines.length === 1 && lines[0].includes("sandbox started"),
+  };
+}
+
+/**
+ * Why a VM has stopped responding, or null. `firstSeenMs` is when the watcher first saw its directory; a VM with no
+ * heartbeat yet is judged from then.
+ */
+export function judgeGuest({ firstSeenMs, heartbeatMs = null, execLogMs = null, stopped = false, onlyStarted = false }, now, stallMs) {
+  if (stopped || !(stallMs > 0)) return null;
+  const lastSign = Math.max(firstSeenMs, heartbeatMs ?? 0, execLogMs ?? 0);
+  const quiet = now - lastSign;
+  if (quiet < stallMs) return null;
+  const secs = (ms) => Math.round(ms / 1000);
+  const beat = heartbeatMs === null ? `no heartbeat in the ${secs(now - firstSeenMs)} s since it appeared` : `its heartbeat stopped ${secs(now - heartbeatMs)} s ago`;
+  const log = onlyStarted ? `its command log holds only "sandbox started"` : `nothing new in its command log for ${secs(now - Math.max(firstSeenMs, execLogMs ?? 0))} s`;
+  return `${beat}, ${log}`;
+}
+
+const listVmDirs = (root) => {
+  try {
+    return readdirSync(root).filter((name) => name.startsWith(VM_PREFIX));
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * A `watchGuest` for serialDispatch: per attempt, `{ stalled, stop, seen }`. `stalled` resolves with
+ * `{ vm, why }` once a VM that appeared during the attempt has stopped responding for `stallMs`; it never rejects.
+ */
+export function guestWatcher({ root, stallMs, pollMs = 2_000, now = () => Date.now(), list = listVmDirs, read = readGuest }) {
+  return () => {
+    const before = new Set(list(root));
+    const firstSeen = new Map();
+    let timer = null;
+    let done = false;
+    let resolve;
+    const stalled = new Promise((r) => (resolve = r));
+    const poll = () => {
+      if (done) return;
+      const t = now();
+      for (const name of list(root)) {
+        if (before.has(name)) continue;
+        if (!firstSeen.has(name)) firstSeen.set(name, t);
+        const why = judgeGuest({ firstSeenMs: firstSeen.get(name), ...read(join(root, name)) }, t, stallMs);
+        if (why) {
+          done = true;
+          resolve({ vm: name, why: `${name}: ${why}` });
+          return;
+        }
+      }
+      timer = setTimeout(poll, pollMs);
+      timer.unref?.();
+    };
+    if (stallMs > 0) poll();
+    return {
+      stalled,
+      stop() {
+        done = true;
+        clearTimeout(timer);
+      },
+      seen: () => [...firstSeen.keys()],
+    };
+  };
 }
 
 /* ---- killing a template VM that hung ---------------------------------------------------------------------------- */
@@ -244,9 +413,11 @@ export function listProcesses() {
 
 /**
  * The processes of a template VM this prewarm started: every descendant of this process, and every process of this
- * user whose command line names a template build VM (the VM's runner may be detached from us). Never this process.
+ * user whose command line names a template build VM (the VM's runner may be detached from us) or one of `names` (the
+ * VM the guest watcher found unresponsive, which may be an eve-sbx-ses VM: eve moves a template build onto one when
+ * it applies the network policy). Never this process.
  */
-export function templateVmProcesses(processes, { self = process.pid, uid = process.getuid?.() } = {}) {
+export function templateVmProcesses(processes, { self = process.pid, uid = process.getuid?.(), names = [] } = {}) {
   const children = new Map();
   for (const p of processes) children.set(p.ppid, [...(children.get(p.ppid) ?? []), p]);
   const found = new Map();
@@ -258,13 +429,14 @@ export function templateVmProcesses(processes, { self = process.pid, uid = proce
     }
   };
   walk(self);
-  for (const p of processes) if (p.pid !== self && p.uid === uid && p.cmdline.includes(TEMPLATE_VM_NAME)) found.set(p.pid, p);
+  const named = (cmdline) => cmdline.includes(TEMPLATE_VM_NAME) || names.some((name) => name && cmdline.includes(name));
+  for (const p of processes) if (p.pid !== self && p.uid === uid && named(p.cmdline)) found.set(p.pid, p);
   return [...found.values()].sort((a, b) => a.pid - b.pid);
 }
 
 /** SIGKILL them. Returns one line saying what was killed, for the report. */
-export function killTemplateVm({ processes = listProcesses(), kill = (pid) => process.kill(pid, "SIGKILL"), self = process.pid, uid = process.getuid?.() } = {}) {
-  const targets = templateVmProcesses(processes, { self, uid });
+export function killTemplateVm({ processes = listProcesses(), kill = (pid) => process.kill(pid, "SIGKILL"), self = process.pid, uid = process.getuid?.(), names = [] } = {}) {
+  const targets = templateVmProcesses(processes, { self, uid, names });
   const killed = [];
   for (const p of targets) {
     try {
@@ -572,42 +744,190 @@ async function selfTest() {
     check("the retry hook ran once per retry", retried.join() === "t3,t5", retried);
     check("a reused template is told apart from a built one", outcomes.find((o) => o.templateKey === "t1").reused === true && outcomes.find((o) => o.templateKey === "t2").reused === false);
 
-    // A template that hangs.
-    const hung = [];
-    const hangBackend = {
-      name: "microsandbox",
-      [SETTINGS_TAG]: { cpus: 2, memoryMiB: 1024, networkPolicy: { allow: ["*"], subnets: { deny: required.deny } } },
-      prewarm(input) {
-        hung.push(input.templateKey);
-        return input.templateKey === "h2" ? new Promise(() => {}) : Promise.resolve({ reused: false }); // h2 never settles
-      },
+    // A template whose attempt hangs (mold_v1-226): its VM is killed and it is started again on a fresh one.
+    const settings = { cpus: 2, memoryMiB: 1024, networkPolicy: { allow: ["*"], subnets: { deny: required.deny } } };
+    /** A backend whose prewarm hangs for the keys in `hangs` (how many attempts each), and finishes otherwise. */
+    const hanging = (hangs) => {
+      const calls = [];
+      const left = new Map(Object.entries(hangs));
+      let cleanups = 0;
+      const backend = {
+        name: "microsandbox",
+        [SETTINGS_TAG]: settings,
+        prewarm(input) {
+          const vm = `vm${calls.length + 1}`; // eve boots a new VM, under a new name, for every call
+          calls.push({ key: input.templateKey, vm, at: Date.now() });
+          const n = left.get(input.templateKey) ?? 0;
+          if (n > 0) {
+            left.set(input.templateKey, n - 1);
+            // A wedged guest: nothing comes back until its VM is killed; then eve's own cleanup runs and it rejects.
+            return new Promise((_, reject) => backend.onKill.push(() => setTimeout(() => (cleanups++, calls.at(-1).cleanedAt = Date.now(), reject(new Error(`runtime error: ${vm} was killed`))), 20)));
+          }
+          return Promise.resolve({ reused: false });
+        },
+        onKill: [],
+        kill() {
+          const pending = backend.onKill.splice(0);
+          for (const f of pending) f();
+          return pending.length ? "killed its VM (pid 4242)" : "found no VM process of its to kill";
+        },
+        calls,
+        cleanups: () => cleanups,
+      };
+      return backend;
     };
-    const killedFor = [];
-    const lines = [];
-    const timed = serialDispatch({
-      retries: 2,
-      timeoutMs: 60,
-      log: (line) => lines.push(line),
-      describe: ({ backend: b, input }) => `node subagents/${input.templateKey}; ${describeBackend(b)}`,
-      onTimeout: async ({ input }) => (killedFor.push(input.templateKey), "killed its VM (pid 4242)"),
-    });
+    const describeIt = ({ backend: b, input }) => `node subagents/${input.templateKey}; ${describeBackend(b)}`;
+
+    // 1. A timeout, then a fresh VM that builds it (the 2026-10-09 and 10-10 root hangs: the next VM took under a minute).
+    const once = hanging({ h2: 1 });
+    const onceLines = [];
+    const onceKills = [];
+    const onceRun = serialDispatch({ retries: 2, timeoutMs: 60, log: (l) => onceLines.push(l), describe: describeIt, onTimeout: async ({ input }) => (onceKills.push(input.templateKey), once.kill()) });
+    const onceAll = await Promise.allSettled(["h1", "h2", "h3"].map((templateKey) => onceRun.dispatch({ backend: once, input: { templateKey } })));
+    const onceOut = await onceRun.settled();
+    const h2once = onceOut.find((o) => o.templateKey === "h2");
+    check("a template whose attempt timed out is started again, on a fresh VM, and is built", h2once?.ok === true && h2once.attempts === 2 && once.calls.filter((c) => c.key === "h2").map((c) => c.vm).join() === "vm2,vm3", { h2once, calls: once.calls });
+    check("…the hung attempt's VM is killed before the next one is booted, and eve's cleanup of it has run", onceKills.join() === "h2" && once.cleanups() === 1 && once.calls[2].at >= once.calls[1].cleanedAt, once.calls);
+    check("…the log says so plainly, with the attempt count and the settings it was started with", onceLines.some((l) => /^template h2 \(microsandbox\) timed out after 0s on attempt 1 of 3 \(node subagents\/h2; cpus=2, memoryMiB=1024, deny=\[169\.254\.0\.0\/16 .*\]\); killed its VM \(pid 4242\); starting it again on a fresh VM$/.test(l)), onceLines);
+    check("…the templates after it are built too, and eve's own wait sees no failure", onceOut.map((o) => `${o.templateKey}:${o.ok}`).join() === "h1:true,h2:true,h3:true" && onceAll.every((r) => r.status === "fulfilled") && onceRun.stoppedAt() === null, onceOut);
+    check("…and the report records the hang it got past", /attempt 1: timed out/.test(h2once?.hangs?.join() ?? ""), h2once);
+
+    // 2. Bounded: a template that hangs on every attempt ends the run after retries + 1 attempts, as before.
+    const always = hanging({ h2: 99 });
+    const alwaysKills = [];
+    const alwaysLines = [];
+    const alwaysRun = serialDispatch({ retries: 2, timeoutMs: 40, log: (l) => alwaysLines.push(l), describe: describeIt, onTimeout: async ({ input }) => (alwaysKills.push(input.templateKey), always.kill()) });
     const t0 = Date.now();
-    const timedAll = await Promise.allSettled(["h1", "h2", "h3", "h4"].map((templateKey) => timed.dispatch({ backend: hangBackend, input: { templateKey } })));
-    const timedOutcomes = await timed.settled();
-    const h2 = timedOutcomes.find((o) => o.templateKey === "h2");
-    check("a template that never finishes is given up on at the timeout instead of hanging the run", h2?.timedOut === true && Date.now() - t0 < 5_000, { h2, ms: Date.now() - t0 });
-    check("…it is NOT retried (retries were 2)", hung.filter((k) => k === "h2").length === 1 && h2.attempts === 1, hung);
-    check("…its VM is killed", killedFor.join() === "h2", killedFor);
-    check("…the report names the template, its node and the settings it was started with", /timed out after 0s on attempt 1 \(node subagents\/h2; cpus=2, memoryMiB=1024, deny=\[169\.254\.0\.0\/16 .*\]\); killed its VM \(pid 4242\)/.test(h2.error) && lines.some((l) => l.includes("template h2 (microsandbox) timed out")), h2.error);
-    check("…the templates after it are not started, and are reported as not tried", hung.join() === "h1,h2" && timedOutcomes.filter((o) => o.skipped).map((o) => o.templateKey).join() === "h3,h4" && timed.stoppedAt() === "h2", { hung, timedOutcomes });
-    check("…the one before it was built, and eve's own wait sees the rest fail", timedOutcomes.find((o) => o.templateKey === "h1")?.ok === true && timedAll.map((r) => r.status).join() === "fulfilled,rejected,rejected,rejected");
-    const quick = serialDispatch({ timeoutMs: 5_000 });
-    await quick.dispatch({ backend: hangBackend, input: { templateKey: "h1" } });
-    check("a template that finishes in time is unaffected by the timeout (and its timer is cleared)", (await quick.settled())[0].ok === true);
-    const killFails = serialDispatch({ timeoutMs: 30, onTimeout: async () => { throw new Error("EPERM"); } });
-    await killFails.dispatch({ backend: hangBackend, input: { templateKey: "h2" } }).catch(() => {});
+    const alwaysAll = await Promise.allSettled(["h1", "h2", "h3", "h4"].map((templateKey) => alwaysRun.dispatch({ backend: always, input: { templateKey } })));
+    const alwaysOut = await alwaysRun.settled();
+    const h2always = alwaysOut.find((o) => o.templateKey === "h2");
+    check("a template that hangs on every attempt is tried exactly retries + 1 times, each on its own VM, then given up on", always.calls.filter((c) => c.key === "h2").length === 3 && new Set(always.calls.filter((c) => c.key === "h2").map((c) => c.vm)).size === 3 && h2always?.timedOut === true && h2always.attempts === 3 && Date.now() - t0 < 5_000, { h2always, calls: always.calls });
+    check("…every hung VM is killed", alwaysKills.join() === "h2,h2,h2" && always.cleanups() === 3, alwaysKills);
+    check("…the report names the template, its node, its settings, the kill, and the earlier attempts", /^timed out after 0s on attempt 3 of 3 \(node subagents\/h2; cpus=2, memoryMiB=1024, deny=\[.*\]\); killed its VM \(pid 4242\) \(earlier: attempt 1: timed out after 0s; attempt 2: timed out after 0s\)$/.test(h2always?.error ?? ""), h2always?.error);
+    check("…the templates after it are not started, and are reported as not tried", always.calls.map((c) => c.key).join() === "h1,h2,h2,h2" && alwaysOut.filter((o) => o.skipped).map((o) => o.templateKey).join() === "h3,h4" && alwaysRun.stoppedAt() === "h2", alwaysOut);
+    check("…the one before it was built, and eve's own wait sees the rest fail", alwaysOut.find((o) => o.templateKey === "h1")?.ok === true && alwaysAll.map((r) => r.status).join() === "fulfilled,rejected,rejected,rejected");
+    const none = hanging({ h2: 99 });
+    const noneRun = serialDispatch({ retries: 0, timeoutMs: 30, onTimeout: async () => none.kill() });
+    await noneRun.dispatch({ backend: none, input: { templateKey: "h2" } }).catch(() => {});
+    check("with --retries 0 a hung template gets exactly one attempt", none.calls.length === 1 && (await noneRun.settled())[0].timedOut === true);
+
+    // 3. A guest that stopped responding is replaced long before the timeout.
+    const frozen = hanging({ h2: 1 });
+    const frozenKills = [];
+    const frozenLines = [];
+    const frozenRun = serialDispatch({
+      retries: 1,
+      timeoutMs: 60_000,
+      log: (l) => frozenLines.push(l),
+      describe: describeIt,
+      onTimeout: async ({ vm }) => (frozenKills.push(vm), frozen.kill()),
+      watchGuest: ({ input, attempt }) => {
+        let timer;
+        const stalled = new Promise((r) => {
+          if (input.templateKey === "h2" && attempt === 1) timer = setTimeout(() => r({ vm: "eve-sbx-ses-frozen", why: 'eve-sbx-ses-frozen: its heartbeat stopped 90 s ago, its command log holds only "sandbox started"' }), 30);
+        });
+        return { stalled, stop: () => clearTimeout(timer) };
+      },
+    });
+    const f0 = Date.now();
+    await Promise.allSettled(["h1", "h2"].map((templateKey) => frozenRun.dispatch({ backend: frozen, input: { templateKey } })));
+    const frozenOut = await frozenRun.settled();
+    check("a guest that stopped responding ends its attempt at once, not at the timeout (60 s here), and the template is built on a fresh VM", frozenOut.find((o) => o.templateKey === "h2")?.ok === true && frozenOut.find((o) => o.templateKey === "h2").attempts === 2 && Date.now() - f0 < 5_000, { frozenOut, ms: Date.now() - f0 });
+    check("…the unresponsive VM is the one killed by name", frozenKills.join() === "eve-sbx-ses-frozen", frozenKills);
+    check("…and the log says why", frozenLines.some((l) => /template h2 \(microsandbox\) stopped responding on attempt 1 of 2, \d+s in: eve-sbx-ses-frozen: its heartbeat stopped 90 s ago, its command log holds only "sandbox started" \(node subagents\/h2;.*\); killed its VM \(pid 4242\); starting it again on a fresh VM/.test(l)), frozenLines);
+    const frozenTwice = hanging({ h2: 9 });
+    const twiceRun = serialDispatch({ retries: 1, timeoutMs: 60_000, onTimeout: async () => frozenTwice.kill(), watchGuest: () => ({ stalled: new Promise((r) => setTimeout(() => r({ vm: "x", why: "x: no heartbeat in the 90 s since it appeared" }), 20)), stop() {} }) });
+    await twiceRun.dispatch({ backend: frozenTwice, input: { templateKey: "h2" } }).catch(() => {});
+    const twiceOut = (await twiceRun.settled())[0];
+    check("a guest that stops responding on the last attempt too is reported timed out (the TIMED OUT line a caller looks for), and marked a stall", twiceOut.timedOut === true && twiceOut.stalled === true && frozenTwice.calls.length === 2 && /stopped responding on attempt 2 of 2/.test(twiceOut.error), twiceOut);
+    const quietWatch = serialDispatch({ retries: 1, timeoutMs: 5_000, watchGuest: () => ({ stalled: new Promise(() => {}), stop() {} }) });
+    await quietWatch.dispatch({ backend: hanging({}), input: { templateKey: "h1" } });
+    check("a template that finishes in time is unaffected by the timeout and the watcher", (await quietWatch.settled())[0].ok === true);
+
+    // 4. An abandoned attempt that never settles does not hold the next one forever.
+    const stuck = { name: "microsandbox", calls: 0, prewarm() { this.calls++; return this.calls === 1 ? new Promise(() => {}) : Promise.resolve({ reused: false }); } };
+    const stuckRun = serialDispatch({ retries: 1, timeoutMs: 30, settleMs: 40 });
+    const s0 = Date.now();
+    await stuckRun.dispatch({ backend: stuck, input: { templateKey: "h1" } });
+    check("an attempt that does not end when its VM is killed is waited for at most settleMs, then the next is started", stuck.calls === 2 && Date.now() - s0 < 2_000 && (await stuckRun.settled())[0].ok === true);
+    const killFails = serialDispatch({ retries: 0, timeoutMs: 30, settleMs: 10, onTimeout: async () => { throw new Error("EPERM"); } });
+    await killFails.dispatch({ backend: { name: "x", prewarm: () => new Promise(() => {}) }, input: { templateKey: "h2" } }).catch(() => {});
     check("a kill that fails is said, and the timeout is still reported", /could not kill its VM: EPERM/.test((await killFails.settled())[0].error));
 
+    // 5. The guest watcher, on microsandbox's own files (layout as on the server: sandboxes/<name>/{runtime,logs}).
+    const msb = join(scratch, "msb", "sandboxes");
+    const vmDir = (name, { heartbeatAgeMs = null, execLines = ["--- sandbox started ---"], execAgeMs = 0, runtime = "" } = {}) => {
+      const dir = join(msb, name);
+      mkdirSync(join(dir, "runtime"), { recursive: true });
+      mkdirSync(join(dir, "logs"), { recursive: true });
+      if (heartbeatAgeMs !== null) {
+        const hb = join(dir, "runtime", "heartbeat.json");
+        writeFileSync(hb, JSON.stringify({ heartbeat_seq: 3, activity_seq: 5 }));
+        const t = new Date(Date.now() - heartbeatAgeMs);
+        utimesSync(hb, t, t);
+      }
+      const exec = join(dir, "logs", "exec.log");
+      writeFileSync(exec, execLines.map((d) => JSON.stringify({ t: new Date().toISOString(), s: "system", d: `${d}\n` })).join("\n") + "\n");
+      const te = new Date(Date.now() - execAgeMs);
+      utimesSync(exec, te, te);
+      writeFileSync(join(dir, "logs", "runtime.log"), runtime);
+      return dir;
+    };
+    const frozenRead = readGuest(vmDir("eve-sbx-ses-f16f", { heartbeatAgeMs: 120_000, execAgeMs: 120_000 }));
+    check("a VM's heartbeat and command log are read from its directory", frozenRead.heartbeatMs !== null && frozenRead.onlyStarted === true && frozenRead.stopped === false, frozenRead);
+    const now = Date.now();
+    check("a running VM whose heartbeat stopped long ago, with only \"sandbox started\" logged, has stopped responding", /^its heartbeat stopped 120 s ago, its command log holds only "sandbox started"$/.test(judgeGuest({ firstSeenMs: now - 200_000, ...frozenRead }, now, 90_000) ?? ""), judgeGuest({ firstSeenMs: now - 200_000, ...frozenRead }, now, 90_000));
+    check("…but not before the stall window has passed since it was first seen", judgeGuest({ firstSeenMs: now - 30_000, ...frozenRead }, now, 90_000) === null);
+    check("a VM that never wrote a heartbeat (the 2026-10-09 hang) has stopped responding once the window has passed", /^no heartbeat in the 100 s since it appeared/.test(judgeGuest({ firstSeenMs: now - 100_000, ...readGuest(vmDir("eve-sbx-ses-6908", { execAgeMs: 100_000 })) }, now, 90_000) ?? ""));
+    check("a VM whose heartbeat is fresh is alive, even with nothing in its command log for minutes (a quiet install)", judgeGuest({ firstSeenMs: now - 600_000, ...readGuest(vmDir("eve-sbx-tpl-tmp-busy", { heartbeatAgeMs: 1_000, execAgeMs: 300_000 })) }, now, 90_000) === null);
+    check("a VM whose command log moves is alive", judgeGuest({ firstSeenMs: now - 600_000, ...readGuest(vmDir("eve-sbx-tpl-tmp-talks", { heartbeatAgeMs: 300_000, execLines: ["--- sandbox started ---", "Collecting x"], execAgeMs: 2_000 })) }, now, 90_000) === null);
+    check("a VM that stopped (eve snapshots the first template VM) is not judged", judgeGuest({ firstSeenMs: now - 600_000, ...readGuest(vmDir("eve-sbx-tpl-tmp-done", { heartbeatAgeMs: 300_000, execLines: ["--- sandbox started ---", "--- sandbox stopped ---"], execAgeMs: 300_000 })) }, now, 90_000) === null && readGuest(vmDir("eve-sbx-tpl-tmp-vmm", { heartbeatAgeMs: 300_000, runtime: "INFO msb_krun_vmm: Vmm is stopping.\n" })).stopped === true);
+    check("a stall window of 0 turns the verdict off", judgeGuest({ firstSeenMs: 0, heartbeatMs: 0 }, now, 0) === null);
+    check("an unreadable or missing VM directory reads as no signs, not an error", readGuest(join(msb, "gone")).heartbeatMs === null);
+
+    // The watcher: only VMs that appear during the attempt, polled until one stops responding.
+    rmSync(msb, { recursive: true, force: true });
+    vmDir("eve-sbx-ses-already-frozen", { heartbeatAgeMs: 900_000, execAgeMs: 900_000 }); // there before the attempt (a chat's VM): never judged
+    let clock = Date.now();
+    const watcher = guestWatcher({ root: msb, stallMs: 90_000, pollMs: 5, now: () => clock });
+    const w = watcher({ input: { templateKey: "h2" }, attempt: 1 });
+    let verdict = null;
+    w.stalled.then((v) => (verdict = v));
+    await sleep(30);
+    check("a VM that was already there when the attempt started is not judged", verdict === null);
+    vmDir("eve-sbx-tpl-tmp-new", { heartbeatAgeMs: 0, execLines: ["--- sandbox started ---", "--- sandbox stopped ---"] }); // the first template VM, stopped
+    mkdirSync(join(msb, "not-a-vm"), { recursive: true });
+    await sleep(30);
+    vmDir("eve-sbx-ses-new", { heartbeatAgeMs: 0 }); // the VM the build moved onto
+    await sleep(30);
+    clock += 60_000;
+    await sleep(30);
+    check("a new VM is not judged before the stall window has passed", verdict === null && w.seen().includes("eve-sbx-ses-new") && !w.seen().includes("not-a-vm"), w.seen());
+    clock += 60_000;
+    await sleep(40);
+    check("the new running VM that went quiet is named once the window has passed, and the stopped one is not", verdict?.vm === "eve-sbx-ses-new" && /^eve-sbx-ses-new: its heartbeat stopped \d+ s ago, its command log holds only "sandbox started"$/.test(verdict.why), verdict);
+    const w2 = watcher({ input: { templateKey: "h3" }, attempt: 1 });
+    w2.stop();
+    let v2 = null;
+    w2.stalled.then((v) => (v2 = v));
+    clock += 600_000;
+    await sleep(30);
+    check("a stopped watcher says nothing", v2 === null);
+    check("the microsandbox home is MSB_HOME when set, else ~/.microsandbox", microsandboxHome({ MSB_HOME: "/srv/msb" }) === "/srv/msb" && microsandboxHome({}) === join(homedir(), ".microsandbox"));
+
+    // 6. The options.
+    const opts = (argv, env) => {
+      try {
+        return prewarmOptions(argv, env);
+      } catch (error) {
+        return String(error.message);
+      }
+    };
+    check("defaults: 1 retry (2 attempts), 600 s per attempt, a VM silent for 90 s is replaced", JSON.stringify(opts([], {})) === JSON.stringify({ retries: 1, timeoutS: 600, stallS: 90 }));
+    check("the command line wins over the environment", JSON.stringify(opts(["--retries", "2", "--template-timeout", "300", "--stall", "45"], { SANDBOX_PREWARM_RETRIES: "4", SANDBOX_PREWARM_TIMEOUT_S: "900", SANDBOX_PREWARM_STALL_S: "120" })) === JSON.stringify({ retries: 2, timeoutS: 300, stallS: 45 }));
+    check("the environment is read when the command line is silent", JSON.stringify(opts([], { SANDBOX_PREWARM_RETRIES: "3", SANDBOX_PREWARM_TIMEOUT_S: "900", SANDBOX_PREWARM_STALL_S: "0" })) === JSON.stringify({ retries: 3, timeoutS: 900, stallS: 0 }));
+    check("a short per-attempt timeout turns the watcher off by default instead of refusing", JSON.stringify(opts(["--template-timeout", "60"], {})) === JSON.stringify({ retries: 1, timeoutS: 60, stallS: 0 }));
+    check("out of range is refused plainly: retries over 5, a stall not under the timeout, a stall under 15 s, a fraction", /--retries/.test(opts(["--retries", "6"], {})) && /--stall/.test(opts(["--stall", "600"], {})) && /--stall/.test(opts(["--stall", "5"], {})) && /--retries/.test(opts(["--retries", "1.5"], {})));
     // Which processes are a hung template's VM.
     const procs = [
       { pid: 1, ppid: 0, uid: 0, cmdline: "init" },
@@ -664,6 +984,29 @@ async function selfTest() {
   process.exit(failures.length ? 1 : 0);
 }
 
+/* ---- options ---------------------------------------------------------------------------------------------------- */
+
+/**
+ * `{ retries, timeoutS, stallS }` from the command line, then the environment, then the defaults (1 retry, 600 s per
+ * attempt, a VM silent for 90 s is replaced; with a per-attempt timeout of 90 s or less the timeout alone ends it). Throws a plain message for a value out of range.
+ */
+export function prewarmOptions(argv, env = {}) {
+  const valueIn = (name, fallback) => {
+    const i = argv.indexOf(name);
+    return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : fallback;
+  };
+  const whole = (raw) => (/^\d+$/.test(String(raw).trim()) ? Number(raw) : NaN);
+  const retries = whole(valueIn("--retries", env.SANDBOX_PREWARM_RETRIES?.trim() || "1"));
+  if (!Number.isInteger(retries) || retries < 0 || retries > 5) throw new Error("--retries (or SANDBOX_PREWARM_RETRIES) takes a whole number from 0 to 5.");
+  const timeoutS = whole(valueIn("--template-timeout", env.SANDBOX_PREWARM_TIMEOUT_S?.trim() || "600"));
+  if (!Number.isInteger(timeoutS) || timeoutS < 1 || timeoutS > 86_400) throw new Error("--template-timeout (or SANDBOX_PREWARM_TIMEOUT_S) takes a whole number of seconds from 1 to 86400.");
+  const stallS = whole(valueIn("--stall", env.SANDBOX_PREWARM_STALL_S?.trim() || (timeoutS > 90 ? "90" : "0")));
+  if (!Number.isInteger(stallS) || stallS < 0 || (stallS > 0 && stallS < 15) || (stallS > 0 && stallS >= timeoutS)) {
+    throw new Error("--stall (or SANDBOX_PREWARM_STALL_S) takes 0 (off) or a whole number of seconds from 15 to less than --template-timeout.");
+  }
+  return { retries, timeoutS, stallS };
+}
+
 /* ---- main ------------------------------------------------------------------------------------------------------- */
 
 /** What every node must have under microsandbox, from THIS process's settings: `{ cpus, memoryMiB, deny }`. Null otherwise. */
@@ -696,10 +1039,7 @@ async function run(stampProblem = null) {
   const t0 = Date.now();
   const at = () => `+${((Date.now() - t0) / 1000).toFixed(0)}s`;
   const say = (line) => console.log(`${at()} ${line}`);
-  const retries = Number(valueOf("--retries", "1"));
-  if (!Number.isInteger(retries) || retries < 0 || retries > 5) throw new Error("--retries takes a whole number from 0 to 5.");
-  const timeoutS = Number(valueOf("--template-timeout", process.env.SANDBOX_PREWARM_TIMEOUT_S?.trim() || "600"));
-  if (!Number.isInteger(timeoutS) || timeoutS < 1 || timeoutS > 86_400) throw new Error("--template-timeout (or SANDBOX_PREWARM_TIMEOUT_S) takes a whole number of seconds from 1 to 86400.");
+  const { retries, timeoutS, stallS } = prewarmOptions(args, process.env);
   const backendSetting = (process.env.SANDBOX_BACKEND ?? "").trim().toLowerCase() || "vercel";
 
   if (!has("--plan")) {
@@ -768,13 +1108,19 @@ async function run(stampProblem = null) {
     const node = byTemplate.get(templateKey);
     return node ? labelOf(node.nodeId) : "unknown node";
   };
-  say(`prewarming sandbox templates one at a time (eve ${eveVersion}, SANDBOX_BACKEND=${backendSetting}, retries ${retries}, ${timeoutS}s per template)`);
+  // The guest watcher reads microsandbox's own files; another backend has none to read.
+  const watching = backendSetting === "microsandbox" && stallS > 0;
+  say(
+    `prewarming sandbox templates one at a time (eve ${eveVersion}, SANDBOX_BACKEND=${backendSetting}, ${retries + 1} attempt(s) per template, ` +
+      `${timeoutS}s per attempt${watching ? `, a VM silent for ${stallS}s is replaced` : ""})`,
+  );
   const serial = serialDispatch({
     retries,
     timeoutMs: timeoutS * 1000,
     log: (line) => say(line),
     describe: ({ backend, input }) => `node ${nodeOf(input.templateKey)}; ${describeBackend(backend)}`,
-    onTimeout: async () => killTemplateVm(),
+    onTimeout: async ({ vm }) => killTemplateVm({ names: vm ? [vm] : [] }),
+    watchGuest: watching ? guestWatcher({ root: join(microsandboxHome(), "sandboxes"), stallMs: stallS * 1000 }) : null,
   });
   // The same rule again at the last moment, on the very backend object about to be used: eve resolved the graph a
   // second time for this call, and a template must never start on a backend that was not checked.

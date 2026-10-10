@@ -43,7 +43,7 @@ import postgres from "postgres";
 import { LEGACY_OWNER_KEYS } from "../agent/lib/legacy-member.ts";
 /** customers' original owner column (0028's pair), by the name it had: built from the legacy word. */
 const O = LEGACY_OWNER_KEYS.account_owner;
-import { ROOT, driftPlan, kit } from "./lib/drift-plan.mjs";
+import { ROOT, driftPlan, kit, stopsToAsk } from "./lib/drift-plan.mjs";
 
 // eve's `.js` -> `.ts` specifiers, so the app's own write path can be imported as the agent imports it.
 register(
@@ -108,14 +108,14 @@ async function freshDb(label) {
 const bootstrap = (url) => spawnSync(process.execPath, [join(ROOT, "scripts/bootstrap-test-db.mjs")], { cwd: ROOT, env: { ...process.env, DATABASE_URL: url }, encoding: "utf8" });
 
 /** Two workspaces, 60 companies: a second owner on 40, none on 20; an owner on 50, none on 10. */
-async function seed(db) {
+async function seed(db, { withOriginal = true } = {}) {
   await db`insert into orgs (org_id, name, status, created_at) values (${W1}, 'One', 'active', now() - interval '1 year'), (${W2}, 'Two', 'active', now())`;
   for (let i = 0; i < 60; i++) {
     const org = i < 30 ? W1 : W2;
     const id = `co-${String(i + 1).padStart(3, "0")}`;
     const owner = i % 6 === 5 ? null : `owner-${i % 4}@sec.test`;
     const second = i % 3 === 2 ? null : `second-${i % 5}@sec.test`;
-    await db`insert into customers (org_id, customer_id, customer_name, tier, ${OWN}, ae_owner, arr, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', ${owner}, ${second}, ${1000 + i}, ${db.json({ note: `n-${id}` })})`;
+    await db`insert into customers (org_id, customer_id, customer_name, tier, ${withOriginal ? OWN : db("account_owner")}, ae_owner, arr, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', ${owner}, ${second}, ${1000 + i}, ${db.json({ note: `n-${id}` })})`;
     await db`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status) values (${org}, ${id}, 'DEP-prod', 'prod', 'ap-south-1', ${`v-${id}`}, 'deployed', 'healthy')`;
   }
 }
@@ -141,9 +141,11 @@ const triggers = async (db) => db`
   select t.tgname, t.tgenabled, pg_get_triggerdef(t.oid) as def, md5(p.prosrc) as body, p.prosecdef
   from pg_trigger t join pg_proc p on p.oid = t.tgfoid
   where not t.tgisinternal and t.tgrelid = 'public.customers'::regclass order by 1`;
-const mismatched = async (db) => db`
-  select org_id, customer_id, ${OWN}, account_owner, ae_owner, secondary_owner from customers
-  where secondary_owner is distinct from ae_owner or account_owner is distinct from ${OWN}`;
+/** Rows holding two different values in a pair: both pairs while customers' original owner column exists (to 0037). */
+const mismatched = async (db, { withOriginal = true } = {}) => withOriginal
+  ? db`select org_id, customer_id, ${OWN}, account_owner, ae_owner, secondary_owner from customers
+       where secondary_owner is distinct from ae_owner or account_owner is distinct from ${OWN}`
+  : db`select org_id, customer_id, ae_owner, secondary_owner from customers where secondary_owner is distinct from ae_owner`;
 const pair = async (db, org, id) => (await db`select ae_owner, secondary_owner from customers where org_id = ${org} and customer_id = ${id}`)[0];
 const ownerPair = async (db, org, id) => (await db`select ${OWN}, account_owner from customers where org_id = ${org} and customer_id = ${id}`)[0];
 const both = (row, v) => row?.ae_owner === v && row?.secondary_owner === v;
@@ -173,7 +175,7 @@ function checkPlan(url, label, { oursOnly = false } = {}) {
 }
 
 /** A write under either name is read under the other, in raw SQL, for the second owner AND still for the owner. */
-async function checkPairs(db, label) {
+async function checkPairs(db, label, { withOriginal = true } = {}) {
   const org = W1;
   // INSERT naming only the original column (what any writer outside this repository knows).
   await db`insert into customers (org_id, customer_id, customer_name, ae_owner) values (${org}, 'raw-old', 'Raw old', 'raw-old@sec.test')`;
@@ -202,6 +204,11 @@ async function checkPairs(db, label) {
   await db`update customers set ae_owner = 'again@sec.test' where org_id = ${org} and customer_id = 'co-001'`;
   await db`update customers set status = 'At Risk' where org_id = ${org} and customer_id = 'co-001'`;
   check(`${label}: UPDATE of another column leaves both alone`, both(await pair(db, org, "co-001"), "again@sec.test"), await pair(db, org, "co-001"));
+  if (!withOriginal) {
+    const m = await mismatched(db, { withOriginal });
+    check(`${label}: afterwards no row anywhere holds two different second owners`, m.length === 0, m);
+    return;
+  }
   // The two pairs are independent: 0028's owner pair still pairs, and a write of one never moves the other.
   const ownerBefore = await ownerPair(db, org, "co-002");
   await db`update customers set ae_owner = 'only-second@sec.test' where org_id = ${org} and customer_id = 'co-002'`;
@@ -354,13 +361,9 @@ try {
     await applyRange(db, entry("0024_company_key_per_workspace").idx - 1, IDX - 1); // 0024 to 0028, as the live databases took them
     const cols0 = await columns(db);
     check("before 0029 the neutral column does not exist, and 0028's does", !cols0.some((x) => x.includes(`.${NEW_COLUMN} `)) && cols0.some((x) => x.startsWith("customers.account_owner ")), cols0);
-    const planBefore = driftPlan(url);
-    const oursBefore = (planBefore.apply ?? []).filter((x) => !laterEntry(x));
-    const named = oursBefore.join("\n");
     check(
-      "…and the drift plan against schema.ts names it, and only it (so an empty plan after 0029 means something)",
-      !planBefore.error && oursBefore.length === 1 && /ADD COLUMN "secondary_owner" text/.test(named) && planBefore.refused.filter((x) => !laterEntry(x)).length === 0,
-      planBefore.error ? planBefore : { apply: planBefore.apply, refused: planBefore.refused },
+      "…and the drift dry run against schema.ts is not empty yet (it stops to ask whether a new column renames an original one, which schema.ts no longer declares), so an empty plan after the journal means something",
+      stopsToAsk(url),
     );
     const f0 = await fingerprint(db);
     const sec0 = await security(db);
@@ -389,15 +392,21 @@ try {
     const f1 = await fingerprint(db, { withNew: true });
     await applyRange(db, IDX - 1, IDX);
     check("0029 again: nothing changes (rows, indexes, triggers)", (await fingerprint(db, { withNew: true })) === f1 && JSON.stringify(await indexes(db)) === JSON.stringify(idx0) && JSON.stringify(await triggers(db)) === JSON.stringify(trg1));
-    // The deploy's drift step runs after the WHOLE journal (0037 among it), so that is where its plan is taken.
-    await applyRange(db, IDX, Number.MAX_SAFE_INTEGER);
-    checkPlan(url, "after the journal");
+    // The journal to 0037 (the app's switch to account_owner; 0028's owner pair still there): both pairs hold.
+    const SWITCH = entry("0037_owner_columns_switch").idx;
+    await applyRange(db, IDX, SWITCH);
     await checkPairs(db, "A");
     await failClosed(db);
     await checkRls(urlOf(name, "app_rw"), "A (fail-closed)");
     await checkAppPaths(urlOf(name, "app_rw"), "A (app paths, fail-closed)");
     check("after the writes no row holds two different values in either pair", (await mismatched(db)).length === 0, await mismatched(db));
-    checkPlan(url, "after the writes");
+    // The rest (0038 drops the original owner columns and their trigger): the second-owner pair and its trigger stay.
+    await applyRange(db, SWITCH, Number.MAX_SAFE_INTEGER);
+    const names = (await triggers(db)).map((r) => r.tgname);
+    check(`after the whole journal (0038 among it) ${TRIGGER} is still there, and 0028's owner trigger is gone`, JSON.stringify(names) === JSON.stringify([TRIGGER]), names);
+    check("…and no row holds two different second owners", (await mismatched(db, { withOriginal: false })).length === 0);
+    // The deploy's drift step runs after the WHOLE journal, so that is where its plan is taken.
+    checkPlan(url, "after the journal");
     await db.end();
   }
 
@@ -408,12 +417,12 @@ try {
     check("push --force from the new schema.ts builds an empty database with the neutral second-owner column", p.status === 0 && /Changes applied/.test(p.out) && (await columns(db)).some((x) => x.startsWith(`customers.${NEW_COLUMN} `)), p.out.slice(-600));
     await applyRange(db, 13, Number.MAX_SAFE_INTEGER);
     const b = bootstrap(url);
-    check("…the journal after it (0014 to 0029) and the bootstrap apply", b.status === 0, (b.stdout + b.stderr).slice(-400));
+    check("…the journal after it (0029 among it) and the bootstrap apply", b.status === 0, (b.stdout + b.stderr).slice(-400));
     const names = (await triggers(db)).map((r) => r.tgname);
-    check("…and both pairing triggers are on customers", JSON.stringify(names) === JSON.stringify(["customers_owner_pair", TRIGGER]), names);
-    await seed(db);
-    check("…rows seeded by the original names carry both names", (await mismatched(db)).length === 0 && (await db`select count(*)::int as n from customers where secondary_owner is not null`)[0].n === 40, await mismatched(db));
-    await checkPairs(db, "B");
+    check("…and the second-owner pairing trigger is on customers (there is no original owner column to pair)", JSON.stringify(names) === JSON.stringify([TRIGGER]), names);
+    await seed(db, { withOriginal: false });
+    check("…rows seeded by the original second-owner name carry both names", (await mismatched(db, { withOriginal: false })).length === 0 && (await db`select count(*)::int as n from customers where secondary_owner is not null`)[0].n === 40, await mismatched(db, { withOriginal: false }));
+    await checkPairs(db, "B", { withOriginal: false });
     checkPlan(url, "empty database, pushed", { oursOnly: true });
     await db.end();
   }

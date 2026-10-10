@@ -158,10 +158,11 @@ node .output/server/index.mjs
 
 | Option | Meaning |
 |---|---|
-| (none) | Remove template locks whose owner process is gone; under microsandbox, refuse unless every agent node of the built agent carries the `SANDBOX_*` settings (below) and, with filesystem storage, the sandbox can reach the file-link origin (above); then build or reuse each template in turn. A failed template is retried once and the rest still run. Exit 1 if any is missing at the end. |
-| `--template-timeout <s>` | Seconds one template may take per attempt (default 600; or `SANDBOX_PREWARM_TIMEOUT_S`). A template that takes longer is not retried: its VM is killed, the report names the template, its node and the CPUs, memory and deny list it was started with, the templates after it are not tried, and the exit code is 1. |
+| (none) | Remove template locks whose owner process is gone; under microsandbox, refuse unless every agent node of the built agent carries the `SANDBOX_*` settings (below) and, with filesystem storage, the sandbox can reach the file-link origin (above); then build or reuse each template in turn. A failed or hung template is retried once, on a fresh VM, and the rest still run. Exit 1 if any is missing at the end. |
+| `--template-timeout <s>` | Seconds one attempt may take (default 600; or `SANDBOX_PREWARM_TIMEOUT_S`). An attempt that takes longer has its VM killed, and the template is started again on a fresh VM while attempts remain (`template … timed out after 600s on attempt 1 of 2 (…); killed its VM (pid …); starting it again on a fresh VM`). If the last attempt times out too, the report names the template, its node, the CPUs, memory and deny list it was started with and every earlier attempt (`TIMED OUT …`), the templates after it are not tried, and the exit code is 1. |
+| `--stall <s>` | Under microsandbox: an attempt whose VM shows no sign of life for this long is ended the same way, long before the timeout (default 90; 0 when `--template-timeout` is 90 or less; `0` turns it off; or `SANDBOX_PREWARM_STALL_S`). See "A template VM that stops responding" below. |
 | `--plan` | Start nothing. Print, as JSON, every agent node's sandbox in the built agent: its definition, backend, template key, the settings its backend carries, and why it would be refused. Exit 1 if any would be. |
-| `--retries <n>` | Extra attempts per template (default 1, at most 5). |
+| `--retries <n>` | Extra attempts per template, after a failure or a hang, each on a fresh VM (default 1, at most 5; or `SANDBOX_PREWARM_RETRIES`). A template takes at most `retries + 1` attempts of `--template-timeout` each, plus up to 30 s per hung attempt for its VM to be killed and cleaned up. |
 | `--link-runtime` | If the microsandbox runtime is not installed for this user, link the copy `npm ci` already put in `node_modules/@superradcompany/microsandbox-*` into `~/.microsandbox/{bin,lib}`. No download and no system package. |
 | `--locks-only` | Only clear stale locks. |
 | `--force-locks` | Remove every template lock, held or not. Only when nothing else is prewarming. |
@@ -169,6 +170,27 @@ node .output/server/index.mjs
 
 Run it as the user the server runs as, with the server's environment. A lock held by a running process is never
 removed without `--force-locks`; the script stops and names the process.
+
+**A template VM that stops responding (mold_v1-226).** Twice on the first self-hosted server (2026-10-09 and 10-10)
+the root template's fresh VM wedged seconds after boot (`BUG: scheduling while atomic` in its `logs/kernel.log`, then
+an oops in the network driver), before the bootstrap's first command ran; the run sat out the whole timeout with
+`--- sandbox started ---` as the only line of the VM's `logs/exec.log`, and the next VM built the same template in
+under a minute. So while an attempt runs, the script reads, for every VM that appears under
+`$MSB_HOME/sandboxes/` (default `~/.microsandbox/sandboxes/`) during it, read only:
+
+- `runtime/heartbeat.json`, which a live guest rewrites about once a second, busy or idle;
+- `logs/exec.log`, the command log;
+- whether the VM has stopped (`--- sandbox stopped ---`, or `Vmm is stopping.` in `logs/runtime.log`): eve stops the
+  first template VM to snapshot it and continues on a second one, so a stopped VM is not judged.
+
+A running VM with neither a new heartbeat nor a new command-log line for `--stall` seconds has stopped responding:
+`template … stopped responding on attempt 1 of 2, 95s in: eve-sbx-ses-…: its heartbeat stopped 91 s ago, its command
+log holds only "sandbox started" (…); killed its VM (pid …); starting it again on a fresh VM`. A slow build (a long
+package install) keeps its heartbeat and runs on to the timeout. The kill is this script's descendants, eve's
+`eve-sbx-tpl-tmp` VMs and the VM named in the verdict. VMs that were already there when the attempt started (a
+running server's chat sandboxes, during a new release's prewarm) are never judged; one that a chat starts during the
+attempt is, and if it is the one that froze it is stopped too: it answered nothing, and the server's own guard
+replaces a VM that answers nothing.
 
 **What it refuses under microsandbox, before any VM is started.** It reads the built agent's graph the way eve's own
 prewarm does and checks every node, not only those with a template:
@@ -328,7 +350,11 @@ Not covered by a test, and to be checked on the real host:
 - that a specialist's template VM and its session VMs really start with `SANDBOX_CPUS` virtual CPUs (the tests prove
   the backend each node is built with carries the settings, through eve's own graph; not what the VM is given);
 - that a template which exceeds `--template-timeout` has its VM killed (the process match is by this script's
-  descendants and by eve's `eve-sbx-tpl-tmp` VM name; check with `ps` that nothing is left);
+  descendants, by eve's `eve-sbx-tpl-tmp` VM name and by the name of a VM found unresponsive; check with `ps` that
+  nothing is left);
+- that a real wedged guest is caught by `--stall` (the self-test drives the verdict with the files laid out as on the
+  server, and the retry with a stand-in backend; the heartbeat cadence of about a second is read from two VMs on the
+  first server, not from microsandbox's documentation);
 
 - that the deny list blocks `169.254.169.254`, the Docker bridge and the private ranges from inside a sandbox created
   through eve (measured so far at the microsandbox layer, with the same policy JSON eve produces);

@@ -55,3 +55,15 @@ export function driftPlan(url) {
   const rest = stmts.filter((x) => !SET_ASIDE.test(x));
   return { apply: rest.filter((x) => !DATA_LOSS.test(x) && !DROPS_INDEX.test(x)), aside, refused: rest.filter((x) => DATA_LOSS.test(x) || DROPS_INDEX.test(x)) };
 }
+
+/**
+ * True when the drift dry run cannot plan at all because drizzle-kit stops to ask whether a column is new or a
+ * renamed one: schema.ts declares a column the database lacks while the database has one schema.ts does not declare
+ * (before drizzle/0038, the original owner columns). provision.py stops the deploy there too ("drizzle-kit stopped to
+ * ask a question"), so for a migration test it is as much "not empty yet" as a plan with statements in it.
+ */
+export function stopsToAsk(url) {
+  const u = new URL(url);
+  u.searchParams.set("options", "-c default_transaction_read_only=on");
+  return /Interactive prompts require a TTY/.test(kit(["push", "--strict", "--verbose"], u.toString()).out);
+}

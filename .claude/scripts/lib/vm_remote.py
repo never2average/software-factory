@@ -1433,7 +1433,7 @@ PREWARM_RETRIES = 2
 # wedged VM for ten minutes; five times the slowest is long enough for a slow package index and short enough to retry.
 PREWARM_TEMPLATE_S = 300
 # Whole prewarm runs when one ends on a timeout (a hung VM). The image pull and builds of the first run count too.
-PREWARM_RUNS = 3
+PREWARM_RUNS = 2   # the mold now retries a hung template in place (upstream #153: up to PREWARM_RETRIES+1 attempts), so one extra whole run is enough
 # A new release's prewarm waits this long, before each run, for room on the host's vCPUs for one template VM beside the
 # chats' running sandboxes (mold_v1-224), then builds anyway at PREWARM_CPU_WEIGHT.
 PREWARM_ROOM_WAIT_S = 300
@@ -1443,9 +1443,9 @@ PREWARM_ROOM_POLL_S = 5
 PREWARM_CPU_WEIGHT = 10
 # The API unit's TimeoutStartSec, which its own prestart (the first start after a reboot, or a release not prewarmed)
 # must fit in: every run hanging once plus every template built once plus each run's start-up (about 45 s).
-API_START_S = 1800
-assert PREWARM_RUNS * (PREWARM_TEMPLATE_S + 60) + 6 * 90 <= API_START_S, "the API prestart's worst case must fit TimeoutStartSec"
-assert PREWARM_RUNS * (PREWARM_ROOM_WAIT_S + PREWARM_TEMPLATE_S + 60) + 6 * 90 <= PREWARM_DEADLINE_S, "a release prewarm's worst case, waits included, must fit its deadline"
+API_START_S = 2700
+assert PREWARM_RUNS * ((PREWARM_RETRIES + 1) * (PREWARM_TEMPLATE_S + 30) + 60) + 6 * 90 <= API_START_S, "the API prestart's worst case (each template retried in place by the mold) must fit TimeoutStartSec"
+assert PREWARM_RUNS * (PREWARM_ROOM_WAIT_S + (PREWARM_RETRIES + 1) * (PREWARM_TEMPLATE_S + 30) + 60) + 6 * 90 <= PREWARM_DEADLINE_S, "a release prewarm's worst case, waits included, must fit its deadline"
 
 def release_sh(S, crons, root="", tool=None, timing=None, extra_gb=RELEASE_SPACE_EXTRA_GB):
     """release.sh: the releases of this app on its server (mold_v1-222). `root` prefixes every path it touches and

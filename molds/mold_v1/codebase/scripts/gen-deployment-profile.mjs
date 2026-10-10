@@ -168,13 +168,10 @@ function zodFields(name) {
   return out;
 }
 function dbColumns(name) {
-  // `export const <name> = pgTable(`, or the factory a table is built by when drizzle-kit's schema adds a column to it
-  // (`export function <name>TableWith(`, agent/lib/db/drizzle-kit-schema.ts).
-  const at = dbSrc.match(new RegExp(`export (?:const ${name} = pgTable\\(|function ${name}TableWith\\b)`));
-  if (!at) { console.error(`gen-deployment-profile: table ${name} not found in agent/lib/db/schema.ts`); process.exit(1); }
-  const start = at.index;
-  const end = dbSrc.slice(start + 1).search(/\nexport (?:const|function) /);
-  const block = dbSrc.slice(start, end < 0 ? undefined : start + 1 + end);
+  const start = dbSrc.indexOf(`export const ${name} = pgTable(`);
+  if (start < 0) { console.error(`gen-deployment-profile: table ${name} not found in agent/lib/db/schema.ts`); process.exit(1); }
+  const end = dbSrc.indexOf("\nexport const ", start + 1);
+  const block = dbSrc.slice(start, end < 0 ? undefined : end);
   const out = {};
   const parts = block.split(/\n(?=\s+[A-Za-z0-9_]+: (?:text|doublePrecision|bigint|integer|jsonb|boolean|timestamp)\()/).slice(1);
   for (const c of parts) {

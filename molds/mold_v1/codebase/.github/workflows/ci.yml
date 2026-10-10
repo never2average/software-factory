@@ -13,10 +13,19 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The nightly run (.github/workflows/nightly.yml) calls this file as it is, so the two cannot drift. `pass` tells its
+  # two calls apart (the night's run, and the retry after a failure).
+  workflow_call:
+    inputs:
+      pass:
+        type: string
+        required: false
+        default: ""
 
-# A new push to the same PR makes the previous run irrelevant.
+# A new push to the same PR makes the previous run irrelevant. (A called run's github.workflow is its caller's, and
+# `pass` keeps the nightly's two calls apart, so a nightly never cancels a push's run or the other way round.)
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.pass }}
   cancel-in-progress: true
 
 # THE JOBS RUN SIDE BY SIDE. verify used to run every offline check one after another (16-18 minutes, the whole run's
@@ -76,6 +85,12 @@ jobs:
       # be one the data room can load, and every workspace-standard subagent (incl. any pack's) must pass.
       - name: Subagent registry and workspaces
         run: npm run check:subagent-shared && npm run check:subagents
+
+      # The nightly's repeats are commands this file runs, its matrix is the repeat script's groups, and the report's
+      # parsing and issue text hold on fixtures (under a second; the nightly itself is not part of a PR run).
+      - name: Nightly repeats and report (self-tests)
+        if: always()
+        run: npm run check:nightly
 
       - name: Typecheck
         run: npm run typecheck
@@ -1636,6 +1651,15 @@ jobs:
       - name: Owner columns switch, migration on production-shaped data
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:owner-columns-switch-db
+
+      # THE OWNER COLUMNS CONTRACT (drizzle/0038), one release after 0037: the original owner columns, their triggers
+      # and functions are dropped in the journal (a DROP COLUMN left to the drift step is refused). On the live shape
+      # after 0037's deploy, with what its deploy window and its release may have left (old stored values, an owner
+      # only in the original column): every owner lands in the neutral column, no row or other value is lost, RLS,
+      # policies and grants are unchanged and fail-closed, the serving release works, and the drift plan is empty.
+      - name: Owner columns contract, migration on production-shaped data
+        if: always()
+        run: ADMIN_URL="$ADMIN_URL" npm run test:owner-columns-contract-db
 
       # ONE HAND-BACK PER STOPPED SPECIALIST, ACROSS INSTANCES (mold_v1-181). The agent is serverless: two Stops on one
       # specialist can land on two instances, where a memory of "already doing this" holds in one. The claim is a row in

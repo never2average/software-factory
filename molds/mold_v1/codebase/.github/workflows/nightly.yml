@@ -1,0 +1,184 @@
+name: Nightly
+
+# Why this exists: a check that fails one run in 256 passes almost every PR. The web-push key length did exactly that
+# (a generated private key was 31 bytes when its first byte was zero) and was found only because one CI run happened
+# to draw such a key. Each night this runs the whole CI on main (ci.yml itself, called, so the two cannot drift), then
+# runs the suites that draw random values, run on timers and leases, race processes, or serve a real runtime or a
+# browser several more times, each attempt on its own runner (scripts/nightly-repeat.mjs names them and why). A failing
+# night re-runs the CI once to tell an intermittent failure from a steady one, and files or updates one issue with the
+# failing job, the failing checks, the log links and whether it reproduced. A history artifact keeps the flaky rate per
+# test over the nights. None of this is part of a PR run.
+
+on:
+  schedule:
+    # 21:17 UTC (off the hour, when scheduled runs queue): early morning in India, before the day's merges.
+    - cron: "17 21 * * *"
+  workflow_dispatch:
+    inputs:
+      attempts:
+        description: Attempt numbers for the repeats, a JSON list (its length is how many times each group runs)
+        default: "[1, 2, 3, 4, 5]"
+
+# Read-only by default; the report job alone may write issues (and read the run's jobs and logs).
+permissions:
+  contents: read
+
+# One nightly at a time per branch, never cancelled by the next (a cancelled night would read as a failure).
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The full CI, exactly as a PR runs it.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      pass: nightly
+
+  # The timing-sensitive and randomised suites, again and again: group x attempt, one runner each.
+  repeat:
+    name: "repeat ${{ matrix.group }} #${{ matrix.attempt }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Must equal the groups in scripts/nightly-repeat.mjs (npm run check:nightly holds it).
+        group: [random-timers, detach-1, detach-2, eve-runtime, db-races, rendered]
+        attempt: ${{ fromJSON(inputs.attempts || '[1, 2, 3, 4, 5]') }}
+    # A Postgres for the db-races group only (an empty image starts no service), as the isolation jobs have one.
+    services:
+      postgres:
+        image: ${{ matrix.group == 'db-races' && 'postgres:16' || '' }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workspace_test
+        ports: ["5432:5432"]
+        options: >-
+          --tmpfs /var/lib/postgresql/data
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      ADMIN_URL: ${{ matrix.group == 'db-races' && 'postgres://postgres:postgres@127.0.0.1:5432/workspace_test' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Database (schema and the tenancy model)
+        if: matrix.group == 'db-races'
+        run: |
+          DATABASE_URL="$ADMIN_URL" npx drizzle-kit push --force
+          DATABASE_URL="$ADMIN_URL" node scripts/bootstrap-test-db.mjs
+
+      - name: Build
+        if: matrix.group == 'rendered'
+        run: npm run build
+
+      - name: Chromium for the rendered-page checks
+        if: matrix.group == 'rendered'
+        uses: ./.github/actions/chromium
+
+      - name: Repeat ${{ matrix.group }}, attempt ${{ matrix.attempt }}
+        run: node scripts/nightly-repeat.mjs --group "${{ matrix.group }}" --attempt "${{ matrix.attempt }}" --out nightly-results
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-repeat-${{ matrix.group }}-${{ matrix.attempt }}
+          path: nightly-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Checkout still matches the commit (profiles/, generated files)
+        if: always()
+        run: npm run check:checkout-clean
+
+  # A failing CI pass runs once more: a job that fails again is steady, one that passes is intermittent.
+  retry:
+    needs: ci
+    if: ${{ !cancelled() && needs.ci.result == 'failure' }}
+    uses: ./.github/workflows/ci.yml
+    with:
+      pass: retry
+
+  # Runs whatever failed, but not on a cancelled night (a cancelled job is not a failing test).
+  report:
+    needs: [ci, repeat, retry]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: The repeats' results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-repeat-*
+          path: nightly-results
+          merge-multiple: true
+
+      # Reads the run's jobs, the failing jobs' logs and the previous night's history; writes the report, the new
+      # history and the flaky rates (and the run's summary page). Writes nothing to GitHub.
+      - name: Report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/nightly-report.mjs --results nightly-results --out nightly-out
+
+      - name: Keep the history (flaky rate per test over the nights)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-history
+          path: |
+            nightly-out/nightly-history.json
+            nightly-out/flaky-rates.md
+          retention-days: 90
+
+      # One open issue per branch's nightly (its title), labelled nightly-failure: created on the first failing night,
+      # then its text replaced and a comment added on each failing night; a passing night comments on it. Never closed
+      # here: a person closes it when the cause is fixed.
+      - name: File or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          failing=$(jq -r .failing nightly-out/report.json)
+          title=$(jq -r .title nightly-out/report.json)
+          label=$(jq -r .label nightly-out/report.json)
+          jq -r .body nightly-out/report.json > body.md
+          jq -r .comment nightly-out/report.json > comment.md
+          number=$(gh issue list --repo "$REPO" --label "$label" --state open --limit 100 --json number,title \
+            | jq -r --arg t "$title" '[.[] | select(.title == $t)][0].number // empty')
+          if [ "$failing" = "true" ]; then
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --repo "$REPO" --body-file body.md
+              gh issue comment "$number" --repo "$REPO" --body-file comment.md
+              echo "Updated issue #$number"
+            else
+              gh label create "$label" --repo "$REPO" --color B60205 --description "The nightly CI run failed" --force
+              gh issue create --repo "$REPO" --title "$title" --label "$label" --body-file body.md
+            fi
+          elif [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body-file comment.md
+            echo "Nightly passed; commented on open issue #$number"
+          else
+            echo "Nightly passed; no open issue"
+          fi

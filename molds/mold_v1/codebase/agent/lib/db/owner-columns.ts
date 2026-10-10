@@ -1,13 +1,12 @@
 /**
  * The owner of an account and of a solution, and an account's second owner.
  *
- *   customers.account_owner    (accountOwner)    one column (drizzle/0028 added it; 0037 made it the only one used)
+ *   customers.account_owner    (accountOwner)    one column (drizzle/0028 added it, 0037 made it the only one used,
+ *                                                  0038 dropped the original beside it)
  *   solutions.solution_owner   (solutionOwner)   one column (likewise)
  *   customers.secondary_owner  (secondaryOwner)  beside  customers.ae_owner  (aeOwner)   drizzle/0029
  *
- * The account's and the solution's owner each had an original column beside the neutral one; since drizzle/0037 the
- * app reads and writes only the neutral one (the original is kept equal by 0028's trigger until 0038 drops both), so
- * they need nothing here beyond a name for the column.
+ * The account's and the solution's owner need nothing here beyond a name for the column.
  *
  * The second owner still has two names. `secondary_owner` is the one the app reads; `ae_owner` is the original, kept
  * and always written too. On a migrated database a trigger keeps the pair equal whichever side a statement writes. A
