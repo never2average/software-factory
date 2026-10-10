@@ -163,6 +163,10 @@ try {
     { orgId: "o", email: "a@x" },
   );
   check("without VAPID keys nothing is sent and nobody is looked up", off.sent === 0 && !looked);
+  // One generated private key in 256 starts with a zero byte, which getPrivateKey() drops: 3,000 keys miss that case
+  // with a chance of about 1 in 120,000. Each must be one vapidFromEnv accepts (it made the check below flaky).
+  const shortKeys = Array.from({ length: 3000 }, () => wp.generateVapidKeys()).filter((k) => wp.vapidFromEnv({ VAPID_PUBLIC_KEY: k.publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: "mailto:ops@example.com" }) === null);
+  check("every generated key pair is one vapidFromEnv accepts (a private key with a leading zero byte is still 32 bytes)", shortKeys.length === 0, shortKeys.slice(0, 2));
   check("VAPID keys are read only when all three are present and well-formed", wp.vapidFromEnv({}) === null && wp.vapidFromEnv({ VAPID_PUBLIC_KEY: vapidPair.publicKey, VAPID_PRIVATE_KEY: vapidPair.privateKey, VAPID_SUBJECT: "ops@example.com" }) === null && wp.vapidFromEnv({ VAPID_PUBLIC_KEY: vapidPair.publicKey, VAPID_PRIVATE_KEY: vapidPair.privateKey, VAPID_SUBJECT: "mailto:ops@example.com" }) !== null);
 } finally {
   server.close();
