@@ -79,10 +79,14 @@ export const PUSH_TIMEOUT_MS = 5_000;
 /** Record size advertised in the header. One record carries every payload this sends (< 4 KB). */
 const RECORD_SIZE = 4096;
 
-/** A fresh VAPID key pair, for the factory to set as VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY. */
-export function generateVapidKeys(): { publicKey: string; privateKey: string } {
+/**
+ * A fresh VAPID key pair, for the factory to set as VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY. `privateKey` is for the
+ * test only (a key it chose, so a failure replays); production always draws a fresh one.
+ */
+export function generateVapidKeys(privateKey?: Uint8Array): { publicKey: string; privateKey: string } {
   const ecdh = createECDH("prime256v1");
-  ecdh.generateKeys();
+  if (privateKey) ecdh.setPrivateKey(privateKey);
+  else ecdh.generateKeys();
   // getPrivateKey() drops leading zero bytes, so one key in 256 came out 31 bytes long and vapidFromEnv (and the JWK
   // the signer builds) refused it. A P-256 private key is always 32 bytes: pad it on the left.
   const d = ecdh.getPrivateKey();

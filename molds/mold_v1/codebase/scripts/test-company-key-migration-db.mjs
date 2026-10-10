@@ -35,7 +35,7 @@ import { join } from "node:path";
 import postgres from "postgres";
 // The owner columns of the live shape (the fixture schema), by the names they had: built from the legacy word.
 import { LEGACY_OWNER_KEYS as LK } from "../agent/lib/legacy-member.ts";
-import { driftPlan, kit } from "./lib/drift-plan.mjs";
+import { driftPlan, kit, stopsToAsk } from "./lib/drift-plan.mjs";
 
 const adminUrl = process.env.ADMIN_URL;
 if (!adminUrl) {
@@ -123,14 +123,20 @@ const checkPlanEmpty = (url, label, { keyedOnly = false } = {}) => {
 };
 
 /** Two workspaces, 100 companies (50 each), rows in every table that hangs off a company, and the looser references. */
+/** The column an account's / a solution's owner is written to on this database: the original while it exists. */
+const ownerColumns = async (db) => {
+  const has = async (t, c) => (await db`select 1 from information_schema.columns where table_schema = 'public' and table_name = ${t} and column_name = ${c}`).length > 0;
+  return { account: db((await has("customers", LK.account_owner)) ? LK.account_owner : "account_owner"), solution: db((await has("solutions", LK.solution_owner)) ? LK.solution_owner : "solution_owner") };
+};
 async function seed(db) {
+  const own = await ownerColumns(db);
   await db`insert into orgs (org_id, name, status, created_at) values (${W1}, 'One', 'active', now() - interval '2 years'), (${W2}, 'Two', 'active', now())`;
   const cos = Array.from({ length: 100 }, (_, i) => ({ org: i < 50 ? W1 : W2, id: `co-${String(i + 1).padStart(3, "0")}` }));
   for (const { org, id } of cos) {
-    await db`insert into customers (org_id, customer_id, customer_name, tier, ${db(LK.account_owner)}, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@mig.test', ${db.json({ notes: `n-${id}` })})`;
+    await db`insert into customers (org_id, customer_id, customer_name, tier, ${own.account}, custom) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@mig.test', ${db.json({ notes: `n-${id}` })})`;
     await db`insert into platform (org_id, customer_id, deployment_model, data_residency_constraint, primary_model, enabled_connectors, feature_flags, primary_use_case) values (${org}, ${id}, 'saas', 'none', 'm', '[]', '{}', 'research')`;
     for (const d of ["prod", "uat"]) await db`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, custom) values (${org}, ${id}, ${`DEP-${d}`}, ${d}, 'ap-south-1', ${`v-${id}-${d}`}, 'deployed', 'healthy', ${db.json({ rating: "Buy" })})`;
-    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, ${db(LK.solution_owner)}) values (${org}, ${id}, 'SOL-1', 'Research Copilot', '[]', 'live', 'owner@mig.test')`;
+    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, ${own.solution}) values (${org}, ${id}, 'SOL-1', 'Research Copilot', '[]', 'live', 'owner@mig.test')`;
     await db`insert into implementation (org_id, customer_id, rollout_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner) values (${org}, ${id}, ${`ROLL-${id}`}, 'UAT', 50, 'Green', 'None')`;
     for (const n of [1, 2, 3]) {
       await db`insert into tickets (org_id, customer_id, ticket_id, summary, ticket_type, ticket_category, ticket_status, ticket_priority, ticket_opened_date, ticket_owner_email, source_channel, last_activity_date, ticket_next_step) values (${org}, ${id}, ${`TCK-${n}`}, ${`t${n} ${id}`}, 'Question', 'Feature Request', 'Open', 'P2-Medium', '2026-09-01', 'owner@mig.test', 'Email', '2026-09-01', 'look')`;
@@ -162,10 +168,15 @@ const counts = async (db) => Object.fromEntries(await Promise.all([...KEYED, ...
  * The columns a LATER journal entry adds (0028's and 0029's neutral owner columns and 0032's apps.starter_key, which ride along in apply0024) are left out:
  * they are new, not changed, and test-owner-columns-migration-db.mjs proves what they hold.
  */
-const LATER_COLUMNS = "- 'account_owner' - 'solution_owner' - 'secondary_owner' - 'starter_key'";
+const LATER_COLUMNS = "- 'secondary_owner' - 'starter_key'";
+/**
+ * The owner as ONE value, whichever column holds it: the original before 0028, both 0028 to 0037, the neutral one
+ * after 0038 (later entries ride along). Moving it is not a change; losing or altering it is.
+ */
+const ROW = `((to_jsonb(x) || jsonb_build_object('~owner', coalesce(to_jsonb(x)->>'account_owner', to_jsonb(x)->>'${LK.account_owner}', to_jsonb(x)->>'solution_owner', to_jsonb(x)->>'${LK.solution_owner}'))) - 'account_owner' - 'solution_owner' - '${LK.account_owner}' - '${LK.solution_owner}' ${LATER_COLUMNS})`;
 const fingerprint = async (db) => {
   const out = {};
-  for (const t of [...KEYED, ...LOOSE]) out[t] = (await db.unsafe(`select md5(coalesce(string_agg((to_jsonb(x) ${LATER_COLUMNS})::text, '|' order by (to_jsonb(x) ${LATER_COLUMNS})::text), '')) as h from ${t} x`))[0].h;
+  for (const t of [...KEYED, ...LOOSE]) out[t] = (await db.unsafe(`select md5(coalesce(string_agg(${ROW}::text, '|' order by ${ROW}::text), '')) as h from ${t} x`))[0].h;
   return out;
 };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -224,7 +235,7 @@ try {
     const [pre] = await db`select (select attnum from pg_attribute where attrelid = 'public.customers'::regclass and attname = 'customer_id') < (select attnum from pg_attribute where attrelid = 'public.customers'::regclass and attname = 'org_id') as first`;
     check("the live shape has customer_id before org_id in customers, as every database pushed before this change does", pre.first === true);
     const planBefore = driftPlan(url);
-    check("before 0024, the drift plan names the key change (so an empty plan after it means something)", !planBefore.error && keyStatements(planBefore.apply).length > 0, planBefore.error ?? planBefore.apply.length);
+    check("before 0024, the drift plan names the key change, or cannot plan yet (it stops to ask about the original owner columns 0038 drops), so an empty plan after it means something", (!planBefore.error && keyStatements(planBefore.apply).length > 0) || stopsToAsk(url), planBefore.error ?? planBefore.apply.length);
     await apply0024(db);
     check("0024 applies, and no row in any table is lost or changed", same(await fingerprint(db), f0));
     await checkShape(db, "after 0024");

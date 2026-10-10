@@ -37,7 +37,6 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
-  type PgColumnBuilderBase,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -45,14 +44,7 @@ import { sql } from "drizzle-orm";
 /* Customers — one row per customer account (the account spine)               */
 /* -------------------------------------------------------------------------- */
 
-/**
- * customers, built with any extra columns a caller adds. The app uses `customers` (no extra column). The schema
- * drizzle-kit reads (agent/lib/db/drizzle-kit-schema.ts) adds the retired owner column a live database still holds
- * until drizzle/0038 drops it, so the deploy's drift check does not plan a DROP COLUMN in between; the app itself
- * never names that column. One definition, so the two can never differ in anything else.
- */
-export function customersTableWith<C extends Record<string, PgColumnBuilderBase>>(extra: C) {
-  return pgTable(
+export const customers = pgTable(
   "customers",
   {
     // Which org (workspace) holds this company: the first half of its key. Declared before customer_id, as in every
@@ -67,7 +59,7 @@ export function customersTableWith<C extends Record<string, PgColumnBuilderBase>
     status: text("status"),
     healthScore: doublePrecision("health_score"),
     // The account's owner (an email). It replaced the original owner column (drizzle/0028 added it and copied the
-    // values, drizzle/0037 stopped every reader and writer of the original, drizzle/0038 drops it).
+    // values, drizzle/0037 stopped every reader and writer of the original, drizzle/0038 dropped it).
     accountOwner: text("account_owner"),
     // The account's second owner (an email), under two names kept equal the same way
     // (drizzle/0029_neutral_secondary_owner.sql). `secondary_owner` is the neutral one the app reads first; `ae_owner`
@@ -108,7 +100,6 @@ export function customersTableWith<C extends Record<string, PgColumnBuilderBase>
     // key; agent/lib/custom-fields.ts validates every write. NULLABLE, unlike deployments.custom: NULL is "no own
     // values", so the column was added without touching a single existing row (drizzle/0019_account_custom_fields.sql).
     custom: jsonb("custom").$type<Record<string, string | number>>(),
-    ...extra,
   },
   (t) => [
     /**
@@ -125,10 +116,7 @@ export function customersTableWith<C extends Record<string, PgColumnBuilderBase>
     index("customers_account_owner_idx").on(t.accountOwner),
     index("customers_lifecycle_stage_idx").on(t.lifecycleStage),
   ],
-  );
-}
-
-export const customers = customersTableWith({});
+);
 
 /* -------------------------------------------------------------------------- */
 /* Platform — one row per customer platform configuration                     */
@@ -256,9 +244,7 @@ export const deployments = pgTable(
 /* Solutions — one row per (customer_id, solution_id) workflow                */
 /* -------------------------------------------------------------------------- */
 
-/** solutions, built with any extra columns a caller adds: as customersTableWith. */
-export function solutionsTableWith<C extends Record<string, PgColumnBuilderBase>>(extra: C) {
-  return pgTable(
+export const solutions = pgTable(
   "solutions",
   {
     orgId: text("org_id").notNull(),
@@ -339,7 +325,6 @@ export function solutionsTableWith<C extends Record<string, PgColumnBuilderBase>
     // Nullable, as 0028 added it: a database migrated from before 0028 has it nullable, so schema.ts says so too.
     solutionOwner: text("solution_owner"),
     lastReviewedDate: text("last_reviewed_date"),
-    ...extra,
   },
   (t) => [
     primaryKey({ name: "solutions_org_id_customer_id_solution_id_pk", columns: [t.orgId, t.customerId, t.solutionId] }),
@@ -347,10 +332,7 @@ export function solutionsTableWith<C extends Record<string, PgColumnBuilderBase>
     foreignKey({ name: "solutions_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
     index("solutions_solution_status_idx").on(t.solutionStatus),
   ],
-  );
-}
-
-export const solutions = solutionsTableWith({});
+);
 
 /* -------------------------------------------------------------------------- */
 /* Implementation — one row per customer rollout plan                         */

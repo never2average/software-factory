@@ -15,7 +15,7 @@
 --   * DROP NOT NULL on solutions' original column: the previous release always writes it, so nothing it does fails;
 --   * the original owner column's index is dropped: a query of the previous release that used it is slower, never
 --     wrong. It goes here, in the journal, because the deploy's drift step refuses an index drop, and the schema
---     drizzle-kit reads (agent/lib/db/drizzle-kit-schema.ts) no longer declares it;
+--     drizzle-kit reads no longer declares it;
 --   * stored values that carried the retired word become the neutral ones ('Member', 'Member Verified', the
 --     'member-profile:' memory key). The previous release reads every enum leniently (customer-schema.ts
 --     withReadTolerantStrings) and shows any value it does not translate as stored, so it reads these unchanged.

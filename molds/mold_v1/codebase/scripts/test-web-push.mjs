@@ -15,9 +15,12 @@
  *
  * Run: npm run test:web-push
  */
-import { createECDH, createPublicKey, randomBytes, verify } from "node:crypto";
+import { createECDH, createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+// The test's own random choices (the browser's keys, its auth secret, the VAPID keys it checks) come from TEST_SEED,
+// so a failure replays: the seed is printed when the run fails.
+import { seededBytes } from "./lib/test-seed.mjs";
 
 const wp = await import("../agent/lib/web-push.ts");
 const text = await import("../agent/lib/notification-text.ts");
@@ -61,9 +64,15 @@ console.log("1. Encryption is RFC 8291 (aes128gcm):");
 }
 
 // A browser's subscription: its own key pair and auth secret.
+/** 32 bytes that are a valid P-256 private key (below the group order, which starts 0xffffffff00000000). */
+const privateKeyBytes = () => {
+  const d = seededBytes(32);
+  if (d[0] === 0xff) d[0] = 0xfe;
+  return d;
+};
 const browser = createECDH("prime256v1");
-browser.generateKeys();
-const authSecret = randomBytes(16);
+browser.setPrivateKey(privateKeyBytes());
+const authSecret = seededBytes(16);
 const vapidPair = wp.generateVapidKeys();
 const vapid = { ...vapidPair, subject: "mailto:ops@example.com" };
 
@@ -165,8 +174,20 @@ try {
   check("without VAPID keys nothing is sent and nobody is looked up", off.sent === 0 && !looked);
   // One generated private key in 256 starts with a zero byte, which getPrivateKey() drops: 3,000 keys miss that case
   // with a chance of about 1 in 120,000. Each must be one vapidFromEnv accepts (it made the check below flaky).
-  const shortKeys = Array.from({ length: 3000 }, () => wp.generateVapidKeys()).filter((k) => wp.vapidFromEnv({ VAPID_PUBLIC_KEY: k.publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: "mailto:ops@example.com" }) === null);
+  const accepted = (k) => wp.vapidFromEnv({ VAPID_PUBLIC_KEY: k.publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: "mailto:ops@example.com" }) !== null;
+  const shortKeys = Array.from({ length: 3000 }, () => wp.generateVapidKeys()).filter((k) => !accepted(k));
   check("every generated key pair is one vapidFromEnv accepts (a private key with a leading zero byte is still 32 bytes)", shortKeys.length === 0, shortKeys.slice(0, 2));
+  // …and the case itself, every run rather than by luck: keys with one and two leading zero bytes, and 3,000 keys from
+  // TEST_SEED (replayable), each through the same padding.
+  const leading = [1, 2].map((zeros) => {
+    const d = privateKeyBytes();
+    d.fill(0, 0, zeros);
+    if (d[zeros] === 0) d[zeros] = 1;
+    return wp.generateVapidKeys(d);
+  });
+  check("a private key with one or two leading zero bytes is still 32 bytes, and accepted", leading.every((k) => b(k.privateKey).length === 32 && accepted(k)), leading);
+  const seededShort = Array.from({ length: 3000 }, () => wp.generateVapidKeys(privateKeyBytes())).filter((k) => !accepted(k));
+  check("3,000 key pairs from the test's seed are all accepted", seededShort.length === 0, seededShort.slice(0, 2));
   check("VAPID keys are read only when all three are present and well-formed", wp.vapidFromEnv({}) === null && wp.vapidFromEnv({ VAPID_PUBLIC_KEY: vapidPair.publicKey, VAPID_PRIVATE_KEY: vapidPair.privateKey, VAPID_SUBJECT: "ops@example.com" }) === null && wp.vapidFromEnv({ VAPID_PUBLIC_KEY: vapidPair.publicKey, VAPID_PRIVATE_KEY: vapidPair.privateKey, VAPID_SUBJECT: "mailto:ops@example.com" }) !== null);
 } finally {
   server.close();

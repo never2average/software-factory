@@ -19,16 +19,17 @@
  *          no DROP COLUMN, no DROP INDEX, no truncate, nothing to apply;
  *        - 0028 again changes nothing; a write under either name is read under the other in raw SQL (INSERT and
  *          UPDATE of either side, both solution columns, a NULL clearing both);
- *        - the rest of the journal (0037 among it: the app's switch to the neutral columns) leaves every pair equal,
- *          and then the app's own write paths (upsert_customer, reassign owner) as app_rw, which name only the neutral
- *          columns, still land on both through the trigger, and the app reads what a raw write of the original put;
+ *        - the journal to 0037 (the app's switch to the neutral columns) leaves every pair equal, and the app's own
+ *          write paths (upsert_customer, reassign owner) as app_rw, which name only the neutral columns, still land
+ *          on both through the trigger, and the app reads what a raw write of the original put;
+ *        - the rest of the journal (0038 drops the originals and the triggers) leaves every owner in its neutral
+ *          column as it was in the original, and the app's paths work on the neutral columns alone;
  *        - row-level security is still FAIL-CLOSED on both tables (the policies flipped to the production shape):
  *          no workspace sees nothing, a workspace sees only its own rows, a write into another workspace is refused,
  *          an update aimed at another workspace's row touches nothing, and 0028 changed no policy or RLS flag.
- *   B. AN EMPTY DATABASE (the only place the chain runs `drizzle-kit push --force`): push from the schema drizzle-kit
- *      reads (with the original columns until 0038), the journal after the 0013 baseline (0028 and 0037 among it),
- *      the bootstrap: the triggers are there, a write under either name is read under the other, and the plan holds
- *      nothing on the two tables.
+ *   B. AN EMPTY DATABASE (the only place the chain runs `drizzle-kit push --force`): push from schema.ts (no original
+ *      columns since 0038), the journal after the 0013 baseline (0028 among it): 0028 makes the neutral index and no
+ *      trigger (there is nothing to keep equal), and the plan holds nothing on the two tables.
  *
  * Needs ADMIN_URL (a role that may CREATE DATABASE). Scratch databases carry this process's pid and are dropped in a
  * finally block.
@@ -42,7 +43,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import postgres from "postgres";
-import { ROOT, driftPlan, kit } from "./lib/drift-plan.mjs";
+import { ROOT, driftPlan, kit, stopsToAsk } from "./lib/drift-plan.mjs";
 import { LEGACY_OWNER_KEYS } from "../agent/lib/legacy-member.ts";
 /** The original owner columns, by the names they had (built from the legacy word). */
 const O = LEGACY_OWNER_KEYS.account_owner;
@@ -316,6 +317,22 @@ async function checkAppPaths(appUrl, label) {
   }
 }
 
+/** The app's paths once the originals are gone: the neutral columns only, as app_rw under the fail-closed policies. */
+async function checkAppPathsNeutral(appUrl, label) {
+  process.env.DATABASE_URL = appUrl;
+  const { closeDb } = await import(pathToFileURL(join(ROOT, "agent/lib/db/index.ts")).href);
+  const sor = await import(pathToFileURL(join(ROOT, "agent/lib/system-of-record.ts")).href);
+  try {
+    await sor.upsertCustomer({ id: "co-007", accountOwner: "after@own.test", solutions: [{ solutionId: "SOL-3", useCase: "Other", modulesEnabled: [], solutionStatus: "Live", solutionOwner: "sol-after@own.test" }] }, W1);
+    const read = await sor.getCustomer("co-007", W1);
+    check(`${label}: upsert_customer writes the owner and a solution's owner, and get_customer reads them`, read?.accountOwner === "after@own.test" && read?.solutions?.find((x) => x.solutionId === "SOL-3")?.solutionOwner === "sol-after@own.test", read && { accountOwner: read.accountOwner });
+    const moved = await sor.reassignOwner("co-007", "after2@own.test", "After Two", W1);
+    check(`${label}: reassigning reads the previous owner and writes the new one`, moved.previousOwner === "after@own.test" && (await sor.getCustomer("co-007", W1))?.accountOwner === "after2@own.test", moved);
+  } finally {
+    await closeDb?.();
+  }
+}
+
 try {
   check(`the journal carries ${TAG}`, !!entry(TAG) && existsSync(join(ROOT, `drizzle/${TAG}.sql`)), journal.entries.at(-1)?.tag);
   if (!entry(TAG)) throw new Error(`${TAG} is not in drizzle/meta/_journal.json`);
@@ -333,12 +350,9 @@ try {
     await applyRange(db, entry("0024_company_key_per_workspace").idx - 1, IDX - 1); // 0024 to 0027, as the live databases took them
     const cols0 = await columns(db);
     check("before 0028 neither neutral column exists", NEW_COLUMNS.every((c) => !cols0.some((x) => x.includes(`.${c} `))), cols0);
-    const planBefore = driftPlan(url);
-    const named = (planBefore.apply ?? []).join("\n");
     check(
-      "…and the drift plan against schema.ts names them and the new index (so an empty plan after 0028 means something)",
-      !planBefore.error && /"account_owner"/.test(named) && /"solution_owner"/.test(named) && /customers_account_owner_idx/.test(named),
-      planBefore.error ? planBefore : planBefore.apply,
+      "…and the drift dry run against schema.ts is not empty yet (it stops to ask whether the new columns are renames of the originals, which schema.ts no longer declares), so an empty plan after the journal means something",
+      stopsToAsk(url),
     );
     const f0 = await fingerprint(db);
     const sec0 = await security(db);
@@ -361,18 +375,25 @@ try {
     await applyRange(db, IDX - 1, IDX);
     check("0028 again: nothing changes", (await fingerprint(db, { withNew: true })) === f1 && JSON.stringify(await indexes(db)) === JSON.stringify(idx1));
     await checkPairs(db, "A");
-    // The app only ever runs against the WHOLE journal: its reads name every column schema.ts declares, the ones a
-    // later entry adds included (0029's customers.secondary_owner). So the rest of the journal goes on before the
-    // app's own paths run, and the pairs 0028 made must hold through it.
-    await applyRange(db, IDX, Number.MAX_SAFE_INTEGER);
+    // The journal up to 0037 (the app's switch to the neutral columns): the pairs 0028 made hold through it, and the
+    // release of that time (the app's own paths, neutral columns only) still lands on both through the trigger.
+    const SWITCH = entry("0037_owner_columns_switch").idx;
+    await applyRange(db, IDX, SWITCH);
     const afterLater = await mismatched(db);
-    check("the journal entries after 0028 leave every owner pair equal", afterLater.customers.length === 0 && afterLater.solutions.length === 0, afterLater);
-    // The deploy's drift step runs after the WHOLE journal (0037 makes the original columns' remaining changes:
-    // DROP NOT NULL, and their index), so that is where its plan is taken.
-    checkPlan(url, "after the journal");
+    check("the journal entries after 0028, to 0037, leave every owner pair equal", afterLater.customers.length === 0 && afterLater.solutions.length === 0, afterLater);
     await failClosed(db);
-    await checkRls(urlOf(name, "app_rw"), "A (fail-closed)");
-    await checkAppPaths(urlOf(name, "app_rw"), "A (app paths, fail-closed)");
+    await checkRls(urlOf(name, "app_rw"), "A at 0037 (fail-closed)");
+    await checkAppPaths(urlOf(name, "app_rw"), "A at 0037 (app paths, fail-closed)");
+    // Then the rest (0038 drops the originals): every owner 0028 paired is in the neutral column, nothing lost.
+    const pairedOwners = await db`select org_id, customer_id, ${OWN} as v from customers order by 1, 2`;
+    const pairedSols = await db`select org_id, customer_id, solution_id, ${SOL} as v from solutions order by 1, 2, 3`;
+    await applyRange(db, SWITCH, Number.MAX_SAFE_INTEGER);
+    const nowOwners = await db`select org_id, customer_id, account_owner as v from customers order by 1, 2`;
+    const nowSols = await db`select org_id, customer_id, solution_id, solution_owner as v from solutions order by 1, 2, 3`;
+    check("after the whole journal (0038 among it) every account's and solution's owner is in the neutral column, as it was in the original", JSON.stringify(nowOwners) === JSON.stringify(pairedOwners) && JSON.stringify(nowSols) === JSON.stringify(pairedSols), { owners: pairedOwners.length, sols: pairedSols.length });
+    check("…and the original columns, their index and the two triggers are gone", !(await columns(db)).some((x) => x.includes(`.${O} `) || x.includes(`.${SO} `)) && !(await indexes(db)).some((x) => x.startsWith(`customers_${O}_idx`)) && (await db`select 1 from pg_trigger where tgname in ('customers_owner_pair', 'solutions_owner_pair')`).length === 0);
+    checkPlan(url, "after the journal");
+    await checkAppPathsNeutral(urlOf(name, "app_rw"), "A after the journal (app paths, fail-closed)");
     checkPlan(url, "after the writes");
     await db.end();
   }
@@ -384,11 +405,10 @@ try {
     check("push --force from the new schema.ts builds an empty database with both owner columns", p.status === 0 && /Changes applied/.test(p.out) && (await columns(db)).some((x) => x.startsWith("customers.account_owner ")), p.out.slice(-600));
     await applyRange(db, 13, Number.MAX_SAFE_INTEGER);
     const b = bootstrap(url);
-    check("…the journal after it (0014 to 0028) and the bootstrap apply", b.status === 0, (b.stdout + b.stderr).slice(-400));
+    check("…the journal after it (0028 among it) and the bootstrap apply", b.status === 0, (b.stdout + b.stderr).slice(-400));
     const triggers = await db`select tgname from pg_trigger where not tgisinternal and tgrelid in ('public.customers'::regclass, 'public.solutions'::regclass) order by 1`;
-    check("…and the two owner triggers are there (beside the one 0029 adds for the second owner)", JSON.stringify(triggers.map((r) => r.tgname)) === JSON.stringify(["customers_owner_pair", "customers_secondary_owner_pair", "solutions_owner_pair"]), triggers);
-    await seed(db);
-    await checkPairs(db, "B", { notNull: false });
+    check("…and 0028 made no owner trigger: there is no original column to keep equal (only 0029's second-owner one is there)", JSON.stringify(triggers.map((r) => r.tgname)) === JSON.stringify(["customers_secondary_owner_pair"]), triggers);
+    check("…and the neutral index is there", (await indexes(db)).some((x) => x.startsWith("customers_account_owner_idx:")));
     checkPlan(url, "empty database, pushed", { oursOnly: true });
     await db.end();
   }

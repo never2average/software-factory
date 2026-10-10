@@ -28,7 +28,7 @@ import { join } from "node:path";
 import postgres from "postgres";
 // The owner columns of the live shape (the fixture schema), by the names they had: built from the legacy word.
 import { LEGACY_OWNER_KEYS as LK } from "../agent/lib/legacy-member.ts";
-import { ROOT, driftPlan, kit } from "./lib/drift-plan.mjs";
+import { ROOT, driftPlan, kit, stopsToAsk } from "./lib/drift-plan.mjs";
 
 const adminUrl = process.env.ADMIN_URL;
 if (!adminUrl) {
@@ -72,14 +72,20 @@ async function freshDb(label) {
 const bootstrap = (url) => spawnSync(process.execPath, [join(ROOT, "scripts/bootstrap-test-db.mjs")], { cwd: ROOT, env: { ...process.env, DATABASE_URL: url }, encoding: "utf8" });
 
 /** Two workspaces, 40 companies, rows in the four tables. */
+/** The column an account's / a solution's owner is written to on this database: the original while it exists. */
+const ownerColumns = async (db) => {
+  const has = async (t, c) => (await db`select 1 from information_schema.columns where table_schema = 'public' and table_name = ${t} and column_name = ${c}`).length > 0;
+  return { account: db((await has("customers", LK.account_owner)) ? LK.account_owner : "account_owner"), solution: db((await has("solutions", LK.solution_owner)) ? LK.solution_owner : "solution_owner") };
+};
 async function seed(db) {
+  const own = await ownerColumns(db);
   await db`insert into orgs (org_id, name, status, created_at) values (${W1}, 'One', 'active', now() - interval '1 year'), (${W2}, 'Two', 'active', now())`;
   for (let i = 0; i < 40; i++) {
     const org = i < 20 ? W1 : W2;
     const id = `co-${String(i + 1).padStart(3, "0")}`;
-    await db`insert into customers (org_id, customer_id, customer_name, tier, ${db(LK.account_owner)}) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@idx.test')`;
+    await db`insert into customers (org_id, customer_id, customer_name, tier, ${own.account}) values (${org}, ${id}, ${`Company ${id}`}, 'Growth', 'owner@idx.test')`;
     for (const d of ["prod", "uat"]) await db`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status) values (${org}, ${id}, ${`DEP-${d}`}, ${d}, 'ap-south-1', ${`v-${id}`}, 'deployed', 'healthy')`;
-    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, ${db(LK.solution_owner)}) values (${org}, ${id}, 'SOL-1', 'Research', '[]', 'live', 'owner@idx.test')`;
+    await db`insert into solutions (org_id, customer_id, solution_id, use_case, modules_enabled, solution_status, ${own.solution}) values (${org}, ${id}, 'SOL-1', 'Research', '[]', 'live', 'owner@idx.test')`;
     for (const n of [1, 2]) {
       await db`insert into tickets (org_id, customer_id, ticket_id, summary, ticket_type, ticket_category, ticket_status, ticket_priority, ticket_opened_date, ticket_owner_email, source_channel, last_activity_date, ticket_next_step) values (${org}, ${id}, ${`TCK-${n}`}, ${`t${n}`}, 'Question', 'Feature Request', 'Open', 'P2-Medium', '2026-09-01', 'owner@idx.test', 'Email', '2026-09-01', 'look')`;
       await db`insert into interactions (org_id, customer_id, interaction_id, interaction_at, interaction_type, source_system, note) values (${org}, ${id}, ${`INT-${n}`}, '2026-09-01', 'note', 'manual', ${`i${n}`})`;
@@ -87,10 +93,15 @@ async function seed(db) {
   }
 }
 /** Rows hashed by value, without the columns a later journal entry adds (0028's and 0029's neutral owner columns: new, not changed). */
-const LATER_COLUMNS = "- 'account_owner' - 'solution_owner' - 'secondary_owner'";
+const LATER_COLUMNS = "- 'secondary_owner'";
+/**
+ * The owner as ONE value, whichever column holds it: the original before 0028, both 0028 to 0037, the neutral one
+ * after 0038 (later entries ride along). Moving it is not a change; losing or altering it is.
+ */
+const ROW = `((to_jsonb(x) || jsonb_build_object('~owner', coalesce(to_jsonb(x)->>'account_owner', to_jsonb(x)->>'${LK.account_owner}', to_jsonb(x)->>'solution_owner', to_jsonb(x)->>'${LK.solution_owner}'))) - 'account_owner' - 'solution_owner' - '${LK.account_owner}' - '${LK.solution_owner}' ${LATER_COLUMNS})`;
 const fingerprint = async (db) => {
   const out = {};
-  for (const t of ["customers", ...TABLES]) out[t] = (await db.unsafe(`select count(*)::int as n, md5(coalesce(string_agg((to_jsonb(x) ${LATER_COLUMNS})::text, '|' order by (to_jsonb(x) ${LATER_COLUMNS})::text), '')) as h from ${t} x`))[0];
+  for (const t of ["customers", ...TABLES]) out[t] = (await db.unsafe(`select count(*)::int as n, md5(coalesce(string_agg(${ROW}::text, '|' order by ${ROW}::text), '')) as h from ${t} x`))[0];
   return JSON.stringify(out);
 };
 const indexes = async (db) => (await db`select indexname, indexdef from pg_indexes where schemaname = 'public' and tablename = any(${TABLES}) order by indexname`).map((r) => `${r.indexname}: ${r.indexdef}`);
@@ -125,8 +136,8 @@ try {
     const planBefore = driftPlan(url);
     const refusedBefore = planBefore.refused ?? [];
     check(
-      "…and the drift plan against schema.ts REFUSES their drop (without 0025 the deploy stops here)",
-      !planBefore.error && DROPPED.every((n) => refusedBefore.some((x) => x.includes(`"${n}"`))),
+      "…and the drift plan against schema.ts REFUSES their drop, or cannot plan at all (it stops to ask about the original owner columns 0038 drops): without the journal the deploy stops here",
+      (!planBefore.error && DROPPED.every((n) => refusedBefore.some((x) => x.includes(`"${n}"`)))) || stopsToAsk(url),
       planBefore.error ? planBefore : refusedBefore,
     );
     const f0 = await fingerprint(db);

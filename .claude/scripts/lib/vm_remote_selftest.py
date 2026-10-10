@@ -413,16 +413,16 @@ esac
           r.returncode == 0 and len(calls) == 1 and "--template-timeout 300" in calls[0] and "--retries 2" in calls[0] and marked, (r.returncode, calls, r.stderr[-300:]))
     r, calls, marked = go(["hang", "ok"])
     check("  ...one that ends on a hung template VM (the 2026-10-09/10 root hang) is run again with a fresh VM, and passes",
-          r.returncode == 0 and len(calls) == 2 and marked and "run 2 of 3 boots a fresh one" in r.stderr and "TIMED OUT" in r.stdout, (r.returncode, calls, r.stderr[-300:]))
+          r.returncode == 0 and len(calls) == 2 and marked and f"run 2 of {V.PREWARM_RUNS} boots a fresh one" in r.stderr and "TIMED OUT" in r.stdout, (r.returncode, calls, r.stderr[-300:]))
     r, calls, marked = go(["hang", "hang", "hang", "ok"])
-    check("  ...a VM that hangs on every run stops after 3 runs, failing, unmarked, and says so",
-          r.returncode == 1 and len(calls) == 3 and not marked and "hung on each of 3 runs" in r.stderr, (r.returncode, calls, r.stderr[-300:]))
+    check(f"  ...a VM that hangs on every run stops after {V.PREWARM_RUNS} runs, failing, unmarked, and says so",
+          r.returncode == 1 and len(calls) == V.PREWARM_RUNS and not marked and f"hung on each of {V.PREWARM_RUNS} runs" in r.stderr, (r.returncode, calls, r.stderr[-300:]))
     order = open(os.path.join(d, "order")).read().split("\n")[:-1]
     r, calls, marked = go(["fail", "ok"])
     check("  ...an ordinary failure (no timeout) is NOT run again: it fails at once with the mold's own exit and words",
           r.returncode == 1 and len(calls) == 1 and not marked and "would be refused" in r.stdout + r.stderr, (r.returncode, calls, r.stderr[-300:]))
     check("prestart: before EVERY run of a new release's prewarm, the first and each rerun, it waits for room on the host's vCPUs (mold_v1-224)",
-          order == [f"room prewarm-room --cpus 2 --wait {V.PREWARM_ROOM_WAIT_S}", "npm"] * 3, order)
+          order == [f"room prewarm-room --cpus 2 --wait {V.PREWARM_ROOM_WAIT_S}", "npm"] * V.PREWARM_RUNS, order)
     check("  ...only for a release named on its command line (the API's own start has no chats to wait for), and the wait never fails the prewarm",
           'if [ -n "${1:-}" ]; then python3 ' + _settings()["tool"] + ' prewarm-room --cpus "${SANDBOX_CPUS:-2}" --wait ' + str(V.PREWARM_ROOM_WAIT_S) + ' || true; fi' in pre
           and pre.index("prewarm-room") > pre.index("--locks-only") and pre.index("prewarm-room") > pre.index("while :; do"), pre)

@@ -192,6 +192,7 @@
     "test:owner-columns-migration-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-owner-columns-migration-db.mjs",
     "test:secondary-owner-migration-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-secondary-owner-migration-db.mjs",
     "test:owner-columns-switch-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-owner-columns-switch-db.mjs",
+    "test:owner-columns-contract-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-owner-columns-contract-db.mjs",
     "test:mcp-endpoint": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-mcp-endpoint.mjs",
     "check:vocabulary": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check-ui-vocabulary.mjs --static",
     "test:sample-data": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-sample-data.mjs",
@@ -232,7 +233,8 @@
     "test:model-output-budget": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-model-output-budget.mjs",
     "test:vision": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-vision-tool.mjs",
     "check:eve-patch": "node scripts/check-eve-patch.mjs --self-test && node scripts/check-eve-patch.mjs",
-    "test:eve-patch-install": "node scripts/test-eve-patch-install.mjs"
+    "test:eve-patch-install": "node scripts/test-eve-patch-install.mjs",
+    "check:nightly": "node scripts/nightly-repeat.mjs --self-test && node scripts/nightly-report.mjs --self-test && node scripts/lib/test-seed.mjs --self-test"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.5",

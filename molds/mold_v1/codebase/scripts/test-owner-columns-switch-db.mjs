@@ -31,10 +31,10 @@
  *          naming both) still succeed after 0037, and its reader (coalesce(neutral, original)) reads the same owner
  *          the new release reads; the new release's writes (neutral only, through the app's own paths, as app_rw)
  *          reach the original column through the trigger, so the previous release reads them too;
- *        - 0037 again changes nothing; the deploy's drift dry run after the journal plans nothing on these tables
- *          and nothing it would refuse.
- *   B. AN EMPTY DATABASE: push --force from the schema drizzle-kit reads, the journal after the 0013 baseline, the
- *      bootstrap: 0037 applies, and the plan is empty.
+ *        - 0037 again changes nothing; the deploy's drift dry run after the whole journal (0038 among it) plans
+ *          nothing on these tables and nothing it would refuse.
+ *   B. AN EMPTY DATABASE: push --force from schema.ts (no original columns since 0038), the journal after the 0013
+ *      baseline, the bootstrap: 0037 applies, and the plan is empty.
  *   C. A DATABASE WITH NO ORIGINAL COLUMNS (pushed from agent/lib/db/schema.ts alone, as after 0038): 0028 and 0037
  *      apply without error and change nothing.
  *
@@ -372,13 +372,12 @@ try {
     const snapshot = JSON.stringify({ c: await rowsOf(db, "customers"), s: await rowsOf(db, "solutions"), t: await rowsOf(db, "tickets"), m: await rowsOf(db, "memories"), cols: await columns(db), idx: await indexes(db) });
     await applyRange(db, IDX - 1, IDX);
     check("0037 again: nothing changes (rows, columns, indexes)", JSON.stringify({ c: await rowsOf(db, "customers"), s: await rowsOf(db, "solutions"), t: await rowsOf(db, "tickets"), m: await rowsOf(db, "memories"), cols: await columns(db), idx: await indexes(db) }) === snapshot);
-    await applyRange(db, IDX, Number.MAX_SAFE_INTEGER);
-    checkPlan(url, "after the journal");
-
     await failClosed(db);
     await checkRls(db, urlOf(name, "app_rw"), "A (fail-closed)");
     await checkNewRelease(db, urlOf(name, "app_rw"), "A (the new release, fail-closed)");
-    checkPlan(url, "after the writes");
+    // The rest of the journal (0038, the contract: scripts/test-owner-columns-contract-db.mjs) and the deploy's drift step.
+    await applyRange(db, IDX, Number.MAX_SAFE_INTEGER);
+    checkPlan(url, "after the journal");
     await db.end();
   }
 
@@ -386,7 +385,7 @@ try {
   {
     const { db, url } = await freshDb("b");
     const p = kit(["push", "--force", "--verbose"], url);
-    check("push --force builds an empty database with the neutral columns and the original ones (until 0038)", p.status === 0 && (await columns(db)).some((x) => x.startsWith("customers.account_owner ")) && (await columns(db)).includes(`solutions.${SO} text YES`), p.out.slice(-600));
+    check("push --force builds an empty database with the neutral columns and no original one", p.status === 0 && (await columns(db)).some((x) => x.startsWith("customers.account_owner ")) && !(await columns(db)).some((x) => x.includes(`.${O} `) || x.includes(`.${SO} `)), p.out.slice(-600));
     await applyRange(db, 13, Number.MAX_SAFE_INTEGER);
     const b = bootstrap(url);
     check("…the journal after it (0037 among it) and the bootstrap apply", b.status === 0, (b.stdout + b.stderr).slice(-400));
@@ -394,7 +393,7 @@ try {
     await db.end();
   }
 
-  console.log("\nC. A database with no original columns (pushed from agent/lib/db/schema.ts alone, as after 0038)");
+  console.log("\nC. A database with no original columns (pushed from agent/lib/db/schema.ts, explicitly)");
   {
     const { db, url } = await freshDb("c");
     const p = kit(["push", "--force", "--dialect=postgresql", "--schema=agent/lib/db/schema.ts", `--url=${url}`], url);

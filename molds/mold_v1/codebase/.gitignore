@@ -49,3 +49,7 @@ public/pdfjs/
 # A deployment's own names (Makefile): its Vercel team/projects and the dashboard's link. Never committed.
 deploy.local.mk
 scripts/vercel-projects/*.local.json
+
+# The nightly repeats and report write here (.github/workflows/nightly.yml); a local run does too.
+nightly-results/
+nightly-out/

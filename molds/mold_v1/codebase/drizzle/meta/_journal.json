@@ -267,6 +267,13 @@
       "when": 1792500000000,
       "tag": "0037_owner_columns_switch",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792600000000,
+      "tag": "0038_owner_columns_contract",
+      "breakpoints": true
     }
   ]
 }
