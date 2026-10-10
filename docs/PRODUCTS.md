@@ -70,13 +70,15 @@ per workspace: `docs/COST_MODEL.md` (Cloudflare path only; the gateway path is n
 |---|---|---|---|---|
 | `delivered` | mold_v1 | released | redacted, redacted, sf_gateway_probe | vercel |
 | `dover` | mold_v1 | released | none | vercel |
-| `redacted_research` | mold_v1 | stamped (gate tasks mold_v1-200..213) | redacted (Vercel), redacted (own server) | vercel, vm_remote |
+| `redacted_research` | mold_v1 | deployed (released gates mold_v1-210..213) | redacted (Vercel), redacted (own server) | vercel, vm_remote |
 | `redacted_governed` | mold_v2 | defined | none | vercel, vm |
 | `redacted_research` | mold_v3 | defined | none | vercel, vm |
 
 `redacted_research` runs on Cloudflare Workers AI with a model per role: GLM 5.3 for both roles on
 `redacted`; Kimi K2.6 orchestrating and GLM 5.3 as specialist on `redacted`. Its pricing and
-packaging are not decided yet (a `released` gate); what it costs to run is in `docs/COST_MODEL.md` §2b and §7.
+packaging are not decided yet (a `released` gate, mold_v1-211; the options and a recommendation are in
+`docs/customer-notes/pricing-options.md`); what it costs to run, per turn, per specialist run, per person and per
+workspace, is in `docs/COST_MODEL.md` §2b, §2c and §7.
 
 ## What a product is not
 
