@@ -11,6 +11,7 @@
   provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
   provision.py <app_id> [--set-remote host=.. domain=..] [--remote-key] [--qualify-remote]
                         [--deploy-remote [--dry-run [--out DIR]]]      target=vm_remote only; see below
+                        [--rollback-remote [--dry-run]]                 back to the release that served before (mold_v1-222)
                         [--prune-sandboxes [--apply]] [--tunnel-remote [--dry-run] [--factory-apply] [--off]] [--tunnel-factory [--apply]]
                         [--workspace-remote [seed.json] [--new-workspace] [--dry-run]]
                         [--sandbox-load [--turns 3] [--per-turn 3] [--steps 2] [--specialists a,b] [--token-file F] [--dry-run]]
@@ -3409,9 +3410,9 @@ def _main(a):
             next=f"Run the five testing lanes: python3 .claude/scripts/lanes.py {app_id} --background --json")
     repo_auto(app_id, adir, "a deploy")
 # ---- the agent interface: --json, --background, status, the deploy lock (lib/agent_result.py, lib/runs.py) ----------
-DEPLOY_FLAGS = ("--deploy", "--deploy-remote", "--rollback")   # each under the app's deploy lock
+DEPLOY_FLAGS = ("--deploy", "--deploy-remote", "--rollback", "--rollback-remote")   # each under the app's deploy lock
 def _action(a):
-    for f, act in (("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback", "rollback"),
+    for f, act in (("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
                    ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke")):
         if f in a: return act + ("-dry-run" if "--dry-run" in a else "")
     return "status" if a[1:2] == ["status"] else "check"
