@@ -83,7 +83,9 @@ WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step i
                   old release serves throughout: the mold's migrations are additive first, so it runs against them
   12 prewarm      the new release's sandbox templates built and checked as the API's user while the old release
                   serves, within PREWARM_DEADLINE_S (eve keys a template by the release's real path, so a release is
-                  prewarmed where it runs). A template that hangs stops the deploy HERE, with the site untouched
+                  prewarmed where it runs). A template that hangs stops the deploy HERE, with the site untouched.
+                  Each run first waits (PREWARM_ROOM_WAIT_S at most) for the chats' running sandboxes to leave room on
+                  the host's vCPUs for a template VM, and runs at a low CPU weight (mold_v1-224)
   13 switch       units installed, `current` pointed at the new release (one rename), workflow, api and web restarted
                   (the API's prestart only clears stale locks: its templates were checked minutes ago, this boot), and
                   the three loopback health endpoints waited for. If a restart or a health answer misses its deadline
@@ -96,7 +98,8 @@ WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step i
                   service's code, this server's own SSH port), then the same read of /api/ops/health the Vercel path gates on.
                   A release that does not serve (a dead endpoint, a 5xx from outside) is switched back here too
   16 keep         every release but the serving and the previous one removed, with the sandbox template snapshots
-                  only they used; --rollback-remote goes back to the previous one by hand
+                  only they used, and every template snapshot neither kept release's sandbox plan uses (mold_v1-224);
+                  --rollback-remote goes back to the previous one by hand
 
 Every step is safe to run again. No step before the switch stops or changes anything the serving release uses, and
 the switch either ends on a release that answered its health checks or switches back to the one that was serving.
@@ -198,7 +201,7 @@ SOURCE_EXCLUDES = ("node_modules", ".next", ".output", ".eve", ".vercel", ".git"
 RELEASE_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 LEGACY_RELEASE = "app"         # the single directory a server deployed before releases runs from, adopted as a release
 RELEASE_SPACE_EXTRA_GB = 3     # free space beyond a copy of the serving release: its new sandbox templates (6 x ~230 MB) and build scratch
-PREWARM_DEADLINE_S = 3600      # the new release's whole prewarm, while the old one serves (the mold stops a template at 600 s)
+PREWARM_DEADLINE_S = 3600      # the new release's whole prewarm, while the old one serves (PREWARM_RUNS runs, PREWARM_TEMPLATE_S per template)
 SWITCH_START_S = {"workflow": 120, "api": 300, "web": 120}   # one restart each; the API's prestart is the light one when prewarmed
 SWITCH_HEALTH_S = 180          # after the restarts, how long the three loopback health endpoints have to answer
 SWITCH_STEP_S = 3
@@ -766,7 +769,7 @@ Environment=NITRO_PORT={PORTS['api']}
 ExecStartPre=/bin/bash {S['factory_dir']}/api-prestart.sh
 # The built server directly: `eve start` holds 2.3 GB for the life of the service.
 ExecStart=/usr/bin/node .output/server/index.mjs
-TimeoutStartSec=1800
+TimeoutStartSec={API_START_S}
 
 [Install]
 WantedBy=multi-user.target
@@ -1384,14 +1387,65 @@ fi
 #   - resolves STORAGE_PUBLIC_URL and refuses if the sandbox deny list holds any address it leads to, so the API never
 #     starts with a data room its sandboxes cannot fetch;
 #   - builds the templates one at a time, each tried @TRIES@ times; exit 1 if any is missing at the end.
-/usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries @RETRIES@
+# A template that takes longer than --template-timeout has its VM killed and ENDS the mold's run, untried again. Every
+# such hang on the first server was a fresh microVM whose guest wedged seconds after boot, before the bootstrap's
+# command ran (guest kernel "BUG: scheduling while atomic", then an oops in virtio-net; mold_v1-190), and the next VM
+# built the same template in under a minute. So a run that ended on a timeout is run again, up to @RUNS@ runs in all:
+# the hung VM is dead, its lock is stale once that run has exited, and every template already built is reused. Before
+# releases, the API unit's own Restart= did this by luck; the release's prewarm is a transient unit with no restart
+# (mold_v1-225). Any other failure stops at once.
+#
+# A NEW release (its directory on the command line) is prewarmed while the old one serves, so a template VM (SANDBOX_CPUS
+# vCPUs) would boot beside the chats' own sandboxes, which the API's guard already lets fill the host's vCPUs; past them
+# a guest can wedge (mold_v1-190). So before EACH run, the first and every rerun, wait (at most @WAIT_S@s) until the
+# running sandbox VMs leave room for one more on this host's vCPUs (mold_v1-224). If the chats keep the host full for
+# that long the run starts anyway: release.sh runs this at a low CPU weight, so a busy chat's VM keeps the CPUs it needs
+# and only the template build slows down. The API's own start (no argument) has no chats to wait for.
+set -o pipefail
+run=1
+while :; do
+  if [ -n "${1:-}" ]; then python3 @TOOL@ prewarm-room --cpus "${SANDBOX_CPUS:-2}" --wait @WAIT_S@ || true; fi
+  out="$(mktemp)"
+  rc=0
+  /usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries @RETRIES@ --template-timeout @TEMPLATE_S@ 2>&1 | tee "$out" || rc=$?
+  hung=0
+  if grep -q " TIMED OUT " "$out"; then hung=1; fi
+  rm -f "$out"
+  [ "$rc" = 0 ] && break
+  if [ "$hung" = 1 ] && [ "$run" -lt @RUNS@ ]; then
+    run=$((run + 1))
+    echo "prewarm: a sandbox VM hung (TIMED OUT above) and was killed; run $run of @RUNS@ boots a fresh one (built templates are reused)" >&2
+    continue
+  fi
+  [ "$hung" = 1 ] && echo "prewarm: a sandbox VM hung on each of @RUNS@ runs; this is no longer a one-off guest fault (see mold_v1-190)" >&2
+  exit "$rc"
+done
 # Remembered until the next reboot (/run is cleared then, and the first start after it does the whole prewarm again).
 touch "$mark" 2>/dev/null || true
-""", HEAD=fill(HEAD, APP=S["app_id"]), CUR=S["app_dir"], LEGACY=S["legacy_app"], MARKS=S["marks"], TRIES=PREWARM_RETRIES + 1, RETRIES=PREWARM_RETRIES)
+""", HEAD=fill(HEAD, APP=S["app_id"]), CUR=S["app_dir"], LEGACY=S["legacy_app"], MARKS=S["marks"], TRIES=PREWARM_RETRIES + 1, RETRIES=PREWARM_RETRIES,
+        TEMPLATE_S=PREWARM_TEMPLATE_S, RUNS=PREWARM_RUNS, TOOL=S["tool"], WAIT_S=PREWARM_ROOM_WAIT_S)
 
 # Extra tries per template (the mold allows 0-5). One microVM boot in about fourteen timed out on nested KVM in the
 # spike (reports/vm-spike-mold_v1-072.md), so three tries in all, as the factory's own prewarm used to do.
 PREWARM_RETRIES = 2
+# One template's whole build (boot, bootstrap, seed files, snapshot), per attempt. Measured on the first server
+# (4 vCPUs, nested KVM): 19-67 s each on 2026-10-10, the root's 47 s on 2026-10-09. The mold's default of 600 s held a
+# wedged VM for ten minutes; five times the slowest is long enough for a slow package index and short enough to retry.
+PREWARM_TEMPLATE_S = 300
+# Whole prewarm runs when one ends on a timeout (a hung VM). The image pull and builds of the first run count too.
+PREWARM_RUNS = 3
+# A new release's prewarm waits this long, before each run, for room on the host's vCPUs for one template VM beside the
+# chats' running sandboxes (mold_v1-224), then builds anyway at PREWARM_CPU_WEIGHT.
+PREWARM_ROOM_WAIT_S = 300
+PREWARM_ROOM_POLL_S = 5
+# The prewarm unit's CPU weight (systemd's default, which the API's chat VMs run at, is 100): when the host's CPUs are
+# all wanted, the chats' VMs get about nine tenths of them and the template build waits, rather than the other way round.
+PREWARM_CPU_WEIGHT = 10
+# The API unit's TimeoutStartSec, which its own prestart (the first start after a reboot, or a release not prewarmed)
+# must fit in: every run hanging once plus every template built once plus each run's start-up (about 45 s).
+API_START_S = 1800
+assert PREWARM_RUNS * (PREWARM_TEMPLATE_S + 60) + 6 * 90 <= API_START_S, "the API prestart's worst case must fit TimeoutStartSec"
+assert PREWARM_RUNS * (PREWARM_ROOM_WAIT_S + PREWARM_TEMPLATE_S + 60) + 6 * 90 <= PREWARM_DEADLINE_S, "a release prewarm's worst case, waits included, must fit its deadline"
 
 def release_sh(S, crons, root="", tool=None, timing=None, extra_gb=RELEASE_SPACE_EXTRA_GB):
     """release.sh: the releases of this app on its server (mold_v1-222). `root` prefixes every path it touches and
@@ -1462,6 +1516,17 @@ relink() {
       done
     done
   done
+}
+# plan_of <release> <file>: the release's sandbox plan as JSON in <file>, or no file. Only a mold whose prewarm knows
+# --plan is asked (an older one would take the flag for a full prewarm).
+plan_of() {
+  local d; d="$(dir_of "$1")"; rm -f "$2"
+  grep -qF 'has("--plan")' "$d/scripts/sandbox-prewarm-serial.mjs" 2>/dev/null || { echo "keep: release $1 cannot list its sandbox templates (its prewarm has no --plan)" >&2; return 0; }
+  if systemd-run --quiet --wait --pipe --collect --unit "@UNIT@-plan" -p User=@API@ -p Group=@API@ \
+      -p EnvironmentFile=@APIENV@ -p Environment=HOME=@APIHOME@ -p Environment=NODE_ENV=production -p "WorkingDirectory=$d" \
+      -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes -p RuntimeMaxSec=300 \
+      -- /usr/bin/node scripts/sandbox-prewarm-serial.mjs --plan > "$2.part" 2>/dev/null; then mv -f "$2.part" "$2"
+  else rm -f "$2.part"; echo "keep: release $1 could not list its sandbox templates" >&2; fi
 }
 rt_version() { sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$1/node_modules/microsandbox/package.json" 2>/dev/null | head -n 1; }
 install_units() {
@@ -1548,7 +1613,7 @@ case "$cmd" in
     rc=0
     systemd-run --quiet --wait --collect --unit "@UNIT@-prewarm" -p User=@API@ -p Group=@API@ -p SupplementaryGroups=kvm \
       -p EnvironmentFile=@APIENV@ -p Environment=HOME=@APIHOME@ -p Environment=NODE_ENV=production \
-      -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes -p RuntimeMaxSec=@PREWARM_S@ \
+      -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes -p RuntimeMaxSec=@PREWARM_S@ -p CPUWeight=@WEIGHT@ \
       -p "StandardOutput=append:$log" -p "StandardError=append:$log" -- /bin/bash "$F/api-prestart.sh" "$new" || rc=$?
     tail -n 30 "$log" 2>/dev/null || true
     if [ "$rc" != 0 ]; then
@@ -1614,7 +1679,14 @@ case "$cmd" in
     echo "ROLLBACK_FAILED=$cur"; exit 11
     ;;
   keep)
-    python3 "$TOOL" release-prune --install "$I" --home @APIHOME@
+    # The template keys each kept release's built agent uses, from the mold's own `sandbox:prewarm --plan` (it starts
+    # nothing), run as the API's user with its settings. With them the tool also removes the template snapshots NO kept
+    # release uses, such as those of builds before releases (mold_v1-224); a release whose plan cannot be read keeps
+    # every snapshot (the tool removes none of those then).
+    install -d -m 755 @RUNDIR@
+    plans="@RUNDIR@/template-plans"; install -d -m 700 "$plans"
+    for n in "$(name_of "$CUR")" "$(name_of "$PREV")"; do [ -n "$n" ] && plan_of "$n" "$plans/plan-$n.json"; done
+    python3 "$TOOL" release-prune --install "$I" --home @APIHOME@ --plans "$plans"
     ;;
   status)
     python3 "$TOOL" release-status --install "$I"
@@ -1627,7 +1699,7 @@ esac
         PRUNE=f"{S['unit']}-sandbox-prune.timer", UNIT=S["unit"], VIEW=view, SYSTEMD=P("/etc/systemd/system"),
         STORE=P(SERVICE_HOME + "/.microsandbox"), API=SERVICE_USERS["api"], APIHOME=P(SERVICE_HOME), APIENV=S["env_files"]["api"],
         BUILD=BUILD_USER, GROUP=CODE_GROUP, DATA=P(S["data"]), MARKS=P(S["marks"]), RUNDIR=P(os.path.dirname(S["marks"])),
-        LOGDIR=P(S["release_log"]), EXTRA_GB=extra_gb, PREWARM_S=t["prewarm"], HEALTH_S=t["health"], STEP_S=t["step"],
+        LOGDIR=P(S["release_log"]), EXTRA_GB=extra_gb, PREWARM_S=t["prewarm"], WEIGHT=PREWARM_CPU_WEIGHT, HEALTH_S=t["health"], STEP_S=t["step"],
         T_WF=t["start"]["workflow"], T_API=t["start"]["api"], T_WEB=t["start"]["web"], PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"])
 
 def caddy_sh(S):
@@ -2119,7 +2191,7 @@ def plan(S, source_dir, bundle_dir="<bundle>", shown=True, release=None):
       {"id": "health", "title": "Health on the server: three endpoints, /dev/kvm, the API's user and groups, listeners, timers", "argv": ssh(f"{S['sudo']}bash {F}/health.sh"), "script": "health.sh", "timeout": 180},
       {"id": "health-public", "title": f"Health from outside: {S['url']}/api/ops/health and {S['url']}/eve/v1/health (the same read the Vercel path gates on)", "local": "health-public", "timeout": 120},
       {"id": "rollback", "when": "the new release does not answer its health check", "title": "Switch back to the release that was serving and restart it (the same as provision.py --rollback-remote)", "argv": ssh(guarded(S, f"bash {F}/release.sh detach rollback")), "timeout": 2400},
-      {"id": "keep", "title": "Keep the serving and the previous release; remove older ones and the sandbox template snapshots only they used", "argv": ssh(guarded(S, f"bash {F}/release.sh keep")), "timeout": 1800},
+      {"id": "keep", "title": "Keep the serving and the previous release; remove older ones and every sandbox template snapshot neither kept release uses", "argv": ssh(guarded(S, f"bash {F}/release.sh keep")), "timeout": 1800},
     ]
 
 def mold_gaps(source_dir):
@@ -2562,44 +2634,124 @@ def template_snapshots(release_dir):
         if isinstance(name, str) and name.startswith(SBX_TEMPLATE) and not name.startswith(SBX_TEMPLATE_TMP): out.add(name)
     return out
 
-def release_prune(install, home=SERVICE_HOME, msb=None, say=print, rmtree=shutil.rmtree):
+TEMPLATE_SNAPSHOT_RE = re.compile(r"^eve-sbx-tpl-[0-9a-f]{32}$")    # eve's createProviderName("eve-sbx-tpl", key, optionsHash)
+
+def plan_template_keys(path):
+    """The template keys a release's built agent uses: the `nodes[].templateKey` of the mold's `sandbox:prewarm --plan`
+    (saved by release.sh keep). None when the file is missing or not such a plan, so the caller removes nothing."""
+    try: doc = json.load(open(path))
+    except (OSError, ValueError): return None
+    nodes = doc.get("nodes") if isinstance(doc, dict) else None
+    if not isinstance(nodes, list) or not nodes: return None
+    keys = set()
+    for n in nodes:
+        if not isinstance(n, dict): return None
+        k = n.get("templateKey")
+        if k is None: continue                       # a node whose sandbox has no template
+        if not isinstance(k, str) or not k.startswith(SBX_TEMPLATE) or "/" in k or k in (".", ".."): return None
+        keys.add(k)
+    return keys
+
+def templates_in_use(release_dir, keys):
+    """The snapshot each of `keys` names in the release's own template cache (eve reads exactly this to start a chat's
+    sandbox). None if one of them has no readable record: then which snapshot it needs is not known."""
+    d = os.path.join(release_dir, ".eve", "sandbox-cache", "microsandbox", "templates"); out = set()
+    for k in keys:
+        try: name = json.load(open(os.path.join(d, k, "metadata.json"))).get("snapshotName")
+        except (OSError, ValueError, AttributeError): return None
+        if not (isinstance(name, str) and TEMPLATE_SNAPSHOT_RE.match(name)): return None
+        out.add(name)
+    return out
+
+def unused_templates(install, keep, plans, home, msb, say=print, procs=None, now=None, dry_run=False, recent_s=TEMPLATE_TMP_HOURS * 3600):
+    """Remove the template snapshots in <home>/.microsandbox/snapshots that NO kept release uses (mold_v1-224): eve
+    never removes a template, and builds before releases left one per template per build in the one store. A kept
+    release's templates are the ones its plan names (`plans`/plan-<release>.json) and its own cache maps to a snapshot.
+    Removes nothing at all when: a kept release's plan or a template record is unreadable, no template is in use (a
+    plan that names none is not believed), or a prewarm is running. Never a snapshot newer than `recent_s`, one whose
+    name is not a template's, a link, or anything not directly in the store's snapshots directory; each goes through
+    `msb snapshot remove`. Returns (removed, failed, bytes freed)."""
+    now = time.time() if now is None else now
+    used = set()
+    for n in sorted(keep):
+        keys = plan_template_keys(os.path.join(plans, f"plan-{n}.json"))
+        names = templates_in_use(_release_dir(install, n), keys) if keys is not None else None
+        if names is None:
+            say(f"release: which sandbox templates release {n} uses is not known, so no other template snapshot was removed"); return 0, 0, 0
+        used |= names
+    if not used: say("release: the kept releases name no sandbox template, which is not believed; no template snapshot was removed"); return 0, 0, 0
+    if any(("sandbox-prewarm" in c or "sandbox:prewarm" in c) and "--plan" not in c for c in (procs or _proc_cmdlines)()):
+        say("release: a sandbox prewarm is running, so no template snapshot was removed"); return 0, 0, 0
+    sdir = os.path.join(home, ".microsandbox", "snapshots")
+    if not os.path.isdir(sdir) or os.path.islink(sdir): return 0, 0, 0
+    real = os.path.realpath(sdir); todo, recent = [], 0
+    for name in sorted(os.listdir(sdir)):
+        if not TEMPLATE_SNAPSHOT_RE.match(name) or name in used: continue
+        p = os.path.join(sdir, name)
+        if os.path.islink(p) or not os.path.isdir(p) or os.path.dirname(os.path.realpath(p)) != real:
+            say(f"release: LEFT {p}: it is not a snapshot directory in the store"); continue
+        size, mtime = _tree(p)
+        if mtime is None or now - mtime < recent_s: recent += 1; continue
+        todo.append((name, p, size, mtime))
+    removed = failed = freed = 0
+    for name, p, size, mtime in todo:
+        line = f"{name} ({size / 1048576:.0f} MB, made {datetime.datetime.fromtimestamp(mtime, datetime.timezone.utc):%Y-%m-%d %H:%M} UTC)"
+        if dry_run: say(f"release: would remove template snapshot {line}: no kept release uses it"); freed += size; continue
+        try: r = msb(["snapshot", "remove", name]); ok = r.returncode == 0 and not os.path.exists(p)
+        except (OSError, subprocess.SubprocessError): ok = False
+        if ok: removed += 1; freed += size; say(f"release: removed template snapshot {line}: no kept release used it")
+        else: failed += 1; say(f"release: template snapshot {name} was left (msb did not remove it)")
+    say(f"release: {len(used)} template snapshot(s) in use by {', '.join(sorted(keep))}; " + (f"{len(todo)} unused would be removed, {freed / 1048576:.0f} MB" if dry_run else
+        f"{removed} of {len(todo)} unused removed, {freed / 1048576:.0f} MB freed") + (f"; {recent} newer than {recent_s // 3600}h kept" if recent else ""))
+    return removed, failed, freed
+
+def release_prune(install, home=SERVICE_HOME, msb=None, say=print, rmtree=shutil.rmtree, plans=None, procs=None, now=None, dry_run=False):
     """Remove every release but `current` and `previous`, and then the template snapshots that only the removed ones
     used (eve never removes a template, and each release has its own: eve keys them by the release's real path). The old
     single directory, once removed, becomes a symlink to `current`, so anything still naming <install>/app finds the
-    serving code. Never touches anything without a pointer to keep: with no `current`, nothing is removed. Returns 0/1."""
+    serving code. With `plans` (the directory release.sh keep saved each kept release's sandbox plan in) it also removes
+    the template snapshots no kept release uses (unused_templates). Never touches anything without a pointer to keep:
+    with no `current`, nothing is removed. `dry_run` removes nothing and says what would go. Returns 0/1."""
     st = release_status(install); keep = {st["current"], st["previous"]} - {""}
     if not st["current"]: say("release: no release is current yet, so none was removed"); return 0
     drop = [n for n in st["releases"] if n not in keep]
-    if not drop: say(f"release: kept {', '.join(sorted(keep))}; nothing older to remove"); return 0
-    kept_snaps = set().union(*(template_snapshots(_release_dir(install, n)) for n in keep))
-    gone_snaps, failed = set(), 0
-    root_real = os.path.realpath(install)
-    for n in drop:
-        d = _release_dir(install, n); real = os.path.realpath(d)
-        ok_place = (os.path.dirname(real) == os.path.join(root_real, "releases") and RELEASE_RE.match(os.path.basename(real))) or real == os.path.join(root_real, LEGACY_RELEASE)
-        if os.path.islink(d) or not ok_place:
-            say(f"release: LEFT {d}: it is not where a release lives"); failed += 1; continue
-        snaps = template_snapshots(d)
-        rmtree(d)
-        if os.path.exists(d): say(f"release: LEFT {d}: it could not be removed"); failed += 1; continue
-        gone_snaps |= snaps
-        if n == LEGACY_RELEASE:
-            os.symlink("current", d)
-            say(f"release: removed the old single directory {d}; it is now a link to current")
-        else: say(f"release: removed {d}")
     binary = os.path.join(home, ".microsandbox", "bin", "msb")
     msb = msb or (lambda args: subprocess.run(["runuser", "-u", SERVICE_USER, "--", "env", f"HOME={home}", binary, *args],
                                               capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL))
-    unused = sorted(gone_snaps - kept_snaps)
-    if unused and not os.path.exists(binary): say(f"release: {len(unused)} template snapshot(s) of the removed releases were left: {binary} is not there to remove them")
-    elif unused:
-        removed = 0
-        for name in unused:
-            try: r = msb(["snapshot", "remove", name]); ok = r.returncode == 0
-            except (OSError, subprocess.SubprocessError): ok = False
-            removed += ok
-            if not ok: say(f"release: template snapshot {name} was left (msb refused it; a sandbox started from it may still exist)")
-        say(f"release: {removed} of {len(unused)} template snapshot(s) only the removed releases used were removed")
+    failed = 0
+    if not drop: say(f"release: kept {', '.join(sorted(keep))}; nothing older to remove")
+    elif dry_run: say(f"release: would remove release(s) {', '.join(drop)}")
+    else:
+        kept_snaps = set().union(*(template_snapshots(_release_dir(install, n)) for n in keep))
+        gone_snaps = set()
+        root_real = os.path.realpath(install)
+        for n in drop:
+            d = _release_dir(install, n); real = os.path.realpath(d)
+            ok_place = (os.path.dirname(real) == os.path.join(root_real, "releases") and RELEASE_RE.match(os.path.basename(real))) or real == os.path.join(root_real, LEGACY_RELEASE)
+            if os.path.islink(d) or not ok_place:
+                say(f"release: LEFT {d}: it is not where a release lives"); failed += 1; continue
+            snaps = template_snapshots(d)
+            rmtree(d)
+            if os.path.exists(d): say(f"release: LEFT {d}: it could not be removed"); failed += 1; continue
+            gone_snaps |= snaps
+            if n == LEGACY_RELEASE:
+                os.symlink("current", d)
+                say(f"release: removed the old single directory {d}; it is now a link to current")
+            else: say(f"release: removed {d}")
+        unused = sorted(gone_snaps - kept_snaps)
+        if unused and not os.path.exists(binary): say(f"release: {len(unused)} template snapshot(s) of the removed releases were left: {binary} is not there to remove them")
+        elif unused:
+            removed = 0
+            for name in unused:
+                try: r = msb(["snapshot", "remove", name]); ok = r.returncode == 0
+                except (OSError, subprocess.SubprocessError): ok = False
+                removed += ok
+                if not ok: say(f"release: template snapshot {name} was left (msb refused it; a sandbox started from it may still exist)")
+            say(f"release: {removed} of {len(unused)} template snapshot(s) only the removed releases used were removed")
+    if plans is not None:
+        if failed: say("release: a release could not be removed, so no other template snapshot was removed")
+        elif not os.path.exists(binary): say(f"release: {binary} is not there, so no other template snapshot was removed")
+        else: failed += unused_templates(install, keep, plans, home, msb, say=say, procs=procs, now=now, dry_run=dry_run)[1]
     say(f"release: kept {', '.join(sorted(keep))}")
     return 1 if failed else 0
 
@@ -2652,6 +2804,39 @@ def _proc_cmdlines():
         try: out.append(open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode("utf-8", "replace").strip())
         except OSError: continue
     return [c for c in out if c]
+
+def running_vms(procs=None):
+    """(chat session VMs, template build VMs) running on this host, from the process table (each VM is an `msb sandbox
+    --name <name>` process; readable by any user, so this works as the API's user without msb)."""
+    ses = tpl = 0
+    for c in (procs or _proc_cmdlines)():
+        m = re.search(r"(?:^|/)msb sandbox .*--name (eve-sbx-\S+)", c)
+        if not m: continue
+        if m.group(1).startswith(SBX_SESSION): ses += 1
+        elif m.group(1).startswith(SBX_TEMPLATE_TMP): tpl += 1
+    return ses, tpl
+
+def prewarm_room(cpus, wait_s=PREWARM_ROOM_WAIT_S, host_cpus=None, procs=None, sleep=time.sleep, clock=time.monotonic, say=print, poll_s=PREWARM_ROOM_POLL_S):
+    """Before a NEW release's prewarm run (api-prestart.sh, as the API's user; mold_v1-224): wait, at most `wait_s`, until
+    the sandbox VMs running now leave room for one more template VM of `cpus` vCPUs on this host's vCPUs (the
+    mold_v1-190 rule: running vCPUs never past the host's). Returns True when there is room, False when the wait ran
+    out (the caller builds anyway, at a low CPU weight); it never fails the prewarm."""
+    host = host_cpus or (len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1)
+    end = clock() + max(0, wait_s); said = False
+    while True:
+        ses, tpl = running_vms(procs)
+        busy = (ses + tpl) * cpus
+        if busy + cpus <= host:
+            if said: say(f"prewarm: room now for a template VM: {ses} chat sandbox(es) running, {busy + cpus} of {host} vCPUs with it")
+            return True
+        if not said:
+            say(f"prewarm: {ses} chat sandbox(es) and {tpl} template VM(s) running hold {busy} of this host's {host} vCPUs; a template VM needs {cpus} more, "
+                f"so waiting up to {wait_s}s for a chat's sandbox to stop (mold_v1-190: running vCPUs never past the host's)")
+            said = True
+        if clock() >= end:
+            say(f"prewarm: still {ses} chat sandbox(es) running after {wait_s}s; building anyway at a low CPU weight, so the chats' VMs keep the CPUs they use")
+            return False
+        sleep(poll_s)
 
 def sandbox_prune(home, retention_days=RETENTION_DAYS, dry_run=False, now=None, msb=None, procs=_proc_cmdlines, say=print, tmp_hours=TEMPLATE_TMP_HOURS):
     """Remove what old chat sessions left in the service user's ~/.microsandbox (mold_v1-153). Runs ON THE SERVER, as the
@@ -3763,6 +3948,8 @@ def cli(a):
         for why in refused: print("env: " + why, file=sys.stderr)
         print(f"env: {len(added)} name(s) added, {len(changed)} changed" + (f": {', '.join(added + changed)}" if added or changed else "") + " (values not shown)")
         return 1 if refused else 0
+    if cmd == "prewarm-room":
+        prewarm_room(int(_opt(a, "--cpus", "2")), int(_opt(a, "--wait", str(PREWARM_ROOM_WAIT_S)))); return 0
     if cmd == "sandbox-prune":
         return sandbox_prune(_opt(a, "--home") or os.path.expanduser("~"), int(_opt(a, "--retention-days", str(RETENTION_DAYS))), dry_run="--dry-run" in a)
     if cmd == "env-mint":
@@ -3791,7 +3978,7 @@ def cli(a):
             return 0
         if cmd == "release-adopt": release_adopt(inst); return 0
         if cmd == "release-space": return release_space(inst, float(_opt(a, "--extra-gb", str(RELEASE_SPACE_EXTRA_GB))))
-        if cmd == "release-prune": return release_prune(inst, _opt(a, "--home", SERVICE_HOME))
+        if cmd == "release-prune": return release_prune(inst, _opt(a, "--home", SERVICE_HOME), plans=_opt(a, "--plans"), dry_run="--dry-run" in a)
         if cmd == "release-migrations":
             newer = release_migrations(inst, _opt(a, "--from", ""), _opt(a, "--to", ""))
             if newer is None: print("NEWER_MIGRATIONS=unknown")
