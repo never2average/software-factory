@@ -308,7 +308,7 @@ def _generated_files(check, tmp):
         check("the egress rule is valid nftables (`nft -c`: checked, never applied)", r.returncode == 0, r.stderr[-400:])
     check("the factory's own prewarm is gone: the mold's `npm run sandbox:prewarm` does that job", "prewarm-serial.mjs" not in B and not hasattr(V, "PREWARM_MJS"))
     pre = B["api-prestart.sh"][0]
-    full = "/usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries 2\n"
+    full = "/usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries 2 --template-timeout 300 2>&1 | tee \"$out\" || rc=$?\n"
     check("the API pre-start checks /dev/kvm, then runs the mold's prewarm with the runtime link and three tries per template, deleting nothing itself",
           pre.index("[ -c /dev/kvm ]") < pre.index(full) and "-delete" not in pre and not re.search(r"(^|[;&|]\s*)rm\s", pre, re.M)
           and 'dir="${1:-/opt/software-factory/vm_remote_fixture/current}"' in pre and 'cd "$dir"' in pre, pre)
@@ -316,6 +316,7 @@ def _generated_files(check, tmp):
           'if [ -z "${1:-}" ] && [ -e "$mark" ]; then' in pre and "exec /usr/bin/npm run --silent sandbox:prewarm -- --locks-only" in pre
           and pre.index("--locks-only") < pre.index(full) < pre.index('touch "$mark"') and 'mark="/run/software-factory/vm_remote_fixture/prewarmed/$(basename "$(pwd -P)")"' in pre, pre)
     check("  ...and on a server not moved to releases yet it runs from the old single directory", 'dir=/opt/software-factory/vm_remote_fixture/app' in pre)
+    _prestart_reruns(check, tmp, pre)
     b = B["build.sh"][0]; order = [b.index(x) for x in ("/factory/users.sh", "env-split --file", "npm ci --include=dev", "npm run build:eve", "-- npm run build\n", "services/task-workflow\" -- npm run build", "/factory/seal.sh \"$REL\"")]
     check("the build builds the NEW release at its final path, beside the serving one, one build at a time, and never stops a service (mold_v1-222)",
           order == sorted(order) and 'REL="/opt/software-factory/vm_remote_fixture/releases/$REL_ID"' in b and "systemctl" not in b and " & " not in b and "wait\n" not in b
@@ -368,6 +369,103 @@ def _generated_files(check, tmp):
     check("  ...and one with all three lacks none", V.mold_gaps(src) == [])
 
 # ---- 076: the env file ------------------------------------------------------------------------------------------
+def _prestart_reruns(check, tmp, pre):
+    """The API prestart, RUN against a stand-in npm (mold_v1-225): a prewarm that ends on a hung template VM is run again
+    (2026-10-09 and -10 on the first server: the root template's fresh VM wedged at boot, the next one built it in 47 s),
+    any other failure is not, and the runs are bounded."""
+    d = tempfile.mkdtemp(prefix="prestart-", dir=tmp); rel = os.path.join(d, "rel"); os.makedirs(rel)
+    npm = os.path.join(d, "npm")
+    # Each call appends its argv to calls; plan holds one outcome per call: ok, hang (the mold's own TIMED OUT summary
+    # line and exit 1) or fail (an ordinary failure, exit 1).
+    with open(npm, "w") as f: f.write("""#!/bin/bash
+echo "$*" >> "$SF_T/calls"
+n=$(wc -l < "$SF_T/calls"); what=$(sed -n "${n}p" "$SF_T/plan")
+case "$what" in
+  ok) echo "+40s built  eve-sbx-tpl-x (root; microsandbox, 47s)"; echo "+40s 6 sandbox template(s) ready"; exit 0 ;;
+  hang) echo "+640s TIMED OUT eve-sbx-tpl-x (root; microsandbox, 300s): timed out after 300s on attempt 1; killed its VM (pid 1)"
+        echo "sandbox:prewarm: 2 of 6 sandbox template(s) could not be built." >&2; exit 1 ;;
+  *) echo "sandbox:prewarm: 1 of 8 sandbox(es) would be refused." >&2; exit 1 ;;
+esac
+""")
+    os.chmod(npm, 0o755)
+    # A stand-in for the factory tool: it records each `prewarm-room` wait (mold_v1-224) in the same order file as npm.
+    room = os.path.join(d, "tool.py")
+    with open(room, "w") as f: f.write("import os, sys\nopen(os.path.join(os.environ['SF_T'], 'order'), 'a').write('room ' + ' '.join(sys.argv[1:]) + '\\n')\n")
+    with open(npm) as f: body_npm = f.read()
+    with open(npm, "w") as f: f.write(body_npm.replace('echo "$*" >> "$SF_T/calls"\n', 'echo "$*" >> "$SF_T/calls"; echo npm >> "$SF_T/order"\n', 1))
+    body = (pre.replace("/usr/bin/npm", npm).replace("/dev/kvm", "/dev/null").replace("/run/software-factory", os.path.join(d, "run"))
+            .replace(_settings()["tool"], room))
+    os.makedirs(os.path.join(d, "run", "vm_remote_fixture", "prewarmed"))
+    script = os.path.join(d, "api-prestart.sh")
+    with open(script, "w") as f: f.write(body)
+    def go(plan):
+        for x in ("calls", "plan", "order"):
+            if os.path.exists(os.path.join(d, x)): os.remove(os.path.join(d, x))
+        with open(os.path.join(d, "plan"), "w") as f: f.write("\n".join(plan) + "\n")
+        open(os.path.join(d, "calls"), "w").close()
+        mark = os.path.join(d, "run", "vm_remote_fixture", "prewarmed", "rel")
+        if os.path.exists(mark): os.remove(mark)
+        r = subprocess.run(["bash", script, rel], capture_output=True, text=True, timeout=60, env={"PATH": "/usr/bin:/bin", "SF_T": d, "TMPDIR": d})
+        calls = open(os.path.join(d, "calls")).read().splitlines()
+        return r, calls, os.path.exists(mark)
+    r, calls, marked = go(["ok"])
+    check("prestart: a prewarm that passes runs once, with the per-template timeout, and marks the release",
+          r.returncode == 0 and len(calls) == 1 and "--template-timeout 300" in calls[0] and "--retries 2" in calls[0] and marked, (r.returncode, calls, r.stderr[-300:]))
+    r, calls, marked = go(["hang", "ok"])
+    check("  ...one that ends on a hung template VM (the 2026-10-09/10 root hang) is run again with a fresh VM, and passes",
+          r.returncode == 0 and len(calls) == 2 and marked and "run 2 of 3 boots a fresh one" in r.stderr and "TIMED OUT" in r.stdout, (r.returncode, calls, r.stderr[-300:]))
+    r, calls, marked = go(["hang", "hang", "hang", "ok"])
+    check("  ...a VM that hangs on every run stops after 3 runs, failing, unmarked, and says so",
+          r.returncode == 1 and len(calls) == 3 and not marked and "hung on each of 3 runs" in r.stderr, (r.returncode, calls, r.stderr[-300:]))
+    order = open(os.path.join(d, "order")).read().split("\n")[:-1]
+    r, calls, marked = go(["fail", "ok"])
+    check("  ...an ordinary failure (no timeout) is NOT run again: it fails at once with the mold's own exit and words",
+          r.returncode == 1 and len(calls) == 1 and not marked and "would be refused" in r.stdout + r.stderr, (r.returncode, calls, r.stderr[-300:]))
+    check("prestart: before EVERY run of a new release's prewarm, the first and each rerun, it waits for room on the host's vCPUs (mold_v1-224)",
+          order == [f"room prewarm-room --cpus 2 --wait {V.PREWARM_ROOM_WAIT_S}", "npm"] * 3, order)
+    check("  ...only for a release named on its command line (the API's own start has no chats to wait for), and the wait never fails the prewarm",
+          'if [ -n "${1:-}" ]; then python3 ' + _settings()["tool"] + ' prewarm-room --cpus "${SANDBOX_CPUS:-2}" --wait ' + str(V.PREWARM_ROOM_WAIT_S) + ' || true; fi' in pre
+          and pre.index("prewarm-room") > pre.index("--locks-only") and pre.index("prewarm-room") > pre.index("while :; do"), pre)
+    left = [x for x in os.listdir(d) if x.startswith("tmp.")]
+    check("  ...and leaves no scratch file behind", not left, left)
+    check("prestart: its worst case (every run hanging once, every template built) fits the API unit's TimeoutStartSec, and both use one number",
+          V.PREWARM_RUNS * (V.PREWARM_TEMPLATE_S + 60) + 6 * 90 <= V.API_START_S and V.PREWARM_RUNS * (V.PREWARM_TEMPLATE_S + 60) + 6 * 90 <= V.PREWARM_DEADLINE_S
+          and f"TimeoutStartSec={V.API_START_S}" in V.unit_files(_settings(), [])[f"{_settings()['unit']}-api.service"])
+    check("prewarm: a new release's worst case, a full wait for room before every run included, fits its deadline",
+          V.PREWARM_RUNS * (V.PREWARM_ROOM_WAIT_S + V.PREWARM_TEMPLATE_S + 60) + 6 * 90 <= V.PREWARM_DEADLINE_S)
+    _prewarm_room(check)
+
+def _prewarm_room(check):
+    """prewarm-room (mold_v1-224): the wait for room on the host's vCPUs before a new release's prewarm run."""
+    ses = lambda n: [f"/var/lib/sfapp/.microsandbox/bin/msb sandbox --name eve-sbx-ses-{i:032x} --cpus 2" for i in range(n)]
+    tpl = ["msb sandbox --name eve-sbx-tpl-tmp-" + "a" * 32]
+    noise = ["node .output/server/index.mjs", "grep msb sandbox --name eve-sbx-ses-x", "msb list --format json"]
+    check("prewarm-room: it counts the chats' VMs and template VMs from the process table, and nothing else",
+          V.running_vms(lambda: ses(2) + tpl + noise) == (2, 1) and V.running_vms(lambda: noise) == (0, 0))
+    def go(tables, wait_s=300, host=4, cpus=2):
+        t = [0.0]; slept = []; said = []; tabs = iter(tables); last = [tables[-1]]
+        def procs():
+            try: last[0] = next(tabs)
+            except StopIteration: pass
+            return last[0]
+        def sleep(x): slept.append(x); t[0] += x
+        ok = V.prewarm_room(cpus, wait_s=wait_s, host_cpus=host, procs=procs, sleep=sleep, clock=lambda: t[0], say=said.append)
+        return ok, slept, said
+    ok, slept, said = go([ses(1)])
+    check("prewarm-room: with one chat VM on a 4-vCPU host there is room for a 2-vCPU template VM: no wait, nothing said", ok and slept == [] and said == [], (slept, said))
+    ok, slept, said = go([ses(2), ses(2), ses(1)])
+    check("prewarm-room: with two (the host's 4 vCPUs taken) it waits, says why once, and goes as soon as one stops",
+          ok and len(slept) == 2 and len(said) == 2 and "waiting up to 300s" in said[0] and "4 of this host's 4 vCPUs" in said[0] and "room now" in said[1], (slept, said))
+    ok, slept, said = go([ses(1) + tpl, ses(0)])
+    check("prewarm-room: a template VM already running counts too", ok and len(slept) == 1, (slept, said))
+    ok, slept, said = go([ses(2)], wait_s=30)
+    check("prewarm-room: the wait is bounded; then it says it builds anyway at a low CPU weight, and never fails the prewarm",
+          ok is False and sum(slept) >= 30 and sum(slept) <= 30 + V.PREWARM_ROOM_POLL_S and "building anyway at a low CPU weight" in said[-1], (sum(slept), said[-1:]))
+    ok, slept, said = go([ses(0)], wait_s=10, host=1)
+    check("prewarm-room: on a host smaller than one template VM it waits out the bound, then builds (as before mold_v1-224)", ok is False and sum(slept) >= 10, said)
+    r = subprocess.run([sys.executable, os.path.join(HERE, "vm_remote.py"), "prewarm-room", "--cpus", "1", "--wait", "0"], capture_output=True, text=True, timeout=60)
+    check("prewarm-room: the command exits 0 whatever it found", r.returncode == 0, r.stdout + r.stderr)
+
 def _env_file(check, tmp):
     d = os.path.join(tmp, "etc", "app"); f = os.path.join(d, "env")
     added, changed, refused = V.env_merge(f, {"RESEND_API_KEY": SECRET, "PLATFORM_NOTIFY_FROM": "Example <no-reply@example.com>"})

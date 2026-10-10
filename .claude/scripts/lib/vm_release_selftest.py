@@ -19,7 +19,7 @@ NOTHING HERE TOUCHES A SERVER OR CHANGES THIS MACHINE: every path the scripts to
 commands that would change a machine are stand-ins, and the real python3, bash, node, flock, timeout, ln and mv only
 ever act on that temp directory.
 """
-import hashlib, json, os, re, shutil, subprocess, sys
+import hashlib, json, os, re, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 import vm_remote as V
@@ -112,7 +112,11 @@ while [ $# -gt 0 ] && [ "$1" != "--" ]; do
   shift
 done
 shift
+# the mold's `sandbox:prewarm --plan` (release.sh keep): the fixture's plan for the release in WorkingDirectory, if any
+case "$*" in *--plan*) w="$(grep -o 'WorkingDirectory=[^ ]*' "$d/calls" | tail -n 1)"; w="${w#WorkingDirectory=}"; f="$d/plan-$(basename "$w").json"
+  [ -f "$f" ] && { cat "$f"; exit 0; }; exit 1 ;; esac
 if [ -n "$out" ]; then "$@" >> "$out" 2>&1; else "$@"; fi''',
+"runuser": r'''echo "runuser $*" >> "$d/calls"; while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done; shift; exec "$@"''',
 "install": r'''a=()
 while [ $# -gt 0 ]; do case "$1" in -o|-g) shift ;; *) a+=("$1") ;; esac; shift; done
 exec /usr/bin/install "${a[@]}"''',
@@ -274,6 +278,8 @@ def release(check, tmp):
           r.returncode == 0 and kv.get("PREWARMED") == B_ and os.path.exists(sv.root + S["marks"] + "/" + B_) and sv.at("current") == A_ and sv.lines("started") == []
           and all(x in sr for x in (f"User={V.SERVICE_USER}", "SupplementaryGroups=kvm", f"EnvironmentFile={S['env_files']['api']}", f"RuntimeMaxSec={V.PREWARM_DEADLINE_S}",
                                     f"HOME={sv.root}{V.SERVICE_HOME}", "ProtectHome=yes", f"api-prestart.sh {sv.rdir(B_)}")), (r.stdout[-300:], sr))
+    check("prewarm:   ...at a low CPU weight, so the chats' VMs keep the CPUs they use while a template builds beside them (mold_v1-224)",
+          f"CPUWeight={V.PREWARM_CPU_WEIGHT}" in sr and V.PREWARM_CPU_WEIGHT < 100, sr)
     check("prewarm:   ...with the serving API stopped, the serving release is not marked (only a running API proves its prewarm)", not os.path.exists(sv.root + S["marks"] + "/" + A_))
     sv.put("active", api)
     r, kv = sv.run("prewarm", B_)
@@ -358,6 +364,109 @@ def release(check, tmp):
     empty = os.path.join(tmp, "prune-none"); os.makedirs(os.path.join(empty, "releases", A_))
     said.clear(); V.release_prune(empty, home, say=said.append)
     check("keep: with no `current` nothing at all is removed", os.path.isdir(os.path.join(empty, "releases", A_)) and "none was removed" in said[-1])
+
+    unused(check, tmp, S, crons)
+
+# ---- mold_v1-224: template snapshots no kept release uses ------------------------------------------------------------
+OLD = 1_700_000_000.0          # a snapshot made long ago
+def _tpl(i): return "eve-sbx-tpl-" + f"{i:032x}"
+def _key(i): return f"eve-sbx-tpl-microsandbox-4c4164b5039c3606-{i:020x}"
+def _cache(rdir, mapping):
+    """A release's own template cache: key -> the snapshot its metadata names."""
+    for k, snap in mapping.items():
+        d = os.path.join(rdir, ".eve/sandbox-cache/microsandbox/templates", k); os.makedirs(d, exist_ok=True)
+        json.dump({"optionsHash": "ffdd1712e872da6aa9b0", "snapshotName": snap, "version": 2}, open(os.path.join(d, "metadata.json"), "w"))
+def _plan(keys, extra_nodes=()):
+    return {"eve": "0.25.1", "nodes": [{"node": f"n{i}", "templateKey": k} for i, k in enumerate(keys)] + [{"node": "browser", "templateKey": None}, *extra_nodes]}
+def _snap(store, name, when=OLD, kb=64):
+    d = os.path.join(store, "snapshots", name); os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "upper.ext4"), "wb") as f: f.write(b"x" * kb * 1024)
+    for x in (os.path.join(d, "upper.ext4"), d): os.utime(x, (when, when))
+
+def unused(check, tmp, S, crons):
+    # the first server, small: previous = the old single directory (its cache also holds records of earlier builds'
+    # keys), current = the first release; the store holds every snapshot any build ever made.
+    base = os.path.join(tmp, "unused"); inst = os.path.join(base, "opt", "app"); home = os.path.join(base, "home"); store = os.path.join(home, ".microsandbox")
+    plans = os.path.join(base, "plans"); os.makedirs(plans); os.makedirs(os.path.join(store, "bin")); open(os.path.join(store, "bin", "msb"), "w").close()
+    os.makedirs(os.path.join(inst, "releases", C_)); os.makedirs(os.path.join(inst, "app"))
+    os.symlink(f"releases/{C_}", os.path.join(inst, "current")); os.symlink("app", os.path.join(inst, "previous"))
+    _cache(os.path.join(inst, "app"), {_key(1): _tpl(1), _key(2): _tpl(2), _key(3): _tpl(3), _key(4): _tpl(4)})   # 3 and 4: earlier builds
+    _cache(os.path.join(inst, "releases", C_), {_key(1): _tpl(1), _key(5): _tpl(5)})
+    json.dump(_plan([_key(1), _key(2)]), open(os.path.join(plans, "plan-app.json"), "w")); json.dump(_plan([_key(1), _key(5)]), open(os.path.join(plans, f"plan-{C_}.json"), "w"))
+    for i in (1, 2, 3, 4, 5, 6): _snap(store, _tpl(i))
+    _snap(store, _tpl(7), when=time.time())                            # made minutes ago (a prewarm that is not ours)
+    _snap(store, "eve-sbx-state-" + "a" * 32); _snap(store, "eve-sbx-tpl-tmp-" + "b" * 32); _snap(store, "not-eve")
+    outside = os.path.join(base, "elsewhere", _tpl(8)); os.makedirs(outside); os.symlink(outside, os.path.join(store, "snapshots", _tpl(8)))
+    def msb_rm(fail=()):
+        asked = []
+        def m(a):
+            asked.append(a)
+            if a[:2] == ["snapshot", "remove"] and a[2] not in fail: shutil.rmtree(os.path.join(store, "snapshots", a[2]))
+            return CP(a, 1 if a[2] in fail else 0, "", "")
+        return asked, m
+    snaps = lambda: sorted(os.listdir(os.path.join(store, "snapshots")))
+    before = snaps(); said = []; asked, m = msb_rm()
+    rc = V.release_prune(inst, home, msb=m, say=said.append, plans=plans, procs=lambda: [], dry_run=True)
+    check("unused templates: a dry run names each snapshot neither kept release's plan uses, with its size and age, and removes nothing",
+          rc == 0 and asked == [] and snaps() == before and sum("would remove template snapshot" in x for x in said) == 3
+          and all(any(_tpl(i) in x and "would remove" in x for x in said) for i in (3, 4, 6)) and any("MB, made 2023-11-14" in x for x in said), said)
+    said.clear()
+    rc = V.release_prune(inst, home, msb=m, say=said.append, plans=plans, procs=lambda: [])
+    check("unused templates: keep removes, through msb, the snapshots no kept release uses: older builds' records in a kept cache, and ones nothing names",
+          rc == 0 and asked == [["snapshot", "remove", _tpl(i)] for i in (3, 4, 6)] and all(_tpl(i) not in snaps() for i in (3, 4, 6)), (asked, said[-3:]))
+    check("unused templates:   ...never one a kept release's plan uses (shared or its own), one made within the hour, a session's state, a build leftover, a stranger, or a link out of the store",
+          all(_tpl(i) in snaps() for i in (1, 2, 5, 7)) and "eve-sbx-state-" + "a" * 32 in snaps() and "eve-sbx-tpl-tmp-" + "b" * 32 in snaps() and "not-eve" in snaps()
+          and os.path.islink(os.path.join(store, "snapshots", _tpl(8))) and os.path.isdir(outside), snaps())
+    check("unused templates:   ...and says what it freed and kept", any("3 of 3 unused removed" in x and "3 template snapshot(s) in use by" in x and "1 newer than 1h kept" in x for x in said)
+          and os.path.isdir(os.path.join(inst, "app")) and os.path.isdir(os.path.join(inst, "releases", C_)), said[-3:])
+    for i in (3, 4, 6): _snap(store, _tpl(i))
+    def none_removed(label, plans_=plans, procs=lambda: [], expect=""):
+        said.clear(); asked.clear()
+        V.release_prune(inst, home, msb=m, say=said.append, plans=plans_, procs=procs)
+        check(f"unused templates: {label}: nothing is removed, with a sentence", asked == [] and all(_tpl(i) in snaps() for i in (3, 4, 6)) and any(expect in x for x in said), said)
+    os.rename(os.path.join(plans, "plan-app.json"), os.path.join(plans, "hidden.json"))
+    none_removed("a kept release whose plan could not be read (an older mold, a failed plan run)", expect="which sandbox templates release app uses is not known")
+    open(os.path.join(plans, "plan-app.json"), "w").write("{not json")
+    none_removed("  ...or is not JSON", expect="is not known")
+    json.dump(_plan([_key(1), _key(9)]), open(os.path.join(plans, "plan-app.json"), "w"))
+    none_removed("a plan key whose template record is missing (which snapshot it needs is not known)", expect="is not known")
+    json.dump(_plan(["../../etc"]), open(os.path.join(plans, "plan-app.json"), "w"))
+    none_removed("a plan key that is not a template key", expect="is not known")
+    json.dump({"nodes": [{"node": "browser", "templateKey": None}]}, open(os.path.join(plans, f"plan-{C_}.json"), "w")); json.dump({"nodes": [{"node": "b", "templateKey": None}]}, open(os.path.join(plans, "plan-app.json"), "w"))
+    none_removed("plans that name no template at all (not believed)", expect="not believed")
+    json.dump(_plan([_key(1), _key(2)]), open(os.path.join(plans, "plan-app.json"), "w")); json.dump(_plan([_key(1), _key(5)]), open(os.path.join(plans, f"plan-{C_}.json"), "w"))
+    none_removed("a sandbox prewarm running", procs=lambda: ["node scripts/sandbox-prewarm-serial.mjs --link-runtime --retries 2"], expect="a sandbox prewarm is running")
+    said.clear(); asked.clear()
+    V.release_prune(inst, home, msb=m, say=said.append)
+    check("unused templates: without plans (prepare, as before) no other snapshot is considered", asked == [] and all(_tpl(i) in snaps() for i in (3, 4, 6)), said)
+    said.clear(); asked2, m2 = msb_rm(fail=(_tpl(4),))
+    rc = V.release_prune(inst, home, msb=m2, say=said.append, plans=plans, procs=lambda: [])
+    check("unused templates: one msb will not remove is left, said, and keep's exit says so", rc == 1 and _tpl(4) in snaps() and _tpl(3) not in snaps() and any(f"{_tpl(4)} was left" in x for x in said), said[-3:])
+
+    # ---- and through release.sh keep itself: the plans asked of each kept release, as the API's user
+    sv = Server(tmp, "rel-unused", S, crons, releases=(A_, B_, C_), current=C_, previous=B_)
+    sstore = sv.root + V.SERVICE_HOME + "/.microsandbox"
+    open(sstore + "/bin/msb", "w").write('#!/bin/bash\necho "msb $*" >> "%s/calls"\n[ "$1 $2" = "snapshot remove" ] && rm -r "$HOME/.microsandbox/snapshots/$3"\nexit 0\n' % sv.d); os.chmod(sstore + "/bin/msb", 0o755)
+    for n, keys in ((A_, (3,)), (B_, (1, 2)), (C_, (1, 5))):
+        _cache(sv.rdir(n), {_key(i): _tpl(i) for i in keys})
+        os.makedirs(sv.rdir(n) + "/scripts", exist_ok=True); open(sv.rdir(n) + "/scripts/sandbox-prewarm-serial.mjs", "w").write('if (has("--plan")) {}\n')
+    json.dump(_plan([_key(1), _key(2)]), open(os.path.join(sv.d, f"plan-{B_}.json"), "w")); json.dump(_plan([_key(1), _key(5)]), open(os.path.join(sv.d, f"plan-{C_}.json"), "w"))
+    for i in (1, 2, 3, 4, 5): _snap(sstore, _tpl(i))
+    r, kv = sv.run("keep")
+    c = sv.lines("calls"); plans_run = [l for l in c if l.startswith("systemd-run") and "--plan" in l]
+    left = sorted(os.listdir(sstore + "/snapshots"))
+    check("keep (release.sh): the old release goes, and so do the snapshots it used and the ones nothing uses; the kept releases' stay",
+          r.returncode == 0 and not os.path.exists(sv.rdir(A_)) and left == [_tpl(1), _tpl(2), _tpl(5)], (r.returncode, left, r.stdout[-600:], r.stderr[-300:]))
+    check("keep (release.sh):   ...each kept release's plan is the mold's own `--plan`, run in that release as the API's user with its settings, bounded",
+          len(plans_run) == 2 and all(x in l for l in plans_run for x in (f"User={V.SERVICE_USER}", f"EnvironmentFile={S['env_files']['api']}", "RuntimeMaxSec=", "ProtectHome=yes", "sandbox-prewarm-serial.mjs --plan"))
+          and any(f"WorkingDirectory={sv.rdir(C_)}" in l for l in plans_run) and any(f"WorkingDirectory={sv.rdir(B_)}" in l for l in plans_run), plans_run)
+    check("keep (release.sh):   ...and every snapshot is removed by msb as the API's user", sum(l.startswith("runuser -u sfapp") and "snapshot remove" in l for l in c) == 2, [l for l in c if "msb" in l or "runuser" in l])
+    sv = Server(tmp, "rel-unused-old", S, crons, releases=(B_, C_), current=C_, previous=B_)
+    sstore = sv.root + V.SERVICE_HOME + "/.microsandbox"; open(sstore + "/bin/msb", "w").write("#!/bin/bash\nexit 0\n"); os.chmod(sstore + "/bin/msb", 0o755)
+    for i in (1, 4): _snap(sstore, _tpl(i))
+    r, kv = sv.run("keep")
+    check("keep (release.sh): a kept release whose mold has no --plan is never asked for one (an older prewarm would take it for a full prewarm), and nothing more is removed",
+          r.returncode == 0 and not any("--plan" in l for l in sv.lines("calls")) and sorted(os.listdir(sstore + "/snapshots")) == [_tpl(1), _tpl(4)] and "has no --plan" in r.stderr, (r.stdout[-300:], r.stderr[-300:]))
 
 def _served_legacy(tmp):
     d = os.path.join(tmp, "served", "opt", "x"); os.makedirs(os.path.join(d, "app"))
