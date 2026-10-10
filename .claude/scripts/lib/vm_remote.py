@@ -82,8 +82,12 @@ WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step i
                   journal, drift dry run that refuses data loss, RLS bootstrap, coverage, release, isolation proof. The
                   old release serves throughout: the mold's migrations are additive first, so it runs against them
   12 prewarm      the new release's sandbox templates built and checked as the API's user while the old release
-                  serves, within PREWARM_DEADLINE_S (eve keys a template by the release's real path, so a release is
-                  prewarmed where it runs). A template that hangs stops the deploy HERE, with the site untouched.
+                  serves, within PREWARM_DEADLINE_S. eve keeps each release's template records in that release's own
+                  .eve/sandbox-cache, but names a template SNAPSHOT from the template and its settings only, not the
+                  release's path: the same template in two releases is one snapshot. So the serving release's records
+                  are first carried into the new one (mold_v1-227), and eve reuses every snapshot whose settings match
+                  instead of removing and rebuilding, under the serving release's chats, the snapshot they start from.
+                  A template that hangs stops the deploy HERE, with the site untouched.
                   Each run first waits (PREWARM_ROOM_WAIT_S at most) for the chats' running sandboxes to leave room on
                   the host's vCPUs for a template VM, and runs at a low CPU weight (mold_v1-224)
   13 switch       units installed, `current` pointed at the new release (one rename), workflow, api and web restarted
@@ -1374,7 +1378,10 @@ if [ -z "${1:-}" ] && [ ! -e "$dir" ]; then dir=@LEGACY@; fi
 [ -c /dev/kvm ] || { echo "no /dev/kvm on this server: the sandbox cannot start" >&2; exit 1; }
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "the service user cannot open /dev/kvm (is it in group kvm?)" >&2; exit 1; }
 cd "$dir"
-# eve keys every sandbox template by this directory's REAL path, so a release is prewarmed where it runs.
+# The mark names this release (its real directory). Each release has its own template records (.eve/sandbox-cache), so
+# each is prewarmed where it runs; the template SNAPSHOTS they name are shared, though: eve names one from the template
+# key and its settings, never the release's path, and release.sh prewarm carries the serving release's records into a
+# new release first, so eve reuses those snapshots instead of rebuilding them under the serving release (mold_v1-227).
 mark="@MARKS@/$(basename "$(pwd -P)")"
 if [ -z "${1:-}" ] && [ -e "$mark" ]; then
   # This exact release had all its templates built and checked earlier in this boot (release.sh prewarm, before the
@@ -1608,6 +1615,13 @@ case "$cmd" in
     install -d -m 755 -o @API@ -g @API@ @MARKS@
     rm -f "@MARKS@/$id"
     relink || echo "warning: the sandbox runtime links could not all be pointed through current" >&2
+    # eve names a template snapshot from the template key and its settings, not the release's path, so the new release
+    # would rebuild, under the SAME name, every snapshot the serving release's chats start from: eve removes it first,
+    # and for that build's seconds a new chat gets "template not provisioned" (mold_v1-227). Its records are carried
+    # over first, as the API's user (who owns both caches): eve then reuses each one whose settings match and whose
+    # snapshot exists, and builds only what changed, under names nothing serving uses.
+    runuser -u @API@ -- python3 "$TOOL" release-carry --install "$I" --to "$id" --home @APIHOME@ \
+      || echo "warning: the serving release's template records could not be carried over; the prewarm builds them again" >&2
     install -d -m 700 @LOGDIR@
     log="@LOGDIR@/prewarm-$id.log"
     rc=0
@@ -2663,6 +2677,45 @@ def templates_in_use(release_dir, keys):
         out.add(name)
     return out
 
+def release_carry(install, name, home=SERVICE_HOME, say=print):
+    """Before release `name`'s prewarm (release.sh prewarm, as the API's user; mold_v1-227): copy into its template cache
+    each template record of the serving release whose snapshot is still in <home>/.microsandbox/snapshots, unless the
+    new release has a record of that key already. eve names a template snapshot createProviderName("eve-sbx-tpl", key,
+    optionsHash), not from the release's path, so without them the new release's prewarm would removeSnapshotIfExists
+    and rebuild the very snapshots the serving release's chats start from. With them eve reuses each record whose
+    optionsHash matches its own and whose snapshot exists, and rebuilds the others under a new name (another key or
+    other settings), which nothing serving uses. Only well-formed records of real directories are carried: never eve's
+    .tmp ones, a link, or a record whose snapshot name is not a template's. Returns how many were carried."""
+    if not RELEASE_RE.match(name or ""): say(f"carry: {name!r} is not a release id; nothing was carried"); return 0
+    cur = _pointer(install, "current")
+    if not cur or cur == name: say("carry: no other release serves, so there are no template records to carry"); return 0
+    sub = os.path.join(".eve", "sandbox-cache", "microsandbox", "templates")
+    src, dst = os.path.join(_release_dir(install, cur), sub), os.path.join(_release_dir(install, name), sub)
+    snaps = os.path.join(home, ".microsandbox", "snapshots")
+    if not os.path.isdir(src) or os.path.islink(src): say(f"carry: the serving release {cur} has no template records"); return 0
+    carried = []
+    for key in sorted(os.listdir(src)):
+        d = os.path.join(src, key); m = os.path.join(d, "metadata.json")
+        if not key.startswith(SBX_TEMPLATE) or key.endswith(".tmp") or os.path.islink(d) or not os.path.isdir(d) or os.path.islink(m): continue
+        try: rec = json.load(open(m))
+        except (OSError, ValueError): continue
+        if not (isinstance(rec, dict) and isinstance(rec.get("optionsHash"), str) and rec["optionsHash"]
+                and isinstance(rec.get("snapshotName"), str) and TEMPLATE_SNAPSHOT_RE.match(rec["snapshotName"])): continue
+        if not os.path.isdir(os.path.join(snaps, rec["snapshotName"])): continue      # eve would rebuild it anyway
+        to = os.path.join(dst, key)
+        if os.path.lexists(to): continue                                             # the new release's own record wins
+        try:
+            os.makedirs(to)
+            tmp = os.path.join(to, f".metadata.json.{os.getpid()}")
+            with open(tmp, "w") as f: json.dump(rec, f, indent=2); f.write("\n")
+            os.replace(tmp, os.path.join(to, "metadata.json"))
+        except OSError as e:
+            say(f"carry: the template record {key} could not be written ({e.strerror}); the prewarm builds that template again"); continue
+        carried.append(key)
+    say(f"carry: {len(carried)} template record(s) carried from the serving release {cur} into {name}; eve reuses each whose settings match"
+        if carried else f"carry: nothing to carry from the serving release {cur} into {name}")
+    return len(carried)
+
 def unused_templates(install, keep, plans, home, msb, say=print, procs=None, now=None, dry_run=False, recent_s=TEMPLATE_TMP_HOURS * 3600):
     """Remove the template snapshots in <home>/.microsandbox/snapshots that NO kept release uses (mold_v1-224): eve
     never removes a template, and builds before releases left one per template per build in the one store. A kept
@@ -2680,7 +2733,8 @@ def unused_templates(install, keep, plans, home, msb, say=print, procs=None, now
             say(f"release: which sandbox templates release {n} uses is not known, so no other template snapshot was removed"); return 0, 0, 0
         used |= names
     if not used: say("release: the kept releases name no sandbox template, which is not believed; no template snapshot was removed"); return 0, 0, 0
-    if any(("sandbox-prewarm" in c or "sandbox:prewarm" in c) and "--plan" not in c for c in (procs or _proc_cmdlines)()):
+    # A prewarm building into this store (one started with this HOME; a process of another store cannot touch it).
+    if any(("sandbox-prewarm" in c or "sandbox:prewarm" in c) and "--plan" not in c for c in (procs or (lambda: _proc_cmdlines(home)))()):
         say("release: a sandbox prewarm is running, so no template snapshot was removed"); return 0, 0, 0
     sdir = os.path.join(home, ".microsandbox", "snapshots")
     if not os.path.isdir(sdir) or os.path.islink(sdir): return 0, 0, 0
@@ -2707,7 +2761,9 @@ def unused_templates(install, keep, plans, home, msb, say=print, procs=None, now
 
 def release_prune(install, home=SERVICE_HOME, msb=None, say=print, rmtree=shutil.rmtree, plans=None, procs=None, now=None, dry_run=False):
     """Remove every release but `current` and `previous`, and then the template snapshots that only the removed ones
-    used (eve never removes a template, and each release has its own: eve keys them by the release's real path). The old
+    used (eve never removes a template; each release has its own template records, and two releases with the same
+    template share its snapshot, since eve names it from the template key and settings, not the release's path, and
+    release_carry hands the serving release's records on: a snapshot a kept release names is never removed). The old
     single directory, once removed, becomes a symlink to `current`, so anything still naming <install>/app finds the
     serving code. With `plans` (the directory release.sh keep saved each kept release's sandbox plan in) it also removes
     the template snapshots no kept release uses (unused_templates). Never touches anything without a pointer to keep:
@@ -2797,13 +2853,28 @@ def _tree(path):
             except OSError: continue
             size += st.st_blocks * 512; newest = max(newest, st.st_mtime)
     return size, newest
-def _proc_cmdlines():
-    out = []
+def _proc_home(pid):
+    """The HOME a process was started with, "" when it has none, None when its environment cannot be read."""
+    try: env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+    except OSError: return None
+    for e in env:
+        if e.startswith(b"HOME="): return e[5:].decode("utf-8", "replace")
+    return ""
+
+def _proc_cmdlines(home=None):
+    """Every process's command line. With `home`, only the processes that may use the sandbox store under it: those
+    started with that HOME (microsandbox finds its store from HOME), and every one whose environment cannot be read."""
+    out = []; want = os.path.realpath(home) if home else None
     for pid in os.listdir("/proc"):
         if not pid.isdigit(): continue
-        try: out.append(open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode("utf-8", "replace").strip())
+        try: c = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
         except OSError: continue
-    return [c for c in out if c]
+        if not c: continue
+        if want is not None:
+            h = _proc_home(pid)
+            if h is not None and os.path.realpath(h or "/") != want: continue
+        out.append(c)
+    return out
 
 def running_vms(procs=None):
     """(chat session VMs, template build VMs) running on this host, from the process table (each VM is an `msb sandbox
@@ -3978,6 +4049,7 @@ def cli(a):
             return 0
         if cmd == "release-adopt": release_adopt(inst); return 0
         if cmd == "release-space": return release_space(inst, float(_opt(a, "--extra-gb", str(RELEASE_SPACE_EXTRA_GB))))
+        if cmd == "release-carry": release_carry(inst, _opt(a, "--to", ""), _opt(a, "--home", SERVICE_HOME)); return 0
         if cmd == "release-prune": return release_prune(inst, _opt(a, "--home", SERVICE_HOME), plans=_opt(a, "--plans"), dry_run="--dry-run" in a)
         if cmd == "release-migrations":
             newer = release_migrations(inst, _opt(a, "--from", ""), _opt(a, "--to", ""))
