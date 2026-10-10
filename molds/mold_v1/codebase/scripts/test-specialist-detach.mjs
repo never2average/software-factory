@@ -50,6 +50,8 @@
  *             both arrive together once the question is answered, and nothing is "reports later".
  *
  * Run:  npm run test:specialist-detach     (about 6 minutes; EVE_DETACH_KEEP=1 keeps the temporary apps)
+ *       EVE_DETACH_SHARD=<k>/<n>           only the k-th of n slices of SCENARIOS (every n-th, from the k-th); the n
+ *                                          slices are disjoint and together every scenario. CI runs two side by side.
  * Without the patch (`npx patch-package --reverse`, then `EVE_DETACH_TEST_CONFIG=omit`, because unpatched eve refuses
  * the `subagents` key) the detach scenarios fail: the finished result is held behind the question.
  */
@@ -321,9 +323,35 @@ function normalize(h) {
     return `${e.type}${d.turnId ? ` ${d.turnId}` : ""}`;
   });
 }
-const shouldRun = (name) => ONLY.length === 0 || ONLY.includes(name);
+/**
+ * Every scenario below, in the order it runs. EVE_DETACH_SHARD slices this list, so a scenario missing from it would
+ * run in no shard: scenario() fails on a name not listed here, and the end of the run fails on a listed name that no
+ * scenario() reached.
+ */
+const SCENARIOS = ["asks", "slow", "together", "stopped", "main", "midturn", "twice", "ownq", "ownqthen", "stopasking", "stopaskingbatch", "mainasking", "forgery", "lone", "unattended", "samestep", "parallel", "sweephandover", "sweeprace", "sweepstale", "sweeprun", "sweeptiming", "idle", "all"];
+const SHARD = (() => {
+  const raw = process.env.EVE_DETACH_SHARD;
+  if (!raw) return null;
+  const m = /^(\d+)\/(\d+)$/.exec(raw);
+  const k = Number(m?.[1]);
+  const n = Number(m?.[2]);
+  if (!m || n < 1 || k < 1 || k > n) {
+    console.error(`EVE_DETACH_SHARD=${raw}: expected <k>/<n> with 1 <= k <= n`);
+    process.exit(2);
+  }
+  return { k, n };
+})();
+const inShard = (name) => !SHARD || SCENARIOS.indexOf(name) % SHARD.n === SHARD.k - 1;
+if (SHARD) console.log(`shard ${SHARD.k}/${SHARD.n}: ${SCENARIOS.filter(inShard).join(", ")}`);
+const shouldRun = (name) => (ONLY.length === 0 || ONLY.includes(name)) && inShard(name);
+const reached = new Set();
 /** One scenario: run if selected; a scenario that throws fails by name and the others still run. */
 async function scenario(name, body) {
+  reached.add(name);
+  if (!SCENARIOS.includes(name)) {
+    failures.push(`${name}: not in SCENARIOS, so a sharded run (EVE_DETACH_SHARD) would never run it; add it there`);
+    return;
+  }
   if (!shouldRun(name)) return;
   try {
     await body();
@@ -893,6 +921,7 @@ try {
   failures.push(String(error?.message ?? error));
   console.log(`  FAIL ${error?.stack ?? error}`);
 }
+for (const name of SCENARIOS) if (!reached.has(name)) failures.push(`SCENARIOS lists ${name}, which no scenario() defines`);
 
 console.log(`\n${passed} checks passed${failures.length ? `, ${failures.length} FAILED:\n  - ${failures.join("\n  - ")}` : ""}`);
 process.exit(failures.length ? 1 : 0);

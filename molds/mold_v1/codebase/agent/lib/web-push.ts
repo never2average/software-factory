@@ -83,7 +83,10 @@ const RECORD_SIZE = 4096;
 export function generateVapidKeys(): { publicKey: string; privateKey: string } {
   const ecdh = createECDH("prime256v1");
   ecdh.generateKeys();
-  return { publicKey: b64u(ecdh.getPublicKey()), privateKey: b64u(ecdh.getPrivateKey()) };
+  // getPrivateKey() drops leading zero bytes, so one key in 256 came out 31 bytes long and vapidFromEnv (and the JWK
+  // the signer builds) refused it. A P-256 private key is always 32 bytes: pad it on the left.
+  const d = ecdh.getPrivateKey();
+  return { publicKey: b64u(ecdh.getPublicKey()), privateKey: b64u(Buffer.concat([Buffer.alloc(32 - d.length), d])) };
 }
 
 /** VAPID keys from the environment, or null when any is absent or malformed (the feature then stays off). */
