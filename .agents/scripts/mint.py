@@ -150,9 +150,20 @@ def st_deploy(app, a, i):
         return FAILED, f"the first deploy stopped: {why[:300]} (state/application/{app}/application.json revert.reason; the whole log: python3 .claude/scripts/provision.py {app} status)"
     if not url or not i.get("deployed_at"): return TODO, "first deploy"
     now = mold_commit(a["mold_id"]); was = a.get("mold_commit")
-    if a.get("status") == "reverted": return TODO, "a test lane failed; redeploy once the cause is fixed"
-    if was and now and was != now: return TODO, f"the mold moved ({was[:7]} -> {now[:7]}); redeploy to pick it up"
-    return DONE, f"{url} (deployed {i['deployed_at'][:16]})"
+    # A redeploy opens the app as the operator afterwards (provision.py's smoke test) and refuses to start without a
+    # sign-in on hand, so with none it is the operator's step: the same one-time code the tests station asks for.
+    signin = (f"a redeploy checks the app by opening it as you afterwards, so it needs your sign-in first: "
+              f"mint.py {app} code-request <email>, then mint.py {app} code <digits> <email>")
+    if a.get("status") == "reverted":
+        why = "rolled back" if "rolled back" in str((a.get("revert") or {}).get("reason", "")) else "a test lane failed"
+        return (TODO, f"{why}; redeploy once the cause is fixed") if session(app) else (OPERATOR, f"{why}; {signin}")
+    if was and now and was != now:
+        return (TODO, f"the mold moved ({was[:7]} -> {now[:7]}); redeploy to pick it up") if session(app) else (OPERATOR, f"the mold moved ({was[:7]} -> {now[:7]}); {signin}")
+    if (v.get("smoke") or {}).get("result") == "needs_sign_in" and session(app):
+        return TODO, SMOKE_PENDING
+    note = " (its chat check waits for a sign-in)" if (v.get("smoke") or {}).get("result") == "needs_sign_in" else ""
+    return DONE, f"{url} (deployed {i['deployed_at'][:16]}){note}"
+SMOKE_PENDING = "deployed; now that a sign-in is on hand, run the post-deploy chat check"
 
 def st_workspaces(app, a, i):
     ss = seeds(app)
@@ -252,7 +263,14 @@ def do(app, name):
         args = [os.path.join(S, "intake.py"), brief, "--app", app]; ans = os.path.join(adir(app), "answers.json")
         if os.path.exists(ans): args += ["--answers", ans]
         return py(*args).returncode in (0,)
-    if name == "deploy": return py(os.path.join(S, "provision.py"), app, "--deploy").returncode == 0
+    if name == "deploy" and (i or {}).get("target") == "vercel" and st_deploy(app, a, i)[1] == SMOKE_PENDING:
+        return py(os.path.join(S, "provision.py"), app, "--smoke").returncode == 0
+    if name == "deploy":
+        rc = py(os.path.join(S, "provision.py"), app, "--deploy").returncode
+        # 3 after a FIRST deploy: deployed and healthy, and only the chat check waits for a sign-in, which the tests
+        # station asks for anyway; the deploy station then runs `--smoke` once a session is on hand.
+        a2, i2 = docs(app)
+        return rc == 0 or (rc == 3 and a2.get("status") == "stamped" and ((i2.get("vercel") or {}).get("smoke") or {}).get("result") == "needs_sign_in")
     if name == "workspaces" and i.get("target") == "vm_remote":
         # One command writes the application's own workspace and every seed, on the server, and records what it applied.
         return py(os.path.join(S, "provision.py"), app, "--workspace-remote").returncode == 0
@@ -471,6 +489,8 @@ def needs_for(app, name, why):
         return [{"kind": "login", "name": "npm sign-in", "how": "The operator runs `npm login` once in a separate terminal on this machine; it prints a link to open and confirm."}]
     if name == "address":
         return [{"kind": "dns", "name": "DNS record", "how": f"The domain's owner adds one DNS record at their domain registrar; `python3 .claude/scripts/domain.py {app} status` prints it exactly. {why}"}]
+    if name == "deploy" and "needs your sign-in" in (why or ""):
+        return needs_for(app, "tests", why)
     if name == "deploy":
         return [{"kind": "approval", "name": "deploy at the operator's terminal", "how": f"The operator runs it themselves, in a separate terminal (it asks for values at a hidden prompt): python3 .claude/scripts/provision.py {app} --deploy-remote"}]
     if name == "state":

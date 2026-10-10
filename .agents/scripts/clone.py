@@ -342,7 +342,16 @@ def main(a):
                  ("apply the surface", me + ["configure"]), ("compare with live", me + ["regress"])]
         for i, (label, cmd) in enumerate(steps, 1):
             print(f"\n[{i}/{len(steps)}] {label}"); r = subprocess.run(cmd)
+            if label == "deploy" and r.returncode == 3 and _smoke_waits(app_id):
+                # deployed and healthy; only the post-deploy chat check waits for the operator's sign-in (provision.py --smoke)
+                print("  deployed; the chat check runs once you have signed in: python3 .claude/scripts/provision.py "
+                      f"{app_id} --smoke"); continue
             if r.returncode: sys.exit(f"stopped at step {i} ({label}). Fix what it printed above and run `clone.py {app_id} run` again; finished steps are safe to repeat.")
         print(f"\n{app_id} is a running clone of live; see the report path above."); return
     sys.exit(__doc__)
+def _smoke_waits(app_id):
+    """A first deploy that ended 3 only because its smoke test had no sign-in to use (provision.py)."""
+    d = os.path.join(ROOT, "state", "application", app_id)
+    a, i = json.load(open(os.path.join(d, "application.json"))), json.load(open(os.path.join(d, "infrastructure.json")))
+    return a.get("status") == "stamped" and ((i.get("vercel") or {}).get("smoke") or {}).get("result") == "needs_sign_in"
 if __name__ == "__main__": main(sys.argv[1:])
