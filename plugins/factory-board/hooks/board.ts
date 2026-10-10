@@ -1,4 +1,4 @@
-import type { AgentUsage, AppRow, Build, BuildBasis, Check, CostBasis, Measured, MoldRow, ProductRow, Ticket, Usage, UsageNumbers, UserUsage } from '../types'
+import type { AgentUsage, AppRow, Build, BuildBasis, Check, CostBasis, Measured, MoldRow, ProductRow, Ticket, Uptime, UptimeApp, UptimeBanner, Usage, UsageNumbers, UserUsage } from '../types'
 
 // Pure readers of the factory's own state files (state/factory.json, state/products.json,
 // state/application/<id>/*.json, state/tasks/<mold>.jsonl). No I/O here, so the tests drive them directly.
@@ -372,4 +372,57 @@ export function buildParts(b: Build | null | undefined): { text: string; dim: bo
   parts.push({ text: `· first message → live ${duration(b.calendar_to_first_deploy_s)}`, dim: false })
   parts.push({ text: b.deploys === null ? '· deploys not measured' : `· ${b.deploys} deploy${b.deploys === 1 ? '' : 's'}`, dim: false })
   return parts
+}
+
+/* ---- uptime: .runs/uptime/state.json, written every minute by .claude/scripts/uptime.py ---------------------------- */
+
+/** The monitor counts as stopped when its last check is older than this. */
+export const UPTIME_STALE_MS = 5 * 60_000
+
+const UPTIME_STATUSES = new Set(['up', 'failing', 'down', 'unknown'])
+
+export function parseUptime(raw: Json | null | undefined): Uptime | null {
+  if (!raw || typeof raw !== 'object' || typeof raw.checked_at !== 'string') return null
+  const apps: UptimeApp[] = Object.entries((raw.apps ?? {}) as Record<string, Json>)
+    .map(([id, a]) => ({
+      id,
+      status: (UPTIME_STATUSES.has(String(a?.status)) ? String(a.status) : 'unknown') as UptimeApp['status'],
+      since: String(a?.since ?? a?.down_since ?? ''),
+      address: String(a?.address ?? ''),
+      lastError: String(a?.last_error ?? ''),
+      emailed: typeof a?.email?.sent === 'boolean' ? a.email.sent : null,
+      emailWhy: String(a?.email?.why ?? ''),
+    }))
+    .sort((x, y) => x.id.localeCompare(y.id))
+  return { checkedAt: raw.checked_at, apps, emailOn: raw.email?.configured === true, emailWhy: String(raw.email?.why ?? '') }
+}
+
+/** "35 min" / "2 h 5 min" between an ISO time and now. */
+export function since(iso: string, now: number): string {
+  const at = Date.parse(iso)
+  if (!Number.isFinite(at)) return '?'
+  const minutes = Math.max(0, Math.round((now - at) / 60_000))
+  if (minutes < 60) return `${minutes} min`
+  const h = Math.floor(minutes / 60)
+  return minutes % 60 ? `${h} h ${minutes % 60} min` : `${h} h`
+}
+
+const hhmm = (iso: string): string => {
+  const t = new Date(iso)
+  return Number.isFinite(t.getTime()) ? `${t.toISOString().slice(11, 16)} UTC` : '?'
+}
+
+/** The banner's lines: one per app that is down, in plain words; or a warning that the monitor stopped. */
+export function uptimeBanner(u: Uptime | null, now: number): UptimeBanner {
+  if (!u) return { level: 'missing', lines: ['Uptime monitor: not running yet (python3 .claude/scripts/uptime.py install).'] }
+  const down = u.apps.filter(a => a.status === 'down')
+  const lines = down.map(a => {
+    const told = a.emailed === true ? 'the operator was emailed' : a.emailed === false ? `not emailed: ${a.emailWhy}` : ''
+    return [`${a.id} is DOWN since ${hhmm(a.since)} (${since(a.since, now)})`, a.address, a.lastError, told].filter(Boolean).join(' · ')
+  })
+  const age = now - Date.parse(u.checkedAt)
+  const stale = !Number.isFinite(age) || age > UPTIME_STALE_MS
+  if (stale) lines.push(`Uptime monitor last ran ${since(u.checkedAt, now)} ago; it may have stopped (uptime.py status).`)
+  if (down.length) return { level: 'down', lines }
+  return stale ? { level: 'stale', lines } : { level: 'ok', lines: [] }
 }

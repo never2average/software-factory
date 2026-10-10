@@ -138,6 +138,24 @@ export type Build = {
 
 export type Tab = 'products' | 'molds' | 'tickets' | 'analytics'
 
+/** One app in .runs/uptime/state.json, written every minute by .claude/scripts/uptime.py. */
+export type UptimeApp = {
+  id: string
+  /** up; failing: one failed check, not yet down; down: two or more in a row. */
+  status: 'up' | 'failing' | 'down' | 'unknown'
+  since: string
+  address: string
+  lastError: string
+  /** null: no email attempted; true: sent; false: not sent, `emailWhy` says why. */
+  emailed: boolean | null
+  emailWhy: string
+}
+
+export type Uptime = { checkedAt: string; apps: UptimeApp[]; emailOn: boolean; emailWhy: string }
+
+/** What the board shows about uptime: red while an app is down, amber when the monitor has not run lately. */
+export type UptimeBanner = { level: 'down' | 'stale' | 'ok' | 'missing'; lines: string[] }
+
 declare module 'claude-code' {
   interface PluginState {
     'factory-board': {
@@ -153,6 +171,7 @@ declare module 'claude-code' {
       builds: Record<string, Build>
       isComputing: boolean
       computeError: string
+      uptime: Uptime | null
     }
   }
 }

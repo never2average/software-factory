@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AppRow, Board, Build, Check, Tab, Ticket, Usage } from '../types'
+import type { AppRow, Board, Build, Check, Tab, Ticket, Uptime, Usage } from '../types'
 import {
   STAGES,
   STAGE_WORDS,
@@ -20,12 +20,14 @@ import {
   moldRow,
   openTickets,
   parseTasks,
+  parseUptime,
   parseUsage,
   plus,
   productRows,
   short,
   sparkline,
   ticketsForApp,
+  uptimeBanner,
   verdict,
 } from './board'
 
@@ -37,6 +39,8 @@ const PROBE_MS = 10_000
 const COLLECT_MS = 5 * 60_000
 const BUILD_EVERY_MS = 60 * 60_000
 const COMPUTE_MS = 10 * 60_000
+/** uptime.py writes its state every minute (systemd timer); the board reads it as often. */
+const UPTIME_EVERY_MS = 60_000
 
 const board = atom({ plugin: 'factory-board', key: 'board' } as const, null)
 const isRefreshing = atom({ plugin: 'factory-board', key: 'isRefreshing' } as const, false)
@@ -50,6 +54,7 @@ const ticketFilter = atom({ plugin: 'factory-board', key: 'ticketFilter' } as co
 const builds = atom({ plugin: 'factory-board', key: 'builds' } as const, {})
 const isComputing = atom({ plugin: 'factory-board', key: 'isComputing' } as const, false)
 const computeError = atom({ plugin: 'factory-board', key: 'computeError' } as const, '')
+const uptime = atom({ plugin: 'factory-board', key: 'uptime' } as const, null)
 
 type $ = EngineInterface
 
@@ -132,7 +137,7 @@ async function refresh($: $): Promise<void> {
     await update($, board, current => (current ? { ...current, apps, checkedAt } : current))
     // the last board, kept across sessions, so the next /factory opens on it at once while it refreshes
     void $.store.set(STORE_KEY, { ...loaded, apps, checkedAt }).catch(() => undefined)
-    $.ui.status(summary(apps, loaded.tickets.length))
+    $.ui.status(downPrefix(await readUptime($)) + summary(apps, loaded.tickets.length))
     if (!(await read($, selectedApp))) {
       const first = apps.find(a => a.status !== 'retired')
       if (first) await update($, selectedApp, () => first.id)
@@ -150,6 +155,27 @@ async function refresh($: $): Promise<void> {
     refreshing = false
     await update($, isRefreshing, () => false)
   }
+}
+
+/* ---- uptime: .runs/uptime/state.json, written every minute by .claude/scripts/uptime.py (a systemd timer) ------------ */
+
+/** Reads the monitor's last state; the board never probes on its behalf. Also puts a down app into the status line. */
+async function readUptime($: $): Promise<Uptime | null> {
+  const raw = await readJson($, `${root}/.runs/uptime/state.json`).catch(() => null)
+  const parsed = parseUptime(raw)
+  await update($, uptime, () => parsed)
+  return parsed
+}
+
+function downPrefix(u: Uptime | null): string {
+  const down = (u?.apps ?? []).filter(a => a.status === 'down').map(a => a.id)
+  return down.length ? `✕ DOWN: ${down.join(', ')} · ` : ''
+}
+
+async function tickUptime($: $): Promise<void> {
+  const u = await readUptime($)
+  const current = await read($, board)
+  if (current && current.checkedAt) $.ui.status(downPrefix(u) + summary(current.apps, current.tickets.length))
 }
 
 /* ---- usage analytics: reports/usage/<app>.json, written by .claude/scripts/app_usage.py -------------------------- */
@@ -270,6 +296,7 @@ export const register: Register = on => {
     $.clock.every(EVERY_MS, () => void refresh($))
     $.clock.every(USAGE_EVERY_MS, () => void collect($))
     $.clock.every(BUILD_EVERY_MS, () => void computeBuilds($))
+    $.clock.every(UPTIME_EVERY_MS, () => void tickUptime($))
     return started
   })
 
@@ -296,6 +323,7 @@ export const register: Register = on => {
     const busy = await read($, isRefreshing)
     const shown = await read($, tab)
     const now = await $.clock.now()
+    const banner = uptimeBanner(await read($, uptime), now)
 
     if (!current) return <Text dimColor>{busy ? 'Reading the factory state…' : 'No data yet. Run /factory refresh.'}</Text>
 
@@ -745,6 +773,23 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
+        {banner.level === 'down' && (
+          <Box key="uptime-banner" flexDirection="column" borderStyle="round" borderColor="error" paddingX={1}>
+            <Text bold color="error">
+              ✕ An app is down. The factory is looking at it.
+            </Text>
+            {banner.lines.map((line, i) => (
+              <Text key={`uptime-line-${i}`} color="error" wrap="wrap">
+                {line}
+              </Text>
+            ))}
+          </Box>
+        )}
+        {banner.level === 'stale' && (
+          <Text key="uptime-stale" color="warning" wrap="wrap">
+            {banner.lines.join(' ')}
+          </Text>
+        )}
         {tabs}
         {current.error && <Text color="error">Could not read {current.root}/state: {current.error}</Text>}
         {shown === 'products' && productsTab}
