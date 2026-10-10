@@ -591,7 +591,10 @@ def remote_main(b64):
            "SF_USAGE_ARGS": json.dumps(args)}
     if vals.get("DATABASE_SSL"): env["DATABASE_SSL"] = vals["DATABASE_SSL"]
     secret = [v for k, v in vals.items() if k not in models]
-    doc = run_node(spec["app_dir"], env, secret + url_secrets(vals["DATABASE_URL"]), timeout=78, user_kw=kw)
+    app_dir = spec["app_dir"]
+    if not os.path.isdir(app_dir) and app_dir.endswith("/current"):   # a server not yet moved to releases/ serves from app/
+        app_dir = app_dir[: -len("current")] + "app"
+    doc = run_node(app_dir, env, secret + url_secrets(vals["DATABASE_URL"]), timeout=78, user_kw=kw)
     print(scrub(json.dumps(doc), secret)); return 0
 
 # ---------------------------------------------------------------------------------------------------------
