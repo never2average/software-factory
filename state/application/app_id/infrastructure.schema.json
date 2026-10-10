@@ -72,9 +72,104 @@
             }
           },
           "additionalProperties": false
+        },
+        "release": {
+          "type": "object",
+          "description": "Written by provision.py --deploy before the three deploys: which Vercel deployment served each project's production at that moment (null for a project that had none). What the deploy's own gate rolls back to, and what --rollback returns to first. Never by hand.",
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "before": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "api": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "web": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "rollback": {
+          "type": "object",
+          "description": "The last rollback, by the deploy's gate (a failed health check or smoke test, or a deploy that stopped part-way) or by hand (provision.py --rollback): when, why, what each project now serves, and the health read after it. result is 'rolled back' only when every project moved back and all health endpoints answered 200.",
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "by": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "projects": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "health": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "result": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "smoke": {
+          "type": "object",
+          "description": "The last post-deploy smoke test (lib/smoke.py): one chat as the operator in the operator's own workspace. result is pass, fail (a deploy then rolls back) or needs_sign_in (no session on hand; provision.py --smoke settles it after the operator signs in). Never a token or an address of a person.",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "fail",
+                "needs_sign_in"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string"
+            },
+            "seconds": {
+              "type": "number"
+            },
+            "workspace_list": {
+              "type": "string"
+            },
+            "cleanup": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
       },
-      "description": "Only what provision.py and intake.py write, and nothing else (additionalProperties is false, like `vm`): every key here is either read as THIS app's URL by lanes.py / the lanes' target-up gates (production_url, workflow_url, api_url) or consumed by provision.py (team, project, functions, custom_domain, crons, health). An open object let a misspelt or stranger's key validate silently (mold_v1-057); a new key must be added here WITH a description, not by reopening the object. A target=vm app must not carry this object at all — validate refuses it, see `target`.",
+      "description": "Only what provision.py and intake.py write, and nothing else (additionalProperties is false, like `vm`): every key here is either read as THIS app's URL by lanes.py / the lanes' target-up gates (production_url, workflow_url, api_url) or consumed by provision.py (team, project, functions, custom_domain, crons, health, release, rollback, smoke). An open object let a misspelt or stranger's key validate silently (mold_v1-057); a new key must be added here WITH a description, not by reopening the object. A target=vm app must not carry this object at all — validate refuses it, see `target`.",
       "additionalProperties": false
     },
     "vm": {
@@ -842,6 +937,54 @@
           "description": "Default false. Only when true may a finished deploy and a recorded lane run push one commit by themselves (repo.py <app_id> auto-push on|off)."
         }
       }
+    },
+    "deploy_gate": {
+      "type": "object",
+      "description": "lib/deploy_gate.py's verdict on the mold commit the last deploy (Vercel or vm_remote) was built from: whether the mold source's CI passed for exactly that commit. verdict is green, red, pending, missing or unverifiable; anything but green refused the deploy unless override is present (provision.py --allow-unverified-mold \"<reason>\": the operator's reason and when).",
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "mold_id": {
+          "type": "string"
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "green",
+            "red",
+            "pending",
+            "missing",
+            "unverifiable"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "override": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

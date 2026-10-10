@@ -79,11 +79,14 @@ def script_start(tool, argv, action=None):
     if action: os.environ["FACTORY_CALL_ACTION"] = action
 
 
-def http_json(method, url, body=None, timeout=20):
-    """A rehearsal's HTTP: (status, parsed body) from the `http` fake. Only called when REHEARSAL is set."""
+def http_json(method, url, body=None, timeout=20, headers=None):
+    """A rehearsal's HTTP: (status, parsed body) from the `http` fake. Only called when REHEARSAL is set.
+    `headers` (a session's Authorization, a workspace header) reach the fake in its environment as
+    FACTORY_HTTP_HEADERS (JSON), never on its command line."""
     activate()
+    env = dict(os.environ, FACTORY_HTTP_HEADERS=json.dumps(headers)) if headers else None
     r = subprocess.run([os.path.join(bin_dir(), "http"), method, url], input=json.dumps(body) if body is not None else "",
-                       capture_output=True, text=True, timeout=timeout)
+                       capture_output=True, text=True, timeout=timeout, env=env)
     try: d = json.loads(r.stdout or "{}")
     except ValueError: d = {}
     if r.returncode and not d: return 0, {"error": (r.stderr or "no answer").strip()[-200:]}

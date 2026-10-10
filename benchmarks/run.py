@@ -109,7 +109,8 @@ def build_world(root):
     for app in apps: run(".claude/scripts/mint.py", "new", app, "--brief", f"briefs/{app}.md")
     for app in apps: preset_secrets(root, app, skip=("RESEND_API_KEY",) if app == "cobalt_app" else ())
     gp = project_store(root, "gamma_app"); d = json.load(open(gp)); d["framework"] = "other"; json.dump(d, open(gp, "w"), indent=2)   # a wrong preset
-    for app in ("alpha_app", "beta_app", "delta_app"): run(".claude/scripts/provision.py", app, "--deploy")
+    # 3: deployed and healthy; the post-deploy chat check waits for a sign-in nobody has given yet (a first deploy)
+    for app in ("alpha_app", "beta_app", "delta_app"): run(".claude/scripts/provision.py", app, "--deploy", ok=(0, 3))
     run(".claude/scripts/provision.py", "gamma_app", "--deploy", ok=(1,))                  # the web build fails
     run(".claude/scripts/lanes.py", "delta_app")                                            # signed-in checks skipped
     run(".claude/scripts/mint.py", "beta_app", "code-request", "owner@beta.example")

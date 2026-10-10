@@ -6,6 +6,6 @@
     "vercel_team": "rehearsal-team"
   },
   "mold_sources": {
-    "mold_v1": "https://git.rehearsal.invalid/mold-source.git"
+    "mold_v1": "https://git.rehearsal.invalid/rehearsal/mold-source.git"
   }
 }

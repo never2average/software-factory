@@ -3,6 +3,9 @@
 
   provision.py <app_id> [--check] [--deploy] [--set-secret NAME] [--verify-db] [--verify-rls]   [--json]
   provision.py <app_id> --deploy --background [--json]     start the deploy detached; returns at once (also --deploy-remote)
+  provision.py <app_id> --deploy [--allow-unverified-mold "<reason>"]   deploy a mold commit whose CI is not green (recorded)
+  provision.py <app_id> --rollback [--json]                every project back to its previous production deployment (Vercel)
+  provision.py <app_id> --smoke [--json]                   the post-deploy chat check on its own, against what serves now
   provision.py <app_id> status [--json]                    the latest deploy: still running (and how far), or its result
   provision.py --self-test   offline checks of the deadlines, deploy watch and VM-headroom logic
   provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
@@ -61,6 +64,17 @@ AGENT INTERFACE. --json prints one result ({"ok","status","summary","next","need
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
   measure). No build, no deploy, no password rotation. Run it after any restore or migration.
 
+ONLY WHAT PASSED, AND ONLY WHAT ANSWERS. Before any deploy (--deploy and --deploy-remote) lib/deploy_gate.py checks that
+the mold commit the build is made from (state/factory.json molds[].source.commit) passed every job of the mold source's
+ci.yml, for exactly that commit; red, still running or unknown refuses with one plain sentence naming the check, unless
+--allow-unverified-mold "<reason>" (kept in infrastructure.json deploy_gate.override). On Vercel the deploy then records
+which deployment serves each project, and after the three deploys runs the health gate and the smoke test
+(lib/smoke.py: one chat as the operator, in the operator's own workspace, answered in time). Either failing points
+every project back at its recorded deployment, reads health again and ends failed, "rolled back" (see RELEASES below:
+the database only ever changed additively, so the old code runs on it). A redeploy needs the operator's sign-in on
+hand before it starts (exit 3 otherwise, nothing deployed); a first deploy ends exit 3 "needs a sign-in" after it,
+deployed and healthy, and `--smoke` settles it once they have signed in.
+
 NOTHING WAITS FOREVER, AND A BUSY VM IS WAITED OUT (mold_v1-106, -109). Every vercel call has a deadline
 and runs in its own process group, killed whole on timeout or on an interrupt. Each `vercel deploy` is
 watched on the API: a deployment stuck in QUEUED/INITIALIZING (PROVISION_DEPLOY_STALL_S, 600) or past
@@ -102,6 +116,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 import agent_result as AR   # the one --json result shape, exit codes 0/1/3/4 (lib/agent_result.py)
 import runs                 # one lock per app and step, background runs and their status (lib/runs.py)
 import services             # FACTORY_REHEARSAL / FACTORY_CALL_LOG (lib/services.py); nothing changes when unset
+import deploy_gate          # only deploy a mold commit whose CI passed (lib/deploy_gate.py)
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
@@ -1707,6 +1722,213 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     print(f"  row-level security, as reported by the app now serving traffic: {running[0]} ({running[1][:160]})")
     return running
 
+# ---- RELEASES: what served before a deploy, the gate after it, and putting it back (Vercel) --------------------------
+# Before the three deploys, release_before() records which deployment serves each project's production. After them,
+# verify_release() runs the health gate (the three health endpoints deploy_vercel read) and then the smoke test
+# (lib/smoke.py: one chat as the operator, in the operator's own workspace). If either fails, rollback_vercel() points
+# every project back at its recorded deployment, reads health again, and the deploy ends failed, "rolled back".
+#
+# WHY ROLLING THE CODE BACK IS SAFE. The database changes BEFORE any deployment, and only additively: bring_up_schema
+# applies the migration journal, then plans schema drift with a READ-ONLY dry run that stops the deploy on anything
+# that would delete data or drop an index (apply_drift -> _refused), so a live database only ever gains tables,
+# columns, indexes and policies, all of which the previous build simply does not read. bootstrap_database reuses the
+# deployed app_rw password (no rotation on a redeploy), and a Vercel deployment keeps the environment it was BUILT
+# with, so a previous deployment comes back with the DATABASE_URL and the TASK_WORKFLOW_SERVICE_TOKEN pair it was
+# built with: the three old deployments agree with each other and with the database. A migration that is not
+# additive belongs in the mold as expand-then-contract over two releases, never in one deploy.
+#
+# AFTER A ROLLBACK Vercel stops promoting new production deployments by itself (autoAssignCustomDomains goes false)
+# until one is promoted. A deploy into such a project would build, then answer health from the OLD deployment and
+# be recorded live, so promote_new() promotes each project this run deployed whose production did not move.
+RELEASE_ROLES = ("workflow", "api", "web")
+ROLLBACK_ORDER = ("web", "api", "workflow")      # the front door first
+ROLLBACK_WAIT_S = int(os.environ.get("PROVISION_ROLLBACK_WAIT_S") or 180)
+ROLLBACK_POLL_S = float(os.environ.get("PROVISION_ROLLBACK_POLL_S") or 5)
+RELEASE = {"before": None, "rollback": None}     # this run's record (read by the revert handler in _main)
+PREFLIGHT_SESSION_LIFE = 2 * 3600                # a session must outlive the deploy it will check
+
+def _role_projects(proj): return {"workflow": f"{proj}-workflow", "api": f"{proj}-api", "web": proj}
+
+def _vapi(path, mold_dir, method="GET", timeout=60):
+    """(returncode, JSON dict, one-line error) from `vercel api`. An answer carrying {"error": ...} is a failure."""
+    r = vrun(["vercel", "api", path, "-X", method, "--raw"], cwd=mold_dir, timeout=timeout)
+    try: doc = json.loads(r.stdout) if (r.stdout or "").strip() else {}
+    except ValueError: doc = {}
+    doc = doc if isinstance(doc, dict) else {}
+    err = (doc.get("error") or {}).get("message") if isinstance(doc.get("error"), dict) else doc.get("error")
+    last = ((r.stderr or r.stdout or "").strip().splitlines() or [""])[-1][:200]
+    return (r.returncode or (1 if err else 0)), doc, (err or last)
+
+def production_of(project, mold_dir):
+    """What serves `project`'s production right now: {project, project_id, id, created, auto_assign}, or None when
+    the project does not exist. id is None for a project with no production deployment yet. Read-only."""
+    rc, doc, _ = _vapi(f"/v9/projects/{project}", mold_dir)
+    if rc or not doc.get("id"): return None
+    t = (doc.get("targets") or {}).get("production") or {}
+    return {"project": project, "project_id": doc["id"], "id": t.get("id"), "created": t.get("createdAt") or 0,
+            "auto_assign": doc.get("autoAssignCustomDomains") is not False}
+
+def release_before(proj, mold_dir):
+    """The deployment serving each of the three projects BEFORE this deploy: what a rollback returns to."""
+    return {"at": NOW, "projects": {role: production_of(p, mold_dir) for role, p in _role_projects(proj).items()}}
+
+def _production_deployments(project_id, mold_dir, limit=20):
+    """READY production deployments of a project, newest first."""
+    _, doc, _ = _vapi(f"/v6/deployments?projectId={project_id}&target=production&state=READY&limit={limit}", mold_dir)
+    ds_ = [d for d in doc.get("deployments") or [] if (d.get("state") or d.get("readyState")) == "READY"]
+    return sorted(ds_, key=lambda d: d.get("created") or d.get("createdAt") or 0, reverse=True)
+
+def _point_production(rec, dep_id, mold_dir, how):
+    """Point one project's production at dep_id (how: rollback | promote) and wait until Vercel says it serves it."""
+    path = (f"/v1/projects/{rec['project_id']}/rollback/{dep_id}" if how == "rollback"
+            else f"/v10/projects/{rec['project_id']}/promote/{dep_id}")
+    rc, _, err = _vapi(path, mold_dir, method="POST", timeout=120)
+    if rc: return False, f"Vercel refused the {how}: {err or 'no answer'}"
+    deadline = time.monotonic() + ROLLBACK_WAIT_S
+    while True:
+        now = production_of(rec["project"], mold_dir)
+        if now and now.get("id") == dep_id: return True, f"{how} to {dep_id} confirmed"
+        if time.monotonic() > deadline:
+            return False, f"after {_fmt_s(ROLLBACK_WAIT_S)} production still serves {(now or {}).get('id') or 'nothing readable'}"
+        time.sleep(ROLLBACK_POLL_S)
+
+def promote_new(before, mold_dir, shipped):
+    """Each project this run deployed must now serve a deployment NEWER than the one recorded before it. After an
+    earlier rollback Vercel does not promote by itself: promote the newest READY production deployment and confirm."""
+    for role in shipped:
+        rec = (before.get("projects") or {}).get(role)
+        if not rec or not rec.get("id"): continue           # a first deploy: Vercel promotes it by itself
+        now = production_of(rec["project"], mold_dir)
+        if now and now.get("id") and now["id"] != rec["id"]: continue
+        newer = [d for d in _production_deployments(rec["project_id"], mold_dir)
+                 if (d.get("created") or d.get("createdAt") or 0) > (rec.get("created") or 0) and d.get("uid") != rec["id"]]
+        if not newer:
+            sys.exit(f"{rec['project']}: the deploy finished but no newer production deployment exists, so it is not serving.")
+        ok, why = _point_production(rec, newer[0]["uid"], mold_dir, "promote")
+        print(f"  {rec['project']}: production was held on an earlier rollback; {why}")
+        if not ok: sys.exit(f"{rec['project']}: the new deployment could not be put in front of traffic: {why}")
+
+def _health_checks(infra):
+    v = infra.get("vercel") or {}
+    return [("workflow", f"{v.get('workflow_url', '')}/api/health"), ("api", f"{v.get('api_url', '')}/eve/v1/health"),
+            ("web", f"{v.get('production_url', '')}{HEALTH_PATH}")]
+
+def read_health_now(infra):
+    """{name: "200" | other code | "no answer"} for the endpoints this app has addresses for. Read-only."""
+    out = {}
+    for name, u in _health_checks(infra):
+        if not u.startswith("http"): continue
+        code, _, _ = _read_health(u); out[name] = code or "no answer"
+    return out
+
+def rollback_vercel(app_id, infra, before, mold_dir, why, roles=None, by="the deploy's own gate"):
+    """Point every project (or `roles`) back at the deployment recorded before this run, front door first, then read
+    health again. Returns the record, also kept in infrastructure.json vercel.rollback. Never raises SystemExit
+    itself (a vrun deadline is caught and recorded): the caller decides how the run ends."""
+    rec = {"at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "by": by, "why": why[:300], "projects": {}}
+    print(f"rolling back ({why[:160]})")
+    for role in ROLLBACK_ORDER:
+        if roles is not None and role not in roles: continue
+        b = (before.get("projects") or {}).get(role)
+        if not b or not b.get("id"):
+            rec["projects"][role] = "nothing to roll back to: no production deployment before this one"; continue
+        try:
+            now = production_of(b["project"], mold_dir)
+            if now and now.get("id") == b["id"]: rec["projects"][role] = f"already serving {b['id']}"; continue
+            ok, detail = _point_production(b, b["id"], mold_dir, "rollback")
+        except SystemExit as e: ok, detail = False, str(e)[:200]
+        rec["projects"][role] = f"rolled back to {b['id']}" if ok else f"NOT rolled back: {detail}"
+        print(f"  {b['project']}: {rec['projects'][role]}")
+    rec["health"] = read_health_now(infra)
+    for k, v in rec["health"].items(): print(f"  health after rollback {k}: {v}")
+    moved = [v for v in rec["projects"].values() if v.startswith(("rolled back", "already serving"))]
+    broken = [k for k, v in rec["projects"].items() if v.startswith("NOT")]
+    rec["result"] = ("rolled back" if moved and not broken and all(v == "200" for v in rec["health"].values())
+                     else "rolled back, but health is not all 200" if moved and not broken
+                     else "nothing to roll back to" if not moved and not broken else "rollback FAILED")
+    infra.setdefault("vercel", {})["rollback"] = rec
+    RELEASE["rollback"] = rec
+    return rec
+
+def _smoke_record(res):
+    return {k: res.get(k) for k in ("result", "detail", "at", "seconds", "workspace_list", "cleanup") if res.get(k) is not None}
+
+def verify_release(app_id, app, infra, ds, adir, mold_dir, before):
+    """After the three deploys, before anything is recorded stamped: the health gate, then the smoke test. A failure of
+    either rolls every project back and ends the run with SystemExit("... rolled back ..."). Returns the smoke result
+    (pass, or needs_sign_in when no session is on hand: the caller finishes with exit 3)."""
+    import smoke
+    promote_new(before, mold_dir, [n for n, _ in SHIPPED])
+    health = infra.get("vercel", {}).get("health") or {}
+    bad = [f"{k} answered {v}" for k, v in health.items() if v != "200"] or ([] if health else ["no health endpoint was read"])
+    if bad:
+        why = "the health check failed (" + ", ".join(bad) + ")"
+    else:
+        print("smoke test: one chat as the operator, in the operator's own workspace")
+        res = smoke.check(app_id, app, infra)
+        infra["vercel"]["smoke"] = _smoke_record(res)
+        print(f"  smoke {res['result']}: {res['detail'][:200]}")
+        if res["result"] != "fail": return res
+        why = f"the smoke test failed ({res['detail'][:200]})"
+    rb = rollback_vercel(app_id, infra, before, mold_dir, why)
+    save(os.path.join(adir, "infrastructure.json"), infra)
+    back = "; ".join(f"{k}: {v}" for k, v in rb["projects"].items())
+    sys.exit(f"{app_id}: the deploy failed and was {rb['result']}: {why}. {back}. Health now: "
+             + ", ".join(f"{k} {v}" for k, v in rb["health"].items())
+             + f".\n  The previous version is serving again. Fix the cause, then: python3 .claude/scripts/provision.py {app_id} --deploy")
+
+def rollback_by_hand(app_id, app, infra, adir, mold_dir):
+    """--rollback: every project back to its PREVIOUS production deployment, front door first, health read again, the
+    app recorded `reverted` so the next deploy is asked for. Previous = what served before the last deploy started
+    (infrastructure.json vercel.release.before), when that is still a READY deployment other than the current one;
+    otherwise the newest READY production deployment older than the current one. The record comes first because a
+    deploy the gate rolled back was in production for a moment, and "the newest older one" would be that broken one."""
+    proj = infra["vercel"]["project"]; before = {"projects": {}}
+    recorded = (infra["vercel"].get("release") or {}).get("before") or {}
+    for role, p in _role_projects(proj).items():
+        cur = production_of(p, mold_dir)
+        if not cur or not cur.get("id"): continue
+        ready = _production_deployments(cur["project_id"], mold_dir)
+        pick = next((d for d in ready if d.get("uid") == recorded.get(role) and d.get("uid") != cur["id"]), None)
+        pick = pick or next((d for d in ready if d.get("uid") != cur["id"]
+                             and (d.get("created") or d.get("createdAt") or 0) < (cur.get("created") or 0)), None)
+        if pick: before["projects"][role] = dict(cur, id=pick["uid"], created=pick.get("created") or 0)
+        else: print(f"  {p}: no earlier production deployment to roll back to; left as it is")
+    if not before["projects"]:
+        sys.exit(f"{app_id}: none of its projects has an earlier production deployment, so there is nothing to roll back to. Nothing was changed.")
+    rb = rollback_vercel(app_id, infra, before, mold_dir, "rolled back by hand (provision.py --rollback)", by="the operator (--rollback)")
+    save(os.path.join(adir, "infrastructure.json"), infra)
+    if rb["result"] != "rollback FAILED":
+        _revert(adir, app, f"rolled back by hand to the previous production deployment ({rb['result']}); redeploy once the cause is fixed")
+    print(f"{app_id}: {rb['result']}. " + "; ".join(f"{k}: {v}" for k, v in rb["projects"].items()))
+    AR.detail("rollback", rb)
+    AR.note(summary=f"{app_id}: {rb['result']} to the previous production deployment.",
+            next=f"Fix the cause, then redeploy: python3 .claude/scripts/provision.py {app_id} --deploy")
+    return 0 if rb["result"] == "rolled back" else 1
+
+def smoke_how(app_id):
+    import smoke
+    return smoke.sign_in_how(app_id)
+
+def smoke_preflight(app_id, app, infra, before):
+    """Before a REDEPLOY (something serves already): a session must be on hand, with life enough to outlive the deploy,
+    and the app now serving must accept it. Otherwise stop here, exit 3, nothing deployed. A first deploy has no app
+    to sign in to yet; its smoke test asks for the sign-in after it (exit 3, the app deployed and healthy)."""
+    import smoke
+    if not any((r or {}).get("id") for r in before["projects"].values()): return
+    tok, _, why = smoke.session_for(app_id, app.get("mold_id"), min_life=PREFLIGHT_SESSION_LIFE)
+    url = smoke.app_url(infra)
+    if tok and not url: return
+    if tok:
+        state, why2, _ = smoke.workspaces(url, tok, smoke.operator_workspace(app))
+        if state == "ok": print(f"  smoke test ready: {why2}"); return
+        if state == "fail": print(f"  note: the app serving now did not list workspaces ({why2}); deploying, and the smoke test after it decides"); return
+        why = why2
+    AR.need("code", "one-time sign-in code", smoke.sign_in_how(app_id))
+    stop_for_human(f"{app_id}: needs a sign-in before it is redeployed: {why}. After the deploy the factory opens the app "
+                   f"as you and asks one question, and rolls back if it does not answer; that needs your sign-in. "
+                   f"Nothing was deployed.\n  {smoke.sign_in_how(app_id)}\n  Then: python3 .claude/scripts/provision.py {app_id} --deploy")
+
 ARTIFACT_HEADER = """# GENERATED by .claude/scripts/provision.py from state/application/{app_id}/*.json.
 # REGENERATED ON EVERY RUN (--check and --verify-db alike) — edit this file and your edit is gone.
 # The one sanctioned hand-edit seam is docker-compose.override.yml, which is never generated. Compose
@@ -2655,10 +2877,12 @@ def self_test():
     check("the dry run's URL is read-only and keeps an existing options value",
           "default_transaction_read_only%3Don" in ro and "endpoint%3Dep-x" in ro and "sslmode=require" in ro, ro)
     self_test_agent(check)
+    self_test_release(check)
     if fails:
         sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
     print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window; "
-          f"--json, exit codes, the deploy lock, --background and status, a piped secret refused)")
+          f"--json, exit codes, the deploy lock, --background and status, a piped secret refused; "
+          f"release: the mold CI gate, rollback on a failed health check or smoke test, promote after a rollback, --rollback)")
 
 def self_test_agent(check):
     """The agent interface, end to end in a throwaway factory with a refusing stand-in `vercel` first on PATH: one JSON
@@ -2718,11 +2942,119 @@ def self_test_agent(check):
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
+def self_test_release(check):
+    """Only what passed, and only what answers, end to end: `provision.py --deploy`, `--smoke`, `--rollback` and
+    `--deploy-remote` as subprocesses in a throwaway factory, in a REHEARSAL (FACTORY_REHEARSAL, lib/services.py) whose
+    vercel, curl, http and gh are fixtures/release/fake.py. Nothing real is called: any other outside name refuses."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    fake = os.path.join(here, "fixtures", "release", "fake.py")
+    if not os.path.isfile(fake): return check("the release fixture is present (fixtures/release/fake.py)", False, fake)
+    t = tempfile.mkdtemp(prefix="provision-release-selftest-")
+    try:
+        shutil.copytree(here, os.path.join(t, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
+        sha = "c0ffee" + "0" * 34
+        os.makedirs(os.path.join(t, "state", "application"))
+        json.dump({"molds": [{"mold_id": "m1", "status": "active", "source": {"commit": sha}}]}, open(os.path.join(t, "state", "factory.json"), "w"))
+        os.makedirs(os.path.join(t, "molds", "m1", "codebase"))
+        local = os.path.join(t, "local.json"); json.dump({"mold_sources": {"m1": "https://github.com/acme/base.git"}}, open(local, "w"))
+        def mkapp(app_id, infra):
+            a = os.path.join(t, "state", "application", app_id); os.makedirs(a)
+            json.dump({"app_id": app_id, "mold_id": "m1", "status": "planned", "model": {"provider": "cloudflare"},
+                       "capabilities": {"web_search": False, "browser": False}, "workspace": {"org": {"org_id": "org_own"}}},
+                      open(os.path.join(a, "application.json"), "w"))
+            json.dump(infra, open(os.path.join(a, "infrastructure.json"), "w"))
+            json.dump({"postgres": {"provider": "neon", "scope": "fresh", "rls": "off"}, "blob": {}}, open(os.path.join(a, "datastores.json"), "w"))
+            return a
+        a = mkapp("app1", {"target": "vercel", "secret_store": "vercel_env", "vercel": {"team": "t", "project": "app-one"},
+                           "secrets": [], "secrets_user": [], "secrets_derived": []})
+        mkapp("app2", {"target": "vm_remote", "secret_store": "vm_env_file", "vm_remote": {}, "secrets": [], "secrets_user": []})
+        reh = os.path.join(t, ".reh"); b = os.path.join(reh, "bin"); priv = os.path.join(t, ".private"); os.makedirs(b); os.makedirs(priv)
+        shutil.copy(fake, os.path.join(b, "fake.py")); os.chmod(os.path.join(b, "fake.py"), 0o755)
+        for nm in ("vercel", "curl", "http", "gh"): os.symlink("fake.py", os.path.join(b, nm))
+        W = os.path.join(reh, "world.json")
+        def world(**kw):
+            w = json.load(open(W)) if os.path.exists(W) else {"projects": {}, "token": "tok-operator", "memberships": [{"orgId": "customer_a"}, {"orgId": "org_own", "role": "owner"}]}
+            w.update(kw); json.dump(w, open(W, "w"))
+            return w
+        world(ci="green")
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("FACTORY_", "MOLD_V1_SESSION"))}
+        env.update(FACTORY_REHEARSAL=reh, FACTORY_PRIVATE_DIR=priv, FACTORY_LOCAL=local, PROVISION_MIN_FREE_MB="0", PROVISION_MAX_LOAD="100000",
+                   PROVISION_HEADROOM_WAIT_S="0", PROVISION_ROLLBACK_POLL_S="0.05", PROVISION_ROLLBACK_WAIT_S="5", PYTHONDONTWRITEBYTECODE="1")
+        P = os.path.join(t, ".claude", "scripts", "provision.py")
+        def go(app_id, *args):
+            r = subprocess.run([sys.executable, P, app_id, *args], cwd=t, env=env, capture_output=True, text=True, timeout=300)
+            return r.returncode, r.stdout + r.stderr
+        st = lambda: load(os.path.join(a, "application.json")); inf = lambda: load(os.path.join(a, "infrastructure.json"))
+        prod = lambda: {n: p.get("prod") for n, p in json.load(open(W))["projects"].items()}
+        ndeps = lambda: sum(len(p["deps"]) for p in json.load(open(W))["projects"].values())
+        calls = lambda: open(W + ".calls").read() if os.path.exists(W + ".calls") else ""
+        session = os.path.join(priv, "app1.session.json")
+        # the gate: red, then still running, both refused before anything is created or deployed
+        world(ci="red")
+        code, out = go("app1", "--deploy")
+        check("red mold CI: --deploy refuses, naming the check, before anything is deployed",
+              code == 1 and "not deploying" in out and "build (failure)" in out and ndeps() == 0 and st()["status"] == "planned", out[-600:])
+        check("  ...and the verdict is in state", inf().get("deploy_gate", {}).get("verdict") == "red", inf().get("deploy_gate"))
+        world(ci="pending")
+        code, out = go("app1", "--deploy")
+        check("pending mold CI: --deploy refuses, saying it is still running", code == 1 and "still running" in out and ndeps() == 0, out[-400:])
+        code, out = go("app2", "--deploy-remote")
+        check("  ...and so does --deploy-remote, before the server is contacted", code == 1 and "not deploying" in out and "ssh" not in calls(), out[-400:])
+        code, out = go("app1", "--deploy", "--allow-unverified-mold", "rehearsal: CI is down")
+        g = inf().get("deploy_gate", {})
+        check("--allow-unverified-mold with a reason deploys anyway and records the reason",
+              g.get("override", {}).get("reason") == "rehearsal: CI is down" and "deploying anyway" in out and ndeps() == 3, (g, out[-400:]))
+        # a first deploy: green gate, deployed and healthy, then the smoke test asks for a sign-in (exit 3)
+        world(ci="green")
+        check("a first deploy with no sign-in on hand: deployed, healthy, then exit 3 'needs a sign-in'",
+              code == 3 and "needs a sign-in" in out and st()["status"] == "stamped" and inf()["vercel"]["smoke"]["result"] == "needs_sign_in", out[-600:])
+        json.dump({"token": "tok-operator", "expires_at": int(time.time()) + 7 * 86400}, open(session, "w"))
+        code, out = go("app1", "--smoke")
+        check("--smoke once signed in: one chat answered in the operator's workspace, recorded",
+              code == 0 and inf()["vercel"]["smoke"]["result"] == "pass" and '"org": "org_own"' in calls() and '"org": "customer_a"' not in calls(), out[-400:])
+        first = prod()
+        # health fails after a redeploy: every project rolled back to what served before
+        world(fault={"app-one-api": "health"})
+        code, out = go("app1", "--deploy")
+        rb = inf()["vercel"].get("rollback") or {}
+        check("a failed health check after a redeploy rolls every project back, exit 1 'rolled back'",
+              code == 1 and "rolled back" in out and prod() == first and rb.get("result") == "rolled back" and st()["status"] == "reverted", (out[-700:], rb, prod(), first))
+        check("  ...health read again after it, all 200", set(rb.get("health", {}).values()) == {"200"}, rb.get("health"))
+        check("  ...and the record says the rollback, not 'replaced in production'", "rolled back" in st()["revert"]["reason"] and "Replaced in production" not in st()["revert"]["reason"], st().get("revert"))
+        # after a rollback Vercel stops promoting by itself: the next good deploy is promoted, and is what serves
+        code, out = go("app1", "--deploy")
+        now = prod()
+        check("the next deploy after a rollback is promoted and serves (no stale 'healthy' from the old one)",
+              code == 0 and all(now[k] != first[k] for k in first) and "held on an earlier rollback" in out and st()["status"] == "stamped", (out[-600:], now))
+        good = prod()
+        # the smoke test fails after a redeploy: rolled back
+        world(fault={"app-one": "chat"})
+        code, out = go("app1", "--deploy")
+        check("a failed smoke test (the chat errors) rolls every project back, exit 1 'rolled back'",
+              code == 1 and "smoke test failed" in out and "rolled back" in out and prod() == good and st()["status"] == "reverted", (out[-600:], prod(), good))
+        # --rollback by hand: the previous production deployment of each project
+        code, out = go("app1", "--deploy")
+        latest = prod()
+        code, out = go("app1", "--rollback")
+        check("--rollback: every project back to its previous production deployment, health read, app reverted",
+              code == 0 and prod() == good and prod() != latest and st()["status"] == "reverted" and inf()["vercel"]["rollback"]["by"].startswith("the operator"),
+              (out[-600:], prod(), good, latest))
+        # a redeploy with no sign-in on hand stops BEFORE deploying
+        os.remove(session); n0 = ndeps()
+        code, out = go("app1", "--deploy")
+        check("a redeploy with no sign-in on hand: exit 3 before anything is deployed", code == 3 and "Nothing was deployed" in out and ndeps() == n0, out[-500:])
+    finally:
+        shutil.rmtree(t, ignore_errors=True)
+
 def shipped_note():
     """What a stopped deploy really changed in production (mold_v1-106/109). A deploy that died in the eve
     build replaced nothing the web app serves, and the record should say so rather than read as an outage."""
     done = [n for n, _ in SHIPPED]
     rest = [n for n in ("workflow", "api", "web") if n not in done]
+    rb = RELEASE.get("rollback")
+    if rb:   # the gate or the revert handler put the previous deployments back: say what serves NOW
+        return (f"Then {rb['result']}: " + "; ".join(f"{k} {v}" for k, v in rb["projects"].items())
+                + ". Health after it: " + (", ".join(f"{k} {v}" for k, v in (rb.get("health") or {}).items()) or "not read") + ".")
     if not done:
         return "Nothing was replaced in production: the previous deployment of every service is still serving."
     return (f"Replaced in production before it stopped: {', '.join(done)}. "
@@ -2772,6 +3104,7 @@ def _main(a):
         # A server over SSH that serves the app (mold_v1-075/076). Nothing below this line applies to it: no
         # Vercel project, no local docker database, and --check must not reach for either. One module owns it.
         sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
+        if "--deploy-remote" in a and "--dry-run" not in a: deploy_gate.require(app_id, app, infra, adir, a, save=save)   # only deploy what passed CI
         rc = vm_remote.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__])
         if rc == 0 and "--deploy-remote" in a and "--dry-run" not in a: repo_auto(app_id, adir, "a deploy")
         sys.exit(AR.EXIT["needs_human"] if rc and AR.NOTES["needs"] else rc)   # a value only the operator holds: exit 3
@@ -2792,6 +3125,23 @@ def _main(a):
         sys.exit(_library().apply_local(app_id, app, infra, a))
     if target == "vercel":
         _refuse_live_or_shared_project(app_id, infra)   # ahead of --set-secret: it writes env into the project
+        if "--rollback" in a:
+            # By hand: every project back to its previous production deployment (rollback_by_hand). Under the deploy lock.
+            return rollback_by_hand(app_id, app, infra, adir, mold_dir)
+        if "--smoke" in a:
+            # The post-deploy check on its own, against what serves now; records infrastructure.json vercel.smoke and
+            # never rolls anything back (a first deploy's check, once the operator has signed in).
+            import smoke
+            res = smoke.check(app_id, app, infra)
+            infra["vercel"]["smoke"] = _smoke_record(res); save(os.path.join(adir, "infrastructure.json"), infra)
+            print(f"smoke {res['result']}: {res['detail']}")
+            AR.detail("smoke", infra["vercel"]["smoke"])
+            if res["result"] == "needs_sign_in":
+                AR.need("code", "one-time sign-in code", smoke.sign_in_how(app_id)); stop_for_human(f"{app_id}: needs a sign-in: {res['detail']}")
+            AR.note(summary=f"{app_id}: smoke {res['result']}: {res['detail'][:200]}")
+            return 0 if res["result"] == "pass" else 1
+    elif "--rollback" in a or "--smoke" in a:
+        sys.exit(f"{app_id}: --rollback and --smoke are for an app on Vercel; this one's target is {target!r}.")
     if "--set-secret" in a:
         return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
     if "--verify-rls" in a:
@@ -2895,6 +3245,14 @@ def _main(a):
                 stop_for_human(f"refusing {verb}: {len(missing_user)} secret(s) above are not set, so NOTHING was created. "
                                f"Set them, then rerun: python3 .claude/scripts/provision.py {app_id} {verb}")
             if deploy:
+                # ONLY DEPLOY WHAT PASSED: the mold commit this build is made from must be green on the mold source's
+                # CI (lib/deploy_gate.py), or the operator said why not with --allow-unverified-mold "<reason>".
+                deploy_gate.require(app_id, app, infra, adir, a, save=save)
+                # What serves each project now: what a failed health gate or smoke test rolls back to. A redeploy also
+                # needs the operator's sign-in on hand BEFORE it starts, for the smoke test after it.
+                RELEASE["before"] = release_before(proj, mold_dir)
+                infra["vercel"]["release"] = {"at": NOW, "before": {r: (v or {}).get("id") for r, v in RELEASE["before"]["projects"].items()}}
+                smoke_preflight(app_id, app, infra, RELEASE["before"])
                 # A deploy on a saturated VM is an OOM waiting to happen (mold_v1-109). Wait for room first,
                 # bounded; if it never comes, stop HERE, before anything is created or the status moves.
                 ok, now = wait_for_headroom("the deploy")
@@ -2975,6 +3333,8 @@ def _main(a):
     app["status"] = "stamping"; save(os.path.join(adir, "application.json"), app)
     try:
         running = deploy_vercel(app_id, app, infra, ds, mold_dir, adir)
+        # The health gate, then the smoke test; either failing rolls all three projects back (verify_release).
+        smoked = verify_release(app_id, app, infra, ds, adir, mold_dir, RELEASE["before"] or {"projects": {}})
     except BaseException as e:
         # "deployed" and "isolated" are the same state or the app is not deployed. Every exit inside
         # deploy_vercel — the coverage pass, the isolation proof, a failed build — lands here, so the
@@ -2987,6 +3347,13 @@ def _main(a):
         # moment to skip the revert. The exception is re-raised untouched, so the traceback (and the
         # exit code) still reach the operator.
         for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, signal.SIG_IGN)   # the record below must land
+        if (isinstance(e, SystemExit) and SHIPPED and not RELEASE["rollback"] and RELEASE["before"]
+                and "stopped by SIG" not in str(e.code)):
+            # A deploy that stopped after replacing some services (a later build failed) leaves a mix of new and old
+            # code in front of traffic: put the ones it replaced back on what served before (see RELEASES above).
+            try: rollback_vercel(app_id, infra, RELEASE["before"], mold_dir, f"the deploy stopped part-way: {str(e.code)[:200]}",
+                                 roles=[n for n, _ in SHIPPED])
+            except Exception as rb_e: print(f"  the rollback itself failed: {type(rb_e).__name__}: {str(rb_e)[:200]}")
         save(os.path.join(adir, "infrastructure.json"), infra)
         note = shipped_note()
         if isinstance(e, SystemExit): _revert(adir, app, str(e) if e.code else "deploy stopped", note)
@@ -3029,14 +3396,23 @@ def _main(a):
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
     AR.detail("production_url", infra.get('vercel', {}).get('production_url')); AR.detail("deployed_at", NOW)
+    if smoked.get("result") == "needs_sign_in":
+        # Deployed and healthy, but the chat check could not run: no sign-in was on hand (a first deploy has had no app
+        # to sign in to). Said, not skipped: exit 3 with the one thing to do, then `--smoke` settles it.
+        AR.need("code", "one-time sign-in code", smoke_how(app_id))
+        repo_auto(app_id, adir, "a deploy")
+        stop_for_human(f"{app_id} is deployed and healthy at {infra.get('vercel', {}).get('production_url')}, but the "
+                       f"post-deploy chat check needs a sign-in: {smoked.get('detail')}.\n  {smoke_how(app_id)}\n"
+                       f"  Then: python3 .claude/scripts/provision.py {app_id} --smoke")
+    AR.detail("smoke", infra.get("vercel", {}).get("smoke"))
     AR.note(summary=f"{app_id} deployed: {infra.get('vercel', {}).get('production_url')}, tenant isolation proven on the app serving traffic.",
             next=f"Run the five testing lanes: python3 .claude/scripts/lanes.py {app_id} --background --json")
     repo_auto(app_id, adir, "a deploy")
 # ---- the agent interface: --json, --background, status, the deploy lock (lib/agent_result.py, lib/runs.py) ----------
-DEPLOY_FLAGS = ("--deploy", "--deploy-remote")
+DEPLOY_FLAGS = ("--deploy", "--deploy-remote", "--rollback")   # each under the app's deploy lock
 def _action(a):
-    for f, act in (("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--verify-db", "verify-db"),
-                   ("--verify-rls", "verify-rls")):
+    for f, act in (("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback", "rollback"),
+                   ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke")):
         if f in a: return act + ("-dry-run" if "--dry-run" in a else "")
     return "status" if a[1:2] == ["status"] else "check"
 
@@ -3060,7 +3436,7 @@ def main(a):
     if not a or a[0].startswith("-"): return _main(a)
     app_id = a[0]
     services.script_start("provision.py", a, action=_action(a))
-    flag = "--deploy-remote" if "--deploy-remote" in a else "--deploy"
+    flag = "--deploy-remote" if "--deploy-remote" in a else "--rollback" if "--rollback" in a else "--deploy"
     start = f"python3 .claude/scripts/provision.py {app_id} {flag} --background --json"
     if a[1:2] == ["status"]:
         res = runs.status(ROOT, "provision.py", app_id, "deploy", start)

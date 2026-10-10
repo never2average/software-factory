@@ -10,6 +10,9 @@ python3 .claude/scripts/provision.py <app_id> --set-secret NAME   # type one cre
 python3 .claude/scripts/provision.py <app_id> --deploy            # prints the plan, refuses before creating if a secret is missing, else creates + deploys
 python3 .claude/scripts/provision.py <app_id> --verify-db         # the database half of --deploy (vercel: creates projects + datastores, bootstraps Neon; vm: a private local Postgres)
 python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # re-prove isolation on what runs now; writes rls_verified
+python3 .claude/scripts/provision.py <app_id> --rollback          # every project back to its previous production deployment (Vercel)
+python3 .claude/scripts/provision.py <app_id> --smoke             # the post-deploy chat check alone, against what serves now
+python3 .claude/scripts/lib/deploy_gate.py <mold_id>              # did the mold source's CI pass for the pinned commit? read-only
 ```
 
 For an application on `target: vm_remote` (a server of the customer's own, over SSH) the commands are different; see "A server
@@ -38,6 +41,25 @@ may not handle secret values). Missing secrets are the user's to set; report nam
 4. **`--verify-db`** on a vercel app is a **writer** (the database half of `--deploy`): it prints `about to create:`
    then creates projects + datastores and bootstraps the database; it does not gate on operator secrets. On vm it is
    local only (`localpg.py down <app>` removes the container).
+
+## Only what passed, and only what answers
+
+- **Mold CI gate** (`lib/deploy_gate.py`), before `--deploy` and `--deploy-remote`: the mold commit the build is made
+  from (`state/factory.json` `molds[].source.commit`) must have passed every job of the mold source's `ci.yml` for
+  exactly that commit. Red, still running, missing or unknown refuses with one sentence naming the check. To deploy
+  anyway, the operator gives a reason: `--allow-unverified-mold "<reason>"`; it is kept in `infrastructure.json`
+  `deploy_gate.override`. Every verdict is recorded in `deploy_gate`.
+- **Rollback on Vercel**: before the three deploys, the deployment serving each project is recorded
+  (`vercel.release.before`). After them, the health gate (all three endpoints 200) and the smoke test
+  (`lib/smoke.py`: one chat as the operator, in the operator's own workspace, answered within 150 s). If either
+  fails, every project is pointed back at its recorded deployment, health is read again, and the deploy ends
+  failed, "rolled back" (`vercel.rollback`, status `reverted`). It is safe because the database only changes
+  additively before the deploy (the drift dry run refuses data loss) and each old deployment keeps the environment
+  it was built with. After a rollback Vercel stops promoting new deployments by itself, so the next deploy promotes
+  its own.
+- **A sign-in is needed**: a redeploy refuses to start without the operator's session on hand (exit 3, nothing
+  deployed). A first deploy ends exit 3 "needs a sign-in", deployed and healthy; once the operator has signed in
+  (`mint.py <app> code-request` / `code`), `--smoke` settles it, and `mint.py <app> run` does that by itself.
 
 There is no separate provision step: "deploy prints, then creates" with the refusal-before-creation gate is the
 whole safety, chosen because the operator is non-technical. `factory.py validate` and `lanes.py <app> --list` are

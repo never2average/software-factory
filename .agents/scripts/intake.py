@@ -456,9 +456,11 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     elif ans["deploy_target"]=="vm":
         infra["vm"]=dict(d.get("vm",{})); infra["vm"]["compose"]=f"infra/vm/apps/{app_id}/docker-compose.yml"
     ex_inf = existing.get("infrastructure", {})
-    for k in ("datastores", "deployed_at", "configured_at"):
+    for k in ("datastores", "deployed_at", "configured_at", "deploy_gate"):
         if k in ex_inf: infra[k] = ex_inf[k]
-    for k in ("production_url", "workflow_url", "api_url", "crons", "health"):   # `health` is the deploy's own verdict; dropping it left state unable to say whether the app came up
+    # `health`, `smoke` and `rollback` are the deploy's own verdicts and `release` what a rollback returns to; dropping them
+    # left state unable to say whether the app came up, or what to put back.
+    for k in ("production_url", "workflow_url", "api_url", "crons", "health", "release", "rollback", "smoke"):
         if k in ex_inf.get("vercel", {}) and "vercel" in infra: infra["vercel"][k] = ex_inf["vercel"][k]
     ds = {"$schema":"../app_id/datastores.schema.json",
       # rls follows TENANCY, it is not a constant. This line used to write "fail_closed" into every app
