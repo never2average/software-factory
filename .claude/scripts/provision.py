@@ -257,25 +257,44 @@ HEADROOM_LOAD = float(os.environ.get("PROVISION_MAX_LOAD") or (os.cpu_count() or
 HEADROOM_MEM_MB = int(os.environ.get("PROVISION_MIN_FREE_MB") or 3072)
 HEADROOM_WAIT_S = int(os.environ.get("PROVISION_HEADROOM_WAIT_S") or 900)
 
+def _vm_stat_available_mb(text):
+    """Available memory in MB from macOS `vm_stat` output, or None when it cannot be read: free + inactive +
+    speculative + purgeable pages, the pages the kernel hands out without swapping (what MemAvailable means
+    on Linux)."""
+    m = re.search(r"page size of (\d+) bytes", text)
+    if not m: return None
+    pages = 0
+    for key in ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable"):
+        n = re.search(rf"^{key}:\s+(\d+)\.?\s*$", text, re.M)
+        if n: pages += int(n.group(1))
+    return pages * int(m.group(1)) // (1024 * 1024)
+
 def _machine():
-    """(1-minute load, MemAvailable in MB)."""
+    """(1-minute load, available memory in MB). Memory is MemAvailable from /proc/meminfo on Linux and the
+    `vm_stat` equivalent on macOS. None means this OS gave no reading: /proc/meminfo exists only on Linux, and
+    reading it as 0 used to make every deploy from a Mac wait out the whole headroom window and then refuse."""
     load1 = os.getloadavg()[0]
-    avail = 0
+    avail = None
     try:
         for l in open("/proc/meminfo"):
             if l.startswith("MemAvailable:"): avail = int(l.split()[1]) // 1024; break
-    except OSError: pass
+    except OSError:
+        if sys.platform == "darwin":
+            try: avail = _vm_stat_available_mb(subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=10).stdout)
+            except (OSError, subprocess.SubprocessError): pass
     return load1, avail
 
 def _busiest(n=3):
     """The top memory users, for the progress line. Command lines are shortened and scrubbed: another
     process's argv can carry a connection string, and this line is printed."""
     try:
-        out = subprocess.run(["ps", "-eo", "rss=,args=", "--sort=-rss"], capture_output=True, text=True, timeout=10).stdout
+        # Sorted here, not with `--sort=-rss`: that flag is procps (Linux) only, and BSD/macOS `ps` rejects it.
+        out = subprocess.run(["ps", "-eo", "rss=,args="], capture_output=True, text=True, timeout=10).stdout
     except Exception: return "unknown"
+    procs = [l.strip().partition(" ") for l in out.splitlines() if l.strip()]
+    procs = sorted((p for p in procs if p[0].isdigit()), key=lambda p: -int(p[0]))
     rows = []
-    for l in out.splitlines()[:n]:
-        rss, _, args = l.strip().partition(" ")
+    for rss, _, args in procs[:n]:
         args = re.sub(r"://[^@\s/]+@", "://***@", args)
         args = re.sub(r"[A-Za-z0-9_\-+/=]{32,}", "…", args)[:70]
         rows.append(f"{args} ({int(rss) // 1024}MB)")
@@ -288,8 +307,10 @@ def wait_for_headroom(label, deadline_s=None, probe=_machine, sleep=time.sleep, 
     waited = 0
     while True:
         load1, avail = probe()
-        now = f"load {load1:.1f} (limit {HEADROOM_LOAD:g}), {avail}MB available (need {HEADROOM_MEM_MB}MB)"
-        if load1 <= HEADROOM_LOAD and avail >= HEADROOM_MEM_MB: return True, now
+        # No memory reading on this OS: the load still gates, memory is reported as not measured, never as 0MB.
+        mem = f"{avail}MB available (need {HEADROOM_MEM_MB}MB)" if avail is not None else "memory not measured on this OS"
+        now = f"load {load1:.1f} (limit {HEADROOM_LOAD:g}), {mem}"
+        if load1 <= HEADROOM_LOAD and (avail is None or avail >= HEADROOM_MEM_MB): return True, now
         if waited >= deadline_s: return False, now
         if waited % max(every, 1) == 0:
             print(f"  waiting for the VM before {label}: {now}; {_fmt_s(waited)} of {_fmt_s(deadline_s)}. "
@@ -299,7 +320,7 @@ def wait_for_headroom(label, deadline_s=None, probe=_machine, sleep=time.sleep, 
 def _node_options(avail_mb, current=""):
     """A V8 old-space ceiling sized to what is free: half of it, clamped to 2-4GB, unless one is already set."""
     if "max-old-space-size" in (current or ""): return current
-    mb = max(2048, min(4096, avail_mb // 2))
+    mb = 2048 if avail_mb is None else max(2048, min(4096, avail_mb // 2))   # no reading: the floor
     return f"{current} --max-old-space-size={mb}".strip()
 
 def _oom_killed(r):
@@ -2753,6 +2774,22 @@ def self_test():
           (_node_options(6000), _node_options(1000), _node_options(20000)) ==
           ("--max-old-space-size=3000", "--max-old-space-size=2048", "--max-old-space-size=4096"))
     check("an existing heap ceiling is kept", _node_options(6000, "--max-old-space-size=1234") == "--max-old-space-size=1234")
+    check("no memory reading gives the floor heap ceiling", _node_options(None) == "--max-old-space-size=2048")
+    # 3b. macOS: vm_stat is read, and an OS with no reading is gated on load alone, never on "0MB"
+    vm_stat = ("Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free:                              182038.\n"
+               "Pages active:                           1313718.\nPages inactive:                         1305969.\n"
+               "Pages speculative:                        12000.\nPages purgeable:                          2000.\n")
+    check("vm_stat: free + inactive + speculative + purgeable pages, in MB",
+          _vm_stat_available_mb(vm_stat) == (182038 + 1305969 + 12000 + 2000) * 4096 // (1024 * 1024), _vm_stat_available_mb(vm_stat))
+    check("vm_stat output without a page size is no reading", _vm_stat_available_mb("garbage") is None)
+    slept = []
+    ok, now = wait_for_headroom("x", deadline_s=600, probe=lambda: (1.0, None), sleep=slept.append, every=30)
+    check("no memory reading: a quiet machine passes at once", ok and not slept and "not measured" in now, (ok, slept, now))
+    slept = []
+    ok, now = wait_for_headroom("x", deadline_s=60, probe=lambda: (99.0, None), sleep=slept.append, every=30)
+    check("no memory reading: a busy machine still waits on load", not ok and sum(slept) == 60, (ok, slept))
+    check("the machine reading works on this OS", isinstance(_machine()[0], float) and (_machine()[1] is None or _machine()[1] >= 0))
+    check("busiest processes are listed without procps-only flags", _busiest() != "unknown", _busiest())
     # 4. the heavy build: nice, NODE_OPTIONS, one retry on an OOM kill only
     CP = subprocess.CompletedProcess
     for codes, want_calls, want_rc in (([137, 0], 2, 0), ([137, 137], 2, 137), ([1, 0], 1, 1), ([0], 1, 0)):
