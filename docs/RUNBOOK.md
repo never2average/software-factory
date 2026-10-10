@@ -319,9 +319,13 @@ Then it copies the app's source, builds it on the server, prepares the database 
 jobs, and gets the security certificate for your domain. The last line is `deployed: https://research.yourcompany.com`.
 
 If it stops, the last lines say in one sentence what to do. Fix that and run the same command again; every step is
-safe to repeat. A redeploy takes the app offline while it rebuilds: each redeploy of the first such server took about
-six minutes from start to finish, and the app is down for part of that (`docs/COST_MODEL.md` §7), so run one outside
-working hours.
+safe to repeat. A redeploy does not take the app offline. Before it sends anything, it rehearses on the factory's
+machine, so a file missing from what it would send stops it before the server is touched. On the server, it builds
+the new version in a folder of its own while the running one keeps serving, and prepares the new version's sandboxes
+there too. Only then does it switch over, by restarting the three services, which takes seconds. If the new version
+does not start or does not answer its health check, the server goes back to the version that was running, by itself,
+and the last lines say so. The previous version stays on the server. To go back to it by hand at any time:
+`python3 .claude/scripts/provision.py <app_id> --rollback-remote` (run it again to go forward).
 
 For the Google sign-in button, add `https://research.yourcompany.com` under **Authorized JavaScript origins** and
 **Authorized redirect URIs** in Google Cloud Console, exactly as §4 describes for a Vercel address.
@@ -336,6 +340,7 @@ For the Google sign-in button, add `https://research.yourcompany.com` under **Au
 | know what the server costs | `docs/COST_MODEL.md` §7 |
 | see what old sandboxes are taking up | `python3 .claude/scripts/provision.py <app_id> --prune-sandboxes` (only lists; see "The disk" below) |
 | see the starter workflows and recipes an older version of the app left in a workspace | `python3 .claude/scripts/provision.py <app_id> --library-cleanup` (only lists, per workspace, what would go and what stays and why; add `--apply` to remove the ones nobody edited, ran or built on) |
+| go back to the version that was running before the last deploy | `python3 .claude/scripts/provision.py <app_id> --rollback-remote` (add `--dry-run` to read it first; run it again to go forward) |
 | close the login port to the internet | step H below |
 
 **The workspace.** A freshly deployed app has no workspace and nobody in it. This one command creates the workspace the brief

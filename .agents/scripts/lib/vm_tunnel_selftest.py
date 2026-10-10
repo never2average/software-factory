@@ -191,8 +191,8 @@ def prune(check, tmp):
     check("prune:   ...on a nightly timer that catches up after a reboot", "OnCalendar=*-*-* 03:17:00" in tim and "Persistent=true" in tim and f"Unit={S['unit']}-sandbox-prune.service" in tim)
     S30 = B._settings(lambda d: d["infrastructure"]["vm_remote"]["sandbox"].update(retention_days=30, disk_alarm_percent=70))
     check("prune:   ...and vm_remote.sandbox.retention_days changes it", "--retention-days 30" in V.unit_files(S30, crons)[f"{S['unit']}-sandbox-prune.service"] and S30["disk_alarm"] == 70 and S["retention_days"] == 7 and S["disk_alarm"] == 80)
-    check("prune:   ...the units step turns the timer on, and does not run a prune during a deploy", f"systemctl enable --now {S['unit']}-sandbox-prune.timer" in V.units_sh(S, crons)
-          and "sandbox-prune.service" not in V.units_sh(S, crons))
+    check("prune:   ...the switch turns the timer on, and does not run a prune during a deploy", f"systemctl enable --now {S['unit']}-sandbox-prune.timer" in V.release_sh(S, crons)
+          and "sandbox-prune.service" not in V.release_sh(S, crons))
     if shutil.which("systemd-analyze"):
         d = os.path.join(tmp, "prune-units"); os.makedirs(d)
         for n in (f"{S['unit']}-sandbox-prune.service", f"{S['unit']}-sandbox-prune.timer"): open(os.path.join(d, n), "w").write(U[n])
@@ -211,8 +211,9 @@ def prune(check, tmp):
     check("prune:   ...and a prune timer that is not on fails it too", any("prune timer is not on" in x for x in bad), bad)
     check("prune:   ...the store's size is recorded with the health", hv["sandbox_store_mb"] == 15462)
     res = V.deploy(S, MOLD, crons, runner=lambda st, stdin=None: CP(st["argv"], 0, {"qualify": B.fx("qualify-ok.txt"), "env-names": "\n".join(V.operator_names(S)),
-                   "db-chain": "EVIDENCE " + json.dumps({"protected": 58}), "health": B.fx("health-ok.txt").replace("DISK_USED_PCT=21", "DISK_USED_PCT=88")}.get(st["id"], "ok"), ""),
-                   resolver=lambda d: ["203.0.113.10"], read_health=lambda u: ("200", B.HEALTH_DOC, ""), say=lambda *_: None, bundle_dir=os.path.join(tmp, "deploy-disk"), wait=lambda s: None)
+                   "db-chain": "EVIDENCE " + json.dumps({"protected": 58}), "health": B.fx("health-ok.txt").replace("DISK_USED_PCT=21", "DISK_USED_PCT=88"), "switch": B.SWITCHED}.get(st["id"], "ok"), ""),
+                   resolver=lambda d: ["203.0.113.10"], read_health=lambda u: ("200", B.HEALTH_DOC, ""), say=lambda *_: None, bundle_dir=os.path.join(tmp, "deploy-disk"), wait=lambda s: None,
+                   rehearse=B.NO_REHEARSAL)
     check("prune: a deploy on a server at 88% is accepted and carries the warning", res["problems"] == [] and len(res["warnings"]) == 1 and res["health"]["disk_percent"] == 88, res.get("warnings"))
     sch = SCH()
     for label, mut, needle in (("a retention of 0 days", lambda d: d["infrastructure"]["vm_remote"]["sandbox"].update(retention_days=0), "retention_days"),
@@ -436,8 +437,8 @@ def tunnel(check, tmp):
     check("tunnel: the outside probe wants port 22 closed publicly and open on the tunnel", doors(False, True) == [] and "still answers on the server's public address" in doors(True, True)[0]
           and "does not answer on the tunnel address" in doors(False, False)[0] and V.ssh_door_problems(S, lambda a, p: True) == [])
     res = V.deploy(Son, MOLD, crons, runner=lambda st, stdin=None: CP(st["argv"], 0, {"qualify": B.fx("qualify-ok.txt"), "env-names": "\n".join(V.operator_names(Son)), "db-chain": "EVIDENCE " + json.dumps({"protected": 58}),
-                   "health": "\n".join(f"{k}={v}" for k, v in ok.items())}.get(st["id"], "ok"), ""), resolver=lambda d: ["203.0.113.10"], read_health=lambda u: ("200", B.HEALTH_DOC, ""), say=lambda *_: None,
-                   bundle_dir=os.path.join(tmp, "deploy-tunnel"), wait=lambda s: None, probe=lambda a, p: True)
+                   "health": "\n".join(f"{k}={v}" for k, v in ok.items()), "switch": B.SWITCHED}.get(st["id"], "ok"), ""), resolver=lambda d: ["203.0.113.10"], read_health=lambda u: ("200", B.HEALTH_DOC, ""), say=lambda *_: None,
+                   bundle_dir=os.path.join(tmp, "deploy-tunnel"), wait=lambda s: None, probe=lambda a, p: True, rehearse=B.NO_REHEARSAL)
     check("tunnel:   ...and a deploy whose outside probe finds public SSH answering is not accepted", any("still answers" in x for x in res["problems"]) and res["health"]["tunnel"] == "ok", res["problems"])
     # ---- the state rules
     sch = SCH()

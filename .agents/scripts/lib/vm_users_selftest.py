@@ -101,18 +101,18 @@ def users(check, tmp):
     check("users: the prewarm runs inside the API unit, so as the agent API's user", "ExecStartPre=/bin/bash" in U[f"{pre}-api.service"] and "runuser" not in pre_sh and "sudo" not in pre_sh)
 
     # ---- the order of a deploy on a server that still runs everything as one user
-    order = [b.index(x) for x in ("systemctl stop", "/factory/users.sh", "env-split --file", f"chown -hR {V.BUILD_USER}:{V.CODE_GROUP} ", "npm run build:eve", "-- npm run build\n", "/factory/seal.sh")]
-    check("migration: build.sh stops the services, THEN hands directories over, THEN splits the env files, builds, and seals the code", order == sorted(order), order)
+    order = [b.index(x) for x in ("/factory/users.sh", "env-split --file", f"chown -hR {V.BUILD_USER}:{V.CODE_GROUP} ", "npm run build:eve", "-- npm run build\n", "/factory/seal.sh")]
+    check("migration: build.sh hands directories over, THEN splits the env files, builds, and seals the new release; it stops nothing (mold_v1-222)", order == sorted(order) and "systemctl" not in b, order)
     ids = [s["id"] for s in V.plan(S, B.MOLD)]
-    check("migration: across the deploy: accounts (packages) -> egress rule that names them (firewall) -> stop, hand over, build -> database -> start (units) -> health",
-          ids.index("packages") < ids.index("firewall") < ids.index("source") < ids.index("build") < ids.index("db-chain") < ids.index("units") < ids.index("health"), ids)
+    check("migration: across the deploy: accounts (packages) -> egress rule that names them (firewall) -> hand over, build -> database -> prewarm -> switch -> health",
+          ids.index("packages") < ids.index("firewall") < ids.index("source") < ids.index("build") < ids.index("db-chain") < ids.index("prewarm") < ids.index("switch") < ids.index("health"), ids)
     pk = Bn["packages.sh"][0]
     body = [l for l in pk.splitlines() if not l.startswith("#")]
     check("migration: the packages step, which runs while the old services are still serving, makes accounts and re-owns NOTHING",
           not any(l.startswith(("chown", "chmod")) for l in body) and not any("install -d" in l and (" -o " in l or data in l or S["app_dir"] in l or "/var/lib/sf" in l) for l in body)
           and all(f"useradd --system --user-group --home-dir {h} --no-create-home --shell /usr/sbin/nologin {u}" in pk for u, h in ((WEB, V.SERVICE_HOMES["web"]), (WORK, V.SERVICE_HOMES["workflow"]), (V.BUILD_USER, V.BUILD_HOME))), body[-8:])
     us = Bn["users.sh"][0]; ub = [l for l in us.splitlines() if l.strip() and not l.lstrip().startswith("#")]
-    everything = "\n".join(Bn[k][0] for k in ("users.sh", "seal.sh", "storage-view.sh", "build.sh", "db-chain.sh", "units.sh", "packages.sh"))
+    everything = "\n".join(Bn[k][0] for k in ("users.sh", "seal.sh", "storage-view.sh", "build.sh", "db-chain.sh", "packages.sh"))
     code_lines = [l for l in everything.splitlines() if l.strip() and not l.lstrip().startswith("#")]
     check("migration: no script in it removes or moves anything, or names the database", not [l for l in code_lines if re.search(r"(^|[;&|]\s*|\s)(rm|mv|rmdir|dropdb|pg_dropcluster|truncate|shred)\s", l)]
           and "postgres" not in us + Bn["seal.sh"][0] + Bn["storage-view.sh"][0] and "psql" not in us)
@@ -147,8 +147,18 @@ def users(check, tmp):
     check("users.sh:   ...the sandbox store and the file store were not touched by any command (not moved, not re-owned, not re-moded)",
           touched == [] and box.owner(store) == API and box.owner(S["storage_dir"]) == API and os.path.isdir(box.root + store) and os.path.isdir(box.root + S["storage_dir"]), touched)
     check("users.sh:   ...the web app's view of the file store gets its mount point", os.path.isdir(box.root + S["storage_view"]) and f"install -d -m 755 {box.root}{S['storage_view']}" in c)
-    check("users.sh:   ...and it started nothing: the services come back in units.sh, each as its own user", not any(l.startswith("systemctl") and ("start" in l or "restart" in l) for l in c)
-          and Bn["units.sh"][0].index("systemctl restart \"$u\"") > 0)
+    check("users.sh:   ...and it started nothing: the services come back in release.sh switch, each as its own user", not any(l.startswith("systemctl") and ("start" in l or "restart" in l) for l in c)
+          and Bn["release.sh"][0].index('timeout "$t" systemctl restart "$u"') > 0)
+    # mold_v1-222: on a server already moved, users.sh runs while the services serve (the new release is built beside them)
+    moved = [(V.SERVICE_HOME, API), (store, API), (data, "root"), (f"{data}/workflow-data", API), (f"{data}/task-workflow-data", WORK), (S["storage_dir"], API)]
+    live = Box(tmp, "moved-server", users=names, active=svc, owners=moved)
+    r = live.run(V.users_sh(S, crons, root=live.root)); lc = live.calls()
+    check("users.sh: on a server already moved to one user per service it runs while the services serve, changing no owner and stopping nothing",
+          r.returncode == 0 and not any(l.startswith(("useradd", "systemctl")) for l in lc) and live.owner(f"{data}/task-workflow-data") == WORK and live.lines("active") == svc, (r.stderr, lc))
+    half = Box(tmp, "half-moved", users=[API, WEB, WORK, V.BUILD_USER], active=svc, owners=old)
+    r = half.run(V.users_sh(S, crons, root=half.root))
+    check("users.sh:   ...but where the move is still pending (the task-workflow data is not its own yet) it refuses while a service runs, and says what to do",
+          r.returncode == 5 and "systemctl stop" in r.stderr and half.calls() == [], (r.stderr, half.calls()))
     mark = len(box.calls()); r = box.run(script); c2 = box.calls()[mark:]
     check("users.sh: a second run makes no account, re-makes no mount point and leaves every owner as it was",
           r.returncode == 0 and not any(l.startswith(("useradd", "usermod", "groupadd")) for l in c2) and not any(S["storage_view"] in l for l in c2)
@@ -207,8 +217,9 @@ def users(check, tmp):
     web_unit = U[f"{pre}-web.service"]; view_unit = U[f"{pre}-storage.service"]
     check("storage: the web app starts only after its view is mounted, and stops with it", f"Requires={pre}-storage.service\n" in web_unit and f"{pre}-storage.service" in web_unit.split("After=")[1].split("\n")[0]
           and "storage-view.sh up" in view_unit and "storage-view.sh down" in view_unit and "RemainAfterExit=yes" in view_unit and "WantedBy=multi-user.target" in view_unit, web_unit)
-    us_ = Bn["units.sh"][0]
-    check("storage: units.sh mounts the view before it starts the services, and says why if it cannot", us_.index(f"systemctl restart {pre}-storage.service") < us_.index('systemctl restart "$u"') and "could not be mounted" in us_)
+    us_ = Bn["release.sh"][0]
+    check("storage: the switch mounts the view before it restarts the services (start, never restart: the serving web app uses it), and says why if it cannot",
+          us_.index(f"systemctl start {pre}-storage.service") < us_.index('timeout "$t" systemctl restart "$u"') and f"systemctl restart {pre}-storage.service" not in us_ and "could not be mounted" in us_)
     real, view = S["storage_dir"], S["storage_view"]
     box = Box(tmp, "view", users=[API, WEB], owners=[(real, API), (view, "root")])
     sv = V.storage_view_sh(S, root=box.root)

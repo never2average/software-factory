@@ -103,6 +103,8 @@ def run():
             library_selftest.remote(check, tmp)
             import vm_capacity_selftest
             vm_capacity_selftest.checks(check, tmp)
+            import vm_release_selftest
+            vm_release_selftest.run(check, tmp)
             check("the whole self-test opened no socket and started no ssh/rsync/curl", not net.tripped, net.tripped)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -116,7 +118,9 @@ def run():
           f"one user per service with the move of a single-user server run against stand-in commands, the egress rule for the server's own SSH port, "
           f"the brief's workspace and the application's surface written on the server through a stand-in for the remote runner, "
           f"the starter-library cleanup on the server and through that stand-in, the capacity check on the first server's recorded day "
-          f"with Postgres and the sandbox limits sized from the server); "
+          f"with Postgres and the sandbox limits sized from the server, the rehearsal of the real bundle and of broken ones, release.sh's switch, "
+          f"its switch back on a failed start or health answer, rollback and forward again, the move of a single-directory server to releases, "
+          f"run against stand-in commands); "
           f"offline, nothing contacted, nothing on this machine changed")
     import vm_users_selftest as later
     print("  also run here: " + ("; ".join(later.RAN) if later.RAN else "none of the optional checks (they need root, unshare, nft and node)"))
@@ -272,7 +276,7 @@ def _generated_files(check, tmp):
     check("the egress rule keeps every one of the app's users off metadata and private ranges, and leaves loopback", all(x in nft for x in V.EGRESS_DENY) and "127.0.0.0/8" not in nft
           and 'meta skuid { "sfweb", "sfapp", "sfwork", "sfbuild" } ip daddr' in nft, nft)
     B = V.bundle(S, crons)
-    changing = ("packages.sh", "firewall.sh", "postgres.sh", "build.sh", "db-chain.sh", "units.sh", "caddy.sh", "users.sh", "seal.sh")
+    changing = ("packages.sh", "firewall.sh", "postgres.sh", "build.sh", "db-chain.sh", "release.sh", "caddy.sh", "users.sh", "seal.sh")
     for name in changing:
         body = [l for l in B[name][0].splitlines() if l.strip() and not l.startswith("#")]
         check(f"{name} refuses to run anywhere but the app's own server, before it does anything", body[0] == "set -eu" and body[1].startswith('[ "${SF_REMOTE_DEPLOY:-}" = "vm_remote_fixture" ] || {') and "exit 3" in body[1], body[:2])
@@ -304,17 +308,25 @@ def _generated_files(check, tmp):
         check("the egress rule is valid nftables (`nft -c`: checked, never applied)", r.returncode == 0, r.stderr[-400:])
     check("the factory's own prewarm is gone: the mold's `npm run sandbox:prewarm` does that job", "prewarm-serial.mjs" not in B and not hasattr(V, "PREWARM_MJS"))
     pre = B["api-prestart.sh"][0]
+    full = "/usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries 2\n"
     check("the API pre-start checks /dev/kvm, then runs the mold's prewarm with the runtime link and three tries per template, deleting nothing itself",
-          pre.index("[ -c /dev/kvm ]") < pre.index("sandbox:prewarm") and pre.rstrip().endswith("exec /usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries 2")
-          and "-delete" not in pre and not re.search(r"(^|[;&|]\s*)rm\s", pre, re.M) and "cd /opt/software-factory/vm_remote_fixture/app" in pre, pre)
-    b = B["build.sh"][0]; order = [b.index(x) for x in ("systemctl stop", "env-split --file", "npm ci --include=dev", "npm run build:eve", "-- npm run build\n", "services/task-workflow -- npm run build")]
-    check("the build stops the services, splits the env files, then builds in place at the final path, one build at a time", order == sorted(order) and "/opt/software-factory/vm_remote_fixture/app" in b and " & " not in b and "wait\n" not in b, order)
-    check("  ...as the service user, each part with its own service's env file loaded by env-run (never sourced by a shell)",
+          pre.index("[ -c /dev/kvm ]") < pre.index(full) and "-delete" not in pre and not re.search(r"(^|[;&|]\s*)rm\s", pre, re.M)
+          and 'dir="${1:-/opt/software-factory/vm_remote_fixture/current}"' in pre and 'cd "$dir"' in pre, pre)
+    check("  ...the unit's own start (no argument) of a release prewarmed in this boot only clears stale locks; a release named on its command line is always prewarmed in full",
+          'if [ -z "${1:-}" ] && [ -e "$mark" ]; then' in pre and "exec /usr/bin/npm run --silent sandbox:prewarm -- --locks-only" in pre
+          and pre.index("--locks-only") < pre.index(full) < pre.index('touch "$mark"') and 'mark="/run/software-factory/vm_remote_fixture/prewarmed/$(basename "$(pwd -P)")"' in pre, pre)
+    check("  ...and on a server not moved to releases yet it runs from the old single directory", 'dir=/opt/software-factory/vm_remote_fixture/app' in pre)
+    b = B["build.sh"][0]; order = [b.index(x) for x in ("/factory/users.sh", "env-split --file", "npm ci --include=dev", "npm run build:eve", "-- npm run build\n", "services/task-workflow\" -- npm run build", "/factory/seal.sh \"$REL\"")]
+    check("the build builds the NEW release at its final path, beside the serving one, one build at a time, and never stops a service (mold_v1-222)",
+          order == sorted(order) and 'REL="/opt/software-factory/vm_remote_fixture/releases/$REL_ID"' in b and "systemctl" not in b and " & " not in b and "wait\n" not in b
+          and "^[0-9]{8}T[0-9]{6}Z$" in b, order)
+    check("  ...as the code's owner, each part with its own service's env file loaded by env-run (never sourced by a shell)",
           all(f"env-run --file /etc/software-factory/vm_remote_fixture/{k}.env --user sfbuild --home /var/lib/sfbuild" in b for k in ("api", "web", "workflow")) and "--user sfapp" not in b
           and "env-run --file /etc/software-factory/vm_remote_fixture/env " not in b and ". /etc/software-factory" not in b
-          and "$RUN_API /opt/software-factory/vm_remote_fixture/app -- npm run build:eve" in b and "$RUN_WEB /opt/software-factory/vm_remote_fixture/app -- npm run build\n" in b)
+          and '$RUN_API "$REL" -- npm run build:eve' in b and '$RUN_WEB "$REL" -- npm run build\n' in b and '"$REL/.sf-stamps/app.lock"' in b)
     dc = B["db-chain.sh"][0]
     check("the database step passes the new DATABASE_URL on to the services' files right after the chain", dc.index("host-chain") < dc.index("env-split --file /etc/software-factory/vm_remote_fixture/env --spec /opt/software-factory/vm_remote_fixture/factory/env-services.json"))
+    check("  ...and migrates with the NEW release's scripts, then seals that release", 'host-chain --app-dir "$REL"' in dc and dc.rstrip().endswith('seal.sh "$REL"') and "systemctl" not in dc)
     pgs = B["postgres.sh"][0]
     check("Postgres listens on loopback with TLS on, and its password is minted on the server", "listen_addresses = '127.0.0.1'" in pgs and "ssl = on" in pgs and "pg-admin --file" in pgs and "PASSWORD" not in pgs)
     S2 = _settings(lambda d: (d["infrastructure"]["vm_remote"]["postgres"].update(tls="migration_switch", migration_switch_env="MIGRATE_SSLMODE"), d["datastores"]["postgres"].update(sslmode="disable")))
@@ -591,12 +603,16 @@ def _qualification(check):
           and not any(w in q for w in ("apt", "install ", "rm ", "systemctl", ">/etc", "tee ")), q)
 
 # ---- 076: the plan and the dry run -------------------------------------------------------------------------------
-STEP_IDS = ["qualify", "dns", "mkdir", "bundle", "packages", "firewall", "postgres", "env-config", "env-mint", "env-names", "env-secrets",
-            "source", "build", "db-chain", "units", "caddy", "health", "health-public"]
+STEP_IDS = ["rehearsal", "qualify", "dns", "mkdir", "bundle", "packages", "firewall", "postgres", "env-config", "env-mint", "env-names", "env-secrets",
+            "release", "source", "build", "db-chain", "prewarm", "switch", "caddy", "health", "health-public", "rollback", "keep"]
+LOCAL_STEPS = ("rehearsal", "dns", "health-public")
+NO_REHEARSAL = lambda *a, **k: []        # the deploy-sequence tests below stand the rehearsal in; _rehearsal runs the real one
+# What release.sh switch prints on success (a recorded answer for the fake runners).
+SWITCHED = "switch: current -> releases/20261010T120000Z\nHEALTH=ok workflow=200 api=200 web=200\nSWITCHED=20261010T120000Z\nPREVIOUS=20261009T080000Z\n"
 def _plan_and_dry_run(check, tmp):
     S = _settings(); mold = os.path.join(ROOT, "molds/mold_v1/codebase"); crons = V.read_crons(mold); B = V.bundle(S, crons)
     steps = V.plan(S, mold)
-    check("the plan is the eighteen steps, qualification first", [s["id"] for s in steps] == STEP_IDS, [s["id"] for s in steps])
+    check("the plan is the twenty-three steps, the rehearsal on this machine first, then qualification", [s["id"] for s in steps] == STEP_IDS, [s["id"] for s in steps])
     check("every script a step runs is in the bundle", all(s["script"] in B for s in steps if s.get("script")))
     remote = [s for s in steps if "argv" in s]
     check("every remote step goes over ssh or rsync to the app's own host, with the named key", all(s["argv"][0] in ("ssh", "rsync") and "root@203.0.113.10" in " ".join(s["argv"]) for s in remote)
@@ -604,8 +620,16 @@ def _plan_and_dry_run(check, tmp):
     changing = [s for s in remote if s["argv"][0] == "ssh" and s["id"] not in ("qualify", "env-names", "health")]
     check("every step that changes the server carries the guard marker; the three read-only ones do not need it", all("SF_REMOTE_DEPLOY=vm_remote_fixture" in s["argv"][-1] for s in changing), [s["id"] for s in changing])
     src = next(s for s in steps if s["id"] == "source")
-    check("the source step copies source, never a build", all(x in src["argv"] for x in ("node_modules", ".next", ".output", ".eve", ".env", ".env.*")) and src["argv"][-1] == "root@203.0.113.10:/opt/software-factory/vm_remote_fixture/app/", src["argv"])
-    check("the build and database steps come after the source and before the units", STEP_IDS.index("source") < STEP_IDS.index("build") < STEP_IDS.index("db-chain") < STEP_IDS.index("units") < STEP_IDS.index("caddy"))
+    check("the source step copies source, never a build, into the NEW release", all(x in src["argv"] for x in ("node_modules", ".next", ".output", ".eve", ".env", ".env.*", ".sf-stamps"))
+          and src["argv"][-1] == "root@203.0.113.10:/opt/software-factory/vm_remote_fixture/releases/<release-id>/", src["argv"])
+    check("the release is made before the source, and built, migrated and prewarmed before the switch; health after it",
+          STEP_IDS.index("release") < STEP_IDS.index("source") < STEP_IDS.index("build") < STEP_IDS.index("db-chain") < STEP_IDS.index("prewarm") < STEP_IDS.index("switch") < STEP_IDS.index("caddy") < STEP_IDS.index("health"))
+    p1 = {s["id"]: s for s in V.plan(S, mold, release="20261010T120000Z")}
+    check("  ...each release step names the release, and the switch and the rollback run detached on the server",
+          p1["release"]["argv"][-1].endswith("release.sh prepare 20261010T120000Z") and p1["build"]["argv"][-1].endswith("build.sh 20261010T120000Z")
+          and p1["db-chain"]["argv"][-1].endswith("db-chain.sh 20261010T120000Z") and p1["prewarm"]["argv"][-1].endswith("release.sh prewarm 20261010T120000Z")
+          and p1["switch"]["argv"][-1].endswith("release.sh detach switch 20261010T120000Z") and p1["rollback"]["argv"][-1].endswith("release.sh detach rollback")
+          and p1["source"]["argv"][-1].endswith(":/opt/software-factory/vm_remote_fixture/releases/20261010T120000Z/") and p1["rollback"].get("when"))
     S2 = _settings(lambda d: d["infrastructure"]["vm_remote"].update(ssh_user="deploy"))
     p2 = {s["id"]: s for s in V.plan(S2, mold)}
     check("a non-root login runs every changing step through sudo", p2["packages"]["argv"][-1].startswith("sudo env SF_REMOTE_DEPLOY=") and "sudo rsync" in p2["source"]["argv"], p2["packages"]["argv"][-1])
@@ -627,28 +651,33 @@ def _plan_and_dry_run(check, tmp):
     rc, printed = quiet(V.main_for, "vm_remote_fixture", ["vm_remote_fixture", "--deploy"], d["application"], d["infrastructure"], d["datastores"], V.FIXTURE, P)
     check("`--deploy` on a vm_remote app points at --deploy-remote", rc == 1 and "--deploy-remote" in printed)
     rc, printed = quiet(V.check, "vm_remote_fixture", d["application"], d["infrastructure"], d["datastores"], V.FIXTURE)
-    check("`--check` is offline, lists the steps, and says what is still to do", rc in (0, 1) and "nothing was contacted and nothing was created" in printed and "a deploy will, in order:" in printed and "18." in printed, printed[-600:])
+    check("`--check` is offline, lists the steps, and says what is still to do", rc in (0, 1) and "nothing was contacted and nothing was created" in printed and "a deploy will, in order:" in printed and "23." in printed, printed[-600:])
+    check("the dry run shows the rehearsal and says the old release serves until the switch", "[01 rehearsal]" in text and "python3 -I -B" in text and "bash -n" in text and "node --check" in text
+          and "keeps serving; nothing serving is stopped before the switch" in text and "(ONLY IF the new release does not answer its health check)" in text)
 
 # ---- 076: the deploy sequence against recorded answers -----------------------------------------------------------
 def _deploy_sequence(check, tmp):
     S = _settings(); mold = os.path.join(ROOT, "molds/mold_v1/codebase"); crons = V.read_crons(mold)
     ev_line = "  isolation proof: {...}\nEVIDENCE " + json.dumps({"at": "x", "mode": "fail_closed", "backend": "self_hosted", "protected": 58})
     waits = []
+    switched = SWITCHED
     def attempt(answers, names_present="", secrets=None, resolver=lambda d: ["203.0.113.10"], fail_at=None):
         log, said, asked, started = [], [], [], []; waits.clear()
         def runner(step, stdin=None):
             log.append((step["id"], list(step["argv"]), stdin))
             if step["id"] == fail_at: return CP(step["argv"], 1, "", "npm ERR! build failed")
-            out = {"qualify": answers, "env-names": names_present, "db-chain": ev_line, "health": fx("health-ok.txt")}.get(step["id"], "ok")
+            out = {"qualify": answers, "env-names": names_present, "db-chain": ev_line, "health": fx("health-ok.txt"), "switch": switched}.get(step["id"], "ok")
             return CP(step["argv"], 0, out, "")
         def secrets_for(names): asked.append(list(names)); return {k: f"{SECRET}-{k}" for k in names} if secrets is None else secrets
         try: res = V.deploy(S, mold, crons, runner=runner, secrets_for=secrets_for, resolver=resolver, read_health=lambda u: ("200", HEALTH_DOC, ""),
-                            say=said.append, bundle_dir=os.path.join(tmp, f"deploy-{len(os.listdir(tmp))}"), on_started=lambda: started.append(1), wait=waits.append)
+                            say=said.append, bundle_dir=os.path.join(tmp, f"deploy-{len(os.listdir(tmp))}"), on_started=lambda: started.append(1), wait=waits.append,
+                            release="20261010T120000Z", rehearse=NO_REHEARSAL)
         except V.Stop as e: res = e
         return res, log, said, asked, started
     res, log, said, asked, started = attempt(fx("qualify-ok.txt"))
     ran = [x[0] for x in log]
-    check("a deploy runs the plan's remote steps in the plan's order", ran == [s for s in STEP_IDS if s not in ("dns", "health-public")], ran)
+    check("a deploy runs the plan's remote steps in the plan's order (the switch-back only when it is needed)", ran == [s for s in STEP_IDS if s not in LOCAL_STEPS + ("rollback",)], ran)
+    check("  ...and says which release serves and which is kept", not isinstance(res, V.Stop) and res["release"] == {"current": "20261010T120000Z", "previous": "20261009T080000Z"}, res)
     check("  ...asks only for the operator's names the server lacks", asked == [V.operator_names(S)], asked)
     sec = next(x for x in log if x[0] == "env-secrets")
     check("  ...sends their values on the stdin of ONE command", all(f"{SECRET}-{k}" in sec[2] for k in V.operator_names(S)) and sum(1 for x in log if x[2] and SECRET in x[2]) == 1)
@@ -671,8 +700,8 @@ def _deploy_sequence(check, tmp):
     check("a value the operator did not supply stops it before the build", isinstance(res, V.Stop) and "still missing" in str(res) and "build" not in [x[0] for x in log])
     answers = iter([("", None, "nothing answered"), ("", None, "nothing answered"), ("200", HEALTH_DOC, ""), ("200", None, "")]); slept = []
     res = V.deploy(S, mold, crons, runner=lambda st, stdin=None: CP(st["argv"], 0, {"qualify": fx("qualify-ok.txt"), "env-names": "\n".join(V.operator_names(S)), "db-chain": ev_line,
-                   "health": fx("health-ok.txt")}.get(st["id"], "ok"), ""), resolver=lambda d: ["203.0.113.10"], read_health=lambda u: next(answers), say=lambda *_: None,
-                   bundle_dir=os.path.join(tmp, "deploy-wait"), wait=slept.append)
+                   "health": fx("health-ok.txt"), "switch": switched}.get(st["id"], "ok"), ""), resolver=lambda d: ["203.0.113.10"], read_health=lambda u: next(answers), say=lambda *_: None,
+                   bundle_dir=os.path.join(tmp, "deploy-wait"), wait=slept.append, rehearse=NO_REHEARSAL)
     check("the outside health read waits for the certificate instead of failing a first deploy", slept == [10, 10] and res["public"][0] == "200" and res["problems"] == [], (slept, res["problems"]))
     step = {"id": "t", "argv": ["sh", "-c", "cat; echo err >&2; exit 3"], "timeout": 10}
     r = V.real_runner(step, "from-stdin")
@@ -1115,7 +1144,7 @@ def _brief_to_plan(check, tmp):
     r = py(".claude/scripts/provision.py", "acme_remote", "--set-remote", "host=203.0.113.44", "domain=research.acme.example")
     check("the operator's two values are recorded", r.returncode == 0 and "recorded host, domain" in r.stdout, r.stdout + r.stderr)
     r = py(".claude/scripts/provision.py", "acme_remote", "--deploy-remote", "--dry-run")
-    check("and the dry run prints the complete plan for that server", r.returncode == 0 and "[18 health-public]" in r.stdout and "root@203.0.113.44" in r.stdout and "research.acme.example {" in r.stdout
+    check("and the dry run prints the complete plan for that server", r.returncode == 0 and "[21 health-public]" in r.stdout and "[23 keep]" in r.stdout and "root@203.0.113.44" in r.stdout and "research.acme.example {" in r.stdout
           and r.stdout.rstrip().endswith("nothing was run and nothing was contacted."), r.stdout[-300:] + r.stderr)
     r = py(".claude/scripts/factory.py", "validate")
     check("the factory still validates with that application in it", r.returncode == 0 and r.stdout.strip() == "ok", r.stdout[-400:])

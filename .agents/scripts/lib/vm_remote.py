@@ -10,7 +10,10 @@ Called by provision.py for an application whose infrastructure.target is "vm_rem
   provision.py <app_id> --deploy-remote --dry-run [--out DIR]
                                                  print every local command, every remote command and every generated
                                                  file, in order, WITHOUT connecting; --out also writes the bundle
-  provision.py <app_id> --deploy-remote          the deploy
+  provision.py <app_id> --deploy-remote          the deploy (never takes the site down: see WHAT A DEPLOY DOES)
+  provision.py <app_id> --rollback-remote [--dry-run]
+                                                 switch the server back to the release that served before this one
+                                                 (mold_v1-222); run again, it goes forward. The database is left as it is
   provision.py <app_id> --verify-rls [--no-repair]   re-prove tenant isolation on the server's database and running app
   provision.py <app_id> --library-cleanup [--apply] [--org <id>]
                                                  the starter workflows and recipes an earlier version left in each
@@ -46,6 +49,11 @@ The same file is copied to the server and run THERE for everything that touches 
 ever crosses the SSH command line (env-merge, env-mint, env-names, env-split, env-run, pg-admin, host-chain below).
 
 WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step is the way it is):
+   0 rehearsal    ON THIS MACHINE, before anything is contacted (mold_v1-222): the exact bundle is written to a temp
+                  directory, and a copy of it checked: every .py imported and run with --help (and its own --self-test)
+                  with python3 -I from the bundle's own paths, every import (inside functions too) found in the bundle,
+                  every factory path the remote side names present, every .sh parsed, every .mjs checked. Any failure
+                  refuses the deploy in plain words with nothing sent.
    1 qualify      read-only probe: /dev/kvm, 8 GB / 4 vCPU, free disk, Ubuntu 24.04, x86-64, sudo, no Docker, no
                   other web server (Caddy is the one reverse proxy; nginx or Apache would hold ports 80 and 443).
                   Anything short is refused in plain words before a single package is installed.
@@ -61,24 +69,37 @@ WHAT A DEPLOY DOES, in order (reports/vm-spike-mold_v1-072.md is why each step i
                   operator's own values from a hidden prompt (or from named environment values), sent on stdin. Each
                   service reads only its own file split from it (web.env, api.env, workflow.env, cron.env; root, 600):
                   the agent's holds the sign-in PUBLIC key only, the workflow service's only the three names it reads
-   8 source       rsync the SOURCE (never a build) to <install>/app
-   9 build        stop the services; users.sh hands each service's directories to its own user (on a server that ran
-                  everything as one user this is the move: nothing is moved or deleted, the sandbox store and the file
-                  store keep their owner); then build IN PLACE as sfbuild, one build at a time (the build embeds
-                  absolute paths); seal.sh then sets who may read and who may write the code
-  10 database     the SAME chain as the Vercel path (provision.SCHEMA_CHAIN through provision._run_chain): hold,
-                  journal, drift dry run that refuses data loss, RLS bootstrap, coverage, release, isolation proof
-  11 units        three services (workflow, api, web), each as its own user, and six cron timers. The web app's view of
-                  the file store is mounted first (storage-view.sh). The API runs as `sfapp`, the only one in group kvm;
-                  before it starts, the mold's own `npm run sandbox:prewarm` clears stale template locks, links the
-                  sandbox runtime, refuses a data room the sandbox could not reach, and prewarms one template at a time
-  12 caddy        TLS for the domain, everything proxied to the web app on loopback
-  13 health       the three health endpoints, /dev/kvm and the API's groups, public listeners, each process's user,
+   8 release      a NEW release directory, <install>/releases/<id> (<id>: the deploy's start, UTC), beside the one
+                  `current` leads to, which keeps serving; only the serving and the previous release are kept, and the
+                  disk must have room for one more. A server deployed before releases served from <install>/app: that
+                  directory is adopted as the release "app" (current -> app), nothing moved
+   9 source       rsync the SOURCE (never a build) into the new release
+  10 build        users.sh keeps each service's directories with its own user (the one-time move off a single user is
+                  the only thing that still needs the services stopped, and it refuses while they run); then the new
+                  release is built at its final path as sfbuild, one build at a time (the build embeds absolute paths);
+                  seal.sh sets who may read and who may write it. No service is stopped
+  11 database     the SAME chain as the Vercel path (provision.SCHEMA_CHAIN through provision._run_chain): hold,
+                  journal, drift dry run that refuses data loss, RLS bootstrap, coverage, release, isolation proof. The
+                  old release serves throughout: the mold's migrations are additive first, so it runs against them
+  12 prewarm      the new release's sandbox templates built and checked as the API's user while the old release
+                  serves, within PREWARM_DEADLINE_S (eve keys a template by the release's real path, so a release is
+                  prewarmed where it runs). A template that hangs stops the deploy HERE, with the site untouched
+  13 switch       units installed, `current` pointed at the new release (one rename), workflow, api and web restarted
+                  (the API's prestart only clears stale locks: its templates were checked minutes ago, this boot), and
+                  the three loopback health endpoints waited for. If a restart or a health answer misses its deadline
+                  the server points `current` back at the release that was serving and restarts that: by itself, as a
+                  transient systemd unit, so a dropped SSH connection cannot leave it halfway. The API is out for the
+                  seconds of its own restart; the web app for the seconds of its own
+  14 caddy        TLS for the domain, everything proxied to the web app on loopback
+  15 health       the three health endpoints, /dev/kvm and the API's groups, public listeners, each process's user,
                   what the agent's user is refused when it tries (the web app's env file and process, another
-                  service's code, this server's own SSH port), then the same read of /api/ops/health the Vercel path gates on
+                  service's code, this server's own SSH port), then the same read of /api/ops/health the Vercel path gates on.
+                  A release that does not serve (a dead endpoint, a 5xx from outside) is switched back here too
+  16 keep         every release but the serving and the previous one removed, with the sandbox template snapshots
+                  only they used; --rollback-remote goes back to the previous one by hand
 
-Every step is safe to run again. A redeploy takes the app offline from step 9 until step 11 finishes (the build is
-not relocatable, so there is nowhere else to build it); say so before running one in working hours.
+Every step is safe to run again. No step before the switch stops or changes anything the serving release uses, and
+the switch either ends on a release that answered its health checks or switches back to the one that was serving.
 """
 import datetime, getpass, json, os, re, secrets as pysecrets, shlex, shutil, socket, subprocess, sys, tempfile, time, urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -168,7 +189,21 @@ RETIRED = ("STORAGE_DIR", "DATAROOM_DIR", "STORAGE_BUCKET", "STORAGE_REGION", "S
 # The s3 driver reads its key pair under these names; state names where the operator's values are stored (*_ref).
 S3_KEYS = (("access_key_ref", "STORAGE_S3_ACCESS_KEY_ID"), ("secret_key_ref", "STORAGE_S3_SECRET_ACCESS_KEY"))
 SOURCE_EXCLUDES = ("node_modules", ".next", ".output", ".eve", ".vercel", ".git", ".env", ".env.*", ".dataroom",
-                   "test-results", ".eve-build-hidden", "*.log")
+                   "test-results", ".eve-build-hidden", "*.log", ".sf-stamps")
+# ---- releases (mold_v1-222) ----------------------------------------------------------------------------------------
+# Each deploy builds a new release at <install>/releases/<id> BESIDE the one serving, migrates the database, prewarms
+# the new release's sandbox templates, and only then switches `current` to it and restarts the three services (a few
+# seconds). If a service does not start or does not answer within the deadlines below, the server switches back to the
+# release that was serving, by itself. <id> is the deploy's start time in UTC. The last two releases are kept.
+RELEASE_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
+LEGACY_RELEASE = "app"         # the single directory a server deployed before releases runs from, adopted as a release
+RELEASE_SPACE_EXTRA_GB = 3     # free space beyond a copy of the serving release: its new sandbox templates (6 x ~230 MB) and build scratch
+PREWARM_DEADLINE_S = 3600      # the new release's whole prewarm, while the old one serves (the mold stops a template at 600 s)
+SWITCH_START_S = {"workflow": 120, "api": 300, "web": 120}   # one restart each; the API's prestart is the light one when prewarmed
+SWITCH_HEALTH_S = 180          # after the restarts, how long the three loopback health endpoints have to answer
+SWITCH_STEP_S = 3
+def release_id(at=None):
+    return (at or datetime.datetime.now(datetime.timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
 GUARD_VAR = "SF_REMOTE_DEPLOY"
 # ---- sandbox disk (mold_v1-153; measured on the first real server, 2026-10-04: about 490 MB left behind per session) ----
 # eve 0.25.1 names what it keeps in the service user's ~/.microsandbox (execution/sandbox/bindings/microsandbox-*.js):
@@ -210,7 +245,11 @@ def settings(app_id, app, infra, ds):
     S = {"app_id": app_id, "slug": slug, "unit": f"sf-{slug}",
          "host": vr.get("host") or "", "domain": vr.get("domain") or "", "user": vr.get("ssh_user") or "root",
          "port": int(vr.get("ssh_port") or 22), "key_ref": vr.get("ssh_key_ref") or "",
-         "install": install, "app_dir": f"{install}/app", "factory_dir": f"{install}/factory",
+         # mold_v1-222: the serving code is reached through the `current` symlink (releases/<id>, or `app` on a server
+         # deployed before releases existed); `app` is that older single directory.
+         "install": install, "app_dir": f"{install}/current", "factory_dir": f"{install}/factory",
+         "releases": f"{install}/releases", "legacy_app": f"{install}/app",
+         "marks": f"/run/software-factory/{app_id}/prewarmed", "release_log": f"/var/log/software-factory/{app_id}",
          "env_dir": f"/etc/software-factory/{app_id}", "env_file": f"/etc/software-factory/{app_id}/env", "data": data,
          "env_files": {k: f"/etc/software-factory/{app_id}/{k}.env" for k in ("web", "api", "workflow", "cron")},
          "sandbox": dict(vr.get("sandbox") or {}), "storage": dict(vr.get("storage") or {}),
@@ -992,7 +1031,9 @@ apt_update() {
   apt-get update -q -o Dir::Etc::sourceparts=/var/lib/software-factory/apt-sources-without-caddy
 }
 apt_update
-apt-get install -y -q ca-certificates curl gnupg rsync ufw fail2ban nftables python3 openssl build-essential ssl-cert sysstat
+# --no-upgrade: what is missing is installed and nothing already installed is upgraded here (mold_v1-222): an upgrade
+# restarts its service under the release that is serving. Security updates come from Ubuntu's unattended-upgrades.
+apt-get install -y -q --no-upgrade ca-certificates curl gnupg rsync ufw fail2ban nftables python3 openssl build-essential ssl-cert sysstat
 # sysstat's history (load, memory, pressure every 10 minutes) is what provision.py --capacity judges (mold_v1-195).
 sed -i 's/^ENABLED="false"/ENABLED="true"/' /etc/default/sysstat 2>/dev/null || true
 systemctl enable --now sysstat >/dev/null 2>&1 || true
@@ -1074,12 +1115,21 @@ fi
 #      itself (root's, so nobody but the three services' group can even enter it);
 #   4. the services are started again by units.sh, each as its own user.
 # Nothing is deleted and nothing is moved, so there is nothing to lose and nothing to undo. Safe to run again.
+#
+# ON A SERVER THAT ALREADY RUNS EACH SERVICE AS ITS OWN USER every line below is a no-op, so it runs while the
+# services serve (mold_v1-222: a deploy builds the new release beside the serving one and never stops them for it).
+# Only the move itself needs them stopped, and while it is pending this script refuses as long as one runs.
 set -eu
-@GUARD@for u in @SERVICES@; do
-  if systemctl is-active --quiet "$u"; then
-    echo "refusing: $u is still running. Directories are handed to the new users only while the services are stopped; nothing was changed." >&2; exit 5
-  fi
-done
+@GUARD@pending=no
+for u in @WEB@ @WORK@ @BUILD@; do id -u "$u" >/dev/null 2>&1 || pending=yes; done
+if [ -e @DATA@/task-workflow-data ] && [ "$(stat -c %U @DATA@/task-workflow-data)" != "@WORK@" ]; then pending=yes; fi
+if [ "$pending" = yes ]; then
+  for u in @SERVICES@; do
+    if systemctl is-active --quiet "$u"; then
+      echo "refusing: $u is still running, and this server still runs everything as one user. That one-time move hands directories to the new users only while the services are stopped, and a deploy no longer stops them by itself; nothing was changed. Stop the three services (systemctl stop @SERVICES@), then run the deploy again." >&2; exit 5
+    fi
+  done
+fi
 @ACCOUNTS@# Homes: each user's own, closed to everyone else. @APIHOME@ is where it always was.
 install -d -m 700 -o @WEB@ -g @WEB@ @WEBHOME@
 install -d -m 700 -o @WORK@ -g @WORK@ @WORKHOME@
@@ -1105,9 +1155,10 @@ chown -hR @WORK@:@WORK@ @DATA@/task-workflow-data
         WEBHOME=P(SERVICE_HOMES["web"]), WORKHOME=P(SERVICE_HOMES["workflow"]), BUILDHOME=P(BUILD_HOME), APIHOME=P(SERVICE_HOME))
 
 def seal_sh(S, root=""):
-    """seal.sh: who may read and who may write the application's code, set after every build and after the database
-    step (which runs the mold's migration scripts as root inside it). `root` as in users_sh."""
-    A = root + S["app_dir"]; web, api, work = (SERVICE_USERS[k] for k in ("web", "api", "workflow"))
+    """seal.sh [release directory]: who may read and who may write the application's code, set after every build and
+    after the database step (which runs the mold's migration scripts as root inside it). Without an argument, the
+    release `current` leads to (resolved first: chown -R does not follow a symlink it is given). `root` as in users_sh."""
+    A = "$A"; web, api, work = (SERVICE_USERS[k] for k in ("web", "api", "workflow"))
     return fill("""#!/bin/bash
 @HEAD@# mold_v1-158. The code after a build, from the snapshot's own code (what each process reads and writes):
 #   everything          owner @BUILD@, group @GROUP@, no access for anyone else. The three services READ it through
@@ -1122,7 +1173,9 @@ def seal_sh(S, root=""):
 #                       and moves the authored file aside (scripts/lib/sandbox-overlay.mjs): @API@ writes, the group reads.
 #   services/task-workflow/.next/   the task-workflow service's build and cache: @WORK@ only.
 set -eu
-@GUARD@chown -hR @BUILD@:@GROUP@ @APP@
+@GUARD@A="$(readlink -f "${1:-@CUR@}")"
+[ -d "$A" ] || { echo "seal: ${1:-@CUR@} is not a release directory on this server; nothing was changed" >&2; exit 2; }
+chown -hR @BUILD@:@GROUP@ @APP@
 chmod -R u=rwX,g=rX,o= @APP@
 if [ -d @APP@/.next ]; then chown -hR @WEB@:@WEB@ @APP@/.next; fi
 for d in .output .eve; do
@@ -1139,7 +1192,7 @@ install -d -m 750 -o @API@ -g @GROUP@ @APP@/node_modules/.cache/eve
 chown -hR @API@:@GROUP@ @APP@/node_modules/.cache/eve
 if [ -d @APP@/services/task-workflow/.next ]; then chown -hR @WORK@:@WORK@ @APP@/services/task-workflow/.next; fi
 echo "seal: the code is @BUILD@'s and read-only to the services; .next is @WEB@'s, .output .eve agent/ are @API@'s, services/task-workflow/.next is @WORK@'s"
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), APP=A, BUILD=BUILD_USER, GROUP=CODE_GROUP, WEB=web, API=api, WORK=work)
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), APP=A, CUR=root + S["app_dir"], BUILD=BUILD_USER, GROUP=CODE_GROUP, WEB=web, API=api, WORK=work)
 
 def storage_view_sh(S, root=""):
     """storage-view.sh: the web app's own view of the file store. Run by its unit at boot and by units.sh."""
@@ -1210,6 +1263,10 @@ def postgres_sh(S):
 # straight into the env file; it is never printed and never leaves this machine.
 set -eu
 @GUARD@install -d -m 755 /etc/postgresql/@PGV@/main/conf.d
+# Restarted only when a setting below changed (mold_v1-222): a restart drops the connections of the release that is
+# serving, and on a redeploy nothing here usually changes.
+pg_conf() { cat /etc/postgresql/@PGV@/main/conf.d/software-factory*.conf /etc/postgresql/@PGV@/main/pg_hba.conf 2>/dev/null | sha256sum; }
+before="$(pg_conf)"
 cat > /etc/postgresql/@PGV@/main/conf.d/software-factory.conf <<'CONF'
 listen_addresses = '127.0.0.1'
 port = @PORT@
@@ -1217,7 +1274,11 @@ ssl = @SSL@
 password_encryption = 'scram-sha-256'
 CONF
 @SIZING@@HBA@systemctl enable postgresql >/dev/null
-systemctl restart postgresql
+if [ "$(pg_conf)" != "$before" ] || ! systemctl is-active --quiet postgresql; then
+  systemctl restart postgresql
+else
+  echo "postgres: settings unchanged, so it was not restarted (the serving release keeps its connections)"
+fi
 for i in 1 2 3 4 5 6 7 8 9 10; do pg_isready -q -h 127.0.0.1 -p @PORT@ && break; sleep 2; done
 pg_isready -q -h 127.0.0.1 -p @PORT@
 python3 @TOOL@ pg-admin --file @ENV@ --db @DB@ --port @PORT@ --sslmode @SSLMODE@
@@ -1234,102 +1295,340 @@ python3 @TOOL@ pg-admin --file @ENV@ --db @DB@ --port @PORT@ --sslmode @SSLMODE@
 def env_split_cmd(S):
     return f"python3 {S['tool']} env-split --file {S['env_file']} --spec {S['factory_dir']}/env-services.json"
 
+RELEASE_ARG = """REL_ID="${1:-}"
+[[ "$REL_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "usage: $0 <release id, e.g. 20261010T120000Z>" >&2; exit 2; }
+REL="@RELEASES@/$REL_ID"
+[ -d "$REL" ] || { echo "there is no release $REL_ID on this server ($REL); the deploy makes it first (release.sh prepare)" >&2; exit 2; }
+"""
 def build_sh(S, crons):
-    svc, tim = unit_names(S, crons)
     run = lambda k: f"python3 {S['tool']} env-run --file {S['env_files'][k]} --user {BUILD_USER} --home {BUILD_HOME} --cwd"
     return fill("""#!/bin/bash
-@HEAD@# Build IN PLACE at the final path: the eve build embeds absolute paths and cannot be moved afterwards.
-# One build at a time (each peaks at 2-3 GB on an 8 GB machine). The services are stopped first, because the
-# build rewrites the directories they run from; they come back in units.sh. Each part is built with the env file
-# of the service that runs it, so build and run see the same names (the agent's has no private key).
-# Every part is built by @USER@, the code's owner, which runs no service (mold_v1-158): the values a build holds in
-# its environment are never under a service's user. While the services are stopped, users.sh hands each service's
-# directories to its own user; after the build, seal.sh sets who may read and who may write the code.
+@HEAD@# build.sh <release id>: build the NEW release at its final path, <install>/releases/<id>, BESIDE the one serving
+# (mold_v1-222). Nothing here stops, restarts or touches a running service: they keep serving the release `current`
+# leads to until release.sh switches it. The eve build embeds absolute paths, which is why each release is built where
+# it will run and never moved. One build at a time (each peaks at 2-3 GB on an 8 GB machine). Each part is built with
+# the env file of the service that runs it, so build and run see the same names (the agent's has no private key).
+# Every part is built by @USER@, the code's owner, which runs no service (mold_v1-158). users.sh keeps each service's
+# directories with its own user; after the build, seal.sh sets who may read and who may write the new release.
+# node_modules was copied from the serving release by release.sh prepare, with the stamps that say which lock file
+# it was installed from: unchanged, it is kept; changed, `npm ci` replaces it (in the new release only).
 set -eu
-@GUARD@for u in @TIMERS@ @SERVICES@; do systemctl stop "$u" 2>/dev/null || true; done
-bash @FACTORY@/users.sh
+@GUARD@@RELEASE@bash @FACTORY@/users.sh
 @SPLIT@
-chown -hR @USER@:@GROUP@ @APPDIR@
+chown -hR @USER@:@GROUP@ "$REL"
+install -d -m 755 "$REL/.sf-stamps"
 RUN_API="@RUN_API@"
 RUN_WEB="@RUN_WEB@"
 RUN_WF="@RUN_WF@"
 # patches/ too: the app patches a dependency at install (patch-package, upstream #122), so a patch-only change must reinstall
-lock_now="$(cat @APPDIR@/package-lock.json @APPDIR@/patches/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)"
-if [ ! -d @APPDIR@/node_modules ] || [ "$(cat @DATA@/build-stamps/app.lock 2>/dev/null || true)" != "$lock_now" ]; then
+lock_now="$(cat "$REL/package-lock.json" "$REL"/patches/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)"
+if [ ! -d "$REL/node_modules" ] || [ "$(cat "$REL/.sf-stamps/app.lock" 2>/dev/null || true)" != "$lock_now" ]; then
   # devDependencies included: the sandbox runtime (microsandbox) is one of them.
-  $RUN_API @APPDIR@ -- npm ci --include=dev --no-audit --no-fund
-  echo "$lock_now" > @DATA@/build-stamps/app.lock
+  $RUN_API "$REL" -- npm ci --include=dev --no-audit --no-fund
+  echo "$lock_now" > "$REL/.sf-stamps/app.lock"
 fi
-$RUN_API @APPDIR@ -- npm run build:eve
-test -f @APPDIR@/.output/server/index.mjs
-$RUN_WEB @APPDIR@ -- npm run build
-lock_now="$(sha256sum @APPDIR@/services/task-workflow/package-lock.json | cut -d' ' -f1)"
-if [ ! -d @APPDIR@/services/task-workflow/node_modules ] || [ "$(cat @DATA@/build-stamps/workflow.lock 2>/dev/null || true)" != "$lock_now" ]; then
-  $RUN_WF @APPDIR@/services/task-workflow -- npm ci --include=dev --no-audit --no-fund
-  echo "$lock_now" > @DATA@/build-stamps/workflow.lock
+$RUN_API "$REL" -- npm run build:eve
+test -f "$REL/.output/server/index.mjs"
+$RUN_WEB "$REL" -- npm run build
+lock_now="$(sha256sum "$REL/services/task-workflow/package-lock.json" | cut -d' ' -f1)"
+if [ ! -d "$REL/services/task-workflow/node_modules" ] || [ "$(cat "$REL/.sf-stamps/workflow.lock" 2>/dev/null || true)" != "$lock_now" ]; then
+  $RUN_WF "$REL/services/task-workflow" -- npm ci --include=dev --no-audit --no-fund
+  echo "$lock_now" > "$REL/.sf-stamps/workflow.lock"
 fi
-$RUN_WF @APPDIR@/services/task-workflow -- npm run build
-bash @FACTORY@/seal.sh
-echo "build: eve API, web app and task-workflow service built at @APPDIR@"
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), TIMERS=" ".join(tim), SERVICES=" ".join(reversed(svc)),
-        USER=BUILD_USER, GROUP=CODE_GROUP, FACTORY=S["factory_dir"], APPDIR=S["app_dir"], DATA=S["data"], SPLIT=env_split_cmd(S),
+$RUN_WF "$REL/services/task-workflow" -- npm run build
+bash @FACTORY@/seal.sh "$REL"
+echo "build: eve API, web app and task-workflow service built at $REL (not serving yet)"
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), RELEASE=fill(RELEASE_ARG, RELEASES=S["releases"]),
+        USER=BUILD_USER, GROUP=CODE_GROUP, FACTORY=S["factory_dir"], SPLIT=env_split_cmd(S),
         RUN_API=run("api"), RUN_WEB=run("web"), RUN_WF=run("workflow"))
 
 def db_chain_sh(S):
     return fill("""#!/bin/bash
-@HEAD@# The database safety chain, on the server, with the URLs read from the env file here (they never cross SSH).
-# It is provision.py's own chain: hold, journal, drift dry run that refuses data loss, RLS bootstrap, coverage,
-# release, isolation proof; DATABASE_URL is written only after the proof, then passed on to the services' own files.
+@HEAD@# db-chain.sh <release id>: the database safety chain, on the server, with the URLs read from the env file here (they
+# never cross SSH). It is provision.py's own chain: hold, journal, drift dry run that refuses data loss, RLS bootstrap,
+# coverage, release, isolation proof; DATABASE_URL is written only after the proof, then passed on to the services' own
+# files. It runs the NEW release's migrations while the previous release keeps serving: the mold's migrations are
+# additive first (a column is dropped only by a later release, once no server runs one that names it; drizzle 0037/0038)
+# and the drift dry run refuses data loss, so the release serving now, and a switch back to it, keep working.
 set -eu
-@GUARD@python3 @TOOL@ host-chain --app-dir @APPDIR@ --env-file @ENV@ --mode @MODE@ --sslmode @SSLMODE@
+@GUARD@@RELEASE@python3 @TOOL@ host-chain --app-dir "$REL" --env-file @ENV@ --mode @MODE@ --sslmode @SSLMODE@
 @SPLIT@
-# The chain ran the mold's migration scripts as root inside the code: put the code's owners and modes back.
-bash @FACTORY@/seal.sh
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), TOOL=S["tool"], APPDIR=S["app_dir"],
+# The chain ran the mold's migration scripts as root inside the new release: put its owners and modes back.
+bash @FACTORY@/seal.sh "$REL"
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), RELEASE=fill(RELEASE_ARG, RELEASES=S["releases"]), TOOL=S["tool"],
         ENV=S["env_file"], MODE=S["mode"], SSLMODE=S["sslmode"], FACTORY=S["factory_dir"], SPLIT=env_split_cmd(S))
 
 def api_prestart_sh(S):
     return fill("""#!/bin/bash
-@HEAD@# Runs as the agent API's user (group kvm), with the API's own env file, before the API starts. It deletes nothing itself.
+@HEAD@# api-prestart.sh [release directory]. Runs as the agent API's user (group kvm), with the API's own env file: as the
+# API unit's ExecStartPre (no argument: the release `current` leads to), and from release.sh prewarm for a NEW release
+# before it serves (its directory as the argument, in a transient unit with the API unit's user and settings). It
+# deletes nothing itself.
 set -eu
+dir="${1:-@CUR@}"
+# A server deployed before releases runs from @LEGACY@ until its first release is switched in.
+if [ -z "${1:-}" ] && [ ! -e "$dir" ]; then dir=@LEGACY@; fi
 [ -c /dev/kvm ] || { echo "no /dev/kvm on this server: the sandbox cannot start" >&2; exit 1; }
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "the service user cannot open /dev/kvm (is it in group kvm?)" >&2; exit 1; }
+cd "$dir"
+# eve keys every sandbox template by this directory's REAL path, so a release is prewarmed where it runs.
+mark="@MARKS@/$(basename "$(pwd -P)")"
+if [ -z "${1:-}" ] && [ -e "$mark" ]; then
+  # This exact release had all its templates built and checked earlier in this boot (release.sh prewarm, before the
+  # switch, or an earlier start): only clear stale locks, so the switch restarts the API in seconds, not minutes.
+  exec /usr/bin/npm run --silent sandbox:prewarm -- --locks-only
+fi
 # The mold's own prewarm (upstream #100, docs/self-hosting/SANDBOX.md), which does what this file used to do, better:
 #   - removes only template locks whose owner process is gone (a held one stops it, naming the process);
 #   - --link-runtime: links the microsandbox runtime npm already installed into ~/.microsandbox (no download);
 #   - resolves STORAGE_PUBLIC_URL and refuses if the sandbox deny list holds any address it leads to, so the API never
 #     starts with a data room its sandboxes cannot fetch;
 #   - builds the templates one at a time, each tried @TRIES@ times; exit 1 if any is missing at the end.
-cd @APPDIR@
-exec /usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries @RETRIES@
-""", HEAD=fill(HEAD, APP=S["app_id"]), APPDIR=S["app_dir"], TRIES=PREWARM_RETRIES + 1, RETRIES=PREWARM_RETRIES)
+/usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries @RETRIES@
+# Remembered until the next reboot (/run is cleared then, and the first start after it does the whole prewarm again).
+touch "$mark" 2>/dev/null || true
+""", HEAD=fill(HEAD, APP=S["app_id"]), CUR=S["app_dir"], LEGACY=S["legacy_app"], MARKS=S["marks"], TRIES=PREWARM_RETRIES + 1, RETRIES=PREWARM_RETRIES)
 
 # Extra tries per template (the mold allows 0-5). One microVM boot in about fourteen timed out on nested KVM in the
 # spike (reports/vm-spike-mold_v1-072.md), so three tries in all, as the factory's own prewarm used to do.
 PREWARM_RETRIES = 2
 
-def units_sh(S, crons):
-    svc, tim = unit_names(S, crons)
-    return fill("""#!/bin/bash
-@HEAD@# Install and (re)start the three services and the cron timers. The API's start includes the sandbox prewarm,
-# so the first one can take several minutes.
+def release_sh(S, crons, root="", tool=None, timing=None, extra_gb=RELEASE_SPACE_EXTRA_GB):
+    """release.sh: the releases of this app on its server (mold_v1-222). `root` prefixes every path it touches and
+    `tool`/`timing` replace the server's tool and deadlines: the self-test runs this very script against a temp
+    directory with stand-in commands."""
+    svc, tim = unit_names(S, crons); P = lambda x: root + x
+    t = {"start": dict(SWITCH_START_S), "health": SWITCH_HEALTH_S, "step": SWITCH_STEP_S, "prewarm": PREWARM_DEADLINE_S, **(timing or {})}
+    view = (f"""  systemctl enable {S['unit']}-storage.service >/dev/null
+  # start, never restart: the view is in use by the web app that is serving, and a restart would unmount it under it.
+  systemctl start {S['unit']}-storage.service || {{ echo "the web app's view of the file store could not be mounted. Its last lines:" >&2; journalctl -u {S['unit']}-storage.service -n 20 --no-pager >&2 || true; return 1; }}
+""" if S["fs"] else "")
+    return fill(r"""#!/bin/bash
+@HEAD@# release.sh: this app's releases on this server (mold_v1-222). A deploy never takes the site down to change it:
+#
+#   @INSTALL@/releases/<id>   one release each: the source, its node_modules, its build. <id> is the deploy's start, UTC.
+#   @INSTALL@/current         -> the release serving. Every unit runs from here (WorkingDirectory, api-prestart.sh).
+#   @INSTALL@/previous        -> the release that served before it: what a switch-back or a rollback goes to.
+#   @INSTALL@/app             a server deployed before releases served from this one directory. It is adopted as the
+#                             release "app" (current -> app) and removed like any other once two newer ones exist.
+#
+#   prepare <id>    adopt the old directory if there is one; remove releases other than current and previous; check
+#                   there is room for one more; make releases/<id> with the serving release's node_modules in it
+#   prewarm <id>    build and check the new release's sandbox templates WHILE THE OLD ONE SERVES, as the API's user
+#                   with its settings, bounded by @PREWARM_S@s. A hung template fails this step; nothing is switched.
+#   switch <id>     install the units, point current at <id>, restart workflow, api and web (each within its deadline),
+#                   and wait for their three loopback health answers. If any of that fails, point current back at the
+#                   release that was serving and restart it: the site is never left on a release that did not start.
+#   rollback [<n>]  the same, by hand (provision.py <app> --rollback-remote): current <-> previous
+#   keep            after a deploy passed every check: remove all releases but current and previous, and the sandbox
+#                   template snapshots only the removed ones used
+#   status          READ-ONLY: which release is current, which is previous, which exist, the free disk
+#   detach <switch|rollback> ...   run it as a transient systemd unit and wait for it: a dropped SSH connection cannot
+#                   stop a switch halfway; the unit finishes (switching back if it must) and its log stays here
+#
+# The database is shared by every release. Its migrations are additive first (drizzle 0037/0038: a column is dropped
+# only by a later release, once nothing running names it) and the deploy's drift dry run refuses data loss, so the
+# previous release keeps working against a database the new one migrated: that is what makes a switch back safe.
 set -eu
-@GUARD@for f in @FACTORY@/units/*; do install -m 644 "$f" "/etc/systemd/system/$(basename "$f")"; done
-systemctl daemon-reload
-@VIEW@systemctl enable @SERVICES@ >/dev/null
-for u in @SERVICES@; do
-  systemctl restart "$u" || { echo "service $u did not start. Its last lines:" >&2; journalctl -u "$u" -n 30 --no-pager >&2; exit 1; }
-done
-systemctl enable --now @TIMERS@ >/dev/null
-# The nightly sandbox prune (mold_v1-153). Enabled, not run now: it runs at its hour, or by hand with --prune-sandboxes.
-systemctl enable --now @PRUNE@ >/dev/null
-echo "units: @NS@ services running, @NT@ cron timers on, the nightly sandbox prune on"
-""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), FACTORY=S["factory_dir"],
-        SERVICES=" ".join(svc), TIMERS=" ".join(tim), NS=len(svc), NT=len(tim), PRUNE=f"{S['unit']}-sandbox-prune.timer",
-        # The web app's view of the file store first: the web service will not start without it.
-        VIEW=(f"""systemctl enable {S['unit']}-storage.service >/dev/null
-systemctl restart {S['unit']}-storage.service || {{ echo "the web app's view of the file store could not be mounted. Its last lines:" >&2; journalctl -u {S['unit']}-storage.service -n 20 --no-pager >&2; exit 1; }}
-""" if S["fs"] else ""))
+@GUARD@I=@INSTALL@; R=@RELEASES@; CUR=@CUR@; PREV=@PREV@; F=@FACTORY@
+TOOL=@TOOL@
+SERVICES="@SERVICES@"
+
+name_of() { local t; t="$(readlink "$1" 2>/dev/null || true)"; if [ -n "$t" ]; then basename "$t"; fi; }
+dir_of() { if [ "$1" = "@LEGACY_NAME@" ]; then echo "@LEGACY@"; else echo "$R/$1"; fi; }
+want_id() { [[ "${1:-}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "not a release id: '${1:-}' (one looks like 20261010T120000Z)" >&2; exit 2; }; }
+built() { [ -f "$1/.output/server/index.mjs" ] && [ -f "$1/.next/BUILD_ID" ] && [ -f "$1/services/task-workflow/.next/BUILD_ID" ]; }
+# point <current|previous> <name or nothing>: a new symlink renamed over the old one, so the switch itself is atomic.
+point() {
+  local link="$I/$1" tmp="$I/.$1.new"
+  if [ -z "${2:-}" ]; then if [ -L "$link" ]; then unlink "$link"; fi; return 0; fi
+  if [ "$2" = "@LEGACY_NAME@" ]; then ln -sfn "@LEGACY_NAME@" "$tmp"; else ln -sfn "releases/$2" "$tmp"; fi
+  mv -Tf "$tmp" "$link"
+}
+# The agent's sandbox runtime (msb and its library) is linked from a release's node_modules into the agent's
+# ~/.microsandbox, by the mold's prewarm, once, at an absolute path. Point every such link through `current` instead,
+# so it follows the release that serves and never dangles when an old release is removed. A real file is left alone.
+relink() {
+  [ -L "$CUR" ] || return 0
+  local pkg sub f t
+  for pkg in "$CUR"/node_modules/@superradcompany/microsandbox-*; do
+    [ -d "$pkg" ] || continue
+    for sub in bin lib; do
+      [ -d "$pkg/$sub" ] || continue
+      [ -d "@STORE@/$sub" ] || install -d -m 755 -o @API@ -g @API@ "@STORE@/$sub"
+      for f in "$pkg/$sub"/*; do
+        t="@STORE@/$sub/$(basename "$f")"
+        if [ -L "$t" ] || [ ! -e "$t" ]; then ln -sfn "$f" "$t"; chown -h @API@:@API@ "$t"; fi
+      done
+    done
+  done
+}
+rt_version() { sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$1/node_modules/microsandbox/package.json" 2>/dev/null | head -n 1; }
+install_units() {
+  local f
+  for f in "$F"/units/*; do install -m 644 "$f" "@SYSTEMD@/$(basename "$f")"; done
+  systemctl daemon-reload
+@VIEW@  systemctl enable $SERVICES >/dev/null
+}
+restart_all() {
+  local s u t rc
+  for s in workflow:@T_WF@ api:@T_API@ web:@T_WEB@; do
+    u="@UNIT@-${s%%:*}.service"; t="${s#*:}"
+    rc=0; timeout "$t" systemctl restart "$u" || rc=$?
+    if [ "$rc" != 0 ]; then
+      if [ "$rc" = 124 ]; then echo "service $u did not start within its ${t}s. Its last lines:" >&2; else echo "service $u did not start (exit $rc). Its last lines:" >&2; fi
+      journalctl -u "$u" -n 30 --no-pager >&2 || true
+      return 1
+    fi
+  done
+}
+code() { curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' "$1" 2>/dev/null || true; }
+# The three loopback endpoints: the task-workflow service and the API must say 200; the web app must answer, and not
+# with a server error.
+healthy() {
+  local end w a b
+  end=$(( $(date +%s) + @HEALTH_S@ ))
+  while :; do
+    w="$(code http://127.0.0.1:@PW@/api/health)"; a="$(code http://127.0.0.1:@PA@/eve/v1/health)"; b="$(code http://127.0.0.1:@PWEB@/api/ops/health)"
+    if [ "$w" = 200 ] && [ "$a" = 200 ] && [ -n "$b" ] && [ "$b" != 000 ] && [ "${b#5}" = "$b" ]; then
+      echo "HEALTH=ok workflow=$w api=$a web=$b"; return 0
+    fi
+    if [ "$(date +%s)" -ge "$end" ]; then echo "HEALTH=failed workflow=${w:-000} api=${a:-000} web=${b:-000}"; return 1; fi
+    sleep @STEP_S@
+  done
+}
+
+cmd="${1:-}"; if [ $# -gt 0 ]; then shift; fi
+if [ "$cmd" = detach ]; then
+  what="${1:-}"; if [ $# -gt 0 ]; then shift; fi
+  case "$what" in switch|rollback) ;; *) echo "detach runs switch or rollback only" >&2; exit 2 ;; esac
+  install -d -m 700 @LOGDIR@
+  log="@LOGDIR@/release-$what-$(date -u +%Y%m%dT%H%M%SZ).log"
+  rc=0
+  systemd-run --quiet --wait --collect --unit "@UNIT@-release-$what" -p "StandardOutput=append:$log" -p "StandardError=append:$log" \
+    --setenv=@GUARDVAR@=@APP@ -- /bin/bash "$0" "$what" "$@" || rc=$?
+  cat "$log" 2>/dev/null || true
+  exit "$rc"
+fi
+if [ "$cmd" != status ]; then
+  exec 9>"$I/.release.lock"
+  flock -n 9 || { echo "another release step is running on this server right now; nothing was changed" >&2; exit 4; }
+fi
+case "$cmd" in
+  prepare)
+    want_id "${1:-}"; id="$1"; new="$R/$id"
+    python3 "$TOOL" release-adopt --install "$I"
+    python3 "$TOOL" release-prune --install "$I" --home @APIHOME@
+    python3 "$TOOL" release-space --install "$I" --extra-gb @EXTRA_GB@ || exit 7
+    [ ! -e "$new" ] || { echo "refusing: release $id already exists on this server; a new deploy makes a new one" >&2; exit 8; }
+    install -d -m 755 "$R"
+    install -d -m 750 -o @BUILD@ -g @GROUP@ "$new"
+    cur="$(name_of "$CUR")"
+    if [ -n "$cur" ]; then
+      from="$(dir_of "$cur")"
+      for m in node_modules services/task-workflow/node_modules; do
+        if [ -d "$from/$m" ]; then install -d "$(dirname "$new/$m")"; cp -a --reflink=auto "$from/$m" "$new/$m"; fi
+      done
+      install -d -m 755 "$new/.sf-stamps"
+      if [ "$cur" = "@LEGACY_NAME@" ]; then st=@DATA@/build-stamps; else st="$from/.sf-stamps"; fi
+      for k in app workflow; do if [ -f "$st/$k.lock" ]; then cp -p "$st/$k.lock" "$new/.sf-stamps/$k.lock"; fi; done
+      echo "prepare: node_modules copied from the serving release $cur (the build keeps it if the lock file is unchanged)"
+    fi
+    echo "RELEASE=$id"
+    ;;
+  prewarm)
+    want_id "${1:-}"; id="$1"; new="$R/$id"
+    built "$new" || { echo "refusing: release $id is not built ($new); nothing was switched" >&2; exit 8; }
+    install -d -m 755 @RUNDIR@
+    install -d -m 755 -o @API@ -g @API@ @MARKS@
+    rm -f "@MARKS@/$id"
+    relink || echo "warning: the sandbox runtime links could not all be pointed through current" >&2
+    install -d -m 700 @LOGDIR@
+    log="@LOGDIR@/prewarm-$id.log"
+    rc=0
+    systemd-run --quiet --wait --collect --unit "@UNIT@-prewarm" -p User=@API@ -p Group=@API@ -p SupplementaryGroups=kvm \
+      -p EnvironmentFile=@APIENV@ -p Environment=HOME=@APIHOME@ -p Environment=NODE_ENV=production \
+      -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes -p RuntimeMaxSec=@PREWARM_S@ \
+      -p "StandardOutput=append:$log" -p "StandardError=append:$log" -- /bin/bash "$F/api-prestart.sh" "$new" || rc=$?
+    tail -n 30 "$log" 2>/dev/null || true
+    if [ "$rc" != 0 ]; then
+      echo "refusing to switch: the new release's sandbox templates could not be prepared within @PREWARM_S@s (exit $rc; the lines above say which). Nothing was switched: the release serving now keeps serving." >&2
+      exit 12
+    fi
+    cur="$(name_of "$CUR")"
+    # The serving release's API is running, so its prestart passed in this boot for the release `current` names: mark
+    # that one too, and a switch back to it restarts the API in seconds (a server deployed before marks has none yet).
+    if [ -n "$cur" ] && [ "$cur" != "$id" ] && systemctl is-active --quiet @UNIT@-api.service; then
+      touch "@MARKS@/$cur"; chown @API@:@API@ "@MARKS@/$cur"
+    fi
+    if [ -n "$cur" ] && [ "$(rt_version "$(dir_of "$cur")")" != "$(rt_version "$new")" ]; then
+      rm -f "@MARKS@/$id"
+      echo "RUNTIME=changed: the sandbox runtime differs from the serving release's, so the switch prewarms once more, with the new one, before the API serves"
+    fi
+    echo "PREWARMED=$id"
+    ;;
+  switch)
+    want_id "${1:-}"; id="$1"; new="$R/$id"
+    built "$new" || { echo "refusing: release $id is not built ($new); nothing was switched" >&2; exit 8; }
+    cur="$(name_of "$CUR")"; pb="$(name_of "$PREV")"
+    install -d -m 755 @RUNDIR@
+    install -d -m 755 -o @API@ -g @API@ @MARKS@
+    install_units
+    point current "$id"
+    if [ -n "$cur" ] && [ "$cur" != "$id" ]; then point previous "$cur" || echo "warning: previous could not be pointed at $cur" >&2; fi
+    relink || echo "warning: the sandbox runtime links could not all be pointed through current" >&2
+    echo "switch: current -> releases/$id (it was ${cur:-nothing}); restarting $SERVICES"
+    if restart_all && healthy; then
+      systemctl enable --now @TIMERS@ >/dev/null
+      # The nightly sandbox prune (mold_v1-153). Enabled, not run now: it runs at its hour, or by hand with --prune-sandboxes.
+      systemctl enable --now @PRUNE@ >/dev/null
+      echo "SWITCHED=$id"; echo "PREVIOUS=$cur"; exit 0
+    fi
+    if [ -z "$cur" ] || [ "$cur" = "$id" ]; then
+      echo "SWITCH_BACK=none"; echo "there is no earlier release on this server to switch back to" >&2; exit 9
+    fi
+    echo "switch: release $id did not come up healthy; switching back to $cur, which was serving" >&2
+    point current "$cur"; point previous "$pb" || true
+    relink || echo "warning: the sandbox runtime links could not all be pointed through current" >&2
+    if restart_all && healthy; then echo "ROLLED_BACK=$cur"; exit 10; fi
+    echo "ROLLBACK_FAILED=$cur"; exit 11
+    ;;
+  rollback)
+    cur="$(name_of "$CUR")"; to="${1:-$(name_of "$PREV")}"
+    [ -n "$to" ] || { echo "there is no earlier release on this server to go back to; nothing was changed" >&2; exit 13; }
+    [ "$to" != "$cur" ] || { echo "release $to is already the one serving; nothing was changed" >&2; exit 13; }
+    [ "$to" = "@LEGACY_NAME@" ] || want_id "$to"
+    built "$(dir_of "$to")" || { echo "release $to is not a complete build on this server; nothing was changed" >&2; exit 8; }
+    python3 "$TOOL" release-migrations --install "$I" --from "$cur" --to "$to" || true
+    install -d -m 755 @RUNDIR@
+    install -d -m 755 -o @API@ -g @API@ @MARKS@
+    install_units
+    point current "$to"; point previous "$cur" || true
+    relink || echo "warning: the sandbox runtime links could not all be pointed through current" >&2
+    echo "rollback: current -> $to (it was $cur); restarting $SERVICES"
+    if restart_all && healthy; then echo "ROLLED_BACK=$to"; echo "PREVIOUS=$cur"; exit 0; fi
+    echo "rollback: release $to did not come up healthy either; putting $cur back" >&2
+    point current "$cur"; point previous "$to" || true
+    relink || echo "warning: the sandbox runtime links could not all be pointed through current" >&2
+    if restart_all && healthy; then echo "ROLLBACK_UNDONE=$cur"; exit 14; fi
+    echo "ROLLBACK_FAILED=$cur"; exit 11
+    ;;
+  keep)
+    python3 "$TOOL" release-prune --install "$I" --home @APIHOME@
+    ;;
+  status)
+    python3 "$TOOL" release-status --install "$I"
+    ;;
+  *) echo "usage: release.sh prepare|prewarm|switch <id> | rollback [<release>] | keep | status | detach switch|rollback ..." >&2; exit 2 ;;
+esac
+""", HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), GUARDVAR=GUARD_VAR, APP=S["app_id"],
+        INSTALL=P(S["install"]), RELEASES=P(S["releases"]), CUR=P(S["app_dir"]), PREV=P(S["install"] + "/previous"), FACTORY=P(S["factory_dir"]),
+        LEGACY=P(S["legacy_app"]), LEGACY_NAME=LEGACY_RELEASE, TOOL=tool or S["tool"], SERVICES=" ".join(svc), TIMERS=" ".join(tim),
+        PRUNE=f"{S['unit']}-sandbox-prune.timer", UNIT=S["unit"], VIEW=view, SYSTEMD=P("/etc/systemd/system"),
+        STORE=P(SERVICE_HOME + "/.microsandbox"), API=SERVICE_USERS["api"], APIHOME=P(SERVICE_HOME), APIENV=S["env_files"]["api"],
+        BUILD=BUILD_USER, GROUP=CODE_GROUP, DATA=P(S["data"]), MARKS=P(S["marks"]), RUNDIR=P(os.path.dirname(S["marks"])),
+        LOGDIR=P(S["release_log"]), EXTRA_GB=extra_gb, PREWARM_S=t["prewarm"], HEALTH_S=t["health"], STEP_S=t["step"],
+        T_WF=t["start"]["workflow"], T_API=t["start"]["api"], T_WEB=t["start"]["web"], PW=PORTS["workflow"], PA=PORTS["api"], PWEB=PORTS["web"])
 
 def caddy_sh(S):
     return fill("""#!/bin/bash
@@ -1605,7 +1904,7 @@ def bundle(S, crons):
     """relative path -> (text, mode): everything generated for the server. Pure; writes nothing."""
     b = {"qualify.sh": (QUALIFY_SH, 0o755), "packages.sh": (packages_sh(S), 0o755), "firewall.sh": (firewall_sh(S), 0o755),
          "postgres.sh": (postgres_sh(S), 0o755), "build.sh": (build_sh(S, crons), 0o755), "db-chain.sh": (db_chain_sh(S), 0o755),
-         "units.sh": (units_sh(S, crons), 0o755), "caddy.sh": (caddy_sh(S), 0o755), "health.sh": (health_sh(S, crons), 0o755),
+         "release.sh": (release_sh(S, crons), 0o755), "caddy.sh": (caddy_sh(S), 0o755), "health.sh": (health_sh(S, crons), 0o755),
          "api-prestart.sh": (api_prestart_sh(S), 0o755), "cron-call.sh": (cron_call_sh(S, crons), 0o755),
          "users.sh": (users_sh(S, crons), 0o755), "seal.sh": (seal_sh(S), 0o755),
          "env-services.json": (json.dumps(service_env_spec(S), indent=2, sort_keys=True) + "\n", 0o644),
@@ -1634,12 +1933,171 @@ def write_bundle(S, crons, out_dir):
         p = os.path.join(out_dir, rel); os.makedirs(os.path.dirname(p), exist_ok=True); shutil.copyfile(src, p)
     return out_dir
 
-def plan(S, source_dir, bundle_dir="<bundle>", shown=True):
+# ---- the rehearsal (mold_v1-222) -----------------------------------------------------------------------------------
+# On 2026-10-09 two deploys stopped ON THE SERVER, after it had been changed, on files the bundle lacked: lib/legacy.py
+# (ModuleNotFoundError at the postgres step) and state/factory.json (at db-chain). The rehearsal finds that class of
+# fault on this machine, before the first server step: it checks a byte-for-byte copy of the very bundle that would be
+# sent, with Python isolated from this machine (-I: no environment, no user site, no script directory; the bundle's
+# own directories put on the path by hand), so an import that would fail there fails here.
+# Imports the bundle's files make that are never reached on the server, with the reason. Anything else that does not
+# resolve inside the bundle (or the standard library) fails the rehearsal.
+REHEARSAL_FACTORY_SIDE = {
+    "factory": "vm_remote.state_problems validates state on the factory, before anything is contacted",
+    "clone": "library.py's Vercel path (clone.pull_env); a vm_remote app's library steps run through vm_remote",
+    "library_selftest": "library.py --self-test, the factory's own test",
+    "vm_remote_selftest": "vm_remote.py --self-test, the factory's own test",
+    "vm_capacity_selftest": "vm_capacity.py --self-test, the factory's own test",
+}
+# Files whose own --self-test is the factory's test, not the server's: it reads what only the factory has.
+REHEARSAL_NO_SELF_TEST = {
+    "provision.py": "its self-test drives the factory's Vercel and local paths with the factory's own fixtures (fixtures/release/...), "
+                    "which no server bundle carries; the server runs only its database chain, which the import and the tool checks cover",
+}
+REHEARSAL_IMPORT = "import importlib, sys; sys.path[:0] = sys.argv[1:4]; importlib.import_module(sys.argv[4])"
+SELF_TEST_DEF = re.compile(r"^def self_test\(", re.M)
+
+def _module_imports(src):
+    import ast
+    out = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Import): out |= {a.name.split(".")[0] for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.module and not n.level: out.add(n.module.split(".")[0])
+    return out
+
+def _server_closure(files):
+    """The bundle's modules the server can reach: everything vm_remote.py (the tool the server runs) imports, at the
+    top or inside a function, and what those import in turn. {module name: path}."""
+    seen, todo = {}, ["vm_remote"]
+    while todo:
+        m = todo.pop()
+        if m in seen or m not in files: continue
+        seen[m] = files[m]
+        try: todo += sorted(_module_imports(open(files[m]).read()) - set(seen))
+        except SyntaxError: pass
+    return seen
+def rehearsal_lines():
+    return ["every .py: imported with python3 -I -B from the bundle's own directories (nothing of this machine's on the path)",
+            "every .py: run with --help from an empty directory; those the server's tool reaches (vm_remote.py and its imports, inside functions "
+            f"too) that carry their own self-test, also with --self-test (not: {', '.join(sorted(REHEARSAL_NO_SELF_TEST))}, the factory's own)",
+            "every import statement in every .py, those inside functions included: found in the bundle or the standard library "
+            f"(factory-side only, and so allowed: {', '.join(sorted(REHEARSAL_FACTORY_SIDE))})",
+            "every <install>/factory/... path a generated script, unit file or remote command names: present in the bundle",
+            "every lib/*.mjs a Python file names: present in the bundle",
+            "the server tool from the bundle: env-names and env-split run against stand-in files in the temp directory",
+            "every .sh: bash -n (parsed, never run); every .mjs: node --check"]
+
+def _bundle_references(S, crons, copy, steps):
+    """Every <factory dir>/<path> a generated text or a remote command names, missing from the bundle copy."""
+    F = S["factory_dir"].rstrip("/"); rx = re.compile(re.escape(F) + r"/([A-Za-z0-9_.@/*-]+)")
+    texts = []
+    for d, _, fs in os.walk(copy):
+        for f in fs:
+            p = os.path.join(d, f)
+            if f.endswith((".sh", ".service", ".timer", ".json", ".nft", ".local")) or f == "Caddyfile":
+                texts.append((os.path.relpath(p, copy), open(p, errors="ignore").read()))
+    for st in steps:
+        if st.get("argv"): texts.append((f"the {st['id']} step's command", " ".join(st["argv"])))
+    bad = []
+    for where, text in texts:
+        for rel in sorted(set(rx.findall(text))):
+            rel = rel.rstrip(".")
+            if rel.endswith("/*"): ok = os.path.isdir(os.path.join(copy, rel[:-2]))
+            elif rel.endswith("/") or rel == "": ok = True
+            else: ok = os.path.exists(os.path.join(copy, rel))
+            if not ok: bad.append(f"{where} names {F}/{rel}, which is not in the bundle")
+    return bad
+
+def _bundle_imports(copy):
+    """Import statements in the bundle's .py files (inside functions too) that resolve neither to the bundle nor to the
+    standard library, and the .mjs helpers a .py names that the bundle lacks."""
+    import ast
+    have, files = set(), []
+    for d, _, fs in os.walk(copy):
+        for f in fs:
+            if f.endswith(".py"): have.add(f[:-3]); files.append(os.path.join(d, f))
+    lib = os.path.join(copy, ".claude", "scripts", "lib"); bad = []
+    for p in sorted(files):
+        rel = os.path.relpath(p, copy); src = open(p).read()
+        try: tree = ast.parse(src)
+        except SyntaxError as e: bad.append(f"{rel} is not valid Python: {e.msg} (line {e.lineno})"); continue
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import): names = [a.name.split(".")[0] for a in n.names]
+            elif isinstance(n, ast.ImportFrom) and n.module and not n.level: names = [n.module.split(".")[0]]
+            else: continue
+            for m in names:
+                if m in have or m in sys.stdlib_module_names or m in REHEARSAL_FACTORY_SIDE: continue
+                bad.append(f"{rel} imports {m} (line {n.lineno}), which is not in the bundle")
+        for m in sorted(set(re.findall(r"""["']([a-z][a-z0-9_-]*\.mjs)["']""", src))):
+            if os.path.isfile(os.path.join(ROOT, ".claude", "scripts", "lib", m)) and not os.path.isfile(os.path.join(lib, m)):
+                bad.append(f"{rel} names lib/{m}, which is not in the bundle")
+    return bad
+
+def rehearsal(S, crons, bundle_dir, self_tests=True, steps=None, jobs_timeout=300, say=print):
+    """Check the bundle before any server step (mold_v1-222). Returns plain sentences, [] when it passes. Reads
+    `bundle_dir` and changes nothing in it: every check runs on a copy, in a temp directory removed afterwards."""
+    import concurrent.futures
+    work = tempfile.mkdtemp(prefix="sf-rehearsal-")
+    try:
+        copy = os.path.join(work, "factory"); shutil.copytree(bundle_dir, copy, symlinks=True)
+        home = os.path.join(work, "home"); cwd = os.path.join(work, "cwd"); etc = os.path.join(work, "etc")
+        for d in (home, cwd, etc): os.makedirs(d)
+        env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": home, "LANG": "C.UTF-8"}
+        scripts = os.path.join(copy, ".claude", "scripts"); lib = os.path.join(scripts, "lib")
+        bad = _bundle_references(S, crons, copy, steps if steps is not None else plan(S, "<source>", bundle_dir, shown=False, release="20000101T000000Z"))
+        bad += _bundle_imports(copy)
+        py, node, bash = sys.executable or "python3", shutil.which("node"), shutil.which("bash") or "/bin/bash"
+        mods = {f[:-3]: os.path.join(d, f) for d, _, fs in os.walk(copy) for f in fs if f.endswith(".py")}
+        reach = set(_server_closure(mods).values())
+        jobs = []
+        for d, _, fs in os.walk(copy):
+            for f in sorted(fs):
+                p = os.path.join(d, f); rel = os.path.relpath(p, copy)
+                if f.endswith(".py"):
+                    jobs.append(("import", rel, [py, "-I", "-B", "-c", REHEARSAL_IMPORT, d, lib, scripts, f[:-3]], (0,)))
+                    jobs.append(("--help", rel, [py, "-I", "-B", p, "--help"], (0, 1, 2)))
+                    if self_tests and p in reach and f not in REHEARSAL_NO_SELF_TEST and SELF_TEST_DEF.search(open(p).read()):
+                        jobs.append(("--self-test", rel, [py, "-I", "-B", p, "--self-test"], (0,)))
+                elif f.endswith(".sh"): jobs.append(("bash -n", rel, [bash, "-n", p], (0,)))
+                elif f.endswith(".mjs"):
+                    if node: jobs.append(("node --check", rel, [node, "--check", p], (0,)))
+                    else: bad.append(f"this machine has no node, so {rel} could not be checked")
+        # The server's own tool, from the bundle, on stand-in files: the commands the deploy runs there before the build.
+        tool = os.path.join(lib, "vm_remote.py"); master = os.path.join(etc, "env")
+        with open(master, "w") as fh: fh.write('DATABASE_URL="postgresql://stand-in"\nCRON_SECRET="stand-in"\n')
+        os.chmod(master, 0o600)
+        jobs.append(("env-names", ".claude/scripts/lib/vm_remote.py", [py, "-I", "-B", tool, "env-names", "--file", master], (0,)))
+        jobs.append(("env-split", ".claude/scripts/lib/vm_remote.py", [py, "-I", "-B", tool, "env-split", "--file", master, "--spec", os.path.join(copy, "env-services.json")], (0,)))
+        def one(job):
+            what, rel, argv, ok = job
+            try: r = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=jobs_timeout)
+            except subprocess.TimeoutExpired: return f"{rel}: {what} did not finish within {jobs_timeout}s"
+            except OSError as e: return f"{rel}: {what} could not be started ({type(e).__name__})"
+            out = (r.stderr or "") + "\n" + (r.stdout or "")
+            if r.returncode in ok and "Traceback (most recent call last)" not in out: return None
+            last = [l.strip() for l in out.splitlines() if l.strip()]
+            why = next((l for l in reversed(last) if re.search(r"Error|error:|Exception", l)), last[-1] if last else f"exit {r.returncode}")
+            return f"{rel}: {what} failed (exit {r.returncode}): {redact(why)[:300]}"
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(2, min(8, os.cpu_count() or 2))) as ex:
+            for res in ex.map(one, jobs):
+                if res: bad.append(res)
+        n = {k: sum(1 for j in jobs if j[0] == k) for k in ("import", "--self-test", "bash -n", "node --check")}
+        if not bad:
+            say(f"    rehearsed: {n['import']} Python files imported and run with --help from the bundle alone ({n['--self-test']} with their own --self-test), "
+                f"{n['bash -n']} shell scripts parsed, {n['node --check']} .mjs checked, every factory path the remote side names present")
+        return bad
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+RELEASE_SHOWN = "<release-id>"
+def plan(S, source_dir, bundle_dir="<bundle>", shown=True, release=None):
     """Every step of a deploy, in order: id, what it is for, the exact local command, what goes on its stdin and
-    which generated script it runs. The dry run prints this list; the deploy executes this list. One list."""
+    which generated script it runs. The dry run prints this list; the deploy executes this list. One list.
+    `release` is the new release's id (the deploy's start, UTC); the dry run shows a placeholder. A step with
+    `when` runs only in that case."""
     F = S["factory_dir"]; ssh = lambda cmd: ssh_argv(S, cmd, shown)
-    tool = f"python3 {S['tool']}"
+    tool = f"python3 {S['tool']}"; rid = release or RELEASE_SHOWN; rel = f"{S['releases']}/{rid}"
     return [
+      {"id": "rehearsal", "title": "Rehearsal on this machine, before anything is sent: the exact bundle is built in a temp directory and every Python file in it imported and run with --help (and its own --self-test) with python3 -I from the bundle's own paths, every file the remote scripts name looked up in it, every shell script parsed (bash -n) and every .mjs checked (node --check)", "local": "rehearsal", "timeout": 600},
       {"id": "qualify", "title": "Is the server fit? (read-only probe; refuses in plain words if not)", "argv": ssh("sh -s"), "stdin": "script:qualify.sh", "script": "qualify.sh", "timeout": 120},
       {"id": "dns", "title": f"Does {S['domain_shown']} point at the server? (looked up on this VM; nothing is sent to the server)", "local": "dns", "timeout": 30},
       {"id": "mkdir", "title": "Make the install directory", "argv": ssh(guarded(S, f"install -d -m 755 {S['install']} {F}")), "timeout": 60},
@@ -1651,13 +2109,17 @@ def plan(S, source_dir, bundle_dir="<bundle>", shown=True):
       {"id": "env-mint", "title": "Master env file: mint the app's own internal secrets on the server (kept if already there)", "argv": ssh(guarded(S, f"{tool} env-mint --file {S['env_file']}" + (f" --push-subject {shlex.quote(push_subject(S))}" if S["push"] else ""))), "timeout": 120},
       {"id": "env-names", "title": "Env file: which NAMES are present (names only; no value is read back)", "argv": ssh(f"{S['sudo']}{tool} env-names --file {S['env_file']}"), "timeout": 60},
       {"id": "env-secrets", "title": "Env file: the values only the operator holds, from a hidden prompt, sent on stdin", "argv": ssh(guarded(S, f"{tool} env-merge --file {S['env_file']}")), "stdin": "secrets", "timeout": 60},
-      {"id": "source", "title": "Copy the SOURCE (never a build) to its final path", "argv": rsync_argv(S, source_dir, S["app_dir"], SOURCE_EXCLUDES, shown=shown), "timeout": 1800},
-      {"id": "build", "title": "Stop the services, split each service's own env file from the master, then build in place: eve API, web app, task-workflow, one at a time", "argv": ssh(guarded(S, f"bash {F}/build.sh")), "script": "build.sh", "timeout": 5400},
-      {"id": "db-chain", "title": "Database: hold, journal, drift dry run refusing data loss, RLS bootstrap, coverage, release, isolation proof; then the services' env files again", "argv": ssh(guarded(S, f"bash {F}/db-chain.sh")), "script": "db-chain.sh", "timeout": 3600},
-      {"id": "units", "title": "Three systemd services (API as a non-root user in group kvm, prewarm before start) and the cron timers", "argv": ssh(guarded(S, f"bash {F}/units.sh")), "script": "units.sh", "timeout": 2700},
+      {"id": "release", "title": f"A new release beside the one serving: keep only the serving and the previous release, check the disk has room for one more, make {S['releases']}/{rid} with the serving release's node_modules (nothing that serves is touched)", "argv": ssh(guarded(S, f"bash {F}/release.sh prepare {rid}")), "script": "release.sh", "timeout": 1800},
+      {"id": "source", "title": "Copy the SOURCE (never a build) into the new release", "argv": rsync_argv(S, source_dir, rel, SOURCE_EXCLUDES, shown=shown), "timeout": 1800},
+      {"id": "build", "title": "Split each service's own env file from the master, then build the new release at its final path while the old one serves: eve API, web app, task-workflow, one at a time", "argv": ssh(guarded(S, f"bash {F}/build.sh {rid}")), "script": "build.sh", "timeout": 5400},
+      {"id": "db-chain", "title": "Database: hold, journal, drift dry run refusing data loss, RLS bootstrap, coverage, release, isolation proof; then the services' env files again (the old release keeps serving: migrations are additive first)", "argv": ssh(guarded(S, f"bash {F}/db-chain.sh {rid}")), "script": "db-chain.sh", "timeout": 3600},
+      {"id": "prewarm", "title": f"Prewarm the new release's sandbox templates as the API's user while the old release serves, within {PREWARM_DEADLINE_S}s; a template that hangs stops the deploy here and nothing is switched", "argv": ssh(guarded(S, f"bash {F}/release.sh prewarm {rid}")), "timeout": PREWARM_DEADLINE_S + 300},
+      {"id": "switch", "title": f"Switch: install the units, point {S['app_dir']} at the new release, restart the three services and wait for their health; if they do not come up, the server switches back to the release that was serving, by itself (run as its own systemd unit, so a dropped connection cannot stop it halfway)", "argv": ssh(guarded(S, f"bash {F}/release.sh detach switch {rid}")), "timeout": 2400},
       {"id": "caddy", "title": f"Caddy: TLS for {S['domain_shown']}, everything proxied to the web app on loopback", "argv": ssh(guarded(S, f"bash {F}/caddy.sh")), "script": "caddy.sh", "timeout": 300},
       {"id": "health", "title": "Health on the server: three endpoints, /dev/kvm, the API's user and groups, listeners, timers", "argv": ssh(f"{S['sudo']}bash {F}/health.sh"), "script": "health.sh", "timeout": 180},
       {"id": "health-public", "title": f"Health from outside: {S['url']}/api/ops/health and {S['url']}/eve/v1/health (the same read the Vercel path gates on)", "local": "health-public", "timeout": 120},
+      {"id": "rollback", "when": "the new release does not answer its health check", "title": "Switch back to the release that was serving and restart it (the same as provision.py --rollback-remote)", "argv": ssh(guarded(S, f"bash {F}/release.sh detach rollback")), "timeout": 2400},
+      {"id": "keep", "title": "Keep the serving and the previous release; remove older ones and the sandbox template snapshots only they used", "argv": ssh(guarded(S, f"bash {F}/release.sh keep")), "timeout": 1800},
     ]
 
 def mold_gaps(source_dir):
@@ -1693,10 +2155,15 @@ def print_plan(S, steps, B, crons, gaps, out=print):
     out(f"  the operator will be asked (hidden) for whichever of these the server does not hold yet: {', '.join(operator_names(S)) or 'nothing'}")
     out(f"  minted on the server, never here: {', '.join(SERVER_MADE)}")
     if S["push"]: out(f"  minted on the server for desktop notifications, kept if already there: {', '.join(PUSH_PAIR)} (VAPID_SUBJECT is the operator's email from state)")
+    out(f"  the new release is built at {S['releases']}/{RELEASE_SHOWN} ({RELEASE_SHOWN} is the deploy's start time in UTC, e.g. {release_id(datetime.datetime(2026, 10, 10, 12, 0, tzinfo=datetime.timezone.utc))}) "
+        f"while the release {S['app_dir']} leads to keeps serving; nothing serving is stopped before the switch, and a failed switch switches back")
     out("")
     for i, st in enumerate(steps, 1):
-        out(f"[{i:02d} {st['id']}] {st['title']}")
-        if st.get("local") == "dns":
+        out(f"[{i:02d} {st['id']}] {st['title']}" + (f" (ONLY IF {st['when']})" if st.get("when") else ""))
+        if st.get("local") == "rehearsal":
+            out("    (local) write the bundle below into a temp directory and check a byte-for-byte copy of it; refuse, with nothing sent, on any failure:")
+            for line in rehearsal_lines(): out("      - " + line)
+        elif st.get("local") == "dns":
             out(f"    (local) resolve {S['domain_shown']} and compare it with {S['host'] or NO_HOST}")
         elif st.get("local") == "health-public":
             out(f"    (local) curl --silent --max-time 20 {S['url']}/api/ops/health")
@@ -1726,7 +2193,7 @@ def print_plan(S, steps, B, crons, gaps, out=print):
     out("Copied verbatim to factory/ so the server runs the factory's own database chain: " + ", ".join(rel for _, rel in bundle_copies()))
     out(f"After the last step: state/application/{S['app_id']}/infrastructure.json gets vm_remote.production_url, vm_remote.health and "
         f"deployed_at; datastores.json gets postgres.rls_verified; application.json status becomes stamped (or reverted, with the reason).")
-    out(f"{len(steps)} steps, {len(crons)} cron timers, 3 services. DRY RUN: nothing was run and nothing was contacted.")
+    out(f"{len(steps)} steps, {len(crons)} cron timers, 3 services, releases kept: 2. DRY RUN: nothing was run and nothing was contacted.")
 
 # ---------------------------------------------------------------------------------------------------------
 # running it
@@ -1765,26 +2232,67 @@ def dns_problem(S, resolver=resolve):
                 f"{S['host']} where the domain is managed, wait a few minutes, and run this again. Nothing was installed.")
     return None
 
-def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=resolve, read_health=None, say=print, bundle_dir=None, on_started=None, wait=time.sleep, probe=port_open):
-    """Run the plan. Returns {"health", "evidence", "running", "facts"}; raises Stop with one instruction otherwise.
-    `runner`, `secrets_for`, `resolver` and `read_health` are injected so the whole sequence runs offline in the
-    self-test against recorded answers."""
+def serving_problems(facts, public):
+    """Why the new release is not serving, from the server's own health read and the read from outside; [] when it is.
+    These, and only these, switch back to the previous release: each is the release's own fault. An outside read that
+    gets no answer at all (the certificate, DNS, the network) is not, and switching back would not cure it."""
+    bad = []
+    for k, K in (("task-workflow service", "WORKFLOW"), ("agent API", "API")):
+        if facts.get(K) != "200": bad.append(f"the {k} answered {facts.get(K) or 'nothing'} on the server itself")
+    w = facts.get("WEB") or "000"
+    if w == "000" or w.startswith("5"): bad.append(f"the web app answered {w if w != '000' else 'nothing'} on the server itself")
+    code = str((public or ("",))[0] or "")
+    if code.startswith("5"): bad.append(f"the app answered HTTP {code} from outside")
+    return bad
+
+def _switch_story(S, kv, rc, release, err=""):
+    """One plain paragraph for a switch or rollback that did not end on the new release."""
+    tail = f" ({kv['HEALTH']})" if kv.get("HEALTH") else ""
+    if kv.get("ROLLED_BACK"):
+        return (f"The new release {release} did not come up healthy{tail}, so the server switched back by itself: release {kv['ROLLED_BACK']}, which "
+                f"was serving before, is serving again and the site is up. The new release is kept on the server for a look and is removed by the "
+                f"next deploy. Fix the cause and run the deploy again: python3 .claude/scripts/provision.py {S['app_id']} --deploy-remote")
+    if rc == 9 or kv.get("SWITCH_BACK") == "none":
+        return (f"The new release {release} did not come up healthy{tail}, and this server has no earlier release to switch back to (this was its "
+                f"first). The site is not serving. Fix the cause and run the deploy again: python3 .claude/scripts/provision.py {S['app_id']} --deploy-remote")
+    if kv.get("ROLLBACK_FAILED"):
+        return (f"The new release {release} did not come up healthy{tail}, and the release that was serving ({kv['ROLLBACK_FAILED']}) did not come "
+                f"back either. THE SITE IS DOWN. Try: python3 .claude/scripts/provision.py {S['app_id']} --rollback-remote; the server's log is in "
+                f"{S['release_log']}.")
+    return (f"The switch to release {release} stopped (exit {rc}): {err[:400]} Run: python3 .claude/scripts/provision.py {S['app_id']} --rollback-remote "
+            f"to see which release is serving and to go back to the previous one.")
+
+def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=resolve, read_health=None, say=print, bundle_dir=None, on_started=None,
+           wait=time.sleep, probe=port_open, release=None, rehearse=None, smoke=None):
+    """Run the plan. Returns {"health", "evidence", "running", "facts", "release"}; raises Stop with one instruction otherwise.
+    `runner`, `secrets_for`, `resolver`, `read_health` and `rehearse` are injected so the whole sequence runs offline in
+    the self-test against recorded answers. The new release is built, migrated and prewarmed while the old one serves,
+    and only a release that answered its health checks stays switched in (mold_v1-222). `smoke`, when given, is one
+    chat as the operator after the health read (lib/smoke.py check); its "fail" switches back like a failed health
+    read, and "needs_sign_in" is reported, not held against the release."""
     own = bundle_dir is None
     bundle_dir = bundle_dir or tempfile.mkdtemp(prefix="sf-vm-remote-")
+    release = release or release_id()
     try:
         write_bundle(S, crons, bundle_dir)
-        B = bundle(S, crons); steps = {s["id"]: s for s in plan(S, source_dir, bundle_dir, shown=False)}
-        def run(sid, stdin=None, quiet=False):
+        B = bundle(S, crons); steps = {s["id"]: s for s in plan(S, source_dir, bundle_dir, shown=False, release=release)}
+        def run(sid, stdin=None, quiet=False, check=True, after=""):
             st = steps[sid]; say(f"[{sid}] {st['title']}")
             r = runner(st, stdin)
             tail = [l for l in redact((r.stdout or "")).splitlines() if l.strip()]
             if not quiet:
                 for l in tail[-8:]: say("    " + l[:220])
-            if r.returncode:
+            if r.returncode and check:
                 err = [l for l in redact((r.stderr or "") + "\n" + (r.stdout or "")).splitlines() if l.strip()]
-                raise Stop(f"step {sid} stopped (exit {r.returncode}): " + " / ".join(err[-4:])[:600] +
+                raise Stop(f"step {sid} stopped (exit {r.returncode}): " + " / ".join(err[-4:])[:600] + after +
                            f"\n  Every step is safe to run again: python3 .claude/scripts/provision.py {S['app_id']} --deploy-remote")
             return r
+        say(f"[rehearsal] {steps['rehearsal']['title']}")
+        problems = (rehearse or rehearsal)(S, crons, bundle_dir, steps=list(steps.values()), say=say)
+        if problems:
+            raise Stop("The deploy was rehearsed on this machine first, and the bundle it would send to the server failed, so nothing was sent and "
+                       "the server was not contacted:\n  - " + "\n  - ".join(problems[:20]) + (f"\n  - ... and {len(problems) - 20} more" if len(problems) > 20 else "") +
+                       "\n  This is a fault in the factory's own files, not in the server or the app; the factory's maintainers fix it here, then the deploy is run again.")
         facts = parse_kv(run("qualify", B["qualify.sh"][0], quiet=True).stdout)
         problems = qualify(facts)
         if problems: raise Stop("This server cannot run the app:\n  - " + "\n  - ".join(problems))
@@ -1810,13 +2318,21 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
             del vals
         else:
             say("[env-secrets] nothing to ask: the server already holds every value only you can supply")
-        for sid in ("source", "build"): run(sid)
-        r = run("db-chain")
+        untouched = " The site was not touched: the release that was serving keeps serving."
+        run("release", after=untouched)
+        for sid in ("source", "build"): run(sid, after=untouched)
+        r = run("db-chain", after=untouched)
         ev = next((json.loads(l[len("EVIDENCE "):]) for l in r.stdout.splitlines() if l.startswith("EVIDENCE {")), None)
         if S["mode"] != "off" and not ev:
-            raise Stop("the database step ended without an isolation proof, so tenant isolation is not known. Nothing was started. "
-                       f"Run the deploy again: python3 .claude/scripts/provision.py {S['app_id']} --deploy-remote")
-        for sid in ("units", "caddy"): run(sid)
+            raise Stop("the database step ended without an isolation proof, so tenant isolation is not known. Nothing was switched: the release "
+                       f"that was serving keeps serving. Run the deploy again: python3 .claude/scripts/provision.py {S['app_id']} --deploy-remote")
+        run("prewarm", after=untouched)
+        r = run("switch", check=False)
+        kv = parse_kv(r.stdout)
+        if r.returncode or not kv.get("SWITCHED"):
+            raise Stop(_switch_story(S, kv, r.returncode, release, redact((r.stderr or "").strip())))
+        previous = kv.get("PREVIOUS") or ""
+        run("caddy")
         hf = parse_kv(run("health", quiet=True).stdout)
         health, bad = health_verdict(S, hf, crons)
         say(f"[health-public] {steps['health-public']['title']}")
@@ -1830,7 +2346,28 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
         api_code = rh(f"{S['url']}/eve/v1/health")[0]
         if api_code != "200": bad.append(f"the agent API did not answer through {S['url']}/eve/v1/health (got {api_code or 'no answer'})")
         bad += ssh_door_problems(S, probe)
-        return {"health": health, "problems": bad, "warnings": health_warnings(S, hf), "evidence": ev, "facts": facts, "public": public}
+        sick = serving_problems(hf, public)
+        smoked = None
+        if smoke and not sick:
+            say("[smoke] one short chat as the operator, in the operator's own workspace (lib/smoke.py)")
+            smoked = smoke() or {}
+            say(f"    {smoked.get('result')}: {redact(str(smoked.get('detail') or ''))[:200]}")
+            if smoked.get("result") == "fail": sick.append(f"the post-deploy chat failed: {redact(str(smoked.get('detail') or ''))[:200]}")
+        if sick and previous:
+            rb = run("rollback", check=False); rkv = parse_kv(rb.stdout)
+            if rb.returncode == 0 and rkv.get("ROLLED_BACK"):
+                raise Stop(f"The new release {release} switched in, but then failed its health check ({'; '.join(sick)}), so the server was switched back "
+                           f"to release {rkv['ROLLED_BACK']}, which was serving before; it answers its health check again and the site is up. Fix the "
+                           f"cause and run the deploy again: python3 .claude/scripts/provision.py {S['app_id']} --deploy-remote")
+            raise Stop(f"The new release {release} failed its health check ({'; '.join(sick)}), and switching back to {previous} did not work "
+                       f"either (exit {rb.returncode}). Run: python3 .claude/scripts/provision.py {S['app_id']} --rollback-remote")
+        if not sick: run("keep")
+        warnings = health_warnings(S, hf)
+        if smoked and smoked.get("result") == "needs_sign_in":
+            warnings.append(f"the post-deploy chat was not run: {smoked.get('detail')} ({smoked.get('how') or 'sign in once with mint.py'})")
+        if sick: bad += sick
+        return {"health": health, "problems": bad, "warnings": warnings, "evidence": ev, "facts": facts, "public": public,
+                "release": {"current": release, "previous": previous}, "smoke": smoked}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -1871,6 +2408,15 @@ def retarget(app_url, admin_url, sslmode):
     host = b.netloc.rsplit("@", 1)[-1]
     return urllib.parse.urlunsplit((a.scheme, f"{userinfo}@{host}" if userinfo else host, a.path, urllib.parse.urlencode(q), a.fragment))
 
+def _served(path):
+    """`<install>/current` as given, or, on a server not moved to releases yet (mold_v1-222), the single directory
+    `<install>/app` that serves there. Used by every command the factory runs on the server against the serving code."""
+    p = (path or "").rstrip("/")
+    if p.endswith("/current") and not os.path.exists(p):
+        leg = os.path.join(os.path.dirname(p), LEGACY_RELEASE)
+        if os.path.isdir(leg): return leg
+    return path
+
 def host_chain(app_dir, env_file, mode, sslmode, measure_only=False, repair=True, P=None, sh=None, run=None):
     """provision.py's schema chain, on the server, against the server's own database.
 
@@ -1880,6 +2426,7 @@ def host_chain(app_dir, env_file, mode, sslmode, measure_only=False, repair=True
     before. Prints one `EVIDENCE {...}` line (role names, flags and counts; no credential)."""
     if P is None:
         sys.path.insert(0, SCRIPTS); import provision as P
+    app_dir = _served(app_dir)
     vals = env_read(env_file); adm = vals.get("POSTGRES_ADMIN_URL", "")
     hint = "run the deploy again from the factory"
     if not adm: sys.exit(f"the env file has no POSTGRES_ADMIN_URL, so there is no database to prepare; {hint}")
@@ -1948,6 +2495,123 @@ def host_chain(app_dir, env_file, mode, sslmode, measure_only=False, repair=True
             if os.path.exists(envloc): os.remove(envloc)
         else: open(envloc, "w").write(saved)
     print("EVIDENCE " + json.dumps(got["ev"])); return got["ev"]
+
+# ---- releases, on the server (mold_v1-222; run by release.sh as root) -----------------------------------------------
+def _pointer(install, which):
+    """The release `current` or `previous` leads to ("app" for the old single directory), or "" when there is none."""
+    p = os.path.join(install, which)
+    if not os.path.islink(p): return ""
+    t = os.readlink(p).rstrip("/")
+    if t == LEGACY_RELEASE: return LEGACY_RELEASE
+    name = t[len("releases/"):] if t.startswith("releases/") else ""
+    return name if RELEASE_RE.match(name) else ""
+
+def _release_dir(install, name):
+    return os.path.join(install, LEGACY_RELEASE) if name == LEGACY_RELEASE else os.path.join(install, "releases", name)
+
+def release_names(install):
+    """Every release on the server, newest first; the old single directory last, while it is a real directory."""
+    d = os.path.join(install, "releases"); out = []
+    if os.path.isdir(d):
+        out = sorted((n for n in os.listdir(d) if RELEASE_RE.match(n) and os.path.isdir(os.path.join(d, n)) and not os.path.islink(os.path.join(d, n))), reverse=True)
+    leg = os.path.join(install, LEGACY_RELEASE)
+    if os.path.isdir(leg) and not os.path.islink(leg): out.append(LEGACY_RELEASE)
+    return out
+
+def release_status(install):
+    return {"current": _pointer(install, "current"), "previous": _pointer(install, "previous"), "releases": release_names(install)}
+
+def release_adopt(install, say=print):
+    """A server deployed before releases serves from <install>/app: make `current` lead there, so the units this deploy
+    installs keep serving the same code from the same real path until the new release is switched in. Nothing moves."""
+    if os.path.lexists(os.path.join(install, "current")): return False
+    leg = os.path.join(install, LEGACY_RELEASE)
+    if not (os.path.isdir(leg) and not os.path.islink(leg)): return False
+    tmp = os.path.join(install, ".current.new")
+    if os.path.lexists(tmp): os.unlink(tmp)
+    os.symlink(LEGACY_RELEASE, tmp); os.replace(tmp, os.path.join(install, "current"))
+    say(f"release: {install}/app, which was serving, is now the release `current` leads to (nothing was moved or restarted)")
+    return True
+
+def _disk_kb(path):
+    size, _ = _tree(path)
+    return size // 1024
+
+def release_space(install, extra_gb=RELEASE_SPACE_EXTRA_GB, statvfs=os.statvfs, size_kb=_disk_kb, say=print):
+    """Is there room to build one more release beside the serving one? (a copy of it, plus `extra_gb`). 0 or 7."""
+    cur = _pointer(install, "current")
+    used = size_kb(_release_dir(install, cur)) if cur else 0
+    st = statvfs(install); free = st.f_bavail * st.f_frsize // 1024
+    need = used + int(extra_gb * 1048576)
+    gb = lambda kb: f"{kb / 1048576:.1f} GB"
+    if free < need:
+        say(f"refusing: the server has {gb(free)} free, and building the new release beside the one serving ({gb(used)}) needs about {gb(need)}. "
+            f"Nothing was changed and the site keeps serving. The agent's old sandboxes are usually what fills the disk: see what the nightly prune "
+            f"would remove with python3 .claude/scripts/provision.py <app> --prune-sandboxes, or move the server to a plan with a bigger disk.")
+        return 7
+    say(f"release: {gb(free)} free; the serving release takes {gb(used)}, so one more fits (needs about {gb(need)})")
+    return 0
+
+def template_snapshots(release_dir):
+    """The sandbox template snapshots a release's prewarm made (eve's metadata.json under .eve/sandbox-cache), by name."""
+    d = os.path.join(release_dir, ".eve", "sandbox-cache", "microsandbox", "templates"); out = set()
+    for n in (os.listdir(d) if os.path.isdir(d) else []):
+        if n.endswith(".tmp"): continue
+        try: name = json.load(open(os.path.join(d, n, "metadata.json"))).get("snapshotName")
+        except (OSError, ValueError, AttributeError): continue
+        if isinstance(name, str) and name.startswith(SBX_TEMPLATE) and not name.startswith(SBX_TEMPLATE_TMP): out.add(name)
+    return out
+
+def release_prune(install, home=SERVICE_HOME, msb=None, say=print, rmtree=shutil.rmtree):
+    """Remove every release but `current` and `previous`, and then the template snapshots that only the removed ones
+    used (eve never removes a template, and each release has its own: eve keys them by the release's real path). The old
+    single directory, once removed, becomes a symlink to `current`, so anything still naming <install>/app finds the
+    serving code. Never touches anything without a pointer to keep: with no `current`, nothing is removed. Returns 0/1."""
+    st = release_status(install); keep = {st["current"], st["previous"]} - {""}
+    if not st["current"]: say("release: no release is current yet, so none was removed"); return 0
+    drop = [n for n in st["releases"] if n not in keep]
+    if not drop: say(f"release: kept {', '.join(sorted(keep))}; nothing older to remove"); return 0
+    kept_snaps = set().union(*(template_snapshots(_release_dir(install, n)) for n in keep))
+    gone_snaps, failed = set(), 0
+    root_real = os.path.realpath(install)
+    for n in drop:
+        d = _release_dir(install, n); real = os.path.realpath(d)
+        ok_place = (os.path.dirname(real) == os.path.join(root_real, "releases") and RELEASE_RE.match(os.path.basename(real))) or real == os.path.join(root_real, LEGACY_RELEASE)
+        if os.path.islink(d) or not ok_place:
+            say(f"release: LEFT {d}: it is not where a release lives"); failed += 1; continue
+        snaps = template_snapshots(d)
+        rmtree(d)
+        if os.path.exists(d): say(f"release: LEFT {d}: it could not be removed"); failed += 1; continue
+        gone_snaps |= snaps
+        if n == LEGACY_RELEASE:
+            os.symlink("current", d)
+            say(f"release: removed the old single directory {d}; it is now a link to current")
+        else: say(f"release: removed {d}")
+    binary = os.path.join(home, ".microsandbox", "bin", "msb")
+    msb = msb or (lambda args: subprocess.run(["runuser", "-u", SERVICE_USER, "--", "env", f"HOME={home}", binary, *args],
+                                              capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL))
+    unused = sorted(gone_snaps - kept_snaps)
+    if unused and not os.path.exists(binary): say(f"release: {len(unused)} template snapshot(s) of the removed releases were left: {binary} is not there to remove them")
+    elif unused:
+        removed = 0
+        for name in unused:
+            try: r = msb(["snapshot", "remove", name]); ok = r.returncode == 0
+            except (OSError, subprocess.SubprocessError): ok = False
+            removed += ok
+            if not ok: say(f"release: template snapshot {name} was left (msb refused it; a sandbox started from it may still exist)")
+        say(f"release: {removed} of {len(unused)} template snapshot(s) only the removed releases used were removed")
+    say(f"release: kept {', '.join(sorted(keep))}")
+    return 1 if failed else 0
+
+def release_migrations(install, frm, to):
+    """The database migrations release `frm` knows and release `to` does not (drizzle's journal): they stay applied
+    when `to` serves again."""
+    def tags(name):
+        try: return [e.get("tag") for e in load(os.path.join(_release_dir(install, name), "drizzle", "meta", "_journal.json")).get("entries", [])]
+        except (OSError, ValueError, AttributeError): return None
+    a, b = tags(frm), tags(to)
+    if a is None or b is None: return None
+    return [t for t in a if t not in set(b)]
 
 def _json_rows(text):
     """The rows of `msb ... --format json`: a list, or an object holding one. None when it is not that (so the caller
@@ -2095,6 +2759,7 @@ def workspace_seed(env_file, user, home, app_dir, script, doc, run=None, say=pri
     write only the tables in `only`, because the seed above has already written the rest through the app's own modules.
     Prints one `SURFACE {json}` line: a count per table, or why a table was not written."""
     import pwd
+    app_dir = _served(app_dir)
     try: pw = pwd.getpwnam(user)
     except KeyError:
         say(f"workspace: this server has no user {user} yet: it was deployed before each service got a user of its own. Nothing was written. Deploy once, then run this again."); return 1
@@ -2175,6 +2840,7 @@ def library_apply(env_file, user, home, app_dir, expect, org=None, apply=False, 
 
 def _library_on_server(kind, env_file, user, home, app_dir, expect, org, apply, run, say):
     import pwd
+    app_dir = _served(app_dir)
     lib = _library()
     script, step = (lib.CLEANUP_SCRIPT, lib.run_cleanup) if kind == "cleanup" else (lib.APPLY_SCRIPT, lib.run_apply)
     def out(doc, rc): say("LIBRARY " + clean(json.dumps(doc))); return rc
@@ -2278,7 +2944,7 @@ def env_run(env_file, user, home, cwd, cmd):
     import pwd
     env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": home, "LANG": "C.UTF-8", **env_read(env_file)}
     pw = pwd.getpwnam(user)
-    os.chdir(cwd)
+    os.chdir(_served(cwd))
     if os.getuid() == 0:
         os.initgroups(user, pw.pw_gid); os.setgid(pw.pw_gid); os.setuid(pw.pw_uid)
     os.execvpe(cmd[0], cmd, env)
@@ -2399,7 +3065,7 @@ def main_for(app_id, a, app, infra, ds, adir, P):
             i = a.index("--set-remote"); set_remote(app_id, adir, [x for x in a[i + 1:] if "=" in x and not x.startswith("-")]); return 0
         S = settings(app_id, app, infra, ds)
         if "--remote-key" in a: remote_key(S); return 0
-        for flag, instead in (("--deploy", "--deploy-remote"), ("--verify-db", "--deploy-remote (its database step is the same chain)"),
+        for flag, instead in (("--deploy", "--deploy-remote"), ("--rollback", "--rollback-remote"), ("--verify-db", "--deploy-remote (its database step is the same chain)"),
                               ("--set-secret", "--deploy-remote (it asks for each missing value at a hidden prompt and stores it on the server)")):
             if flag in a:
                 say(f"{app_id}: {flag} is for the other targets; this app runs on its own server. Use: "
@@ -2424,6 +3090,11 @@ def main_for(app_id, a, app, infra, ds, adir, P):
             return library_apply_remote(app_id, S, app, infra, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
         if "--workspace-remote" in a:
             return workspace_remote(app_id, S, app, infra, adir, P, a, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")))
+        if "--rollback-remote" in a:
+            if not dry:
+                if not S["host"]: raise Stop(f"{app_id}: the server address is not in state, so there is nothing to roll back. Nothing was contacted.")
+                if not os.path.isfile(key_path(S)): raise Stop(f"{app_id}: there is no SSH key named {S['key_ref']} on this VM ({key_shown(S)}). Nothing was contacted.")
+            return rollback_remote(app_id, S, read_crons(os.path.join(ROOT, "molds", app["mold_id"], "codebase")), read_health=P._read_health, dry=dry)
         if not any(f in a for f in ("--deploy-remote", "--qualify-remote", "--verify-rls")):
             return check(app_id, app, infra, ds, adir)
         src = source_for(app_id, app); mold_src = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
@@ -2451,7 +3122,7 @@ def main_for(app_id, a, app, infra, ds, adir, P):
         for tool in ("ssh", "rsync"):
             if not shutil.which(tool): raise Stop(f"this VM has no `{tool}` command, which the deploy needs. Nothing was contacted.")
         if "--qualify-remote" in a:
-            st = plan(S, src, shown=False)[0]; r = real_runner(st, QUALIFY_SH)
+            st = next(x for x in plan(S, src, shown=False) if x["id"] == "qualify"); r = real_runner(st, QUALIFY_SH)
             if r.returncode: raise Stop("could not log in to the server: " + redact((r.stderr or "").strip().splitlines()[-1] if (r.stderr or "").strip() else "no answer") +
                                         f". Check the address, and that the key named {S['key_ref']} was added when the server was created.")
             problems = qualify(parse_kv(r.stdout))
@@ -2931,7 +3602,13 @@ def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy)
             # The sender's display name is the app's brand, as on the Vercel path; the operator supplies the address.
             if vals.get("PLATFORM_NOTIFY_FROM"): vals["PLATFORM_NOTIFY_FROM"] = P.brand_sender(app, vals["PLATFORM_NOTIFY_FROM"])
             return vals
-        res = deploy_fn(S, src, crons, on_started=on_started, secrets_for=secrets_for, read_health=P._read_health)
+        def smoke():
+            # lib/smoke.py (one chat as the operator): after the switch and the health read; "fail" switches back.
+            if HERE not in sys.path: sys.path.insert(0, HERE)
+            import smoke as smoke_mod
+            return smoke_mod.check(app_id, app=app, infra=infra, url=S["url"])
+        res = deploy_fn(S, src, crons, on_started=on_started, secrets_for=secrets_for, read_health=P._read_health,
+                        smoke=smoke if os.path.isfile(os.path.join(HERE, "smoke.py")) else None)
     except BaseException as e:
         # A refusal before anything on the server changed (the host is unfit, the domain does not point at it, the
         # login failed) leaves the status alone. After that point every stop is recorded, as on the Vercel path.
@@ -2972,7 +3649,60 @@ def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy)
               + (f" ({box['sandbox_max_running_from']})" if box.get("sandbox_max_running_from") else "")
               + (f", Postgres shared_buffers {box['pg_shared_buffers']}" if box.get("pg_shared_buffers") else "")
               + f". Is it big enough? python3 .claude/scripts/provision.py {app_id} --capacity")
+    rel = res.get("release") or {}
+    if rel.get("current"):
+        print(f"{app_id}: release {rel['current']} is serving" + (f"; {rel['previous']} is kept on the server, and python3 .claude/scripts/provision.py {app_id} --rollback-remote goes back to it" if rel.get("previous") else ""))
     print(f"deployed: {S['url']}")
+    return 0
+
+def rollback_argv(S, what, shown=False):
+    F = S["factory_dir"]
+    if what == "status": return ssh_argv(S, guarded(S, f"bash {F}/release.sh status"), shown)
+    return ssh_argv(S, guarded(S, f"bash {F}/release.sh detach rollback"), shown)
+
+def rollback_remote(app_id, S, crons, runner=real_runner, read_health=None, say=print, dry=False):
+    """provision.py <app> --rollback-remote (mold_v1-222): switch the server back to the release that served before
+    the current one, restart it, and read its health, here and from outside. The server switches by itself and, if the
+    release it went back to does not come up, puts the one that was serving back. The database is left as it is: the
+    mold's migrations are additive first, so the earlier release runs against it; the server names any migration the
+    earlier release was built before. A second rollback goes forward again. Returns the exit code."""
+    if dry:
+        say(f"DRY RUN for {app_id}: nothing below was run and nothing was contacted.")
+        for what, title in (("status", "which release is serving, which served before it (read-only)"),
+                            ("rollback", "point current at the previous release, restart the three services, wait for their health; if they do not come up, put the serving one back")):
+            say(f"  {title}\n    $ " + shown_cmd(S, rollback_argv(S, what, shown=True)))
+        say(f"  then: bash {S['factory_dir']}/health.sh on the server, and {S['url']}/api/ops/health from here")
+        return 0
+    r = runner({"id": "release-status", "argv": rollback_argv(S, "status"), "timeout": 120})
+    st = parse_kv(r.stdout)
+    if r.returncode:
+        why = redact(((r.stderr or "").strip().splitlines() or ["no answer"])[-1])
+        if "No such file" in (r.stderr or "") or r.returncode == 127:
+            say(f"{app_id}: this server was deployed before releases existed, so there is no earlier release on it to go back to. Nothing was changed."); return 1
+        say(f"{app_id}: the server could not say which release is serving: {why}. Nothing was changed."); return 1
+    if not st.get("PREVIOUS"):
+        say(f"{app_id}: release {st.get('CURRENT') or '(none)'} is serving and the server keeps no earlier one to go back to. Nothing was changed."); return 1
+    say(f"{app_id}: serving release {st.get('CURRENT')}; going back to {st.get('PREVIOUS')}, which served before it")
+    r = runner({"id": "rollback", "argv": rollback_argv(S, "rollback"), "timeout": 2400})
+    kv = parse_kv(r.stdout)
+    for l in redact(r.stdout or "").splitlines():
+        if l.strip() and not re.match(r"^[A-Z_]+=", l): say("    " + l[:220])
+    newer = kv.get("NEWER_MIGRATIONS")
+    if newer and newer != "unknown":
+        say(f"  the database keeps the migrations {kv.get('PREVIOUS') or 'the newer release'} applied that {kv.get('ROLLED_BACK') or 'this release'} was built before: {newer.replace(',', ', ')}. "
+            "They are additive in this mold, so it runs against them.")
+    if r.returncode or not kv.get("ROLLED_BACK"):
+        if kv.get("ROLLBACK_UNDONE"):
+            say(f"{app_id}: release {st.get('PREVIOUS')} did not come up healthy ({kv.get('HEALTH', 'no health line')}), so the server put {kv['ROLLBACK_UNDONE']} back; it is serving as before."); return 1
+        say(f"{app_id}: the rollback did not finish (exit {r.returncode}): " + redact(((r.stderr or "").strip().splitlines() or ["no message"])[-1])[:300] +
+            (" THE SITE MAY BE DOWN." if kv.get("ROLLBACK_FAILED") else "")); return 1
+    hf = parse_kv(runner({"id": "health", "argv": ssh_argv(S, f"{S['sudo']}bash {S['factory_dir']}/health.sh"), "timeout": 180}).stdout)
+    public = (read_health or _read_health)(f"{S['url']}/api/ops/health")
+    sick = serving_problems(hf, public)
+    if sick:
+        say(f"{app_id}: switched back to release {kv['ROLLED_BACK']}, but it is not healthy: {'; '.join(sick)}"); return 1
+    say(f"{app_id}: release {kv['ROLLED_BACK']} is serving again ({kv.get('HEALTH', 'healthy')}; {S['url']} answers {public[0]}). "
+        f"Release {kv.get('PREVIOUS')} stays on the server: to go forward to it again, run --rollback-remote once more.")
     return 0
 
 def verify_rls(app_id, S, app, infra, ds, adir, P, repair=True, runner=real_runner, read_health=None):
@@ -3050,6 +3780,23 @@ def cli(a):
         return library_cleanup(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--expect", "none"), org=_opt(a, "--org"), apply="--apply" in a)
     if cmd == "library-apply":
         return library_apply(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--app-dir"), _opt(a, "--expect", "none"), org=_opt(a, "--org"), apply="--apply" in a)
+    if cmd.startswith("release-"):
+        inst = _opt(a, "--install")
+        if not (inst and os.path.isabs(inst)): sys.exit(f"{cmd}: --install <the app's install directory> is required")
+        if cmd == "release-status":
+            st = release_status(inst)
+            print(f"CURRENT={st['current']}"); print(f"PREVIOUS={st['previous']}"); print("RELEASES=" + " ".join(st["releases"]))
+            try: v = os.statvfs(inst); print(f"FREE_KB={v.f_bavail * v.f_frsize // 1024}")
+            except OSError: pass
+            return 0
+        if cmd == "release-adopt": release_adopt(inst); return 0
+        if cmd == "release-space": return release_space(inst, float(_opt(a, "--extra-gb", str(RELEASE_SPACE_EXTRA_GB))))
+        if cmd == "release-prune": return release_prune(inst, _opt(a, "--home", SERVICE_HOME))
+        if cmd == "release-migrations":
+            newer = release_migrations(inst, _opt(a, "--from", ""), _opt(a, "--to", ""))
+            if newer is None: print("NEWER_MIGRATIONS=unknown")
+            else: print("NEWER_MIGRATIONS=" + ",".join(newer))
+            return 0
     if cmd == "pg-admin":
         pg_admin(f, _opt(a, "--db"), int(_opt(a, "--port", "5432")), _opt(a, "--sslmode", "require")); return 0
     if cmd == "host-chain":
