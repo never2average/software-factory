@@ -99,6 +99,17 @@ There are two buttons:
 
 The numbers come from `.claude/scripts/app_usage.py`, which the board runs every 30 minutes and on **Collect usage**. It reads each app's own database as the app's own restricted role, one workspace at a time, in read-only transactions. Only counts leave the database: no messages, no names, no email addresses. The results are kept in `reports/usage/<app>.json`, which is not committed.
 
+## Uptime alerts
+
+`.claude/scripts/uptime.py` checks every app that isn't retired once a minute, from a systemd timer on the factory machine (`uptime.py install`; `uptime.py status` shows the timer). It loads the same health pages as the board, with a 10-second timeout and one retry, and writes `.runs/uptime/state.json`, which is not committed.
+
+- An app is **down** after 2 failing checks in a row, so a single blip alerts nobody.
+- While any app is down, a **red banner** sits above the tabs on every tab. It names the app, its address, since when, what it answered, and whether the operator was emailed. The status line starts with `✕ DOWN: <app>`.
+- If the monitor hasn't written anything for 5 minutes, an amber line says it may have stopped.
+- The board only reads the monitor's file, once a minute. It never sends anything itself.
+- **Email:** the operator gets an email when the app goes down, again every 30 minutes while it stays down, and when it's back up, with how long it was down. This needs the factory machine's own sending key (`uptime.py set-email-key`, typed by the operator). Without one, the banner is the alert. `uptime.py preview-alert` prints the exact email and sends nothing.
+- **The gap:** the monitor runs on the factory machine, so it can't report that machine being down. The top of `uptime.py` lists free outside options and their trade-offs.
+
 ## The status line
 
 A one-line summary sits in the status line, so you can see it without opening the pane:
@@ -126,6 +137,7 @@ The board reads the factory's records from the folder Claude Code was started in
 The tests are:
 
 - `hooks/board.test.ts` for the readers, the build lines and the product totals;
+- `hooks/uptime-ui.test.tsx`, which checks that the red banner and the status line show a down app, and stay away while it's up, on both surfaces;
 - `hooks/tickets-ui.test.tsx`, which clicks through the tickets, the filters and the Products & apps tab (with its build lines and **Recompute build costs**) on the terminal and desktop surfaces against a small fake factory.
 
 ```

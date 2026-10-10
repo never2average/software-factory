@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ago, appRow, healthChecks, isComingSoon, moldRow, openTickets, parseTasks, productRows, verdict } from './board'
+import { ago, appRow, healthChecks, isComingSoon, moldRow, openTickets, parseTasks, parseUptime, productRows, since, uptimeBanner, verdict } from './board'
 
 const TASKS = [
   { task_id: 'm-1', mold_id: 'mold_v1', title: 'old', status: 'todo', priority: 2 },
@@ -245,4 +245,42 @@ test('a product total sums its apps, is apportioned when any part is, and counts
   expect(sumBuilds([blank])!.cost_usd).toBe(null)
   expect(sumBuilds([blank, hfc])!.cost_usd).toBe(1298.66)
   expect(sumBuilds([parseBuild({ summary: { ...SUMMARY, build_cost_basis: 'own' } })])!.basis).toBe('own')
+})
+
+const UPTIME = {
+  checked_at: '2026-10-09T11:16:00+00:00',
+  email: { configured: false, why: 'this machine has no email-sending key of its own yet' },
+  apps: {
+    up_app: { status: 'up', since: '2026-10-09T09:00:00+00:00', address: 'https://up.example.test' },
+    vm_app: {
+      status: 'down',
+      since: '2026-10-09T10:41:00+00:00',
+      down_since: '2026-10-09T10:41:00+00:00',
+      address: 'https://vm.example.test',
+      last_error: 'web: nothing: it did not answer within 10 seconds',
+      email: { sent: false, why: 'this machine has no email-sending key of its own yet' },
+    },
+  },
+}
+
+test('uptime: a down app is a red banner line in plain words; up apps are not', async () => {
+  const now = Date.parse('2026-10-09T11:16:30Z')
+  const u = parseUptime(UPTIME)
+  expect(u?.apps.map(a => a.status)).toEqual(['up', 'down'])
+  const b = uptimeBanner(u, now)
+  expect(b.level).toBe('down')
+  expect(b.lines).toEqual([
+    'vm_app is DOWN since 10:41 UTC (36 min) · https://vm.example.test · web: nothing: it did not answer within 10 seconds · not emailed: this machine has no email-sending key of its own yet',
+  ])
+  expect(since('2026-10-09T09:00:00Z', Date.parse('2026-10-09T11:05:00Z'))).toBe('2 h 5 min')
+})
+
+test('uptime: all up is quiet; a monitor that stopped says so; no state file says how to start it', async () => {
+  const allUp = { ...UPTIME, apps: { up_app: UPTIME.apps.up_app } }
+  expect(uptimeBanner(parseUptime(allUp), Date.parse('2026-10-09T11:17:00Z'))).toEqual({ level: 'ok', lines: [] })
+  const stale = uptimeBanner(parseUptime(allUp), Date.parse('2026-10-09T11:40:00Z'))
+  expect(stale.level).toBe('stale')
+  expect(stale.lines[0]).toBe('Uptime monitor last ran 24 min ago; it may have stopped (uptime.py status).')
+  expect(uptimeBanner(parseUptime(null), 0).level).toBe('missing')
+  expect(parseUptime({ apps: {} })).toBe(null)
 })
