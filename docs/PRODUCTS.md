@@ -70,13 +70,15 @@ per workspace: `docs/COST_MODEL.md` (Cloudflare path only; the gateway path is n
 |---|---|---|---|---|
 | `delivered` | mold_v1 | released | claudecode_web_internal, claudecode_web_replica, sf_gateway_probe | vercel |
 | `dover` | mold_v1 | released | none | vercel |
-| `onfinance_hfc_research` | mold_v1 | stamped (gate tasks mold_v1-200..213) | onfinance_hfc (Vercel), onfinance_hfc_vm (own server) | vercel, vm_remote |
+| `onfinance_hfc_research` | mold_v1 | deployed (released gates mold_v1-210..213) | onfinance_hfc (Vercel), onfinance_hfc_vm (own server) | vercel, vm_remote |
 | `claudecode_web_governed` | mold_v2 | defined | none | vercel, vm |
 | `claudecode_web_research` | mold_v3 | defined | none | vercel, vm |
 
 `onfinance_hfc_research` runs on Cloudflare Workers AI with a model per role: GLM 5.3 for both roles on
 `onfinance_hfc`; Kimi K2.6 orchestrating and GLM 5.3 as specialist on `onfinance_hfc_vm`. Its pricing and
-packaging are not decided yet (a `released` gate); what it costs to run is in `docs/COST_MODEL.md` §2b and §7.
+packaging are not decided yet (a `released` gate, mold_v1-211; the options and a recommendation are in
+`docs/customer-notes/pricing-options.md`); what it costs to run, per turn, per specialist run, per person and per
+workspace, is in `docs/COST_MODEL.md` §2b, §2c and §7.
 
 ## What a product is not
 

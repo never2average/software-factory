@@ -11,8 +11,8 @@ invented; if a value is a placeholder the formula still works, the result is jus
 
 ## 1. Prices (fetched)
 
-Source: https://developers.cloudflare.com/workers-ai/platform/pricing/ — fetched 2026-10-08 (first read 2026-09-09;
-the GLM 5.2 row is unchanged). The mold's default is `@cf/zai-org/glm-5.2` (`agent/lib/model.ts`); an application
+Source: https://developers.cloudflare.com/workers-ai/platform/pricing/ — fetched 2026-10-10 (also 2026-10-08; first read
+2026-09-09; all four rows below unchanged since they were first read). The mold's default is `@cf/zai-org/glm-5.2` (`agent/lib/model.ts`); an application
 may name a model per role in `application.model.roles`, which the deploy writes as `CLOUDFLARE_MODEL_ORCHESTRATOR` /
 `CLOUDFLARE_MODEL_SPECIALIST`, and the `read_image` tool uses `CLOUDFLARE_MODEL_VISION` (default
 `@cf/zai-org/glm-5.3-flash`). Section 2b names what each app of `onfinance_hfc_research` runs.
@@ -24,10 +24,12 @@ may name a model per role in `application.model.roles`, which the deploy writes 
 | `@cf/zai-org/glm-5.3-flash` | $0.150 | $0.030 | $0.500 | 13,636 / 2,727 / 45,455 | fetched 2026-10-08 |
 | `@cf/moonshotai/kimi-k2.6` | $0.950 | $0.160 | $4.000 | 86,364 / 14,545 / 363,636 | fetched 2026-10-08 |
 
-Neuron price: $0.011 per 1,000 neurons, 10,000 neurons per day free on the account (same page, 2026-10-08). On
-2026-09-09 the same page said GLM 5.2 requires a paid billing method. The app's own price table
-(`lib/inference-pricing.ts`, which `GET /api/ops/usage` applies) carries the same four rows; it counts cached input
-as part of input, priced at `P_cached`.
+Neuron price: $0.011 per 1,000 neurons, 10,000 neurons per day free on the account (same page, 2026-10-10). On
+2026-10-10 the same page says all four models require a paid billing method (Workers Paid or prepaid AI Gateway credits). The app's own price table
+(`lib/inference-pricing.ts`, which `GET /api/ops/usage` applies) carries the same four rows (its own sources: the
+pricing page read 2026-09-09 for GLM 5.2; the account's Workers AI model catalogue read 2026-09-19 for the other three;
+every row equal to the pricing page on 2026-10-10); it counts cached input as part of input, priced at `P_cached`.
+`app_usage.py` prices with the same table.
 
 Re-fetch before quoting: vendor pages change and this file records one reading.
 
@@ -108,16 +110,131 @@ Read these with three cautions:
   (`agent/hooks/chat-usage.ts`); specialists record into `automation_runs` through their own
   `agent/subagents/<id>/hooks/usage.ts`. `GET /api/ops/orgs/onfinance-ai/usage` returned **0 runs** in the same
   30 days on both apps, although specialists ran in that workspace in that window (mold_v1-199's evidence names one).
-  Whether nothing was recorded or that route does not see what was recorded is not established, so the
-  specialist share of the bill is `PLACEHOLDER`. On the server copy that is every GLM 5.3 call.
+  Whether nothing was recorded or that route does not see what was recorded was not established on 2026-10-08.
+  **Superseded 2026-10-10:** `python3 .claude/scripts/app_usage.py --all --json` reads `automation_runs` directly (as
+  the app role, under row-level security) and finds the specialist runs; section 2c prices them.
 - The model mix on `onfinance_hfc` changed during the window (GLM 5.2, then Kimi K2.6, then GLM 5.3), so the
   per-model rows, not the total, describe the app as it runs now.
 
 From these, for the main agent on the models deployed today: **about $0.085 per turn on `onfinance_hfc` and
-$0.012 per turn on `onfinance_hfc_vm`** (measured), plus the specialists' calls (`PLACEHOLDER`). The cached share
+$0.012 per turn on `onfinance_hfc_vm`** (measured), plus the specialists' calls (section 2c). The cached share
 is what separates them: Kimi on the server reused 81% of its input from cache, GLM 5.3 on Vercel 38%.
 
+## 2c. Inference budget per workspace for `onfinance_hfc_research` (2026-10-10)
+
+The released-stage budget (mold_v1-212). Every figure is labelled **measured** (read from the app's own tables),
+**fetched** (section 1) or **estimated** (a scenario or a model, with the arithmetic shown). The customer's
+workspace is called "the customer workspace"; workspaces are never named by company here.
+
+**Source of every measured figure:** `python3 .claude/scripts/app_usage.py --all --json`, run 2026-10-10T20:24Z, window
+30 days (2026-09-11..10-10). It reads each app's own database as the app role under row-level security:
+`chat_turn_usage` for the main agent (cost **recorded**: the model each turn recorded, priced with the app's price
+table) and `automation_runs` of type workflow for the specialists (cost **recorded** since upstream #141, which writes
+cost and model per step; runs before #141 recorded tokens only and are **estimated** at the specialist's configured
+model, `@cf/zai-org/glm-5.3`, with the same table; app_usage labels each figure `recorded`, `estimated` or `mixed`).
+Prices: section 1 (`lib/inference-pricing.ts`, equal to the Cloudflare pricing page fetched 2026-10-10).
+
+### Per chat turn (main agent)
+
+| App (orchestrator model) | Turns | Input / turn | Output / turn | Cost / turn | Kind |
+|---|---|---|---|---|---|
+| `onfinance_hfc` (GLM 5.3) | 182 | 87,069 | 1,071 | **$0.080** ($14.59 / 182) | measured, recorded |
+| `onfinance_hfc_vm` (Kimi K2.6) | 379 | 35,058 | 315 | **$0.012** ($4.58 / 379) | measured, recorded |
+
+Both windows are almost all before prompt-cache affinity went live (upstream #142, 2026-10-09). The before/after
+measurement on mold_v1-220 (five chats per app, same shape, read from the same tables) moved the main agent's cached
+share from 28.6% to 61.4% on `onfinance_hfc` ($0.550 -> $0.342 for the five, -38%) and from 83.9% to 88.7% on
+`onfinance_hfc_vm` ($0.1015 -> $0.0903, -11%). So the same turn now costs less than these 30-day means by about
+those percentages; the means are kept as the budget figure because they are the larger sample (measured).
+
+### Per specialist run (all specialists run `@cf/zai-org/glm-5.3`)
+
+What a run costs is set by how much it reads, which varies by two orders of magnitude between a quick lookup and a
+research run over whole filings. Three sizes, each measured:
+
+| Run size | Input per run | Where it was measured | Cost per run |
+|---|---|---|---|
+| **small** (a lookup: six shell commands) | ~97,000 | mold_v1-220, 5 `lodr-filings` runs per app after #142, 2026-10-09 | **$0.036** on `onfinance_hfc` ($0.1781 / 5; 91.5% cached), **$0.040** on `onfinance_hfc_vm` ($0.1984 / 5; 88.2% cached) — measured, recorded |
+| **typical** (the operator's own research runs) | 0.85M-6.91M for the six research runs named on mold_v1-220 (median 3.3M); the 47 also hold smoke runs of 10-27k | mean of the 47 runs in the operator's workspace on `onfinance_hfc` | **$0.50 mean** ($23.33 / 47, `mixed`: most runs before #141 are estimated) |
+| **heavy** (full-document research in the customer workspace) | 0.07M-18.25M, seven of the nine over 3.5M (mold_v1-220) | mean of the 9 runs in the customer workspace on `onfinance_hfc` | **$6.43 mean** ($57.87 / 9, estimated: all 9 ran before #141); 39.6% of their input was cache reads (mold_v1-220) |
+
+The 238 runs on `onfinance_hfc_vm` average $0.029 ($6.94 / 238, `mixed`), but most are the factory's own smoke and
+load checks, so they are not used as a size.
+
+How the price of a run scales (estimated; output taken as 1.4% of input, the ratio measured over the
+customer workspace's `lodr-filings` runs and the operator's on `onfinance_hfc`: 293,276 / 20,912,169 and
+183,049 / 13,040,477):
+
+```
+cost_run = I_run * ((1 - r) * $1.40 + r * $0.26 + 0.014 * $4.40) / 1e6
+         = $1.46 per M input with no cache, $1.01 at r = 39.6% (measured, big runs before #142), $0.46 at r = 88% (measured, small runs after #142)
+```
+
+Cache affinity has been measured only on small runs. Whether a heavy run now reaches 88% is **not measured**; if it
+does, a $6.43 heavy run would cost about $2.92 (estimated). Caching lowers the price, not the tokens: the step and
+size caps that would shrink heavy runs are still open on mold_v1-220.
+
+### Specialist runs per chat turn
+
+**0.26** (measured): 47 specialist runs per 182 chat turns in the operator's workspace on `onfinance_hfc`. The
+server copy's 0.63 (238 / 379) is inflated by the load checks of 2026-10-06 and is not used.
+
+### Scheduled starter apps (a workspace that has them)
+
+`operator:new-org` gives a NEW workspace the build's starter library (on these apps the `hfc-research` library: four
+apps, measured 2026-10-10 on `onfinance_hfc_vm`), and each refreshes on a schedule whether anyone opens it or not:
+"New LODR filings this week" every weekday 02:30 (`30 2 * * 1-5`, about 22 a month), "Latest quarter KPI table" and
+"Guidance tracker" weekly, "Annual report extract status" monthly (`packs/hfc-research/files/library/hfc-research/apps.json`):
+about 31.6 refreshes a month.
+
+| Line | Value | Kind |
+|---|---|---|
+| one "New LODR filings this week" refresh | 3.51M and 5.63M input (the customer workspace, 2026-10-06 and 10-07) -> **$4.62** each at r = 39.6% | measured tokens, estimated price |
+| the other three, per refresh | no refresh measured; priced as a typical research run, 3.3M -> $3.37 | estimated |
+| **starter apps, per workspace per month** | 22 x $4.62 + 9.6 x $3.37 = **about $134** at r = 39.6%, **about $61** at r = 88% | estimated |
+
+A refresh that stops at an approval nobody answers keeps its row `running` (mold_v1-220), so it does not repeat the
+spend, but it does not finish either.
+
+### Per active user per month
+
+```
+user_month = D * T_user * (cost_turn + 0.26 * cost_run)          D = 22 working days (assumption)
+```
+
+`T_user`, chat turns per person per working day, is a **scenario**: only one person has used either app (the operator;
+`people_active` = 1 on both). The one measured rate: 99 turns over 15 active days on `onfinance_hfc` (6.6 per active
+day), leaving out 2026-10-06, whose 83 turns were the factory's lane and rig runs. "Typical" uses that rate, rounded.
+
+| Scenario | `T_user` | Run size | `onfinance_hfc` (Vercel) | `onfinance_hfc_vm` (own server) |
+|---|---|---|---|---|
+| light | 3 a day (66 a month) | small, $0.036 | **$5.90** ($5.29 chat + 17 runs $0.61) | **$1.41** ($0.80 chat + $0.61) |
+| typical | 7 a day (154 a month) | typical, $0.50 | **$32** ($12.34 chat + 40 runs $19.74) | **$22** ($1.86 chat + $19.74) |
+| heavy | 20 a day (440 a month) | heavy, $6.43 | **$766** ($35.27 chat + 114 runs $730.58); about $367 if heavy runs cache at 88% | **$736**; about $337 at 88% |
+
+All rows are **estimated** (scenario volumes times measured unit costs). The point they make is measured: **the
+specialists' research runs, not chat, are the bill**. At typical use specialists are 60-90% of the cost, at heavy use
+over 95%, and one heavy research run costs as much as 80 chat turns on Vercel or 530 on the server.
+
+### Per workspace per month
+
+```
+workspace_month = U * user_month + starter_apps (if the workspace has them) + server (vm_remote only, section 7)
+```
+
+Example (estimated): five people at typical use with the starter apps, on the server: 5 x $22 + $134 = **about $244**
+in inference, plus the $48 server; on Vercel 5 x $32 + $134 = **about $294**. At light use without the starter apps:
+5 x $1.41 = about $7 on the server, 5 x $5.90 = about $30 on Vercel.
+
+**What would make these figures facts rather than scenarios:** a month of a customer's real people in a workspace
+(`app_usage.py <app_id>` reads `T_user` and runs per turn per workspace), and one heavy run measured after #142 for
+its cached share. Neither cap nor budget is enforced by mold_v1 (section 5), so a heavy month is not stopped by the
+app; `app_usage.py` is how the operator sees it coming.
+
 ## 3. Volume per workspace (placeholders)
+
+The general model, read on 2026-09-14 from a replica of another product's database. For `onfinance_hfc_research` the
+measured volumes (turns, specialist runs per turn, starter-app refreshes) and the budget built from them are in section 2c.
 
 | Symbol | Meaning | Value | Kind |
 |---|---|---|---|
@@ -171,7 +288,7 @@ Blob. Inference is unchanged: sections 1-5 apply as they are.
 
 | Line | Value | Kind |
 |---|---|---|
-| **the server: 8 GB / 4 vCPU with KVM, Ubuntu 24.04** | **$48.00 per month** ($0.07143 per hour): DigitalOcean Basic Droplet `s-4vcpu-8gb`, 8 GiB / 4 vCPUs / 160 GiB SSD / 5,000 GiB transfer. Source: https://www.digitalocean.com/api/static-content/v1/products?product_name=droplets, fetched 2026-10-08 (also 2026-10-06, `.claude/scripts/lib/vm_capacity.py` `PRICES_CHECKED`; and https://www.digitalocean.com/pricing/droplets, 2026-10-02). This is the plan `onfinance_hfc_vm` runs on: `infrastructure.vm_remote.health.box.plan` = `s-4vcpu-8gb` | fetched |
+| **the server: 8 GB / 4 vCPU with KVM, Ubuntu 24.04** | **$48.00 per month** ($0.07143 per hour): DigitalOcean Basic Droplet `s-4vcpu-8gb`, 8 GiB / 4 vCPUs / 160 GiB SSD / 5,000 GiB transfer. Source: https://www.digitalocean.com/api/static-content/v1/products?product_name=droplets, fetched 2026-10-10, monthly "48" and hourly "0.07143" (also 2026-10-08, 2026-10-06, `.claude/scripts/lib/vm_capacity.py` `PRICES_CHECKED`; and https://www.digitalocean.com/pricing/droplets, 2026-10-02). This is the plan `onfinance_hfc_vm` runs on: `infrastructure.vm_remote.health.box.plan` = `s-4vcpu-8gb` | fetched |
 | why that size | the host check refuses anything under 8 GB / 4 vCPU / 20 GB free or without `/dev/kvm` (`.claude/scripts/lib/vm_remote.py` `HOST_MIN`). The eve build peaks at 2.9 GB, the prewarm at 2.5 GB, the three services rest at about 0.7 GB plus Postgres, and each agent sandbox is capped at 2 vCPU / 1024 MiB (`reports/vm-spike-mold_v1-072.md`, Memory and CPU) | measured (spike, stub model) |
 | KVM on that plan | the factory's own VM is this plan and exposes `/dev/kvm` (nested). Whether a NEW droplet of the same plan does is checked per server by `provision.py <app> --qualify-remote` before anything is installed; many small VPS plans elsewhere do not | measured on one host; checked per server |
 | concurrent sandboxes the server can hold, `N_sbx` | **2 running at once** on `onfinance_hfc_vm` (`infrastructure.vm_remote.health.box.sandbox_max_running`, derived from the box by `provision.py --capacity`, mold_v1-195: 2 vCPU / 1024 MiB each, 2048 MiB kept for the host); further sandboxes wait in line. The sandbox load checks of 2026-10-07 (`infrastructure.vm_remote.load_checks`) ran against that cap | measured |
@@ -179,7 +296,7 @@ Blob. Inference is unchanged: sections 1-5 apply as they are.
 | database, file storage, TLS certificate | $0: Postgres and the files are on the server's own disk, the certificate is Let's Encrypt through Caddy | by construction |
 | backups | PLACEHOLDER: DigitalOcean's backup add-on is priced as a percentage of the Droplet on the same page; nothing in this factory takes a backup of a vm_remote server yet | placeholder |
 | the domain | whatever the operator already pays their registrar; one A record, no extra service | not priced |
-| what a redeploy costs in downtime | **at most about 6 minutes**: the three redeploys of `onfinance_hfc_vm` on 2026-10-07 each ran 5 min 53 s to 6 min 4 s from start (`deployed_at`, stamped as the run starts) to the last line of the run's log, and the services are down only from the `[build]` step (services stopped, build in place) to `[units]`, so the outage is shorter than the run. Not timed step by step. Since mold_v1-222 a deploy builds, migrates and prewarms the new release beside the serving one and the outage is each service's own restart at the switch (seconds; the API's prestart only clears locks), with an automatic switch back on a failed start or health check | measured (upper bound, before mold_v1-222) |
+| what a redeploy costs in downtime | **Since 2026-10-10 (mold_v1-222, -223): about 1-2 s for the web app and 5-15 s for chat, once per deploy.** The new release is built, migrated and its sandboxes prewarmed beside the serving one; only the switch interrupts, by restarting the three services. Measured at the switch of 2026-10-10T19:54:52Z (`journalctl` of the three units, read-only): web app stopped to ready in 0.55 s, task-workflow 0.48 s, the agent API stopped to listening in 2.66 s; a chat in progress also has to reconnect, which is where the 5-15 s comes from (the factory's figure, not timed per chat). If the new release does not start or fails its health check, the server switches back to the previous one by itself (`release-switch-<id>.log` on the server records `HEALTH=` and `SWITCHED=`), and `provision.py <app> --rollback-remote` does the same by hand. Before 2026-10-10 a redeploy built in place and was down for up to about 6 minutes (three redeploys on 2026-10-07 ran 5 min 53 s to 6 min 4 s). What to tell customers: `docs/customer-notes/updates.md` | measured (one switch) + the factory's stated envelope |
 
 ```
 cost_month(vm_remote) = server_month + cost_month(inference, sections 1-5)

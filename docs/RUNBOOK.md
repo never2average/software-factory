@@ -7,7 +7,7 @@ inside `/root/software-factory` (`ssh digitalocean`, then `cd /root/software-fac
 Two kinds of step: **agent** (say it to Claude Code, the `intake` / `provisioner` subagents run it) and **you,
 at the terminal** — every step that touches a secret value, because the agent runtime is not allowed to handle
 one. The whole path is: brief → intake → provision (check, read-only) → the credentials → deploy (prints its plan,
-then creates) → first sign-in → lanes.
+then creates) → first sign-in → more workspaces and the first company (§6a) → lanes.
 
 ## 0. What you get and what you must bring
 
@@ -122,7 +122,12 @@ python3 .claude/scripts/provision.py <app_id> --set-secret CLOUDFLARE_ACCOUNT_ID
 python3 .claude/scripts/provision.py <app_id> --set-secret CLOUDFLARE_API_TOKEN
 python3 .claude/scripts/provision.py <app_id> --set-secret RESEND_API_KEY
 python3 .claude/scripts/provision.py <app_id> --set-secret PLATFORM_NOTIFY_FROM
+python3 .claude/scripts/provision.py <app_id> --set-secret GOOGLE_CLIENT_ID
+python3 .claude/scripts/provision.py <app_id> --set-secret EXA_API_KEY          # only when web search is on
+python3 .claude/scripts/provision.py <app_id> --set-secret BROWSERBASE_API_KEY  # only when the browser is on
 ```
+
+The check in step 3 prints exactly the lines this app still needs; run those and no others.
 
 Each asks for the value with input hidden and writes it to all three Vercel projects. The first one has to have
 somewhere to live: if the three projects do not exist yet, this command creates them (empty, free, no deployment)
@@ -158,12 +163,48 @@ python3 .claude/scripts/clone.py <app_id> configure
 ```
 
 (`configure` is the one `clone.py` step that applies to an app that is not a clone: it writes the workspace,
-members and surface from the app's state into its database, through the app role.) Then open the URL from step
+members and surface from the app's state into its database, through the app role.) On an app on a server of its own
+(`target: vm_remote`, §9) the same step is `python3 .claude/scripts/provision.py <app_id> --workspace-remote` (§9 G);
+`clone.py configure` is for Vercel apps. Then open the URL from step
 5, enter the operator address from the brief, and type the code from the email. It expires in ten minutes. Every
 other member from the brief signs in the same way; new people are invited from inside the app.
 
 Connectors (GitHub, Slack, …) are entered inside the app after sign-in; a new app starts with none, because
 each app seals them under its own key (`docs/HOW_IT_WORKS.md`, Secrets).
+
+## 6a. You, another workspace, and the first company (agent)
+
+The mold ships three commands of its own for this (`molds/mold_v1/codebase/package.json`):
+
+| Command | What it writes |
+|---|---|
+| `operator:new-org -- --name "<Name>" --id <id> --owner <email>` | a workspace: the `orgs` row, the owner (also made a platform admin), one workflow row per specialist and the build's starter library. On `onfinance_hfc_research` that library is `hfc-research`: four starter apps that refresh on a schedule and spend inference whether anyone opens them or not (`docs/COST_MODEL.md` §2c). Refuses a workspace id that already exists unless `--force`, so it cannot change an existing workspace by accident |
+| `operator:onboard-self -- --email <you> --name "<you>" --org <id>` | records you as a team member and prints a readiness checklist. **Fails today** on every app with fail-closed row-level security, after printing the checklist: mold_v1-229 |
+| `operator:new-customer -- --email <you> --name "<Company>" --id <id> --org <workspace id>` | a company in that workspace: its row, you as its solution engineer, and `context.md` + `interactions.jsonl` in the workspace's data room |
+
+They run inside the app, with the app's own database connection (the app role, row-level security on), never with an
+admin password. No factory command wraps them yet (mold_v1-230), so the agent runs them by hand:
+
+- **On a server of your own:** over SSH, as root, which starts `node --experimental-strip-types scripts/operator/<name>.mjs
+  <args>` in `/opt/software-factory/<app_id>/current` **as the web app's user (`sfweb`)**, with the values of
+  `/etc/software-factory/<app_id>/web.env` as its environment, and `WORKSPACE_OPS_URL=https://<domain>` for the
+  health line. The values stay on the server: they are read there, passed to the child, and removed from anything it
+  prints. `npm run operator:*` does not work as written on the server, because it reads `.env.local`, which a server
+  does not have.
+- **On Vercel:** not wrapped; wait for mold_v1-230.
+
+Then sign in at the app's address. The new workspace is in the workspace switcher for its owner; your first workspace
+stays the one you land in.
+
+**Taking a workspace out of service.** The mold has no way to delete a workspace. The one it has is **Suspend**: in the
+app, switch to that workspace, open `https://<address>/workspace`, the **Settings** tab, then **Suspend** under
+*Danger zone* (or `PATCH /api/ops/orgs/<id>?org=<id>` with
+`{"status": "suspended"}` as its owner or an admin). A suspended workspace refuses sign-ins to it and its schedules stop
+(the starter apps no longer refresh); its rows and files stay, and **Reactivate** brings it back.
+
+Measured on `onfinance_hfc_vm` on 2026-10-10 with a throwaway workspace "Onboarding Check 2026-10-10": `new-org` and
+`new-customer` succeeded (readiness: 1 member, 7 workflows, data-room prefix, 1 company), `onboard-self` failed as
+above, the workspace was then suspended; the existing workspaces were not touched (task mold_v1-210).
 
 ## 7. Lanes (agent)
 
@@ -215,9 +256,8 @@ ever runs the app on the vm target, and it is a measurement on your own machine,
 
 ## 9. A server of your own instead of Vercel (`target: vm_remote`)
 
-**Where this stands today:** everything below is built and tested without a server. It has not yet been run against
-a real one, and the deploy itself refuses until three upstream changes are in the app's code (the check names them).
-You can do steps A to E now; they cost one server and change nothing for anyone.
+**Where this stands today:** in production since 2026-10-04 (`onfinance_hfc_vm`, a DigitalOcean `s-4vcpu-8gb`).
+Steps A to E cost one server and change nothing for anyone; step F is the deploy.
 
 Say in the brief `on the customer's own server` (step 1), and intake writes an application whose target is
 `vm_remote`. From then on five things are needed from you, one at a time. Each says how long it takes.
