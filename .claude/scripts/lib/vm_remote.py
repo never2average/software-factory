@@ -198,7 +198,7 @@ SOURCE_EXCLUDES = ("node_modules", ".next", ".output", ".eve", ".vercel", ".git"
 RELEASE_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 LEGACY_RELEASE = "app"         # the single directory a server deployed before releases runs from, adopted as a release
 RELEASE_SPACE_EXTRA_GB = 3     # free space beyond a copy of the serving release: its new sandbox templates (6 x ~230 MB) and build scratch
-PREWARM_DEADLINE_S = 3600      # the new release's whole prewarm, while the old one serves (the mold stops a template at 600 s)
+PREWARM_DEADLINE_S = 3600      # the new release's whole prewarm, while the old one serves (PREWARM_RUNS runs, PREWARM_TEMPLATE_S per template)
 SWITCH_START_S = {"workflow": 120, "api": 300, "web": 120}   # one restart each; the API's prestart is the light one when prewarmed
 SWITCH_HEALTH_S = 180          # after the restarts, how long the three loopback health endpoints have to answer
 SWITCH_STEP_S = 3
@@ -766,7 +766,7 @@ Environment=NITRO_PORT={PORTS['api']}
 ExecStartPre=/bin/bash {S['factory_dir']}/api-prestart.sh
 # The built server directly: `eve start` holds 2.3 GB for the life of the service.
 ExecStart=/usr/bin/node .output/server/index.mjs
-TimeoutStartSec=1800
+TimeoutStartSec={API_START_S}
 
 [Install]
 WantedBy=multi-user.target
@@ -1384,14 +1384,49 @@ fi
 #   - resolves STORAGE_PUBLIC_URL and refuses if the sandbox deny list holds any address it leads to, so the API never
 #     starts with a data room its sandboxes cannot fetch;
 #   - builds the templates one at a time, each tried @TRIES@ times; exit 1 if any is missing at the end.
-/usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries @RETRIES@
+# A template that takes longer than --template-timeout has its VM killed and ENDS the mold's run, untried again. Every
+# such hang on the first server was a fresh microVM whose guest wedged seconds after boot, before the bootstrap's
+# command ran (guest kernel "BUG: scheduling while atomic", then an oops in virtio-net; mold_v1-190), and the next VM
+# built the same template in under a minute. So a run that ended on a timeout is run again, up to @RUNS@ runs in all:
+# the hung VM is dead, its lock is stale once that run has exited, and every template already built is reused. Before
+# releases, the API unit's own Restart= did this by luck; the release's prewarm is a transient unit with no restart
+# (mold_v1-225). Any other failure stops at once.
+set -o pipefail
+run=1
+while :; do
+  out="$(mktemp)"
+  rc=0
+  /usr/bin/npm run --silent sandbox:prewarm -- --link-runtime --retries @RETRIES@ --template-timeout @TEMPLATE_S@ 2>&1 | tee "$out" || rc=$?
+  hung=0
+  if grep -q " TIMED OUT " "$out"; then hung=1; fi
+  rm -f "$out"
+  [ "$rc" = 0 ] && break
+  if [ "$hung" = 1 ] && [ "$run" -lt @RUNS@ ]; then
+    run=$((run + 1))
+    echo "prewarm: a sandbox VM hung (TIMED OUT above) and was killed; run $run of @RUNS@ boots a fresh one (built templates are reused)" >&2
+    continue
+  fi
+  [ "$hung" = 1 ] && echo "prewarm: a sandbox VM hung on each of @RUNS@ runs; this is no longer a one-off guest fault (see mold_v1-190)" >&2
+  exit "$rc"
+done
 # Remembered until the next reboot (/run is cleared then, and the first start after it does the whole prewarm again).
 touch "$mark" 2>/dev/null || true
-""", HEAD=fill(HEAD, APP=S["app_id"]), CUR=S["app_dir"], LEGACY=S["legacy_app"], MARKS=S["marks"], TRIES=PREWARM_RETRIES + 1, RETRIES=PREWARM_RETRIES)
+""", HEAD=fill(HEAD, APP=S["app_id"]), CUR=S["app_dir"], LEGACY=S["legacy_app"], MARKS=S["marks"], TRIES=PREWARM_RETRIES + 1, RETRIES=PREWARM_RETRIES,
+        TEMPLATE_S=PREWARM_TEMPLATE_S, RUNS=PREWARM_RUNS)
 
 # Extra tries per template (the mold allows 0-5). One microVM boot in about fourteen timed out on nested KVM in the
 # spike (reports/vm-spike-mold_v1-072.md), so three tries in all, as the factory's own prewarm used to do.
 PREWARM_RETRIES = 2
+# One template's whole build (boot, bootstrap, seed files, snapshot), per attempt. Measured on the first server
+# (4 vCPUs, nested KVM): 19-67 s each on 2026-10-10, the root's 47 s on 2026-10-09. The mold's default of 600 s held a
+# wedged VM for ten minutes; five times the slowest is long enough for a slow package index and short enough to retry.
+PREWARM_TEMPLATE_S = 300
+# Whole prewarm runs when one ends on a timeout (a hung VM). The image pull and builds of the first run count too.
+PREWARM_RUNS = 3
+# The API unit's TimeoutStartSec, which its own prestart (the first start after a reboot, or a release not prewarmed)
+# must fit in: every run hanging once plus every template built once plus each run's start-up (about 45 s).
+API_START_S = 1800
+assert PREWARM_RUNS * (PREWARM_TEMPLATE_S + 60) + 6 * 90 <= API_START_S, "the API prestart's worst case must fit TimeoutStartSec"
 
 def release_sh(S, crons, root="", tool=None, timing=None, extra_gb=RELEASE_SPACE_EXTRA_GB):
     """release.sh: the releases of this app on its server (mold_v1-222). `root` prefixes every path it touches and
