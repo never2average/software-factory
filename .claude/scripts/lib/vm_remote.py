@@ -1685,7 +1685,7 @@ case "$cmd" in
     # every snapshot (the tool removes none of those then).
     install -d -m 755 @RUNDIR@
     plans="@RUNDIR@/template-plans"; install -d -m 700 "$plans"
-    for n in "$(name_of "$CUR")" "$(name_of "$PREV")"; do [ -n "$n" ] && plan_of "$n" "$plans/plan-$n.json"; done
+    for n in "$(name_of "$CUR")" "$(name_of "$PREV")"; do if [ -n "$n" ]; then plan_of "$n" "$plans/plan-$n.json"; fi; done
     python3 "$TOOL" release-prune --install "$I" --home @APIHOME@ --plans "$plans"
     ;;
   status)
