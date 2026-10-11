@@ -42,6 +42,7 @@ import { inheritedScope } from "./session-scope.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { fill } from "./agent-vocabulary.ts";
 import { FOLDER } from "./dataroom-folders.ts";
+import { pageList, pageText } from "./dataroom-paging.ts";
 /** Re-throw as a model-readable message when the store rejects a path. */
 function pathErrorMessage(error: unknown): string | null {
   if (error instanceof DataroomPathError) return error.message;
@@ -115,9 +116,17 @@ export const dataroomFetchToSandboxTool = modelFacing("dataroom_fetch_to_sandbox
   },
 }), { pathInput: ["path"] });
 
+/** A `.jsonl` file's records as dataroom_read returns them: all of them, or one page and how to read on. */
+function recordsPage(path: string, records: unknown[], offset: number | undefined) {
+  const page = pageList("dataroom_read", "records", records, offset);
+  if (!page.paging) return { path, records: page.items };
+  const { total, ...paging } = page.paging;
+  return { path, records: page.items, ...paging, totalRecords: total };
+}
+
 export const dataroomReadTool = modelFacing("dataroom_read", defineTool({
   description:
-    "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.",
+    "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.",
   inputSchema: z.object({
     path: z
       .string()
@@ -125,16 +134,21 @@ export const dataroomReadTool = modelFacing("dataroom_read", defineTool({
       .describe(
         fill("dm.md data-room path, e.g. '{folder:accounts}/acme-bank/context.md' or '{folder:tickets}/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."),
       ),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start."),
   }),
-  async execute({ path }, ctx) {
+  async execute({ path, offset }, ctx) {
     try {
       const store = await storeForSession(ctx);
-      if (path.endsWith(".jsonl")) {
-        return { path, records: await store.readJsonl(path) };
-      }
+      if (path.endsWith(".jsonl")) return recordsPage(path, await store.readJsonl(path), offset);
       const content = await store.read(path);
       if (content === null) return { path, found: false as const };
-      return { path, content };
+      const page = pageText(content, offset);
+      return page.paging ? { path, content: page.content, ...page.paging } : { path, content };
     } catch (error) {
       const message = pathErrorMessage(error);
       if (message !== null) return { path, error: message };
@@ -145,7 +159,7 @@ export const dataroomReadTool = modelFacing("dataroom_read", defineTool({
 
 export const dataroomListTool = modelFacing("dataroom_list", defineTool({
   description:
-    "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: '{folder:accounts}/acme' does NOT match '{folder:accounts}/acme-bank/...'). Omit `prefix` to list the whole data room.",
+    "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: '{folder:accounts}/acme' does NOT match '{folder:accounts}/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.",
   inputSchema: z.object({
     prefix: z
       .string()
@@ -153,10 +167,22 @@ export const dataroomListTool = modelFacing("dataroom_list", defineTool({
       .describe(
         fill("Folder prefix with directory-boundary semantics, e.g. '{folder:deliveries}/acme-bank'. Omit to list the whole data room."),
       ),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start."),
   }),
-  async execute({ prefix }, ctx) {
+  async execute({ prefix, offset }, ctx) {
     try {
-      return { paths: await (await storeForSession(ctx)).list(prefix ?? "") };
+      const paths = await (await storeForSession(ctx)).list(prefix ?? "");
+      const first = pageList("dataroom_list", "paths", paths, offset);
+      if (!first.paging) return { paths };
+      // More than one page: the pages are of the SORTED listing, so a second call starts where the first ended.
+      const page = pageList("dataroom_list", "paths", [...paths].sort(), offset);
+      const { total, ...paging } = page.paging ?? first.paging;
+      return { paths: page.items, ...paging, totalPaths: total };
     } catch (error) {
       const message = pathErrorMessage(error);
       if (message !== null) return { prefix: prefix ?? "", error: message };

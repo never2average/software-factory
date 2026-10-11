@@ -223,6 +223,6 @@ client component.
 
 - The local MCP server's direct-store mode (`setup/workspace-mcp.mjs`) turns on only when `BLOB_READ_WRITE_TOKEN`
   is set. On another driver it works through the Ops API, which is driver-agnostic. `scripts/operator/onboard-self.mjs`
-  prints that token's presence as an advisory line whatever the driver.
+  prints that token's presence as an advisory line only on the Vercel Blob driver; on another it names the driver.
 - `scripts/seed-dataroom-blob.mjs` and `scripts/migrate-dataroom-root.mjs` are about a Vercel Blob store and stay
   Vercel-only.

@@ -557,7 +557,7 @@ Get a data-room file into your bash sandbox so you can PARSE it (spreadsheets, P
 
 === root :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -565,13 +565,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -580,6 +586,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -6073,7 +6085,7 @@ Complete the bounded task without waiting for chat input; make side effects idem
 
 === root/app-author :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6081,13 +6093,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root/app-author :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6096,6 +6114,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -6727,7 +6751,7 @@ Open a CHANGESET before a bulk write, then pass its id as `changesetId` on every
 
 === root/configuration :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6735,13 +6759,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root/configuration :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -6750,6 +6780,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -7157,7 +7193,7 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
 
 === root/customer-context :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -7165,13 +7201,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root/customer-context :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -7180,6 +7222,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -11736,7 +11784,7 @@ Create a ticket in the system of record for an account — e.g. an account doubt
 
 === root/data-migration :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -11744,13 +11792,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root/data-migration :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -11759,6 +11813,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -12234,7 +12294,7 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
 
 === root/evals :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12242,13 +12302,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root/evals :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12257,6 +12323,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -12594,7 +12666,7 @@ Stage a DRAFT ticket in the triage queue (status is forced to 'Needs Triage') fo
 
 === root/follow-ups :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12602,13 +12674,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root/follow-ups :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -12617,6 +12695,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -13479,7 +13563,7 @@ Durably append one record (or an array of records) to a `.jsonl` artifact in the
 
 === root/research :: tool :: dataroom_list
 dataroom_list
-List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room.
+List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -13487,13 +13571,19 @@ List the logical file paths in the dm.md data room at or under a folder prefix (
     "prefix": {
       "description": "Folder prefix with directory-boundary semantics, e.g. 'Deliveries/acme-bank'. Omit to list the whole data room.",
       "type": "string"
+    },
+    "offset": {
+      "description": "Where to start: the `nextOffset` of the previous page (a count of paths). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }
 
 === root/research :: tool :: dataroom_read
 dataroom_read
-Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct.
+Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -13502,6 +13592,12 @@ Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths
       "type": "string",
       "minLength": 1,
       "description": "dm.md data-room path, e.g. 'Accounts/acme-bank/context.md' or 'Tickets/bug/acme-bank/2026.06.3/tickets_TCK-1042.jsonl'."
+    },
+    "offset": {
+      "description": "Where to start reading: the `nextOffset` of the previous page (characters for text, records for .jsonl). Omit for the start.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [

@@ -320,7 +320,10 @@ if (PACK) {
 // parts that need no specialist in the step that calls one, reply with what is there and hold back only a step that
 // needs the specialist's output, and a "reports later" result is added when it comes; to keep the stable prompt in its
 // word budget, the ground rule that repeated the publish rule ("A file only counts as delivered once…") went (the
-// "Deliverables & artifacts" section above it says the same). The same lines in both files.
+// "Deliverables & artifacts" section above it says the same). The same lines in both files. And once more (mold_v1-220,
+// paged data-room reads): dataroom_read's and dataroom_list's descriptions say a large file or listing comes back a
+// page at a time and how to read on, and each takes an optional `offset`; the same lines in both files, applied as one
+// diff, and none of them names a folder.
 if (!PACK) {
   const pinned = render([["50-legacy-folders.json", LEGACY_FOLDERS_PIN]], ["--snapshot", "--no-results"]);
   const before = readFileSync(SURFACE_BEFORE, "utf8");

@@ -85,14 +85,22 @@ only with the folder layout. Do not add `schedules/` or `channels/`: both are ro
 
 ```ts
 import { defineAgent } from "eve";
-import { agentModel, modelContextWindowTokens } from "#lib/model.js";
+import { agentModel, compactionFor, modelContextWindowTokens } from "#lib/model.js";
 
 export default defineAgent({
   description: "<what it does>. Delegate here to <the requests that belong to it>. <what it needs to already exist, and what it will not do>.",
   model: agentModel("orchestrator"),
-  modelContextWindowTokens: modelContextWindowTokens(),
+  modelContextWindowTokens: modelContextWindowTokens("orchestrator"),
+  compaction: compactionFor("<key>", "orchestrator"),
 });
 ```
+
+`compaction` is required (`npm run check:subagents` fails without it): every step of a run resends the run's whole
+history, so past the profile's `agent.compaction.specialist_tokens` (160,000 by default) the older steps are summarised
+and the run goes on from the summary. Nothing is capped: the run takes as many steps as it needs. The first argument
+is the directory name (`<key>`), so a profile can give this one specialist its own value
+(`agent.compaction.specialists.<key>`); the second is the role whose model it runs, the same one its window names.
+See docs/SPECIALIST_CONTEXT.md.
 
 `description` is required (*"the compiler rejects any subagent whose `agent.ts` leaves it
 out"*), and *"the parent reads it to decide whether to delegate"*. Write the requests a

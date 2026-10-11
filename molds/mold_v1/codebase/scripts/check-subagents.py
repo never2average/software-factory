@@ -517,6 +517,7 @@ def check_registry(root, reg=None, grammar=None, skip=()):
                     "%s/%s/targets.json names \"%s\", which is not a subagent under agent/subagents/" % (SHARED_DIR, family, key))
     for key in declared:
         check_usage_hook(r, root, key)
+        check_compaction(r, root, key)
     check_delegation_recorder(r, root)
     agent_dir = os.path.join(root, "agent")
     for base, dirs, files in os.walk(agent_dir):
@@ -530,6 +531,23 @@ def check_registry(root, reg=None, grammar=None, skip=()):
             r.check(read_image_gated(path), "%s does not gate on VISION_ENABLED (ENABLE_VISION=false would leave it calling a vision model that is not there)"
                     % os.path.relpath(path, root))
     return r
+
+
+COMPACTION_DECL = re.compile(r"compaction\s*:\s*compactionFor\(\s*[\"']([^\"']+)[\"']\s*,")
+
+
+def check_compaction(r, root, key):
+    """Every subagent declares when its run is summarised (mold_v1-220): each step of a run resends the run's whole
+    history, and eve's own threshold (90% of the window, ~1.18M tokens on a 1.31M model) is never reached, so without it
+    a long run pays for everything it read again on every step. Named by its own directory, so the profile's
+    agent.compaction.specialists.<key> reaches it."""
+    path = os.path.join(root, "agent/subagents", key, "agent.ts")
+    found = COMPACTION_DECL.findall(read(path)) if os.path.isfile(path) else []
+    if not r.check(bool(found), "agent/subagents/%s/agent.ts declares no compaction - add `compaction: compactionFor(\"%s\", \"<the role its modelContextWindowTokens names>\")` "
+                   "(import compactionFor from #lib/model.js; docs/SPECIALIST_CONTEXT.md)" % (key, key)):
+        return
+    r.check(found == [key], "agent/subagents/%s/agent.ts names %s in compactionFor, not \"%s\" (the profile's per-specialist value would miss it)"
+            % (key, ", ".join('"%s"' % f for f in found), key))
 
 
 def check_usage_hook(r, root, key):
@@ -660,7 +678,8 @@ print(json.dumps({"ok": True}))
 
 def _fixture(root, key, broken=False):
     sub = os.path.join(root, "agent/subagents", key)
-    _write(os.path.join(sub, "agent.ts"), 'export default defineAgent({ description: "Delegate here when ..." });\n')
+    _write(os.path.join(sub, "agent.ts"), 'export default defineAgent({ description: "Delegate here when ...", compaction: compactionFor("%s", "specialist") });\n'
+           % ("research" if broken else key))
     _write(os.path.join(sub, "instructions/00-mode.ts"), "export default 1;\n")
     _write(os.path.join(sub, "instructions/operator-override.ts"),
            'await loadWorkflowOverride("%s", orgId);\n' % ("research" if broken else key))
@@ -719,7 +738,7 @@ def self_test():
         _fixture(tmp, "bad-one", broken=True)
         _fixture(tmp, "unbuilt-one")
         os.makedirs(os.path.join(tmp, "agent/subagents/stray-folder"))
-        _write(os.path.join(tmp, "agent/subagents/legacy/agent.ts"), 'export default defineAgent({ description: "Legacy." });\n')
+        _write(os.path.join(tmp, "agent/subagents/legacy/agent.ts"), 'export default defineAgent({ description: "Legacy." });\n')  # declares no compaction
         _write(os.path.join(tmp, "agent/subagents/legacy/hooks/usage.ts"), 'const WORKFLOW = "legacy";\\nevents: { async "turn.started"(event, ctx) { await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id); } }\\n')
         sub = lambda key, *parts: os.path.join(tmp, "agent/subagents", key, *parts)
         # the data-room grammar the store would enforce
@@ -759,6 +778,8 @@ def self_test():
                   "targets.json names \"gone\"", "agent/subagents/bad-one: subagent.json has unknown field",
                   "agent/subagents/bad-one/tools/web_search.ts does not gate",
                   "agent/subagents/bad-one/tools/read_image.ts does not gate",
+                  "agent/subagents/legacy/agent.ts declares no compaction",
+                  "agent/subagents/bad-one/agent.ts names \"research\" in compactionFor",
                   # The half no subagent can record about itself, and which no pack supplies.
                   "agent/lib/session-delegation-runs.ts is missing"]:
             cases.append(("the registry reports: " + e, any(e in f for f in registry.failures), registry.failures))
@@ -811,7 +832,7 @@ def self_test():
         try:
             _fixture(clean, "good-one")
             _root_hooks(clean)
-            _write(os.path.join(clean, "agent/subagents/legacy/agent.ts"), 'export default defineAgent({ description: "Legacy." });\n')
+            _write(os.path.join(clean, "agent/subagents/legacy/agent.ts"), 'export default defineAgent({ description: "Legacy.", compaction: compactionFor("legacy", "orchestrator") });\n')
             _write(os.path.join(clean, "agent/subagents/legacy/hooks/usage.ts"), 'const WORKFLOW = "legacy";\\nevents: { async "turn.started"(event, ctx) { await openWorkflowRun(WORKFLOW, event.data.turnId, ctx.session.id); } }\\n')
             _generated(clean, ["good-one", "legacy"])
             sink = Sink()

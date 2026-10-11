@@ -1,7 +1,7 @@
 {
   "eve": "0.25.1",
   "patch": "patches/eve+0.25.1.patch",
-  "patchSha256": "1922b9393eaedf984607f9979051ff4ca777ef40a870320a03d71bb7c77f4580",
+  "patchSha256": "0a44b71b144b188e80937571b7b5ddf976b8347f5cb729328e8dbdef92a685fb",
   "files": {
     "dist/src/compiled/@workflow/world-local/index.js": "28056b4d06f00e34d9cd5d2a4b42c84148bc7ffb380a5e626d46af7e9941757c",
     "dist/src/compiler/manifest.js": "7e7ae60c6940cb9f0fbfd29f6205101622b3f5a9c6adf580df5a85569bf62dff",
@@ -23,6 +23,9 @@
     "dist/src/execution/workflow-entry.js": "ed2b0c9dee86281bfc648d03e9e9ad36a6a944594c9bfbae16c72f6228c3fa9a",
     "dist/src/execution/workflow-runtime.js": "8b6af770c95c2f2f8388c367714266f45861e26b03b84bd596be8a525ab59dc1",
     "dist/src/execution/workflow-steps.js": "5ef2acf97657096bb75011acf70c856cd0d0cbbeabde438d5eba5fe01c6f0775",
+    "dist/src/harness/compaction-fidelity.js": "e88510942ec485d9f013525515bb5574f08d7679a4beeca5d418da72c78accb7",
+    "dist/src/harness/compaction-prompt.js": "f055d28948ac551fd67971ea80c0f8e10ce90273c510c8783667589d3e547626",
+    "dist/src/harness/compaction.js": "1aebb33b163b707d6c84cfc0165b01d55469aed07b3fa1736a1c4085f81eb6fc",
     "dist/src/harness/detached-delegations.js": "8053e60016fa93ad832dcf75ce451581ddcd329e48c3c05bd921acef7e19f25e",
     "dist/src/harness/input-requests.js": "b33fa1aa4f254b821924930f01c9a84737063997fd5272640634cf2ca44fd9ae",
     "dist/src/harness/messages.js": "b3d10b2a932ce70a5610740541ac0a6219dd563f014fe638a801100caccfec8b",

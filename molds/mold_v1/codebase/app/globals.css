@@ -2,6 +2,26 @@
 @source "../node_modules/streamdown/dist/*.js";
 
 /*
+ * `dark:` follows the theme chosen in the app, the same rule as the dark palette below (mold_v1-219):
+ *   - data-theme="dark" on <html> (an explicit dark choice), whatever the system says;
+ *   - otherwise the system's dark preference, unless data-theme="light" (an explicit light choice).
+ * Tailwind's default `dark:` is the bare prefers-color-scheme media query, so with light chosen in the app on a system
+ * set to dark, every `dark:text-…` painted dark-mode text on the light page (and the reverse). "Match system" removes
+ * the attribute (app/_components/theme-toggle.tsx), so it still follows the system. :where() adds no specificity,
+ * like the media query it replaces, so a `dark:` utility still sorts after its unprefixed twin and wins.
+ */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+/*
  * A signed-in person's first paint (app/layout.tsx, lib/startup-fetch.ts): under <html data-session> the page shows
  * the app's frame, not the sign-in card, until the app mounts. AuthGate removes the mark the moment there is no usable
  * session, so a signed-out person always gets the card.

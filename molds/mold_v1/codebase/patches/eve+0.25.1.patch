@@ -350,6 +350,252 @@ index 86f65f3..f37bcad 100644
 \ No newline at end of file
 +import{callAdapterEventHandler,defaultDeliverResult}from"#channel/adapter.js";import{AuthKey,CapabilitiesKey,InitiatorAuthKey,ModeKey}from"#context/keys.js";import{createAuthorizationCompletedEvent,encodeMessageStreamEvent,timestampHandleMessageStreamEvent}from"#protocol/message.js";import{BundleKey,ChannelKey}from"#runtime/sessions/runtime-context-keys.js";import{getHarnessEmissionState}from"#harness/emission.js";import{deserializeContext,serializeContext}from"#context/serialize.js";import{createDurableSessionState,readDurableSession}from"#execution/durable-session-store.js";import{createWorkflowRuntime,startWorkflowPreferLatest,turnWorkflowReference}from"#execution/workflow-runtime.js";import{getPendingRuntimeActionBatch}from"#harness/runtime-actions.js";import{subagentBatchStepFields}from"#harness/detached-delegations.js";import{hydrateDurableSession,refreshSessionFromTurnAgent}from"#execution/session.js";import{resumeHook}from"#internal/workflow/runtime.js";import{buildAdapterContext}from"#channel/adapter-context.js";import{getPendingWorkflowInterrupt}from"#harness/workflow-interrupt-state.js";import{getRuntimeActionKeysFromWorkflowInterrupt,isWorkflowRuntimeActionInterrupt}from"#harness/workflow-runtime-action-state.js";import{dispatchDynamicModelEvent}from"#context/dynamic-model-lifecycle.js";import{resolveWorkflowCallbackBaseUrl}from"#execution/workflow-callback-url.js";import{setChannelContext}from"#execution/channel-context.js";import{dispatchStreamEventHooks}from"#context/hook-lifecycle.js";import{runStep}from"#context/run-step.js";import{reconcileSessionContinuationToken}from"#execution/reconcile-session-continuation-token.js";import{routeDeliverPayload}from"#execution/subagent-hitl-proxy.js";import{CallbackBaseUrlKey,PendingAuthorizationResultKey,clearPendingAuthorization,getPendingAuthorization}from"#harness/authorization.js";import{isTurnCancellation,throwIfTurnAborted}from"#harness/turn-cancellation.js";import{createTurnWorkflowInput}from"#execution/durable-session-migrations/turn-workflow.js";import{coalesceTurnInputs}from"#harness/messages.js";import{buildTurnAttributes,readRootSessionId}from"#execution/eve-workflow-attributes.js";import{normalizeEveAttributes}from"#runtime/attributes/normalize.js";import{dispatchDynamicInstructionEvent}from"#context/dynamic-instruction-lifecycle.js";import{dispatchDynamicSkillEvent}from"#context/dynamic-skill-lifecycle.js";import{dispatchDynamicToolEvent}from"#context/dynamic-tool-lifecycle.js";import{hasPendingInputBatch}from"#harness/input-requests.js";import{getTurnUsageState,toUsage}from"#harness/turn-tag-state.js";import{getRuntimeActionRequestKey}from"#runtime/actions/keys.js";import{createExecutionNodeStep}from"#execution/node-step.js";import{recordSubagentUsageSpans}from"#execution/subagent-usage-span.js";import{resolveSessionSkillRoot}from"#execution/workflow-skill-root.js";async function turnStep(a){"use step";let o=a,s=await readDurableSession(o.sessionState),c=await deserializeContext(o.serializedContext),l=c.require(ChannelKey),u=c.require(BundleKey);try{let{getWorkflowMetadata:e}=await import(`#compiled/@workflow/core/index.js`),t=e();typeof t.url==`string`&&c.set(CallbackBaseUrlKey,resolveWorkflowCallbackBaseUrl(t.url))}catch{}let d=getPendingAuthorization(s.state),f;if(d&&o.input?.kind===`deliver`){let e=[],t=[],n=[];for(let r of o.input.payloads){let i=r.authorizationCallback;if(i){let n=d.challenges.find(e=>e.name===i.connectionName);n&&(e.push({name:n.name,resume:n.resume,callback:i.callback,hookUrl:n.hookUrl}),t.push({name:n.name,authorization:n.challenge}))}else n.push(r)}e.length>0&&(c.set(PendingAuthorizationResultKey,e),s={...s,state:clearPendingAuthorization(s.state,e.map(e=>e.name))},f=t,o=n.length>0?{...o,input:{...o.input,payloads:n}}:{...o,input:void 0})}o.input?.kind===`deliver`&&o.input.auth!==void 0&&c.set(AuthKey,o.input.auth??null);let p=hydrateDurableSession({compactionOverrides:{thresholdPercent:u.resolvedAgent.config.compaction?.thresholdPercent},durable:s,turnAgent:u.turnAgent}),m=buildAdapterContext(l,c),h;if(o.input?.kind===`deliver`){let e=[],lateResults=[];for(let n of o.input.payloads){let w=n;if(n!=null&&(n.delegationResults!==void 0||n.delegationRequests!==void 0)){let{delegationResults:q,delegationRequests:_q,...x}=n;Array.isArray(q)&&lateResults.push(...q);if(Object.keys(x).length===0)continue;w=x}let r=l.deliver?await l.deliver(w,m):defaultDeliverResult(w);r!=null&&e.push(r)}h=e.length===0?void 0:e.reduce(coalesceTurnInputs);lateResults.length>0&&(h={...h,delegationResults:lateResults})}else o.input?.kind===`runtime-action-result`&&(recordSubagentUsageSpans(o.input.results),h={runtimeActionResults:o.input.results,...o.input.detachedDelegations===void 0?{}:{detachedDelegations:o.input.detachedDelegations}});if(o.input?.kind===`deliver`&&setChannelContext(c,{...l,state:{...m.state}}),o.input?.kind===`deliver`&&h===void 0){let e=reconcileSessionContinuationToken(c,p),t=serializeContext(c),n=e===p?o.sessionState:createDurableSessionState({session:e});return{action:`park`,...derivePendingState(e),serializedContext:t,sessionState:n}}let g=o.parentWritable.getWriter(),_=u.hookRegistry,v=u.resolvedAgent.dynamicInstructionsResolvers??[],y=u.resolvedAgent.dynamicSkillResolvers??[],b=u.resolvedAgent.dynamicToolResolvers??[],emit=async t=>{let n=await callAdapterEventHandler(l,t,m);return setChannelContext(c,{...l,state:{...m.state}}),await g.write(encodeMessageStreamEvent(timestampHandleMessageStreamEvent(n))),n},handleEvent=async(e,t)=>{let n=await emit(e);await dispatchStreamEventHooks({ctx:c,registry:_,event:n}),n.type!==`step.started`&&await dispatchDynamicModelEvent({ctx:c,dynamicModel:u.turnAgent.dynamicModel,event:n,fallback:u.turnAgent.model,messages:t??[],scope:{moduleMap:u.moduleMap,nodeId:u.nodeId}}),await dispatchDynamicToolEvent({ctx:c,resolvers:b,event:n,messages:t??[]}),await dispatchDynamicSkillEvent({ctx:c,resolvers:y,event:n,messages:t??[]}),await dispatchDynamicInstructionEvent({ctx:c,resolvers:v,event:n,messages:t??[]})},x=c.require(ModeKey),S;try{throwIfTurnAborted(o.abortSignal),S=await runStep(c,p,async e=>{let t=resolveEffectiveOutputSchema({agentOutputSchema:u.turnAgent.outputSchema,input:h,mode:x,session:e});if(f){let e=getHarnessEmissionState(t.state);for(let{name:t,authorization:n}of f)await handleEvent(createAuthorizationCompletedEvent({authorization:n,name:t,outcome:`authorized`,sequence:e.sequence,stepIndex:e.stepIndex,turnId:e.turnId}))}let n=c.get(CapabilitiesKey);return(async(e,t)=>{let r=await resolveSessionSkillRoot({ctx:c,turnAgent:u.turnAgent}),i=refreshSessionFromTurnAgent({compactionOverrides:{thresholdPercent:u.resolvedAgent.config.compaction?.thresholdPercent},session:e,skillRoot:r,turnAgent:u.turnAgent});return createExecutionNodeStep({abortSignal:o.abortSignal,capabilities:n,createRuntime:createWorkflowRuntime,handleEvent,mode:x,modelResolutionScope:{moduleMap:u.moduleMap,nodeId:u.nodeId},node:u.graph.root,workflowMaxSubagents:i.workflowMaxSubagents})(i,t)})(t,h)})}catch(e){if(!isTurnCancellation(e))throw e;return g.releaseLock(),{action:`cancelled`,serializedContext:o.serializedContext,sessionState:o.sessionState}}let C=reconcileSessionContinuationToken(c,S.session),w=serializeContext(c);S={...S,session:C};let T=createDurableSessionState({session:S.session});if(S.next!==null&&typeof S.next==`object`&&`done`in S.next){await g.close();let e=getTurnUsageState(S.session.state)?.session;return{action:`done`,output:S.next.output,isError:S.next.isError,serializedContext:w,sessionState:T,usage:e===void 0?void 0:toUsage(e)}}if(S.next===null){g.releaseLock();let e=getPendingWorkflowInterrupt(S.session.state);return e!==void 0&&isWorkflowRuntimeActionInterrupt(e.interrupt)?{action:`dispatch-workflow-runtime-actions`,pendingRuntimeActionKeys:getRuntimeActionKeysFromWorkflowInterrupt(e.interrupt),serializedContext:w,sessionState:T}:{action:`park`,...derivePendingState(S.session),...subagentBatchStepFields(u.resolvedAgent.config,S.session,c.get(InitiatorAuthKey)),serializedContext:w,sessionState:T}}return g.releaseLock(),{action:`continue`,serializedContext:w,sessionState:T}}function derivePendingState(e){let t=getPendingRuntimeActionBatch(e.state),n=getPendingAuthorization(e.state),r={authorizationNames:n?.challenges.map(e=>e.name),hasPendingAuthorization:n!==void 0,hasPendingInputBatch:hasPendingInputBatch(e.state)};return t===void 0?r:{...r,pendingRuntimeActionKeys:t.actions.map(e=>getRuntimeActionRequestKey(e))}}function resolveEffectiveOutputSchema(e){let{agentOutputSchema:t,input:n,mode:r,session:i}=e;return n?.outputSchema===void 0?r===`task`&&i.outputSchema===void 0&&t!==void 0?{...i,outputSchema:t}:i:{...i,outputSchema:n.outputSchema}}async function routeProxiedDeliverStep(e){"use step";let t=await readDurableSession(e.sessionState),n=routeDeliverPayload({payload:e.payload,state:t.state});for(let t of n.forChildren)await resumeHook(t.childContinuationToken,{auth:e.auth,kind:`deliver`,payloads:[t.payload]});return{remainder:n.forSelf}}async function dispatchTurnStep(e){"use step";return{runId:(await startWorkflowPreferLatest(turnWorkflowReference,[createTurnWorkflowInput(e)],{allowReservedAttributes:!0,attributes:normalizeEveAttributes(buildTurnAttributes({parentSessionId:e.sessionState.sessionId,requestId:e.delivery.kind===`deliver`?e.delivery.requestId:void 0,rootSessionId:readRootSessionId(e.serializedContext)??e.sessionState.sessionId}))})).runId}}export{dispatchTurnStep,resolveEffectiveOutputSchema,routeProxiedDeliverStep,turnStep};
 \ No newline at end of file
+diff --git a/node_modules/eve/dist/src/harness/compaction-fidelity.js b/node_modules/eve/dist/src/harness/compaction-fidelity.js
+new file mode 100644
+index 0000000..75f14c4
+--- /dev/null
++++ b/node_modules/eve/dist/src/harness/compaction-fidelity.js
+@@ -0,0 +1,212 @@
++// agent-workspace patch to eve 0.25.1 (mold_v1-220): a compaction that keeps what the session READ.
++// Not part of eve. Added by patches/eve+0.25.1.patch; the readable source of every change is scripts/eve-patch/.
++//
++// eve compacts a session when its prompt passes `compaction.threshold` (harness/compaction.js): the older messages
++// are summarised by the model, the last few are kept, and the session goes on from there. As shipped it was written
++// for chat-like sessions, and three of its choices lose a specialist's work when compaction fires mid-run:
++//
++//   1. The summariser is shown each part cut to 280 characters, and a tool result collapsed to three keys, two levels
++//      deep (`Tool dataroom_read returned object(type=json, value=object(3 keys))`). Whatever a document said is gone
++//      before the summary is written, so the summary cannot keep it.
++//   2. The messages kept after the summary lose every tool call and tool result (only an assistant's own text stays),
++//      and those messages were not summarised either: the last few pages a specialist read vanish outright.
++//   3. The kept window is chosen to fill the threshold less a reserve of at most 2,048 tokens, so the session comes
++//      out of a compaction nearly as large as it went in and compacts again a step or two later.
++//
++// Each is replaced here, for every session (a session compacts only past its threshold, so one that never reaches it
++// is unchanged):
++//
++//   1. `compactionTranscriptMessages`: the summariser reads every part in full — tool inputs and results as JSON.
++//      The transcript is held to a budget (`compactionTranscriptBudgetChars`: never less than the summarised messages'
++//      own size, which the session already sent); over it, the LARGEST parts are shortened first (water-filling),
++//      each to the same length, never below eve's own 280, with a note of how much is not shown. A short part is
++//      never cut to make room for a long one.
++//   2. `keepRecentMessages`: a kept message keeps its tool calls and their results, as complete pairs (a call with no
++//      result in the window, or a result whose call is not kept, is dropped as eve did). `splitKeepingToolPairs`
++//      starts the kept window after any tool results that answer a call in the summarised part, so they are
++//      summarised rather than orphaned.
++//   3. `compactionRecentReserve`: the kept window is at most a quarter of the threshold, so a compaction leaves room
++//      for three quarters of a threshold of new work before the next one.
++//
++// Pure functions only, no I/O.
++
++/** eve's own floor for a part shown to the summariser (harness/compaction-prompt.js `summarizeText`). */
++const MIN_PART_CHARS = 280;
++/** Characters per token in eve's own estimate (harness/compaction.js `estimateTokens`: JSON length / 4). */
++const CHARS_PER_TOKEN = 4;
++
++/**
++ * The transcript budget, in characters: the larger of the threshold and the summarised messages' own size, both as
++ * eve measures a prompt. The summarised messages were already sent to the model as part of the session (all but the
++ * latest step's results), so a transcript of them in full fits wherever the session did; the budget binds only on a
++ * transcript that came out larger than the messages it renders.
++ */
++export function compactionTranscriptBudgetChars(config, olderMessages = []) {
++  const threshold = Number(config?.threshold);
++  let own = 0;
++  try {
++    own = JSON.stringify(olderMessages).length;
++  } catch {
++    own = 0;
++  }
++  return Math.max(4096, Math.floor((Number.isFinite(threshold) && threshold > 0 ? threshold : 100_000) * CHARS_PER_TOKEN), own);
++}
++
++/** The reserve `selectRecentWindowSize` keeps free of kept messages: three quarters of the threshold. */
++export function compactionRecentReserve(config) {
++  return Math.max(64, Math.floor((config.threshold * 3) / 4));
++}
++
++const json = (value) => {
++  if (value === undefined) return ``;
++  if (typeof value === `string`) return value;
++  try {
++    return JSON.stringify(value) ?? ``;
++  } catch {
++    return String(value);
++  }
++};
++
++/** A tool result's output as the summariser should read it (AI SDK `ToolResultOutput`). */
++function renderToolOutput(output) {
++  if (output === undefined || output === null) return ``;
++  if (typeof output !== `object`) return String(output);
++  switch (output.type) {
++    case `text`:
++    case `error-text`:
++      return typeof output.value === `string` ? output.value : json(output.value);
++    case `json`:
++    case `error-json`:
++      return json(output.value);
++    case `content`:
++      return Array.isArray(output.value)
++        ? output.value.map((p) => (p?.type === `text` ? p.text : p?.type ? `[${p.type}${p.mediaType ? ` ${p.mediaType}` : ``}]` : json(p))).join(`\n`)
++        : json(output.value);
++    default:
++      return json(output);
++  }
++}
++
++/** One message's parts, each as the full text the summariser should read (empty parts dropped). */
++function partsOf(message) {
++  if (typeof message.content === `string`) return message.content.trim() ? [message.content.trim()] : [];
++  if (!Array.isArray(message.content)) return [];
++  const out = [];
++  for (const part of message.content) {
++    switch (part?.type) {
++      case `text`:
++        if (part.text?.trim()) out.push(part.text.trim());
++        break;
++      case `file`:
++        out.push(part.filename ? `Attached file ${part.filename} (${part.mediaType})` : `Attached file attachment (${part.mediaType})`);
++        break;
++      case `tool-call`: {
++        const input = json(part.input);
++        out.push(input ? `Called ${part.toolName} with ${input}` : `Called ${part.toolName}`);
++        break;
++      }
++      case `tool-result`: {
++        const output = renderToolOutput(part.output);
++        const verb = part.isError || part.output?.type === `error-text` || part.output?.type === `error-json` ? `errored` : `returned`;
++        out.push(output ? `Tool ${part.toolName} ${verb} ${output}` : `Tool ${part.toolName} ${verb}`);
++        break;
++      }
++      default:
++        // reasoning, approvals and anything newer: not part of what the next model needs to continue (as eve).
++        break;
++    }
++  }
++  return out;
++}
++
++/**
++ * The largest length every part may keep so that all of them together fit `budget` characters, or Infinity when they
++ * already do. Water-filling: parts shorter than the level keep everything; the rest are cut to the level.
++ */
++export function waterFillCap(lengths, budget) {
++  const total = lengths.reduce((a, b) => a + b, 0);
++  if (total <= budget) return Infinity;
++  const sorted = [...lengths].sort((a, b) => a - b);
++  let remaining = budget;
++  let count = sorted.length;
++  for (const len of sorted) {
++    const level = remaining / count;
++    if (len > level) return Math.max(MIN_PART_CHARS, Math.floor(level));
++    remaining -= len;
++    count -= 1;
++  }
++  return Infinity;
++}
++
++const clip = (text, cap) => (text.length <= cap ? text : `${text.slice(0, cap)}… [${text.length - cap} more characters not shown]`);
++
++/**
++ * The transcript messages (`{ role, content }`, content a string) the summariser reads for `messages`, every part in
++ * full unless the whole is over `budgetChars`, in which case the largest parts are shortened first.
++ */
++export function compactionTranscriptMessages(messages, budgetChars) {
++  const rendered = messages.map((m) => ({ role: m.role, parts: partsOf(m) }));
++  const cap = waterFillCap(rendered.flatMap((m) => m.parts.map((p) => p.length)), budgetChars);
++  return rendered.map((m) => ({ role: m.role, content: m.parts.map((p) => clip(p, cap)).join(`\n`).trim() }));
++}
++
++/**
++ * Split for compaction: the last `count` messages are kept, except that tool results at the start of the kept window
++ * (whose calls are in the summarised part) are moved to the summarised part with their calls.
++ */
++export function splitKeepingToolPairs(messages, count) {
++  if (count <= 0) return { older: [...messages], recent: [] };
++  let at = Math.max(0, messages.length - count);
++  while (at < messages.length && messages[at]?.role === `tool`) at += 1;
++  return { older: messages.slice(0, at), recent: messages.slice(at) };
++}
++
++const assistantText = (m) =>
++  typeof m.content === `string`
++    ? m.content.trim()
++    : m.content
++        .filter((p) => p.type === `text`)
++        .map((p) => p.text)
++        .join(``)
++        .trim();
++
++/**
++ * The kept window after a compaction: user and system messages as they are; an assistant message with its text and
++ * every tool call whose result is also in the window; a tool message with the results of the calls kept. Reasoning
++ * and approval parts are dropped, as eve did.
++ */
++export function keepRecentMessages(messages) {
++  const answered = new Set();
++  for (const m of messages) {
++    if (m.role !== `tool` || !Array.isArray(m.content)) continue;
++    for (const p of m.content) if (p?.type === `tool-result`) answered.add(p.toolCallId);
++  }
++  const keptCalls = new Set();
++  const out = [];
++  for (const m of messages) {
++    if (m.role === `assistant`) {
++      if (typeof m.content === `string`) {
++        if (m.content.trim()) out.push({ role: `assistant`, content: m.content.trim() });
++        continue;
++      }
++      const calls = m.content.filter((p) => p?.type === `tool-call` && answered.has(p.toolCallId));
++      if (calls.length === 0) {
++        const text = assistantText(m);
++        if (text) out.push({ role: `assistant`, content: text });
++        continue;
++      }
++      for (const c of calls) keptCalls.add(c.toolCallId);
++      const text = assistantText(m);
++      out.push({ role: `assistant`, content: [...(text ? [{ type: `text`, text }] : []), ...calls] });
++      continue;
++    }
++    if (m.role === `tool`) {
++      if (!Array.isArray(m.content)) continue;
++      const results = m.content.filter((p) => p?.type === `tool-result` && keptCalls.has(p.toolCallId));
++      if (results.length) out.push({ ...m, content: results });
++      continue;
++    }
++    out.push(m);
++  }
++  return out;
++}
+diff --git a/node_modules/eve/dist/src/harness/compaction-prompt.js b/node_modules/eve/dist/src/harness/compaction-prompt.js
+index ffc0ce9..42c70b3 100644
+--- a/node_modules/eve/dist/src/harness/compaction-prompt.js
++++ b/node_modules/eve/dist/src/harness/compaction-prompt.js
+@@ -1,4 +1,4 @@
+-const COMPACTION_CHECKPOINT_MARKER=`Summary of our conversation so far:`,COMPACTION_SYSTEM_PROMPT=`You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
++import{compactionTranscriptMessages}from"#harness/compaction-fidelity.js";const COMPACTION_CHECKPOINT_MARKER=`Summary of our conversation so far:`,COMPACTION_SYSTEM_PROMPT=`You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+ 
+ Include:
+ 
+@@ -7,7 +7,7 @@ Include:
+ - What remains to be done, with clear next steps
+ - Any critical data, examples, or references needed to continue
+ 
+-Be concise, structured, and focused on helping the next LLM seamlessly continue the work. Write in the same language as the conversation. Do not continue the conversation, answer its questions, or invent facts. Only output the handoff summary.`,COMPACTION_PROMPT_ENVELOPE={prompt:formatCompactionPrompt({previousCheckpoint:``,transcript:``}),system:COMPACTION_SYSTEM_PROMPT};function createCompactionPrompt(e){let n=e.messages.map(e=>({content:summarizeCompactionMessageContent(e),role:e.role}));return{prompt:formatCompactionPrompt({previousCheckpoint:e.previousCheckpoint?.trim()??`(none)`,transcript:formatCompactionTranscript(n)}),system:COMPACTION_SYSTEM_PROMPT}}function formatCompactionPrompt(e){return`<previous-checkpoint>
++Be concise, structured, and focused on helping the next LLM seamlessly continue the work. Write in the same language as the conversation. Do not continue the conversation, answer its questions, or invent facts. Only output the handoff summary.`,COMPACTION_PROMPT_ENVELOPE={prompt:formatCompactionPrompt({previousCheckpoint:``,transcript:``}),system:COMPACTION_SYSTEM_PROMPT};function createCompactionPrompt(e){let n=e.budgetChars===void 0?e.messages.map(e=>({content:summarizeCompactionMessageContent(e),role:e.role})):compactionTranscriptMessages(e.messages,e.budgetChars);return{prompt:formatCompactionPrompt({previousCheckpoint:e.previousCheckpoint?.trim()??`(none)`,transcript:formatCompactionTranscript(n)}),system:COMPACTION_SYSTEM_PROMPT}}function formatCompactionPrompt(e){return`<previous-checkpoint>
+ ${e.previousCheckpoint}
+ </previous-checkpoint>
+ 
+diff --git a/node_modules/eve/dist/src/harness/compaction.js b/node_modules/eve/dist/src/harness/compaction.js
+index 77be21f..46196fd 100644
+--- a/node_modules/eve/dist/src/harness/compaction.js
++++ b/node_modules/eve/dist/src/harness/compaction.js
+@@ -1 +1 @@
+-import{generateText}from"ai";import{COMPACTION_CHECKPOINT_MARKER,COMPACTION_PROMPT_ENVELOPE,createCompactionPrompt}from"#harness/compaction-prompt.js";function estimateTokens(e){return JSON.stringify(e).length/4}const COMPACTION_PROMPT_OVERHEAD_TOKENS=estimateTokens([{content:COMPACTION_PROMPT_ENVELOPE.system,role:`system`},{content:COMPACTION_PROMPT_ENVELOPE.prompt,role:`user`}]);function getInputTokenCount(e,t){let n=t.lastKnownInputTokens,r=t.lastKnownPromptMessageCount;return n===void 0||r===void 0||!Number.isInteger(r)||r<0||r>e.length?estimateTokens(e):n+estimateTokens(e.slice(r))}function shouldCompact(e,t){return e.length>0&&getInputTokenCount(e,t)+COMPACTION_PROMPT_OVERHEAD_TOKENS>t.threshold}async function resolveCompactionModel(e){let t=e.compactionModelReference??e.modelReference;return{model:t===e.modelReference?e.model:await e.resolveModel(t),providerOptions:t.providerOptions}}async function compactMessages(n,i,a,o,s,c,l){let{conversation:u,previousCheckpoint:d}=extractPreviousCheckpoint(n),f=selectRecentWindowSize(u,a);for(;;){let{older:n,recent:p}=splitMessagesForCompaction(u,f);if(n.length===0&&d===void 0)return keepNonToolResultMessages(p);let m=createCompactionPrompt({messages:n,previousCheckpoint:d}),h=await generateText({abortSignal:l,headers:c,model:i,prompt:m.prompt,providerOptions:o,system:m.system,telemetry:s?{...s,functionId:`eve.compaction`}:void 0,temperature:0}),g=keepNonToolResultMessages(p),_=g.at(-1)?.role,v=_===void 0||_===`assistant`?[{role:`user`,content:`Continue.`}]:[],y=[{content:COMPACTION_CHECKPOINT_MARKER,role:`user`},{content:h.text,role:`assistant`},...g,...v];if(estimateTokens(y)<=a.threshold||f===0)return y;--f}}function extractPreviousCheckpoint(e){let n=e[0],r=e[1];return n?.role!==`user`||n.content!==COMPACTION_CHECKPOINT_MARKER||r?.role!==`assistant`?{conversation:[...e],previousCheckpoint:void 0}:{conversation:e.slice(2),previousCheckpoint:assistantMessageText(r)}}function keepNonToolResultMessages(e){let t=[];for(let n of e)if(n.role!==`tool`){if(n.role===`assistant`){let e=assistantMessageText(n);e.length>0&&t.push({content:e,role:`assistant`});continue}t.push(n)}return t}function assistantMessageText(e){return typeof e.content==`string`?e.content.trim():e.content.filter(e=>e.type===`text`).map(e=>e.text).join(``).trim()}function selectRecentWindowSize(e,t){let n=Math.min(t.recentWindowSize,Math.max(e.length-1,0)),r=resolveCompactionSummaryReserve(t),i=0,a=0;for(let o=e.length-1;o>=0&&i<n;--o){let n=e[o];if(n===void 0)continue;let s=estimateTokens([n]);if(a+s+r>t.threshold)break;a+=s,i+=1}return i}function resolveCompactionSummaryReserve(e){return Math.min(2048,Math.max(64,Math.floor(e.threshold/4)))}function splitMessagesForCompaction(e,t){return t<=0?{older:[...e],recent:[]}:{older:e.slice(0,-t),recent:e.slice(-t)}}export{compactMessages,estimateTokens,getInputTokenCount,resolveCompactionModel,shouldCompact};
+\ No newline at end of file
++import{generateText}from"ai";import{COMPACTION_CHECKPOINT_MARKER,COMPACTION_PROMPT_ENVELOPE,createCompactionPrompt}from"#harness/compaction-prompt.js";import{compactionRecentReserve,compactionTranscriptBudgetChars,keepRecentMessages,splitKeepingToolPairs}from"#harness/compaction-fidelity.js";function estimateTokens(e){return JSON.stringify(e).length/4}const COMPACTION_PROMPT_OVERHEAD_TOKENS=estimateTokens([{content:COMPACTION_PROMPT_ENVELOPE.system,role:`system`},{content:COMPACTION_PROMPT_ENVELOPE.prompt,role:`user`}]);function getInputTokenCount(e,t){let n=t.lastKnownInputTokens,r=t.lastKnownPromptMessageCount;return n===void 0||r===void 0||!Number.isInteger(r)||r<0||r>e.length?estimateTokens(e):n+estimateTokens(e.slice(r))}function shouldCompact(e,t){return e.length>0&&getInputTokenCount(e,t)+COMPACTION_PROMPT_OVERHEAD_TOKENS>t.threshold}async function resolveCompactionModel(e){let t=e.compactionModelReference??e.modelReference;return{model:t===e.modelReference?e.model:await e.resolveModel(t),providerOptions:t.providerOptions}}async function compactMessages(n,i,a,o,s,c,l){let{conversation:u,previousCheckpoint:d}=extractPreviousCheckpoint(n),f=selectRecentWindowSize(u,a);for(;;){let{older:n,recent:p}=splitMessagesForCompaction(u,f);if(n.length===0&&d===void 0)return keepNonToolResultMessages(p);let m=createCompactionPrompt({messages:n,previousCheckpoint:d,budgetChars:compactionTranscriptBudgetChars(a,n)}),h=await generateText({abortSignal:l,headers:c,model:i,prompt:m.prompt,providerOptions:o,system:m.system,telemetry:s?{...s,functionId:`eve.compaction`}:void 0,temperature:0}),g=keepRecentMessages(p),_=g.at(-1)?.role,v=_===void 0||_===`assistant`?[{role:`user`,content:`Continue.`}]:[],y=[{content:COMPACTION_CHECKPOINT_MARKER,role:`user`},{content:h.text,role:`assistant`},...g,...v];if(estimateTokens(y)<=a.threshold||f===0)return y;--f}}function extractPreviousCheckpoint(e){let n=e[0],r=e[1];return n?.role!==`user`||n.content!==COMPACTION_CHECKPOINT_MARKER||r?.role!==`assistant`?{conversation:[...e],previousCheckpoint:void 0}:{conversation:e.slice(2),previousCheckpoint:assistantMessageText(r)}}function keepNonToolResultMessages(e){let t=[];for(let n of e)if(n.role!==`tool`){if(n.role===`assistant`){let e=assistantMessageText(n);e.length>0&&t.push({content:e,role:`assistant`});continue}t.push(n)}return t}function assistantMessageText(e){return typeof e.content==`string`?e.content.trim():e.content.filter(e=>e.type===`text`).map(e=>e.text).join(``).trim()}function selectRecentWindowSize(e,t){let n=Math.min(t.recentWindowSize,Math.max(e.length-1,0)),r=resolveCompactionSummaryReserve(t),i=0,a=0;for(let o=e.length-1;o>=0&&i<n;--o){let n=e[o];if(n===void 0)continue;let s=estimateTokens([n]);if(a+s+r>t.threshold)break;a+=s,i+=1}return i}function resolveCompactionSummaryReserve(e){return compactionRecentReserve(e)}function splitMessagesForCompaction(e,t){return splitKeepingToolPairs(e,t)}export{compactMessages,estimateTokens,getInputTokenCount,resolveCompactionModel,shouldCompact};
+\ No newline at end of file
 diff --git a/node_modules/eve/dist/src/harness/detached-delegations.js b/node_modules/eve/dist/src/harness/detached-delegations.js
 new file mode 100644
 index 0000000..841cd30

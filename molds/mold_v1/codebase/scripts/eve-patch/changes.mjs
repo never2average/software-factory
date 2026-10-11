@@ -6,10 +6,11 @@
  * must occur exactly once in its file, or nothing is written), and `npx patch-package eve` then records the result.
  * `npm run check:eve-patch` proves the installed eve is 0.25.1 with exactly this patch applied.
  *
- * Three new modules are copied in whole from scripts/eve-patch/files/ (readable, commented):
+ * Four new modules are copied in whole from scripts/eve-patch/files/ (readable, commented):
  *   harness/detached-delegations.js     pure helpers (also used by workflow code)
  *   execution/parent-session-delivery.js a detached delegation's way home
  *   execution/delegation-sweep.js       what the application's specialist sweep may do (mold_v1-196)
+ *   harness/compaction-fidelity.js      a compaction that keeps what the session read (mold_v1-220)
  *
  * What the opt-in does — `defineAgent({ subagents: { batch: "detach", detachAfterMs } })`, default "all" (eve's own
  * behaviour, unchanged) — and how each piece below serves it is in docs/SPECIALIST_HANDBACK.md "Per-result delegation".
@@ -554,7 +555,53 @@ export const CHANGES = [
     find: "else if(i.eventType===`step_retrying`&&`eventData`in i){",
     replace: "else if(i.eventType===`step_retrying`&&`eventData`in i){" + INL + ".delete(`${C}-${i.correlationId}`);",
   },
+
+  /* ---- mold_v1-220: a compaction that keeps what the session read (harness/compaction-fidelity.js) -------------- */
+  {
+    file: "harness/compaction-prompt.js",
+    why: "import the transcript renderer",
+    find: "const COMPACTION_CHECKPOINT_MARKER=",
+    replace: 'import{compactionTranscriptMessages}from"#harness/compaction-fidelity.js";const COMPACTION_CHECKPOINT_MARKER=',
+  },
+  {
+    file: "harness/compaction-prompt.js",
+    why: "createCompactionPrompt: given a `budgetChars`, the summariser reads every part in full (tool inputs and results as JSON), the largest parts shortened first only when the whole is over the budget; without one, eve's 280-character digest as before",
+    find: "function createCompactionPrompt(e){let n=e.messages.map(e=>({content:summarizeCompactionMessageContent(e),role:e.role}));",
+    replace:
+      "function createCompactionPrompt(e){let n=e.budgetChars===void 0?e.messages.map(e=>({content:summarizeCompactionMessageContent(e),role:e.role})):compactionTranscriptMessages(e.messages,e.budgetChars);",
+  },
+  {
+    file: "harness/compaction.js",
+    why: "import the helpers",
+    find: 'import{COMPACTION_CHECKPOINT_MARKER,COMPACTION_PROMPT_ENVELOPE,createCompactionPrompt}from"#harness/compaction-prompt.js";',
+    replace:
+      'import{COMPACTION_CHECKPOINT_MARKER,COMPACTION_PROMPT_ENVELOPE,createCompactionPrompt}from"#harness/compaction-prompt.js";import{compactionRecentReserve,compactionTranscriptBudgetChars,keepRecentMessages,splitKeepingToolPairs}from"#harness/compaction-fidelity.js";',
+  },
+  {
+    file: "harness/compaction.js",
+    why: "compactMessages: the summariser reads the older messages in full (the budget is never less than their own size, which the session already sent)",
+    find: "createCompactionPrompt({messages:n,previousCheckpoint:d})",
+    replace: "createCompactionPrompt({messages:n,previousCheckpoint:d,budgetChars:compactionTranscriptBudgetChars(a,n)})",
+  },
+  {
+    file: "harness/compaction.js",
+    why: "compactMessages: the kept messages keep their tool calls and results as complete pairs (eve dropped them, unsummarised)",
+    find: "g=keepNonToolResultMessages(p)",
+    replace: "g=keepRecentMessages(p)",
+  },
+  {
+    file: "harness/compaction.js",
+    why: "selectRecentWindowSize: the kept window is at most a quarter of the threshold (eve kept up to the threshold less 2,048 tokens, so a session compacted again a step or two later)",
+    find: "function resolveCompactionSummaryReserve(e){return Math.min(2048,Math.max(64,Math.floor(e.threshold/4)))}",
+    replace: "function resolveCompactionSummaryReserve(e){return compactionRecentReserve(e)}",
+  },
+  {
+    file: "harness/compaction.js",
+    why: "splitMessagesForCompaction: tool results whose calls are summarised are summarised with them, never left at the head of the kept window",
+    find: "function splitMessagesForCompaction(e,t){return t<=0?{older:[...e],recent:[]}:{older:e.slice(0,-t),recent:e.slice(-t)}}",
+    replace: "function splitMessagesForCompaction(e,t){return splitKeepingToolPairs(e,t)}",
+  },
 ];
 
 /** Whole new files, copied from scripts/eve-patch/files/<path> to node_modules/eve/dist/src/<path>. */
-export const NEW_FILES = ["harness/detached-delegations.js", "execution/parent-session-delivery.js", "execution/delegation-sweep.js"];
+export const NEW_FILES = ["harness/detached-delegations.js", "execution/parent-session-delivery.js", "execution/delegation-sweep.js", "harness/compaction-fidelity.js"];

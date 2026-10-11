@@ -314,6 +314,13 @@ cannot be cleared.*
 | Key | Meaning | Default |
 |---|---|---|
 | `agent.briefing` | Free text the model receives on every turn, inside the "This deployment" block (below; "This workspace" when the profile relabels). At most 400 words: it is paid for on every turn. Under a relabelling profile it is spoken in the profile's words like everything else the model reads, but write it in them to begin with. | `null` |
+| `agent.compaction.specialist_tokens` | When a specialist's prompt is summarised, in input tokens. Every step of a specialist's run resends the run's history; past this size its older steps are summarised (tool results included) and the run goes on from the summary and its latest steps. Nothing is stopped and no step refused: this bounds what one step sends, not how many steps a run takes. A whole number from 32000 up, or `null` for eve's own (90% of the model's window, ~1.18M tokens on GLM 5.3, which a specialist never reaches). See [`SPECIALIST_CONTEXT.md`](SPECIALIST_CONTEXT.md). | `160000` |
+| `agent.compaction.orchestrator_tokens` | The same for the main agent. Its steps resend the conversation and the specialists' results, not their tool steps. | `null` (eve's own) |
+| `agent.compaction.specialists` | A value for one specialist, by its directory name (a pack's too), overriding `specialist_tokens`; `null` gives that one eve's own. A name that is not a subagent is refused at build. | `{}` |
+
+Each value is held to 90% of the model's window, and read when the agent is built (eve compiles it into its
+manifest). `MODEL_COMPACT_AT_TOKENS_SPECIALIST` / `MODEL_COMPACT_AT_TOKENS_ORCHESTRATOR` override the role values for
+one deployment without a profile file (`off` = eve's own).
 
 ### `persona`
 

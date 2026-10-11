@@ -54,8 +54,15 @@ export interface DeploymentProfile {
    * hidden required field carries the fixed value the forms submit). Keys are real field keys and enum values.
    */
   domains: { deployments: DomainSpec; implementations: DomainSpec & { group_by: string | null; group_label: { singular: string; plural: string } } };
-  /** Sent to the model on every turn, after the stable prompt. null = nothing extra. */
-  agent: { briefing: string | null };
+  /**
+   * briefing: sent to the model on every turn, after the stable prompt. null = nothing extra.
+   * compaction: the input size, in tokens, past which a session's older steps are summarised (eve's compaction), by
+   * role and by specialist directory name; null = eve's own (90% of the model's window). agent/lib/compaction-threshold.ts.
+   */
+  agent: {
+    briefing: string | null;
+    compaction: { orchestrator_tokens: number | null; specialist_tokens: number | null; specialists: Record<string, number | null> };
+  };
   /** base: keep the base product's orchestrator persona in the root prompt (agent/lib/root-instructions.ts). */
   persona: { base: boolean };
   /** Base specialists the deployment does not use: moved out of agent/subagents/ at generation time. */
@@ -363,7 +370,12 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
     }
   },
   "agent": {
-    "briefing": null
+    "briefing": null,
+    "compaction": {
+      "orchestrator_tokens": null,
+      "specialist_tokens": 160000,
+      "specialists": {}
+    }
   },
   "persona": {
     "base": true

@@ -27,11 +27,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
     "tools": [
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix."
       },
       {
         "name": "dataroom_read",
-        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct."
       },
       {
         "name": "get_customer",
@@ -121,11 +121,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix."
       },
       {
         "name": "dataroom_read",
-        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct."
       },
       {
         "name": "dataroom_write",
@@ -174,11 +174,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix."
       },
       {
         "name": "dataroom_read",
-        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct."
       },
       {
         "name": "dataroom_write",
@@ -259,11 +259,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix."
       },
       {
         "name": "dataroom_read",
-        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct."
       },
       {
         "name": "email_list_inbox",
@@ -325,11 +325,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix."
       },
       {
         "name": "dataroom_read",
-        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct."
       },
       {
         "name": "dataroom_write",
@@ -358,11 +358,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix."
       },
       {
         "name": "dataroom_read",
-        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct."
       },
       {
         "name": "email_create_draft",
@@ -459,11 +459,11 @@ export const SUBAGENT_META: Record<string, SubagentMeta> = {
       },
       {
         "name": "dataroom_list",
-        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room."
+        "description": "List the logical file paths in the dm.md data room at or under a folder prefix (directory-boundary semantics: 'Accounts/acme' does NOT match 'Accounts/acme-bank/...'). Omit `prefix` to list the whole data room. A long listing comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`; call again with the same prefix and `offset: nextOffset` until a result has no `nextOffset`, or narrow the prefix."
       },
       {
         "name": "dataroom_read",
-        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). Invalid paths return an error message so you can self-correct."
+        "description": "Read one artifact from the dm.md data room by its canonical path. `.jsonl` paths are parsed into a `records` array; every other path returns raw `content` (null `content` / `found:false` when the file does not exist yet). A large file comes back ONE PAGE at a time: the result then has `offset`, `nextOffset` and `more`, which says how much there is and the exact call that reads on (the same path with `offset: nextOffset`); keep calling until a result has no `nextOffset`. Text pages count characters, `.jsonl` pages count records. Invalid paths return an error message so you can self-correct."
       },
       {
         "name": "dataroom_write",
