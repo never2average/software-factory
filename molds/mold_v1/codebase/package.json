@@ -221,6 +221,7 @@
     "check:neutral-names": "node scripts/check-neutral-names.mjs",
     "check:deployment-ids": "node scripts/check-deployment-ids.mjs --self-test && node scripts/check-deployment-ids.mjs",
     "check:google-client": "node scripts/check-google-client.mjs --self-test && node scripts/check-google-client.mjs",
+    "test:build-limits": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-build-limits.mjs",
     "test:neutral-names": "node scripts/test-neutral-names.mjs",
     "test:operator-tooling": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-operator-tooling.mjs",
     "build:agent-cli": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/build-agent-cli.mjs",

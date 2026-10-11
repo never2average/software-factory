@@ -178,7 +178,7 @@ const mini = mkdtempSync(join(tmpdir(), "agent-url-build-"));
 try {
   mkdirSync(join(mini, "lib"));
   mkdirSync(join(mini, "app"));
-  for (const f of ["next.config.ts", "lib/agent-url.ts", "lib/bundle-budget-dist.ts", "lib/sandbox-line-flag.ts"]) cpSync(join(ROOT, f), join(mini, f));
+  for (const f of ["next.config.ts", "lib/agent-url.ts", "lib/bundle-budget-dist.ts", "lib/sandbox-line-flag.ts", "lib/build-limits.ts"]) cpSync(join(ROOT, f), join(mini, f));
   writeFileSync(join(mini, "package.json"), JSON.stringify({ name: "agent-url-build-probe", private: true, type: "module" }));
   writeFileSync(join(mini, "tsconfig.json"), JSON.stringify({ compilerOptions: { allowImportingTsExtensions: true, noEmit: true, module: "esnext", moduleResolution: "bundler", jsx: "preserve", strict: true, skipLibCheck: true } }));
   writeFileSync(join(mini, "app/layout.tsx"), "export default function Layout({ children }: { children: React.ReactNode }) { return <html><body>{children}</body></html>; }\n");
