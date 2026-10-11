@@ -446,9 +446,11 @@ def _vm_tunnel(app_id, vr, f, fix):
     if net is not None:
         if net.prefixlen not in (30, 31) or not net.is_private:
             out.append(f"{f}: vm_remote.tunnel.network {net} must be a PRIVATE /30 or /31 that holds only the two machines — choose one inside 192.168.0.0/16 in {fix}")
-        usable = set(net.hosts()) if net.prefixlen == 30 else set(net)
+        # Asked of the network, never listed: set(net) of a wrong /8 was 16 million addresses, 2 GB, and the self-test
+        # that feeds one was killed for lack of memory beside the other agents' builds (mold_v1-232).
+        usable = lambda v: v in net and (net.prefixlen != 30 or v not in (net.network_address, net.broadcast_address))
         for k, v in (("factory_address", fa), ("server_address", sa)):
-            if v is not None and v not in usable:
+            if v is not None and not usable(v):
                 out.append(f"{f}: vm_remote.tunnel.{k} {v} is not a usable address of {net} — fix it in {fix}")
         if _ip_in(vr.get("host") or "", [str(net)]):
             out.append(f"{f}: vm_remote.tunnel.network {net} holds the server's public address {vr.get('host')}; the tunnel needs a private network of its own — change it in {fix}")

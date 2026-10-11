@@ -173,8 +173,14 @@ No list anywhere is edited by hand. In the pack:
 python3 .claude/scripts/packs.py check <pack_id>              # the pack on its own
 python3 .claude/scripts/packs.py apply <app_id>               # into build/<app_id>/, generators run
 python3 .claude/scripts/packs.py verify <app_id>              # the mold's check-subagents.py + shared-helper drift
-cd build/<app_id> && npm run typecheck && npm run build:eve   # eve build is the final word on skill frontmatter
+cd build/<app_id> && python3 ../../.claude/scripts/lib/buildfit.py run --step eve -- npm run typecheck \
+  && python3 ../../.claude/scripts/lib/buildfit.py run --step eve -- npm run build:eve   # eve build is the final word on skill frontmatter
 ```
+
+`buildfit.py run` sizes each build to the memory and CPUs this machine has free right now (V8's heap, worker and
+thread counts), runs it at a low priority, waits for memory when other agents' builds hold it, and retries once tight
+if the kernel kills it; exit 75 means this machine is too busy or too small for it now, not that the pack is wrong.
+`buildfit.py plan --step eve` shows what it would do here, changing nothing.
 
 `lanes.py` runs a packed application's codebase checks in `build/<app_id>/`, and the mold's functional lane
 includes `check:subagents`, so a stamped application cannot pass with a broken workspace. Close the task with the check's
