@@ -20,6 +20,13 @@
  * The maths is the browser's: oklch -> linear sRGB -> gamma-encoded sRGB clipped to gamut and rounded to 8 bits,
  * alpha composited in that space, then WCAG relative luminance. --self-test pins it to the live axe measurement above.
  *
+ * A `dark:` pair is measured on the dark surfaces only if `dark:` turns on exactly when the dark palette does: the
+ * theme chosen in the app (`data-theme` on <html>), else the system's preference. Tailwind's default `dark:` is the
+ * bare prefers-color-scheme media query, which disagrees with the page whenever the two choices differ (light chosen
+ * in the app on a system set to dark paints amber-400 on the light page, 1.46:1; mold_v1-219). So globals.css must
+ * declare `@custom-variant dark` keyed to the same attribute as its dark palette; this check refuses to run without it.
+ * tests/cards.spec.ts measures the painted result in a browser for every combination.
+ *
  * NOT CHECKED: a colour pair split across separate literals (e.g. two arguments of cn()), arbitrary values
  * (`text-[#…]`), state variants (hover:, focus:, …), and large text, which WCAG lets read 3:1 — every literal here
  * is held to 4.5:1, the stricter bar.
@@ -109,6 +116,48 @@ export function surfaces(css) {
     return out;
   };
   return { light: block(":root {"), dark: block('[data-theme="dark"] {') };
+}
+
+/**
+ * Problems with the `dark:` variant in globals.css: [] when `dark:` follows the in-app theme the same way the dark
+ * palette does, i.e. on [data-theme="dark"], and under prefers-color-scheme: dark only where data-theme is not "light".
+ */
+export function darkVariantProblems(css) {
+  const flat = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
+  const at = flat.indexOf("@custom-variant dark");
+  if (at < 0) {
+    return ["app/globals.css declares no `@custom-variant dark`, so `dark:` follows the system setting, not the theme chosen in the app"];
+  }
+  // The variant's body: from its first brace to the matching close.
+  let depth = 0;
+  let end = -1;
+  const open = flat.indexOf("{", at);
+  const semi = flat.indexOf(";", at);
+  if (open < 0 || (semi >= 0 && semi < open)) {
+    // The one-line form, `@custom-variant dark (<selector>);`.
+    end = semi;
+  } else {
+    for (let i = open; i < flat.length; i++) {
+      if (flat[i] === "{") depth++;
+      else if (flat[i] === "}" && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  const body = flat.slice(at, end < 0 ? flat.length : end + 1);
+  const out = [];
+  if (!/\[data-theme=["']?dark["']?\]/.test(body)) {
+    out.push('`@custom-variant dark` does not turn on for data-theme="dark" (dark chosen in the app)');
+  }
+  if (/prefers-color-scheme:\s*dark/.test(body)) {
+    if (!/:not\(\s*\[data-theme=["']?light["']?\]\s*\)/.test(body)) {
+      out.push('`@custom-variant dark` follows the system preference even when light is chosen in the app (no :not([data-theme="light"]))');
+    }
+  } else {
+    out.push("`@custom-variant dark` ignores the system preference, so \"match system\" no longer turns dark: on");
+  }
+  return out;
 }
 
 // ---- the rule ----------------------------------------------------------------------------------------------------
@@ -204,6 +253,26 @@ function selfTest() {
   const fgAlpha = findings('<div className="bg-red-500/10 text-red-800/40" />', pal, surf);
   expect(fgAlpha.length === 1, "applies a text colour's own alpha (text-red-800/40 fails)");
 
+  // The dark: variant follows the in-app theme, both ways (mold_v1-219).
+  const live2 = darkVariantProblems(readFileSync(path.join(ROOT, "app/globals.css"), "utf8"));
+  expect(live2.length === 0, `app/globals.css keys dark: to the in-app theme${live2.length ? ` (${live2.join("; ")})` : ""}`);
+  const ok = `@custom-variant dark { &:where([data-theme="dark"], [data-theme="dark"] *) { @slot; }
+    @media (prefers-color-scheme: dark) { &:where(:root:not([data-theme="light"]) *) { @slot; } } }`;
+  expect(darkVariantProblems(ok).length === 0, "accepts a dark variant on data-theme=dark, or the system's dark unless light is chosen");
+  expect(darkVariantProblems('@import "tailwindcss";').length === 1, "flags no @custom-variant dark (Tailwind's default follows the OS)");
+  expect(
+    darkVariantProblems("@custom-variant dark { @media (prefers-color-scheme: dark) { &:where(:root *) { @slot; } } }").length === 2,
+    "flags a dark variant that ignores data-theme (both the dark and the light choice)",
+  );
+  expect(
+    darkVariantProblems('@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));').length === 1,
+    "flags a dark variant that drops the system's preference (\"match system\" never goes dark)",
+  );
+  expect(
+    darkVariantProblems('/* @custom-variant dark ([data-theme="dark"]) */ @import "tailwindcss";').length === 1,
+    "ignores a dark variant that is only in a comment",
+  );
+
   if (fails.length) {
     for (const f of fails) console.error(`  FAIL ${f}`);
     process.exit(1);
@@ -215,7 +284,14 @@ function selfTest() {
 
 function main() {
   const pal = palette();
-  const surf = surfaces(readFileSync(path.join(ROOT, "app/globals.css"), "utf8"));
+  const globals = readFileSync(path.join(ROOT, "app/globals.css"), "utf8");
+  const variant = darkVariantProblems(globals);
+  if (variant.length) {
+    for (const v of variant) console.error(`app/globals.css: ${v}`);
+    console.error("\nKey `dark:` to the in-app theme (see the @custom-variant dark block's comment in app/globals.css).");
+    process.exit(1);
+  }
+  const surf = surfaces(globals);
   let n = 0;
   let checked = 0;
   for (const root of ROOTS) {

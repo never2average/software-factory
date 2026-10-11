@@ -79,6 +79,17 @@
  *                      also call ask_question in that same step; `+work` (`+work=<tool>`) makes it also call a tool of its
  *                      own in that step (default `independent_part`): a part of the request that needs no specialist.
  *
+ *   long-read          (mold_v1-220) a specialist READS A LONG DOCUMENT page by page and reports every fact in it.
+ *                      The person's message names it: `[[read <specialist>]]`; the root delegates to that
+ *                      specialist and, once it is back, answers `ROOT-DONE <its result>`. The specialist calls its
+ *                      `read_doc` tool from offset 0 and then at each result's `nextOffset` until a result has none,
+ *                      and answers `READER-RESULT <every FACT-n=xxxxxxxx it can still see>`. Its system prompt carries
+ *                      `SPECIALIST-ID: <name>`. A COMPACTION request (eve's checkpoint system prompt) is answered as a
+ *                      summariser would: every fact the transcript shows, how far the reading got (`NEXT-OFFSET n`,
+ *                      `READ-TO-END`) and who is reading. Every answer reports `prompt_tokens` as eve estimates a
+ *                      prompt (JSON length / 4, messages and tools), and `/__calls` carries it as `inputTokens`, with
+ *                      `compaction: true` on a compaction call (scripts/test-specialist-context.mjs).
+ *
  * `GET /__log` serves every decision with the time it was made (`at`, epoch ms), so a
  * rig can tell when the orchestrator was asked to continue — the moment a specialist's
  * result reached it.
@@ -269,8 +280,70 @@ function decideHandback(messages) {
   return { tools: calls };
 }
 
+/* ---- the `long-read` script (mold_v1-220) ------------------------------------------------------------------- */
+
+/** The first words of eve's compaction system prompt (eve/dist/src/harness/compaction-prompt.js). */
+const COMPACTION_SYSTEM = "You are performing a CONTEXT CHECKPOINT COMPACTION";
+const isCompaction = (messages) => messages.some((m) => m.role === "system" && textOf(m.content).startsWith(COMPACTION_SYSTEM));
+/** Every `FACT-n=xxxxxxxx` in a text, by n. */
+const factsIn = (text) => new Map([...text.matchAll(/FACT-(\d+)=([0-9a-f]{8})/g)].map((m) => [Number(m[1]), m[2]]));
+const factList = (facts) => [...facts.entries()].sort((a, b) => a[0] - b[0]).map(([n, v]) => `FACT-${n}=${v}`).join(" ");
+/** Who a long-read call is from: the specialist its system prompt (or, for a compaction, its transcript) names. */
+function longReadWho(messages) {
+  const text = messages.map((m) => textOf(m.content)).join("\n");
+  return /SPECIALIST-ID: ([a-z0-9-]+)/.exec(text)?.[1] ?? /You are the subagent "([^"]+)"/.exec(text)?.[1] ?? null;
+}
+/** eve's own estimate of a prompt (harness/compaction.js `estimateTokens`: JSON length / 4), messages and tools. */
+const estimateInput = (payload) => Math.ceil((JSON.stringify(payload.messages ?? []).length + JSON.stringify(payload.tools ?? []).length) / 4);
+
+function decideLongRead(messages) {
+  if (isCompaction(messages)) {
+    // A summariser keeps what the next model needs: every fact the transcript shows, and where the reading got to.
+    const text = messages.map((m) => textOf(m.content)).join("\n");
+    const offsets = [...text.matchAll(/(?:"nextOffset":|NEXT-OFFSET )(\d+)/g)].map((m) => Number(m[1]));
+    const ended = /READ-TO-END|the end\. Nothing more to read/.test(text);
+    const who = longReadWho(messages);
+    return {
+      text: `CHECKPOINT. SPECIALIST-ID: ${who ?? "unknown"}. Reading the document with read_doc. NEXT-OFFSET ${offsets.length ? Math.max(...offsets) : 0}.${ended ? " READ-TO-END." : ""} Facts found so far: ${factList(factsIn(text)) || "none"}`,
+    };
+  }
+  const system = messages.filter((m) => m.role === "system").map((m) => textOf(m.content)).join("\n");
+  const reader = /SPECIALIST-ID: ([a-z0-9-]+)/.exec(system)?.[1];
+  if (reader) {
+    const answer = () => ({ text: `READER-RESULT ${factList(factsIn(messages.map((m) => textOf(m.content)).join("\n")))}` });
+    // Where the reading is: the latest tool result, else the latest checkpoint, else the start.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "tool") {
+        let result = null;
+        try {
+          result = JSON.parse(textOf(m.content));
+        } catch {
+          /* not a read_doc result */
+        }
+        if (result && Number.isInteger(result.nextOffset)) return { tool: "read_doc", args: { offset: result.nextOffset } };
+        if (result && typeof result.content === "string") return answer();
+        continue;
+      }
+      const text = textOf(m.content);
+      if (m.role === "assistant" && text.startsWith("CHECKPOINT.")) {
+        if (/READ-TO-END/.test(text)) return answer();
+        return { tool: "read_doc", args: { offset: Number(/NEXT-OFFSET (\d+)/.exec(text)?.[1] ?? 0) } };
+      }
+    }
+    return { tool: "read_doc", args: {} };
+  }
+  const users = messages.filter((m) => m.role === "user");
+  const target = /\[\[read ([a-z0-9-]+)\]\]/.exec(textOf(users[users.length - 1]?.content))?.[1];
+  const results = messages.filter((m) => m.role === "tool");
+  if (results.length) return { text: `ROOT-DONE ${textOf(results[results.length - 1].content)}` };
+  if (!target) return { text: "ROOT-PLAIN" };
+  return { tool: target, args: { message: "Read the whole document with read_doc, page by page, and report every FACT line in it." } };
+}
+
 function decide(messages, payload = {}) {
   if (SCRIPT === "handback") return decideHandback(messages);
+  if (SCRIPT === "long-read") return decideLongRead(messages);
   if (SCRIPT === "vision" || SCRIPT === "vision-empty" || SCRIPT === "vision-refuses-reasoning") {
     // `{ empty: true }` — the same shape `empty-always` returns, so `completion()`
     // and `sseChunks()` need no case of their own for this. The branch that used to
@@ -366,7 +439,7 @@ function completion(decision, model) {
       created: Math.floor(Date.now() / 1000),
       model,
       choices: [{ index: 0, message: { role: "assistant", content: decision.text }, finish_reason: "stop" }],
-      ...(NO_USAGE ? {} : { usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }),
+      ...(NO_USAGE ? {} : { usage: decision.usage ?? { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }),
     };
   }
   return {
@@ -389,7 +462,7 @@ function completion(decision, model) {
         finish_reason: "tool_calls",
       },
     ],
-    ...(NO_USAGE ? {} : { usage: { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 } }),
+    ...(NO_USAGE ? {} : { usage: decision.usage ?? { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 } }),
   };
 }
 
@@ -412,7 +485,7 @@ function sseChunks(decision, model) {
   }
   if (decision.text) {
     out.push({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: decision.text }, finish_reason: null }] });
-    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], ...(NO_USAGE ? {} : { usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }) });
+    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], ...(NO_USAGE ? {} : { usage: decision.usage ?? { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } }) });
   } else {
     out.push({
       ...base,
@@ -432,7 +505,7 @@ function sseChunks(decision, model) {
         },
       ],
     });
-    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], ...(NO_USAGE ? {} : { usage: { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 } }) });
+    out.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], ...(NO_USAGE ? {} : { usage: decision.usage ?? { prompt_tokens: 13, completion_tokens: 9, total_tokens: 22 } }) });
   }
   return out;
 }
@@ -471,7 +544,11 @@ const server = createServer((req, res) => {
     {
       const { authorization: _secret, ...headers } = req.headers;
       const msgs = payload.messages ?? [];
-      CALLS.push({ at: Date.now(), model: payload.model, child: childNameOf(msgs) ?? (isChild(msgs) ? SUBAGENT : null), headers });
+      CALLS.push(
+        SCRIPT === "long-read"
+          ? { at: Date.now(), model: payload.model, child: longReadWho(msgs), headers, inputTokens: estimateInput(payload), compaction: isCompaction(msgs) }
+          : { at: Date.now(), model: payload.model, child: childNameOf(msgs) ?? (isChild(msgs) ? SUBAGENT : null), headers },
+      );
     }
     if (SCRIPT === "vision-refuses-reasoning" && payload.reasoning_effort !== undefined) {
       // The shape an OpenAI-compatible endpoint gives an unsupported parameter.
@@ -482,6 +559,10 @@ const server = createServer((req, res) => {
     }
     const messages = payload.messages ?? [];
     const decision = decide(messages, payload);
+    if (SCRIPT === "long-read") {
+      const input = estimateInput(payload);
+      decision.usage = { prompt_tokens: input, completion_tokens: 20, total_tokens: input + 20 };
+    }
     LOG.push({ at: Date.now(), child: isChild(messages), decision });
     console.error(
       `[fake-model] ${isChild(messages) || childNameOf(messages) ? "CHILD " : "ROOT  "} -> ${decision.empty ? "EMPTY" : decision.fail ? "500" : (decision.tools?.map((t) => t.tool).join("+") ?? decision.tool ?? "text")} (max_tokens=${payload.max_tokens ?? "unset"})`,

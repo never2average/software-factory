@@ -1,20 +1,23 @@
 // operator:onboard-self — record the running engineer as a team member and report readiness.
 //
-//   npm run operator:onboard-self -- --name "Quinn" --title "Solutions Engineer" \
+//   npm run operator:onboard-self -- --org <workspace id> --name "Quinn" --title "Solutions Engineer" \
 //     --focus "onboarding, migrations" [--email you@example.com] [--timezone Asia/Kolkata]
 //
-// Idempotent. Writes ONE team-scoped memory (`member-profile:<email>`)
-// so every agent and teammate knows who the team is — there is no internal-people table, and the
+// Idempotent. Writes ONE team-scoped memory (`member-profile:<email>`) in ONE workspace (`--org <id>`, or
+// WORKSPACE_ORG; required), inside that workspace's scope as operator:new-org and operator:new-customer write theirs:
+// on a deployment whose row-level security fails closed, a write that names no workspace is refused (mold_v1-229).
+// So every agent and teammate knows who the team is — there is no internal-people table, and the
 // {folder:people}/ data-room tree is external-only (see docs/OPERATOR_WORKFLOW.md). Also prints a
 // readiness checklist: identity, platform health, and the local env the MCP needs.
 //
 // Run with DATABASE_URL in the environment (it's in .env.local):
 //   node --experimental-strip-types --env-file=.env.local scripts/operator/onboard-self.mjs -- ...
-import { getDb, closeDb } from "../../agent/lib/db/index.ts";
+import { getDb, closeDb, withOrgDb } from "../../agent/lib/db/index.ts";
 import { memories } from "../../agent/lib/db/schema.ts";
 import { MEMBER_KIND } from "../../agent/lib/member-kind.ts";
 import { and, eq, inArray } from "drizzle-orm";
 import { createDataroomStore } from "../../agent/lib/dataroom-store.ts";
+import { storageKind } from "../../lib/storage/settings.ts";
 import { DEPLOYMENT_PROFILE } from "../../lib/deployment-profile.generated.ts";
 import { glyph, flag, resolveIdentity, isOperatorIdentity, ALLOWED_DOMAIN, checkHealth, envReady, operatorEnv, memberProfileKeys, pickMemberProfile } from "./lib/operator.mjs";
 import { W } from "./lib/words.mjs";
@@ -54,14 +57,35 @@ async function main() {
   }
   console.log(`${glyph.ok} Identity: ${email}  (from ${source})`);
 
+  // The workspace the profile is recorded in. Asked before anything is written: there is no default workspace.
+  // The same rule as the customer-facing scripts' workspaceFor() (lib/customer.mjs).
+  const org = (flag("org") || operatorEnv("WORKSPACE_ORG")).trim();
+  if (!org) {
+    console.error(`${glyph.bad} --org <workspace id> (or WORKSPACE_ORG) is required: your member profile is recorded in that workspace.`);
+    process.exit(1);
+  }
+  console.log(`${glyph.ok} Workspace: ${org}`);
+
   // 2. Platform health (advisory — you can still record your profile).
   const health = await checkHealth();
   console.log(`${health.ok ? glyph.ok : glyph.warn} Platform health: ${health.detail}`);
 
-  // 3. Local env the MCP server needs (values never printed).
-  const blob = envReady("BLOB_READ_WRITE_TOKEN");
+  // 3. Local env the MCP server needs (values never printed). BLOB_READ_WRITE_TOKEN is the Vercel Blob driver's
+  //    only: on another driver (STORAGE_DRIVER=filesystem or s3) the local MCP reaches the data room through the Ops API.
+  let driver;
+  try {
+    driver = storageKind();
+  } catch (e) {
+    driver = null;
+    console.log(`${glyph.warn} File storage: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (driver === "vercel-blob") {
+    const blob = envReady("BLOB_READ_WRITE_TOKEN");
+    console.log(`${blob ? glyph.ok : glyph.warn} BLOB_READ_WRITE_TOKEN ${blob ? "set" : "missing — Data Room tools disabled"}`);
+  } else if (driver) {
+    console.log(`${glyph.ok} File storage: ${driver} (STORAGE_DRIVER); the local MCP server reaches the data room through the Ops API.`);
+  }
   const cf = envReady("CLOUDFLARE_ACCOUNT_ID") && envReady("CLOUDFLARE_API_TOKEN");
-  console.log(`${blob ? glyph.ok : glyph.warn} BLOB_READ_WRITE_TOKEN ${blob ? "set" : "missing — Data Room tools disabled"}`);
   console.log(`${cf ? glyph.ok : glyph.warn} CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN ${cf ? "set" : "missing — model calls will fail (Cloudflare Workers AI is the only provider)"}`);
 
   // 4. Record the member profile as a team memory (idempotent upsert by key).
@@ -81,42 +105,47 @@ async function main() {
   };
   const value = JSON.stringify(profile);
 
-  const found = await db
-    .select({ id: memories.id, key: memories.key, version: memories.version })
-    .from(memories)
-    .where(and(eq(memories.scope, "team"), inArray(memories.key, [key])));
-  const existing = pickMemberProfile(found, email);
-
+  // One transaction in the workspace's scope (withOrgDb sets app.org_id), the row stamped with it: the read sees only
+  // this workspace's rows and the write passes the org_isolation check whether that policy is permissive or closed.
+  const { existing } = await withOrgDb(org, async (tx) => {
+    const found = await tx
+      .select({ id: memories.id, key: memories.key, version: memories.version })
+      .from(memories)
+      .where(and(eq(memories.orgId, org), eq(memories.scope, "team"), inArray(memories.key, [key])));
+    const existing = pickMemberProfile(found, email);
+    if (existing) {
+      await tx
+        .update(memories)
+        .set({ key, value, authorEmail: email, updatedAt: new Date(), version: (existing.version ?? 1) + 1 })
+        .where(and(eq(memories.orgId, org), eq(memories.id, existing.id)));
+    } else {
+      await tx.insert(memories).values({
+        orgId: org,
+        scope: "team",
+        entityId: null,
+        key,
+        value,
+        authorEmail: email,
+        sensitivity: "internal",
+      });
+    }
+    return { existing };
+  });
   if (existing) {
-    await db
-      .update(memories)
-      .set({ key, value, authorEmail: email, updatedAt: new Date(), version: (existing.version ?? 1) + 1 })
-      .where(eq(memories.id, existing.id));
     const moved = existing.key === key ? "" : `, moved from \`${existing.key}\``;
-    console.log(`${glyph.ok} Updated your member profile (team memory \`${key}\`, v${(existing.version ?? 1) + 1}${moved}).`);
+    console.log(`${glyph.ok} Updated your member profile in ${org} (team memory \`${key}\`, v${(existing.version ?? 1) + 1}${moved}).`);
   } else {
-    await db.insert(memories).values({
-      scope: "team",
-      entityId: null,
-      key,
-      value,
-      authorEmail: email,
-      sensitivity: "internal",
-    });
-    console.log(`${glyph.ok} Recorded you as a team member (team memory \`${key}\`).`);
+    console.log(`${glyph.ok} Recorded you as a team member in ${org} (team memory \`${key}\`).`);
   }
 
   // 5. Register the member as a first-class {folder:people}/ roster entry (kind MEMBER_KIND, a stored value).
   //    Reverses the old "People is external-only" rule FOR INTERNAL members: the
   //    kind tag keeps them distinct, and list_members reads these (entries written with the
   //    earlier value too; agent/lib/member-kind.ts).
-  //    In ONE workspace's data room (`--org <id>` or WORKSPACE_ORG): every workspace has its own tree and there is no
-  //    default one to fall back to (lib/dataroom-keyspace.ts).
-  const rosterOrg = (flag("org") || operatorEnv("WORKSPACE_ORG")).trim();
-  const store = rosterOrg ? createDataroomStore({ orgId: rosterOrg }) : null;
-  if (!store) {
-    console.log(`${glyph.warn} Not added to a workspace's ${FOLDER.people}/ roster: pass --org <workspace id> (or set WORKSPACE_ORG).`);
-  } else if (store.backend && store.backend.kind !== "local") {
+  //    In the same workspace's data room: every workspace has its own tree and there is no default one to fall back to
+  //    (lib/dataroom-keyspace.ts).
+  const store = createDataroomStore({ orgId: org });
+  if (store.backend && store.backend.kind !== "local") {
     const slug = personSlug(email);
     const skills = flag("skills").trim() ? flag("skills").split(",").map((s) => s.trim()).filter(Boolean) : [];
     const pod = flag("pod").trim() || null;
@@ -148,7 +177,7 @@ async function main() {
     }
     console.log(`${glyph.ok} Registered you in the ${MEMBER} roster (${FOLDER.people}/${slug}/, kind ${MEMBER_KIND}).`);
   } else {
-    console.log(`${glyph.warn} No blob data room (BLOB_READ_WRITE_TOKEN) — skipped the ${FOLDER.people}/ roster entry.`);
+    console.log(`${glyph.warn} No file store configured (BLOB_READ_WRITE_TOKEN, or STORAGE_DRIVER) — skipped the ${FOLDER.people}/ roster entry.`);
   }
 
   await closeDb();

@@ -106,7 +106,13 @@
     }
   },
   "agent": {
-    "briefing": null
+    "briefing": null,
+    "compaction": {
+      "$comment": "When a session's prompt is summarised so it stops growing (eve's compaction), in input tokens. Every step of a session resends its whole history, so a specialist that runs many tool steps pays for that history again on each one; past this size its older steps are summarised (tool results included) and it goes on from the summary and its latest steps. Nothing is stopped and no step is refused: this bounds what ONE step sends, not how many steps a specialist takes. specialist_tokens: every specialist (agent/subagents/*, a pack's too). orchestrator_tokens: the main agent; null = eve's own threshold, 90% of the model's context window. specialists: a value for one specialist by its directory name, overriding specialist_tokens (null there = eve's own threshold for it). Each value is a whole number from 32000 up, and is held to 90% of the model's window. The environment variables MODEL_COMPACT_AT_TOKENS_SPECIALIST and MODEL_COMPACT_AT_TOKENS_ORCHESTRATOR override the role values for one deployment (\"off\" = eve's own). Read when the agent is built. See docs/SPECIALIST_CONTEXT.md.",
+      "orchestrator_tokens": null,
+      "specialist_tokens": 160000,
+      "specialists": {}
+    }
   },
   "persona": {
     "$comment": "base: the root agent's built-in persona (the operations orchestrator, its specialist roster, the system-of-record and stand-up sections). false drops it: the root prompt keeps only its neutral rules, and a pack's agent/instructions/50-pack-*.md supplies who the agent is.",

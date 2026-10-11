@@ -2,8 +2,8 @@
 
 agent-workspace depends on [eve](https://github.com/vercel/eve), a third-party framework, at exactly **0.25.1**, and changes it
 in one place: `patches/eve+0.25.1.patch`, applied to the installed copy. Nothing is forked, published or filed upstream.
-What it changes and why is in docs/SPECIALIST_HANDBACK.md ("Per-result delegation"); this page is how it is applied
-and kept honest.
+What it changes and why is in docs/SPECIALIST_HANDBACK.md ("Per-result delegation") and, for compaction, in
+docs/SPECIALIST_CONTEXT.md; this page is how it is applied and kept honest.
 
 ## The mechanism: patch-package
 
@@ -18,7 +18,7 @@ and kept honest.
 
 eve ships minified modules, so the patch file is one long line per changed file. **Review the readable source instead:**
 `scripts/eve-patch/changes.mjs` lists every edit as an exact anchor and its replacement, each with the reason, and
-`scripts/eve-patch/files/` holds the three new modules, written readably. `node scripts/eve-patch/apply.mjs --dry-run`
+`scripts/eve-patch/files/` holds the four new modules, written readably. `node scripts/eve-patch/apply.mjs --dry-run`
 checks that every anchor occurs exactly once in a pristine eve 0.25.1.
 
 ## How each deployment applies it
@@ -57,6 +57,14 @@ gates everything new on `driverCapabilities.delegationResults`, the adapter's `p
 delivery's `delegationResults` — or deploy it only when no affected run is in flight. mold_v1-196/197 follow the same
 rule: the idle bound, the independent-work hand-over and the sweep hook (new hooks and a new step in the turn's wait)
 run only under `driverCapabilities.delegationSweep`, which only the new driver writes into a NEW turn's input.
+
+**Compaction (mold_v1-220).** `harness/compaction-fidelity.js` changes what eve's compaction keeps, for every session
+that reaches its threshold: the summariser reads tool calls and results in full (the transcript is never held below
+the summarised messages' own size, which the session already sent; over its budget the largest parts are shortened
+first), the kept messages keep their tool calls and results as
+complete pairs, and the kept window is at most a quarter of the threshold. It runs inside the step that compacts, so it
+adds no workflow-level operation and replays like any step. A session that never reaches its threshold is unchanged.
+docs/SPECIALIST_CONTEXT.md is why, and how a specialist's threshold is set.
 
 **What the application may call.** The patch exports one thing for the application's own code: `delegationSweep` from
 `eve/channels` (execution/delegation-sweep.js), what the specialist sweep (agent/lib/specialist-sweep.ts) does from a

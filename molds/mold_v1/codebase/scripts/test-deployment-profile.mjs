@@ -398,5 +398,12 @@ assert.ok(!renderDeploymentBriefing(pickOnly).includes("custom_append"), "no lon
 
 bad({ domains: { deployments: { colour: "red" } } }, /domains\.deployments\.colour: unknown key/);
 bad({ domains: { releases: {} } }, /domains\.releases: unknown key/);
+// agent.compaction (mold_v1-220): whole numbers of tokens from 32000 up or null, per role and per specialist by name.
+assert.equal(generate({ agent: { compaction: { specialist_tokens: 200000, orchestrator_tokens: 400000, specialists: { research: 120000, evals: null } } } }).status, 0, "compaction values per role and per specialist generate");
+bad({ agent: { compaction: { specialist_tokens: 1000 } } }, /agent\.compaction\.specialist_tokens must be null .* or a whole number of tokens from 32000 up/);
+bad({ agent: { compaction: { orchestrator_tokens: "lots" } } }, /agent\.compaction\.orchestrator_tokens must be null/);
+bad({ agent: { compaction: { specialists: { "no-such-specialist": 100000 } } } }, /agent\.compaction\.specialists\.no-such-specialist: "no-such-specialist" is not a subagent/);
+bad({ agent: { compaction: { specialists: { research: 12.5 } } } }, /agent\.compaction\.specialists\.research must be null/);
+bad({ agent: { compaction: { every_tokens: 1 } } }, /agent\.compaction\.every_tokens: unknown key/);
 
 console.log("deployment-profile: all assertions passed");

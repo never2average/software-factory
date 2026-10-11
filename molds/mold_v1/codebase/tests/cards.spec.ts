@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { STORAGE_KEYS } from "../lib/browser-storage";
 import { DEPLOYMENT_PROFILE } from "../lib/deployment-profile.generated";
+
+const THEME_STORAGE_KEY = STORAGE_KEYS.theme;
 
 /**
  * Visual + structural checks for the redesigned workspace list cards, against
@@ -162,3 +165,86 @@ test("sandbox line: shows the place in line live, clears when the sandbox opens;
   expect(asked.length).toBe(after);
   await page.screenshot({ path: "test-results/sandbox-wait.png" });
 });
+
+/**
+ * THE IN-APP THEME DECIDES THE `dark:` VARIANTS (mold_v1-219). The page colours follow the theme chosen in the app
+ * (`data-theme` on <html>, set by the theme toggle and the inline script in app/layout.tsx), and a `dark:` text colour
+ * must follow the same choice. When it followed the browser's own setting instead, light chosen in the app on a
+ * browser that prefers dark painted dark-mode text (amber-400) on the light page, and dark chosen on a browser that
+ * prefers light painted light-mode text (amber-800) on the dark page: both unreadable. Every combination is checked
+ * here, with "match system" (no stored choice) following the browser both ways.
+ *
+ * The contrast is measured as painted: the notice's background and every background above it are composited in a
+ * canvas (the browser's own colour conversion), and the text colour is read the same way. 4.5:1 is WCAG 2.1 AA.
+ */
+const THEME_CASES = [
+  { chosen: "light", browser: "dark", page: "light" },
+  { chosen: "dark", browser: "light", page: "dark" },
+  { chosen: "light", browser: "light", page: "light" },
+  { chosen: "dark", browser: "dark", page: "dark" },
+  { chosen: "system", browser: "dark", page: "dark" },
+  { chosen: "system", browser: "light", page: "light" },
+] as const;
+
+for (const c of THEME_CASES) {
+  test(`tinted notice reads 4.5:1 with ${c.chosen} chosen in the app and a browser that prefers ${c.browser}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: c.browser });
+    await page.addInitScript(
+      ({ key, chosen }) => {
+        try {
+          if (chosen === "system") window.localStorage.removeItem(key);
+          else window.localStorage.setItem(key, chosen);
+        } catch {
+          /* no storage: nothing to set */
+        }
+      },
+      { key: THEME_STORAGE_KEY, chosen: c.chosen },
+    );
+    await page.goto("/preview/cards");
+    const notice = page.getByTestId("tint-notice");
+    await expect(notice).toBeVisible();
+
+    const painted = await notice.evaluate((el) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) throw new Error("no 2d canvas");
+      const pixel = (): [number, number, number] => {
+        const d = ctx.getImageData(0, 0, 1, 1).data;
+        return [d[0], d[1], d[2]];
+      };
+      // The backgrounds from <html> down to the notice, painted in that order over the canvas's white.
+      const layers: string[] = [];
+      for (let n: Element | null = el; n; n = n.parentElement) layers.unshift(getComputedStyle(n).backgroundColor);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, 1, 1);
+      for (const bg of layers) {
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, 1, 1);
+      }
+      const background = pixel();
+      ctx.fillStyle = getComputedStyle(el).color;
+      ctx.fillRect(0, 0, 1, 1);
+      const text = pixel();
+      return { background, text, pageBackground: getComputedStyle(document.body).backgroundColor };
+    });
+
+    const luminance = (rgb: readonly number[]) => {
+      const [r, g, b] = rgb.map((v) => {
+        const s = v / 255;
+        return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const [hi, lo] = [luminance(painted.text), luminance(painted.background)].sort((a, b) => b - a);
+    const contrast = (hi + 0.05) / (lo + 0.05);
+    // The page itself is the theme the case expects: a light page is light, a dark page dark.
+    const pageIsDark = luminance(painted.background) < 0.2;
+    expect(pageIsDark ? "dark" : "light", `page background ${painted.pageBackground}`).toBe(c.page);
+    expect(
+      contrast,
+      `text rgb(${painted.text.join(",")}) on rgb(${painted.background.join(",")}) reads ${contrast.toFixed(2)}:1`,
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+}

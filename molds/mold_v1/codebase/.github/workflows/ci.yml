@@ -852,6 +852,15 @@ jobs:
         if: always()
         run: npm run test:workflow-run-cost
 
+      # A SPECIALIST STEP SENDS AT MOST ABOUT ITS THRESHOLD (mold_v1-220). Every step resends the session's history, and
+      # eve compacted only at 90% of the window (~1.18M tokens on GLM 5.3), so a specialist never did. The eve patch's
+      # compaction keeps what was read (tool results reach the summariser in full; kept messages keep their tool pairs;
+      # the kept window is at most a quarter of the threshold), the thresholds per role come from the profile (the main
+      # agent eve's own), and data-room reads come back a page at a time that, followed, rebuild the file byte for byte.
+      - name: Specialist context (compaction keeps what was read; thresholds per role; paged data-room reads)
+        if: always()
+        run: npm run test:compaction-fidelity && npm run test:dataroom-paging
+
       # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
       # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
       - name: Checkout still matches the commit (profiles/, generated files)
@@ -928,6 +937,13 @@ jobs:
       - name: Session affinity on every Workers AI call (at the wire, real eve runtime)
         if: always() && matrix.shard == 2
         run: npm run test:session-affinity
+
+      # …and on the real eve runtime with the fake model server (mold_v1-220): a specialist reads an 800,000-character
+      # document page by page; with the profile's threshold no call (compaction calls included) sends more than it, and
+      # every fact reaches the main agent; with eve's own threshold the same run peaks above it. Both totals are printed.
+      - name: A long specialist run stays under its threshold and loses nothing (real eve runtime)
+        if: always() && matrix.shard == 1
+        run: npm run test:specialist-context
 
       # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
       # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
@@ -1355,6 +1371,16 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:library-provisioning-db
+
+      # operator:onboard-self records the person running it as a team memory. It wrote that row with no workspace in
+      # scope, so on a deployment whose row-level security fails closed it was refused (42501) while new-org and
+      # new-customer worked (mold_v1-229). This runs the real command against the production policy shape.
+      - name: Operator self-onboarding writes in its workspace, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:onboard-self-db
 
       # The two record areas (deployments[], implementation) written by upsert_customer: only the rows and fields
       # a patch names change, each in SQL onto what is stored at write time; a row is deleted only by remove: true;

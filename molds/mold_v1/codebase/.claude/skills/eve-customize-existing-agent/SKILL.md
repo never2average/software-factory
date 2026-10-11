@@ -101,6 +101,7 @@ Every `agent.ts` takes its model from `agent/lib/model.ts`:
 ```ts
 model: agentModel("orchestrator"),            // or agentModel("specialist")
 modelContextWindowTokens: modelContextWindowTokens(),
+compaction: compactionFor("<key>", "orchestrator"),   // a subagent; the same role as its window
 ```
 
 - `MODEL_PROVIDER` is `cloudflare` (default; one model for the whole fleet,
@@ -114,6 +115,11 @@ modelContextWindowTokens: modelContextWindowTokens(),
   is text-only. Never pass it to an `agent.ts`.
 - `modelContextWindowTokens()` is required for the Cloudflare provider: eve cannot look up
   the window of a custom OpenAI-compatible model, and needs it to know when to compact.
+- `compaction: compactionFor(<key>, <role>)` is required on a subagent: it is when the run's
+  older steps are summarised (the profile's `agent.compaction`, 160,000 tokens by default for
+  a specialist), so a long run does not resend its whole history on every step. To change
+  it for one specialist, add a profile value (`agent.compaction.specialists.<key>`), never a
+  number in `agent.ts`. docs/SPECIALIST_CONTEXT.md.
 - Never write a model id into an `agent.ts`. A hardcoded id bypasses the provider switch
   and is how a fleet ends up billing the wrong provider. Values come from the environment,
   by name; trailing newlines in a value are trimmed by `model.ts` for that reason.

@@ -27,8 +27,9 @@ function merge(base, over, path, shape) {
 }
 // "$comment" is documentation at any depth, never data.
 const uncomment = (v) => (Array.isArray(v) ? v.map(uncomment) : isObj(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== "$comment").map(([k, x]) => [k, uncomment(x)])) : v);
-// library.sources is a map of the deployment's own source ids (scripts/lib/profile-library.mjs validates each).
-const FREE = ["dataroom.domains", "library.sources"];
+// library.sources is a map of the deployment's own source ids (scripts/lib/profile-library.mjs validates each);
+// agent.compaction.specialists a map of specialist directory names (checked against the subagents present, below).
+const FREE = ["dataroom.domains", "library.sources", "agent.compaction.specialists"];
 // domains.<area>.fields is a map keyed by real field keys; its entries are validated against the schemas below.
 const FIELD_MAP = /^domains\.(deployments|implementations)\.fields(\.|$)/;
 let current = "";
@@ -337,6 +338,17 @@ for (const area of Object.keys(AREAS)) {
 }
 
 if (profile.agent.briefing !== null && (typeof profile.agent.briefing !== "string" || profile.agent.briefing.split(/\s+/).length > 400)) fail("agent.briefing must be null or a string of at most 400 words (it is sent on every turn)");
+// agent.compaction: when a session's prompt is summarised, in input tokens (agent/lib/compaction-threshold.ts reads it).
+// The per-specialist names are checked once the subagents present are known (below).
+const COMPACT_MIN = 32_000;
+const compactValue = (at, v) => {
+  if (v !== null && !(Number.isInteger(v) && v >= COMPACT_MIN && v <= 10_000_000)) fail(`${at} must be null (eve's own threshold) or a whole number of tokens from ${COMPACT_MIN} up, for example 160000`);
+};
+if (!isObj(profile.agent.compaction)) fail("agent.compaction must be an object: { orchestrator_tokens, specialist_tokens, specialists }");
+compactValue("agent.compaction.orchestrator_tokens", profile.agent.compaction.orchestrator_tokens);
+compactValue("agent.compaction.specialist_tokens", profile.agent.compaction.specialist_tokens);
+if (!isObj(profile.agent.compaction.specialists)) fail("agent.compaction.specialists must be a map of specialist directory name to tokens (empty for none)");
+for (const [key, v] of Object.entries(profile.agent.compaction.specialists)) compactValue(`agent.compaction.specialists.${key}`, v);
 
 // --- what the model is: the base persona, and which base specialists it has ------------------------------------
 if (typeof profile.persona?.base !== "boolean") fail("persona.base must be true (keep the base product's orchestrator persona) or false (a pack's agent/instructions/50-pack-*.md supplies it)");
@@ -365,6 +377,10 @@ for (const [i, key] of profile.specialists.exclude.entries()) {
   if (!knownSpecialists.has(key)) fail(`specialists.exclude[${i}]: "${key}" is not a subagent (none of agent/subagents/*/agent.ts; known: ${[...knownSpecialists].sort().join(", ")})`);
 }
 if (new Set(profile.specialists.exclude).size !== profile.specialists.exclude.length) fail("specialists.exclude lists a subagent twice");
+for (const key of Object.keys(profile.agent.compaction.specialists)) {
+  if (!/^[a-z][a-z0-9-]{0,79}$/.test(key)) fail(`agent.compaction.specialists.${key}: not a subagent directory name, e.g. "data-migration"`);
+  if (!knownSpecialists.has(key)) fail(`agent.compaction.specialists.${key}: "${key}" is not a subagent (none of agent/subagents/*/agent.ts; known: ${[...knownSpecialists].sort().join(", ")})`);
+}
 
 // --- the library a new workspace is provisioned with: named here, never listed in base code -----------------------
 // Each source is a directory in the repository (workflows/*.workflow.js, recipes.json). A later profile adds one
@@ -454,8 +470,15 @@ export interface DeploymentProfile {
    * hidden required field carries the fixed value the forms submit). Keys are real field keys and enum values.
    */
   domains: { deployments: DomainSpec; implementations: DomainSpec & { group_by: string | null; group_label: { singular: string; plural: string } } };
-  /** Sent to the model on every turn, after the stable prompt. null = nothing extra. */
-  agent: { briefing: string | null };
+  /**
+   * briefing: sent to the model on every turn, after the stable prompt. null = nothing extra.
+   * compaction: the input size, in tokens, past which a session's older steps are summarised (eve's compaction), by
+   * role and by specialist directory name; null = eve's own (90% of the model's window). agent/lib/compaction-threshold.ts.
+   */
+  agent: {
+    briefing: string | null;
+    compaction: { orchestrator_tokens: number | null; specialist_tokens: number | null; specialists: Record<string, number | null> };
+  };
   /** base: keep the base product's orchestrator persona in the root prompt (agent/lib/root-instructions.ts). */
   persona: { base: boolean };
   /** Base specialists the deployment does not use: moved out of agent/subagents/ at generation time. */

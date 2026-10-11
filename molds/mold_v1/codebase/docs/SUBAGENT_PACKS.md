@@ -29,6 +29,7 @@ subagents it discovers:
 | the subagent as a delegation target | `agent/subagents/<key>/agent.ts` | eve discovers the directory and gives the root a tool named `<key>` |
 | its key, display name and summary in every UI list, label and provisioned row | the directory, plus optional `subagent.json` | `scripts/gen-subagent-meta.mjs` writes `app/_components/subagent-meta.generated.ts` and `agent/lib/subagent-registry.generated.ts`; every consumer reads those |
 | permission to write its data-room folders | `subagent.json` `"dataroomPaths"` | the generator appends them to `DATAROOM_PATH_TEMPLATES` |
+| when its run is summarised so a step does not resend the whole run | `agent.ts` `compaction: compactionFor("<key>", <role>)`, and optionally the profile's `agent.compaction.specialists.<key>` | eve compacts past the profile's threshold (160,000 tokens by default); `npm run check:subagents` fails an `agent.ts` without it (docs/SPECIALIST_CONTEXT.md) |
 | when the root should delegate to it | `agent/instructions/NN-pack-<name>.md` | eve loads the root `agent/instructions.ts` first, then every `.md`/`.ts` in `agent/instructions/` in filename order |
 | shared sandbox helpers | `scripts/subagent-shared/<family>/` with `targets.json` | `npm run sync:subagent-shared` copies the family into each target's sandbox seed |
 
@@ -219,7 +220,7 @@ invoices-pack/
       50-pack-invoices.md                      root delegation text
     subagents/
       invoice-extraction/
-        agent.ts                               description = routing hint
+        agent.ts                               description = routing hint; compaction: compactionFor("invoice-extraction", <role>)
         subagent.json                          name, summary, dataroomPaths
         instructions.md                        the contract: sources, precedence, output, skills table, scripts table
         instructions/00-mode.ts                copied verbatim from agent/subagents/research/

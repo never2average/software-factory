@@ -690,7 +690,9 @@ const ctx = ctxWith(fakeSandbox(join(WORK, "sb-dr")));
 const readerSource = readFileSync(join(ROOT, "agent/lib/dataroom-tools.ts"), "utf8");
 check(
   "dataroom_read is storeForSession + store.read, with no path handling of its own",
-  /dataroomReadTool[\s\S]{0,900}await storeForSession\(ctx\)[\s\S]{0,400}store\.read\(path\)/.test(readerSource),
+  // The first window only finds execute() past the description and schema (longer since paging, mold_v1-220); the
+  // second is the property: nothing between resolving the store and reading the path.
+  /dataroomReadTool[\s\S]{0,2000}await storeForSession\(ctx\)[\s\S]{0,400}store\.read\(path\)/.test(readerSource),
 );
 
 const PROBES = [

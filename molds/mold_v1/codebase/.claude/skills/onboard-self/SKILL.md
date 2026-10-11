@@ -60,12 +60,14 @@ rather than silently falling through to another provider.
 **5. Record your member profile.** Make the system know you — there is no internal
 people table, so this writes a team-scoped memory every agent can see:
 ```bash
-npm run operator:onboard-self -- --name "Your Name" --title "Solutions Engineer" \
+npm run operator:onboard-self -- --org <workspace id> --name "Your Name" --title "Solutions Engineer" \
   --focus "what you own" [--timezone Asia/Kolkata]
 ```
 It resolves your identity from step 2, checks health + local env, and upserts
-`member-profile:<you>` (idempotent — re-run any time to update). Green checks = you're
-recorded.
+`member-profile:<you>` in that workspace (idempotent — re-run any time to update). Green checks = you're
+recorded. `--org` (or `WORKSPACE_ORG`) is required: the profile is written inside that workspace's
+scope, as `operator:new-org` and `operator:new-customer` write theirs, so a deployment whose row-level
+security fails closed accepts it.
 
 **6. Smoke test.** From your coding agent, ask it to run the MCP's `connector_list`.
 You should get the six connectors (System of record, Slack, GitHub, Granola, Gmail,
@@ -81,10 +83,11 @@ subagents (`research`, `configuration`, `deployment`, `data-migration`,
 READ:
 - `~/.config/workspace-mcp/credentials.json` — your stored identity (email only)
 - `/api/ops/health` — live platform status
-- `.env.local` — presence of `BLOB_READ_WRITE_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`
+- `.env.local` — presence of `BLOB_READ_WRITE_TOKEN` (only when `STORAGE_DRIVER` is unset or `vercel-blob`),
+  `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`
 
 WRITE (only this):
-- `memories` table, `scope=team`, key `member-profile:<email>` ← your member profile
+- `memories` table, `org_id=<--org>`, `scope=team`, key `member-profile:<email>` ← your member profile
 
 ## Never
 
@@ -100,5 +103,5 @@ WRITE (only this):
 curl -s .../api/ops/health | python3 -m json.tool   # 1. platform up?
 node setup/workspace-login.mjs                              # 2. sign in (Google)
 vercel env pull .env.local --environment production  # 3. blob token
-npm run operator:onboard-self -- --name "…" --focus "…"   # 5. record profile (idempotent)
+npm run operator:onboard-self -- --org <id> --name "…" --focus "…"   # 5. record profile (idempotent)
 ```

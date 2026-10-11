@@ -42,6 +42,7 @@ import { createEmptyResponseRecovery, type ModelLike } from "./empty-model-respo
 import { publishEmptyResponse } from "./empty-model-response-log.ts";
 import { servedModelNote } from "./served-model.ts";
 import { withSessionAffinity } from "./session-affinity.ts";
+import { agentCompaction } from "./compaction-threshold.ts";
 import { createOutputBudget, resolveOutputBudget } from "./model-output-budget.ts";
 import { toolNameAliases } from "./tool-name-aliases.ts";
 import { uniqueToolCallIds } from "./unique-tool-call-ids.ts";
@@ -119,6 +120,23 @@ export function modelContextWindowTokens(role: AgentRole = "orchestrator"): numb
     envTrim(process.env[`CLOUDFLARE_CONTEXT_WINDOW_${role.toUpperCase()}`]) ?? envTrim(process.env.CLOUDFLARE_CONTEXT_WINDOW);
   if (override && Number.isFinite(Number(override)) && Number(override) > 0) return Number(override);
   return CLOUDFLARE_CONTEXT_WINDOWS[agentModelId(role)] ?? 262_144;
+}
+
+/**
+ * eve's `compaction` for one agent: when its prompt is summarised, from the deployment profile's `agent.compaction`
+ * (agent/lib/compaction-threshold.ts, mold_v1-220). `specialist` is the subagent's directory name (`null` for the main
+ * agent); `modelRole` is the role whose model it runs, whose window the threshold is a fraction of — the same role its
+ * `modelContextWindowTokens` names. Every agent declares it beside that window:
+ *
+ *   model: agentModel("specialist"),
+ *   modelContextWindowTokens: modelContextWindowTokens("specialist"),
+ *   compaction: compactionFor("my-specialist", "specialist"),
+ *
+ * Undefined (eve's own, 90% of the window) for the main agent by default, in gateway mode, and when the value is at or
+ * above eve's own. `npm run check:subagents` fails a subagent that does not declare it.
+ */
+export function compactionFor(specialist: string | null, modelRole: AgentRole): { thresholdPercent: number } | undefined {
+  return agentCompaction(specialist === null ? "orchestrator" : "specialist", specialist ?? undefined, modelContextWindowTokens(modelRole));
 }
 
 /**

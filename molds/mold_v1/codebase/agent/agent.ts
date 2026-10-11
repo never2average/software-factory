@@ -1,5 +1,5 @@
 import { defineAgent } from "eve";
-import { agentModel, agentReasoning, modelContextWindowTokens } from "#lib/model.js";
+import { agentModel, agentReasoning, compactionFor, modelContextWindowTokens } from "#lib/model.js";
 
 // Model is resolved centrally (Kimi K2.7 via OpenCode Zen by default, or Claude
 // via the AI Gateway) — see agent/lib/model.ts.
@@ -15,6 +15,10 @@ import { agentModel, agentReasoning, modelContextWindowTokens } from "#lib/model
 export default defineAgent({
   model: agentModel("orchestrator"),
   modelContextWindowTokens: modelContextWindowTokens("orchestrator"),
+  // The main agent compacts at eve's own threshold (90% of the window) unless the profile's
+  // agent.compaction.orchestrator_tokens names one: its steps resend the conversation and the specialists' results,
+  // not the specialists' own tool steps, which is where the input went (mold_v1-220, docs/SPECIALIST_CONTEXT.md).
+  compaction: compactionFor(null, "orchestrator"),
   // Stream extended-thinking (reasoning) tokens on the gateway Claude models.
   // On Workers AI only when CLOUDFLARE_REASONING_EFFORT names a level. See model.ts.
   reasoning: agentReasoning(),

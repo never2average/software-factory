@@ -124,6 +124,14 @@ export default function CardsPreview() {
     <div className="min-h-screen bg-background p-8 text-foreground">
       <h1 className="mb-1 font-semibold text-lg">Workspace cards</h1>
       <p className="mb-6 text-muted-foreground text-sm">Redesigned Tasks + {W.Implementations} list cards (preview).</p>
+      {/* A tinted notice as the app paints them everywhere (the same classes as the chat's unsaved-draft notice).
+          tests/cards.spec.ts reads its contrast under every in-app theme and browser setting (mold_v1-219). */}
+      <p
+        data-testid="tint-notice"
+        className="mb-6 w-fit rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-amber-800 text-xs dark:text-amber-400"
+      >
+        Your latest changes are not saved yet.
+      </p>
 
       <section data-testid="tasks-board" className="mb-10">
         <h2 className="mb-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Tasks board</h2>
