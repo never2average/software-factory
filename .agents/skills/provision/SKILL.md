@@ -161,6 +161,19 @@ State is the source: a default profile or a subagent's instructions edited in th
 `--dry-run` list first when people already use the workspace.
 `--prune-sandboxes` lists what the server's nightly sandbox prune would remove and the space (read-only; `--apply` removes it now).
 
+## Builds sized to the machine (mold_v1-232)
+
+Every heavy build step, on the server (`build.sh`: npm ci, the eve build, next build, the task-workflow build) and here
+(the Vercel path's eve build), runs through `lib/buildfit.py`. Just before each step it measures free memory, CPUs, load
+and any cgroup limit, and sizes the step to them: V8's heap, Next's worker count (`BUILD_CPUS`, `BUILD_MEMORY_MIB`, read
+by the mold's `next.config.ts`), and the rolldown and Turbopack thread pools. It keeps headroom for the release that
+serves, runs at nice 19 and idle IO in a scope with a CPU weight, and makes the build the kernel's first choice if memory
+runs out. If memory is short it waits (at most 10 minutes, saying what is using it). Then, only on a machine with no swap at
+all, it adds a temporary swap file for that step, says so, and removes it afterwards. If the kernel kills the step anyway, it
+retries once with tight settings. If even that cannot fit, the deploy stops at the build with nothing switched and exits 3:
+it names the measured numbers and gives the same request for a bigger server that `--capacity` gives. Ask the operator for
+that one thing. If the server was only busy, running the deploy again later may be enough.
+
 ## Is the server big enough? (`--capacity`, mold_v1-195)
 
 The operator's decision (2026-10-06): the self-hosted server is scalable by default, and the factory asks for a bigger one when

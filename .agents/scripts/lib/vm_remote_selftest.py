@@ -317,14 +317,15 @@ def _generated_files(check, tmp):
           and pre.index("--locks-only") < pre.index(full) < pre.index('touch "$mark"') and 'mark="/run/software-factory/vm_remote_fixture/prewarmed/$(basename "$(pwd -P)")"' in pre, pre)
     check("  ...and on a server not moved to releases yet it runs from the old single directory", 'dir=/opt/software-factory/vm_remote_fixture/app' in pre)
     _prestart_reruns(check, tmp, pre)
-    b = B["build.sh"][0]; order = [b.index(x) for x in ("/factory/users.sh", "env-split --file", "npm ci --include=dev", "npm run build:eve", "-- npm run build\n", "services/task-workflow\" -- npm run build", "/factory/seal.sh \"$REL\"")]
+    b = B["build.sh"][0]; order = [b.index(x) for x in ("/factory/users.sh", "env-split --file", "npm ci --include=dev", "npm run build:eve", "--step web -- npm run build\n", "--step workflow -- npm run build", "/factory/seal.sh \"$REL\"")]
     check("the build builds the NEW release at its final path, beside the serving one, one build at a time, and never stops a service (mold_v1-222)",
           order == sorted(order) and 'REL="/opt/software-factory/vm_remote_fixture/releases/$REL_ID"' in b and "systemctl" not in b and " & " not in b and "wait\n" not in b
           and "^[0-9]{8}T[0-9]{6}Z$" in b, order)
-    check("  ...as the code's owner, each part with its own service's env file loaded by env-run (never sourced by a shell)",
-          all(f"env-run --file /etc/software-factory/vm_remote_fixture/{k}.env --user sfbuild --home /var/lib/sfbuild" in b for k in ("api", "web", "workflow")) and "--user sfapp" not in b
+    check("  ...as the code's owner, each part with its own service's env file loaded by env-run inside build-run (never sourced by a shell; mold_v1-232 sizes it)",
+          all(f"build-run --serving /opt/software-factory/vm_remote_fixture/current --file /etc/software-factory/vm_remote_fixture/{k}.env --user sfbuild --home /var/lib/sfbuild" in b
+              for k in ("api", "web", "workflow")) and "--user sfapp" not in b
           and "env-run --file /etc/software-factory/vm_remote_fixture/env " not in b and ". /etc/software-factory" not in b
-          and '$RUN_API "$REL" -- npm run build:eve' in b and '$RUN_WEB "$REL" -- npm run build\n' in b and '"$REL/.sf-stamps/app.lock"' in b)
+          and '$RUN_API "$REL" --step eve -- npm run build:eve' in b and '$RUN_WEB "$REL" --step web -- npm run build\n' in b and '"$REL/.sf-stamps/app.lock"' in b)
     dc = B["db-chain.sh"][0]
     check("the database step passes the new DATABASE_URL on to the services' files right after the chain", dc.index("host-chain") < dc.index("env-split --file /etc/software-factory/vm_remote_fixture/env --spec /opt/software-factory/vm_remote_fixture/factory/env-services.json"))
     check("  ...and migrates with the NEW release's scripts, then seals that release", 'host-chain --app-dir "$REL"' in dc and dc.rstrip().endswith('seal.sh "$REL"') and "systemctl" not in dc)

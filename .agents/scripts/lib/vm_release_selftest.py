@@ -16,6 +16,12 @@ cannot take the site down.
              first, as the API's user) instead of rebuilding them under it; keep still removes what no plan uses
   factory    deploy() against recorded answers: what it says and runs when the switch switched back, when the health
              check after it fails, when the prewarm or the build fails; --rollback-remote
+  buildfit   a build sized to the machine (mold_v1-232, lib/buildfit.py): the sizing for 2, 4 and 8 GB, 1 to 4 CPUs,
+             idle and busy, beside a serving release or not; cgroup limits read from a stand-in /sys/fs/cgroup tree (the
+             page cache left out); the wait for memory, the temporary swap file (only with no swap at all, and removed
+             after), the retry tight after a kernel kill and with more heap after V8's own, the clear capacity exit with
+             the measured numbers, build.sh running every heavy step through it, env-run carrying the sizing, and
+             deploy() turning the capacity exit into the request for a bigger server, nothing switched
 
 NOTHING HERE TOUCHES A SERVER OR CHANGES THIS MACHINE: every path the scripts touch is under a temp directory, the
 commands that would change a machine are stand-ins, and the real python3, bash, node, flock, timeout, ln and mv only
@@ -42,6 +48,7 @@ def run(check, tmp):
     rehearsal(check, tmp)
     release(check, tmp)
     factory(check, tmp)
+    buildfit(check, tmp)
 
 # ---- the rehearsal --------------------------------------------------------------------------------------------------
 def rehearsal(check, tmp):
@@ -637,3 +644,220 @@ def carry(check, tmp, S, crons):
     r, kv = sv.run("prepare", D_); sv.build(D_); os.makedirs(sv.rdir(D_) + "/.eve", exist_ok=True); sv.run("prewarm", D_)
     check("carry (release.sh prewarm): a record whose snapshot keep removed is not carried on", sorted(os.listdir(sv.rdir(D_) + "/.eve/sandbox-cache/microsandbox/templates")) == sorted([_key(1), _key(2), _key(9)]),
           os.listdir(sv.rdir(D_) + "/.eve/sandbox-cache/microsandbox/templates"))
+
+# ---- mold_v1-232: a build sized to the machine that runs it ----------------------------------------------------------
+import buildfit as BF
+
+def box(mem_gb, cpus, avail_frac=0.8, load=0.0, swap=0, room=None, limit=None, host=None, disk=50000):
+    """Facts for a machine of this size: MemAvailable at `avail_frac` of it, `load` on its CPUs."""
+    total = int(mem_gb * 1024 * 0.97)
+    return {"mem_total_mb": total, "mem_avail_mb": int(total * avail_frac), "swap_total_mb": swap, "swap_free_mb": swap, "cg_room_mb": room,
+            "cg_limit_mb": limit, "cpus": cpus, "host_cpus": host or cpus, "load1": load, "disk_free_mb": disk}
+
+def buildfit(check, tmp):
+    # ---- the sizing table: 2, 4, 8 GB x 1-4 CPUs x idle and busy ----
+    rows = {}
+    for gb in (2, 4, 8):
+        for cpus in (1, 2, 3, 4):
+            for busy in (False, True):
+                f = box(gb, cpus, avail_frac=0.45 if busy else 0.85, load=cpus * 0.9 if busy else 0.1)
+                for step in ("eve", "web", "workflow", "npm-ci"):
+                    rows[(gb, cpus, busy, step)] = BF.plan(step, f, serving=True)
+    bad = []
+    for (gb, cpus, busy, step), pl in rows.items():
+        need, floor, heap = BF.STEPS[step]["need_mb"], BF.STEPS[step]["floor_mb"], BF.STEPS[step]["heap_mb"]
+        b = pl["budget_mb"]
+        want = "roomy" if b >= need else "tight" if b >= floor else "short"
+        if pl["mode"] != want: bad.append(f"{gb}GB/{cpus}cpu/{'busy' if busy else 'idle'}/{step}: mode {pl['mode']}, want {want} (budget {b})")
+        if not (1 <= pl["workers"] <= cpus and 1 <= pl["threads"] <= cpus): bad.append(f"{gb}/{cpus}/{step}: {pl['workers']} workers, {pl['threads']} threads on {cpus} CPUs")
+        if pl["mode"] != "roomy" and (pl["workers"] != 1 or pl["threads"] > 2): bad.append(f"{gb}/{cpus}/{step}: tight but {pl['workers']} workers")
+        if not (heap <= pl["heap_mb"] <= BF.HEAP_MAX_MB): bad.append(f"{gb}/{cpus}/{step}: heap {pl['heap_mb']} outside {heap}-{BF.HEAP_MAX_MB}")
+        if pl["mode"] == "roomy" and pl["heap_mb"] > b: bad.append(f"{gb}/{cpus}/{step}: heap {pl['heap_mb']} over the budget {b}")
+        if pl["env"]["NODE_OPTIONS"] != f"--max-old-space-size={pl['heap_mb']}" or pl["env"]["BUILD_CPUS"] != str(pl["workers"]): bad.append(f"{gb}/{cpus}/{step}: env {pl['env']}")
+        if busy and pl["nice"] != 19: bad.append(f"{gb}/{cpus}/{step}: busy but nice {pl['nice']}")
+    check("buildfit: across 2/4/8 GB, 1-4 CPUs, idle and busy, every step's mode follows its budget, workers and threads fit the CPUs, "
+          "tight is one worker, the heap stays between the step's floor and 4 GB and under the budget, and the env says the same", not bad, bad[:6])
+    g = lambda gb, cpus, busy, step: rows[(gb, cpus, busy, step)]
+    check("buildfit:   ...8 GB idle, 4 CPUs: the web build roomy, 3 workers (Next's own default), 4 native threads, a heap of a few GB",
+          (g(8, 4, False, "web")["mode"], g(8, 4, False, "web")["workers"], g(8, 4, False, "web")["threads"]) == ("roomy", 3, 4) and g(8, 4, False, "web")["heap_mb"] >= 2048,
+          {k: g(8, 4, False, "web")[k] for k in ("mode", "workers", "threads", "heap_mb")})
+    check("buildfit:   ...8 GB busy (other work holds half): the eve build still fits, at nice 19 and idle IO, fewer workers than CPUs",
+          g(8, 4, True, "eve")["mode"] in ("roomy", "tight") and g(8, 4, True, "eve")["nice"] == 19 and g(8, 4, True, "eve")["ionice"] == "idle")
+    check("buildfit:   ...4 GB idle: eve and web tight or roomy, never short; 4 GB busy: they are short (wait, swap or a bigger box)",
+          all(g(4, c, False, s_)["mode"] != "short" for c in (1, 2, 3, 4) for s_ in ("eve", "web")) and all(g(4, c, True, s_)["mode"] == "short" for c in (1, 2, 4) for s_ in ("eve", "web")),
+          [(c, s_, g(4, c, b_, s_)["mode"], g(4, c, b_, s_)["budget_mb"]) for c in (1, 4) for b_ in (False, True) for s_ in ("eve", "web")])
+    check("buildfit:   ...2 GB: every heavy build is short without swap; the install and the task-workflow build are not when idle",
+          all(g(2, c, b_, s_)["mode"] == "short" for c in (1, 4) for b_ in (False, True) for s_ in ("eve", "web")) and g(2, 2, False, "npm-ci")["mode"] != "short")
+    check("buildfit:   ...1 CPU: one worker and one native thread whatever the memory", all(g(gb, 1, b_, s_)["workers"] == 1 and g(gb, 1, b_, s_)["threads"] == 1
+          for gb in (2, 4, 8) for b_ in (False, True) for s_ in ("eve", "web")))
+    with_swap = BF.plan("eve", box(2, 2, avail_frac=0.85, swap=4096), serving=False)
+    check("buildfit:   ...2 GB with 4 GB of swap: eve runs tight, counting half the free swap, slow but not killed",
+          with_swap["mode"] == "tight" and with_swap["workers"] == 1, {k: with_swap[k] for k in ("mode", "budget_mb", "heap_mb")})
+    lone = BF.plan("web", box(8, 4, avail_frac=0.62), serving=False); beside = BF.plan("web", box(8, 4, avail_frac=0.62), serving=True)
+    check("buildfit:   ...beside a serving release more is kept back (the release's headroom) than on a machine that serves nothing",
+          beside["budget_mb"] < lone["budget_mb"] and BF.headroom_mb(box(8, 4), True) >= 480, (lone["budget_mb"], beside["budget_mb"]))
+    check("buildfit:   ...no memory reading (macOS): tight at the step's need, never a guess of plenty", BF.plan("eve", dict(box(8, 4), mem_avail_mb=None))["mode"] == "tight")
+    check("buildfit:   ...the soft memory limit is never under the step's need (a step above it would crawl, not finish)",
+          all(pl["memory_high_mb"] >= BF.STEPS[k[3]]["need_mb"] for k, pl in rows.items()))
+    # ---- what is measured: a cgroup's limit, not the host's ----
+    cg = os.path.join(tmp, "cgroup"); leaf = os.path.join(cg, "system.slice", "build.scope")
+    os.makedirs(leaf)
+    files = {os.path.join(cg, "system.slice", "memory.max"): "max\n", os.path.join(cg, "system.slice", "memory.current"): str(5 << 30),
+             os.path.join(cg, "system.slice", "memory.stat"): f"anon {4 << 30}\nfile {1 << 30}\n",
+             os.path.join(leaf, "memory.max"): str(3 << 30), os.path.join(leaf, "memory.current"): str(int(1.5 * (1 << 30))),
+             os.path.join(leaf, "memory.stat"): f"anon {1 << 29}\nfile {1 << 30}\n", os.path.join(leaf, "memory.high"): "max\n",
+             os.path.join(leaf, "cpu.max"): "200000 100000\n"}
+    for pth, txt in files.items(): open(pth, "w").write(txt)
+    def read(pth):
+        if pth == "/proc/self/cgroup": return "0::/system.slice/build.scope\n"
+        try: return open(pth).read()
+        except OSError: return None
+    room, limit, cpus = BF.cgroup_limits(read, root=cg)
+    check("buildfit: a cgroup's limit is found from the leaf up: 3 GB, of which 0.5 GB held (its 1 GB of page cache does not count), 2 CPUs from cpu.max",
+          (room, limit, cpus) == (2560, 3072, 2), (room, limit, cpus))
+    check("buildfit:   ...and no cgroup line (not Linux, cgroup v1) is no limit, not zero", BF.cgroup_limits(lambda p: None) == (None, None, None))
+    capped = BF.plan("eve", box(8, 4, avail_frac=0.85, room=1800, limit=3072, host=4), serving=False)
+    check("buildfit:   ...a build inside that limit is sized to it, not to the host's free memory", capped["mode"] == "short" and capped["budget_mb"] < 1800, capped["budget_mb"])
+    mi = BF._meminfo("MemTotal:        8129672 kB\nMemAvailable:    5120000 kB\nSwapTotal:             0 kB\nSwapFree:              0 kB\n")
+    check("buildfit: /proc/meminfo is read in MB", (mi["MemTotal"], mi["MemAvailable"], mi["SwapTotal"]) == (7939, 5000, 0), mi)
+    real = BF.measure()
+    check("buildfit: the real measurement works on this machine", real["cpus"] >= 1 and (real["mem_avail_mb"] is None or real["mem_avail_mb"] > 0), real)
+    check("buildfit: idle CPUs: a 4-CPU host at load 3 has 1; a 2-CPU cgroup on that host keeps both until the other two are full",
+          (BF.idle_cpus(box(8, 4, load=3.0)), BF.idle_cpus(box(8, 2, load=2.0, host=4)), BF.idle_cpus(box(8, 2, load=3.4, host=4))) == (1, 2, 1))
+    # ---- how it runs: priority, and never escaping a limit ----
+    pl = BF.plan("web", box(8, 4))
+    w = BF.wrap(["npm", "run", "build"], pl, box(8, 4), which=lambda c: "/usr/bin/" + c, euid=0)
+    if os.path.isdir("/run/systemd/system"):
+        check("buildfit: as root with systemd, a transient scope with CPUWeight, IOWeight, MemoryHigh and nice, ionice inside it",
+              w[:4] == ["systemd-run", "--quiet", "--scope", "--collect"] and f"MemoryHigh={pl['memory_high_mb']}M" in w and f"--nice={pl['nice']}" in w
+              and w[w.index("--") + 1] == "ionice" and w[-3:] == ["npm", "run", "build"], w)
+    w = BF.wrap(["npm", "run", "build"], pl, box(8, 2, limit=3072, host=4), which=lambda c: "/usr/bin/" + c, euid=0)
+    check("buildfit:   ...inside a cgroup limit no new scope (it would be made outside the limit and escape it): nice and ionice instead",
+          w[0] == "nice" and "systemd-run" not in w and w[-3:] == ["npm", "run", "build"] and "ionice" in w, w)
+    w = BF.wrap(["x"], pl, box(8, 4), which=lambda c: None, euid=1000)
+    check("buildfit:   ...and with neither tool, the command as it is", w == ["x"], w)
+    e = BF.sized_env({"NODE_OPTIONS": "--enable-source-maps --max-old-space-size=8000", "KEEP": "1"}, pl)
+    check("buildfit: NODE_OPTIONS keeps its other flags and gets this heap ceiling instead of any other; the rest is kept",
+          e["NODE_OPTIONS"] == f"--enable-source-maps --max-old-space-size={pl['heap_mb']}" and e["KEEP"] == "1" and e["BUILD_CPUS"] == str(pl["workers"]), e["NODE_OPTIONS"])
+    # ---- run: the wait, the swap file, the retry, the clear failure (every outside effect a stand-in) ----
+    def go(facts_seq, codes, tails=None, swap_made=True, kills_seq=None, **kw):
+        fs, cs, ts = iter(facts_seq), iter(codes), iter(tails or [""] * len(codes)); ks = iter(kills_seq or [None] * 20)
+        last = {"f": None}
+        def probe():
+            try: last["f"] = next(fs)
+            except StopIteration: pass
+            return dict(last["f"])
+        log = {"runs": [], "slept": [], "said": [], "swap": []}
+        def runner(argv, env, cwd): log["runs"].append(dict(env)); return next(cs), next(ts)
+        swap = (lambda mb, say: log["swap"].append(("on", mb)) or swap_made, lambda say: log["swap"].append(("off",)))
+        rc = BF.run("eve", ["npm", "run", "build:eve"], serving=True, wait_s=kw.pop("wait_s", 60), poll_s=15, env={}, probe=probe, runner=runner,
+                    sleep=log["slept"].append, kills=lambda: next(ks), swap=swap, wrapper=lambda a, p, f: a, say=log["said"].append, **kw)
+        return rc, log
+    roomy, short = box(8, 4, avail_frac=0.85), box(8, 4, avail_frac=0.2)
+    rc, log = go([roomy], [0])
+    check("buildfit run: a machine with room runs the step once, sized, and says how", rc == 0 and len(log["runs"]) == 1 and "eve roomy" in log["said"][0]
+          and log["runs"][0]["NODE_OPTIONS"].startswith("--max-old-space-size="), log["said"])
+    rc, log = go([short, short, roomy], [0])
+    check("buildfit run: memory short now: it waits (saying what is using it), and runs once there is room, with no swap file",
+          rc == 0 and log["slept"] == [15, 15] and len(log["runs"]) == 1 and not log["swap"] and "waiting for memory" in log["said"][0], (log["slept"], log["said"][:2]))
+    swapped = dict(short, swap_total_mb=2048, swap_free_mb=2048)
+    rc, log = go([short] * 5 + [swapped], [0])
+    check("buildfit run: still short after the wait, on a machine with no swap and disk to spare: a temporary swap file, said in the log; the step runs "
+          "tight; the file is removed after", rc == 0 and log["swap"][0][0] == "on" and log["swap"][-1] == ("off",) and log["runs"][0]["BUILD_CPUS"] == "1"
+          and sum(log["slept"]) == 60, (log["swap"], log["slept"]))
+    tiny = box(2, 2, avail_frac=0.85)
+    rc, log = go([tiny, dict(tiny, swap_total_mb=3072, swap_free_mb=3072)], [0])
+    check("buildfit run: a machine too small for the step whatever leaves (2 GB for eve): no wait at all, straight to the swap file",
+          rc == 0 and not log["slept"] and log["swap"][0][0] == "on" and any("waiting would not help" in l for l in log["said"]), (log["slept"], log["said"][:2]))
+    rc, log = go([short] * 6, [0])
+    check("buildfit run: and if even that is short: CAPACITY_RC, nothing run, a BUILD_SHORT line with the measured numbers, the swap file removed",
+          rc == BF.CAPACITY_RC and not log["runs"] and log["said"][-1].startswith("BUILD_SHORT step=eve") and "avail_mb=" in log["said"][-1] and log["swap"][-1] == ("off",), log["said"][-2:])
+    rc, log = go([dict(short, swap_total_mb=1024, swap_free_mb=0)] * 6, [0])
+    check("buildfit run:   ...a machine that HAS swap (used up) gets no swap file of ours", rc == BF.CAPACITY_RC and not log["swap"], log["swap"])
+    rc, log = go([dict(short, disk_free_mb=3000)] * 6, [0])
+    check("buildfit run:   ...nor one without the disk to spare", rc == BF.CAPACITY_RC and not log["swap"])
+    rc, log = go([roomy], [137, 0], kills_seq=[3, 4, 4, 4])
+    check("buildfit run: killed by the kernel (exit 137): once more, tight: one worker, two native threads at most, and it finishes",
+          rc == 0 and len(log["runs"]) == 2 and log["runs"][0]["BUILD_CPUS"] != "1" and log["runs"][1]["BUILD_CPUS"] == "1" and int(log["runs"][1]["RAYON_NUM_THREADS"]) <= 2
+          and any("not a fault of the app" in l for l in log["said"]), [r["BUILD_CPUS"] for r in log["runs"]])
+    rc, log = go([roomy], [1, 0], kills_seq=[7, 8, 8, 8])
+    check("buildfit run:   ...a failure while the kernel's OOM count rose counts as a kill too (npm says only `exit 1`)", rc == 0 and len(log["runs"]) == 2)
+    rc, log = go([roomy], [134, 0], tails=["FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", ""])
+    h1, h2 = (int(r["NODE_OPTIONS"].split("=")[1]) for r in log["runs"])
+    check("buildfit run: out of V8's own heap: once more with a bigger heap (never a smaller one)", rc == 0 and h2 > h1, (h1, h2))
+    rc, log = go([roomy], [137, 137])
+    check("buildfit run: killed again, tight: CAPACITY_RC and BUILD_SHORT ... killed=1, not the build's own exit", rc == BF.CAPACITY_RC and log["said"][-1].endswith("killed=1"), log["said"][-1])
+    rc, log = go([roomy], [2])
+    check("buildfit run: an ordinary failure is the build's own: its exit code, run once, no retry", rc == 2 and len(log["runs"]) == 1)
+    short_line = BF.short_line("web", box(4, 2, avail_frac=0.3), True)
+    parsed = BF.parse_short("noise\n" + short_line + "\n")
+    words = BF.short_words(parsed)
+    check("buildfit: the BUILD_SHORT line reads back, and says the numbers in a sentence", parsed["step"] == "web" and parsed["cpus"] == 2 and "MB of memory available" in words
+          and "2500 MB as usual" in words, words)
+    check("buildfit: a self-test's light jobs at once: never more than the idle CPUs or the memory allow, at least one",
+          (BF.fit_workers(150, facts=box(8, 4)), BF.fit_workers(150, facts=box(8, 4, load=3.9)), BF.fit_workers(150, facts=box(2, 4, avail_frac=0.1))) == (4, 1, 1))
+    # ---- the server: build.sh runs every heavy step through build-run, one after another ----
+    S = B._settings(); crons = V.read_crons(B.MOLD)
+    sh = V.build_sh(S, crons)
+    steps = re.findall(r'\$RUN_(API|WEB|WF) "[^"]+" --step ([a-z-]+) -- (npm [^\n]+)', sh)
+    check("build.sh: each heavy step goes through build-run with its own step: the install, eve, web, the workflow install and build, in that order",
+          [(k, st) for k, st, _ in steps] == [("API", "npm-ci"), ("API", "eve"), ("WEB", "web"), ("WF", "npm-ci"), ("WF", "workflow")]
+          and all(f'build-run --serving {S["app_dir"]} --file' in l for l in sh.splitlines() if l.startswith("RUN_")) and "env-run" not in sh.split("set -eu")[1], steps)
+    check("build.sh:   ...and nothing runs two at once (no `&`, no `wait`), under set -e so a capacity exit stops it",
+          not re.search(r"&\s*$|\bwait\b", sh, re.M) and "set -eu" in sh and str(BF.CAPACITY_RC) in sh)
+    got = {}
+    rc = V.build_run(["build-run", "--serving", tmp, "--file", "/etc/x/web.env", "--user", "sfbuild", "--home", "/var/lib/sfbuild", "--cwd", "/opt/a/releases/r",
+                      "--step", "web", "--", "npm", "run", "build"], fit=lambda step, inner, **k: got.update(step=step, inner=inner, **k) or 0)
+    check("build-run: the step, sized, with env-run inside it (the build user and the service's env file), knowing a release serves",
+          rc == 0 and got["step"] == "web" and got["serving"] is True and got["inner"][2:4] == ["env-run", "--file"] and got["inner"][-4:] == ["--", "npm", "run", "build"]
+          and "sfbuild" in got["inner"], got)
+    V.build_run(["build-run", "--serving", os.path.join(tmp, "nothing-serves"), "--file", "f", "--user", "u", "--home", "h", "--cwd", "c", "--step", "nonsense", "--", "x"],
+                fit=lambda step, inner, **k: got.update(step=step, **k) or 0)
+    check("build-run:   ...a first deploy (no current) keeps only the machine's headroom; an unknown step is sized as a generic build", got["serving"] is False and got["step"] == "generic")
+    if os.getuid() == 0:
+        env_file = os.path.join(tmp, "build.env"); open(env_file, "w").write('NODE_OPTIONS="--enable-source-maps"\nFROM_FILE="1"\n'); os.chmod(env_file, 0o600)
+        r = subprocess.run([sys.executable, TOOL, "env-run", "--file", env_file, "--user", "root", "--home", tmp, "--cwd", tmp, "--", "env"],
+                           env={"PATH": os.environ.get("PATH", ""), "NODE_OPTIONS": "--max-old-space-size=1234", "BUILD_CPUS": "1", "SECRET_ELSEWHERE": "x"},
+                           capture_output=True, text=True)
+        envs = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
+        check("env-run: the sizing from build-run reaches the build (NODE_OPTIONS merged with the file's), nothing else of the caller's does",
+              envs.get("NODE_OPTIONS") == "--enable-source-maps --max-old-space-size=1234" and envs.get("BUILD_CPUS") == "1" and envs.get("FROM_FILE") == "1"
+              and "SECRET_ELSEWHERE" not in envs, {k: envs.get(k) for k in ("NODE_OPTIONS", "BUILD_CPUS", "FROM_FILE", "SECRET_ELSEWHERE")})
+    # ---- the factory: a capacity exit is the request for a bigger server, nothing switched ----
+    ev = "EVIDENCE " + json.dumps({"protected": 58})
+    line = BF.short_line("eve", box(8, 4, avail_frac=0.2, load=3.5), True)
+    log = []
+    def runner(st, stdin=None):
+        log.append(st["id"])
+        if st["id"] == "build": return CP(st["argv"], BF.CAPACITY_RC, "build: ...\nbuildfit: eve cannot run on this machine now\n" + line + "\n", "")
+        out = {"qualify": B.fx("qualify-ok.txt"), "env-names": "\n".join(V.operator_names(S)), "db-chain": ev, "health": B.fx("health-ok.txt"), "switch": B.SWITCHED}.get(st["id"], "ok")
+        return CP(st["argv"], 0, out, "")
+    import agent_result
+    agent_result.reset() if hasattr(agent_result, "reset") else agent_result.NOTES.update({"needs": []})
+    try: res = V.deploy(S, B.MOLD, crons, runner=runner, resolver=lambda d: ["203.0.113.10"], read_health=lambda u: ("200", B.HEALTH_DOC, ""), say=lambda *_: None,
+                        bundle_dir=os.path.join(tmp, "factory-deploy-buildshort"), wait=lambda s: None, release=D_, rehearse=B.NO_REHEARSAL)
+    except V.Stop as e: res = e
+    text = str(res)
+    check("deploy: a build the server cannot fit stops at the build, before the database, the prewarm and the switch, and says nothing was switched",
+          isinstance(res, V.Stop) and log[-1] == "build" and "switch" not in log and "db-chain" not in log and "Nothing was switched" in text, (log[-3:], text[:200]))
+    check("deploy:   ...naming what build-run measured there, in words", "MB of memory available" in text and "agent API's build" in text, text[:400])
+    check("deploy:   ...and asking for the bigger server the capacity check would (one plan, its price, the resize clicks), as an approval only the operator gives",
+          "Resize" in text and "16 GB memory" in text and "--capacity" in text and any(n["kind"] == "approval" and "bigger" in n["name"] for n in agent_result.NOTES["needs"]),
+          (text[-600:], agent_result.NOTES["needs"]))
+    agent_result.NOTES.update({"needs": []})
+
+def buildfit_alone():
+    """buildfit.py --self-test: this section only, offline."""
+    import tempfile
+    fails, n = [], [0]
+    def check(name, cond, detail=""):
+        n[0] += 1
+        if not cond: fails.append(f"{name}{': ' + str(detail)[:400] if detail != '' else ''}")
+    tmp = tempfile.mkdtemp(prefix="buildfit-selftest-")
+    try:
+        with B.Offline(): buildfit(check, tmp)
+    finally: shutil.rmtree(tmp, ignore_errors=True)
+    if fails: print("buildfit self-test FAILED:\n  " + "\n  ".join(fails)); return 1
+    print(f"buildfit self-test ok: {n[0]} checks (sizing for 2/4/8 GB, 1-4 CPUs, idle and busy; cgroup limits; the wait, the swap file, "
+          "the retry and the capacity exit; build.sh, build-run, env-run; deploy's request for a bigger server). Offline, nothing on this machine changed")
+    return 0

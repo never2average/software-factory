@@ -96,7 +96,8 @@ def users(check, tmp):
     check("users:   ...and so does --prune-sandboxes", f"runuser -u {API} -- env HOME={V.SERVICE_HOME} " in pa, pa)
     b = Bn["build.sh"][0]
     check("users: every part of the build runs as the code's owner, with the env file of the service that will run it",
-          all(f"env-run --file {S['env_files'][k]} --user {V.BUILD_USER} --home {V.BUILD_HOME} --cwd" in b for k in ("api", "web", "workflow")) and f"--user {API}" not in b and f"--user {WEB}" not in b, b)
+          all(f"build-run --serving {S['app_dir']} --file {S['env_files'][k]} --user {V.BUILD_USER} --home {V.BUILD_HOME} --cwd" in b for k in ("api", "web", "workflow"))
+          and f"--user {API}" not in b and f"--user {WEB}" not in b, b)   # build-run runs env-run with these (mold_v1-232)
     pre_sh = Bn["api-prestart.sh"][0]
     check("users: the prewarm runs inside the API unit, so as the agent API's user", "ExecStartPre=/bin/bash" in U[f"{pre}-api.service"] and "runuser" not in pre_sh and "sudo" not in pre_sh)
 

@@ -111,6 +111,7 @@ the switch either ends on a release that answered its health checks or switches 
 import datetime, getpass, json, os, re, secrets as pysecrets, shlex, shutil, socket, subprocess, sys, tempfile, time, urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import legacy   # an older application's pre-rename state keys, where this machine names them (lib/legacy.py)
+import buildfit # a heavy build sized to the machine that runs it, now (lib/buildfit.py, mold_v1-232)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)
@@ -1308,7 +1309,11 @@ REL="@RELEASES@/$REL_ID"
 [ -d "$REL" ] || { echo "there is no release $REL_ID on this server ($REL); the deploy makes it first (release.sh prepare)" >&2; exit 2; }
 """
 def build_sh(S, crons):
-    run = lambda k: f"python3 {S['tool']} env-run --file {S['env_files'][k]} --user {BUILD_USER} --home {BUILD_HOME} --cwd"
+    # Each heavy step through build-run (lib/buildfit.py, mold_v1-232): sized to what the server has free at that moment,
+    # beside the release serving, at a low CPU and IO priority, waited for, retried once tight; exit BUILD_CAPACITY_RC
+    # with a BUILD_SHORT line when it cannot fit, which ends this script (set -e) with nothing switched.
+    run = lambda k: (f"python3 {S['tool']} build-run --serving {S['app_dir']} --file {S['env_files'][k]} --user {BUILD_USER} "
+                     f"--home {BUILD_HOME} --cwd")
     return fill("""#!/bin/bash
 @HEAD@# build.sh <release id>: build the NEW release at its final path, <install>/releases/<id>, BESIDE the one serving
 # (mold_v1-222). Nothing here stops, restarts or touches a running service: they keep serving the release `current`
@@ -1319,6 +1324,13 @@ def build_sh(S, crons):
 # directories with its own user; after the build, seal.sh sets who may read and who may write the new release.
 # node_modules was copied from the serving release by release.sh prepare, with the stamps that say which lock file
 # it was installed from: unchanged, it is kept; changed, `npm ci` replaces it (in the new release only).
+# Every step goes through build-run (mold_v1-232): it measures the server's free memory and CPUs, and the limits of
+# any cgroup above it, just before the step; sizes the step to them (V8's heap, Next's workers, the native thread
+# pools of rolldown and Turbopack: lib/buildfit.py STEPS has each step's measured need), leaving room for the release
+# that serves; runs it at a low priority; waits for memory when it is short (bounded), then, on a server with no swap
+# at all, a temporary swap file for that step only; and once more, tight, if the kernel kills it anyway. When even
+# that cannot fit it exits @CAP@ with a BUILD_SHORT line: this script stops, nothing is switched, and the factory asks
+# for a bigger server with the numbers measured here.
 set -eu
 @GUARD@@RELEASE@bash @FACTORY@/users.sh
 @SPLIT@
@@ -1331,23 +1343,23 @@ RUN_WF="@RUN_WF@"
 lock_now="$(cat "$REL/package-lock.json" "$REL"/patches/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)"
 if [ ! -d "$REL/node_modules" ] || [ "$(cat "$REL/.sf-stamps/app.lock" 2>/dev/null || true)" != "$lock_now" ]; then
   # devDependencies included: the sandbox runtime (microsandbox) is one of them.
-  $RUN_API "$REL" -- npm ci --include=dev --no-audit --no-fund
+  $RUN_API "$REL" --step npm-ci -- npm ci --include=dev --no-audit --no-fund
   echo "$lock_now" > "$REL/.sf-stamps/app.lock"
 fi
-$RUN_API "$REL" -- npm run build:eve
+$RUN_API "$REL" --step eve -- npm run build:eve
 test -f "$REL/.output/server/index.mjs"
-$RUN_WEB "$REL" -- npm run build
+$RUN_WEB "$REL" --step web -- npm run build
 lock_now="$(sha256sum "$REL/services/task-workflow/package-lock.json" | cut -d' ' -f1)"
 if [ ! -d "$REL/services/task-workflow/node_modules" ] || [ "$(cat "$REL/.sf-stamps/workflow.lock" 2>/dev/null || true)" != "$lock_now" ]; then
-  $RUN_WF "$REL/services/task-workflow" -- npm ci --include=dev --no-audit --no-fund
+  $RUN_WF "$REL/services/task-workflow" --step npm-ci -- npm ci --include=dev --no-audit --no-fund
   echo "$lock_now" > "$REL/.sf-stamps/workflow.lock"
 fi
-$RUN_WF "$REL/services/task-workflow" -- npm run build
+$RUN_WF "$REL/services/task-workflow" --step workflow -- npm run build
 bash @FACTORY@/seal.sh "$REL"
 echo "build: eve API, web app and task-workflow service built at $REL (not serving yet)"
 """, HEAD=fill(HEAD, APP=S["app_id"]), GUARD=fill(GUARD, APP=S["app_id"]), RELEASE=fill(RELEASE_ARG, RELEASES=S["releases"]),
         USER=BUILD_USER, GROUP=CODE_GROUP, FACTORY=S["factory_dir"], SPLIT=env_split_cmd(S),
-        RUN_API=run("api"), RUN_WEB=run("web"), RUN_WF=run("workflow"))
+        RUN_API=run("api"), RUN_WEB=run("web"), RUN_WF=run("workflow"), CAP=buildfit.CAPACITY_RC)
 
 def db_chain_sh(S):
     return fill("""#!/bin/bash
@@ -2033,12 +2045,14 @@ REHEARSAL_FACTORY_SIDE = {
     "library_selftest": "library.py --self-test, the factory's own test",
     "vm_remote_selftest": "vm_remote.py --self-test, the factory's own test",
     "vm_capacity_selftest": "vm_capacity.py --self-test, the factory's own test",
+    "vm_release_selftest": "buildfit.py --self-test, the factory's own test (its checks are that file's buildfit section)",
 }
 # Files whose own --self-test is the factory's test, not the server's: it reads what only the factory has.
 REHEARSAL_NO_SELF_TEST = {
     "provision.py": "its self-test drives the factory's Vercel and local paths with the factory's own fixtures (fixtures/release/...), "
                     "which no server bundle carries; the server runs only its database chain, which the import and the tool checks cover",
 }
+REHEARSAL_JOB_MB = 150
 REHEARSAL_IMPORT = "import importlib, sys; sys.path[:0] = sys.argv[1:4]; importlib.import_module(sys.argv[4])"
 SELF_TEST_DEF = re.compile(r"^def self_test\(", re.M)
 
@@ -2163,7 +2177,9 @@ def rehearsal(S, crons, bundle_dir, self_tests=True, steps=None, jobs_timeout=30
             last = [l.strip() for l in out.splitlines() if l.strip()]
             why = next((l for l in reversed(last) if re.search(r"Error|error:|Exception", l)), last[-1] if last else f"exit {r.returncode}")
             return f"{rel}: {what} failed (exit {r.returncode}): {redact(why)[:300]}"
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(2, min(8, os.cpu_count() or 2))) as ex:
+        # As many at once as this machine's idle CPUs and free memory allow (a self-test here takes up to ~150 MB), at
+        # least one: the factory machine runs other agents' builds too, and the rehearsal was killed beside them (mold_v1-232).
+        with concurrent.futures.ThreadPoolExecutor(max_workers=buildfit.fit_workers(REHEARSAL_JOB_MB)) as ex:
             for res in ex.map(one, jobs):
                 if res: bad.append(res)
         n = {k: sum(1 for j in jobs if j[0] == k) for k in ("import", "--self-test", "bash -n", "node --check")}
@@ -2369,10 +2385,13 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
             if not quiet:
                 for l in tail[-8:]: say("    " + l[:220])
             if r.returncode and check:
+                if sid == "build" and r.returncode == buildfit.CAPACITY_RC:
+                    raise Stop(build_short_story(S, facts, (r.stdout or "") + "\n" + (r.stderr or "")))
                 err = [l for l in redact((r.stderr or "") + "\n" + (r.stdout or "")).splitlines() if l.strip()]
                 raise Stop(f"step {sid} stopped (exit {r.returncode}): " + " / ".join(err[-4:])[:600] + after +
                            f"\n  Every step is safe to run again: python3 .claude/scripts/provision.py {S['app_id']} --deploy-remote")
             return r
+        facts = {}
         say(f"[rehearsal] {steps['rehearsal']['title']}")
         problems = (rehearse or rehearsal)(S, crons, bundle_dir, steps=list(steps.values()), say=say)
         if problems:
@@ -2456,6 +2475,27 @@ def deploy(S, source_dir, crons, runner=real_runner, secrets_for=None, resolver=
                 "release": {"current": release, "previous": previous}, "smoke": smoked}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
+
+def build_short_story(S, facts, text):
+    """What the operator reads when the server is too small, or too busy, to build the new release (mold_v1-232): the
+    numbers build-run measured there, then the same request for a bigger server `provision.py --capacity` makes. Asked
+    of the operator as an approval (agent_result `needs`), so the deploy exits 3 and waits for them."""
+    sys.path.insert(0, HERE); import vm_capacity, agent_result
+    short = buildfit.parse_short(text) or {}
+    said = buildfit.short_words(short) if short else "The server ran out of memory while it built the new release."
+    box = vm_capacity.box_of(facts or {})
+    if not box.get("mem_mb") and short.get("total_mb"): box["mem_mb"] = short["total_mb"]; box["plan"] = vm_capacity.current_plan(box)
+    if not box.get("vcpu") and short.get("cpus"): box["vcpu"] = short["cpus"]
+    plan, resizable, _ = vm_capacity.choose(box, ["memory"])
+    head = (f"The new release could not be built on {S['host'] or 'the server'}. {said} Nothing was switched: the release serving now "
+            "keeps serving, and the build used no more than it was given.")
+    if not plan:
+        return head + f" No larger DigitalOcean plan in the factory's table fits; this needs a different kind of server. python3 .claude/scripts/provision.py {S['app_id']} --capacity reads the server's own history."
+    ask = vm_capacity.request_text(S, box, plan, resizable, ["memory"], None, None)
+    agent_result.need("approval", "a bigger server", ask)
+    return (head + "\n\nIf the server is only busy for now (another build, a burst of chats), running the deploy again later may be enough. "
+            f"If it keeps happening, it needs more memory:\n\n{ask}\n\n(The same check over the server's last day: python3 .claude/scripts/provision.py "
+            f"{S['app_id']} --capacity)")
 
 def _read_health(url):
     sys.path.insert(0, SCRIPTS); import provision
@@ -3194,11 +3234,26 @@ def _surface_apply(surf, script, app_dir, run, written, clean):
         return {"org": org, "error": "the surface step did not finish: " + tail}
     return {"org": org, **{t: (v if isinstance(v, int) else str(v)[:300]) for t, v in out.items() if t in only}}
 
+def build_run(a, fit=None):
+    """`build-run --step S --serving <current> --file F --user U --home H --cwd C -- cmd...`: build.sh's every heavy step
+    (mold_v1-232), sized and run by lib/buildfit.py, with env-run (the build user, the service's env file) inside it.
+    --serving names `current`: when it exists, a release serves beside this build and keeps its headroom."""
+    i = a.index("--"); head = a[:i]; step = _opt(head, "--step", "generic")
+    inner = [sys.executable or "python3", os.path.abspath(__file__), "env-run", "--file", _opt(head, "--file"), "--user", _opt(head, "--user"),
+             "--home", _opt(head, "--home"), "--cwd", _opt(head, "--cwd"), "--", *a[i + 1:]]
+    serving = bool(_opt(head, "--serving")) and os.path.lexists(_opt(head, "--serving"))
+    return (fit or buildfit.run)(step if step in buildfit.STEPS else "generic", inner, serving=serving, label=f"{step} in {_opt(head, '--cwd')}",
+                                 wait_s=int(_opt(head, "--wait", str(buildfit.WAIT_S))))
+
 def env_run(env_file, user, home, cwd, cmd):
     """Run one command as the service user with the env file loaded. The file is root's and mode 600, so root
     reads it here and the values pass to the child in its environment, never through a shell or a command line."""
     import pwd
     env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": home, "LANG": "C.UTF-8", **env_read(env_file)}
+    # build-run's sizing (lib/buildfit.py ENV_NAMES) reaches the build: it is in this process's environment, never in
+    # the file. NODE_OPTIONS keeps what the file says, with build-run's heap ceiling instead of any other.
+    sized = {k: os.environ[k] for k in buildfit.ENV_NAMES if os.environ.get(k)}
+    if sized: env = buildfit.sized_env(env, {"env": sized})
     pw = pwd.getpwnam(user)
     os.chdir(_served(cwd))
     if os.getuid() == 0:
@@ -4030,6 +4085,7 @@ def cli(a):
         print("env: each service's own file written (root, mode 600; values not shown): " + ", ".join(f"{k}.env {n} names" for k, n in counts.items())); return 0
     if cmd == "env-run":
         i = a.index("--"); env_run(f, _opt(a, "--user"), _opt(a, "--home"), _opt(a, "--cwd"), a[i + 1:]); return 0
+    if cmd == "build-run": return build_run(a)
     if cmd == "workspace-seed":
         try: doc = json.loads(sys.stdin.read())
         except ValueError: print("workspace: what arrived on stdin is not the list of workspaces; nothing was written"); return 2

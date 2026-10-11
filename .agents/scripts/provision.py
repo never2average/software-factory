@@ -111,13 +111,14 @@ DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier 
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
 `self_hosted` means a Postgres on a PRIVATE docker network with no host port — never a public one.
 """
-import base64, json, os, re, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time, signal
+import base64, json, os, re, shlex, sys, subprocess, datetime, shutil, tempfile, urllib.parse, time, signal
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 import agent_result as AR   # the one --json result shape, exit codes 0/1/3/4 (lib/agent_result.py)
 import runs                 # one lock per app and step, background runs and their status (lib/runs.py)
 import services             # FACTORY_REHEARSAL / FACTORY_CALL_LOG (lib/services.py); nothing changes when unset
 import deploy_gate          # only deploy a mold commit whose CI passed (lib/deploy_gate.py)
+import buildfit             # a heavy build sized to this machine, now (lib/buildfit.py, mold_v1-232)
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
@@ -317,32 +318,33 @@ def wait_for_headroom(label, deadline_s=None, probe=_machine, sleep=time.sleep, 
                   f"Busiest: {_busiest()}", flush=True)
         step = min(every, max(deadline_s - waited, 1)); sleep(step); waited += step
 
-def _node_options(avail_mb, current=""):
-    """A V8 old-space ceiling sized to what is free: half of it, clamped to 2-4GB, unless one is already set."""
-    if "max-old-space-size" in (current or ""): return current
-    mb = 2048 if avail_mb is None else max(2048, min(4096, avail_mb // 2))   # no reading: the floor
-    return f"{current} --max-old-space-size={mb}".strip()
-
-def _oom_killed(r):
-    text = (r.stdout or "") + (r.stderr or "")
-    return r.returncode in (137, -9) or (r.returncode != 0 and bool(re.search(r"\bKilled\b|exit(?:ed with| code)? 137|SIGKILL", text)))
-
-def heavy_build(cmd, cwd, label, env=None, wait=wait_for_headroom, runner=None, timeout=None):
-    """Run a build that can exhaust this VM: after waiting for headroom, under `nice`, with a heap ceiling,
-    retried once after another wait if the kernel killed it for memory. Returns the CompletedProcess."""
+def heavy_build(cmd, cwd, label, env=None, wait=wait_for_headroom, runner=None, timeout=None, step="eve", **fit):
+    """Run a build that can exhaust this VM (mold_v1-109, mold_v1-232): after waiting for the load to drop, sized to
+    the memory and CPUs free right now by lib/buildfit.py (V8's heap, Next's workers, the native thread pools), at a
+    low CPU and IO priority, waited for when memory is short, and retried once tight if the kernel killed it anyway.
+    Returns the CompletedProcess; when even the step's smallest settings cannot fit, its exit is buildfit.CAPACITY_RC
+    and its stdout says what was measured. `fit` passes buildfit.run's stand-ins (probe, kills, sleep, swap) in tests."""
     runner = runner or (lambda c, e: vrun(c, shell=True, cwd=cwd, env=e, timeout=timeout or BUILD_TIMEOUT_S, what=label))
-    for attempt in (1, 2):
-        ok, now = wait(label)
-        if not ok: print(f"  WARNING: building anyway, the VM is still busy after the wait ({now})", flush=True)
-        e = dict(env if env is not None else os.environ)
-        e["NODE_OPTIONS"] = _node_options(_machine()[1], e.get("NODE_OPTIONS", ""))
-        r = runner(f"nice -n 10 {cmd}", e)
-        if not r.returncode or not _oom_killed(r): return r
-        load1, avail = _machine()
-        msg = (f"{label} was killed by the kernel for lack of memory (exit {r.returncode}) at load {load1:.1f} with "
-               f"{avail}MB available: other work on this VM, not a defect of the application")
-        if attempt == 1: print(f"  {msg}; waiting for headroom and retrying once", flush=True)
-        else: r.stderr = (r.stderr or "") + f"\n{msg}, twice. Run the deploy again when the VM is quieter."
+    ok, now = wait(label)
+    if not ok: print(f"  WARNING: building anyway, the VM is still busy after the wait ({now})", flush=True)
+    got, said = {}, []
+    def one(argv, e, _cwd):
+        got["r"] = r = runner(shlex.join(argv), e)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    def say(line): said.append(line); print("  " + line, flush=True)
+    rc = buildfit.run(step, ["bash", "-c", cmd], label=label, env=dict(os.environ if env is None else env), runner=one, say=say, **fit)
+    if rc == buildfit.CAPACITY_RC and (not got or got["r"].returncode != rc):
+        out = "\n".join(said)
+        short = buildfit.parse_short(out)
+        why = buildfit.short_words(short) if short else out[-600:]
+        return subprocess.CompletedProcess(cmd, rc, out, f"{label} could not run on this machine: {why} Nothing was deployed. "
+                                           "This is the factory's own machine being too busy or too small, not the app: run the deploy again when it is quieter.")
+    r = got["r"]
+    if rc == buildfit.CAPACITY_RC and r.returncode != rc:        # killed twice, the second time tight
+        short = buildfit.parse_short("\n".join(said))
+        return subprocess.CompletedProcess(r.args, rc, r.stdout, (r.stderr or "") + f"\n{label} was killed for lack of memory twice, the second "
+                                           f"time at its smallest settings: the machine, not the app. {buildfit.short_words(short) if short else ''} "
+                                           "Run the deploy again when the VM is quieter.")
     return r
 
 def vercel_env_names(cwd, project):
@@ -2770,11 +2772,6 @@ def self_test():
     slept = []
     ok, now = wait_for_headroom("x", deadline_s=90, probe=lambda: (12.0, 100), sleep=slept.append, every=30)
     check("headroom gives up at its deadline", not ok and sum(slept) == 90, (ok, slept))
-    check("heap ceiling is half of what is free, clamped to 2-4GB",
-          (_node_options(6000), _node_options(1000), _node_options(20000)) ==
-          ("--max-old-space-size=3000", "--max-old-space-size=2048", "--max-old-space-size=4096"))
-    check("an existing heap ceiling is kept", _node_options(6000, "--max-old-space-size=1234") == "--max-old-space-size=1234")
-    check("no memory reading gives the floor heap ceiling", _node_options(None) == "--max-old-space-size=2048")
     # 3b. macOS: vm_stat is read, and an OS with no reading is gated on load alone, never on "0MB"
     vm_stat = ("Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages free:                              182038.\n"
                "Pages active:                           1313718.\nPages inactive:                         1305969.\n"
@@ -2790,16 +2787,31 @@ def self_test():
     check("no memory reading: a busy machine still waits on load", not ok and sum(slept) == 60, (ok, slept))
     check("the machine reading works on this OS", isinstance(_machine()[0], float) and (_machine()[1] is None or _machine()[1] >= 0))
     check("busiest processes are listed without procps-only flags", _busiest() != "unknown", _busiest())
-    # 4. the heavy build: nice, NODE_OPTIONS, one retry on an OOM kill only
+    # 4. the heavy build (mold_v1-232): sized by lib/buildfit.py, at a low priority, one retry TIGHT on an OOM kill only,
+    #    and a clear capacity exit when it is killed again or cannot fit at all
     CP = subprocess.CompletedProcess
-    for codes, want_calls, want_rc in (([137, 0], 2, 0), ([137, 137], 2, 137), ([1, 0], 1, 1), ([0], 1, 0)):
+    def quietly(fn, *a, **k):
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()): return fn(*a, **k)
+    idle8 = {"mem_total_mb": 7941, "mem_avail_mb": 6000, "swap_total_mb": 0, "swap_free_mb": 0, "cg_room_mb": None, "cg_limit_mb": None,
+             "cpus": 4, "host_cpus": 4, "load1": 0.2, "disk_free_mb": 50000}
+    fit = dict(probe=lambda: dict(idle8), kills=lambda: None, sleep=lambda s: None, swap=(lambda mb, say: False, lambda say: None))
+    for codes, want_calls, want_rc in (([137, 0], 2, 0), ([137, 137], 2, buildfit.CAPACITY_RC), ([1, 0], 1, 1), ([0], 1, 0)):
         calls, it = [], iter(codes)
-        def runner(c, e): calls.append((c, e.get("NODE_OPTIONS", ""))); return CP(c, next(it), "", "")
-        r = heavy_build("vercel build", "/", "eve api build", env={}, wait=lambda l: (True, "quiet"), runner=runner)
+        def runner(c, e): calls.append((c, e.get("NODE_OPTIONS", ""), e.get("BUILD_CPUS"))); return CP(c, next(it), "", "")
+        r = quietly(heavy_build, "vercel build", "/", "eve api build", env={}, wait=lambda l: (True, "quiet"), runner=runner, **fit)
         check(f"heavy build exits {codes}: {want_calls} call(s), rc {want_rc}", len(calls) == want_calls and r.returncode == want_rc, (calls, r.returncode))
-        check(f"  ...under nice with a heap ceiling", all(c.startswith("nice -n 10 vercel build") and "max-old-space-size" in o for c, o in calls), calls)
-    check("an OOM reported only in the output counts", _oom_killed(CP("x", 1, 'Error: Command "npm run build:eve" exited with 137', "")))
-    check("an ordinary failure does not", not _oom_killed(CP("x", 1, "Type error: foo", "")))
+        check(f"  ...at a low priority with a heap ceiling", all("vercel build" in c and ("--nice=" in c or c.startswith("nice -n")) and "max-old-space-size" in o for c, o, _ in calls), calls)
+        if len(calls) == 2: check("  ...and the second try is tight: one worker", calls[1][2] == "1" and calls[0][2] != "1", calls)
+        if codes == [137, 137]:
+            check("  ...killed twice says so, and that it is the machine, not the app", "killed for lack of memory twice" in (r.stderr or "") and "not the app" in r.stderr, r.stderr)
+    small = dict(fit, probe=lambda: dict(idle8, mem_avail_mb=900), sleep=lambda s: None)
+    calls = []
+    r = quietly(heavy_build, "vercel build", "/", "eve api build", env={}, wait=lambda l: (True, "quiet"), runner=lambda c, e: calls.append(c) or CP(c, 0, "", ""), **small)
+    check("a machine that cannot fit the eve build: nothing run, the capacity exit, the measured numbers in words",
+          not calls and r.returncode == buildfit.CAPACITY_RC and "900 MB of memory available" in r.stderr and "not the app" in r.stderr, (calls, r.returncode, r.stderr))
+    check("an OOM reported only in the output counts", buildfit.killed(1, 'Error: Command "npm run build:eve" exited with 137', None, None) == "kernel")
+    check("an ordinary failure does not", buildfit.killed(1, "Type error: foo", None, None) is None)
     # 5. the record a stopped deploy leaves
     SHIPPED.clear()
     check("nothing shipped says the old deployment still serves", "still serving" in shipped_note())
