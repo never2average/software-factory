@@ -179,7 +179,7 @@ The mold ships three commands of its own for this (`molds/mold_v1/codebase/packa
 | Command | What it writes |
 |---|---|
 | `operator:new-org -- --name "<Name>" --id <id> --owner <email>` | a workspace: the `orgs` row, the owner (also made a platform admin), one workflow row per specialist and the build's starter library. On `onfinance_hfc_research` that library is `hfc-research`: four starter apps that refresh on a schedule and spend inference whether anyone opens them or not (`docs/COST_MODEL.md` §2c). Refuses a workspace id that already exists unless `--force`, so it cannot change an existing workspace by accident |
-| `operator:onboard-self -- --email <you> --name "<you>" --org <id>` | records you as a team member and prints a readiness checklist. **Fails today** on every app with fail-closed row-level security, after printing the checklist: mold_v1-229 |
+| `operator:onboard-self -- --org <workspace id> --email <you> --name "<you>"` | records you as a team member **in that one workspace** (a team memory and, in its data room, `People/<you>/`) and prints a readiness checklist. `--org` is required since mold 1260acd (upstream #154, mold_v1-229); without it the command stops and writes nothing. Run it once per workspace you work in |
 | `operator:new-customer -- --email <you> --name "<Company>" --id <id> --org <workspace id>` | a company in that workspace: its row, you as its solution engineer, and `context.md` + `interactions.jsonl` in the workspace's data room |
 
 They run inside the app, with the app's own database connection (the app role, row-level security on), never with an
@@ -203,8 +203,23 @@ app, switch to that workspace, open `https://<address>/workspace`, the **Setting
 (the starter apps no longer refresh); its rows and files stay, and **Reactivate** brings it back.
 
 Measured on `onfinance_hfc_vm` on 2026-10-10 with a throwaway workspace "Onboarding Check 2026-10-10": `new-org` and
-`new-customer` succeeded (readiness: 1 member, 7 workflows, data-room prefix, 1 company), `onboard-self` failed as
-above, the workspace was then suspended; the existing workspaces were not touched (task mold_v1-210).
+`new-customer` succeeded (readiness: 1 member, 7 workflows, data-room prefix, 1 company) and the workspace was
+suspended. `onboard-self` failed there (mold_v1-229); on 2026-10-11, on mold 1260acd, it succeeded with `--org` in the
+same workspace, still suspended (it does not need the workspace active), and its row landed in that workspace only.
+The existing workspaces were not touched (task mold_v1-210).
+
+**Keep a sign-in for the deploy's chat check.** After every deploy the factory sends one chat to the app as a check,
+and it needs a signed-in session of yours that the factory keeps in its own private folder. Without one it says
+"no signed-in session for this app is on hand" and skips the check. A session lasts 7 days; to give it one (or a
+fresh one), tell the agent to run this, with your sign-in address:
+
+```
+python3 .claude/scripts/mint.py <app_id> code-request <your email>
+```
+
+A six-digit code arrives by email. Paste it into the chat and the agent runs
+`python3 .claude/scripts/mint.py <app_id> code <six digits> <your email>`. The code expires in ten minutes, and the session
+is stored only on the factory's machine, never in the repository or the chat.
 
 ## 7. Lanes (agent)
 
