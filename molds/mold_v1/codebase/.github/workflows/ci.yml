@@ -213,6 +213,14 @@ jobs:
         if: always()
         run: npm run check:google-client
 
+      # A BUILD SIZED TO THE MACHINE THAT RUNS IT. Next starts os.cpus()-1 static workers whatever a cgroup allows and
+      # sets Turbopack no memory target, so a small or busy server's build was killed for lack of memory. Whoever runs
+      # the build measures the machine and says BUILD_CPUS and BUILD_MEMORY_MIB (lib/build-limits.ts); unset, Next's
+      # defaults. This proves the parsing, that the installed Next accepts the options, and that both apps use them.
+      - name: Build size comes from the machine (BUILD_CPUS, BUILD_MEMORY_MIB; unset is Next's defaults)
+        if: always()
+        run: npm run test:build-limits
+
       # Base code used to write its own workflows (13) and onboarding recipes (5) into every workspace of every
       # deployment, whatever the deployment was for. A workspace's library is the deployment profile's now
       # (library.sources; none by default): this proves the default provisions nothing, that the one-line opt-in

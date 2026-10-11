@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { agentBaseUrl } from "./lib/agent-url.ts";
+import { buildLimits } from "./lib/build-limits.ts";
 import { bundleBudgetDist } from "./lib/bundle-budget-dist.ts";
 import { sandboxLineFlag } from "./lib/sandbox-line-flag.ts";
 
@@ -24,11 +25,13 @@ const BUNDLE_BUDGET_DIST = bundleBudgetDist();
 /** Whether the chat shows "Waiting for a free sandbox (3rd in line)…": only beside an agent that caps its sandboxes. */
 const SANDBOX_LINE = sandboxLineFlag();
 
+/** How much of the machine the build may use (BUILD_CPUS, BUILD_MEMORY_MIB; unset: Next's defaults). */
+const BUILD_LIMITS = buildLimits();
+
 const nextConfig: NextConfig = {
   env: { NEXT_PUBLIC_SANDBOX_LINE: SANDBOX_LINE },
-  ...(BUNDLE_BUDGET_DIST
-    ? { distDir: BUNDLE_BUDGET_DIST, productionBrowserSourceMaps: true, experimental: { turbopackSourceMaps: true } }
-    : {}),
+  ...(BUNDLE_BUDGET_DIST ? { distDir: BUNDLE_BUDGET_DIST, productionBrowserSourceMaps: true } : {}),
+  experimental: { ...BUILD_LIMITS, ...(BUNDLE_BUDGET_DIST ? { turbopackSourceMaps: true } : {}) },
   // /api/mcp serves dm.md (the data-room contract) through its dataroom_structure tool.
   outputFileTracingIncludes: { "/api/mcp": ["./dm.md"] },
   async rewrites() {
