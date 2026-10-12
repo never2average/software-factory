@@ -129,6 +129,7 @@ import runs                 # one lock per app and step, background runs and the
 import services             # FACTORY_REHEARSAL / FACTORY_CALL_LOG (lib/services.py); nothing changes when unset
 import deploy_gate          # only deploy a mold commit whose CI passed (lib/deploy_gate.py)
 import buildfit             # a heavy build sized to this machine, now (lib/buildfit.py, mold_v1-232)
+import asr                  # the app's speech model for dictation, carried as ASR_* (lib/asr.py)
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
@@ -922,6 +923,8 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
                "ENABLE_WEB_SEARCH": str(app.get("capabilities", {}).get("web_search", "?")).lower(),
                "ENABLE_BROWSER": str(app.get("capabilities", {}).get("browser", "?")).lower(),
                "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
+        try: cfg.update(asr.env_pairs(app, mold_dir))
+        except SystemExit as x: create.append(f"NOTHING: the deploy stops before writing anything, because {x}")
         create.append(f"env on {proj} and {api}, rewritten on every deploy: " + ", ".join(f"{k}={v}" for k, v in cfg.items())
                       + "; PLATFORM_NOTIFY_FROM's display name set to this app's product name on all three projects")
         if not shared:
@@ -1642,6 +1645,9 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         for role, env_name in (("orchestrator", "CLOUDFLARE_MODEL_ORCHESTRATOR"), ("specialist", "CLOUDFLARE_MODEL_SPECIALIST")):
             v = (app["model"].get("roles") or {}).get(role)
             if v: cfg[env_name] = v
+    # The speech model behind the microphone (application.asr), the same way: ASR_MODEL / ASR_LANGUAGE / ASR_ENABLED,
+    # written on every deploy. A choice this build's mold cannot carry stops the deploy HERE, before anything is written.
+    cfg.update(asr.env_pairs(app, mold_dir))
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=proj)
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=f"{proj}-api")   # build-time flags of the eve bundle: the API must agree with the web door
     # The sender's display name is this app's brand, re-derived on every deploy so it cannot drift from

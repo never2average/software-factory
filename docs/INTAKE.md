@@ -21,8 +21,9 @@ What the factory needs to know before it can stamp an application, and where eac
 | workspace_name | application.workspace.org.name | brief silent and no factory default | free text |
 | operator_email | application.workspace.operator_self.email | brief silent and no factory default | email |
 | library | application.surface.custom_workflow_builder.library.install | never (brief hint, default none) | none, all |
+| asr_model | application.asr.model | **optional**: offered, never required (brief hint, else the app's earlier choice, else today's model); `--ask` prompts with the default, the intake subagent includes it in its batch | @cf/openai/whisper-large-v3-turbo **(default)**, @cf/openai/whisper, @cf/deepgram/nova-3 |
 
-Brief hints recognised: "vercel" / "vm, droplet, self-host" / "vm_remote, the customer's own server, a remote server, a dedicated server" (a server that serves the app; add "server: <address>" and "domain: <name>" if known, else the operator supplies them later); "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "operator: <email>" (also "owner:"); "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none" (the starter library; see below); "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
+Brief hints recognised: "vercel" / "vm, droplet, self-host" / "vm_remote, the customer's own server, a remote server, a dedicated server" (a server that serves the app; add "server: <address>" and "domain: <name>" if known, else the operator supplies them later); "neon" / "supabase" / "self-host the postgres, database on the vm, local postgres"; "no web search"; "no browser"; "single workspace"; "fresh database" / "shared database"; "customer: <id>"; "domain: <host>"; "workspace: <name>"; "operator: <email>" (also "owner:"); "members: a@x, b@x"; "primary context: a, b, c" (corpus kinds, unknown ones become custom); "multiplayer: x, y, z" (processes, unknown ones become custom gaps); "accounts are called patients"; "clone of live"; "workflows: all|none" (the starter library; see below); "speech model: nova-3" (also "dictation model:", a full id, "turbo", "whisper", "deepgram"), "speech language: hi" (or "auto"), "no dictation" (see below); "mold_v2". Field-by-field mapping to the mold: `docs/STATE.md`.
 
 Steady state after the first confirmed intake: zero questions for a five-line brief; everything comes from the brief or defaults. Secrets are always by name; `provision.py` checks presence in the store and lists what the user still has to set.
 
@@ -73,6 +74,32 @@ deployment and the only list `provision.py` syncs onto it is `API_ENV`, so intak
 provider whose secret is not in it, instead of writing state that passes `--check` and runs without its key.
 Both providers' names are in `API_ENV` today, so nothing is refused; the check stays in place for the next
 provider. `target: vm` starts no process, so nothing is forwarded there.
+
+## Speech model (the microphone button)
+
+The chat composer has a microphone button: a person speaks, a speech-to-text model on Cloudflare Workers AI turns it
+into text, and the text lands in the message box to edit and send (the mold's dictation; no audio is kept). The
+application developer picks the model per app, as they pick the chat's models; it is never a setting for the app's
+users or workspace admins. `application.asr` (`.claude/scripts/lib/asr.py` holds the list, the prices and the rules):
+
+| `asr.model` | Price per audio minute | Language | Source (read 2026-10-12) |
+| --- | --- | --- | --- |
+| `@cf/openai/whisper-large-v3-turbo` **(default, today's model)** | $0.000513 | any ISO 639-1 code, or detected | developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/ |
+| `@cf/openai/whisper` | $0.000453 | none (always detected) | developers.cloudflare.com/workers-ai/models/whisper/ |
+| `@cf/deepgram/nova-3` | $0.0052 (HTTP; the WebSocket price, $0.0092, is not used) | en, es, fr, de, hi, ru, pt, ja, it, nl, or detected | developers.cloudflare.com/workers-ai/models/nova-3/ |
+
+`asr.language` is a two-letter code or `null` (the model detects it); `asr.enabled: false` removes the button. Absent,
+each key is the mold's own default (its deployment profile's `asr`, with the app's packs' profiles). Intake writes the
+block explicitly, so the choice is visible in state.
+
+How it reaches the app: the same way as `model.roles` (`CLOUDFLARE_MODEL_<ROLE>`). Every deploy writes
+`ASR_MODEL`, `ASR_LANGUAGE` (`auto` for detected) and `ASR_ENABLED` to the Vercel projects (`provision.py`) or the
+server's env file (`lib/vm_remote.py`), and the mold's dictation route takes them over its profile. **Fail closed:** a
+model off the list or a language the model cannot take is refused by `factory.py validate`; a choice other than the
+mold's own on a mold that does not read `ASR_MODEL` yet is refused by validate and by the deploy itself, before
+anything is written (refresh the mold, or set `asr` back to its values); and the mold turns dictation off rather than
+call a model it cannot call or price. The usage report (`app_usage.py`) counts dictations apart from chat turns and
+prices them per audio minute at the model each clip recorded.
 
 ## Inference providers
 

@@ -502,6 +502,15 @@ def _env_file(check, tmp):
     r = subprocess.run([sys.executable, tool, "env-run", "--file", f, "--user", os.environ.get("USER") or __import__("pwd").getpwuid(os.getuid()).pw_name, "--home", tmp, "--cwd", tmp,
                         "--", "sh", "-c", 'test "$CLOUDFLARE_API_TOKEN" = "$1" && test "$HOME" = "$2" && echo loaded', "x", SECRET, tmp], capture_output=True, text=True)
     check("env-run hands the file's values to the child's environment", r.stdout.strip() == "loaded", r.stdout + r.stderr)
+    # The speech model (application.asr; lib/asr.py): written as ASR_* only for a mold that reads them, like the roles.
+    import asr as _asr
+    reads = _asr.mold_reads_env(MOLD)
+    Sa = _settings(lambda d: d["application"].update(asr={"enabled": True, "model": "@cf/deepgram/nova-3", "language": "hi"}))
+    ca = V.config_pairs(Sa)
+    check("the app's speech model goes into the env file as ASR_* when its mold reads them, and never when it does not"
+          + ("" if reads else " (this snapshot does not: none written; validate refuses the choice)"),
+          (ca.get("ASR_MODEL"), ca.get("ASR_LANGUAGE"), ca.get("ASR_ENABLED")) == (("@cf/deepgram/nova-3", "hi", "true") if reads else (None, None, None)), {k: v for k, v in ca.items() if k.startswith("ASR")})
+    check("  ...and config_pairs carries whatever settings() resolved", V.config_pairs(dict(Sa, asr={"ASR_MODEL": "m", "ASR_LANGUAGE": "auto", "ASR_ENABLED": "false"}))["ASR_LANGUAGE"] == "auto")
     S = _settings(); c = V.config_pairs(S)
     check("the settings half of the env file holds no secret name", not (set(c) & set(V.SERVER_MADE)) and not (set(c) & set(V.operator_names(S))), sorted(c))
     check("  ...and carries the sandbox settings, the build-time flags and the loopback addresses", c["SANDBOX_BACKEND"] == "microsandbox" and c["SANDBOX_CPUS"] == "2" and c["SANDBOX_MEMORY_MIB"] == "1024"

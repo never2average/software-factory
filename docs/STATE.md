@@ -138,6 +138,9 @@ A vercel or vm app's lanes are unchanged.
 ## capabilities and runtime env
 `application.capabilities` is the source; `infrastructure.runtime_env` is what provision.py writes to the target (`OPS_MULTI_TENANT`, `ENABLE_*`, `MODEL_PROVIDER`). Never edit `runtime_env` by hand.
 
+## application.asr (the microphone button's speech model)
+`{enabled, model, language}`, chosen per app by its developer (intake question `asr_model`; list, prices and rules in `.claude/scripts/lib/asr.py`, explained in `docs/INTAKE.md`, "Speech model"). Written to the deployment on every deploy as `ASR_MODEL`, `ASR_LANGUAGE` (`auto` = detected) and `ASR_ENABLED`, beside `CLOUDFLARE_MODEL_<ROLE>`; the mold's dictation route reads them over its profile's `asr`. A mold that does not read them yet refuses any choice other than its own (validate and the deploy both stop).
+
 ## clone_of
 Set when the app replicates an existing deployment. `datastores.postgres.snapshot.cleared_sealed_rows` records the `connector_secrets` / `browser_credentials` rows the restore dropped: they were sealed under the source app's `OPS_SECRETS_KEY`, which is minted per app and never copied (`docs/HOW_IT_WORKS.md`, Secrets). A non-clone app restores nothing and starts with no connectors; enter them in the app. `datastores.postgres.snapshot` and `datastores.blob.snapshot` say where the data came from; `clone_of.regression` records the diff run against the source. Read-back tools in the mold (`operator:doctor`, `validate-solution`, `context-graph`) print prose, so the regression harness queries Postgres and blob directly.
 

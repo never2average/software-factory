@@ -68,6 +68,34 @@
         }
       }
     },
+    "asr": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Dictation: the speech-to-text model behind the chat composer's microphone button, chosen per app by its developer (intake question asr_model). Absent, or a key absent: the mold's own default (its deployment profile's asr; today @cf/openai/whisper-large-v3-turbo, language detected, on). Carried to the app as ASR_MODEL / ASR_LANGUAGE / ASR_ENABLED on every deploy (.claude/scripts/lib/asr.py), the way model.roles are; a mold that cannot take them refuses a choice other than its own. Prices per audio minute (Workers AI, 2026-10-12): whisper-large-v3-turbo $0.000513, whisper $0.000453, deepgram/nova-3 $0.0052.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "false: no microphone button in this app"
+        },
+        "model": {
+          "type": "string",
+          "enum": [
+            "@cf/openai/whisper-large-v3-turbo",
+            "@cf/openai/whisper",
+            "@cf/deepgram/nova-3"
+          ],
+          "description": "A Cloudflare Workers AI speech-to-text model the mold's dictation can call and price (lib/asr.py MODELS)"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z]{2}$",
+          "description": "ISO 639-1 code to transcribe in, or null for the model to detect it. @cf/openai/whisper takes none; @cf/deepgram/nova-3 takes en, es, fr, de, hi, ru, pt, ja, it, nl"
+        }
+      }
+    },
     "capabilities": {
       "type": "object",
       "properties": {

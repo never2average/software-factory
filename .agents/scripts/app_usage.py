@@ -64,6 +64,8 @@ TICKET_NOTE = ("tickets: the app's own in-app tickets table, every ticket as it 
                "Waiting on Eng, Waiting on Vendor, Mitigated, Monitoring; done = Resolved, Closed, Won't Fix (the app's own closed set)")
 SCOPE_NOTES = [
     "input_tokens, output_tokens, cost_usd: chat turns only (chat_turn_usage); workflow (subagent) tokens are not in them, workflow money is workflow_cost_usd",
+    "dictations, audio_seconds, dictation_cost_usd: the microphone button's speech-to-text clips (chat_turn_usage rows of kind dictation), not chat turns; "
+    "priced per audio minute at the speech model each clip recorded, with the app's own price table (estimateAudioCostUsd), to six places",
     "cost_usd: not stored by the app; estimated from the turns' tokens at the app's own price table (lib/inference-pricing.ts), the same way its usage page does",
     "workflow_runs: automation_runs rows of type workflow (subagent runs) started in the window; schedules, system crons, connector syncs and browser runs are not counted",
     "cost_basis / workflow_cost_basis: recorded = the cost the app recorded for those tokens, priced at the model it recorded for them (or the provider's own figure); "
@@ -75,7 +77,8 @@ MODEL_ENV_NAMES = ("MODEL_PROVIDER", "CLOUDFLARE_MODEL", "CLOUDFLARE_MODEL_ORCHE
 MODEL_ID = re.compile(r"^[@A-Za-z0-9][A-Za-z0-9@/._:-]{1,120}$")
 ROLE_CALL = re.compile(r"""\bagentModel\(\s*["'](\w+)["']\s*\)""")
 ROW_CAP = 50
-NUM = ("people_active", "chats", "chat_turns", "input_tokens", "output_tokens", "cost_usd", "workflow_runs", "workflow_cost_usd")
+NUM = ("people_active", "chats", "chat_turns", "input_tokens", "output_tokens", "cost_usd", "workflow_runs", "workflow_cost_usd",
+       "dictations", "audio_seconds", "dictation_cost_usd")
 
 # ---------------------------------------------------------------------------------------------------------
 # the query: node + the app's own `postgres` package, as the app's own role. Prints ONE JSON line of counts.
@@ -92,8 +95,11 @@ const ro = (org, fn) => sql.begin('read only', async (t) => {
   if (org !== null) await t`select set_config('app.org_id', ${org}, true)`;
   return fn(t);
 });
-let price = null;
-try { price = (await import(pathToFileURL(process.cwd() + '/lib/inference-pricing.ts').href)).estimateCostUsd; } catch (e) { price = null; }
+let price = null, audioPrice = null;
+try {
+  const m = await import(pathToFileURL(process.cwd() + '/lib/inference-pricing.ts').href);
+  price = m.estimateCostUsd; audioPrice = typeof m.estimateAudioCostUsd === 'function' ? m.estimateAudioCostUsd : null;
+} catch (e) { price = null; }
 const out = { pricing: typeof price === 'function', workspaces: [], daily_people: {} };
 try {
   const [r] = await ro(null, (t) => t`select current_user as role, r.rolsuper as su, r.rolbypassrls as bypass from pg_roles r where r.rolname = current_user`);
@@ -102,6 +108,10 @@ try {
     console.log(JSON.stringify({ error: `refused: the app's connection role ${r.role} bypasses row-level security, so it is not the app role; nothing was read` }));
     await sql.end(); process.exit(0);
   }
+  // Dictation (speech to text for the composer) shares chat_turn_usage: rows of kind 'dictation' with the clip's length
+  // in audio_ms (the mold's drizzle/0039). They are not chat turns: counted apart and priced per audio minute at the
+  // model each one recorded. The columns are read through to_jsonb(row) so one statement serves a database from before
+  // that migration too (no such column: every row is a chat turn, and there are no dictations).
   let listed = null;
   try { listed = await ro(null, (t) => t`select org_id, name from orgs order by org_id`); } catch (e) { out.orgs_error = why(e); }
   const orgs = new Map();
@@ -115,10 +125,10 @@ try {
     const since = A.since;
     const byModel = await q('chat', (t) => t`select model, count(*)::int as turns, coalesce(sum(input_tokens),0)::text as inp,
         coalesce(sum(output_tokens),0)::text as outp, coalesce(sum(cache_read_tokens),0)::text as cr, coalesce(sum(cache_write_tokens),0)::text as cw
-        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz group by model`);
-    const chats = await q('chat', (t) => t`select count(distinct eve_session_id)::int as n from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz`);
+        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and coalesce(to_jsonb(chat_turn_usage)->>'kind', 'chat') <> 'dictation' group by model`);
+    const chats = await q('chat', (t) => t`select count(distinct eve_session_id)::int as n from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and coalesce(to_jsonb(chat_turn_usage)->>'kind', 'chat') <> 'dictation'`);
     const days = await q('chat', (t) => t`select to_char(started_at at time zone 'UTC', 'YYYY-MM-DD') as d, lower(actor_email) as e, count(*)::int as n
-        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz group by 1, 2`);
+        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and coalesce(to_jsonb(chat_turn_usage)->>'kind', 'chat') <> 'dictation' group by 1, 2`);
     if (byModel && chats && days) {
       w.chat_turns = 0; w.input_tokens = 0; w.output_tokens = 0; w.cost_usd = 0; w.unpriced_turns = 0;
       for (const g of byModel) {
@@ -136,6 +146,19 @@ try {
       }
       w.people_active = people.size;
     }
+    {
+      const dz = await q('dictation', (t) => t`select model, count(*)::int as n, coalesce(sum((to_jsonb(chat_turn_usage)->>'audio_ms')::bigint),0)::text as ms
+          from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and to_jsonb(chat_turn_usage)->>'kind' = 'dictation' group by model`);
+      if (dz) {
+        w.dictations = 0; w.audio_ms = 0; w.dictation_cost_usd = 0; w.unpriced_dictations = 0; w.dictation_models = {};
+        for (const g of dz) {
+          const ms = Number(g.ms); w.dictations += g.n; w.audio_ms += ms;
+          w.dictation_models[g.model || '(none recorded)'] = (w.dictation_models[g.model || '(none recorded)'] || 0) + g.n;
+          const c = audioPrice ? audioPrice(g.model, ms) : null;
+          if (c === null || c === undefined) w.unpriced_dictations += g.n; else w.dictation_cost_usd += c;
+        }
+      }
+    }
     const wf = await q('workflow', (t) => t`select count(*)::int as runs, coalesce(sum(cost_usd),0)::float8 as cost,
         count(*) filter (where coalesce(cost_usd,0) = 0 and coalesce(input_tokens,0) + coalesce(output_tokens,0) > 0)::int as uncosted, coalesce(sum(input_tokens),0)::text as inp, coalesce(sum(output_tokens),0)::text as outp
         from automation_runs where org_id = ${org} and automation_type = 'workflow' and started_at >= ${since}::timestamptz`);
@@ -147,7 +170,7 @@ try {
     w.berr = {};
     const b = async (field, fn) => { try { return await ro(org, fn); } catch (e) { w.berr[field] = why(e); return null; } };
     const iso = (v) => (v ? new Date(v).toISOString() : null);
-    const lastChat = await b('main', (t) => t`select max(started_at) as last from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz`);
+    const lastChat = await b('main', (t) => t`select max(started_at) as last from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and coalesce(to_jsonb(chat_turn_usage)->>'kind', 'chat') <> 'dictation'`);
     w.by_agent = [];
     if (byModel && chats && days && lastChat && w.chat_turns > 0) {
       w.by_agent.push({ agent: 'main agent', kind: 'main', turns: w.chat_turns, runs: null, input_tokens: w.input_tokens, output_tokens: w.output_tokens,
@@ -199,9 +222,9 @@ try {
     // per person: chat turns by model (to price them), chats, and the workflow runs their sessions started
     const uModel = await b('users', (t) => t`select lower(actor_email) as e, model, count(*)::int as turns, coalesce(sum(input_tokens),0)::text as inp,
         coalesce(sum(output_tokens),0)::text as outp, coalesce(sum(cache_read_tokens),0)::text as cr, coalesce(sum(cache_write_tokens),0)::text as cw, max(started_at) as last
-        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and actor_email is not null group by 1, 2`);
+        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and coalesce(to_jsonb(chat_turn_usage)->>'kind', 'chat') <> 'dictation' and actor_email is not null group by 1, 2`);
     const uChats = await b('users', (t) => t`select lower(actor_email) as e, count(distinct eve_session_id)::int as n
-        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and actor_email is not null group by 1`);
+        from chat_turn_usage where org_id = ${org} and started_at >= ${since}::timestamptz and coalesce(to_jsonb(chat_turn_usage)->>'kind', 'chat') <> 'dictation' and actor_email is not null group by 1`);
     // run_key = <workflow>:<child session>:<turn>; a child session's owner row carries its parent's (the person's) owner.
     const uRuns = await b('user_runs', (t) => t`select case when o.owner_kind = 'person' then lower(o.owner_email) end as e, count(*)::int as n, max(r.started_at) as last
         from automation_runs r left join agent_session_owners o on r.run_key like '%:%:%' and o.session_id = split_part(r.run_key, ':', 2) and o.org_id = r.org_id
@@ -461,11 +484,20 @@ def assemble(app_id, days, target, raw, dates, generated_at=None):
                 f["workflow_cost_usd"] = None if none_costed else round(float(w.get("workflow_cost_usd") or 0), 4)
                 f["_kinds"] = {"recorded"}
             f["workflow_cost_basis"] = None if f["workflow_cost_usd"] is None else basis_of(f["_kinds"])
+        if "dictation" not in e and "dictations" in w:
+            f["dictations"] = int(w.get("dictations") or 0); f["audio_seconds"] = round(float(w.get("audio_ms") or 0) / 1000, 1)
+            f["dictation_cost_usd"] = round(float(w.get("dictation_cost_usd") or 0), 6) if not w.get("unpriced_dictations") else None
+            if w.get("unpriced_dictations"):
+                nm.append(f"dictation_cost_usd ({w.get('org_id')}): {w['unpriced_dictations']} dictation(s) used a speech model the app's price table does not price "
+                          f"({', '.join(sorted(w.get('dictation_models') or {}))}), so no total is given")
+        elif "dictation" not in e:
+            nm.append(f"dictations, audio_seconds, dictation_cost_usd ({w.get('org_id')}): not read (the usage query did not report them)")
         if "tickets" not in e:
             f["tickets"], unknown = fold_tickets(w.get("tickets_by_status"))
             if unknown: nm.append(f"tickets ({w.get('org_id')}): " + ", ".join(f"{n} with status '{s}'" for s, n in sorted(unknown.items())) + " are not one of the app's statuses and are counted as open")
         for field, msg in sorted(e.items()):
-            what = {"chat": "people_active, chats, chat_turns, input_tokens, output_tokens, cost_usd", "workflow": "workflow_runs, workflow_cost_usd", "tickets": "tickets"}.get(field, field)
+            what = {"chat": "people_active, chats, chat_turns, input_tokens, output_tokens, cost_usd", "workflow": "workflow_runs, workflow_cost_usd", "tickets": "tickets",
+                    "dictation": "dictations, audio_seconds, dictation_cost_usd"}.get(field, field)
             nm.append(f"{what} ({w.get('org_id')}): the table could not be read: {msg}")
         if "chat" not in e and f["cost_usd"] is None:
             nm.append(f"cost_usd ({w.get('org_id')}): " + (f"{w.get('unpriced_turns')} chat turn(s) ran on a model the app's price table does not price (or recorded none), so no total is given" if pricing else "the app's price table (lib/inference-pricing.ts) could not be loaded"))
@@ -486,7 +518,8 @@ def assemble(app_id, days, target, raw, dates, generated_at=None):
     for k in NUM:
         vals = [w[k] for w in ws]
         if k == "people_active": tot[k] = int(raw.get("people_active") or 0) if all(v is not None for v in vals) else None
-        elif all(v is not None for v in vals): tot[k] = round(sum(vals), 4) if k.endswith("_usd") else sum(vals)
+        elif all(v is not None for v in vals):
+            tot[k] = round(sum(vals), 6) if k == "dictation_cost_usd" else round(sum(vals), 4) if k.endswith("_usd") else round(sum(vals), 1) if k == "audio_seconds" else sum(vals)
     if tot["workflow_cost_usd"] is not None:
         tot["workflow_cost_basis"] = basis_of(set().union(*[w.get("_kinds") or set() for w in ws]) if ws else set())
     for w in ws: w.pop("_kinds", None)
@@ -844,6 +877,14 @@ def self_test():
     ok([(r["agent"], r["turns"], r["runs"], r["cost_usd"], r["cost_basis"], r["estimated_from"]) for r in fr["by_agent"]] == [("main agent", 6, None, 3.2, "recorded", None), ("research", None, 2, 0.0051, "estimated", "m1")], "main agent and specialist rows, the specialist estimated at its configured model by the app's price table")
     ok(fr["totals"]["workflow_cost_usd"] == 0.0051 and fr["totals"]["workflow_cost_basis"] == "estimated", "totals from the query")
     ok(fr["totals"]["people_active"] == 3 and fr["totals"]["tickets"]["open"] == 1, "existing fields unchanged by the breakdowns")
+    # dictation: counted apart from chat turns, priced per audio minute at the speech model each clip recorded
+    ok((fr["totals"]["dictations"], fr["totals"]["audio_seconds"], fr["totals"]["dictation_cost_usd"]) == (2, 90.0, 0.015) and fr["totals"]["chat_turns"] == 6,
+       "dictations from the query: two clips, 90 s, $0.015 at the app's own audio price; not chat turns")
+    ok(all("coalesce(to_jsonb(chat_turn_usage)->>'kind', 'chat') <> 'dictation'" in q for q in re.findall(r"t`([^`]*from chat_turn_usage[^`]*)`", QUERY_JS) if "'dictation' group by model" not in q)
+       and QUERY_JS.count("<> 'dictation'") == 6, "every chat-turn statement leaves dictation rows out (and reads a database from before the column)")
+    ok((rep["totals"]["dictations"], rep["totals"]["audio_seconds"], rep["totals"]["dictation_cost_usd"]) == (4, 170.0, None)
+       and rep["workspaces"][0]["dictation_cost_usd"] == 0.001283 and any("@cf/unknown/asr" in x and "no total is given" in x for x in rep["not_measured"]),
+       "an unpriced speech model makes the dictation total null, and is named")
     print(f"app_usage: {n} checks passed"); return 0
 
 if __name__ == "__main__": sys.exit(main(sys.argv[1:]))

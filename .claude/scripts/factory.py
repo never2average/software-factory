@@ -762,6 +762,15 @@ def _library(app_id, docs):
     if here not in sys.path: sys.path.insert(0, here)
     import library
     return library.problems(app_id, docs.get("application") or {})
+def _asr(app_id, docs):
+    """The speech-model choice (lib/asr.py): a language the model cannot take, and a choice the app's mold cannot carry
+    (it would run the mold's own model while state says another)."""
+    a = docs.get("application") or {}
+    if not isinstance(a, dict) or not isinstance(a.get("asr"), dict): return []
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+    if here not in sys.path: sys.path.insert(0, here)
+    import asr
+    return asr.problems(app_id, a, os.path.join(ROOT, "molds", str(a.get("mold_id") or ""), "codebase"), ROOT)
 def _app_errors(app, adir):
     """(errors, docs) for one application directory: the four files against their schemas, then every rule the
     schemas cannot express. One function for state/application/<app_id>/ and for a fixture named with --app-dir."""
@@ -772,7 +781,7 @@ def _app_errors(app, adir):
             docs[name] = load(f); errs += _check(_current_names(name, docs[name]), load(os.path.join(sdir, f"{name}.schema.json")), f"{app}/{name}.json")
         else: errs.append(f"{app}: missing {name}.json")
     errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
-             + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs))
+             + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs))
     return errs, docs
 def cmd_validate(a):
     if "--app-dir" in a:
