@@ -108,7 +108,7 @@ const VIC = "vic@guard-a.test"; // viewer on it
 const REX = "rex@guard-a.test"; // revoked from it
 
 const admin = postgres(adminUrl, { prepare: false, onnotice: () => {} });
-const TABLES = ["agent_session_owners", "agent_session_scopes", "chat_sessions", "chat_threads", "chat_thread_members", "chat_transcript_snapshots"];
+const TABLES = ["agent_session_owners", "agent_session_scopes", "chat_sessions", "chat_threads", "chat_thread_members", "chat_transcript_snapshots", "specialist_steering_notes"];
 const saved = new Map();
 const cleanup = async () => {
   await admin`DELETE FROM chat_thread_members WHERE org_id IN (${ORG_A}, ${ORG_B})`;
@@ -734,6 +734,79 @@ try {
     } finally {
       await admin`DELETE FROM specialist_sweeps WHERE parent_session_id = ${S}`;
     }
+  }
+
+  /* ---- notes to a running specialist (mold_v1-235) ------------------------------------------------------- */
+
+  console.log("\nNOTES TO A RUNNING SPECIALIST (POST/GET …/steer on the main thread; the specialist's read of its inbox):");
+  if (saved.has("specialist_steering_notes")) {
+    const steer = (id, token, body) => call(body === undefined ? "GET" : "POST", `/eve/v1/session/${encodeURIComponent(id)}/steer`, { token, body });
+    check("the steer routes are the channel's own, beside eve's, gated like every route that names a session", Boolean(match("GET", `/eve/v1/session/${S}/steer`)) && Boolean(match("POST", `/eve/v1/session/${S}/steer`)));
+    // Alice's main thread: beta is still working, gamma has handed back.
+    const CS = newSession("subagent:steer-beta");
+    sessions.get(S).events.push(
+      { type: "subagent.called", data: { callId: "call_steer_beta", childSessionId: CS, name: "beta", sessionId: S } },
+      { type: "subagent.called", data: { callId: "call_steer_gamma", childSessionId: "wrun_guard_steer_gamma", name: "gamma", sessionId: S } },
+      { type: "action.result", data: { result: { callId: "call_steer_gamma", kind: "subagent-result", output: "done" }, status: "completed" } },
+    );
+    await stream(S, T.alice); // the chat reads its main thread, as it does: beta's run is announced and recorded
+    try {
+      const own = await steer(S, T.alice, { callId: "call_steer_beta", text: "focus on FY24 only" });
+      check("the owner sends beta a note while it works (200), pending", own.status === 200 && own.json?.note?.status === "pending" && own.json.note.callId === "call_steer_beta", own.json);
+      const [row] = await admin`SELECT org_id, author_email, child_session_id, status FROM specialist_steering_notes WHERE id = ${own.json?.note?.id ?? ""}`;
+      check("…written in her workspace, with its author and beta's run", row?.org_id === ORG_A && row.author_email === ALICE && row.child_session_id === CS && row.status === "pending", row);
+      const pat = await steer(S, T.pat, { callId: "call_steer_beta", text: "and skip the annex" });
+      check("a participant of the shared chat may steer too (200)", pat.status === 200, pat.json);
+      for (const [label, token] of [["the viewer", T.vic], ["another workspace", T.carol], ["the SAME workspace, not the owner", T.bob], ["a revoked member", T.rex]]) {
+        const r = await steer(S, token, { callId: "call_steer_beta", text: "hijack" });
+        check(`${label}: a note → 404, nothing written`, r.status === 404, { status: r.status, json: r.json });
+      }
+      check("no sign-in: → 401", (await steer(S, undefined, { callId: "call_steer_beta", text: "x" })).status === 401);
+      const [{ n: written }] = await admin`SELECT count(*)::int AS n FROM specialist_steering_notes WHERE parent_session_id = ${S}`;
+      check("…so exactly the two notes are in the inbox", written === 2, written);
+      const done = await steer(S, T.alice, { callId: "call_steer_gamma", text: "too late" });
+      check("a specialist that has handed back: 409, said plainly, with what to do instead", done.status === 409 && done.json?.code === "specialist-not-running" && /Gamma has already finished/.test(done.json?.error ?? "") && /Ask the main agent/.test(done.json?.error ?? ""), done.json);
+      const unknown = await steer(S, T.alice, { callId: "call_nobody", text: "x" });
+      check("a delegation this chat never made: 404 specialist-not-found", unknown.status === 404 && unknown.json?.code === "specialist-not-found", unknown.json);
+      const empty = await steer(S, T.alice, { callId: "call_steer_beta", text: "   " });
+      check("an empty note: 400", empty.status === 400 && empty.json?.code === "steer-note-invalid", empty.json);
+      const viaChild = await steer(C, T.alice, { callId: "call_steer_beta", text: "x" });
+      check("a note posted on a specialist's own session: 409, it goes through the main thread", viaChild.status === 409 && viaChild.json?.code === "steer-not-main-thread", viaChild.json);
+      const raw = await post(CS, T.alice, { message: "a raw message", continuationToken: sessions.get(CS).token });
+      check("a raw message to the specialist's own session is still refused (409 specialist-session-not-addressable)", raw.status === 409 && raw.json?.code === "specialist-session-not-addressable", raw.json);
+
+      // Another workspace's row naming her chat: no read may show it, and no reader in her workspace may deliver it.
+      await admin`INSERT INTO specialist_steering_notes (id, org_id, parent_session_id, call_id, author_email, text, status)
+                  VALUES ('note-forged-b', ${ORG_B}, ${S}, 'call_steer_beta', ${CAROL}, 'FORGED-NOTE', 'pending')`;
+      const listed = await steer(S, T.alice);
+      check("the owner reads her chat's notes (200): both, oldest first, not the other workspace's", listed.status === 200 && listed.json?.notes?.map((n) => n.text).join("|") === "focus on FY24 only|and skip the annex" && !listed.text.includes("FORGED"), listed.json);
+      check("the viewer reads them too (a read)", (await steer(S, T.vic)).json?.notes?.length === 2);
+      for (const [label, token] of [["another workspace", T.carol], ["the SAME workspace, not the owner", T.bob]]) {
+        const r = await steer(S, token);
+        check(`${label}: reading the notes → 404`, r.status === 404 && !r.text.includes("FY24"), { status: r.status });
+      }
+
+      // The specialist's read at its next step: the app's reader over the real inbox, as app_rw.
+      const { readSteeringNotes } = await import("../agent/lib/steering.ts");
+      const { agentGateDb } = await import("../agent/lib/session-owners.ts");
+      const inA = { db: agentGateDb, scopeOf: async () => ({ orgId: ORG_A }) };
+      const at = (step) => ({ sessionId: CS, parent: { sessionId: S, callId: "call_steer_beta", rootSessionId: S }, turnId: "turn_0", stepIndex: step });
+      const first = await readSteeringNotes(at(2), inA);
+      check("beta's next step reads both notes, in order, worded for the model", first.map((n) => n.text).join("|") === `Note from ${ALICE} while you were working: focus on FY24 only|Note from ${PAT} while you were working: and skip the annex`, first);
+      check("…never the other workspace's row", !JSON.stringify(first).includes("FORGED"));
+      const again = await readSteeringNotes(at(2), inA);
+      check("the same step, retried, reads the same notes again", JSON.stringify(again) === JSON.stringify(first));
+      check("a later step reads none of them", (await readSteeringNotes(at(3), inA)).length === 0);
+      const otherStep = await readSteeringNotes(at(3), { db: agentGateDb, scopeOf: async () => ({ orgId: ORG_B }) });
+      check("a reader in the other workspace sees only that workspace's row (workspaces are not aware of each other)", otherStep.length === 1 && otherStep[0].text.includes("FORGED-NOTE"), otherStep);
+      check("…and a delegation with no recorded workspace reads nothing", (await readSteeringNotes(at(4), { db: agentGateDb, scopeOf: async () => null })).length === 0);
+      const after = await steer(S, T.alice);
+      check("the owner now reads both as delivered", after.json?.notes?.every((n) => n.status === "delivered" && n.deliveredAt), after.json);
+    } finally {
+      await admin`DELETE FROM specialist_steering_notes WHERE parent_session_id = ${S}`;
+    }
+  } else {
+    console.log("  (specialist_steering_notes does not exist here: skipped)");
   }
 
   /* ---- children delegated BEFORE lineage was recorded (mold_v1-133) ------------------------------------- */

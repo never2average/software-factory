@@ -1,7 +1,7 @@
 {
   "eve": "0.25.1",
   "patch": "patches/eve+0.25.1.patch",
-  "patchSha256": "0a44b71b144b188e80937571b7b5ddf976b8347f5cb729328e8dbdef92a685fb",
+  "patchSha256": "6cc06514714317deb81cc53bc20253ca5609cb427ef2f9504767978bd3992d78",
   "files": {
     "dist/src/compiled/@workflow/world-local/index.js": "28056b4d06f00e34d9cd5d2a4b42c84148bc7ffb380a5e626d46af7e9941757c",
     "dist/src/compiler/manifest.js": "7e7ae60c6940cb9f0fbfd29f6205101622b3f5a9c6adf580df5a85569bf62dff",
@@ -18,6 +18,7 @@
     "dist/src/execution/settle-cancelled-turn-step.js": "b106708233a567e2412369caa16d546f4829d9f8a345be46f81b2a3e2fa7ee13",
     "dist/src/execution/subagent-adapter.js": "f7a5f617087b1742dc0a0d95e276a0f890ff6441173cebe752686e98cf82b925",
     "dist/src/execution/subagent-event-proxy-step.js": "399e03c2637bf8010a078f5382f9f09f7c1ee3b4c2dea5dfccaa334d2b017ba9",
+    "dist/src/execution/subagent-hitl-proxy.js": "485098ccf2d926a9b8630fe6974b48673eba366a9cd28efd3fd96972e2a6ccd8",
     "dist/src/execution/subagent-tool.js": "5c3f0ef4a44bf30fe155b055154b04ce36b4d816665cd5eaafdd69593100251d",
     "dist/src/execution/turn-workflow.js": "d5b5caee8e0f2a84c09b075ba8ef8be8e2616e0d86b0127a133d6853cf61d1f6",
     "dist/src/execution/workflow-entry.js": "ed2b0c9dee86281bfc648d03e9e9ad36a6a944594c9bfbae16c72f6228c3fa9a",
@@ -30,7 +31,8 @@
     "dist/src/harness/input-requests.js": "b33fa1aa4f254b821924930f01c9a84737063997fd5272640634cf2ca44fd9ae",
     "dist/src/harness/messages.js": "b3d10b2a932ce70a5610740541ac0a6219dd563f014fe638a801100caccfec8b",
     "dist/src/harness/runtime-actions.js": "a8b277a3d760e62326561d42c141ff89015d5d7118bf66e8848a5c6d52d3ab0d",
-    "dist/src/harness/tool-loop.js": "40bbfba3a828552d1121adc4050adcf2332fb76c516da2c2e517a38bbad97548",
+    "dist/src/harness/steering-notes.js": "1bbc7d352c838151dac6fff028d75c138659de7c77723e308d0dacedffc52fd1",
+    "dist/src/harness/tool-loop.js": "d780fb1d76edc2648d079f213ecf7c46291a69b5585ea30e63f8233187f3e030",
     "dist/src/internal/authored-definition/core.js": "b9e2600d69968287275d44de2187ec0fd61c84e2e3a4bb0d0dac54788bda01af",
     "dist/src/public/channels/index.d.ts": "bccaa4e15fea0743bf7f328352d17a3cbe2c6b441da7006e88a8613c4603a5c9",
     "dist/src/public/channels/index.js": "0e0da8b00a7284967e2f3fc8fdb43088e1e06a3e99a1436210aee11bd1694355",

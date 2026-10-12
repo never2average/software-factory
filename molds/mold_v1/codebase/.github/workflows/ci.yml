@@ -658,6 +658,10 @@ jobs:
         if: always()
         run: npm run test:subagent-delivery
 
+      - name: A specialist's question names it, and the reply is filed under it (behavioural, recorded streams)
+        if: always()
+        run: npm run test:specialist-questions
+
       # THE HAND-BACK STAYS LIVE. After a specialist's question is answered the
       # parent's stream is silent until the child hands back; the chat's reader
       # counted each quiet ~120s seam as a failure, gave up, and the
@@ -788,6 +792,15 @@ jobs:
       - name: Chat attachments (behavioural)
         if: always()
         run: npm run test:chat-attachments
+
+      # Dictation in the composer (speech to text for a prompt; never sent on its own, no spoken replies): the route's
+      # real handler with a fake provider. Signed out is 401, a refused workspace is passed on unserved, the usage row is
+      # the sign-in's workspace and person whatever the form says, the size and length limits hold before AND after the
+      # paid call, a provider failure records nothing; the Workers AI call, the price per audio minute, the profile's
+      # `asr` rules and the migration. The composer half is tests/dictation.spec.ts (ui-behaviour job).
+      - name: Dictation (sign-in, workspace, limits, usage, price; a fake provider)
+        if: always()
+        run: npm run test:dictation
 
       # A pdf an analyst UPLOADS must be previewable, which it was not: the one
       # viewer in the app was wired to a pdf the AGENT publishes, so a filing
@@ -1433,6 +1446,16 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:workspace-attention-db
+
+      # DICTATION USAGE, AS THE APP WRITES AND READS IT. Each clip is a chat_turn_usage row of kind 'dictation'; this
+      # writes them as app_rw for two workspaces with the policy failing closed, and reads each workspace's report:
+      # its own clips only, counted apart from chat turns, priced per audio minute.
+      - name: Dictation usage stays in its workspace and is priced, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:dictation-usage-db
 
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()

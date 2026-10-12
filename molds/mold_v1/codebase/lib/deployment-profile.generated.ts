@@ -78,6 +78,11 @@ export interface DeploymentProfile {
    */
   account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
   /**
+   * Dictation in the chat composer: speech to text for writing a prompt, never sent on its own (lib/dictation.ts).
+   * enabled: shown when the provider's credentials are set on the server. language: null = detected by the model.
+   */
+  asr: { enabled: boolean; provider: "cloudflare"; model: string; language: string | null; max_seconds: number; max_bytes: number };
+  /**
    * The time-boxed periods that group tasks (the `cycles` table). mode "team": one shared period with a lead, a
    * capacity and a burndown. "individual": each person's own items within the period. "off": the feature does not
    * exist in this deployment (agent/lib/work-periods.ts is what every surface reads).
@@ -407,6 +412,14 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
       90
     ],
     "workspace_can_set_length": true
+  },
+  "asr": {
+    "enabled": true,
+    "provider": "cloudflare",
+    "model": "@cf/openai/whisper-large-v3-turbo",
+    "language": null,
+    "max_seconds": 120,
+    "max_bytes": 4194304
   },
   "account_fields": {
     "hidden": [],

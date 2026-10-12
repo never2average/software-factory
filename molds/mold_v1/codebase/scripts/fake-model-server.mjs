@@ -65,7 +65,8 @@
  *                      STEP, each with the message `HBMODE:<mode>`, and once all have handed back
  *                      answers `PARENT-DONE: <their results>`. A specialist's mode is `fast` (answers
  *                      at once), `slow=<ms>` (answers after that long), `ask` (asks a question first),
- *                      `askslow=<ms>` (asks, then works that long after the answer), `returns` (needs the
+ *                      `askslow=<ms>` (asks, then works that long after the answer), `steer=<ms>` (a tool step
+ *                      that takes that long, then an answer naming the note it was sent, mold_v1-235), `returns` (needs the
  *                      person's decision but RETURNS the question as its result instead of asking, so the batch it
  *                      was called in holds nothing)
  *                      `steps=<n>` (works in n `bash` tool steps, then answers)
@@ -215,6 +216,14 @@ function decideHandback(messages) {
       const done = messages.filter((m) => m.role === "assistant" && (m.tool_calls ?? []).length > 0).length;
       if (done < Number(mode?.[2] ?? 1)) return { tool: "bash", args: { command: `echo STEP-${done + 1}` } };
       return { text: `CHILD-RESULT ${child} after ${done} steps` };
+    }
+    // `steer=<ms>` (mold_v1-235): one tool step answered after <ms> (time for the person to send a note while it works),
+    // then the answer, naming the last note it was given at a step ("Note from …") or NO-NOTE.
+    if (kind === "steer") {
+      const done = messages.filter((m) => m.role === "assistant" && (m.tool_calls ?? []).length > 0).length;
+      if (done < 1) return { tool: "bash", args: { command: "echo STEP-1" }, delayMs: Number(mode?.[2] ?? 0) };
+      const note = messages.filter((m) => m.role === "user").map((m) => textOf(m.content)).filter((t) => t.startsWith("Note from ")).pop();
+      return { text: `CHILD-RESULT ${child} after ${done} step(s), ${note ? `NOTED: ${note}` : "NO-NOTE"}` };
     }
     if (kind === "returns") return { text: `CHILD-QUESTION ${child}: Which fiscal year should I use? (work so far: the figures for FY25 and FY26 are both ready)` };
     if ((kind === "ask" || kind === "askslow") && !childAlreadyAsked(messages)) {

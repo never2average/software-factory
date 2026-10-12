@@ -1460,6 +1460,42 @@ export const specialistHandbacks = pgTable(
 );
 
 /**
+ * NOTES TO A RUNNING SPECIALIST (agent/lib/steering.ts; mold_v1-235).
+ *
+ * eve cannot take a message on a delegation's own session (lib/specialist-run-actions.ts), so a note the person sends a
+ * specialist while it works is kept here, keyed by the delegation: the main thread and the delegation's call id. The
+ * specialist reads its pending notes at the start of its next step (the eve patch's harness/steering-notes.js) and
+ * each is appended to that step's messages, after everything the session already holds.
+ *
+ *   status          pending    written, not yet read by the specialist
+ *                   delivered  read into a step; `delivered_step` (`<child session>:<turn>:<step>`) is that step, so a
+ *                              retried step reads the same notes again and no other step does
+ *   author_email    who sent it (the chat's owner or a participant with the right to write)
+ *
+ * Written inside the workspace's row-level scope, like every tenant table; `org_id` is the main thread owner's.
+ */
+export const specialistSteeringNotes = pgTable(
+  "specialist_steering_notes",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    parentSessionId: text("parent_session_id").notNull(),
+    callId: text("call_id").notNull(),
+    childSessionId: text("child_session_id"),
+    authorEmail: text("author_email"),
+    text: text("text").notNull(),
+    status: text("status").notNull().default("pending"),
+    deliveredStep: text("delivered_step"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("specialist_steering_notes_delegation_idx").on(t.parentSessionId, t.callId),
+    index("specialist_steering_notes_org_idx").on(t.orgId),
+  ],
+);
+
+/**
  * WHAT THE SPECIALIST SWEEP DID, AND THE RIGHT TO DO IT (agent/lib/specialist-sweep.ts, agent/lib/sweep-ledger.ts;
  * mold_v1-196).
  *
@@ -1566,6 +1602,13 @@ export const chatTurnUsage = pgTable(
     status: text("status").notNull().default("running"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    /**
+     * "chat": a turn of the main agent (tokens). "dictation": one clip turned into prompt text by the speech-to-text
+     * model (lib/dictation.ts); its tokens are 0 and `audioMs` is what it is priced on (lib/inference-pricing.ts).
+     */
+    kind: text("kind").notNull().default("chat"),
+    /** Milliseconds of audio transcribed (dictation rows); 0 for a chat turn. */
+    audioMs: bigint("audio_ms", { mode: "number" }).notNull().default(0),
   },
   (t) => [
     // One row per turn: the upsert key the hook accumulates into.

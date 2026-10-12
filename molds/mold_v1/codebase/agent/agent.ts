@@ -1,4 +1,6 @@
 import { defineAgent } from "eve";
+// Notes a person sends a running specialist are read at its next step (mold_v1-235): registered for the eve patch.
+import "#lib/steering-reader.js";
 import { agentModel, agentReasoning, compactionFor, modelContextWindowTokens } from "#lib/model.js";
 
 // Model is resolved centrally (Kimi K2.7 via OpenCode Zen by default, or Claude

@@ -208,10 +208,11 @@ export function serviceMayAct(ownership: SessionOwnership): boolean {
 /**
  * The right a request needs, from its method and the path segments AFTER `/eve/v1/session/:id`. The reads are the
  * stream, the sandbox line (`sandbox-wait`, agent/lib/session-guard.ts: whether a command of this chat waits for
- * a free sandbox) and the sweep's notes (`specialist-sweep`: what the specialist sweep did on this main thread);
- * anything else — a message, an approval answer, a cancel, a verb eve adds later — is a write.
+ * a free sandbox), the sweep's notes (`specialist-sweep`: what the specialist sweep did on this main thread) and a
+ * GET of `steer` (the notes sent to this thread's running specialists, mold_v1-235); anything else — a message, an
+ * approval answer, a cancel, a POST of `steer`, a verb eve adds later — is a write.
  */
-export const SESSION_READS: readonly string[] = ["stream", "sandbox-wait", "specialist-sweep"];
+export const SESSION_READS: readonly string[] = ["stream", "sandbox-wait", "specialist-sweep", "steer"];
 export function rightFor(method: string, rest: readonly string[]): SessionRight {
   const verb = method.toUpperCase();
   if ((verb === "GET" || verb === "HEAD") && rest.length === 1 && SESSION_READS.includes(rest[0])) return "read";

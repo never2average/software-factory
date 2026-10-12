@@ -18,6 +18,9 @@
  * cancellation belongs to the parent turn (docs/subagents.mdx). So the correct offer is the one that works: ask the
  * main agent to run it again, as a new delegation in a turn that is waiting for it.
  *
+ * A RUNNING specialist can be steered, but not through its own session either: a note goes to its main thread's
+ * steer route and the specialist reads it at its next step (lib/steering-client.ts, mold_v1-235).
+ *
  * A workflow step's OWN session is not a delegation: it was started over HTTP, its token is the channel's own, and a
  * message to it continues it. Resume stays for those, and only when the agent has said the session is not a
  * delegation (a step's row often opens the specialist the step called, which is one).
@@ -29,7 +32,7 @@ export const STOPPED_SPECIALIST_NOTE =
 
 /** What the agent answers (409) to a message posted to a delegated specialist's own session. */
 export const SPECIALIST_MESSAGE_REFUSAL =
-  "A specialist cannot take a message on its own session: the message would start a new, unrelated conversation and the specialist would never see it. To answer its question, answer it in the chat. To have a stopped specialist's work done, ask the main agent in the chat to run it again.";
+  "A specialist cannot take a message on its own session: the message would start a new, unrelated conversation and the specialist would never see it. To answer its question, answer it in the chat. To steer it while it works, send it a note from the chat. To have a stopped specialist's work done, ask the main agent in the chat to run it again.";
 
 /** The machine-readable reason beside {@link SPECIALIST_MESSAGE_REFUSAL}. */
 export const SPECIALIST_MESSAGE_REFUSAL_CODE = "specialist-session-not-addressable";

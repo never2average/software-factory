@@ -601,7 +601,41 @@ export const CHANGES = [
     find: "function splitMessagesForCompaction(e,t){return t<=0?{older:[...e],recent:[]}:{older:e.slice(0,-t),recent:e.slice(-t)}}",
     replace: "function splitMessagesForCompaction(e,t){return splitKeepingToolPairs(e,t)}",
   },
+
+  /* ---- whose question it is (mold_v1-234) ---------------------------------------------------------------------- */
+  {
+    file: "execution/subagent-hitl-proxy.js",
+    why:
+      "emitProxiedInputRequest: a specialist's question forwarded onto the main thread says WHICH delegation asked it " +
+      "(`data.subagent: { callId, name, childSessionId }`, from the hook payload eve already holds). eve dropped those three " +
+      "fields, so the chat could not say who was asking and the answer read as a plain message in the main thread",
+    find: "await i.emit(createInputRequestedEvent({requests:i.hookPayload.event.requests,sequence:i.hookPayload.event.sequence,stepIndex:i.hookPayload.event.stepIndex,turnId:i.hookPayload.event.turnId}));",
+    replace:
+      "{let ev=createInputRequestedEvent({requests:i.hookPayload.event.requests,sequence:i.hookPayload.event.sequence,stepIndex:i.hookPayload.event.stepIndex,turnId:i.hookPayload.event.turnId});" +
+      "typeof i.hookPayload.callId==`string`&&i.hookPayload.callId!==``&&typeof i.hookPayload.subagentName==`string`&&i.hookPayload.subagentName!==``&&" +
+      "(ev.data.subagent={callId:i.hookPayload.callId,name:i.hookPayload.subagentName,...(typeof i.hookPayload.childSessionId==`string`&&i.hookPayload.childSessionId!==``?{childSessionId:i.hookPayload.childSessionId}:{})});" +
+      "await i.emit(ev)}",
+  },
+
+  /* ---- notes to a running specialist (mold_v1-235) ------------------------------------------------------------ */
+  {
+    file: "harness/tool-loop.js",
+    why: "import deliverSteeringNotes",
+    find: 'import{createErrorId,createLogger,formatError,logError,recordErrorOnSpan}from"#internal/logging.js";',
+    replace:
+      'import{createErrorId,createLogger,formatError,logError,recordErrorOnSpan}from"#internal/logging.js";import{deliverSteeringNotes}from"#harness/steering-notes.js";',
+  },
+  {
+    file: "harness/tool-loop.js",
+    why:
+      "executeStepBody: at the start of every step of a DELEGATED session, after the step's own input, append the notes the " +
+      "person sent this delegation while it worked (the application's inbox; harness/steering-notes.js), as user-role messages",
+    find: "if(N?.message!==void 0&&!F.deferredMessage&&!F.consumedMessage){let e=await stageAttachmentsToSandbox(N.message);I.push({content:e,role:`user`})}",
+    replace:
+      "if(N?.message!==void 0&&!F.deferredMessage&&!F.consumedMessage){let e=await stageAttachmentsToSandbox(N.message);I.push({content:e,role:`user`})}" +
+      "{let e=contextStorage.getStore();e!==void 0&&await deliverSteeringNotes({emissionState:x,emit:n,messages:I,parent:e.get(ParentSessionKey),sessionId:b.sessionId})}",
+  },
 ];
 
 /** Whole new files, copied from scripts/eve-patch/files/<path> to node_modules/eve/dist/src/<path>. */
-export const NEW_FILES = ["harness/detached-delegations.js", "execution/parent-session-delivery.js", "execution/delegation-sweep.js", "harness/compaction-fidelity.js"];
+export const NEW_FILES = ["harness/detached-delegations.js", "execution/parent-session-delivery.js", "execution/delegation-sweep.js", "harness/compaction-fidelity.js", "harness/steering-notes.js"];
