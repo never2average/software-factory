@@ -136,19 +136,27 @@ def rehearsal_deploy_vercel(P, app_id, app, infra, ds, mold_dir, adir):
     P.SHIPPED.clear()
     steps = [("workflow", f"{proj}-workflow", "workflow_url", ["services/task-workflow"]), ("api", f"{proj}-api", "api_url", ["--prebuilt"]),
              ("web", proj, "production_url", ["."])]
+    # The same addresses as the real path (mold_v1-239): claimed when free, read back from the deployment, never made
+    # from a project name; the fake vercel keeps the domain and alias records (fixtures/release/fake.py).
+    import vercel_addr
+    api, probe = P._addr_api(mold_dir, infra), P._addr_probe()
+    for _, project, _, _ in steps:
+        u, why = vercel_addr.claim(api, probe, project)
+        print(f"  address of {project}: {u or 'not known yet: ' + why}")
     for name, project, key, extra in steps:
         print(f"deploying {name} ({project})")
         r = P.vrun(["vercel", "deploy", *extra, "--prod", "--yes", "--project", project], cwd=mold_dir, timeout=120)
         out = (r.stdout or "") + (r.stderr or "")
         if r.returncode: sys.exit(f"{name} deploy failed:\n" + out.strip()[-1500:])
-        urls = re.findall(r"https://[a-z0-9.-]+", out)
-        url = urls[-1] if urls else ""
+        url = P._deployed_address(project, out, mold_dir, infra)
         P.SHIPPED.append((name, url)); infra["vercel"][key] = url; print(f"  {url}")
     url = infra["vercel"]["production_url"]
     checks = [("workflow", f"{infra['vercel'].get('workflow_url', '')}/api/health"), ("api", f"{infra['vercel'].get('api_url', '')}/eve/v1/health"),
               ("web", f"{url}/api/ops/health")]
     health = {}; running = ("unmeasured", "the web app was not health-checked")
     for name, u in checks:
+        mine, why_not = P._guard(infra, u, name, mold_dir)
+        if not mine: health[name] = "not ours"; print(f"  health {name}: NOT READ: {why_not}"); continue
         code, doc, why = P._read_health(u)
         health[name] = code or "no answer"; print(f"  health {name}: {health[name]} {u}")
         if name == "web": running = P._rls_from_doc(code, doc, why)

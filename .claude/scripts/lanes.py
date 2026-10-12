@@ -506,6 +506,13 @@ def main(a):
         AR.note(summary=f"{len(todo)} lane(s) for {app_id}: " + ", ".join(f"{l} {'no harness' if not v['harness'] else str(v['checks']) + ' checks' + (', ' + str(len(v['unmet'])) + ' precondition(s) unmet' if v['unmet'] else '')}" for l, v in listed.items()) + ".")
         return 0
 
+    # mold_v1-239: the lanes sign in and carry sessions to the app's address; on Vercel that address must be one Vercel
+    # files under this app's web project, or nothing runs (on 2026-10-12 state held another account's address).
+    url_ = lane_url.target_url(docs["infrastructure"])
+    if url_ and docs["infrastructure"].get("target") == "vercel":
+        import vercel_addr
+        mine, why = vercel_addr.guard_app(docs["infrastructure"], url_, roles=("",))
+        if not mine: die(f"{app_id}: {why} No lane ran.")
     verdicts, first_fail = {}, None
     ordered = not want   # the whole-suite run of record; --lane makes it a partial re-measure
     cmdline = "python3 .claude/scripts/lanes.py " + " ".join([app_id] + opts)
@@ -651,7 +658,8 @@ def self_test():
         json.dump({"products": [{"product_id": "p", "mold_id": "m1", "name": "P", "stage": "defined", "gates": {}}]}, open(os.path.join(t, "state", "products.json"), "w"))
         open(os.path.join(t, "state", "tasks", "m1.jsonl"), "w").close()
         json.dump({"app_id": "app1", "mold_id": "m1", "status": "stamped"}, open(os.path.join(a, "application.json"), "w"))
-        json.dump({"target": "vercel", "vercel": {"production_url": "https://app1.example.test"}}, open(os.path.join(a, "infrastructure.json"), "w"))
+        # no production_url: these stand-in lanes grade nothing live, and an address would be asked of Vercel (mold_v1-239)
+        json.dump({"target": "vercel", "vercel": {}}, open(os.path.join(a, "infrastructure.json"), "w"))
         for n in ("datastores", "datainfra"): json.dump({}, open(os.path.join(a, f"{n}.json"), "w"))
         for i, lane in enumerate(LANES):
             d = os.path.join(t, "molds", "m1", "testing", lane); os.makedirs(d)
