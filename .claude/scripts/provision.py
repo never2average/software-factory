@@ -2106,6 +2106,12 @@ def smoke_preflight(app_id, app, infra, before):
     to sign in to yet; its smoke test asks for the sign-in after it (exit 3, the app deployed and healthy)."""
     import smoke
     if not any((r or {}).get("id") for r in before["projects"].values()): return
+    # An app that never finished a deploy (not `stamped`: a first deploy that failed, reverted) serves nobody yet, so
+    # it is treated as a first deploy: deploy, then ask for the sign-in after it (exit 3, deployed and healthy).
+    # Only an app that is live (stamped) needs the sign-in before it is redeployed (2026-10-12, compliance_os).
+    if app.get("status") != "stamped":
+        print(f"  sign-in: not needed before this deploy ({app_id} is {app.get('status') or 'not stamped'}, not live); "
+              f"the smoke test after it asks for one if none is on hand"); return
     tok, _, why = smoke.session_for(app_id, app.get("mold_id"), min_life=PREFLIGHT_SESSION_LIFE)
     url = smoke.app_url(infra)
     if tok and not url: return
@@ -3412,10 +3418,16 @@ def self_test_release(check):
         check("--rollback: every project back to its previous production deployment, health read, app reverted",
               code == 0 and prod() == good and prod() != latest and st()["status"] == "reverted" and inf()["vercel"]["rollback"]["by"].startswith("the operator"),
               (out[-600:], prod(), good, latest))
-        # a redeploy with no sign-in on hand stops BEFORE deploying
+        # an app that is not live (reverted just above) with no sign-in on hand deploys like a first deploy, and asks
+        # for the sign-in after it (2026-10-12, compliance_os)
         os.remove(session); n0 = ndeps()
         code, out = go("app1", "--deploy")
-        check("a redeploy with no sign-in on hand: exit 3 before anything is deployed", code == 3 and "Nothing was deployed" in out and ndeps() == n0, out[-500:])
+        check("a redeploy of an app that is not live, no sign-in on hand: deployed, then exit 3 asking for the sign-in",
+              code == 3 and "not needed before this deploy" in out and ndeps() > n0 and "Nothing was deployed" not in out, out[-500:])
+        # a LIVE app (stamped) with no sign-in on hand stops BEFORE deploying
+        s1 = st(); s1["status"] = "stamped"; json.dump(s1, open(os.path.join(a, "application.json"), "w"), indent=2); n0 = ndeps()
+        code, out = go("app1", "--deploy")
+        check("a redeploy of a live app with no sign-in on hand: exit 3 before anything is deployed", code == 3 and "Nothing was deployed" in out and ndeps() == n0, out[-500:])
         # ---- mold_v1-239: addresses are read from Vercel and verified, never made from a project name ----------------------
         world(ci="green", strangers=["taken-app", "cos", "cos-api"])
         # the stranger's site may see the factory's anonymous "is this name free?" GET of / and nothing else
