@@ -15,6 +15,9 @@ Called by provision.py for an application whose infrastructure.target is "vm_rem
                                                  switch the server back to the release that served before this one
                                                  (mold_v1-222); run again, it goes forward. The database is left as it is
   provision.py <app_id> --verify-rls [--no-repair]   re-prove tenant isolation on the server's database and running app
+  provision.py <app_id> --smoke [--json]         the post-deploy chat check on its own (lib/smoke.py, as on Vercel):
+                                                 one chat as the operator at vm_remote.production_url, recorded as
+                                                 vm_remote.smoke; exit 0 pass, 1 fail, 3 needs a sign-in (mold_v1-236)
   provision.py <app_id> --library-cleanup [--apply] [--org <id>]
                                                  the starter workflows and recipes an earlier version left in each
                                                  workspace that this app does not use: listed (a dry run), or removed
@@ -3382,6 +3385,11 @@ def main_for(app_id, a, app, infra, ds, adir, P):
                 say(f"{app_id}: {flag} is for the other targets; this app runs on its own server. Use: "
                     f"python3 .claude/scripts/provision.py {app_id} {instead}"); return 1
         dry = "--dry-run" in a
+        if "--smoke" in a:
+            # mold_v1-236: the post-deploy chat check on its own, exactly as on Vercel (provision.py smoke_now): one chat
+            # as the operator at vm_remote.production_url, recorded as vm_remote.smoke; exit 3 when a sign-in is needed.
+            # Nothing on the server is contacted over SSH and nothing is switched back.
+            return P.smoke_now(app_id, app, infra, adir, "vm_remote")
         if "--tunnel-remote" in a or "--tunnel-factory" in a:
             sys.path.insert(0, HERE); import vm_tunnel
             return vm_tunnel.main_for(app_id, a, S, adir)
@@ -3931,6 +3939,7 @@ def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy)
         raise
     vr = infra.setdefault("vm_remote", {})
     vr["health"] = dict(res["health"], qualified_at=P.NOW)
+    if res.get("smoke"): vr["smoke"] = P._smoke_record(res["smoke"])   # the post-deploy chat, recorded as on Vercel (mold_v1-236)
     code, doc, why = res["public"]
     running = P._rls_from_doc(code, doc, why)
     if res["evidence"]:

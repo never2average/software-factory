@@ -890,6 +890,15 @@ def _records(check, tmp):
     errs, _ = F._app_errors("vm_remote_fixture", d)
     check("  ...and that recorded state VALIDATES as a deployed application", errs == [], errs)
     check("  ...which the lanes then grade at its own URL", lane_url.target_url(infra) == "https://app.example.com")
+    check("  ...and no smoke record when no chat was run", "smoke" not in infra["vm_remote"], infra["vm_remote"].get("smoke"))
+    d, docs, S = stage("smoked")
+    sm = {"result": "pass", "detail": "a new chat in the operator's workspace answered in 4s: '4'", "at": P.NOW, "seconds": 4.2, "workspace_list": "pass",
+          "cleanup": "removed", "url": "https://app.example.com", "session_from": "the operator's kept sign-in (mint.py code)", "answer_ok": True}
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(dict(good, smoke=sm)))
+    infra = load(os.path.join(d, "infrastructure.json"))
+    check("mold_v1-236: the post-deploy chat's result is recorded as vm_remote.smoke, as the Vercel path records vercel.smoke",
+          rc == 0 and (infra["vm_remote"].get("smoke") or {}).get("result") == "pass" and "session_from" not in infra["vm_remote"]["smoke"], infra["vm_remote"].get("smoke"))
+    check("  ...and that state validates", F._app_errors("vm_remote_fixture", d)[0] == [], F._app_errors("vm_remote_fixture", d)[0])
     d, docs, S = stage("unproven")
     bad = dict(good, public=("502", None, "HTTP 502, and the body is not a health document"))
     rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(bad))
