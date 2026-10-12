@@ -245,15 +245,22 @@ python3 .claude/scripts/provision.py <app_id> --operator new-org --yes -- --name
 - **Own server:** the script runs there, as the web app's user (`sfweb`), in the serving release (`current`), with `web.env` as
   its environment (the app role, row-level security on) — the way `--library-cleanup` runs. Its arguments travel on stdin, and
   every value of `web.env` is removed from what it prints. The server checks the name again against the serving release.
-- **Vercel:** it runs here, from `build/<app_id>/`, with the app role's `DATABASE_URL` pulled from the web project's production
-  environment for the run and never printed. Only `DATABASE_URL` is given, so a script's data-room writes (onboard-self's
-  `People/<you>/`, new-customer's `context.md`) find no file store there and are skipped or fail; the database rows are written.
-- **A yes first.** `--dry-run` is safe to run any time: it prints the exact command, the database address, the env file's values
-  and any argument after a flag named like a password, token, secret or key masked. Without `--dry-run` the script writes to a
+- **Vercel:** it runs here, from `build/<app_id>/`, with the web project's production environment pulled for the run and handed
+  to the script through an allow-list (mold_v1-237): the app role's `DATABASE_URL` and the file store's settings the mold's
+  `lib/storage` reads (`docs/STORAGE.md`): `BLOB_READ_WRITE_TOKEN` on Vercel Blob (`STORAGE_DRIVER` unset, the default),
+  `STORAGE_DRIVER` + `STORAGE_S3_*` on s3. So a script's data-room writes (onboard-self's `People/<you>/`, new-customer's
+  `context.md`) reach the live store. Nothing else of the project's environment reaches the script, and of this machine's only
+  `PATH`, `HOME`, `LANG` and the like (`BASE_ENV` in `lib/operator_run.py`). No value is printed, logged or in the JSON. On the
+  **filesystem** driver the files are on a disk the factory cannot reach: nothing of the store is passed, the output says file
+  writes are not possible from the factory and why, and only the database rows are written. With no readable token (missing, or
+  marked Sensitive on Vercel) the output says so too.
+- **A yes first.** `--dry-run` is safe to run any time: it prints the exact command, the database address, the file store's token
+  (`BLOB_READ_WRITE_TOKEN=<hidden …>` on Vercel), the env file's values and any argument after a flag named like a password,
+  token, secret or key masked. It pulls nothing, so it names what each file-store driver would get. Without `--dry-run` the script writes to a
   live app: show the dry run, ask the person in plain words ("This adds a workspace called X owned by Y to <app>. Shall I?"), and
   only on a plain yes rerun it with `--yes`. Without `--yes` it stops with exit 3 and a `needs` entry of kind `approval`.
-- `--json` (before `--`) prints one result: `details.operator` has the script, the target, the masked arguments and command, and
-  the script's exit code. Exit 0 the script finished with 0, 1 it failed or the app could not be reached, 2 bad input, 3 a yes is needed.
+- `--json` (before `--`) prints one result: `details.operator` has the script, the target, the masked arguments and command, `env`
+  (the names handed to the script, never values; on Vercel), and the script's exit code. Exit 0 the script finished with 0, 1 it failed or the app could not be reached, 2 bad input, 3 a yes is needed.
 
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this
