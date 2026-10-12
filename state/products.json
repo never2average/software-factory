@@ -220,7 +220,7 @@
     {
       "product_id": "compliance_os",
       "mold_id": "mold_v1",
-      "name": "Compliance OS",
+      "name": "ComplianceOS",
       "stage": "defined",
       "target_model": "GLM 5.3",
       "gates": {
