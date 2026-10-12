@@ -283,6 +283,12 @@ def settings(app_id, app, infra, ds):
     # Desktop notifications: on when the mold can send them and state names somebody the push services may contact.
     S["mold_src"] = os.path.join(ROOT, "molds", str(app.get("mold_id") or ""), "codebase")
     S["push"] = bool(EMAIL.match(S["email"])) and os.path.isfile(os.path.join(S["mold_src"], PUSH_SOURCE))
+    # The speech model behind the microphone (application.asr; lib/asr.py): the ASR_* values config_pairs writes, read
+    # against the mold and the app's packs as validate reads them. A choice that mold cannot carry is a state problem
+    # (factory.py validate), which stops every real deploy before a server is contacted; nothing is written for it here.
+    import asr
+    try: S["asr"] = asr.env_pairs(app, S["mold_src"])
+    except SystemExit: S["asr"] = {}
     S["host_shown"] = S["ssh_host"] or S["host"] or NO_HOST; S["domain_shown"] = S["domain"] or NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"
     S["sudo"] = "" if S["user"] == "root" else "sudo "
@@ -522,6 +528,7 @@ def config_pairs(S):
     if S["model"].get("provider") == "cloudflare":
         for role, name in (("orchestrator", "CLOUDFLARE_MODEL_ORCHESTRATOR"), ("specialist", "CLOUDFLARE_MODEL_SPECIALIST")):
             if (S["model"].get("roles") or {}).get(role): c[name] = S["model"]["roles"][role]
+    c.update(S.get("asr") or {})     # ASR_MODEL / ASR_LANGUAGE / ASR_ENABLED, only for a mold that reads them
     if S["pg"]["tls"] == "migration_switch" and S["pg"]["switch"]: c[S["pg"]["switch"]] = "disable"
     return c
 

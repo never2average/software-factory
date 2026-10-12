@@ -16,6 +16,7 @@ import sys as _sys_fl, os as _os_fl
 _sys_fl.path.insert(0, _os_fl.path.join(_os_fl.path.dirname(_os_fl.path.abspath(__file__)), "lib"))
 from factory_local import load_factory, live_projects
 import legacy
+import asr
 import json, os, re, sys, datetime, subprocess
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
@@ -113,6 +114,18 @@ def parse_brief(text):
     elif re.search(r"\b(?:no|without(?: the| a| any)?) (?:starter |built-?in |default |original |workflow |account[- ]delivery )+librar", t) \
          or re.search(r"(?:\bnot|n't|\bnever) (?:want|need|install|include|use|ship|have)\b[^.\n]{0,40}\blibrar", t): h["library"] = "none"
     elif re.search(r"\b(?:starter|built-?in|default|original|account[- ]delivery)(?: product'?s?)?(?: workflow)? librar", t): h["library"] = "all"
+    # The speech model behind the microphone button (lib/asr.py): "speech model: nova-3", "dictation model:
+    # @cf/openai/whisper", "speech language: hi", "no dictation" / "dictation: off". A model off the list is a
+    # question (with why), never a guess.
+    m = re.search(r"^\s*(?:speech|dictation|asr|speech[- ]to[- ]text|microphone)(?: model)?:\s*([^\n]+?)\s*$", text, re.I | re.M)
+    if m and not re.fullmatch(r"(?:on|off|none|no|yes)", m.group(1).strip().lower()):
+        mid = asr.normalize(m.group(1))
+        if mid: h["asr_model"] = mid
+        else: h["asr_model_unknown"] = m.group(1).strip()
+    m = re.search(r"^\s*(?:speech|dictation) language:\s*([a-z]{2}|auto|detect)\b", t, re.M)
+    if m: h["asr_language"] = None if m.group(1) in ("auto", "detect") else m.group(1)
+    if re.search(r"\bno (?:dictation|microphone|speech[- ]to[- ]text)\b|\bwithout (?:dictation|a microphone|the microphone)\b|^\s*(?:dictation|microphone):\s*(?:off|none|no)\b", t, re.M):
+        h["asr_enabled"] = False
     return h
 
 def slug(s): return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
@@ -238,7 +251,17 @@ QUESTIONS = [
    lambda d,h,c: h.get("operator_email") or legacy.get(d, "operator_email")),   # or its pre-rename spelling (lib/legacy.py)
  ("library", "application.surface.custom_workflow_builder.library.install", "Give new workspaces the original product's starter library (13 workflows and 5 onboarding recipes for account delivery)? none = no starter library.", ["none","all"],
    lambda d,h,c: h.get("library", "none")),
+ # OPTIONAL: never pending (a brief, the app's state, or today's model resolve it), but offered: --ask prompts for it
+ # with the default, and the intake subagent includes it in its batch (questions.json "optional", or the line printed
+ # on success). A model the brief names that is not on the list is asked, with why.
+ ("asr_model", "application.asr.model", asr.question_text(), asr.options(),
+   lambda d,h,c: None if h.get("asr_model_unknown") else h.get("asr_model") or c.get("existing_asr", {}).get("model") or asr.DEFAULT_MODEL),
 ]
+# Offered, never required: asked on the terminal (--ask) and by the intake subagent, with the resolved value as default.
+OPTIONAL = {"asr_model"}
+
+def qid_value_ok(q, v):
+    return not q.get("options") or v in q["options"]
 
 def coerce(v):
     if isinstance(v, str) and v.lower() in ("true","false"): return v.lower()=="true"
@@ -422,6 +445,13 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
       "service_surface":[s["name"] for s in factory["service_surface"] if not s.get("optional") or ans.get(s["name"], True)],
       "workspace": workspace, "surface": surface,
       "testing":{l:{"status":"pending"} for l in ["load","context","functional","accessibility","responsiveness"]}}
+    # The speech model (lib/asr.py): the answer, with the brief's language and on/off over the app's own earlier choice.
+    ex_asr = (existing.get("application") or {}).get("asr") or {}
+    app["asr"] = {"enabled": hints.get("asr_enabled", ex_asr.get("enabled", True)), "model": asr.normalize(ans["asr_model"]) or ans["asr_model"],
+                  "language": hints["asr_language"] if "asr_language" in hints else ex_asr.get("language")}
+    if app["asr"]["model"] not in asr.MODELS: sys.exit(f"asr_model {app['asr']['model']!r} is not on the speech-model list: {', '.join(asr.options())}")
+    why = asr.language_problem(app["asr"]["model"], app["asr"]["language"])
+    if why: sys.exit(f"{app_id}: {why}. Nothing was written.")
     if ans.get("customer_id"): app["customer_id"] = ans["customer_id"]
     if packs: app["packs"] = packs
     if pack_model_roles and model_provider == "cloudflare": app["model"]["roles"] = pack_model_roles
@@ -527,6 +557,22 @@ def self_test(app_id="onfinance_hfc"):
             for k, v in o.items(): yield from paths(v, f"{p}.{k}" if p else k)
         else: yield p, o
     real = digest(ST); fails, n = [], 0
+    # The speech-model hints and question (pure): brief words, the list with prices, today's model as the default.
+    H = lambda txt: {k: v for k, v in parse_brief(txt).items() if k.startswith("asr")}
+    pure = [(H("Speech model: nova-3\nspeech language: hi\n"), {"asr_model": "@cf/deepgram/nova-3", "asr_language": "hi"}),
+            (H("Dictation model: @cf/openai/whisper\n"), {"asr_model": "@cf/openai/whisper"}),
+            (H("speech model: gpt-4o-transcribe\n"), {"asr_model_unknown": "gpt-4o-transcribe"}),
+            (H("No dictation, please.\n"), {"asr_enabled": False}),
+            (H("A research desk for analysts.\n"), {})]
+    for got, want in pure:
+        n += 1
+        if got != want: fails.append(f"brief hints for the speech model: {got} != {want}")
+    q = next(x for x in QUESTIONS if x[0] == "asr_model"); n += 1
+    if q[1] != "application.asr.model" or q[3][0] != asr.DEFAULT_MODEL or set(q[3]) != set(asr.MODELS) or "$0.000513 per audio minute" not in q[2] or "asr_model" not in OPTIONAL:
+        fails.append(f"the asr_model question is not the optional list with prices and today's default first: {q[:4]}")
+    n += 1
+    if q[4]({}, {}, {}) != asr.DEFAULT_MODEL or q[4]({}, {"asr_model_unknown": "x"}, {}) is not None or q[4]({}, {}, {"existing_asr": {"model": "@cf/openai/whisper"}}) != "@cf/openai/whisper":
+        fails.append("asr_model resolves: default today's model; an unknown brief model is asked; the app's own earlier choice is kept")
     src = os.path.join(ST, "application", app_id)
     if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none")
     T = tempfile.mkdtemp(prefix="intake-selftest-")
@@ -565,6 +611,19 @@ def self_test(app_id="onfinance_hfc"):
         n += 1
         if after["application"]["model"] != before["application"]["model"]:
             fails.append("the operator's model choice was reset by a re-run that did not change the provider")
+        n += 1
+        want_asr = before["application"].get("asr") or {"enabled": True, "model": asr.DEFAULT_MODEL, "language": None}
+        if after["application"].get("asr") != want_asr:
+            fails.append(f"the speech model choice {want_asr} became {after['application'].get('asr')} on a same-answers re-run")
+        # The developer picks another speech model: it is written; a mold that cannot carry it is refused by validate.
+        for nm in before: save(os.path.join(tapp, f"{nm}.json"), before[nm])
+        r = rerun(dict(answers, asr_model="nova-3")); n += 1
+        got = load(os.path.join(tapp, "application.json")).get("asr") or {}
+        mold_src = os.path.join(ROOT, "molds", before["application"]["mold_id"], "codebase")
+        if got.get("model") != "@cf/deepgram/nova-3": fails.append(f"answer asr_model=nova-3 was not written as @cf/deepgram/nova-3: {got}")
+        elif asr.mold_reads_env(mold_src) and r.returncode: fails.append(f"asr_model=nova-3 on a mold that reads ASR_MODEL was refused: {(r.stdout + r.stderr).strip()[-300:]}")
+        elif not asr.mold_reads_env(mold_src) and (r.returncode == 0 or "cannot take a per-app speech model yet" not in r.stdout + r.stderr):
+            fails.append(f"asr_model=nova-3 on a mold that cannot carry it was not refused by validate: rc={r.returncode} {(r.stdout + r.stderr).strip()[-300:]}")
         # a real change of database provider must NOT keep the old database's isolation proof
         for nm in before: save(os.path.join(tapp, f"{nm}.json"), before[nm])
         # A real switch: a provider that is neither the one in state nor the recorded answer (a recorded answer that only
@@ -617,7 +676,8 @@ def main(a):
     prod = pick_product(mold_id, hints, existing)
     ctx = {"app_id": app_id, "product": prod, "first_app": not [x for x in prod.get("app_ids", []) if x != app_id],
            "suffix": app_id[len(prod["product_id"])+1:] if app_id.startswith(prod["product_id"]+"_") else app_id,
-           "existing_project": existing.get("infrastructure", {}).get("vercel", {}).get("project")}
+           "existing_project": existing.get("infrastructure", {}).get("vercel", {}).get("project"),
+           "existing_asr": (existing.get("application") or {}).get("asr") or {}}
     resolved, pending = {}, []; ctx["resolved"] = resolved   # later questions may depend on earlier answers
     if not hints.get("workspace_name") and not d.get("workspace_name"): hints["workspace_name"] = None
     answers = load(opt("--answers")) if opt("--answers") else {}
@@ -635,6 +695,8 @@ def main(a):
             resolved[qid] = coerce(v); continue
         q = {"id":qid,"path":path,"question":prompt,"options":options,"suggested":v}
         if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both the vm and Vercel"
+        if qid == "asr_model" and hints.get("asr_model_unknown"):
+            q["why"] = f"the brief names speech model {hints['asr_model_unknown']!r}, which is not on the list"; q["suggested"] = asr.DEFAULT_MODEL
         pending.append(q)
     # The starter library is a choice people also make in state, by hand (the default went from all to none, and live
     # apps were set to none there). A re-run that only repeats the answer RECORDED at the last intake must not undo
@@ -649,6 +711,18 @@ def main(a):
     ex_prov = ((existing.get("datastores") or {}).get("postgres") or {}).get("provider")
     if ex_prov and "postgres_provider" not in hints and os.path.exists(recorded) and load(recorded).get("postgres_provider") == resolved.get("postgres_provider") != ex_prov:
         resolved["postgres_provider"] = ex_prov
+    # Optional questions resolved only by their default (not by an answer, the brief or the app's state) are offered.
+    offered = [{"id": qid, "path": path, "question": prompt, "options": options, "suggested": resolved.get(qid)}
+               for qid, path, prompt, options, _ in QUESTIONS if qid in OPTIONAL and qid in resolved and qid not in answers
+               and not hints.get(qid) and not (qid == "asr_model" and ctx["existing_asr"].get("model"))]
+    if "--ask" in opts:
+        for q in offered:
+            v = input(f"{q['question']} [{'/'.join(q['options'])}] (default: {q['suggested']}): ").strip()
+            if v:
+                if q["id"] == "asr_model": v = asr.normalize(v) or v     # "nova-3", "turbo", ... as well as the full id
+                if qid_value_ok(q, v): resolved[q["id"]] = v
+                else: sys.exit(f"{v!r} is not one of {', '.join(q['options'])}; nothing was written. Run it again and pick one, or press Enter for the default.")
+        offered = []
     if "--ask" in opts and pending:
         for q in pending:
             hint = f" [{'/'.join(q['options'])}]" if q["options"] else ""
@@ -658,7 +732,7 @@ def main(a):
         pending = []
     if pending:
         save(qfile, {"app_id":app_id,"mold_id":mold_id,"brief":os.path.relpath(brief_path, ROOT),"hints":hints,
-                     "answers":{k:v for k,v in resolved.items()},"pending":pending,"generated":TODAY})
+                     "answers":{k:v for k,v in resolved.items()},"pending":pending,"optional":offered,"generated":TODAY})
         print(f"{len(pending)} question(s) pending -> {os.path.relpath(qfile, ROOT)}")
         for q in pending:
             print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] not in (None,"") else "") + (f"  ({q['why']})" if q.get("why") else ""))
@@ -702,4 +776,6 @@ def main(a):
     print(r.stdout.strip())
     if r.returncode: sys.exit(r.returncode)
     print(f"state written: state/application/{app_id}/  (target={infra['target']}, project={infra.get('vercel',{}).get('project','vm')}, org={app['workspace']['org']['org_id']}, corpus={len(app['surface']['primary_context']['corpus'])}, processes={len(app['surface']['multiplayer_context']['processes'])}, secrets to provide: {len(infra['secrets'])})")
+    for q in offered:
+        print(f"optional, left at its default: {q['id']} = {q['suggested']} ({q['question']}) To change it: put \"{q['id']}\" in answers.json and rerun with --answers.")
 if __name__ == "__main__": main(sys.argv[1:])
