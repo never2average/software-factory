@@ -68,6 +68,7 @@ Safe to run without asking: `factory.py doctor`, `status`, `tasks`, `next`, `val
 - **Repositories:** `repo.py publish` or `push` (only ever when the person asked for a repository), `gh repo create`.
 - **Force-push or history rewrite** on any shared branch: `git push --force`, `-f`, `--force-with-lease`, `+refspec`.
 - **Spending:** anything that starts a paid plan, a bigger server, a paid add-on, or publishes a package (`agent_cli.py publish`, `npm publish`).
+- **Writing to a live app's data:** `provision.py <app> --operator <script> -- <args>` (the mold's `operator:*` scripts: a new workspace, a team member, a company). Show the `--dry-run` first; it runs only with `--yes`, which you add once the person said yes to that script with those arguments (without it: exit 3, asking for that yes).
 - **Deletes and irreversible changes:** removing projects, databases, repositories, workspaces or files you did not create; any `--apply` of a cleanup; `domain.py switch`.
 - **Contacting people:** anything that emails or messages someone (`mint.py <app> code-request`).
 

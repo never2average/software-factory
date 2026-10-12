@@ -20,6 +20,8 @@
                                                                        target=vm_remote only; lib/vm_remote.py and lib/vm_tunnel.py
   provision.py <app_id> --library-cleanup [--apply] [--org <id>]       a deployed app, on Vercel or on its own server; see below
   provision.py <app_id> --library-apply [--apply] [--org <id>]         the same; see below
+  provision.py <app_id> --operator <script> [--dry-run] [--yes] -- <args>   one of the build's own operator:* scripts against
+                        the deployed app (Vercel or its own server); see below and lib/operator_run.py (mold_v1-230)
 
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
@@ -62,6 +64,12 @@ AGENT INTERFACE. --json prints one result ({"ok","status","summary","next","need
   <specialist> the first time someone opens it)") and the ones left alone and why. A DRY RUN; with --apply it adds
   exactly what that dry run listed, one workspace at a time; nothing is generated until someone opens the app.
   --org <id> looks at one workspace. Same app role, same secrecy. An app deployed before #115 is refused plainly.
+--operator <script>: one of the mold's own `operator:*` package scripts (new-org, onboard-self, new-customer, ...; the list
+  is read from the build copy's package.json, nothing else runs) against the deployed app, with the script's own
+  arguments after `--`. On its own server: run there as the web app's user, from the serving release, with web.env (as
+  --library-cleanup). On Vercel: run here from the build copy with the app role's DATABASE_URL pulled for the run and
+  never printed. --dry-run prints the exact command, secrets masked, and runs nothing. Anything else writes to a live
+  app, so it runs only with --yes (passed once the person said yes); without it: exit 3, `needs` asks for the yes.
 --verify-rls: prove tenant isolation on whatever this app is running RIGHT NOW, and record the
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only
   measure). No build, no deploy, no password rotation. Run it after any restore or migration.
@@ -2944,6 +2952,7 @@ def self_test():
           "default_transaction_read_only%3Don" in ro and "endpoint%3Dep-x" in ro and "sslmode=require" in ro, ro)
     self_test_agent(check)
     self_test_release(check)
+    import operator_run; operator_run.self_test(check)   # --operator (mold_v1-230): parsing, allow-list, masking, both targets
     if fails:
         sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
     print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window; "
@@ -3084,7 +3093,7 @@ def self_test_release(check):
         i2 = inf2(); i2["vm_remote"] = {"production_url": "https://app-one.rehearsal.invalid"}; i2["deployed_at"] = "2026-10-12T00:00:00+00:00"
         json.dump(i2, open(os.path.join(a2, "infrastructure.json"), "w"))
         def go_json(app_id, *args):
-            r = subprocess.run([sys.executable, P, app_id, *args, "--json"], cwd=t, env=env, capture_output=True, text=True, timeout=300)
+            r = subprocess.run([sys.executable, P, app_id, "--json", *args], cwd=t, env=env, capture_output=True, text=True, timeout=300)
             try: doc = json.loads(r.stdout)
             except ValueError: doc = {}
             log_ = open(doc["log"]).read() if doc.get("log") and os.path.isfile(doc["log"]) else ""
@@ -3106,6 +3115,22 @@ def self_test_release(check):
         code, d2, out = go_json("app2", "--smoke")
         check("vm_remote --smoke against an address that does not answer: fail, exit 1, recorded", code == 1 and d2.get("status") == "failed"
               and (inf2()["vm_remote"].get("smoke") or {}).get("result") == "fail", out[-400:])
+        # mold_v1-230: --operator through provision.py itself: the script's own arguments after -- (even --json and
+        # --dry-run) are the script's, a dry run connects to nothing, and without --yes it is exit 3 asking for the yes
+        json.dump({"scripts": {"build": "x", "operator:new-org": "node --env-file=.env.local scripts/operator/new-org.mjs"}},
+                  open(os.path.join(t, "molds", "m1", "codebase", "package.json"), "w"))
+        i2 = inf2(); i2["vm_remote"].update(host="203.0.113.7", domain="app-two.example.com", production_url="https://app-two.example.com")
+        json.dump(i2, open(os.path.join(a2, "infrastructure.json"), "w"))
+        if os.path.exists(W + ".calls"): os.remove(W + ".calls")
+        code, d2, out = go_json("app2", "--operator", "new-org", "--dry-run", "--", "--name", "Acme", "--json", "--password", "hunter2hunter2")
+        check("--operator --dry-run through provision.py: one JSON result, exit 0, the node line with the script's own --json kept and its password masked",
+              code == 0 and d2.get("status") == "done" and "scripts/operator/new-org.mjs --name Acme --json --password '***'" in (d2.get("details") or {}).get("operator", {}).get("command", "")
+              and "hunter2" not in out and not calls(), (code, d2, out[-500:]))
+        code, d2, out = go_json("app2", "--operator", "new-org", "--", "--name", "Acme", "--dry-run")
+        check("--operator without --yes (a --dry-run after -- is the script's): needs_human, exit 3, an approval in needs, nothing contacted",
+              code == 3 and d2.get("status") == "needs_human" and (d2.get("needs") or [{}])[0].get("kind") == "approval" and not calls(), (code, d2))
+        code, d2, out = go_json("app2", "--operator", "build", "--dry-run")
+        check("--operator with a package script that is not operator:*: exit 2, nothing run", code == 2 and d2.get("status") == "failed", (code, d2))
         first = prod()
         # health fails after a redeploy: every project rolled back to what served before
         world(fault={"app-one-api": "health"})
@@ -3194,6 +3219,12 @@ def _main(a):
     global ADMIN_KEYS
     ADMIN_KEYS = (ds.get("postgres", {}).get("admin_url_ref") or PROVIDER_ADMIN.get(prov, "POSTGRES_ADMIN_URL"),)
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
+    if "--operator" in (a[:a.index("--")] if "--" in a else a):
+        # One of the mold's operator:* scripts against the deployed app (lib/operator_run.py, mold_v1-230): a dry run
+        # with --dry-run, exit 3 for a yes without --yes; on the server as the web app's user, or here with the pulled
+        # DATABASE_URL. Ahead of every other flag: the script's own arguments (after --) are never read as provision's.
+        import operator_run
+        sys.exit(operator_run.main_for(app_id, a, app, infra, ds, P=sys.modules[__name__]))
     if target == "vm_remote":
         # A server over SSH that serves the app (mold_v1-075/076). Nothing below this line applies to it: no
         # Vercel project, no local docker database, and --check must not reach for either. One module owns it.
@@ -3497,7 +3528,8 @@ def _main(a):
 # ---- the agent interface: --json, --background, status, the deploy lock (lib/agent_result.py, lib/runs.py) ----------
 DEPLOY_FLAGS = ("--deploy", "--deploy-remote", "--rollback", "--rollback-remote")   # each under the app's deploy lock
 def _action(a):
-    for f, act in (("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
+    a = a[:a.index("--")] if "--" in a else a
+    for f, act in (("--operator", "operator"), ("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
                    ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke")):
         if f in a: return act + ("-dry-run" if "--dry-run" in a else "")
     return "status" if a[1:2] == ["status"] else "check"
@@ -3518,7 +3550,11 @@ def _say(res):
 
 def main(a):
     if a and a[0] in ("--self-test", "--self-test-remote"): return _main(a)
-    as_json, a = AR.wants_json(a)
+    # Everything after the first `--` belongs to an operator script (--operator, mold_v1-230): never read as ours,
+    # --json included.
+    tail = a[a.index("--"):] if "--" in a else []
+    as_json, a = AR.wants_json(a[:len(a) - len(tail)])
+    a = a + tail
     if not a or a[0].startswith("-"): return _main(a)
     app_id = a[0]
     services.script_start("provision.py", a, action=_action(a))
@@ -3528,7 +3564,8 @@ def main(a):
         res = runs.status(ROOT, "provision.py", app_id, "deploy", start)
         if as_json: sys.exit(AR.emit(res))
         _say(res); sys.exit(AR.exit_code(res))
-    deploying = any(f in a for f in DEPLOY_FLAGS) and "--dry-run" not in a
+    head = a[:len(a) - len(tail)]
+    deploying = any(f in head for f in DEPLOY_FLAGS) and "--dry-run" not in head and "--operator" not in head
     if "--background" in a:
         if not deploying:
             sys.exit(f"--background goes with --deploy or --deploy-remote (the long step); everything else here answers at once. "

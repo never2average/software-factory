@@ -183,15 +183,24 @@ The mold ships three commands of its own for this (`molds/mold_v1/codebase/packa
 | `operator:new-customer -- --email <you> --name "<Company>" --id <id> --org <workspace id>` | a company in that workspace: its row, you as its solution engineer, and `context.md` + `interactions.jsonl` in the workspace's data room |
 
 They run inside the app, with the app's own database connection (the app role, row-level security on), never with an
-admin password. No factory command wraps them yet (mold_v1-230), so the agent runs them by hand:
+admin password. The factory runs them for you with one command (mold_v1-230), the script's own arguments after `--`:
 
-- **On a server of your own:** over SSH, as root, which starts `node --experimental-strip-types scripts/operator/<name>.mjs
-  <args>` in `/opt/software-factory/<app_id>/current` **as the web app's user (`sfweb`)**, with the values of
-  `/etc/software-factory/<app_id>/web.env` as its environment, and `WORKSPACE_OPS_URL=https://<domain>` for the
-  health line. The values stay on the server: they are read there, passed to the child, and removed from anything it
-  prints. `npm run operator:*` does not work as written on the server, because it reads `.env.local`, which a server
-  does not have.
-- **On Vercel:** not wrapped; wait for mold_v1-230.
+```
+python3 .claude/scripts/provision.py <app_id> --operator new-org --dry-run -- --name "<Name>" --id <id> --owner <your email>
+```
+
+The agent shows you that dry run first: the exact command, with the database address and any password-like value
+hidden; nothing runs and nothing is contacted. Each of these writes to your live app, so the agent asks you before it
+runs one and adds `--yes` only after you said yes (without it the command stops and asks). Then:
+
+- **On a server of your own:** it runs there, as the web app's user (`sfweb`), in the release that serves
+  (`/opt/software-factory/<app_id>/current`), with `/etc/software-factory/<app_id>/web.env` as its environment and
+  `WORKSPACE_OPS_URL=https://<domain>` for the health line. The values stay on the server: they are read there, passed to
+  the script, and removed from anything it prints. Nobody needs to SSH in by hand.
+- **On Vercel:** it runs on the factory machine from the app's build copy (`build/<app_id>/`), with the app's database
+  address read from the project's production environment for that run only and never printed. Only the database is
+  reachable this way: the rows are written, but a script's data-room files (onboard-self's `People/<you>/`,
+  new-customer's `context.md`) find no file store there and are skipped or fail.
 
 Then sign in at the app's address. The new workspace is in the workspace switcher for its owner; your first workspace
 stays the one you land in.
