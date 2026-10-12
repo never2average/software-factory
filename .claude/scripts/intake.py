@@ -571,8 +571,28 @@ def self_test(app_id="onfinance_hfc"):
         # repeats itself does not override state; see main()).
         now_prov = before["datastores"]["postgres"].get("provider")
         other = next(p for p in ("supabase", "neon", "rds") if p not in (now_prov, answers.get("postgres_provider")))
-        r = rerun(dict(answers, postgres_provider=other)); n += 1
+        switch = dict(answers, postgres_provider=other)
+        if answers.get("deploy_target") == "vm_remote":
+            # On vm_remote the database is ALWAYS the server's own Postgres (lib/vm_remote.py shape_state), so a provider
+            # answer alone is not a switch (mold_v1-231): same host, same database, and its proof rightly stays. Assert
+            # exactly that, then make the real switch a vm_remote app can make: off the server, onto a managed provider.
+            r = rerun(switch); n += 1
+            if r.returncode: fails.append(f"vm_remote re-run with postgres_provider={other} exited {r.returncode}: {(r.stdout + r.stderr).strip()[-400:]}")
+            pg = load(os.path.join(tapp, "datastores.json")).get("postgres", {})
+            if pg.get("provider") != "self_hosted": fails.append(f"a vm_remote app took postgres provider {pg.get('provider')} (its database is the server's own)")
+            elif pg.get("rls_verified") != before["datastores"]["postgres"].get("rls_verified"):
+                fails.append("a vm_remote re-run that kept the same database changed its rls_verified")
+            if load(os.path.join(tapp, "answers.json")).get("postgres_provider") != "self_hosted":
+                fails.append(f"a vm_remote re-run recorded postgres_provider={other}, which its state does not carry")
+            for nm in before: save(os.path.join(tapp, f"{nm}.json"), before[nm])
+            save(os.path.join(tapp, "answers.json"), answers)
+            switch.update(deploy_target="vercel", blob_provider="vercel_blob", secret_store="vercel_env")
+        # The re-run may exit 1 here, AFTER writing state: validate then (rightly) asks for a fresh --verify-rls.
+        r = rerun(switch); n += 1
         ds2 = load(os.path.join(tapp, "datastores.json"))
+        if ds2.get("postgres", {}).get("provider") != other:
+            fails.append(f"the provider switch to {other} was not written (provider {ds2.get('postgres', {}).get('provider')}): "
+                         f"{(r.stdout + r.stderr).strip()[-400:]}")
         if "rls_verified" in ds2.get("postgres", {}): fails.append(f"switching postgres to {other} kept the old database's rls_verified")
         n += 1
         if other != "neon" and "pooling" in ds2["postgres"]: fails.append("switching away from neon kept postgres.pooling")
@@ -643,6 +663,14 @@ def main(a):
         for q in pending:
             print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] not in (None,"") else "") + (f"  ({q['why']})" if q.get("why") else ""))
         sys.exit(2)
+    # vm_remote decides its own database, files and secret store (lib/vm_remote.py shape_state): whatever was answered,
+    # the state holds self_hosted / fs / vm_remote_env_file. Record THAT, never an answer the state does not carry: a
+    # recorded supabase beside a self_hosted state made a later real switch to supabase look like a repeat (mold_v1-231).
+    if resolved.get("deploy_target") == "vm_remote":
+        for qid, forced in (("postgres_provider", "self_hosted"), ("blob_provider", "fs"), ("secret_store", "vm_remote_env_file")):
+            if resolved.get(qid) != forced:
+                print(f"note: {qid}={resolved.get(qid)} does not apply on vm_remote (the server's own); recorded as {forced}")
+                resolved[qid] = forced
     # everything resolved: write state, confirm defaults, register app
     gap = unforwarded(resolved["deploy_target"], resolved["inference_provider"])
     if gap:
