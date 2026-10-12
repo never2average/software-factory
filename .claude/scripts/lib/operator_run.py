@@ -15,10 +15,15 @@ WHERE IT RUNS
              DATABASE_URL, row-level security in force, never the admin URL. The way --library-cleanup does it. The
              script's arguments travel on stdin, never on a command line, and every value of the env file is removed
              from what it prints before that leaves the server.
-  vercel     HERE, from the app's build copy, with the app role's DATABASE_URL read from the web project's production
-             environment for the length of the run, handed to the child in its environment and never printed.
-             Only DATABASE_URL: a script's data-room writes (onboard-self's People/<you>/, new-customer's context.md)
-             find no file store here and are skipped or fail; the database rows are written.
+  vercel     HERE, from the app's build copy, with the web project's production environment read for the length of the
+             run and handed to the child through an allow-list (PULLED_ENV, mold_v1-237): the app role's DATABASE_URL and
+             the file store's settings the mold's lib/storage reads (docs/STORAGE.md): BLOB_READ_WRITE_TOKEN on Vercel
+             Blob (STORAGE_DRIVER unset, the default), STORAGE_DRIVER and STORAGE_S3_* on s3. So a script's data-room
+             writes (onboard-self's People/<you>/, new-customer's context.md) reach the live store. On the filesystem
+             driver the files are on a disk the factory cannot reach: nothing of the store is passed, and the output says
+             so. Nothing else of the project's environment, nor of this machine's beyond BASE_ENV, reaches the script;
+             every secret value is masked in --dry-run, removed from what the script prints and kept out of the log and
+             the JSON result.
   Both add NODE_ENV=production and WORKSPACE_OPS_URL=<the app's address> (not secrets). `npm run operator:*` reads
   .env.local, which neither place has, so the script's own `node ...` line is run without its --env-file flag.
 
@@ -48,6 +53,18 @@ MARK = "OPERATOR "
 CRONS_FOR_TEST = False   # the self-test has no mold on disk: the module's own cron list stands in
 TIMEOUT = int(os.environ.get("OPERATOR_TIMEOUT_S") or 1800)
 OWN_FLAGS = ("--operator", "--dry-run", "--yes")
+
+# What a Vercel run hands the script (mold_v1-237). An allow-list, never the whole environment: of the project's
+# production environment, the database address and the settings the selected file-store driver reads (the mold's
+# lib/storage/settings.ts and docs/STORAGE.md); of this machine's, only what node needs to start. The filesystem
+# driver is absent on purpose: its files live on the disk of the machine that serves the app.
+DB_VAR = "DATABASE_URL"
+STORAGE_VARS = {"vercel-blob": ("BLOB_READ_WRITE_TOKEN",),
+                "s3": ("STORAGE_DRIVER", "STORAGE_S3_ENDPOINT", "STORAGE_S3_BUCKET", "STORAGE_S3_REGION",
+                       "STORAGE_S3_ACCESS_KEY_ID", "STORAGE_S3_SECRET_ACCESS_KEY", "STORAGE_S3_ADDRESSING")}
+PULLED_ENV = (DB_VAR,) + tuple(dict.fromkeys(v for vs in STORAGE_VARS.values() for v in vs))
+SHOWN_VALUES = ("STORAGE_DRIVER", "STORAGE_S3_REGION", "STORAGE_S3_ADDRESSING")   # not secrets: printed as they are
+BASE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR")
 
 
 class Usage(Exception):
@@ -121,6 +138,56 @@ def hider(values):
         for v in vals: text = text.replace(v, "[hidden]")
         return AR.scrub(text)
     return hide
+
+
+# ---- the environment of a Vercel run (mold_v1-237) ---------------------------------------------------------------------
+def storage_driver(vals):
+    """The file-store driver the project's production environment selects, as lib/storage/settings.ts reads it."""
+    raw = (vals.get("STORAGE_DRIVER") or "").strip()
+    return "vercel-blob" if raw == "" else "filesystem" if raw == "fs" else raw
+
+
+def storage_env(vals):
+    """({name: value} of the file store's settings to hand the script, the sentence to print about the store)."""
+    drv = storage_driver(vals)
+    if drv == "filesystem":
+        return {}, ("its file store is the filesystem driver (STORAGE_DRIVER=filesystem): the files live on the disk of the machine "
+                    "that serves the app, which the factory cannot reach, so file writes are not possible from the factory. Nothing of the "
+                    "store is passed: the database rows are written, and the data-room files (onboard-self's People/<you>/, new-customer's "
+                    "context.md) are skipped or fail. (On Vercel that disk is not kept between requests either; the app's own file store "
+                    "needs Vercel Blob or s3.)")
+    if drv not in STORAGE_VARS:
+        return {"STORAGE_DRIVER": vals["STORAGE_DRIVER"]}, (f"its STORAGE_DRIVER is {vals['STORAGE_DRIVER']!r}, which is not a driver (vercel-blob, "
+                f"filesystem or s3): the script reports the store as misconfigured and writes no file. Fix the setting on the project first.")
+    env = {k: vals[k] for k in STORAGE_VARS[drv] if vals.get(k) and vals[k] != "[SENSITIVE]"}
+    if drv == "vercel-blob" and not env:
+        return {}, ("its production environment has no BLOB_READ_WRITE_TOKEN (the Vercel Blob store's token) the factory can read: it is "
+                    "missing, or marked Sensitive, which Vercel never hands back. So the script finds no file store: the database rows "
+                    "are written, the data-room files are skipped or fail.")
+    names = " ".join(f"{k}={v}" if k in SHOWN_VALUES else f"{k}=<hidden>" for k, v in env.items())
+    return env, f"its file store is {drv}: the script gets {names} from the same production environment, so its data-room files are written."
+
+
+def child_env(vals, url, base=None):
+    """The whole environment a Vercel run's child gets: BASE_ENV from this machine, the allow-listed values of the project."""
+    base = os.environ if base is None else base
+    env = {k: base[k] for k in BASE_ENV if base.get(k)}
+    env[DB_VAR] = vals[DB_VAR]
+    store, said = storage_env(vals)
+    env.update(store); env.update(NODE_ENV="production", WORKSPACE_OPS_URL=url)
+    return env, said
+
+
+def _secret_values(passed):
+    """Every value handed to the script that is a secret (all of the project's but the driver's name and plain options)."""
+    return [v for k, v in passed.items() if k in PULLED_ENV and k not in SHOWN_VALUES]
+
+
+def shown_env(names, proj):
+    """The variables of a Vercel run as they are printed: names, never values."""
+    why = {DB_VAR: f"the app role's address, read from the production environment of Vercel project {proj} for this run only",
+           "BLOB_READ_WRITE_TOKEN": "the Vercel Blob store's token, from the same environment"}
+    return " ".join(f"{k}=<hidden: {why[k]}>" if k in why else f"{k}=<hidden>" for k in names)
 
 
 # ---- on the server (vm_remote): run by `vm_remote.py operator-run`, as root ------------------------------------------
@@ -207,12 +274,16 @@ def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None,
     if target == "vercel":
         if P is not None: P._refuse_live_or_shared_project(app_id, infra)
         proj = (infra.get("vercel") or {}).get("project")
-        shown = (f"DATABASE_URL=<hidden: the app role's address, read from the production environment of Vercel project {proj} for this run only> "
-                 f"NODE_ENV=production WORKSPACE_OPS_URL={shlex.quote(url)} " + shlex.join(argv + shown_args))
+        shown = (shown_env((DB_VAR, "BLOB_READ_WRITE_TOKEN"), proj) + f" NODE_ENV=production WORKSPACE_OPS_URL={shlex.quote(url)} "
+                 + shlex.join(argv + shown_args))
         say(f"{app_id}: {key} on Vercel, run here from {os.path.relpath(build, ROOT)}/ (the app's build copy):")
         say(f"    $ cd {shlex.quote(os.path.relpath(build, ROOT))}")
         say(f"    $ {shown}")
-        detail["command"] = shown
+        say(f"    with nothing else of the project's environment, and of this machine's only {', '.join(BASE_ENV[:3])} and the like. "
+            f"The file store's settings follow the project's STORAGE_DRIVER: BLOB_READ_WRITE_TOKEN on Vercel Blob (unset, the default); "
+            f"STORAGE_DRIVER and STORAGE_S3_* (hidden) on s3; none on filesystem, whose files are on a disk the factory cannot reach, "
+            f"so a run there writes the database rows only and says so.")
+        detail["command"] = shown; detail["env"] = [DB_VAR, "BLOB_READ_WRITE_TOKEN", "NODE_ENV", "WORKSPACE_OPS_URL"]
     else:
         sys.path.insert(0, HERE); import vm_remote as V
         S = V.settings(app_id, app, infra, ds or {})
@@ -247,11 +318,19 @@ def _run_vercel(app_id, app, infra, ds, build, argv, args, url, key, runner, pul
         if SCRIPTS not in sys.path: sys.path.insert(0, SCRIPTS)
         import clone
         pull_env = clone.pull_env
-    db = (pull_env(infra["vercel"]["project"], build) or {}).get("DATABASE_URL")
+    pulled = pull_env(infra["vercel"]["project"], build) or {}
+    vals = {k: pulled[k] for k in PULLED_ENV if isinstance(pulled.get(k), str)}   # the allow-list: nothing else is kept
+    del pulled
+    for v in _secret_values(vals): AR.forbid(v)
+    db = vals.get(DB_VAR)
     if not db or db == "[SENSITIVE]":
         say(f"{app_id}: the database address could not be read from the project's production environment. Nothing was run."); return 1
-    AR.forbid(db); hide = hider([db])
-    env = dict(os.environ, DATABASE_URL=db, NODE_ENV="production", WORKSPACE_OPS_URL=url)
+    env, said = child_env(vals, url)
+    hide = hider(_secret_values(env))
+    AR.NOTES["details"].setdefault("operator", {})["env"] = sorted(k for k in env if k not in BASE_ENV)
+    say(f"{app_id}: {said}")
+    say(f"    $ " + " ".join(f"{k}={env[k]}" if k in SHOWN_VALUES or k in ("NODE_ENV", "WORKSPACE_OPS_URL") else f"{k}=<hidden>"
+                           for k in env if k not in BASE_ENV) + " " + shlex.join(argv + mask_args(args)))
     try:
         r = (runner or subprocess.run)(argv + list(args), cwd=build, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -260,7 +339,7 @@ def _run_vercel(app_id, app, infra, ds, build, argv, args, url, key, runner, pul
         say(f"{app_id}: {key} could not be started ({type(e).__name__}). Nothing was run."); return 1
     for text in (r.stdout, r.stderr):
         for l in hide(text).splitlines(): say(l)
-    say(f"{app_id}: {key} exited {r.returncode}. The database address was never printed.")
+    say(f"{app_id}: {key} exited {r.returncode}. The database address and the file store's credentials were never printed.")
     return r.returncode
 
 
@@ -372,9 +451,9 @@ def self_test(check=None):
         global _build_dir, CRONS_FOR_TEST
         real_build_dir = _build_dir; CRONS_FOR_TEST = True
         _build_dir = lambda app_id, app_, target: build
-        def go(argv, inf=infra, **kw):
+        def go(argv, inf=infra, pull_=None, run_=None, **kw):
             AR.reset(); buf = io.StringIO()
-            rc = main_for("app1", ["app1"] + argv, app, inf, runner=fake_run, pull_env=pull, say=lambda s: buf.write(s + "\n"), **kw)
+            rc = main_for("app1", ["app1"] + argv, app, inf, runner=run_ or fake_run, pull_env=pull_ or pull, say=lambda s: buf.write(s + "\n"), **kw)
             return rc, buf.getvalue()
         try:
             pulls.clear(); runs_.clear()
@@ -391,6 +470,86 @@ def self_test(check=None):
                and runs_[-1][1]["cwd"] == build and runs_[-1][1]["env"]["DATABASE_URL"] == DB and runs_[-1][1]["env"]["NODE_ENV"] == "production"
                and runs_[-1][1]["env"]["WORKSPACE_OPS_URL"] == "https://app-one.example.com" and DB not in " ".join(runs_[-1][0]), (rc, out))
             ok("operator vercel: the database address is never printed, even when the script echoes it", "Sup3rS3cretPw" not in out and "[hidden]" in out, out)
+            # 4b. mold_v1-237: the file store's settings come from the same production environment, through an
+            # allow-list: the child gets them and nothing else of the project's (or of this machine's) environment.
+            BLOB = "vercel_blob_rw_StoreId123_S3cr3tBlobT0ken"
+            NOT_FOR_IT = {"CLOUDFLARE_API_TOKEN": "cf_NotForTheScript_123", "RESEND_API_KEY": "re_NotForTheScript_456",
+                          "VERCEL_OIDC_TOKEN": "oidc_NotForTheScript_789", "AUTH_SECRET": "auth_NotForTheScript_0"}
+            FULL = {"DATABASE_URL": DB, "BLOB_READ_WRITE_TOKEN": BLOB, **NOT_FOR_IT}
+            def pull_with(vals):
+                def p_(proj, cwd): pulls.append((proj, cwd)); return dict(vals)
+                return p_
+            def echo_run(argv, **kw):     # a script that prints its whole environment
+                runs_.append((argv, kw))
+                return subprocess.CompletedProcess(argv, 0, "".join(f"{k}={v}\n" for k, v in sorted((kw.get("env") or {}).items())), "")
+            basics = set(globals().get("BASE_ENV") or ())
+            os.environ["SF_SELFTEST_FACTORY_ONLY"] = "factorySideOnlyValue99"
+            try:
+                pulls.clear(); runs_.clear()
+                rc, out = go(["--operator", "onboard-self" if "operator:onboard-self" in al else "new-org", "--dry-run", "--", "--org", "acme"], pull_=pull_with(FULL))
+                ok("operator vercel 237: --dry-run names the storage credential, masked, and pulls nothing",
+                   rc == 0 and not pulls and "BLOB_READ_WRITE_TOKEN=<hidden" in out and BLOB not in out and "filesystem" in out
+                   and "BLOB_READ_WRITE_TOKEN" in (AR.NOTES["details"]["operator"].get("env") or []), out)
+                rc, out = go(["--operator", "new-org", "--yes", "--", "--name", "Acme"], pull_=pull_with(FULL), run_=echo_run)
+                env_ = runs_[-1][1]["env"] if runs_ else {}
+                ok("operator vercel 237: the run gets BLOB_READ_WRITE_TOKEN from the project's production environment",
+                   rc == 0 and env_.get("BLOB_READ_WRITE_TOKEN") == BLOB and env_.get("DATABASE_URL") == DB, (rc, sorted(env_)))
+                ok("operator vercel 237: the env passed is the allow-list only (no other project value, nothing of this machine's beyond the basics)",
+                   set(env_) - basics == {"DATABASE_URL", "BLOB_READ_WRITE_TOKEN", "NODE_ENV", "WORKSPACE_OPS_URL"}
+                   and not any(k in env_ for k in NOT_FOR_IT) and "SF_SELFTEST_FACTORY_ONLY" not in env_, sorted(env_))
+                ok("operator vercel 237: the storage credential is never printed, even when the script echoes it",
+                   BLOB not in out and "BLOB_READ_WRITE_TOKEN=[hidden]" in out and "BLOB_READ_WRITE_TOKEN=<hidden" in out, out)
+                # the --json log and result: run through run_json exactly as provision.py --json does
+                saved_env = {k: os.environ.pop(k) for k in ("FACTORY_RUN_LOG", "FACTORY_RUN_RECORD", "FACTORY_RUNS_DIR") if k in os.environ}
+                jbuf = io.StringIO()
+                try:
+                    import contextlib
+                    with contextlib.redirect_stdout(jbuf):
+                        AR.run_json(lambda a_: main_for("app1", a_, app, infra, runner=echo_run, pull_env=pull_with(FULL),
+                                                        say=lambda s: os.write(1, (s + "\n").encode())),
+                                    ["app1", "--operator", "new-org", "--yes", "--", "--name", "Acme"], t, "app1", "operator")
+                finally: os.environ.update(saved_env)
+                try: jdoc = json.loads(jbuf.getvalue())
+                except ValueError: jdoc = {}
+                jlog = open(jdoc["log"]).read() if jdoc.get("log") and os.path.exists(jdoc["log"]) else ""
+                ok("operator vercel 237: --json: the storage credential is in neither the result nor the run's log",
+                   jdoc.get("status") == "done" and "BLOB_READ_WRITE_TOKEN" in jlog and BLOB not in jlog and BLOB not in jbuf.getvalue()
+                   and "Sup3rS3cretPw" not in jlog, (jbuf.getvalue()[-600:], jlog[-600:]))
+                # mutation: with the token left out of what is masked, the leak shows (so the checks above can fail)
+                real_sv = globals().get("_secret_values"); AR._FORBIDDEN.clear()
+                globals()["_secret_values"] = lambda passed: [passed.get("DATABASE_URL")]
+                try: rc, out = go(["--operator", "new-org", "--yes"], pull_=pull_with(FULL), run_=echo_run)
+                finally:
+                    if real_sv: globals()["_secret_values"] = real_sv
+                    else: globals().pop("_secret_values", None)
+                ok("operator vercel 237 (mutation): unmasked, the echoed token would be printed: the masking is what hides it", BLOB in out, out)
+                AR._FORBIDDEN.clear()
+                # filesystem: nothing of the file store is passed, and the output says why no file is written
+                rc, out = go(["--operator", "new-org", "--yes"], run_=echo_run,
+                             pull_=pull_with({"DATABASE_URL": DB, "STORAGE_DRIVER": "filesystem", "STORAGE_FS_ROOT": "/srv/files",
+                                              "STORAGE_SIGNING_SECRET": "sig_" + "x" * 32, "BLOB_READ_WRITE_TOKEN": BLOB}))
+                env_ = runs_[-1][1]["env"] if runs_ else {}
+                ok("operator vercel 237: a filesystem file store: no storage setting passed, and the output says file writes are not possible from the factory and why",
+                   rc == 0 and not any(k.startswith(("STORAGE_", "BLOB_")) for k in env_) and "file writes are not possible from the factory" in out
+                   and "disk" in out and "sig_xxxx" not in out and BLOB not in out, (sorted(env_), out))
+                # s3: the bucket's settings, its secret hidden; a stale blob token is not passed
+                S3SECRET = "s3SecretAccessKey_ABCDEFGH123"
+                rc, out = go(["--operator", "new-org", "--yes"], run_=echo_run,
+                             pull_=pull_with({"DATABASE_URL": DB, "STORAGE_DRIVER": "s3", "STORAGE_S3_ENDPOINT": "https://ams3.digitaloceanspaces.com",
+                                              "STORAGE_S3_BUCKET": "files-bucket-x", "STORAGE_S3_REGION": "ams3", "STORAGE_S3_ACCESS_KEY_ID": "AKIDEXAMPLE12345",
+                                              "STORAGE_S3_SECRET_ACCESS_KEY": S3SECRET, "BLOB_READ_WRITE_TOKEN": BLOB, **NOT_FOR_IT}))
+                env_ = runs_[-1][1]["env"] if runs_ else {}
+                ok("operator vercel 237: an s3 file store: STORAGE_DRIVER and the bucket's settings only, the secret key never printed",
+                   rc == 0 and env_.get("STORAGE_DRIVER") == "s3" and env_.get("STORAGE_S3_SECRET_ACCESS_KEY") == S3SECRET and "BLOB_READ_WRITE_TOKEN" not in env_
+                   and set(env_) - basics == {"DATABASE_URL", "NODE_ENV", "WORKSPACE_OPS_URL", "STORAGE_DRIVER", "STORAGE_S3_ENDPOINT", "STORAGE_S3_BUCKET",
+                                              "STORAGE_S3_REGION", "STORAGE_S3_ACCESS_KEY_ID", "STORAGE_S3_SECRET_ACCESS_KEY"}
+                   and S3SECRET not in out and "AKIDEXAMPLE12345" not in out, (sorted(env_), out))
+                # Vercel Blob without a token: said, and the run goes on (the rows are written)
+                rc, out = go(["--operator", "new-org", "--yes"], run_=echo_run, pull_=pull_with({"DATABASE_URL": DB}))
+                ok("operator vercel 237: no BLOB_READ_WRITE_TOKEN in the project: said plainly, the database part still runs",
+                   rc == 0 and "no BLOB_READ_WRITE_TOKEN" in out, out)
+            finally:
+                os.environ.pop("SF_SELFTEST_FACTORY_ONLY", None); AR._FORBIDDEN.clear()
             rc, out = go(["--operator", "new-org", "--yes", "--", "--exit", "4"])
             ok("operator vercel: a script that fails is exit 1", rc == 1 and AR.NOTES["details"]["operator"]["exit_code"] == 4, (rc, out))
             n0 = len(runs_)

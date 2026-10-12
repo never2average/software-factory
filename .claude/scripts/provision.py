@@ -67,8 +67,9 @@ AGENT INTERFACE. --json prints one result ({"ok","status","summary","next","need
 --operator <script>: one of the mold's own `operator:*` package scripts (new-org, onboard-self, new-customer, ...; the list
   is read from the build copy's package.json, nothing else runs) against the deployed app, with the script's own
   arguments after `--`. On its own server: run there as the web app's user, from the serving release, with web.env (as
-  --library-cleanup). On Vercel: run here from the build copy with the app role's DATABASE_URL pulled for the run and
-  never printed. --dry-run prints the exact command, secrets masked, and runs nothing. Anything else writes to a live
+  --library-cleanup). On Vercel: run here from the build copy with the app role's DATABASE_URL and the file store's settings
+  (BLOB_READ_WRITE_TOKEN; STORAGE_DRIVER + STORAGE_S3_* on s3; an allow-list, mold_v1-237) pulled for the run and never
+  printed; on the filesystem driver it says file writes are not possible from the factory. --dry-run prints the exact command, secrets masked, and runs nothing. Anything else writes to a live
   app, so it runs only with --yes (passed once the person said yes); without it: exit 3, `needs` asks for the yes.
 --verify-rls: prove tenant isolation on whatever this app is running RIGHT NOW, and record the
   result in datastores.postgres.rls_verified. Repairs coverage first (add --no-repair to only

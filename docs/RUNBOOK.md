@@ -189,18 +189,21 @@ admin password. The factory runs them for you with one command (mold_v1-230), th
 python3 .claude/scripts/provision.py <app_id> --operator new-org --dry-run -- --name "<Name>" --id <id> --owner <your email>
 ```
 
-The agent shows you that dry run first: the exact command, with the database address and any password-like value
-hidden; nothing runs and nothing is contacted. Each of these writes to your live app, so the agent asks you before it
+The agent shows you that dry run first: the exact command, with the database address, the file store's key and any
+password-like value hidden; nothing runs and nothing is contacted. Each of these writes to your live app, so the agent asks you before it
 runs one and adds `--yes` only after you said yes (without it the command stops and asks). Then:
 
 - **On a server of your own:** it runs there, as the web app's user (`sfweb`), in the release that serves
   (`/opt/software-factory/<app_id>/current`), with `/etc/software-factory/<app_id>/web.env` as its environment and
   `WORKSPACE_OPS_URL=https://<domain>` for the health line. The values stay on the server: they are read there, passed to
   the script, and removed from anything it prints. Nobody needs to SSH in by hand.
-- **On Vercel:** it runs on the factory machine from the app's build copy (`build/<app_id>/`), with the app's database
-  address read from the project's production environment for that run only and never printed. Only the database is
-  reachable this way: the rows are written, but a script's data-room files (onboard-self's `People/<you>/`,
-  new-customer's `context.md`) find no file store there and are skipped or fail.
+- **On Vercel:** it runs on the factory machine from the app's build copy (`build/<app_id>/`), with two things read from
+  the project's production environment for that run only and never printed: the app's database address and the file
+  store's key (`BLOB_READ_WRITE_TOKEN`, the Vercel Blob store the deploy made; on an `s3` store, its `STORAGE_S3_*`
+  settings). So both the rows and the data-room files (onboard-self's `People/<you>/`, new-customer's `context.md`) are
+  written. Nothing else of the project's settings is handed to the script (mold_v1-237). If the app keeps its files on a
+  server's own disk (`STORAGE_DRIVER=filesystem`), the factory cannot reach that disk: the command says so, and only the
+  rows are written.
 
 Then sign in at the app's address. The new workspace is in the workspace switcher for its owner; your first workspace
 stays the one you land in.
