@@ -487,6 +487,36 @@ result), on Vercel's world and on the local world alike. On Vercel the schedule 
 `eve start` runs it itself.
 
 
+## A specialist's question, and the reply to it (mold_v1-234)
+
+A specialist that needs the person calls its question tool. eve parks it and forwards the question onto the main
+thread as an `input.requested`; the person's answer is posted as `inputResponses` and eve routes it to that specialist
+by request id (`routeDeliverPayload`). Two things were missing, and together they made the reply read as a plain message
+in the main thread:
+
+- **Who asked.** eve built the forwarded event from a hook payload that names the delegation (`callId`,
+  `subagentName`, `childSessionId`) and dropped all three. The patch keeps them as `data.subagent: { callId, name,
+  childSessionId }` (scripts/eve-patch/changes.mjs, "whose question it is"), in both paths: a question asked inside the
+  main agent's turn, and one that reaches it between turns (a "reports later" specialist). A stream recorded before
+  the patch is attributed only when one delegation was live when the question came; otherwise it is left unattributed.
+- **Where the reply went.** Nothing on the main thread records an answer. The chat persists it as its own
+  `client.input.responded` marker, which now also carries `data.subagent`, so a reload and another device file the
+  reply under the specialist and its run.
+
+What the chat shows (lib/specialist-questions.ts, app/_components/specialist-question.tsx):
+
+| | |
+|---|---|
+| The open question | a card headed "<Specialist> is asking you" (the registry's display name) |
+| The composer | "Answering <Specialist> · Switch to main chat". Switched, the message is held for the main agent and sent once the specialist has its answer and hands back |
+| After the reply | the same card: the question, "Reply to <Specialist>" indented under it, and "<Specialist> is working on your reply" with "Open its run" |
+| Once it hands back | the thread sits under its delegation card: "<Specialist> finished. Its result went to the main agent" (or stopped, or an error) |
+| Nobody can say who asked | as before: the plain question card, and the reply as "Your answer" |
+
+Checked by `npm run test:specialist-questions` (recorded streams), the "asks" and "all" scenarios of
+`npm run test:specialist-detach` (the real runtime) and tests/specialist-question.spec.ts (the rendered card, the
+composer row, a reload, a phone).
+
 ## Resume on a stopped specialist
 
 The Control Panel offered "Resume" on a stopped specialist. It posted a message to the specialist's own session with
@@ -510,11 +540,45 @@ The agent enforces it too: a message posted to a delegated specialist's own sess
 `code: "specialist-session-not-addressable"` and the same advice, before anything is started
 (`agent/lib/session-guard.ts`). And so that no panel offers such a message in the first place, every stream the guard
 serves says whether its session is a delegation (`x-eve-session-delegation: 1` or `0`, from the same lineage record),
-and the web app's /eve proxy passes it through. The Control Panel's steer box and Resume, and the run timeline's step
-steer, are offered only when it says `0`. A workflow step's row usually opens the specialist the step called, so the
+and the web app's /eve proxy passes it through. Resume, and the run timeline's step steer, are offered only when it
+says `0`. The Control Panel's steer box is offered for a running delegation too, and sends a NOTE through the main
+thread's steer route ([below](#a-note-to-a-running-specialist-mold_v1-235)), never a message to the specialist's own
+session. A workflow step's row usually opens the specialist the step called, so the
 journal alone cannot decide this. Where a refusal can still happen, the panel shows the agent's own text, never a
 bare status code. An answer to a specialist's question still goes through the main thread, as the chat
 sends it. A stranger still gets the plain 404.
+
+## A note to a running specialist (mold_v1-235)
+
+While a specialist works, the person can send it a note from the chat ("focus on FY24 only", "skip the annex"). It
+reads the note at its next step and carries on: the same session, no restart, nothing it did is lost.
+
+- **The inbox.** `specialist_steering_notes` (drizzle/0040, `agent/lib/steering.ts`): one row per note, keyed by the
+  main thread and the delegation's call id, in the main thread's workspace under the same row-level policy as every
+  tenant table.
+- **Writing a note.** `POST /eve/v1/session/<main thread>/steer { callId, text }`, gated by the session guard as a
+  WRITE of the main thread (its owner or a participant; never a viewer, a guest, another workspace or a session-bound
+  token). Refused in plain words, before anything is written: a specialist that has already handed back (409
+  `specialist-not-running`: "… has already finished … Ask the main agent in the chat instead."), a call id this thread
+  never made (404), an empty or over-long note (400), a note posted on a specialist's own session (409: notes go
+  through the main thread). `GET …/steer` (a read) lists the thread's notes and whether each was read. A raw message
+  to the specialist's own session is still refused (409 `specialist-session-not-addressable`, above).
+- **Reading it.** The eve patch (`scripts/eve-patch/changes.mjs` "notes to a running specialist",
+  `files/harness/steering-notes.js`) asks the app's reader at the START of every step of a delegated session, after
+  the step's own input. Each due note is appended as a user-role message, "Note from <person> while you were working:
+  …", after everything the session already holds, so the prompt's stable prefix (and its cache) is untouched and the
+  note is saved with the step like any other input. A read marks the notes delivered to that step: a retried step
+  reads them again, a later step does not. Each delivery is reported on the specialist's own stream as
+  `steering.delivered`.
+- **In the chat.** The row above the composer picks whom a message goes to: the main chat, the specialist that is
+  asking (its answer), or a running specialist (a note). Each note shows on the specialist's card as "Steered
+  <Specialist>: …", "Waiting for its next step" or "Read at its next step"; one sent too late to be read says so once
+  the specialist has finished.
+
+Checked by the "steer" scenario of `npm run test:specialist-detach` (the real runtime: a note sent mid-run, the next
+model call ends with it as a user message, the first call is a prefix of the second, `steering.delivered` once, one
+session, one result), `npm run test:session-guard` (who may steer and read, another workspace's rows, the reader's
+retry and workspace rules, as app_rw against fail-closed policies) and tests/specialist-question.spec.ts.
 
 ## What this repo adds around that rule
 

@@ -274,6 +274,20 @@
       "when": 1792600000000,
       "tag": "0038_owner_columns_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792700000000,
+      "tag": "0039_dictation_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0040_specialist_steering_notes",
+      "breakpoints": true
     }
   ]
 }

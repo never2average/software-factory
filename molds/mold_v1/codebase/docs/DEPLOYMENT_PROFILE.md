@@ -540,6 +540,46 @@ No periods at all:
 { "work_periods": { "mode": "off" } }
 ```
 
+### `asr`
+
+Dictation in the chat composer: speech to text for writing a prompt. A person presses the microphone button, speaks,
+presses Stop (or Enter or Space on it; Escape cancels), and the words land in the message box **at the cursor**, to
+edit and send themselves. It never sends a message on its own and there are no spoken replies. Both composers carry
+it (the main chat and a specialist's steer box), after their own tools.
+
+| Key | Meaning | Default |
+|---|---|---|
+| `asr.enabled` | `true`: the button shows whenever the provider's credentials are set on the server; without them it stays hidden (the composer asks `GET /api/ops/dictation` once per tab). `false`: no dictation in this deployment, and `POST /api/ops/dictation` answers 404. | `true` |
+| `asr.provider` | `"cloudflare"`: Workers AI, with the `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` the chat's models already use. No new secret. | `"cloudflare"` |
+| `asr.model` | The provider's speech-to-text model id. Its price per audio minute is in `lib/inference-pricing.ts` (`AUDIO_PRICES`); add a row, with its source and date, when changing it, or its usage is reported unpriced. | `"@cf/openai/whisper-large-v3-turbo"` |
+| `asr.language` | An ISO 639-1 code (`"en"`, `"hi"`) to transcribe in, or `null` for the model to detect it. | `null` |
+| `asr.max_seconds` | The longest clip, 5 to 600. The recorder stops itself there and transcribes what was said; the button says the limit ("up to 2 minutes"). | `120` |
+| `asr.max_bytes` | The largest upload, 64 KB to 10 MB (the most the proxy in front of every `/api/ops` route passes on). The default stays under the 4.5 MB request body a Vercel function accepts; two minutes at the recorder's 32 kbps is about 0.5 MB. | `4194304` (4 MB) |
+
+How it works (`lib/dictation.ts`, `app/api/ops/dictation/route.ts`, `app/_components/dictation-button.tsx`):
+
+- The browser records with `MediaRecorder` (WebM or Ogg Opus in Chromium and Firefox, MP4 in Safari) and the server
+  transcribes with the profile's model, so it works the same on Vercel and on a self-hosted server. No browser speech
+  service is used.
+- The route is signed in and workspace-scoped like every `/api/ops` route: the workspace is the sign-in's (a named
+  one only for a member), never anything in the form.
+- The limits are checked on the server before the paid call (the upload's size, the length the recorder states) and
+  after it (the length the model measured: a longer clip is recorded as used, since it was paid for, and its text
+  refused).
+- No audio is kept: the clip is held in memory for the request and sent to the provider, nothing else.
+- Usage: one `chat_turn_usage` row per clip, of kind `dictation`, under the workspace and person who recorded it, with
+  the audio's length in milliseconds (`audio_ms`; migration `drizzle/0039_dictation_usage.sql`). `GET /api/ops/usage`
+  reports `dictations` and `audio_seconds` beside the chat's `turns`, the model as its own line in `by_model`, and
+  prices it per audio minute in `est_cost_usd`.
+- Errors are said in plain words in the composer: a blocked microphone (how to allow it), no microphone, a browser that
+  cannot record, nothing heard, and the server's own refusal (too long, too large).
+
+Turning it off:
+
+```json
+{ "asr": { "enabled": false } }
+```
+
 ### `account_fields`
 
 | Key | Meaning | Default |
@@ -1096,6 +1136,9 @@ npm run test:custom-fields         # the custom-field validator, the agent's wri
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run test:work-periods          # work_periods: the generator's rules, each mode's views, words, tools and routes (three builds rendered), the default to the letter; offline
 npm run test:work-periods-db       # the same three modes against a real Postgres: two workspaces, the routes and the model's tools, rollover, whose an item is
+npm run test:dictation             # asr: the route's rules with a fake provider (sign-in, workspace, limits, usage, price), the generator's rules; offline
+npm run test:dictation-usage-db    # dictation usage written and reported as app_rw, two workspaces, against a fail-closed Postgres
+npx playwright test tests/dictation.spec.ts      # the real composer with a fake microphone: record, stop, the words at the cursor, nothing sent
 npm run check:generated            # fails if a generated file is stale
 npm run typecheck
 ```

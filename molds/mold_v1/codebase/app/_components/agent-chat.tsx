@@ -338,6 +338,10 @@ import {
 } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
 import { AgentMessage, PendingApprovalCard, messageRendersContent } from "./agent-message";
+import type { ComposerTarget } from "./specialist-question";
+import { subagentDisplayName } from "./tool-display";
+import type { SpecialistAnswerView, SpecialistAsker, SteeringNoteView } from "@/lib/specialist-questions";
+import { useSteering } from "./use-steering";
 import { HandbackNote } from "./handback-note";
 import { isHandbackTranscriptMessage, messageText } from "@/lib/handback-text";
 import { GOAL_OUTCOME_SCHEMA, asGoalOutcome, goalPreamble, type GoalOutcome } from "./goal-mode";
@@ -355,6 +359,22 @@ import { opsFetch } from "./ops/lib";
 
 // The control panel (runs, graphs, dashboards) is fetched when a chat first shows it, not with the composer. Its
 // placeholder fills the rail it will occupy (the <aside> already has its width), so nothing moves when it lands.
+// A specialist's question, the reply to it, notes to a running specialist and the composer's target row
+// (mold_v1-234/235) show only in a chat that delegated: loaded on first use, never in the first load.
+const ComposerTargetRow = lazyPanel(() => import("./specialist-question").then((m) => m.ComposerTargetRow), {
+  label: "Who your message goes to",
+});
+const SpecialistAnsweredCard = lazyPanel(() => import("./specialist-question").then((m) => m.SpecialistAnsweredCard), {
+  label: "Specialist reply",
+});
+const SpecialistNotesCard = lazyPanel(() => import("./specialist-question").then((m) => m.SpecialistNotesCard), {
+  label: "Notes to a specialist",
+});
+const SpecialistQuestionFrame = lazyPanel(() => import("./specialist-question").then((m) => m.SpecialistQuestionFrame), {
+  label: "Specialist question",
+  // The question itself never waits for its frame: until the frame loads, the card shows as it always did.
+  placeholder: (props: { name: string; children: React.ReactNode }) => props.children,
+});
 const Cockpit = lazyPanel(() => import("./cockpit").then((m) => m.Cockpit), {
   label: "The control panel",
   placeholder: () => <CockpitPlaceholder />,
@@ -540,6 +560,10 @@ function lastText(messages: MsgList) {
  * never sees a `client.input.responded`, so the part keeps NO `inputResponse`.
  * `extra` — the responses this session actually recorded — closes that gap:
  * without it, a directDeliver-answered question reverted to pending on reopen.
+ *
+ * Once the chat has delegated, `respondedInputMarkers` (lib/specialist-questions.ts)
+ * builds them instead and files a reply to a delegated specialist under that
+ * specialist and its run (mold_v1-234), so a reload shows whom the reply went to.
  */
 /** Dismissed (waved-away) input requests, persisted across reopens. Keyed
  *  globally because requestIds are unique UUIDs — no need to scope by chat. */
@@ -580,6 +604,31 @@ function respondedInputEvents(messages: MsgList, extra: Record<string, AnsweredR
   for (const [rid, resp] of Object.entries(extra)) if (rid) byId.set(rid, resp);
   return [...byId.values()].map((resp) => ({ type: "client.input.responded", data: { responses: [resp] } }));
 }
+
+/**
+ * WHO ASKED, AND WHERE THE REPLY GOES (lib/specialist-questions.ts, mold_v1-234/235) only matters in a chat that has
+ * delegated, so the module is loaded then, not in the first load. Until it is, every question renders as it always
+ * did (nothing is attributed).
+ */
+type SpecialistLib = typeof import("@/lib/specialist-questions");
+function useSpecialistLib(wanted: boolean): SpecialistLib | null {
+  const [lib, setLib] = useState<SpecialistLib | null>(null);
+  useEffect(() => {
+    if (!wanted || lib) return;
+    let live = true;
+    void import("@/lib/specialist-questions").then(
+      (m) => live && setLib(m),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [wanted, lib]);
+  return lib;
+}
+const NO_ASKERS: ReadonlyMap<string, SpecialistAsker> = new Map();
+const NO_ANSWERS: ReadonlyMap<string, SpecialistAnswerView> = new Map();
+const NO_NOTES: readonly SteeringNoteView[] = [];
 
 interface OnlineMember {
   email: string;
@@ -2012,6 +2061,76 @@ export function AgentChat({
     }
     return out;
   }, [pendingInputParts, expiredRequestIds, deadRequests]);
+
+  /**
+   * WHO ASKED, AND WHERE THE REPLY GOES ON SCREEN (mold_v1-234, lib/specialist-questions.ts).
+   *
+   * A delegated specialist's question names its asker (eve's forwarded event, or the only live delegation on an
+   * older stream, or the reply's own persisted marker). Its reply used to render as a bare "Your answer" bubble in
+   * the main thread; now an attributed reply is a thread on the specialist's card:
+   *   - "tail"    the specialist is still working on it: under the conversation, where the question was;
+   *   - "card"    it has handed back: under its delegation card, in the history;
+   *   - "inplace" no delegation card is on screen (a transcript that starts after it): where eve put the part.
+   * Unattributed questions are not in this map and render exactly as before.
+   */
+  const specialistLib = useSpecialistLib(hasSubagent);
+  const askers = useMemo(
+    () => (specialistLib ? specialistLib.specialistAskers(mergedEvents as readonly TurnEvent[]) : NO_ASKERS),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedEvents.length, specialistLib],
+  );
+  const specialistAnswers = useMemo(
+    () =>
+      specialistLib
+        ? specialistLib.placeSpecialistAnswers({
+            messages: viewMessages as readonly { parts?: readonly unknown[] }[],
+            askers,
+            events: mergedEvents as readonly TurnEvent[],
+            stopped: stopped.delegations,
+          })
+        : NO_ANSWERS,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [viewMessages, askers, mergedEvents.length, stopped, specialistLib],
+  );
+  /** The transcript as rendered: a specialist's answered question placed on its card is not also in its message. */
+  const renderedMessages = useMemo(
+    () => (specialistLib ? specialistLib.withoutPlacedAnswers(viewMessages, specialistAnswers) : viewMessages),
+    [viewMessages, specialistAnswers, specialistLib],
+  );
+  /**
+   * WHOM THE COMPOSER WRITES TO (mold_v1-234/235): "auto" (the specialist that is asking, else the main chat), "main",
+   * or a running specialist's call id (a note it reads at its next step, through the steer route).
+   */
+  const [composerTarget, setComposerTarget] = useState<string>("auto");
+  const [steerError, setSteerError] = useState<string | null>(null);
+  const openRequestKey = openInputRequests.map((r) => r.requestId).join(",");
+  // A new question (or none) starts from "auto" again: the asking specialist is answered by default.
+  useEffect(() => setComposerTarget("auto"), [openRequestKey]);
+  /** The specialists working now, in call order (a "reports later" one counts). */
+  const runningSpecialists = useMemo(
+    () => liveDelegations(mergedEvents as readonly TurnEvent[]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedEvents.length],
+  );
+  const steering = useSteering({
+    sessionId: agent.session?.sessionId ?? liveSessionIdRef.current,
+    headers: getAuthHeaders,
+    delegated: hasSubagent,
+    running: runningSpecialists.length > 0,
+  });
+  const steeringNotes = useMemo(
+    () =>
+      specialistLib
+        ? specialistLib.placeSteeringNotes({
+            notes: steering.notes,
+            events: mergedEvents as readonly TurnEvent[],
+            cards: specialistLib.delegationCards(viewMessages as readonly { parts?: readonly unknown[] }[]),
+            stopped: stopped.delegations,
+          })
+        : NO_NOTES,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [steering.notes, mergedEvents.length, viewMessages, stopped, specialistLib],
+  );
   const startedTurns = useMemo(
     () => turnsStarted(mergedEvents as { type?: string }[]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2038,6 +2157,32 @@ export function AgentChat({
   );
   holdRef.current = gate.hold;
   gateReasonRef.current = gate.reason;
+  /** Whom the composer is answering: one specialist owns every open question (mold_v1-234). */
+  const answering = useMemo(
+    () =>
+      gate.reason === "awaiting-input" && specialistLib
+        ? specialistLib.answeringWhom(openInputRequests.map((r) => r.requestId), askers)
+        : undefined,
+    [gate.reason, openInputRequests, askers, specialistLib],
+  );
+  /** The places a message can go now: the main chat, and each running specialist (the asking one marked). */
+  const composerTargets = useMemo((): ComposerTarget[] => {
+    const freeform = openInputRequests.some((r) => (r as { allowFreeform?: boolean }).allowFreeform !== false);
+    const out: ComposerTarget[] = [{ id: "main" }];
+    for (const d of runningSpecialists) {
+      const asking = answering?.callId === d.callId;
+      // A specialist asking a question typed text cannot answer (a strict approval) is answered on its card.
+      if (asking && !freeform) continue;
+      out.push({ id: d.callId, name: d.name, ...(asking ? { asking: true } : {}) });
+    }
+    return out;
+  }, [runningSpecialists, answering, openInputRequests]);
+  /** The target in force: the picked one while it is still there, else the asking specialist, else the main chat. */
+  const effectiveTarget = useMemo((): ComposerTarget => {
+    const picked = composerTargets.find((t) => t.id === composerTarget);
+    if (picked) return picked;
+    return composerTargets.find((t) => t.asking) ?? composerTargets[0];
+  }, [composerTargets, composerTarget]);
   /**
    * The specialists the main thread is waiting on while nothing is asked of the
    * person — see `awaitingSpecialists`. Read by the live reader at every seam
@@ -2408,7 +2553,9 @@ export function AgentChat({
   // Answered-input markers to fold into the persisted stream (see helper). The
   // count is a dep so persisting re-fires the moment a new input is answered,
   // even when neither status nor messageCount changes.
-  const responded = respondedInputEvents(viewMessages, answeredResponses);
+  const responded = specialistLib
+    ? specialistLib.respondedInputMarkers(viewMessages, answeredResponses, askers)
+    : respondedInputEvents(viewMessages, answeredResponses);
   const respondedCount = responded.length;
   const respondedRef = useRef(responded);
   respondedRef.current = responded;
@@ -3073,8 +3220,19 @@ export function AgentChat({
     setFiles([]);
     // While ANY turn of this session is live — streaming, detached, or parked on
     // a request — the message is held, never appended as if the chat were idle.
+    // A note to a running specialist (mold_v1-235): through the steer route, read at its next step. Text only.
+    if (effectiveTarget.id !== "main" && !effectiveTarget.asking && raw && outgoing.length === 0 && !(openInputRequests.length > 0 && !answering)) {
+      setSteerError(null);
+      const sent = await steering.send(effectiveTarget.id, raw);
+      if (!sent.ok) setSteerError(`${sent.message} Your note: “${raw.length > 120 ? `${raw.slice(0, 120)}…` : raw}”`);
+      return;
+    }
+    // The main chat picked while a specialist asks (mold_v1-234): the text is NOT an answer; it is held for the main
+    // agent like any message typed while the session is busy, and goes once the specialist hands back.
     const answers =
-      gate.reason === "awaiting-input" && raw ? resolveTextToResponses(raw, openInputRequests) : [];
+      gate.reason === "awaiting-input" && raw && !(answering && effectiveTarget.id === "main")
+        ? resolveTextToResponses(raw, openInputRequests)
+        : [];
     const route = composerRoute({ gate, answers: answers.length, hasFiles: outgoing.length > 0 });
     if (route === "answer") {
       // Typed text that answers the open question IS the answer (eve resolves
@@ -4147,8 +4305,11 @@ export function AgentChat({
                     isProxiedApproval={isProxiedChildApproval}
                     isLast={index === viewMessages.length - 1}
                     isStreaming={liveStreaming && index === viewMessages.length - 1}
-                    message={message}
+                    // A specialist's answered question placed on its card is taken out of the message (mold_v1-234).
+                    message={renderedMessages[index] ?? message}
                     stoppedDelegations={stopped.delegations}
+                    specialistAnswers={specialistAnswers}
+                    steeringNotes={steeringNotes}
                     stoppedNote={stoppedNoteAt.get(message.id)}
                     onFocusSubagent={(toolCallId) => {
                       setCockpitOpen(true);
@@ -4206,7 +4367,12 @@ export function AgentChat({
                   // Stopped: the specialist's tile already says so, in place — a second
                   // copy hoisted below later replies would read as a new event.
                   if (requestId && stopped.requestIds.has(requestId) && proxiedRequestIds.has(requestId)) return null;
-                  return (
+                  const cardExpired = Boolean(
+                    requestId && (expiredRequestIds.has(requestId) || deadRequests.has(requestId)),
+                  );
+                  // A specialist's open question says who is asking (mold_v1-234); an unattributed one is as before.
+                  const asker = requestId && !cardExpired ? askers.get(requestId) : undefined;
+                  const card = (
                     <PendingApprovalCard
                       key={p.toolCallId}
                       // A dead request reads exactly like an expired one: the run
@@ -4227,9 +4393,49 @@ export function AgentChat({
                       }
                     />
                   );
+                  return asker ? (
+                    <SpecialistQuestionFrame key={p.toolCallId} name={subagentDisplayName(asker.name)}>
+                      {card}
+                    </SpecialistQuestionFrame>
+                  ) : (
+                    card
+                  );
                 })}
               </div>
             ) : null}
+            {/* A specialist's question the person has answered, while it works on the reply (mold_v1-234): the
+                same card, with the reply under it and what the specialist is doing now. */}
+            {[...specialistAnswers.values()]
+              .filter((a) => a.where === "tail")
+              .map((a) => (
+                <SpecialistAnsweredCard
+                  key={`answered-${a.requestId}`}
+                  name={subagentDisplayName(a.name)}
+                  prompt={a.prompt}
+                  reply={a.reply}
+                  progress={a.progress}
+                  onOpen={() => {
+                    setCockpitOpen(true);
+                    setFocusSubagent(a.callId);
+                  }}
+                />
+              ))}
+            {/* Notes sent to a running specialist (mold_v1-235), and whether it has read them. */}
+            {[...new Set(steeringNotes.filter((n) => n.where === "tail").map((n) => n.callId))].map((callId) => {
+              const mine = steeringNotes.filter((n) => n.where === "tail" && n.callId === callId);
+              return (
+                <SpecialistNotesCard
+                  key={`notes-${callId}`}
+                  name={subagentDisplayName(mine[0].name)}
+                  notes={mine}
+                  progress={mine[0].progress}
+                  onOpen={() => {
+                    setCockpitOpen(true);
+                    setFocusSubagent(callId);
+                  }}
+                />
+              );
+            })}
             {/* The "A subagent needs your approval — open the Control Panel to
                 respond" banner that used to sit here is gone. It was gated on
                 `isBusy`, which goes false the moment eve emits the parent's turn
@@ -4437,9 +4643,23 @@ export function AgentChat({
           ) : null}
           {/* eve's own rule: while a question is open, free text ANSWERS it. Said
               plainly, so a message meant as a new request is not a surprise. */}
-          {gate.reason === "awaiting-input" &&
-          !readOnly &&
-          openInputRequests.some((r) => (r as { allowFreeform?: boolean }).allowFreeform !== false) ? (
+          {/* A specialist is waiting (mold_v1-234): say whom the next message answers, with the way to write to the
+              main agent instead. One self-contained row above the input. */}
+          {/* Not while a question nobody can attribute is open: typed text answers it, as the hint below says. */}
+          {!readOnly && !relayThreadId && composerTargets.length > 1 && !(openInputRequests.length > 0 && !answering) ? (
+            <ComposerTargetRow
+              targets={composerTargets.map((t) => (t.name ? { ...t, name: subagentDisplayName(t.name) } : t))}
+              selected={effectiveTarget.id}
+              onSelect={(id) => {
+                setSteerError(null);
+                setComposerTarget(id);
+              }}
+              heldFor={answering ? subagentDisplayName(answering.name) : undefined}
+              error={steerError}
+            />
+          ) : gate.reason === "awaiting-input" &&
+            !readOnly &&
+            openInputRequests.some((r) => (r as { allowFreeform?: boolean }).allowFreeform !== false) ? (
             <p data-answer-hint className="mb-1.5 px-1 text-muted-foreground text-xs">
               Your next message will answer the question above.
             </p>
@@ -4907,6 +5127,7 @@ export function AgentChat({
               onFocusConsumed={() => setFocusSubagent(null)}
               onDetailChange={setCockpitWide}
               onInputResponses={respondToInput}
+              onSteer={relayThreadId || readOnly ? undefined : steering.send}
               onStuckHandoffs={setStuckHandoffs}
               onHeldHandoffs={setHeldHandoffs}
               // A published file in the rail opens in the SAME artifact preview

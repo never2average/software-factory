@@ -96,6 +96,9 @@ import { handbackLedger } from "./handback-ledger.ts";
 import { sandboxWaitLine, sandboxWaitStatus } from "./sandbox-wait.ts";
 import { sweepOnTurnStart } from "./specialist-sweep-run.ts";
 import { sweepNotes, type SweepNote } from "./sweep-ledger.ts";
+import { steeringLedger, type SteeringLedger } from "./steering.ts";
+import { notRunningMessage, STEER_REFUSAL, STEER_SEGMENT, validNote } from "../../lib/steering-client.ts";
+import { liveDelegations, specialistDisplayName } from "../../lib/chat-turn-state.ts";
 
 type AuthContext = Exclude<Awaited<ReturnType<typeof routeAuth>>, Response>;
 type Handler = HttpRouteDefinition["handler"];
@@ -122,8 +125,17 @@ export const SANDBOX_WAIT_ROUTE = `GET ${SANDBOX_WAIT_PATH}`;
  */
 export const SWEEP_NOTES_PATH = "/eve/v1/session/:sessionId/specialist-sweep";
 export const SWEEP_NOTES_ROUTE = `GET ${SWEEP_NOTES_PATH}`;
+/**
+ * OURS, not eve's (mold_v1-235): notes to a RUNNING specialist, on its MAIN THREAD's session. POST writes one (a write
+ * of the main thread: its owner or a participant, never a viewer, a guest or a session-bound token), only while the
+ * delegation it names is running; GET reads the thread's notes and whether each was read (a read). The specialist
+ * reads them at its next step (agent/lib/steering.ts). A message to the specialist's own session stays refused.
+ */
+export const STEER_PATH = `/eve/v1/session/:sessionId/${STEER_SEGMENT}`;
+export const STEER_READ_ROUTE = `GET ${STEER_PATH}`;
+export const STEER_WRITE_ROUTE = `POST ${STEER_PATH}`;
 /** The per-session routes a viewer may call: reads, which change nothing. */
-const READ_ROUTES = new Set([STREAM_ROUTE, SANDBOX_WAIT_ROUTE, SWEEP_NOTES_ROUTE]);
+const READ_ROUTES = new Set([STREAM_ROUTE, SANDBOX_WAIT_ROUTE, SWEEP_NOTES_ROUTE, STEER_READ_ROUTE]);
 
 /** What the guard needs from the world. Injected by the handler-level test; defaulted to the agent's own. */
 export interface GuardDeps {
@@ -149,6 +161,8 @@ export interface GuardDeps {
   readonly sweepOnTurnStart: (db: GateDb, orgId: string, sessionId: string) => Promise<unknown>;
   /** What the sweep did on a main thread, for the chat (agent/lib/sweep-ledger.ts). */
   readonly sweepNotes: (db: GateDb, orgId: string, sessionId: string) => Promise<SweepNote[]>;
+  /** The inbox of notes to running specialists, in one workspace (agent/lib/steering.ts). */
+  readonly steering: (db: GateDb, orgId: string) => SteeringLedger;
 }
 
 export interface GuardOptions {
@@ -168,6 +182,7 @@ const defaultDeps: GuardDeps = {
   consumeSessionPost: consumePostInDb,
   sweepOnTurnStart: (db, orgId, sessionId) => sweepOnTurnStart(db, orgId, sessionId),
   sweepNotes: (db, orgId, sessionId) => sweepNotes(db, orgId, sessionId),
+  steering: (db, orgId) => steeringLedger(db, orgId),
   async grantEmail(grant) {
     const publicKey = sessionPublicKeyPem();
     if (!publicKey) return null;
@@ -979,6 +994,8 @@ function wrapPerSession(route: HttpRouteDefinition, key: string, opts: GuardOpti
     const { ownership, db } = decision;
     if (key === SANDBOX_WAIT_ROUTE) return await sandboxWaitResponse(sessionId, db, ownership?.orgId ?? workspace);
     if (key === SWEEP_NOTES_ROUTE) return await sweepNotesResponse(sessionId, db, ownership, deps);
+    if (key === STEER_READ_ROUTE) return await steerNotesResponse(sessionId, db, ownership, deps);
+    if (key === STEER_WRITE_ROUTE) return await steerWrite(request, args, sessionId, db, ownership, caller, deps);
     // Children announced in the history this reader skips get their owner on record first (mold_v1-133).
     if (key === STREAM_ROUTE && ownership && db) {
       // Bounded: the reopen-from-cache path and the tail probes are latency-sensitive. A cursor read waits at most
@@ -1075,6 +1092,64 @@ async function sweepNotesResponse(sessionId: string, db: GateDb | null, ownershi
   }
 }
 
+/** The steer read's answer: this main thread's notes in its recorded workspace; nothing for anything else. */
+async function steerNotesResponse(sessionId: string, db: GateDb | null, ownership: SessionOwnership | null, deps: GuardDeps): Promise<Response> {
+  if (!db || !ownership || ownership.source !== "record" || ownership.rootSessionId) return Response.json({ ok: true, notes: [] }, { headers: noStore });
+  try {
+    return Response.json({ ok: true, notes: await deps.steering(db, ownership.orgId).list(sessionId) }, { headers: noStore });
+  } catch {
+    return Response.json({ ok: true, notes: [] }, { headers: noStore });
+  }
+}
+
+/** How long a note's check of the main thread's history may take. */
+const STEER_READ_MS = 8_000;
+
+/**
+ * A note to a running specialist: on a main thread recorded in this workspace, for a delegation of it that is still
+ * running (called, and no result yet; a "reports later" one counts), from a caller already admitted to WRITE this
+ * thread. Anything else is refused in plain words, before anything is written.
+ */
+async function steerWrite(
+  request: Request,
+  args: RouteHandlerArgs,
+  sessionId: string,
+  db: GateDb | null,
+  ownership: SessionOwnership | null,
+  caller: GateCaller,
+  deps: GuardDeps,
+): Promise<Response> {
+  const refuse = (status: number, code: string, error: string) => Response.json({ ok: false, code, error }, { status, headers: noStore });
+  if (!db) return unavailable();
+  if (!ownership || ownership.source !== "record" || ownership.rootSessionId) {
+    return refuse(409, STEER_REFUSAL.notMainThread, "Notes to a specialist go through the chat it works for.");
+  }
+  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown } | null;
+  const callId = typeof body?.callId === "string" ? body.callId : "";
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!callId || !validNote(text)) return refuse(400, STEER_REFUSAL.invalid, "Write a short note (up to 2,000 characters).");
+  const events = await historyReader(args, STEER_READ_MS)(sessionId);
+  if (!events) return Response.json({ ok: false, error: "This conversation is busy. Try again in a moment." }, { status: 503, headers: noStore });
+  const called = events.find((e) => e?.type === "subagent.called" && (e.data as { callId?: unknown } | undefined)?.callId === callId) as
+    | { data?: { name?: unknown; childSessionId?: unknown } }
+    | undefined;
+  if (!called) return refuse(404, STEER_REFUSAL.unknown, "No such specialist in this chat.");
+  const name = specialistDisplayName(typeof called.data?.name === "string" && called.data.name ? called.data.name : "specialist");
+  if (!liveDelegations(events as never).some((d) => d.callId === callId)) return refuse(409, STEER_REFUSAL.notRunning, notRunningMessage(name));
+  try {
+    const note = await deps.steering(db, ownership.orgId).add({
+      parentSessionId: sessionId,
+      callId,
+      childSessionId: typeof called.data?.childSessionId === "string" ? called.data.childSessionId : null,
+      authorEmail: caller.email ?? null,
+      text,
+    });
+    return Response.json({ ok: true, note }, { headers: noStore });
+  } catch {
+    return unavailable();
+  }
+}
+
 /** (workspace, session) pairs with no owner record there, and when that was last looked up. */
 const waitRootMisses = new Map<string, number>();
 const WAIT_ROOT_MISS_MS = 15_000;
@@ -1099,6 +1174,8 @@ export function guardSessionRoutes<C extends Channel>(channel: C, opts: GuardOpt
   const withOurs: RouteDefinition[] = [...channel.routes];
   if (!keys.has(SANDBOX_WAIT_ROUTE)) withOurs.push({ transport: "http", method: "GET", path: SANDBOX_WAIT_PATH, handler: async () => notFound() });
   if (!keys.has(SWEEP_NOTES_ROUTE)) withOurs.push({ transport: "http", method: "GET", path: SWEEP_NOTES_PATH, handler: async () => notFound() });
+  if (!keys.has(STEER_READ_ROUTE)) withOurs.push({ transport: "http", method: "GET", path: STEER_PATH, handler: async () => notFound() });
+  if (!keys.has(STEER_WRITE_ROUTE)) withOurs.push({ transport: "http", method: "POST", path: STEER_PATH, handler: async () => notFound() });
   const routes = withOurs.map((route): RouteDefinition => {
     if (route.transport === "websocket") {
       if (route.path.includes(":sessionId")) {

@@ -337,6 +337,19 @@ for (const area of Object.keys(AREAS)) {
   if (wp.workspace_can_set_length === null) wp.workspace_can_set_length = wp.mode !== "off";
 }
 
+// --- asr: dictation in the chat composer (speech to text, never spoken replies) ---------------------------------
+{
+  const a = profile.asr; const at = "asr";
+  if (!isObj(a)) fail(`${at} must be an object`);
+  if (typeof a.enabled !== "boolean") fail(`${at}.enabled must be true (the microphone button shows when the provider's credentials are set) or false (no dictation in this deployment)`);
+  const PROVIDERS = ["cloudflare"];
+  if (!PROVIDERS.includes(a.provider)) fail(`${at}.provider: ${JSON.stringify(a.provider)} is not a provider. Use "cloudflare" (Workers AI, with the credentials the chat's models already use)`);
+  if (typeof a.model !== "string" || !/^@cf\/[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(a.model)) fail(`${at}.model must be a Workers AI model id, for example "@cf/openai/whisper-large-v3-turbo"`);
+  if (a.language !== null && (typeof a.language !== "string" || !/^[a-z]{2}$/.test(a.language))) fail(`${at}.language must be null (the model detects the language) or a two-letter ISO 639-1 code, for example "en"`);
+  if (!Number.isInteger(a.max_seconds) || a.max_seconds < 5 || a.max_seconds > 600) fail(`${at}.max_seconds must be a whole number of seconds from 5 to 600`);
+  if (!Number.isInteger(a.max_bytes) || a.max_bytes < 65_536 || a.max_bytes > 10_485_760) fail(`${at}.max_bytes must be a whole number of bytes from 65536 (64 KB) to 10485760 (10 MB: the most the proxy in front of every /api/ops route passes on, Next's proxyClientMaxBodySize)`);
+}
+
 if (profile.agent.briefing !== null && (typeof profile.agent.briefing !== "string" || profile.agent.briefing.split(/\s+/).length > 400)) fail("agent.briefing must be null or a string of at most 400 words (it is sent on every turn)");
 // agent.compaction: when a session's prompt is summarised, in input tokens (agent/lib/compaction-threshold.ts reads it).
 // The per-specialist names are checked once the subagents present are known (below).
@@ -493,6 +506,11 @@ export interface DeploymentProfile {
    * custom_fields: the deployment's OWN fields on the account record, by key in the customers table's \`custom\` column.
    */
   account_fields: { hidden: string[]; custom_fields: CustomFieldSpec[] };
+  /**
+   * Dictation in the chat composer: speech to text for writing a prompt, never sent on its own (lib/dictation.ts).
+   * enabled: shown when the provider's credentials are set on the server. language: null = detected by the model.
+   */
+  asr: { enabled: boolean; provider: "cloudflare"; model: string; language: string | null; max_seconds: number; max_bytes: number };
   /**
    * The time-boxed periods that group tasks (the \`cycles\` table). mode "team": one shared period with a lead, a
    * capacity and a burndown. "individual": each person's own items within the period. "off": the feature does not

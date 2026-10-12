@@ -18,10 +18,18 @@
  * It lives on this page, beside the transcript it is part of, rather than on a
  * page of its own: preview pages are compiled into production builds too (they
  * answer 404 there), and a new one regrouped the chat page's first-load chunks.
+ *
+ * At the bottom, the composer's REAL microphone (app/_components/dictation-slot.tsx and the recorder it loads), in a
+ * message box and form shaped like the composer's (a `textarea` in a form; Enter sends), checked by
+ * tests/dictation.spec.ts, which gives the server's answers (`/api/ops/dictation`) and a fake microphone. What the
+ * form would send is counted, never sent anywhere: dictation must put words in the box and send nothing. Not the
+ * ChatComposer itself: importing it here made it a module two pages share, and the bundler moved it out of the chat's
+ * first-load chunk into one more file (scripts/check-bundle-budget.mjs).
  */
 import { useEffect, useState } from "react";
 import type { EveMessage } from "eve/react";
 import { AgentMessage } from "@/app/_components/agent-message";
+import { DictationSlot } from "@/app/_components/dictation-slot";
 import { SandboxWaitLine, useSandboxWait } from "@/app/_components/sandbox-wait-line";
 
 const noHeaders = () => ({});
@@ -51,6 +59,45 @@ const assistant = (id: string, text: string, streaming = false): EveMessage =>
     role: "assistant",
     parts: [{ type: "step-start" }, { type: "text", text, state: streaming ? "streaming" : "done", stepIndex: 0 }],
   }) as EveMessage;
+
+function DictationComposer() {
+  const [sent, setSent] = useState<string[]>([]);
+  return (
+    <section data-testid="dictation-composer" className="flex flex-col gap-2">
+      <form
+        className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const box = e.currentTarget.elements.namedItem("message") as HTMLTextAreaElement;
+          setSent((s) => [...s, box.value]);
+          box.value = "";
+        }}
+      >
+        <textarea
+          name="message"
+          placeholder="Send a message…"
+          className="min-h-11 resize-none bg-transparent p-2 text-sm outline-none"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              e.currentTarget.form?.requestSubmit();
+            }
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-1">
+          <DictationSlot />
+          <button type="submit" className="ml-auto rounded-md border border-border px-2 py-1 text-xs">
+            Send
+          </button>
+        </div>
+      </form>
+      <div className="text-muted-foreground text-xs">
+        Sent: <span data-testid="sent-count">{sent.length}</span>
+        {sent.length ? <span data-testid="sent-last"> — {sent.at(-1)}</span> : null}
+      </div>
+    </section>
+  );
+}
 
 export default function UserMessagePreview() {
   const [ticks, setTicks] = useState(1);
@@ -87,6 +134,7 @@ export default function UserMessagePreview() {
       </button>
       <SandboxChat id="capped" enabled active={turnActive} />
       <SandboxChat id="uncapped" enabled={false} active={turnActive} />
+      <DictationComposer />
     </main>
   );
 }

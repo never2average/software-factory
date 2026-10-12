@@ -6,8 +6,12 @@
  * (same container, same colors, same textarea metrics, same submit button).
  * Surface-specific chrome (attach/search/plan tools, attachment chips) comes
  * in through slots; the rail passes none.
+ *
+ * Both get the microphone (app/_components/dictation-slot.tsx) after their
+ * tools: dictated text goes into this box at the cursor and is never sent on
+ * its own. It draws nothing unless the server says dictation is on.
  */
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { prewarmAgent } from "@/lib/agent-prewarm";
 import {
   PromptInput,
@@ -18,6 +22,13 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
+
+/**
+ * The microphone, loaded after the composer rather than with it: the chat's first load sits at its budget
+ * (scripts/check-bundle-budget.mjs), and even the slot's few hundred bytes there split a first-load chunk in two (one
+ * more file). Loaded, it asks the server whether dictation is on and draws nothing unless it is.
+ */
+const DictationSlot = lazy(() => import("./dictation-slot").then((m) => ({ default: m.DictationSlot })));
 
 export function ChatComposer({
   header,
@@ -52,7 +63,12 @@ export function ChatComposer({
           overflow-hidden frame; the right padding keeps the wrapped row clear
           of the absolutely-positioned submit button + accessory. */}
       <PromptInputFooter className="pr-20">
-        <PromptInputTools className="flex-wrap">{tools}</PromptInputTools>
+        <PromptInputTools className="flex-wrap">
+          {tools}
+          <Suspense fallback={null}>
+            <DictationSlot />
+          </Suspense>
+        </PromptInputTools>
       </PromptInputFooter>
       {submitAccessory ? (
         <div className="absolute right-14 bottom-3 flex items-center">{submitAccessory}</div>

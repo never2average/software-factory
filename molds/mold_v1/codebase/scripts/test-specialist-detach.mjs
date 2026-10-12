@@ -132,7 +132,21 @@ async function startApp({ detach, idleMs }) {
       'const provider = createOpenAICompatible({ name: "scripted", baseURL: process.env.SCRIPTED_MODEL_URL ?? "http://127.0.0.1:9/v1", apiKey: "none" });',
       'export const scripted = provider.chatModel("scripted-model");',
     ].join("\n"),
-    "agent/agent.ts": `import { defineAgent } from "eve";\nimport { scripted } from "./model.ts";\nexport default defineAgent({ model: scripted, modelContextWindowTokens: 200000${subagents} });\n`,
+    "agent/agent.ts": `import { defineAgent } from "eve";\nimport "./steer-inbox.ts";\nimport { scripted } from "./model.ts";\nexport default defineAgent({ model: scripted, modelContextWindowTokens: 200000${subagents} });\n`,
+    // TEST ONLY (mold_v1-235): the inbox of notes to running specialists, in memory, read through the reader the eve
+    // patch calls at each step of a delegated session (harness/steering-notes.js). Same contract as the app's
+    // agent/lib/steering.ts: due = pending, or already given to this very step; the model reads the app's own wording.
+    "agent/steer-inbox.ts": [
+      `import { noteForModel } from ${JSON.stringify(join(ROOT, "lib/steering-client.ts"))};`,
+      "const notes = (globalThis.__steerNotes ??= []);",
+      "globalThis[Symbol.for('eve.app.steeringNotes')] = async ({ sessionId, parent, turnId, stepIndex }) => {",
+      "  const step = `${sessionId}:${turnId}:${stepIndex}`;",
+      "  const due = notes.filter((n) => n.parentSessionId === parent?.sessionId && n.callId === parent?.callId && (n.status === 'pending' || n.step === step));",
+      "  for (const n of due) { n.status = 'delivered'; n.step = step; n.childSessionId = sessionId; n.reads = (n.reads ?? 0) + 1; }",
+      "  return due.map((n) => ({ id: n.id, text: noteForModel(n.author, n.text) }));",
+      "};",
+      "",
+    ].join("\n"),
     "agent/instructions.md": "The main agent of a test app.\n",
     // The part of a request that needs no specialist (the `+work` directive, mold_v1-197).
     "agent/tools/independent_part.ts": 'import { defineTool } from "eve/tools";\nimport { z } from "zod";\nexport default defineTool({ description: "Test: the part of the request that needs no specialist.", inputSchema: z.object({}), async execute() { return "INDEPENDENT-PART"; } });\n',
@@ -172,6 +186,13 @@ async function startApp({ detach, idleMs }) {
       "  if (b.op === 'terminate') return Response.json({ ok: await delegationSweep.terminate(b.sessionId, 'test') });",
       "  if (b.op === 'events') { const r = (await delegationSweep.events(b.sessionId, 0)).getReader(); const out = []; const t = setTimeout(() => r.cancel(), 800); for (;;) { const x = await r.read().catch(() => ({ done: true })); if (x.done) break; out.push(x.value); } clearTimeout(t); return Response.json({ events: out }); }",
       "  return Response.json({ ok: false }, { status: 400 });",
+      "}),",
+      // TEST ONLY (mold_v1-235): write a note into the in-memory inbox, or read the inbox.
+      "POST('/test/steer', async (request) => {",
+      "  const b = await request.json();",
+      "  const notes = (globalThis.__steerNotes ??= []);",
+      "  if (b.op === 'add') { const n = { id: crypto.randomUUID(), parentSessionId: b.parentSessionId, callId: b.callId, author: b.author, text: b.text, status: 'pending' }; notes.push(n); return Response.json({ ok: true, note: n }); }",
+      "  return Response.json({ notes });",
       "}),",
       // TEST ONLY: how long the sweep's whole-history read of one session takes on this runtime (mold_v1-199).
       "POST('/test/sweep-history', async (request) => {",
@@ -328,7 +349,7 @@ function normalize(h) {
  * run in no shard: scenario() fails on a name not listed here, and the end of the run fails on a listed name that no
  * scenario() reached.
  */
-const SCENARIOS = ["asks", "slow", "together", "stopped", "main", "midturn", "twice", "ownq", "ownqthen", "stopasking", "stopaskingbatch", "mainasking", "forgery", "lone", "unattended", "samestep", "parallel", "sweephandover", "sweeprace", "sweepstale", "sweeprun", "sweeptiming", "idle", "all"];
+const SCENARIOS = ["asks", "slow", "together", "stopped", "main", "midturn", "twice", "ownq", "ownqthen", "stopasking", "stopaskingbatch", "mainasking", "forgery", "lone", "unattended", "samestep", "parallel", "sweephandover", "sweeprace", "sweepstale", "sweeprun", "sweeptiming", "idle", "steer", "all"];
 const SHARD = (() => {
   const raw = process.env.EVE_DETACH_SHARD;
   if (!raw) return null;
@@ -382,7 +403,7 @@ const dump = (label, h) => {
 
 try {
   // The app with the setting, unless only the "all" scenario runs (unpatched eve refuses the setting).
-  const app = ["asks", "slow", "together", "stopped", "main", "midturn", "twice", "ownq", "ownqthen", "stopasking", "stopaskingbatch", "mainasking", "forgery", "lone", "unattended", "samestep", "parallel", "sweephandover", "sweeprace", "sweepstale", "sweeprun", "sweeptiming"].some(shouldRun) ? await startApp({ detach: true }) : null;
+  const app = ["asks", "slow", "together", "stopped", "main", "midturn", "twice", "ownq", "ownqthen", "stopasking", "stopaskingbatch", "mainasking", "forgery", "lone", "unattended", "samestep", "parallel", "sweephandover", "sweeprace", "sweepstale", "sweeprun", "sweeptiming", "steer"].some(shouldRun) ? await startApp({ detach: true }) : null;
   const { post, history, until } = app ?? {};
 
   await scenario("asks", async () => {
@@ -404,6 +425,9 @@ try {
     check("the main agent replied with alpha's result and beta's 'running'", /CHILD-RESULT alpha/.test(reply) && /running/.test(reply), reply);
     const question = h.find((e) => e.type === "input.requested");
     check("beta's question is on the main thread", Boolean(question), types(h));
+    // mold_v1-234: the forwarded question names the delegation that asked it (eve dropped the hook payload's callId,
+    // subagentName and childSessionId), so the chat can say who is asking and file the reply under that specialist.
+    check("…and says which delegation asked it: data.subagent { callId, name: beta, childSessionId } (mold_v1-234)", question?.data?.subagent?.callId === calls.beta.callId && question?.data?.subagent?.name === "beta" && question?.data?.subagent?.childSessionId === calls.beta.childSessionId, question?.data?.subagent ?? question?.data);
     h = await until(P, (x) => types(x).at(-1) === "session.waiting", "the main thread at rest");
     check("the main thread is at rest (its turn ended) while beta waits", types(h).at(-1) === "session.waiting", types(h).slice(-4));
     await sleep(1_500);
@@ -890,6 +914,37 @@ try {
     check("…a delegation back before the bound is untouched (no stand-in, one reply)", !h.some(isPlaceholder) && replies(h, /PARENT-/).length === 1, types(h));
   });
 
+  await scenario("steer", async () => {
+    console.log("\na note to a specialist while it works (mold_v1-235):");
+    const P = (await post("/eve/v1/session", { message: "[[hb beta:steer=6000]]" })).body.sessionId;
+    let h = await until(P, (x) => Boolean(callsOf(x).beta), "beta to be called", 30_000);
+    const beta = callsOf(h).beta;
+    // beta is in its first step (a tool call the model takes 6 s to make): the note arrives while it works.
+    await sleep(1_500);
+    const added = await post("/test/steer", { op: "add", parentSessionId: P, callId: beta.callId, author: "tester", text: "focus on FY24 only" });
+    check("a note is written to beta's inbox while beta works", added.status === 200 && added.body?.ok === true, added);
+    h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the main agent's reply", 40_000);
+    const reply = replies(h, /PARENT-DONE/)[0].data.message;
+    check("beta read the note at its next step and finished with it: CHILD-RESULT … NOTED: Note from tester …", /CHILD-RESULT beta after 1 step\(s\), NOTED: Note from tester while you were working: focus on FY24 only/.test(reply), reply);
+    const requests = (await (await fetch(`${app.model.base}/__requests`)).json()).map((r) => r.body ?? r);
+    const betaCalls = requests.filter((r) => Array.isArray(r.messages) && r.messages.some((m) => /You are the subagent "beta"/.test(typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""))) && r.messages.some((m) => /HBMODE:steer/.test(typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""))));
+    const second = betaCalls.at(-1);
+    const last = second?.messages?.at(-1);
+    check("on the wire, beta's next model call ends with the note as a USER message, after its tool result", betaCalls.length === 2 && last?.role === "user" && /^Note from tester while you were working: focus on FY24 only$/.test(typeof last.content === "string" ? last.content : JSON.stringify(last.content)) && second.messages.at(-2)?.role === "tool", second?.messages?.slice(-3));
+    check("…and its first call is a prefix of the second (the stable prefix is untouched)", betaCalls.length === 2 && JSON.stringify(betaCalls[1].messages.slice(0, betaCalls[0].messages.length)) === JSON.stringify(betaCalls[0].messages), { first: betaCalls[0]?.messages?.length, second: betaCalls[1]?.messages?.length });
+    const child = await history(beta.childSessionId);
+    const delivered = child.filter((e) => e.type === "steering.delivered");
+    check("beta's own stream reports the delivery: steering.delivered naming the note, once", delivered.length === 1 && delivered[0].data?.noteIds?.[0] === added.body.note.id, delivered);
+    check("the same session carried on: one session.started, no second turn, finished once", child.filter((e) => e.type === "session.started").length === 1 && child.filter((e) => e.type === "turn.started").length === 1 && child.filter((e) => e.type === "session.completed").length === 1, types(child));
+    const inbox = (await post("/test/steer", { op: "list" })).body.notes.filter((n) => n.parentSessionId === P);
+    check("the note was read once, by beta's own session", inbox.length === 1 && inbox[0].status === "delivered" && inbox[0].reads === 1 && inbox[0].childSessionId === beta.childSessionId, inbox);
+    check("one result for beta, no restart", realResultsFor(h, beta.callId).length === 1 && userMessagesAfterFirst(h).length === 0, { results: realResultsFor(h, beta.callId).length, users: userMessagesAfterFirst(h).length });
+    // Without a note the same run reads none (the reader answers nothing; nothing is appended).
+    const Q = (await post("/eve/v1/session", { message: "[[hb beta:steer=200]]" })).body.sessionId;
+    const plain = await until(Q, (x) => replies(x, /PARENT-DONE/).length > 0, "the plain run's reply", 40_000);
+    check("with no note, beta answers NO-NOTE and its stream has no steering.delivered", /NO-NOTE/.test(replies(plain, /PARENT-DONE/)[0].data.message) && !(await history(callsOf(plain).beta.childSessionId)).some((e) => e.type === "steering.delivered"));
+  });
+
   await scenario("all", async () => {
     console.log("\nan app WITHOUT the setting behaves as eve always has:");
     const plain = await startApp({ detach: false });
@@ -903,6 +958,7 @@ try {
     h = await plain.history(P);
     check("alpha's finished result is HELD while beta waits for the person (eve's batch)", resultsFor(h, calls.alpha.callId).length === 0, types(h));
     const question = h.find((e) => e.type === "input.requested");
+    check("beta's question, asked inside the main agent's turn, names beta's delegation too (mold_v1-234)", question?.data?.subagent?.callId === calls.beta.callId && question?.data?.subagent?.name === "beta" && question?.data?.subagent?.childSessionId === calls.beta.childSessionId, question?.data?.subagent ?? question?.data);
     await plain.post(`/eve/v1/session/${P}`, { inputResponses: [{ requestId: question.data.requests[0].requestId, optionId: "fy26" }], continuationToken: tokenOf(h) ?? started.body.continuationToken });
     h = await plain.until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "both results", 30_000);
     await sleep(3_000);

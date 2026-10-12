@@ -85,3 +85,47 @@ export function estimateCostUsd(model: string | null | undefined, tokens: TokenC
   // point noise like 0.04536000000000001 out of the JSON.
   return Math.round(usd * 10_000) / 10_000;
 }
+
+/* ---- speech to text (dictation) ---------------------------------------------------------------------------------- */
+
+/**
+ * What a speech-to-text model costs: USD per minute of audio. Billed on the audio's length, not on tokens, so it is
+ * its own table; a dictation's usage row (`chat_turn_usage`, kind "dictation") stores the audio's length in
+ * milliseconds and is priced here at request time, exactly as a chat turn's tokens are.
+ *
+ * Source: https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/ — "Unit Pricing: $0.000513 per
+ * audio minute", read on 2026-10-11. The pricing page (https://developers.cloudflare.com/workers-ai/platform/pricing/,
+ * same day) rounds it to "$0.0005 per audio minute" and states the unit it is billed in: 46.63 neurons per audio
+ * minute at $0.011 per 1,000 neurons = $0.000513. Whisper (the older model) is $0.000453 on its page (41.14 neurons).
+ *
+ * Unknown model: null, never zero, as for the token table above.
+ */
+export interface AudioPrice {
+  /** USD per minute of audio. */
+  readonly perMinute: number;
+}
+
+export const AUDIO_PRICES: Readonly<Record<string, AudioPrice>> = {
+  // Cloudflare Workers AI — https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/ (2026-10-11)
+  "@cf/openai/whisper-large-v3-turbo": { perMinute: 0.000513 },
+  // https://developers.cloudflare.com/workers-ai/models/whisper/ (2026-10-11)
+  "@cf/openai/whisper": { perMinute: 0.000453 },
+};
+
+/** The audio price row for a model id, or null when the model is not priced here. */
+export function audioPriceForModel(model: string | null | undefined): AudioPrice | null {
+  if (!model) return null;
+  return AUDIO_PRICES[model.trim()] ?? null;
+}
+
+/**
+ * Estimated USD for `audioMs` milliseconds of audio on a speech-to-text model, or null when the model is not priced.
+ * Rounded to a millionth of a dollar (six places): a two-minute clip is about a tenth of a cent, and the four places
+ * the token figures use would round a single dictation to zero.
+ */
+export function estimateAudioCostUsd(model: string | null | undefined, audioMs: number | null | undefined): number | null {
+  const price = audioPriceForModel(model);
+  if (!price) return null;
+  const ms = nonNegative(audioMs);
+  return Math.round(((ms / 60_000) * price.perMinute) * 1_000_000) / 1_000_000;
+}

@@ -38,7 +38,8 @@ import { DETACHED_LABEL, DETACHED_NOTE, isDetachedOutput, isStoppedDelegation } 
 import { isPreviewablePdfPath } from "@/lib/pdf-preview";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { ErrorBoundary } from "./error-boundary";
-import { toolCallSummary, toolDisplayName } from "./tool-display";
+import { subagentDisplayName, toolCallSummary, toolDisplayName } from "./tool-display";
+import type { SpecialistAnswerView, SteeringNoteView } from "@/lib/specialist-questions";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { CollapsibleUserText } from "./collapsible-user-text";
@@ -60,6 +61,14 @@ import {
 import { cn } from "@/lib/utils";
 
 // The pdf viewer (and pdf.js under it) is fetched when a preview first opens.
+// A specialist's question and the notes sent to it (mold_v1-234/235) render only in a chat that delegated: loaded on
+// first use, never in the first load.
+const SpecialistThread = lazyPanel(() => import("./specialist-question").then((m) => m.SpecialistThread), {
+  label: "Specialist reply",
+});
+const SteeringNoteLine = lazyPanel(() => import("./specialist-question").then((m) => m.SteeringNoteLine), {
+  label: "Note to a specialist",
+});
 const PdfView = lazyPanel(() => import("./pdf-view").then((m) => m.PdfView), {
   label: "The preview",
   placeholder: () => (
@@ -161,6 +170,10 @@ export function messageRendersContent(
   return message.parts.some((p) => partRendersContent(p, message.role, hoistPendingInput, isProxiedApproval));
 }
 
+const requestIdOf = (part: EveMessagePart): string | undefined =>
+  (part as { toolMetadata?: { eve?: { inputRequest?: { requestId?: string } } } }).toolMetadata?.eve?.inputRequest
+    ?.requestId;
+
 function partRendersContent(
   part: EveMessagePart,
   role: EveMessage["role"],
@@ -168,7 +181,9 @@ function partRendersContent(
   isProxiedApproval?: (part: EveMessagePart) => boolean,
 ): boolean {
   // A subagent-proxied approval is suppressed entirely in the main thread (it
-  // lives in the rail), so it renders nothing here.
+  // lives in the rail), so it renders nothing here. (A specialist's answered
+  // question placed on its card is not in the message at all: the chat takes it
+  // out before rendering, lib/specialist-questions.ts `withoutPlacedAnswers`.)
   if (isProxiedApproval?.(part)) return Boolean(answeredText(part));
   switch (part.type) {
     case "step-start":
@@ -213,6 +228,8 @@ export function AgentMessage({
   message,
   onFocusSubagent,
   stoppedDelegations,
+  specialistAnswers,
+  steeringNotes,
   stoppedNote,
   onInputResponses,
   onRetry,
@@ -234,6 +251,10 @@ export function AgentMessage({
   readonly onFocusSubagent?: (toolCallId: string) => void;
   /** Delegations a Stop discarded (call id → specialist): their tile reads "Stopped", not "Running". */
   readonly stoppedDelegations?: ReadonlyMap<string, string>;
+  /** Specialists' answered questions, by request id, and where each renders (see `SpecialistAnswerView`). */
+  readonly specialistAnswers?: ReadonlyMap<string, SpecialistAnswerView>;
+  /** Notes the person sent running specialists (mold_v1-235); those placed "card" render under their delegation. */
+  readonly steeringNotes?: readonly SteeringNoteView[];
   /** This reply was stopped — said under it, where it stays in the conversation's history. */
   readonly stoppedNote?: string;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
@@ -302,6 +323,8 @@ export function AgentMessage({
                   messageStreaming={isStreaming}
                   onFocusSubagent={onFocusSubagent}
                   stoppedDelegations={stoppedDelegations}
+                  specialistAnswers={specialistAnswers}
+                  steeringNotes={steeringNotes}
                   onInputResponses={onInputResponses}
                   part={segment.part}
                   role={message.role}
@@ -546,6 +569,8 @@ function AgentMessagePart({
   messageStreaming,
   onFocusSubagent,
   stoppedDelegations,
+  specialistAnswers,
+  steeringNotes,
   onInputResponses,
   part,
   showCaret,
@@ -558,6 +583,8 @@ function AgentMessagePart({
   /** Hand a delegation tool call off to the Control Panel rail. */
   readonly onFocusSubagent?: (toolCallId: string) => void;
   readonly stoppedDelegations?: ReadonlyMap<string, string>;
+  readonly specialistAnswers?: ReadonlyMap<string, SpecialistAnswerView>;
+  readonly steeringNotes?: readonly SteeringNoteView[];
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly part: EveMessagePart;
   readonly showCaret: boolean;
@@ -579,6 +606,24 @@ function AgentMessagePart({
     // Unanswered, it lives at the conversation's tail. ANSWERED, what the person
     // said stays here, in its place in the thread, as their own words — typed
     // text used to answer a question otherwise vanished without a trace.
+    // mold_v1-234: a reply to a NAMED specialist is not the person's own message in the main thread. It renders on
+    // the specialist's card (the tail, or under its delegation card; the chat takes those out of the message before
+    // it renders); here only when no such card is on screen.
+    const rid = requestIdOf(part);
+    const placed = rid ? specialistAnswers?.get(rid) : undefined;
+    if (placed) {
+      return placed.where === "inplace" ? (
+        <div className="not-prose mb-4 w-full rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+          <SpecialistThread
+            name={subagentDisplayName(placed.name)}
+            prompt={placed.prompt}
+            reply={placed.reply}
+            progress={placed.progress}
+            onOpen={onFocusSubagent ? () => onFocusSubagent(placed.callId) : undefined}
+          />
+        </div>
+      ) : null;
+    }
     const said = answeredText(part);
     return said ? <YourAnswer text={said} /> : null;
   }
@@ -684,7 +729,7 @@ function AgentMessagePart({
         const delegationRunning =
           reportsLater || (stoppedAs === undefined && part.state !== "output-available" && part.state !== "output-error");
         return (
-          <div className="not-prose mb-4 w-full overflow-hidden rounded-md border">
+          <div data-delegation={part.toolCallId} className="not-prose mb-4 w-full overflow-hidden rounded-md border">
             <button
               type="button"
               onClick={onFocusSubagent ? () => onFocusSubagent(part.toolCallId) : undefined}
@@ -736,6 +781,27 @@ function AgentMessagePart({
                   part={part}
                   onInputResponses={onInputResponses}
                 />
+              </div>
+            ) : null}
+            {[...(specialistAnswers?.values() ?? [])]
+              .filter((a) => a.where === "card" && a.callId === part.toolCallId)
+              .map((a) => (
+                <SpecialistThread
+                  key={a.requestId}
+                  className="border-border/60 border-t px-3 py-2.5"
+                  name={subagentDisplayName(a.name)}
+                  prompt={a.prompt}
+                  reply={a.reply}
+                  progress={a.progress}
+                />
+              ))}
+            {(steeringNotes ?? []).some((n) => n.where === "card" && n.callId === part.toolCallId) ? (
+              <div className="space-y-2 border-border/60 border-t px-3 py-2.5">
+                {(steeringNotes ?? [])
+                  .filter((n) => n.where === "card" && n.callId === part.toolCallId)
+                  .map((n) => (
+                    <SteeringNoteLine key={n.id} name={subagentDisplayName(n.name)} text={n.text} status={n.status} live={false} />
+                  ))}
               </div>
             ) : null}
             {part.errorText && !stoppedResult ? (

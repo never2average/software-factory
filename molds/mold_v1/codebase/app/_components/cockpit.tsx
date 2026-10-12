@@ -113,6 +113,7 @@ export function Cockpit({
   onFocusConsumed,
   onDetailChange,
   onInputResponses,
+  onSteer,
   onStuckHandoffs,
   onHeldHandoffs,
   onOpenArtifact,
@@ -128,6 +129,11 @@ export function Cockpit({
   readonly onInputResponses?: (
     responses: readonly { optionId?: string; requestId: string; text?: string }[],
   ) => void | Promise<void>;
+  /**
+   * Send a note to a RUNNING delegated specialist, through its main thread's steer route (mold_v1-235). Undefined: no
+   * notes (a shared thread's relay, a viewer).
+   */
+  readonly onSteer?: (callId: string, text: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   /** Report subagents that FINISHED but whose result never reached the parent
    *  (the delegation is still pending) — the chat surfaces a recovery action. */
   readonly onStuckHandoffs?: (
@@ -939,6 +945,7 @@ export function Cockpit({
           appendLocal={appendLocal}
           feed={selectedRun.childSessionId ? feeds[selectedRun.childSessionId] : undefined}
           onInputResponses={onInputResponses}
+          onSteer={onSteer}
           run={selectedRun}
         />
       ) : stepRun ? (
@@ -2952,9 +2959,12 @@ function SubagentDetail({
   appendLocal,
   feed,
   onInputResponses,
+  onSteer,
   run,
 }: {
   readonly appendLocal: (sessionId: string, text: string) => void;
+  /** A note to this run when it is a delegation of the chat's main thread (mold_v1-235). */
+  readonly onSteer?: (callId: string, text: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   readonly feed?: ChildFeed;
   readonly onInputResponses?: (
     responses: readonly { optionId?: string; requestId: string; text?: string }[],
@@ -3068,6 +3078,19 @@ function SubagentDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queueDead, steerQueue.length]);
 
+  /** A delegation of the chat's main thread takes a note through the steer route; its own session takes no message. */
+  const steerAsNote = live && feed?.delegated === true && onSteer !== undefined;
+  const sendNote = async (raw: string) => {
+    const sid = run.childSessionId;
+    if (!raw || !sid || !onSteer) return;
+    setBusy("steer");
+    try {
+      const sent = await onSteer(run.callId, raw);
+      appendLocal(sid, sent.ok ? `You → ${raw.slice(0, 90)} (a note: ${display} reads it at its next step)` : sent.message);
+    } finally {
+      setBusy(null);
+    }
+  };
   const sendSteer = async (raw: string) => {
     const sid = run.childSessionId;
     if ((!raw && steerFiles.length === 0) || !sid) return;
@@ -3288,6 +3311,19 @@ function SubagentDetail({
                 </PromptInputButton>
               </>
             }
+          />
+        </div>
+      ) : run.childSessionId && steerAsNote ? (
+        // A RUNNING delegation of this chat (mold_v1-235): its own session takes no message, so the box sends a NOTE
+        // through the main thread's steer route, read at its next step. Text only.
+        <div className="shrink-0 px-3 pt-1 pb-5">
+          <ChatComposer
+            onSubmit={(m) => {
+              const text = m.text?.trim() ?? "";
+              if (text) void sendNote(text);
+            }}
+            placeholder={`Note to ${display}: it reads it at its next step…`}
+            status={busy === "steer" ? "submitted" : undefined}
           />
         </div>
       ) : !run.childSessionId ? (
