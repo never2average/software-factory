@@ -4,7 +4,7 @@ A draft for the operator to send to customers whose OnFinance AI runs on its own
 Filled in by the operator on 2026-10-12; send it as it is. The facts behind it are in `docs/COST_MODEL.md` §7
 ("what a redeploy costs in downtime") and `docs/RUNBOOK.md` §9 F; if either changes, change this note too.
 
-Status: **draft, not yet sent** (gate task mold_v1-213 stays open until the operator confirms it was sent).
+Status: **sent** by the operator on 2026-10-12 (closed gate task mold_v1-213).
 
 ---
 
