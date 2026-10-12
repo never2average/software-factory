@@ -6,6 +6,7 @@
   provision.py <app_id> --deploy [--allow-unverified-mold "<reason>"]   deploy a mold commit whose CI is not green (recorded)
   provision.py <app_id> --rollback [--json]                every project back to its previous production deployment (Vercel)
   provision.py <app_id> --smoke [--json]                   the post-deploy chat check on its own, against what serves now
+                                                           (Vercel or the app's own server; recorded as <target>.smoke)
   provision.py <app_id> status [--json]                    the latest deploy: still running (and how far), or its result
   provision.py --self-test   offline checks of the deadlines, deploy watch and VM-headroom logic
   provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
@@ -1877,6 +1878,21 @@ def rollback_vercel(app_id, infra, before, mold_dir, why, roles=None, by="the de
 def _smoke_record(res):
     return {k: res.get(k) for k in ("result", "detail", "at", "seconds", "workspace_list", "cleanup") if res.get(k) is not None}
 
+def smoke_now(app_id, app, infra, adir, key):
+    """`provision.py <app> --smoke`: lib/smoke.py once, against what serves now at infra[key].production_url (key is
+    "vercel" or "vm_remote"); the result is recorded in infrastructure.json <key>.smoke and nothing is ever rolled back.
+    Exit 0 pass, 1 fail, 3 (stop_for_human, `needs` names the sign-in code and how to get it) needs a sign-in."""
+    import smoke
+    url = (infra.get(key) or {}).get("production_url")
+    res = smoke.check(app_id, app, infra, url=url)
+    infra.setdefault(key, {})["smoke"] = _smoke_record(res); save(os.path.join(adir, "infrastructure.json"), infra)
+    print(f"smoke {res['result']}: {res['detail']}")
+    AR.detail("smoke", infra[key]["smoke"])
+    if res["result"] == "needs_sign_in":
+        AR.need("code", "one-time sign-in code", smoke.sign_in_how(app_id)); stop_for_human(f"{app_id}: needs a sign-in: {res['detail']}")
+    AR.note(summary=f"{app_id}: smoke {res['result']}: {res['detail'][:200]}")
+    return 0 if res["result"] == "pass" else 1
+
 def verify_release(app_id, app, infra, ds, adir, mold_dir, before):
     """After the three deploys, before anything is recorded stamped: the health gate, then the smoke test. A failure of
     either rolls every project back and ends the run with SystemExit("... rolled back ..."). Returns the smoke result
@@ -3062,6 +3078,34 @@ def self_test_release(check):
         code, out = go("app1", "--smoke")
         check("--smoke once signed in: one chat answered in the operator's workspace, recorded",
               code == 0 and inf()["vercel"]["smoke"]["result"] == "pass" and '"org": "org_own"' in calls() and '"org": "customer_a"' not in calls(), out[-400:])
+        # mold_v1-236: --smoke on an app on its own server runs the same check at vm_remote.production_url (it used to
+        # print the offline check, "check only ... Ready", and never open a chat)
+        a2 = os.path.join(t, "state", "application", "app2"); inf2 = lambda: load(os.path.join(a2, "infrastructure.json"))
+        i2 = inf2(); i2["vm_remote"] = {"production_url": "https://app-one.rehearsal.invalid"}; i2["deployed_at"] = "2026-10-12T00:00:00+00:00"
+        json.dump(i2, open(os.path.join(a2, "infrastructure.json"), "w"))
+        def go_json(app_id, *args):
+            r = subprocess.run([sys.executable, P, app_id, *args, "--json"], cwd=t, env=env, capture_output=True, text=True, timeout=300)
+            try: doc = json.loads(r.stdout)
+            except ValueError: doc = {}
+            log_ = open(doc["log"]).read() if doc.get("log") and os.path.isfile(doc["log"]) else ""
+            return r.returncode, doc, r.stdout + r.stderr + log_
+        if os.path.exists(W + ".calls"): os.remove(W + ".calls")
+        code, d2, out = go_json("app2", "--smoke")
+        check("vm_remote --smoke with no sign-in on hand: needs_human, exit 3, needs names the code and the code-request line",
+              code == 3 and d2.get("status") == "needs_human" and d2.get("needs", [{}])[0].get("kind") == "code" and "code-request" in d2["needs"][0].get("how", "")
+              and (inf2()["vm_remote"].get("smoke") or {}).get("result") == "needs_sign_in" and "check only" not in out, out[-600:])
+        json.dump({"token": "tok-operator", "expires_at": int(time.time()) + 7 * 86400}, open(os.path.join(priv, "app2.session.json"), "w"))
+        code, d2, out = go_json("app2", "--smoke")
+        check("vm_remote --smoke once signed in: one chat at the server's address in the operator's workspace, pass, exit 0, recorded as vm_remote.smoke",
+              code == 0 and d2.get("status") == "done" and (d2.get("details") or {}).get("smoke", {}).get("result") == "pass"
+              and (inf2()["vm_remote"].get("smoke") or {}).get("result") == "pass" and "app-one.rehearsal.invalid/eve/v1/session" in calls()
+              and '"org": "org_own"' in calls() and '"org": "customer_a"' not in calls() and "tok-operator" not in out, out[-600:])
+        check("  ...the same record the Vercel path writes, and no chat is left behind", set(inf2()["vm_remote"].get("smoke") or {"none"}) == set(inf()["vercel"]["smoke"])
+              and '"method": "DELETE"' in calls(), (inf2()["vm_remote"].get("smoke"), inf()["vercel"]["smoke"]))
+        i2 = inf2(); i2["vm_remote"]["production_url"] = "https://app-gone.rehearsal.invalid"; json.dump(i2, open(os.path.join(a2, "infrastructure.json"), "w"))
+        code, d2, out = go_json("app2", "--smoke")
+        check("vm_remote --smoke against an address that does not answer: fail, exit 1, recorded", code == 1 and d2.get("status") == "failed"
+              and (inf2()["vm_remote"].get("smoke") or {}).get("result") == "fail", out[-400:])
         first = prod()
         # health fails after a redeploy: every project rolled back to what served before
         world(fault={"app-one-api": "health"})
@@ -3179,19 +3223,11 @@ def _main(a):
             # By hand: every project back to its previous production deployment (rollback_by_hand). Under the deploy lock.
             return rollback_by_hand(app_id, app, infra, adir, mold_dir)
         if "--smoke" in a:
-            # The post-deploy check on its own, against what serves now; records infrastructure.json vercel.smoke and
-            # never rolls anything back (a first deploy's check, once the operator has signed in).
-            import smoke
-            res = smoke.check(app_id, app, infra)
-            infra["vercel"]["smoke"] = _smoke_record(res); save(os.path.join(adir, "infrastructure.json"), infra)
-            print(f"smoke {res['result']}: {res['detail']}")
-            AR.detail("smoke", infra["vercel"]["smoke"])
-            if res["result"] == "needs_sign_in":
-                AR.need("code", "one-time sign-in code", smoke.sign_in_how(app_id)); stop_for_human(f"{app_id}: needs a sign-in: {res['detail']}")
-            AR.note(summary=f"{app_id}: smoke {res['result']}: {res['detail'][:200]}")
-            return 0 if res["result"] == "pass" else 1
+            # The post-deploy check on its own, against what serves now (a first deploy's check, once the operator
+            # has signed in). The same function serves an app on its own server (lib/vm_remote.py main_for).
+            return smoke_now(app_id, app, infra, adir, "vercel")
     elif "--rollback" in a or "--smoke" in a:
-        sys.exit(f"{app_id}: --rollback and --smoke are for an app on Vercel; this one's target is {target!r}.")
+        sys.exit(f"{app_id}: --rollback and --smoke are for an app that serves traffic (Vercel, or its own server); this one's target is {target!r}.")
     if "--set-secret" in a:
         return set_secret(app_id, a[a.index("--set-secret") + 1], infra, mold_dir)
     if "--verify-rls" in a:

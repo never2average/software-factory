@@ -640,6 +640,36 @@
               "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
             }
           }
+        },
+        "smoke": {
+          "type": "object",
+          "description": "The last post-deploy smoke test on the app's own server (lib/smoke.py): one chat as the operator in the operator's own workspace, at production_url. Written by --deploy-remote after the release switch (a fail switches back) and by provision.py --smoke. result is pass, fail or needs_sign_in. Never a token or an address of a person.",
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "fail",
+                "needs_sign_in"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string"
+            },
+            "seconds": {
+              "type": "number"
+            },
+            "workspace_list": {
+              "type": "string"
+            },
+            "cleanup": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
       }
     },
