@@ -8,6 +8,11 @@
   provision.py <app_id> --smoke [--json]                   the post-deploy chat check on its own, against what serves now
                                                            (Vercel or the app's own server; recorded as <target>.smoke)
   provision.py <app_id> status [--json]                    the latest deploy: still running (and how far), or its result
+  provision.py <app_id> --deploy --dry-run                 the plan, the mold CI gate and the sign-in a redeploy needs; read-only
+  provision.py <app_id> --fix-addresses [--dry-run]        read each project's address back from Vercel, verify it is ours,
+                                                           record it and rewrite the URL env from it (mold_v1-239)
+  provision.py <app_id> --rename-projects NEW [--dry-run]  rename the three projects to NEW, NEW-api, NEW-workflow when nobody
+                                                           holds NEW*.vercel.app; same projects, nothing deleted (mold_v1-239)
   provision.py --self-test   offline checks of the deadlines, deploy watch and VM-headroom logic
   provision.py --self-test-remote   offline checks of the vm_remote target (same as lib/vm_remote.py --self-test)
   provision.py <app_id> [--set-remote host=.. domain=..] [--remote-key] [--qualify-remote]
@@ -23,6 +28,12 @@
   provision.py <app_id> --operator <script> [--dry-run] [--yes] -- <args>   one of the build's own operator:* scripts against
                         the deployed app (Vercel or its own server); see below and lib/operator_run.py (mold_v1-230)
 
+ADDRESSES (mold_v1-239). A *.vercel.app name is global across Vercel accounts, so no address is ever made from a
+  project name. Each one is read back from Vercel after a deploy (the project's domains on that deployment's aliases,
+  lib/vercel_addr.py), <project>.vercel.app is claimed before a first deploy only when nobody serves it, and a new app
+  whose name is someone else's gets its projects under a free name (recorded in vercel.name_history). The health
+  checks, the smoke test, the pre-deploy sign-in probe, mint.py code-request / code and the lanes send nothing to an
+  address Vercel does not file under this app's projects.
 --check (default): READ-ONLY. On target=vercel it creates NOTHING remote: it reads which of the three
   projects exist (GET /v9/projects), which secret names are set on <proj> (`vercel env ls`), which spare
   Neon resources and Blob store the team has (list calls), whether a project is still git-linked, and
@@ -130,6 +141,7 @@ import services             # FACTORY_REHEARSAL / FACTORY_CALL_LOG (lib/services
 import deploy_gate          # only deploy a mold commit whose CI passed (lib/deploy_gate.py)
 import buildfit             # a heavy build sized to this machine, now (lib/buildfit.py, mold_v1-232)
 import asr                  # the app's speech model for dictation, carried as ASR_* (lib/asr.py)
+import vercel_addr          # which addresses are this app's own on Vercel: read, verified, never derived (mold_v1-239)
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
@@ -441,12 +453,48 @@ def _link_dir(project, mold_dir):
               open(os.path.join(d, ".vercel/project.json"), "w"))
     return d
 
-def ensure_projects(proj, mold_dir):
-    """Create this app's three Vercel projects before anything writes to them.
+def name_prefix(app_id, infra):
+    """The word put in front of a taken project name: infrastructure.vercel.name_prefix, else the app's customer."""
+    v = (infra or {}).get("vercel") or {}
+    if v.get("name_prefix"): return v["name_prefix"]
+    try: cust = load(os.path.join(ST, "application", app_id, "application.json")).get("customer_id")
+    except Exception: cust = None
+    return cust if cust and cust not in ("internal",) else None
+
+def choose_project_base(app_id, proj, infra, mold_dir, api=None, probe=None):
+    """(base, note) for three projects that do not exist yet: `proj` when <proj>, <proj>-api and <proj>-workflow are
+    free on vercel.app and in this team, else the first free alternative (lib/vercel_addr.py alternatives). Read-only.
+    (None, why) when no name is free."""
+    api = api or _addr_api(mold_dir, infra); probe = probe or _addr_probe()
+    alts = vercel_addr.alternatives(proj, prefix=name_prefix(app_id, infra), team=(infra.get("vercel") or {}).get("team"))
+    base, report = vercel_addr.free_base(api, probe, proj, alts)
+    taken = "; ".join(w for b_, why in report if b_ == proj for w in why)
+    if base == proj: return base, ""
+    if base: return base, f"{taken}, so the projects are named {base}, {base}-api, {base}-workflow"
+    return None, "no free name: " + " | ".join(f"{b_}: {'; '.join(why)}" for b_, why in report)
+
+def ensure_projects(proj, mold_dir, infra=None, app_id=None):
+    """Create this app's three Vercel projects before anything writes to them. Returns the base name they have.
 
     deploy_vercel's first act is _set_env(..., project=f'{proj}-api'), and the API answers 404 for a
     project that does not exist — so a first deploy of a NEW app could never start. The two projects
-    that exist today were created by other means, which is why nobody had hit this."""
+    that exist today were created by other means, which is why nobody had hit this.
+
+    mold_v1-239: a *.vercel.app name is global across Vercel accounts. When none of the three exists yet and
+    <proj>.vercel.app (or -api / -workflow) is someone else's, the three are created under the first free name
+    instead, recorded in infrastructure.json (vercel.project, vercel.name_history) before anything else is written."""
+    missing = [p for p in (proj, f"{proj}-api", f"{proj}-workflow") if not _project_meta(p, mold_dir).get("id")]
+    if len(missing) == 3 and infra is not None:
+        base, note = choose_project_base(app_id, proj, infra, mold_dir)
+        if not base: sys.exit(f"refusing to create {proj}'s projects: {note}. Set infrastructure.json vercel.project to a free name and rerun. Nothing was created.")
+        if base != proj:
+            print(f"  {note}")
+            infra["vercel"].setdefault("name_history", []).append({"at": NOW, "from": proj, "to": base, "why": note[:300]})
+            infra["vercel"]["project"] = base; proj = base
+            if app_id: save(os.path.join(ST, "application", app_id, "infrastructure.json"), infra)
+    elif missing and len(missing) < 3:
+        print(f"  NOTE: {', '.join(missing)} are created next to existing projects; if a name is taken on vercel.app, "
+              f"Vercel names the address itself and the deploy reads it back")
     for p in (proj, f"{proj}-api", f"{proj}-workflow"):
         if _project_meta(p, mold_dir).get("id"): continue
         r = vrun(f"vercel project add {p}", shell=True, cwd=mold_dir, capture_output=True, text=True)
@@ -457,6 +505,7 @@ def ensure_projects(proj, mold_dir):
         # that repo; every push would then build the factory root as this app. Unlink it in the same
         # breath it was created, not after the first deploy.
         disconnect_git(p, mold_dir)
+    return proj
 
 def _neon_spares(mold_dir):
     """Every Neon resource on this team that is available and attached to no project."""
@@ -781,20 +830,74 @@ def owner_email(app_id):
         elif isinstance(x, list): stack.extend(x)
     return None
 
-def stable_url(project, url):
-    """The project's public production address for a deployment URL.
+# ---- ADDRESSES: read from Vercel and verified as ours, never derived from a project name (mold_v1-239) -------------------
+# A *.vercel.app name is global across every Vercel account. This file used to assume a project named X answers at
+# https://X.vercel.app (stable_url). On 2026-10-12 compliance-os.vercel.app and compliance-os-api.vercel.app were
+# someone else's: Vercel had given our projects compliance-os-neon / compliance-os-api-ten instead, the health checks
+# read the stranger's site, WEB_ORIGIN and NEXT_PUBLIC_EVE_API_URL were written with the stranger's address, and had
+# health passed the smoke test would have sent the operator's session there. Now every address is read back from
+# Vercel (the project's domains on the deployment's alias list, lib/vercel_addr.py) and every request that carries a
+# credential asks vercel_addr.guard_app first.
+ADDRESS_WAIT_S = float(os.environ.get("PROVISION_ADDRESS_WAIT_S") or 90)    # Vercel assigns aliases just after READY
+ADDRESS_POLL_S = float(os.environ.get("PROVISION_ADDRESS_POLL_S") or 5)
 
-    `vercel deploy --prod` names the one-off deployment (https://<project>-<hash>-<team>.vercel.app), which
-    Vercel Deployment Protection keeps behind a login. Everything the factory records or wires between the
-    apps (NEXT_PUBLIC_EVE_API_URL, TASK_WORKFLOW_SERVICE_URL, WEB_ORIGIN, production_url, the health probes)
-    must use the public alias https://<project>.vercel.app instead: on 2026-09-29 the one-off addresses were
-    recorded and the web app's calls to the agent and workflow service got the login page (HTML), so its
-    health read 503 and chats could not reach the agent."""
-    # Vercel shortens the project name inside a deployment URL (onfinance-hfc-api -> onfinance-hfc-h0kj2jowi-…),
-    # so match any *.vercel.app address that is not the alias itself; a custom domain is left alone.
-    if isinstance(url, str) and re.match(r"^https://[a-z0-9-]+\.vercel\.app/?$", url.strip()) and url.strip().rstrip("/") != f"https://{project}.vercel.app":
-        return f"https://{project}.vercel.app"
+def _addr_api(mold_dir, infra=None):
+    team = ((infra or {}).get("vercel") or {}).get("team") or None
+    return vercel_addr.cli_api(cwd=mold_dir, scope=team)
+
+def _addr_probe():
+    return vercel_addr.curl_probe()
+
+def _deployed_address(project, cli_output, mold_dir, infra):
+    """The production address of `project` after `vercel deploy --prod` printed `cli_output`: the deployment it made
+    (a host in the output that Vercel's deployment record files under THIS project), then that deployment's aliases
+    that are also the project's own domains. Polls briefly while Vercel assigns them. A project held on an earlier
+    rollback gets no aliases until promote_new() promotes it: then the project's own domain list answers (Vercel files
+    those domains under this project, so they are ours). Never derived from the name: an address no record vouches
+    for stops the deploy here, before anything is sent to it."""
+    api = _addr_api(mold_dir, infra)
+    hosts = list(dict.fromkeys(re.findall(r"https://([a-z0-9.-]+)", cli_output or "")))
+    meta = vercel_addr.project(api, project) or {}
+    ours = [h for h in hosts if meta.get("id") and api(f"/v13/deployments/{h}")[1].get("projectId") == meta["id"]]
+    held = meta.get("autoAssignCustomDomains") is False
+    deadline = time.monotonic() + (0 if held else ADDRESS_WAIT_S); why = "the deploy's output named no deployment of this project"
+    while ours:
+        for h in ours:
+            url, why = vercel_addr.production_address(api, project, deployment=h)
+            if url: return url
+        if time.monotonic() > deadline: break
+        time.sleep(ADDRESS_POLL_S)
+    if ours:
+        url, why2 = vercel_addr.current_address(api, project)
+        if url:
+            print(f"  {project}: " + ("held on an earlier rollback, so the new deployment is promoted after the deploy; "
+                                      if held else "the new deployment carries no production domain yet; ")
+                  + f"its address is the project's own domain {url}")
+            return url
+        why = f"{why}; {why2}"
+    sys.exit(f"{project}: deployed, but no address Vercel files under this project could be read ({why}). Nothing was "
+             f"sent to any address. Read it with: python3 .claude/scripts/lib/vercel_addr.py {project} --scope "
+             f"{(infra.get('vercel') or {}).get('team') or '<team>'}")
+
+def _front_door(infra, url, mold_dir):
+    """The web app's address to record: its own domain once `domain.py switch` made it the front door AND Vercel files
+    it under this project; else the verified *.vercel.app address."""
+    v = infra.get("vercel") or {}; dom = v.get("custom_domain")
+    if dom and (v.get("production_url") or "") == f"https://{dom}":
+        ok, why = vercel_addr.guard_app(infra, f"https://{dom}", api=_addr_api(mold_dir, infra), roles=("",))
+        if ok: return f"https://{dom}"
+        print(f"  NOTE: {why}; keeping the verified address {url}")
     return url
+
+def _guard(infra, url, role, mold_dir=None):
+    """(ok, why) for sending anything to `url` as the app's `role` project ("web" | "api" | "workflow")."""
+    suffix = {"web": "", "api": "-api", "workflow": "-workflow"}[role]
+    return vercel_addr.guard_app(infra, url, api=_addr_api(mold_dir, infra), roles=(suffix,))
+
+def addresses_now(infra, mold_dir):
+    """{role: (url or None, why)} read now from each project's own domain list. Read-only."""
+    proj = infra["vercel"]["project"]; api = _addr_api(mold_dir, infra)
+    return {role: vercel_addr.current_address(api, p) for role, p in _role_projects(proj).items()}
 
 def provision_datastores(app_id, ds, mold_dir, present, infra, proj):
     """Fresh datastores via Vercel Marketplace, inside the app's own project. Returns names now present."""
@@ -901,7 +1004,22 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
     elif mode == "deploy" and _wants_library(app):
         create.append(f"build/{app_id}/: a copy of the mold with the account-delivery starter library named in its profile (local files only; the snapshot is never edited)")
     missing = [p for p, ok in projects.items() if not ok]
+    if len(missing) == 3:
+        # mold_v1-239: a *.vercel.app name is global across accounts; read (anonymously) whether ours are free
+        base, note = choose_project_base(app_id, proj, infra, mold_dir)
+        if base and base != proj:
+            missing = [base, f"{base}-api", f"{base}-workflow"]; proj, api, wf = base, f"{base}-api", f"{base}-workflow"
+            create.append(f"NAMES: {note}; recorded in infrastructure.json vercel.project and vercel.name_history")
+        elif not base:
+            create.append(f"NOTHING: the deploy refuses before creating anything, because {note}")
     if missing: create.append(f"Vercel project(s) {', '.join(missing)} — empty, free, no deployment, git integration disconnected (also created by --set-secret, which needs them)")
+    # The addresses, read now from each existing project's own domain list (never made from a name).
+    addr = {}
+    for role, p_ in _role_projects(proj).items():
+        if projects.get(p_): addr[role] = vercel_addr.current_address(_addr_api(mold_dir, infra), p_)[0]
+    if addr:
+        create.append("addresses Vercel files under the projects now (each read from its domain list): "
+                      + ", ".join(f"{role} {u or 'none yet'}" for role, u in addr.items()))
     if pg.get("scope") == "fresh" and prov in DB_SENTINEL and DB_SENTINEL[prov] not in present:
         if prov == "neon":
             spares = _neon_spares(mold_dir)
@@ -958,9 +1076,13 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
             bdir = f"build/{app_id}" if app.get("surface", {}).get("branding") or _wants_library(app) else os.path.relpath(mold_dir, ROOT)
             create.append(f"{bdir}/vercel.nocron.json: vercel.json with its crons stripped "
                           f"(shared_with_live: the crons stay with the live app); no schema, no app_rw, no isolation proof")
-        origin = infra.get("vercel", {}).get("production_url") or f"https://{proj}.vercel.app"
+        origin = addr.get("web") or f"the address Vercel files under {proj}, read back after its deploy"
+        create.append(f"addresses: <project>.vercel.app is claimed for a project that has none yet, only when nobody serves that name; "
+                      f"after each deploy the address is read back from Vercel (the project's domains on that deployment's aliases) "
+                      f"and used for every URL written below; the health checks, the smoke test and the sign-in go only to an "
+                      f"address Vercel files under this app's projects, otherwise refused with nothing sent")
         create.append(f"env WEB_ORIGIN={origin} on {proj} and {api}; a PRODUCTION deployment of the web app on {proj}; git "
-                      f"disconnected if the deploy re-linked it; WEB_ORIGIN rewritten on both if the deployment's URL differs")
+                      f"disconnected if the deploy re-linked it; WEB_ORIGIN rewritten on both if the address read back differs")
         create.append(f"then reads only (three health endpoints), and state: state/application/{app_id}/application.json status "
                       f"stamping -> stamped (or reverted, with the reason), infrastructure.json (the three URLs, deployed_at), "
                       f"datastores.json postgres.rls_verified")
@@ -1668,8 +1790,16 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
             r = heavy_build(cmd, mold_dir, label or cmd, env=env)
             out = (r.stdout or "") + (r.stderr or "")
             if r.returncode: sys.exit(f"{label or cmd} failed:\n" + out.strip()[-1500:])
-        urls = re.findall(r"https://[a-z0-9.-]+\.vercel\.app", out)
-        return urls[-1] if urls else ""
+        return out
+    # THE ADDRESSES, before anything is written (mold_v1-239): each project's own production domain, read from Vercel.
+    # A project with none yet gets <project>.vercel.app claimed for it, only when nobody serves that name; a taken
+    # name is left to Vercel, which names the address itself at the deploy, and it is read back from the deployment.
+    api_ = _addr_api(mold_dir, infra); probe_ = _addr_probe(); known = {}
+    for role, p_ in _role_projects(proj).items():
+        if shared and role != "web": continue
+        u_, why_ = vercel_addr.claim(api_, probe_, p_)
+        known[role] = u_
+        print(f"  address of {p_}: {u_ + ' (Vercel files it under this project)' if u_ else 'not known yet: ' + why_}")
     if not shared:
         # Minted on EVERY deploy and written to both ends at once. It used to be minted only when the main
         # project had no copy, then copied to the workflow project by reading the main project's value back;
@@ -1684,7 +1814,7 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         record_rls(adir, ds, ev)
         # workflow service: its own Next.js app under services/task-workflow
         print("deploying workflow service (services/task-workflow)"); sync_env(WORKFLOW_ENV, vals, f"{proj}-workflow", mold_dir); set_framework(f"{proj}-workflow", "nextjs", mold_dir)
-        wf_url = stable_url(f"{proj}-workflow", run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy"))
+        wf_url = _deployed_address(f"{proj}-workflow", run(f"vercel deploy services/task-workflow --prod --yes --project {proj}-workflow {scope}", label="workflow deploy"), mold_dir, infra)
         SHIPPED.append(("workflow", wf_url))
         disconnect_git(f"{proj}-workflow", mold_dir)
         infra["vercel"]["workflow_url"] = wf_url; print(f"  {wf_url}")
@@ -1701,12 +1831,13 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         # the environment its deployment was BUILT with, so they, and WEB_ORIGIN, go in before the api build.
         _set_env("VERCEL_FRONTEND_TEAM_SLUG", infra["vercel"]["team"], mold_dir, project=f"{proj}-api")
         _set_env("VERCEL_FRONTEND_PROJECT", proj, mold_dir, project=f"{proj}-api")
-        _set_env("WEB_ORIGIN", infra["vercel"].get("production_url") or f"https://{proj}.vercel.app", mold_dir, project=f"{proj}-api")
+        if known.get("web"): _set_env("WEB_ORIGIN", _front_door(infra, known["web"], mold_dir), mold_dir, project=f"{proj}-api")
+        else: print(f"  {proj}-api: WEB_ORIGIN is written after the web deploy, once Vercel has named the web address")
         print(f"  {proj}-api: trusts {infra['vercel']['team']}/{proj} (production) as the service identity")
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
         run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build", kind="build")
-        api_url = stable_url(f"{proj}-api", run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy"))
+        api_url = _deployed_address(f"{proj}-api", run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy"), mold_dir, infra)
         SHIPPED.append(("api", api_url))
         disconnect_git(f"{proj}-api", mold_dir)
         infra["vercel"]["api_url"] = api_url; print(f"  {api_url}")
@@ -1722,21 +1853,21 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         v = load(os.path.join(mold_dir, "vercel.json")); v.pop("crons", None)
         cfg_main = "vercel.nocron.json"; save(os.path.join(mold_dir, cfg_main), v); infra["vercel"]["crons"] = "stripped (shared_with_live)"
     # WEB_ORIGIN has no default in the base (upstream #118); the agent got it before its build above.
-    # Point it at this app's own front door; the value is only known once the web app has a URL, so a
-    # first deploy sets it from the project alias and later deploys correct it.
-    web_origin = infra["vercel"].get("production_url") or f"https://{proj}.vercel.app"
-    for p_ in (proj, f"{proj}-api"): _set_env("WEB_ORIGIN", web_origin, mold_dir, project=p_)
+    # Point it at this app's own front door: the address Vercel files under the web project (read above), never one
+    # made from the project's name. Unknown before a first deploy whose name was taken: written after it, below.
+    web_origin = _front_door(infra, known["web"], mold_dir) if known.get("web") else None
+    if web_origin:
+        for p_ in (proj, f"{proj}-api"): _set_env("WEB_ORIGIN", web_origin, mold_dir, project=p_)
     print("deploying web app")
     # the eve prebuilt output and the build-time env `vercel build` wrote are the api's, not the web app's
     subprocess.run("rm -rf .vercel/output .vercel/static-build .vercel/.env.production.local", shell=True, cwd=mold_dir)
-    url = stable_url(proj, run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy"))
+    url = _deployed_address(proj, run(f"vercel deploy . --prod --yes --project {proj} {scope} --local-config {cfg_main}", label="web deploy"), mold_dir, infra)
     SHIPPED.append(("web", url))
     disconnect_git(proj, mold_dir)
-    # An app with its own domain (domain.py attach/switch) keeps it as its front door: `vercel deploy` always
-    # answers with the project's *.vercel.app address, and recording that would send WEB_ORIGIN, emailed links
-    # and the app's agent package back to the old address on every deploy.
-    dom = infra["vercel"].get("custom_domain")
-    if dom and (infra["vercel"].get("production_url") or "") == f"https://{dom}": url = f"https://{dom}"
+    # An app with its own domain (domain.py attach/switch) keeps it as its front door, once Vercel files it under this
+    # project: recording the *.vercel.app address would send WEB_ORIGIN, emailed links and the app's agent package
+    # back to the old address on every deploy.
+    url = _front_door(infra, url, mold_dir)
     infra["vercel"]["production_url"] = url; print(f"  {url}")
     if url != web_origin:
         for p_ in (proj, f"{proj}-api"): _set_env("WEB_ORIGIN", url, mold_dir, project=p_)
@@ -1746,6 +1877,9 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     health = {}; running = ("unmeasured", "the web app was not health-checked")
     for name, u in checks:
         if not u.startswith("http"): continue
+        mine, why_not = _guard(infra, u, name, mold_dir)
+        if not mine:
+            health[name] = "not ours"; print(f"  health {name}: NOT READ: {why_not}"); continue
         code, doc, why = _read_health(u)
         health[name] = code or "no answer"; print(f"  health {name}: {health[name]} {u}")
         # READ THE BODY, NOT THE STATUS CODE — and only a body that IS this app's health document.
@@ -1858,6 +1992,7 @@ def read_health_now(infra):
     out = {}
     for name, u in _health_checks(infra):
         if not u.startswith("http"): continue
+        if infra.get("target") == "vercel" and not _guard(infra, u, name)[0]: out[name] = "not ours"; continue
         code, _, _ = _read_health(u); out[name] = code or "no answer"
     return out
 
@@ -1974,6 +2109,9 @@ def smoke_preflight(app_id, app, infra, before):
     tok, _, why = smoke.session_for(app_id, app.get("mold_id"), min_life=PREFLIGHT_SESSION_LIFE)
     url = smoke.app_url(infra)
     if tok and not url: return
+    if tok and infra.get("target") == "vercel":
+        mine, why_not = _guard(infra, url, "web")
+        if not mine: sys.exit(f"{app_id}: {why_not}. Nothing was deployed.")
     if tok:
         state, why2, _ = smoke.workspaces(url, tok, smoke.operator_workspace(app))
         if state == "ok": print(f"  smoke test ready: {why2}"); return
@@ -1983,6 +2121,95 @@ def smoke_preflight(app_id, app, infra, before):
     stop_for_human(f"{app_id}: needs a sign-in before it is redeployed: {why}. After the deploy the factory opens the app "
                    f"as you and asks one question, and rolls back if it does not answer; that needs your sign-in. "
                    f"Nothing was deployed.\n  {smoke.sign_in_how(app_id)}\n  Then: python3 .claude/scripts/provision.py {app_id} --deploy")
+
+def dry_run_gates(app_id, app, infra, proj, mold_dir):
+    """What `--deploy` decides before it starts, read now and changing nothing: the mold CI gate and the sign-in a
+    redeploy needs (`--deploy --dry-run`)."""
+    import smoke
+    try: v = deploy_gate.check(app.get("mold_id"))
+    except SystemExit as e: v = {"ok": False, "message": str(e)}
+    print(f"  mold checks (read now): {v.get('message')}" + ("" if v.get("ok") else
+          ' -> a real --deploy refuses unless the operator gives --allow-unverified-mold "<reason>" again (an earlier '
+          'override stays on record and is never reused)'))
+    before = release_before(proj, mold_dir)
+    serving = [r for r, x in before["projects"].items() if (x or {}).get("id")]
+    if not serving: return print("  a first deploy: the operator's sign-in for the smoke test is asked for after it")
+    tok, where, why = smoke.session_for(app_id, app.get("mold_id"), min_life=PREFLIGHT_SESSION_LIFE)
+    print(f"  a redeploy ({', '.join(serving)} serve now): " + (f"the operator's sign-in is on hand ({where})" if tok else
+          f"needs the operator's sign-in first ({why}); --deploy stops with exit 3 before deploying anything"))
+
+def rename_projects(app_id, infra, adir, mold_dir, new, dry):
+    """`--rename-projects NEW [--dry-run]` (mold_v1-239): the app's three projects renamed to NEW, NEW-api, NEW-workflow
+    when those names are free on vercel.app and in this team, and NEW*.vercel.app attached to them. A rename keeps the
+    project (id, deployments, env, database, Blob store, the domains it had); nothing is deleted. Then state and the
+    URL-valued env are rewritten from the addresses READ BACK from Vercel; they reach traffic with the next deploy."""
+    new = vercel_addr.slug(new); old = infra["vercel"]["project"]
+    if new == old: sys.exit(f"{app_id}: its projects are already named {old}. Nothing was changed.")
+    olds, news = _role_projects(old), _role_projects(new)
+    if set(news.values()) & set(LIVE_PROJECTS): sys.exit(f"{new} is a live project's name. Nothing was changed.")
+    api = _addr_api(mold_dir, infra); probe = _addr_probe()
+    metas = {r: vercel_addr.project(api, p) for r, p in olds.items()}
+    gone = [olds[r] for r, m in metas.items() if not m]
+    if gone: sys.exit(f"{app_id}: {', '.join(gone)} could not be read in this team, so nothing is renamed. Nothing was changed.")
+    base, report = vercel_addr.free_base(api, probe, new, [])
+    if not base: sys.exit(f"{app_id}: refusing to rename to {new}: {'; '.join(report[0][1])}. Nothing was changed.")
+    print(("--rename-projects --dry-run, would do:" if dry else "about to do:"))
+    for r in RELEASE_ROLES: print(f"  - rename {olds[r]} -> {news[r]} (the same project {metas[r]['id']}: deployments, env, database and domains stay)")
+    print(f"  - attach {', '.join(n + vercel_addr.suffix() for n in news.values())} (nobody serves those names now); the addresses they have now stay attached")
+    print("  - state: infrastructure.json vercel.project and vercel.name_history, and the three URLs, read back from Vercel")
+    print("  - env on the projects, from the addresses read back: WEB_ORIGIN (web, api), NEXT_PUBLIC_EVE_API_URL (web), "
+          "TASK_WORKFLOW_SERVICE_URL (web, api), VERCEL_FRONTEND_PROJECT (api); the next deploy puts them in front of traffic")
+    if dry: print("dry run: nothing was changed."); return 0
+    for r in RELEASE_ROLES:
+        rc, doc = api(f"/v9/projects/{metas[r]['id']}", "PATCH", {"name": news[r]})
+        got = vercel_addr.project(api, news[r])
+        if rc or not got or got.get("id") != metas[r]["id"]:
+            sys.exit(f"{app_id}: renaming {olds[r]} to {news[r]} did not take ({doc.get('error') or 'no answer'}). Renamed so far: see "
+                     f"vercel.name_history; state still names {infra['vercel']['project']}.")
+        print(f"  renamed {olds[r]} -> {news[r]}")
+    infra["vercel"]["project"] = new
+    infra["vercel"].setdefault("name_history", []).append({"at": NOW, "from": old, "to": new, "why": (
+        f"{old}.vercel.app / {old}-api.vercel.app answered another account's site; the projects were renamed to names nobody holds")})
+    save(os.path.join(adir, "infrastructure.json"), infra)
+    for r in RELEASE_ROLES:
+        host = news[r] + vercel_addr.suffix()
+        if host in (vercel_addr.project_domains(api, metas[r]["id"]) or []): continue
+        rc, doc = api(f"/v10/projects/{metas[r]['id']}/domains", "POST", {"name": host})
+        print(f"  {news[r]}: " + (f"{host} attached" if not rc else f"{host} NOT attached: {doc.get('error')}"))
+    record_addresses(app_id, infra, adir, mold_dir)
+    print(f"{app_id}: projects renamed to {new}; addresses read back from Vercel and recorded. Next: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
+    return 0
+
+def record_addresses(app_id, infra, adir, mold_dir, wait=None):
+    """`--fix-addresses` (and the end of --rename-projects), mold_v1-239: each project's production address read back
+    from Vercel and verified as ours, recorded in infrastructure.json, and the URL-valued env rewritten from them on the
+    app's own projects (WEB_ORIGIN, NEXT_PUBLIC_EVE_API_URL, TASK_WORKFLOW_SERVICE_URL, VERCEL_FRONTEND_PROJECT). An
+    address that cannot be verified is removed from state and its env left alone. The next deploy puts the env in
+    front of traffic (a deployment keeps the env it was built with)."""
+    new = infra["vercel"]["project"]; news = _role_projects(new); api = _addr_api(mold_dir, infra)
+    got, deadline = {}, time.monotonic() + (ADDRESS_WAIT_S if wait is None else wait)
+    while True:
+        for r in RELEASE_ROLES:
+            if got.get(r): continue
+            u, _ = vercel_addr.production_address(api, news[r])
+            if u: got[r] = u
+        if len(got) == 3 or time.monotonic() > deadline: break
+        time.sleep(ADDRESS_POLL_S)
+    for r in RELEASE_ROLES: print(f"  address of {news[r]}: {got.get(r) or 'NOT verified yet (the next deploy reads it back)'}")
+    v = infra["vercel"]
+    for r, k in (("workflow", "workflow_url"), ("api", "api_url"), ("web", "production_url")):
+        if got.get(r):
+            if not (r == "web" and v.get("custom_domain") and v.get("production_url") == f"https://{v['custom_domain']}"): v[k] = got[r]
+        else: v.pop(k, None)
+    save(os.path.join(adir, "infrastructure.json"), infra)
+    web, apiu, wf = v.get("production_url"), v.get("api_url"), v.get("workflow_url")
+    for name, val, where in (("WEB_ORIGIN", web, ("web", "api")), ("NEXT_PUBLIC_EVE_API_URL", apiu, ("web",)),
+                             ("TASK_WORKFLOW_SERVICE_URL", wf, ("web", "api")), ("VERCEL_FRONTEND_PROJECT", new, ("api",))):
+        if not val: print(f"  {name}: not written (its address is not verified yet)"); continue
+        for r in where: _set_env(name, val, mold_dir, project=news[r])
+        print(f"  {name} = {val} on {', '.join(news[r] for r in where)}")
+    AR.detail("addresses", got)
+    return got
 
 ARTIFACT_HEADER = """# GENERATED by .claude/scripts/provision.py from state/application/{app_id}/*.json.
 # REGENERATED ON EVERY RUN (--check and --verify-db alike) — edit this file and your edit is gone.
@@ -2432,7 +2659,7 @@ def set_secret(app_id, name, infra, mold_dir):
             # The value needs somewhere to live and the API answers 404 for a project that does not exist.
             # --check never creates these (mold_v1-041); this writer does, and says so first.
             print(f"creating the Vercel project(s) {', '.join(absent)} to hold {name} (empty, free, no deployment) ...")
-            ensure_projects(proj, mold_dir)
+            proj = ensure_projects(proj, mold_dir, infra, app_id); projects = [proj, f"{proj}-api", f"{proj}-workflow"]
         for n_ in names:
             for p in projects: _set_env(n_, value, mold_dir, project=p)
         where = f"{len(projects)} project(s)"
@@ -2958,6 +3185,26 @@ def self_test():
     check("the dry run's URL is read-only and keeps an existing options value",
           "default_transaction_read_only%3Don" in ro and "endpoint%3Dep-x" in ro and "sslmode=require" in ro, ro)
     self_test_agent(check)
+    # mold_v1-239: the address after a deploy is READ from Vercel, against the 2026-10-12 world (someone else holds
+    # compliance-os.vercel.app; Vercel gave our project compliance-os-neon). The old stable_url() answered the stranger's.
+    V = vercel_addr.FakeVercel(); V.strangers = {"compliance-os.vercel.app": "someone else's Compliance OS"}
+    V.add("compliance-os", ["compliance-os-neon.vercel.app"]); V.add("other-app", ["other-app.vercel.app"])
+    _saved = globals()["_addr_api"]; globals()["_addr_api"] = lambda *a_, **k_: V.api
+    _env = os.environ.pop("FACTORY_REHEARSAL", None)
+    try:
+        cli = "Production: https://compliance-os-abc123-team.vercel.app [2m]\nAliased: https://compliance-os.vercel.app [3s]"
+        check("alias reading: after the deploy the address is the one Vercel files under the project, not <project>.vercel.app",
+              _deployed_address("compliance-os", cli, None, {"vercel": {"team": "t"}}) == "https://compliance-os-neon.vercel.app")
+        try: got = _deployed_address("compliance-os", "Production: https://other-app-abc123-team.vercel.app", None, {"vercel": {"team": "t"}}); check("a deployment of another project is never read as ours", False, got)
+        except SystemExit as e: check("a deployment of another project is never read as ours (stops, nothing sent)", "Nothing was sent" in str(e), e)
+        check("the guard refuses the stranger's address for the web project", not _guard({"target": "vercel", "vercel": {"team": "t", "project": "compliance-os"}}, "https://compliance-os.vercel.app", "web")[0])
+        check("the front door is the verified address when no own domain was switched to", _front_door({"vercel": {"project": "compliance-os"}}, "https://compliance-os-neon.vercel.app", None) == "https://compliance-os-neon.vercel.app")
+        check("  ...and an own domain Vercel does not file under the project is not the front door",
+              _front_door({"target": "vercel", "vercel": {"project": "compliance-os", "custom_domain": "compliance.example.com", "production_url": "https://compliance.example.com"}},
+                          "https://compliance-os-neon.vercel.app", None) == "https://compliance-os-neon.vercel.app")
+    finally:
+        globals()["_addr_api"] = _saved
+        if _env is not None: os.environ["FACTORY_REHEARSAL"] = _env
     self_test_release(check)
     import operator_run; operator_run.self_test(check)   # --operator (mold_v1-230): parsing, allow-list, masking, both targets
     if fails:
@@ -3169,6 +3416,60 @@ def self_test_release(check):
         os.remove(session); n0 = ndeps()
         code, out = go("app1", "--deploy")
         check("a redeploy with no sign-in on hand: exit 3 before anything is deployed", code == 3 and "Nothing was deployed" in out and ndeps() == n0, out[-500:])
+        # ---- mold_v1-239: addresses are read from Vercel and verified, never made from a project name ----------------------
+        world(ci="green", strangers=["taken-app", "cos", "cos-api"])
+        # the stranger's site may see the factory's anonymous "is this name free?" GET of / and nothing else
+        stranger_hits = lambda: [h for h in (json.loads(l) for l in calls().splitlines() if '"stranger"' in l)
+                                 if h.get("authorization") or not h["url"].endswith(".invalid/")]
+        # name collision: none of the three exists and <name>.rehearsal.invalid is someone else's -> a free name, recorded
+        a3 = mkapp("app3", {"target": "vercel", "secret_store": "vercel_env", "vercel": {"team": "t", "project": "taken-app"},
+                            "secrets": [], "secrets_user": [], "secrets_derived": []})
+        i3 = lambda: load(os.path.join(a3, "infrastructure.json"))
+        n0 = ndeps(); code, out = go("app3", "--deploy", "--dry-run")
+        check("--deploy --dry-run: the plan names the free name it would use, and nothing is created or deployed",
+              code == 0 and "taken-app-t" in out and "dry run, read-only" in out and ndeps() == n0 and "taken-app-t" not in json.load(open(W))["projects"]
+              and i3()["vercel"]["project"] == "taken-app", out[-900:])
+        code, out = go("app3", "--deploy")
+        w_ = json.load(open(W))["projects"]
+        check("name collision: taken-app.rehearsal.invalid is a stranger's, so the projects are created as taken-app-t and recorded",
+              i3()["vercel"]["project"] == "taken-app-t" and (i3()["vercel"].get("name_history") or [{}])[-1].get("from") == "taken-app"
+              and {"taken-app-t", "taken-app-t-api", "taken-app-t-workflow"} <= set(w_) and "taken-app" not in w_, (out[-900:], i3()["vercel"]))
+        check("  ...and its addresses are its own, read back from Vercel", i3()["vercel"].get("production_url") == "https://taken-app-t.rehearsal.invalid"
+              and i3()["vercel"].get("api_url") == "https://taken-app-t-api.rehearsal.invalid", i3()["vercel"])
+        # alias reading: the 2026-10-12 world. The three projects exist; cos and cos-api's names are a stranger's.
+        for nm in ("cos", "cos-api", "cos-workflow"):
+            w_ = json.load(open(W)); w_["projects"][nm] = {"id": "prj_" + nm, "auto": True, "prod": None, "env": {}, "deps": []}; json.dump(w_, open(W, "w"))
+        a4 = mkapp("app4", {"target": "vercel", "secret_store": "vercel_env", "vercel": {"team": "t", "project": "cos"},
+                            "secrets": [], "secrets_user": [], "secrets_derived": []})
+        i4 = lambda: load(os.path.join(a4, "infrastructure.json"))
+        json.dump({"token": "tok-operator", "expires_at": int(time.time()) + 7 * 86400}, open(os.path.join(priv, "app4.session.json"), "w"))
+        code, out = go("app4", "--deploy")
+        v4 = i4()["vercel"]
+        check("alias reading: the addresses recorded are the ones Vercel gave (cos-x7, cos-api-x7), not <project>.rehearsal.invalid",
+              v4.get("production_url") == "https://cos-x7.rehearsal.invalid" and v4.get("api_url") == "https://cos-api-x7.rehearsal.invalid"
+              and v4.get("workflow_url") == "https://cos-workflow.rehearsal.invalid" and code == 0, (out[-900:], v4))
+        check("  ...health and the smoke test went to our addresses, and the stranger's site got nothing", not stranger_hits()
+              and set(v4.get("health", {}).values()) == {"200"} and (v4.get("smoke") or {}).get("result") == "pass", (stranger_hits(), v4.get("health"), v4.get("smoke")))
+        # the ownership guard: state pointing at the stranger's address never receives the session
+        bad = i4(); bad["vercel"]["production_url"] = "https://cos.rehearsal.invalid"; json.dump(bad, open(os.path.join(a4, "infrastructure.json"), "w"))
+        code, out = go("app4", "--smoke")
+        check("ownership guard: --smoke refuses an address Vercel does not file under the app, and sends no token there",
+              code == 1 and "refusing to send anything to cos.rehearsal.invalid" in out and not stranger_hits(), (out[-600:], stranger_hits()))
+        n0 = ndeps(); code, out = go("app4", "--deploy")
+        check("  ...and a redeploy whose recorded address is the stranger's stops before deploying, nothing sent",
+              code == 1 and "refusing to send anything" in out and ndeps() == n0 and not stranger_hits(), (out[-600:], stranger_hits()))
+        # --rename-projects: the same projects under a free name, the addresses read back and recorded
+        bad["vercel"]["production_url"] = v4["production_url"]; json.dump(bad, open(os.path.join(a4, "infrastructure.json"), "w"))
+        code, out = go("app4", "--rename-projects", "acme-cos", "--dry-run")
+        check("--rename-projects --dry-run changes nothing", code == 0 and "nothing was changed" in out and "cos" in json.load(open(W))["projects"], out[-500:])
+        code, out = go("app4", "--rename-projects", "taken-app")
+        check("--rename-projects refuses a name someone else holds", code == 1 and "someone else" in out and i4()["vercel"]["project"] == "cos", out[-500:])
+        code, out = go("app4", "--rename-projects", "acme-cos")
+        v4 = i4()["vercel"]; w_ = json.load(open(W))["projects"]
+        check("--rename-projects: same project ids under the new names, the new addresses verified and recorded",
+              code == 0 and w_.get("acme-cos", {}).get("id") == "prj_cos" and "cos" not in w_ and v4["project"] == "acme-cos"
+              and v4.get("production_url") == "https://acme-cos.rehearsal.invalid" and v4.get("api_url") == "https://acme-cos-api.rehearsal.invalid"
+              and (v4.get("name_history") or [{}])[-1].get("to") == "acme-cos", (out[-900:], v4))
     finally:
         shutil.rmtree(t, ignore_errors=True)
 
@@ -3213,7 +3514,8 @@ def _main(a):
         sys.path.insert(0, os.path.join(ROOT, ".claude/scripts/lib")); import vm_remote
         return sys.exit(vm_remote.cli(["--self-test"]))
     if not a or a[0].startswith("-"): sys.exit(__doc__)   # `--help`, or a flag where the app id goes
-    app_id = a[0]; deploy = "--deploy" in a
+    # `--deploy --dry-run` is the plan only (mold_v1-239): it used to be read as --deploy, a real deploy with no lock.
+    app_id = a[0]; dry = "--dry-run" in a; dry_deploy = "--deploy" in a and dry; deploy = "--deploy" in a and not dry
     adir = os.path.join(ST, "application", app_id)
     if not os.path.isfile(os.path.join(adir, "application.json")):
         sys.exit(f"{app_id}: no such application (state/application/{app_id}/application.json does not exist). "
@@ -3255,15 +3557,29 @@ def _main(a):
     if "--library-apply" in a:
         # Its twin: a dry run unless --apply; the same app role, the same build copy (library.py).
         sys.exit(_library().apply_local(app_id, app, infra, a))
+    if dry:
+        for f in ("--verify-db", "--rollback", "--set-secret", "--smoke", "--verify-rls"):
+            if f in a: sys.exit(f"{app_id}: {f} has no dry run, so nothing was done. The plan of a deploy, read-only: "
+                                f"python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
     if target == "vercel":
         _refuse_live_or_shared_project(app_id, infra)   # ahead of --set-secret: it writes env into the project
+        if "--rename-projects" in a:
+            # mold_v1-239: give the three projects a name nobody else holds on vercel.app, keeping them (a rename).
+            i_ = a.index("--rename-projects")
+            if i_ + 1 >= len(a) or a[i_ + 1].startswith("-"): sys.exit("--rename-projects needs the new name, e.g. --rename-projects acme-app [--dry-run]")
+            return rename_projects(app_id, infra, adir, mold_dir, a[i_ + 1], dry)
+        if "--fix-addresses" in a:
+            if dry:
+                for role, (u, why) in addresses_now(infra, mold_dir).items(): print(f"  {role}: {u or 'none: ' + why}")
+                return print("dry run: nothing was changed.")
+            record_addresses(app_id, infra, adir, mold_dir); return 0
         if "--rollback" in a:
             # By hand: every project back to its previous production deployment (rollback_by_hand). Under the deploy lock.
             return rollback_by_hand(app_id, app, infra, adir, mold_dir)
         if "--smoke" in a:
             # The post-deploy check on its own, against what serves now (a first deploy's check, once the operator
             # has signed in). The same function serves an app on its own server (lib/vm_remote.py main_for).
-            return smoke_now(app_id, app, infra, adir, "vercel")
+            sys.exit(smoke_now(app_id, app, infra, adir, "vercel"))   # exit 0 pass, 1 fail (its docstring); a bare return exited 0
     elif "--rollback" in a or "--smoke" in a:
         sys.exit(f"{app_id}: --rollback and --smoke are for an app that serves traffic (Vercel, or its own server); this one's target is {target!r}.")
     if "--set-secret" in a:
@@ -3331,7 +3647,8 @@ def _main(a):
         # plan says what a writer would create, and only --deploy / --verify-db go on to create it.
         writer = deploy or "--verify-db" in a
         plan = vercel_plan(app_id, app, infra, ds, mold_dir, proj, "verify-db" if "--verify-db" in a else "deploy")
-        print_plan(plan, "about to create:" if writer else "a deploy will create:")
+        print_plan(plan, "about to create:" if writer else "--deploy --dry-run: a deploy would do, in this order:" if dry_deploy else "a deploy will create:")
+        if dry_deploy: dry_run_gates(app_id, app, infra, proj, mold_dir)
         present = plan["present"]
         # report a reconnected project before anyone deploys: a git-sourced build of the factory repo
         # overwrites this app's production deployment and its build cache.
@@ -3385,7 +3702,7 @@ def _main(a):
                              f"{_busiest()}. NOTHING was created and {app_id}'s status is unchanged; the running "
                              f"app is untouched. Rerun when that work has finished: python3 .claude/scripts/provision.py {app_id} --deploy")
                 print(f"  VM headroom ok: {now}")
-            ensure_projects(proj, mold_dir)         # before ANY env or resource is written to them
+            proj = ensure_projects(proj, mold_dir, infra, app_id)   # before ANY env or resource is written to them
             present = provision_datastores(app_id, ds, mold_dir, present, infra, proj)
             save(os.path.join(adir, "infrastructure.json"), infra)
         if "--verify-db" in a:
@@ -3440,7 +3757,8 @@ def _main(a):
     if not deploy:
         # Exit 1 only for something the OPERATOR must do; derived names are the deploy's job and were
         # listed above as what it will create.
-        print("check only, read-only: nothing was created. " + (f"Set the secret(s) above, then run:" if missing_user else "Ready:")
+        print(("dry run, read-only: nothing was created, written or deployed. " if dry_deploy else "check only, read-only: nothing was created. ")
+              + (f"Set the secret(s) above, then run:" if missing_user else "Ready:")
               + f" python3 .claude/scripts/provision.py {app_id} --deploy")
         AR.detail("secrets_present", len([x for x in secrets if x in present])); AR.detail("secrets_total", len(secrets))
         AR.detail("missing", missing_user); AR.detail("will_create", plan["create"])

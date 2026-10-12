@@ -24,7 +24,26 @@
           "type": "string"
         },
         "project": {
-          "type": "string"
+          "type": "string",
+          "description": "Base name of the app's three projects (<project>, <project>-api, <project>-workflow). Never an address: the addresses are read from Vercel after each deploy (mold_v1-239)."
+        },
+        "name_prefix": {
+          "type": "string",
+          "description": "Word put in front of the project name when <project>.vercel.app is someone else's (default: the app's customer_id)."
+        },
+        "name_history": {
+          "type": "array",
+          "description": "Every time the projects' name changed because a *.vercel.app name was taken (provision.py chose one, or --rename-projects).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {"type": "string"},
+              "from": {"type": "string"},
+              "to": {"type": "string"},
+              "why": {"type": "string"}
+            },
+            "required": ["at", "from", "to"]
+          }
         },
         "production_url": {
           "type": "string",

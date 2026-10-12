@@ -14,7 +14,35 @@ python3 .claude/scripts/provision.py <app_id> --rollback          # every projec
 python3 .claude/scripts/provision.py <app_id> --smoke             # the post-deploy chat check alone, against what serves now (Vercel or its own server)
 python3 .claude/scripts/provision.py <app_id> --operator <script> --dry-run -- <args>   # one of the mold's operator:* scripts: the exact command, nothing run
 python3 .claude/scripts/lib/deploy_gate.py <mold_id>              # did the mold source's CI pass for the pinned commit? read-only
+python3 .claude/scripts/provision.py <app_id> --deploy --dry-run  # the plan, the mold CI gate and whether a redeploy needs a sign-in; read-only
+python3 .claude/scripts/provision.py <app_id> --fix-addresses [--dry-run]          # read each project's address back from Vercel, record it, rewrite the URL env
+python3 .claude/scripts/provision.py <app_id> --rename-projects NEW [--dry-run]    # NEW, NEW-api, NEW-workflow when nobody holds those *.vercel.app names; nothing deleted
+python3 .claude/scripts/lib/vercel_addr.py <project> --scope <team>                # a project's production address, verified as ours; read-only
 ```
+
+## Addresses are read, never made from a name (mold_v1-239)
+
+A `*.vercel.app` name is global across every Vercel account: when `<project>.vercel.app` is someone else's, Vercel
+gives our project another one (on 2026-10-12, compliance-os got `compliance-os-neon.vercel.app` because another
+account's "Compliance OS" held `compliance-os.vercel.app`). So the factory never derives an address from a project
+name (`lib/vercel_addr.py`):
+
+- **Before a first deploy**, a new app whose `<project>`, `<project>-api` or `<project>-workflow` name is served by
+  anyone else (an anonymous GET; Vercel answers `DEPLOYMENT_NOT_FOUND` for a free name) gets its three projects under
+  the first free name: `<name_prefix or customer_id>-<project>`, then `<project>-<first word of the team>`, then
+  `<project>-<4 hex>`, recorded in `infrastructure.json` `vercel.project` and `vercel.name_history`. The check prints
+  it as `NAMES: ...`. A project with no domain yet gets `<project>.vercel.app` claimed only when it is free.
+- **After each deploy** the address is read back: the project's own domains (`GET /v9/projects/<id>/domains`) that
+  the new deployment's alias list carries, preferring `<project>.vercel.app`, and confirmed by the alias record
+  (`GET /v4/aliases/<host>` names our project id). No such address stops the deploy with nothing sent anywhere.
+- **The ownership guard** (`vercel_addr.guard_app`): the health checks, the smoke test, the pre-deploy sign-in probe,
+  `mint.py code-request` / `code` and `lanes.py` send nothing to an address Vercel does not file under this app's
+  projects. They refuse with `refusing to send anything to <host>: ... Nothing was sent.`
+- **An app whose name was taken after the fact**: `--rename-projects NEW` renames the same three projects (ids,
+  deployments, env, database, Blob store and their old domains stay; nothing is deleted), attaches
+  `NEW*.vercel.app`, then does what `--fix-addresses` does: records the addresses read back and rewrites
+  `WEB_ORIGIN`, `NEXT_PUBLIC_EVE_API_URL`, `TASK_WORKFLOW_SERVICE_URL` and `VERCEL_FRONTEND_PROJECT` from them. A
+  running deployment keeps the env it was built with, so the next `--deploy` puts them in front of traffic.
 
 For an application on `target: vm_remote` (a server of the customer's own, over SSH) the commands are different; see "A server
 of its own" at the end.
@@ -26,7 +54,9 @@ may not handle secret values). Missing secrets are the user's to set; report nam
 
 1. **`provision.py <app>`** (same as `--check`) is **read-only on every target**. On `target: vercel` it runs exactly
    five kinds of read: `GET /v9/projects/<proj>`, `/<proj>-api`, `/<proj>-workflow`; `vercel integration list --all
-   --json`; `GET /v1/storage/stores`; and `vercel env ls production --project <proj>` only if `<proj>` exists. It prints
+   --json`; `GET /v1/storage/stores`; and `vercel env ls production --project <proj>` only if `<proj>` exists. It also reads each existing project's domain list
+   (`GET /v9/projects/<id>/domains`, plus `GET /v4/aliases/<host>`) and, for a new app, looks anonymously at whether
+   `<name>.vercel.app` is served by anyone (mold_v1-239). It prints
    each project as `exists` / `does not exist`, then `a deploy will create:` — every step the deploy performs, in the order it happens, so nothing it writes or rotates is a surprise (mold_v1-056): `build/<app_id>/`, a branded copy of the mold to build from (branded apps only; local files); the projects to create; the Neon action (adopt one of N named unattached resources if one is empty, else provision `<app-id-dashed>` on the free plan, each candidate inspected through a temporary `sf-neon-inspect-*` project created and deleted in the same run); the Blob store `<app-id-dashed>` (create, or connect if the team already has one); the env it mints (`CRON_SECRET`, `OPS_SECRETS_KEY`, `AUTH_JWT_PRIVATE_KEY`, `AUTH_JWT_PUBLIC_KEY`, `TASK_WORKFLOW_SERVICE_TOKEN`); the four build-time flags rewritten on `<project>` and `<project>-api` on every deploy (`MODEL_PROVIDER`, `ENABLE_WEB_SEARCH`, `ENABLE_BROWSER`, `OPS_MULTI_TENANT`); the database step — every org-scoped table held closed to `app_rw` by a temporary restrictive guard from before the schema step until coverage passes, re-applied after the journal and after the drift step so a table either creates is guarded too, with `app_rw`'s default grant on new tables withheld meanwhile (mold_v1-143; each hold and the release take a lock on every org-scoped table with a 10 s lock timeout and up to 4 attempts, so on a busy database one of them can stall the app's queries on a table for up to ~40 s in the worst case), schema (a full `drizzle-kit push --force` only on an empty database), migration journal, then on a live database any schema drift the journal did not cover, planned by a read-only dry run and applied in one transaction with nothing that drops a policy or disables RLS — a plan that would delete data (truncate, DROP TABLE/COLUMN/SCHEMA/MATERIALIZED VIEW) or drop an index other than the mold's own `workflow_definitions_one_default_idx` stops the deploy with the statements named, because that change belongs in a migration, the RLS + `app_rw` bootstrap, which ROTATES the `app_rw` password unless the `DATABASE_URL` already deployed is `app_rw`'s own — the check reads names, not values, so it cannot tell in advance (a rotation means every build made against the older password stops connecting until it is rebuilt), the task-workflow migration, the RLS coverage pass, the isolation proof, and only after that proof `DATABASE_URL` on all three projects; then the three production deployments in order — `<project>-workflow` (env copied from `<project>`, framework PATCHed to `nextjs`, i.e. the project's framework setting is changed by an API call, then `TASK_WORKFLOW_SERVICE_URL` written), `<project>-api` (API env copied, framework PATCHed to `eve`, a prebuilt deployment, then `NEXT_PUBLIC_EVE_API_URL` written) and `<project>` itself (`WEB_ORIGIN` written on web and api, rewritten if the deployment's URL differs), each git-disconnected again if the deploy re-linked it; and last, reads only (the three health endpoints) and the state files it updates. A `shared_with_live` app lists `build/<app_id>/vercel.nocron.json` (the snapshot path when unbranded) — `vercel.json` with its crons stripped — in place of the database, workflow and api steps. Then `secrets present: n/N`, one `--set-secret NAME` line per missing operator secret, `secrets a deploy will mint (not yours to set): <derived names>` (a different, shorter line: the names only), `set during --deploy: <deploy-time names>`, a `--verify-rls` reminder
    while nothing has measured isolation, and the closing line `check only, read-only: nothing was created. Set the secret(s)
    above, then run: ... --deploy` (exit 1) or `... Ready: ... --deploy` (exit 0). It never creates, deletes or writes

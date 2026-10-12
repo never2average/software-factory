@@ -19,6 +19,11 @@ WHAT IT DOES, in the app's own API (the calls the browser makes; molds/mold_v1/c
 The question needs no specialist ("What is 2 + 2?"), so a pass measures the deployment's own wiring: the web app,
 the agent API behind it, the model credential and the database, not a subagent.
 
+NEVER ANOTHER'S ADDRESS (mold_v1-239). Before the session is even looked up, the address must be one Vercel files under
+this app's web project (lib/vercel_addr.py guard_app; an app on its own server is not asked). Otherwise the check
+fails with "refusing to send anything to <host>" and nothing is sent: on 2026-10-12 the address in state was another
+account's compliance-os.vercel.app.
+
 NEVER A CUSTOMER'S WORKSPACE. The only workspace ever named is the operator's own, from state. If the session on
 hand is not a member of it the check stops before sending anything ("needs a sign-in": it is the wrong person's
 session), and an app with one workspace only (no memberships listed: tenancy off) is asked without naming one.
@@ -41,6 +46,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import services  # noqa: E402
 import legacy    # noqa: E402
+import vercel_addr  # noqa: E402  which addresses are this app's own on Vercel (mold_v1-239)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 PROMPT = ("[factory post-deploy check: an automated message, safe to delete] "
@@ -184,14 +190,18 @@ def workspaces(url, tok, org, timeout=30):
     return "ok", f"workspace list loaded ({len(ms)}); the operator's workspace {org} is there as {mine.get('role') or 'member'}", org
 
 
-def check(app_id, app=None, infra=None, url=None, session_file=None, timeout=None, min_life=MIN_LIFE):
-    """The whole post-deploy check. Never raises; the token is never in what it returns."""
+def check(app_id, app=None, infra=None, url=None, session_file=None, timeout=None, min_life=MIN_LIFE, owner=None):
+    """The whole post-deploy check. Never raises; the token is never in what it returns. `owner(url) -> (ok, why)`
+    decides whether the address is this app's own (default: lib/vercel_addr.py guard_app on the web project)."""
     t0 = time.time(); timeout = timeout or DEFAULT_TIMEOUT
     if app is None or infra is None:
         adir = os.path.join(ROOT, "state", "application", app_id)
         app = json.load(open(os.path.join(adir, "application.json"))); infra = json.load(open(os.path.join(adir, "infrastructure.json")))
     url = (url or app_url(infra) or "").rstrip("/")
     if not url: return _result("fail", "the app has no production address in state, so there is nothing to open", t0)
+    try: mine, why_not = (owner or (lambda u: vercel_addr.guard_app(infra, u, roles=("",))))(url)
+    except Exception as e: mine, why_not = False, f"refusing to send anything to {url}: its owner could not be read ({type(e).__name__})"
+    if not mine: return _result("fail", why_not, t0, url=url, refused="not this app's address")
     tok, where, why = session_for(app_id, app.get("mold_id"), min_life=min_life, session_file=session_file)
     if not tok: return _result("needs_sign_in", why, t0, url=url, how=sign_in_how(app_id))
     base = {"url": url, "session_from": where}
@@ -333,6 +343,16 @@ def self_test():
             ok(check("app_one", app, infra)["result"] == "pass", "an operator's own lent session (MOLD_V1_SESSION_TOKEN) is used")
             os.environ.pop(session_var("mold_v1"))
             ok(check("app_one", {"mold_id": "mold_v1"}, infra, session_file=f)["result"] == "needs_sign_in", "no operator workspace in state: never guesses one")
+            # mold_v1-239: an address Vercel does not file under this app's web project never receives the session
+            world_is()
+            stranger = lambda u: (False, f"refusing to send anything to {vercel_addr.host_of(u)}: another account's site. Nothing was sent.")
+            r = check("app_one", app, infra, session_file=f, owner=stranger)
+            ok(r["result"] == "fail" and r.get("refused") and "refusing to send anything" in r["detail"] and not calls(),
+               "ownership guard: an address that is not this app's gets no request and no token", (r, calls()))
+            vinfra = {"target": "vercel", "vercel": {"team": "t", "project": "app-one", "production_url": "https://app-one.rehearsal.invalid"}}
+            r = check("app_one", app, vinfra, session_file=f, owner=None)
+            ok(r["result"] == "fail" and "refusing to send anything" in r["detail"] and not calls(),
+               "ownership guard by default on a Vercel app: Vercel does not vouch for it (the rehearsal has no vercel), nothing sent", (r, calls()))
         finally:
             os.environ.clear(); os.environ.update(old_env); services.REHEARSAL = old_reh; services._ACTIVE = False
     if fails:

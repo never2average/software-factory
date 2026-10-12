@@ -249,7 +249,7 @@
       "deploy_targets": [
         "vercel"
       ],
-      "vercel_project": "compliance-os",
+      "vercel_project": "onfinance-compliance-os",
       "packs": [
         "compliance-os"
       ]

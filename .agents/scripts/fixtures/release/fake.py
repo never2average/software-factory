@@ -4,9 +4,13 @@
 The self-test links each name to this file in <FACTORY_REHEARSAL>/bin (lib/services.py puts that first on PATH). The
 whole outside world is <FACTORY_REHEARSAL>/world.json:
 
-  projects   {name: {id, auto, prod, env: {NAME: 1}, deps: [{uid, created, state, fault}]}}   Vercel, as far as the
-             deploy, the rollback and the promote go. A rollback sets auto false (as Vercel does); a promote sets it
-             back. A deployment is put in front of traffic by itself only while auto is true.
+  projects   {name: {id, auto, prod, env: {NAME: 1}, deps: [{uid, created, state, fault, alias}], domain}}   Vercel, as
+             far as the deploy, the rollback and the promote go. A rollback sets auto false (as Vercel does); a promote
+             sets it back. A deployment is put in front of traffic by itself only while auto is true. `domains` are the
+             project's production address labels (<label>.rehearsal.invalid): claimed, or given at the first deploy.
+  strangers  [label]   addresses another account holds (mold_v1-239): <label>.rehearsal.invalid answers a stranger's
+             site, so a project created under that name gets <label>-x7 at its first deploy, as Vercel does. Every
+             request a stranger's site receives is logged with whether it carried an authorization header.
   fault      {project: "build" | "health" | "chat"}   the NEXT deployment of that project fails its build, answers
              health 500, or fails every chat turn. Used once.
   ci         "green" | "red" | "pending"              the mold source's CI for any commit (gh api)
@@ -27,10 +31,24 @@ def opt(k): return A[A.index(k) + 1] if k in A and A.index(k) + 1 < len(A) else 
 def proj_by_id(w, pid): return next((n for n, p in w["projects"].items() if p["id"] == pid or n == pid), None)
 
 
+SUF = ".rehearsal.invalid"
+
+
 def meta(n, p):
     prod = next((d for d in p["deps"] if d["uid"] == p.get("prod")), None)
     return {"id": p["id"], "name": n, "autoAssignCustomDomains": p.get("auto", True), "link": None,
-            "targets": {"production": {"id": prod["uid"], "createdAt": prod["created"], "readyState": prod["state"]}} if prod else {}}
+            "targets": {"production": {"id": prod["uid"], "createdAt": prod["created"], "readyState": prod["state"],
+                                       "alias": prod.get("alias", [])}} if prod else {}}
+
+
+def label_of(host): return host[:-len(SUF)] if host.endswith(SUF) else None
+def by_domain(w, label): return next((n for n, p in w["projects"].items() if label and label in (p.get("domains") or [])), None)
+def taken(w, label): return label in (w.get("strangers") or []) or by_domain(w, label) is not None
+def find_dep(w, ref):
+    for n, p in w["projects"].items():
+        for i, d in enumerate(p["deps"]):
+            if ref in (d["uid"], f"{n}-{i + 1}{SUF}"): return n, p, d
+    return None, None, None
 
 
 def vercel():
@@ -38,10 +56,36 @@ def vercel():
     log()
     if cmd == "api":
         path, method = A[1], (opt("-X") or "GET")
+        field = dict(x.split("=", 1) for x in [A[i + 1] for i, a in enumerate(A[:-1]) if a == "-f"])
+        m = re.match(r"^/v4/aliases/([^/?]+)$", path)
+        if m:
+            n = by_domain(w, label_of(m.group(1))); p = w["projects"].get(n) if n else None
+            if not p or not p.get("prod"): print("Error: Response Error (404)", file=sys.stderr); return 1
+            print(json.dumps({"alias": m.group(1), "projectId": p["id"], "deploymentId": p["prod"]})); return 0
+        m = re.match(r"^/v13/deployments/([^/?]+)$", path)
+        if m:
+            n, p, d = find_dep(w, m.group(1))
+            if not d: print("Error: Response Error (404)", file=sys.stderr); return 1
+            print(json.dumps({"id": d["uid"], "projectId": p["id"], "readyState": d["state"], "alias": d.get("alias", [])})); return 0
+        m = re.match(r"^/v\d+/projects/([^/?]+)/domains$", path)
+        if m:
+            n = proj_by_id(w, m.group(1))
+            if not n: print('{"error": {"message": "Project not found"}}'); return 1
+            p = w["projects"][n]
+            if method == "POST":
+                lb = label_of(field.get("name", ""))
+                if not lb or taken(w, lb): print('{"error": {"message": "domain already in use"}}'); return 1
+                p.setdefault("domains", []).append(lb)      # Vercel points a new domain at the current production deployment
+                for d in p["deps"]:
+                    if d["uid"] == p.get("prod"): d.setdefault("alias", []).append(lb + SUF)
+                save(w); print(json.dumps({"name": field["name"]})); return 0
+            print(json.dumps({"domains": [{"name": x + SUF, "projectId": p["id"], "verified": True, "redirect": None} for x in p.get("domains") or []]})); return 0
         m = re.match(r"^/v\d+/projects/([^/?]+)$", path)
         if m:
             n = proj_by_id(w, m.group(1))
             if not n: print('{"error": {"code": "not_found", "message": "Project not found"}}'); return 1
+            if method == "PATCH" and field.get("name"):
+                w["projects"][field["name"]] = w["projects"].pop(n); n = field["name"]; save(w)
             print(json.dumps(meta(n, w["projects"][n]))); return 0
         m = re.match(r"^/v\d+/projects/([^/?]+)/env$", path)
         if m:
@@ -82,16 +126,23 @@ def vercel():
         if fault == "build":
             p["deps"].append({"uid": uid, "created": time.time() * 1000, "state": "ERROR"}); save(w)
             print("Error: the build failed (rehearsal)", file=sys.stderr); return 1
-        p["deps"].append({"uid": uid, "created": time.time() * 1000, "state": "READY", "fault": fault})
+        if not p.get("domains"):   # Vercel names the production address at the first deploy; a taken name gets a suffix
+            p["domains"] = [n if not taken(w, n) else n + "-x7"]
+        p["deps"].append({"uid": uid, "created": time.time() * 1000, "state": "READY", "fault": fault,
+                          "alias": [x + SUF for x in p["domains"]] if p.get("auto", True) else []})
         if p.get("auto", True): p["prod"] = uid
-        save(w); print(f"Aliased: https://{n}.rehearsal.invalid"); return 0
+        save(w); print(f"Aliased: https://{p['domains'][0]}{SUF}"); return 0
     return 0
 
 
 def app(method, url, headers, body):
     m = re.match(r"^https://([a-z0-9-]+)\.rehearsal\.invalid(/[^?#]*)?", url or "")
     if not m: return None
-    w = load(); n, path = m.group(1), (m.group(2) or "/")
+    w = load(); lb, path = m.group(1), (m.group(2) or "/")
+    if lb in (w.get("strangers") or []) and not by_domain(w, lb):
+        log(stranger=lb, url=url, authorization=bool(headers.get("authorization")))
+        return (404, {"stranger": "someone else's 404 page"}) if path.endswith("health") else (200, {"stranger": "someone else's product"})
+    n = by_domain(w, lb) or (lb if lb in w.get("projects", {}) and not w["projects"][lb].get("domains") else None)
     p = w.get("projects", {}).get(n)
     prod = next((d for d in (p or {}).get("deps", []) if d["uid"] == (p or {}).get("prod")), None)
     if not prod: return 404, {"error": "DEPLOYMENT_NOT_FOUND"}
