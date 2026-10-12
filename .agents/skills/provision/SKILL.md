@@ -11,7 +11,8 @@ python3 .claude/scripts/provision.py <app_id> --deploy            # prints the p
 python3 .claude/scripts/provision.py <app_id> --verify-db         # the database half of --deploy (vercel: creates projects + datastores, bootstraps Neon; vm: a private local Postgres)
 python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # re-prove isolation on what runs now; writes rls_verified
 python3 .claude/scripts/provision.py <app_id> --rollback          # every project back to its previous production deployment (Vercel)
-python3 .claude/scripts/provision.py <app_id> --smoke             # the post-deploy chat check alone, against what serves now
+python3 .claude/scripts/provision.py <app_id> --smoke             # the post-deploy chat check alone, against what serves now (Vercel or its own server)
+python3 .claude/scripts/provision.py <app_id> --operator <script> --dry-run -- <args>   # one of the mold's operator:* scripts: the exact command, nothing run
 python3 .claude/scripts/lib/deploy_gate.py <mold_id>              # did the mold source's CI pass for the pinned commit? read-only
 ```
 
@@ -227,6 +228,33 @@ python3 .claude/scripts/provision.py <app_id> --library-apply --org <id> --apply
 Same rules: dry run first, the operator says yes, then `--apply`, which adds only what that dry run listed, one workspace at a
 time. Nothing is generated: each app is written by its specialist the first time someone opens it. An app deployed before the
 mold had this command is refused in a sentence: deploy it first.
+## The mold's operator scripts: a workspace, a team member, a company (mold_v1-230)
+
+The mold ships `operator:*` scripts of its own (`operator:new-org`, `operator:onboard-self`, `operator:new-customer`, ...;
+docs/RUNBOOK.md §6a says what each writes). One command runs any of them against a deployed app, on Vercel or on its own server,
+with the script's own arguments after `--`:
+
+```
+python3 .claude/scripts/provision.py <app_id> --operator new-org --dry-run -- --name "<Name>" --id <id> --owner <email>   # the exact command; nothing run, nothing contacted
+python3 .claude/scripts/provision.py <app_id> --operator new-org -- --name "<Name>" --id <id> --owner <email>             # exit 3: needs the person's yes; nothing run
+python3 .claude/scripts/provision.py <app_id> --operator new-org --yes -- --name "<Name>" --id <id> --owner <email>       # runs it (only after that yes)
+```
+
+- **Only the build's own `operator:*` scripts run**, read from the package.json of the app's build copy; any other name is exit 2
+  with the list. A script whose line is not a plain `node scripts/operator/<file>` is never run.
+- **Own server:** the script runs there, as the web app's user (`sfweb`), in the serving release (`current`), with `web.env` as
+  its environment (the app role, row-level security on) — the way `--library-cleanup` runs. Its arguments travel on stdin, and
+  every value of `web.env` is removed from what it prints. The server checks the name again against the serving release.
+- **Vercel:** it runs here, from `build/<app_id>/`, with the app role's `DATABASE_URL` pulled from the web project's production
+  environment for the run and never printed. Only `DATABASE_URL` is given, so a script's data-room writes (onboard-self's
+  `People/<you>/`, new-customer's `context.md`) find no file store there and are skipped or fail; the database rows are written.
+- **A yes first.** `--dry-run` is safe to run any time: it prints the exact command, the database address, the env file's values
+  and any argument after a flag named like a password, token, secret or key masked. Without `--dry-run` the script writes to a
+  live app: show the dry run, ask the person in plain words ("This adds a workspace called X owned by Y to <app>. Shall I?"), and
+  only on a plain yes rerun it with `--yes`. Without `--yes` it stops with exit 3 and a `needs` entry of kind `approval`.
+- `--json` (before `--`) prints one result: `details.operator` has the script, the target, the masked arguments and command, and
+  the script's exit code. Exit 0 the script finished with 0, 1 it failed or the app could not be reached, 2 bad input, 3 a yes is needed.
+
 `--tunnel-remote --dry-run` prints the private administration tunnel's whole plan (WireGuard, SSH on the tunnel only, public port 22
 closed behind a lockout guard) without connecting; the real run, `--tunnel-remote --factory-apply`, installs one package on this
 machine and is the user's to approve. If the tunnel is ever down, give the user `docs/RUNBOOK.md` §9, "If the factory cannot reach the

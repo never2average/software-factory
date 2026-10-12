@@ -4075,6 +4075,10 @@ def cli(a):
         print_plan(S, plan(S, src), bundle(S, crons), crons, mold_gaps(mold_src))
         if "--out" in a: write_bundle(S, crons, _opt(a, "--out")); print(f"bundle written to {_opt(a, '--out')} for reading; nothing was sent anywhere")
         return 0
+    if cmd == "operator-run":
+        # mold_v1-230: one of the app's operator:* scripts, as the web app's user in the serving release (lib/operator_run.py)
+        sys.path.insert(0, HERE); import operator_run
+        return operator_run.server_cli(a)
     f = _opt(a, "--file")
     if cmd == "env-names":
         print("\n".join(env_names(f))); return 0
