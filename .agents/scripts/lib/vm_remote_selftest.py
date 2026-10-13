@@ -1314,7 +1314,7 @@ def _brief_to_plan(check, tmp):
     r = py(".claude/scripts/factory.py", "validate")
     check("the factory still validates with that application in it", r.returncode == 0 and r.stdout.strip() == "ok", r.stdout[-400:])
     r = py(".claude/scripts/lanes.py", "acme_remote", "--list")
-    check("its lanes list 27 functional checks (the 26 plus tool.python) and point at --deploy-remote", r.returncode == 0 and "--deploy-remote" in r.stdout
-          and any(l.split()[:3] == ["functional", "yes", "27"] for l in r.stdout.splitlines()), r.stdout + r.stderr)
+    check("its lanes list 28 functional checks (the 27 plus tool.python) and point at --deploy-remote", r.returncode == 0 and "--deploy-remote" in r.stdout
+          and any(l.split()[:3] == ["functional", "yes", "28"] for l in r.stdout.splitlines()), r.stdout + r.stderr)
 
 if __name__ == "__main__": sys.exit(run())
