@@ -43,8 +43,12 @@ web address, one paste per code block, what is hidden). What each station needs:
 - **keys** — first try `mint.py <app_id> reuse-keys <an app of theirs that already runs>`: it copies the operator's
   own service keys in memory and derives the sender address, so a second app asks for nothing. Only for a key no
   app holds yet: `provision.py <app_id> --set-secret NAME` (hidden prompt; or the Vercel form it points to).
-  'Continue with Google' additionally needs the new address added to that Google client's Authorised JavaScript
-  origins; emailed codes work without it.
+  'Continue with Google' works only at an address Google has been told about by hand, and a new app's is not, so
+  `reuse-keys` also makes the app the keys came from the new app's **sign-in hub** when that app's own Google
+  sign-in works (state only: the new app takes it up at its first deploy, the other app at ITS next deploy, which
+  is a live app's deploy and needs its own yes). Emailed codes work without any of it. Every deploy's result says
+  where Google sign-in stands (directly, through the hub, or NOT working with the steps):
+  `provision.py <app_id> --google-signin`.
 - **tests** — the signed-in checks need a person who can sign in. Ask them to say "send the code"; then
   `mint.py <app_id> code-request <email>`, they paste the six digits, `mint.py <app_id> code <digits> <email>`,
   then `run`. The session lives in `~/.cache/software-factory/`, never in the repo or the chat.

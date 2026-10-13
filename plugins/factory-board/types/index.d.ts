@@ -11,6 +11,8 @@ export type AppRow = {
   url: string
   deployedAt: string
   rls: string
+  /** What the last deploy or --smoke found about "Continue with Google": '' when it was never checked. */
+  google: '' | 'direct' | 'hub' | 'not_working' | 'unknown'
   checks: Check[]
 }
 

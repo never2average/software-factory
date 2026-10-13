@@ -289,6 +289,11 @@ def settings(app_id, app, infra, ds):
     import asr
     try: S["asr"] = asr.env_pairs(app, S["mold_src"])
     except SystemExit: S["asr"] = {}
+    # The Google sign-in hub (lib/google_signin.py, mold_v1-242): which app does the Google part for this one, and
+    # which addresses this one does it for; from state on every deploy, and only for a mold that has the hub. The env
+    # file is rewritten whole, so a value state no longer sets is gone with the next deploy.
+    import google_signin
+    S["google_hub"] = google_signin.env_pairs(infra, S["mold_src"])
     S["host_shown"] = S["ssh_host"] or S["host"] or NO_HOST; S["domain_shown"] = S["domain"] or NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"
     S["sudo"] = "" if S["user"] == "root" else "sudo "
@@ -528,6 +533,7 @@ def config_pairs(S):
     if S["model"].get("provider") == "cloudflare":
         for role, name in (("orchestrator", "CLOUDFLARE_MODEL_ORCHESTRATOR"), ("specialist", "CLOUDFLARE_MODEL_SPECIALIST")):
             if (S["model"].get("roles") or {}).get(role): c[name] = S["model"]["roles"][role]
+    c.update(S.get("google_hub") or {})   # AUTH_GOOGLE_HUB_ORIGIN / AUTH_GOOGLE_HUB_ALLOWED_RETURNS, only for a mold that reads them
     c.update(S.get("asr") or {})     # ASR_MODEL / ASR_LANGUAGE / ASR_ENABLED, only for a mold that reads them
     if S["pg"]["tls"] == "migration_switch" and S["pg"]["switch"]: c[S["pg"]["switch"]] = "disable"
     return c
@@ -3908,7 +3914,7 @@ def prepare_source(app_id, app):
             print("\n".join((r.stdout + r.stderr).strip().splitlines()[-3:]))
             if r.returncode: raise Stop("a pack did not apply or does not pass the mold's own checks; not deploying. Nothing was contacted.")
 
-def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy):
+def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy, google=None):
     """The deploy, then the record. The status rules are the Vercel path's: `stamping` while it runs, `reverted`
     with the reason on any stop, `stamped` only when the app in front of traffic says row-level security is enforced."""
     def shape(n, v):
@@ -3980,6 +3986,17 @@ def run_deploy(app_id, S, app, infra, ds, adir, P, src, crons, deploy_fn=deploy)
     if rel.get("current"):
         print(f"{app_id}: release {rel['current']} is serving" + (f"; {rel['previous']} is kept on the server, and python3 .claude/scripts/provision.py {app_id} --rollback-remote goes back to it" if rel.get("previous") else ""))
     print(f"deployed: {S['url']}")
+    # Google sign-in on what now serves (provision.py google_signin_now, mold_v1-242), as after a Vercel deploy:
+    # directly, through the hub, or NOT WORKING with the steps. A first NOT WORKING is a warning; a regression (it
+    # worked at the last check) ends this deploy with exit 1, with nothing switched back: the app is up and healthy.
+    # `google`: the check to run; the real deploy runs provision.py's, a stand-in deploy (the self-test) only one it is given.
+    google = google or (getattr(P, "google_signin_now", None) if deploy_fn is deploy else None)
+    if not google: return 0
+    try: g, regressed = google(app_id, app, infra, adir)
+    except Exception as e: print(f"Google sign-in: could not be checked (the check itself stopped on {type(e).__name__}: {str(e)[:160]})"); return 0
+    if regressed:
+        print(f"{app_id}: deployed and healthy, but Google sign-in REGRESSED: it worked when it was last checked and does not now. Nothing was switched back.")
+        return 1
     return 0
 
 def rollback_argv(S, what, shown=False):

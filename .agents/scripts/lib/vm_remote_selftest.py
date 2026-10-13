@@ -908,6 +908,49 @@ def _records(check, tmp):
     check("mold_v1-236: the post-deploy chat's result is recorded as vm_remote.smoke, as the Vercel path records vercel.smoke",
           rc == 0 and (infra["vm_remote"].get("smoke") or {}).get("result") == "pass" and "session_from" not in infra["vm_remote"]["smoke"], infra["vm_remote"].get("smoke"))
     check("  ...and that state validates", F._app_errors("vm_remote_fixture", d)[0] == [], F._app_errors("vm_remote_fixture", d)[0])
+    # mold_v1-242: after a deploy to its own server, the Google sign-in check, as after a Vercel deploy. The reading is
+    # scripted here (lib/google_signin.py --self-test holds the reading itself); provision.py's own recorder runs.
+    import google_signin as G
+    def google(result):
+        def run(app_id, app, infra, adir):
+            real = G.check
+            G.check = lambda *a, **k: {"result": result, "detail": "scripted", "address": "https://app.example.com", "at": P.NOW,
+                                       "next": ["   1. Open the page", "        https://app.example.com"] if result == "not_working" else []}
+            try: return P.google_signin_now(app_id, app, infra, adir)
+            finally: G.check = real
+        return run
+    d, docs, S = stage("google")
+    def deploy_with(result):
+        dd = {k: load(os.path.join(d, f"{k}.json")) for k in ("application", "infrastructure", "datastores")}
+        rc, printed = quiet(V.run_deploy, "vm_remote_fixture", V.settings("vm_remote_fixture", dd["application"], dd["infrastructure"], dd["datastores"]),
+                            dd["application"], dd["infrastructure"], dd["datastores"], d, P, MOLD, list(V.CRONS), fake(good), google=google(result))
+        return rc, printed, load(os.path.join(d, "infrastructure.json")), load(os.path.join(d, "application.json"))
+    rc, printed, infra, app = deploy_with("not_working")
+    check("mold_v1-242: a first deploy where Google sign-in does not work is a WARNING: deployed, exit 0, said loudly with the steps, recorded",
+          rc == 0 and app["status"] == "stamped" and infra["google_sign_in"]["check"]["result"] == "not_working" and "Google sign-in: NOT WORKING" in printed
+          and "1. Open the page" in printed and "REGRESS" not in printed, printed[-500:])
+    check("  ...and that state validates", F._app_errors("vm_remote_fixture", d)[0] == [], F._app_errors("vm_remote_fixture", d)[0])
+    rc, printed, infra, app = deploy_with("direct")
+    check("  ...a deploy where it works says so and records it", rc == 0 and infra["google_sign_in"]["check"]["result"] == "direct" and "Google sign-in: works directly" in printed, printed[-300:])
+    rc, printed, infra, app = deploy_with("unknown")
+    check("  ...a deploy where it could not be checked is neither a failure nor a regression", rc == 0 and infra["google_sign_in"]["check"]["last_known"]["result"] == "direct" and "could not be checked" in printed, printed[-300:])
+    rc, printed, infra, app = deploy_with("not_working")
+    check("  ...a REGRESSION (it worked at the last check that said, and now does not) ends the deploy with exit 1, nothing switched back",
+          rc == 1 and "REGRESSED" in printed and "Nothing was switched back" in printed and app["status"] == "stamped" and infra["vm_remote"]["production_url"] == "https://app.example.com", printed[-400:])
+    rc, printed, infra, app = deploy_with("not_working")
+    check("  ...and once reported it is not reported as a new regression on every later deploy", rc == 0 and "REGRESS" not in printed, printed[-300:])
+    d, docs, S = stage("google_none")
+    rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(good))
+    check("  ...a stand-in deploy given no check asks nobody (the tripwire at the end holds this for the whole run)", rc == 0 and "google_sign_in" not in load(os.path.join(d, "infrastructure.json")))
+    with tempfile.TemporaryDirectory() as mold_with_hub:
+        os.makedirs(os.path.join(mold_with_hub, "lib")); open(os.path.join(mold_with_hub, G.MOLD_READS), "w").write(f"{G.HUB_ENV} {G.RETURNS_ENV}")
+        hub_state = dict(docs["infrastructure"], google_sign_in={"hub": {"origin": "https://hub-app.example", "app_id": "hub"},
+                                                               "answers_for": [{"origin": "https://other.example", "name": "Other App", "app_id": "other"}]})
+        S2 = V.settings("vm_remote_fixture", docs["application"], hub_state, docs["datastores"])
+        check("  ...the hub's settings are not written for a mold that does not read them", "google_hub" in S2 and S2["google_hub"] == {} and G.HUB_ENV not in V.config_pairs(S2))
+        S2["google_hub"] = G.env_pairs(hub_state, mold_with_hub)
+        c2 = V.config_pairs(S2)
+        check("  ...and for a mold that does, the server's env file carries both from state", c2.get(G.HUB_ENV) == "https://hub-app.example" and c2.get(G.RETURNS_ENV) == "https://other.example=Other App", {k: c2.get(k) for k in (G.HUB_ENV, G.RETURNS_ENV)})
     d, docs, S = stage("unproven")
     bad = dict(good, public=("502", None, "HTTP 502, and the body is not a health document"))
     rc, printed = quiet(V.run_deploy, "vm_remote_fixture", S, docs["application"], docs["infrastructure"], docs["datastores"], d, P, MOLD, list(V.CRONS), fake(bad))

@@ -33,7 +33,7 @@ Each product in `state/products.json` gets:
 - **Its stage path:** `defined → built → tested → deployed → released`. Done stages are ticked and the current one is green. A product of a coming-soon mold shows **coming soon** instead.
 - **Each of its apps:**
   - **Health:** live health (`healthy`, `down`, `pending`, or `n/a` for a retired app), shown only when it isn't plain `stamped`. Its record status shows beside it, as `reverted` or `retired`. Where it runs: `vercel`, or `own server`.
-  - **Checks:** the answer from each health page the board loads itself (web, api, and on Vercel the workflow service). Also the workspace-isolation proof from the last deploy: `RLS 62/62` means all 62 workspace tables are locked to their workspace.
+  - **Checks:** the answer from each health page the board loads itself (web, api, and on Vercel the workflow service). Also the workspace-isolation proof from the last deploy: `RLS 62/62` means all 62 workspace tables are locked to their workspace. And what the last deploy found about "Continue with Google": `Google sign-in ok`, `via hub`, or in red `Google sign-in NOT working` (`python3 .claude/scripts/provision.py <app> --google-signin` gives the steps).
   - **Deploy:** when it was last deployed, and the base-code (mold) version it runs. `current` is the factory's latest snapshot; `behind` means a redeploy would update it.
   - **Address:** its web address.
   - **Built:** what it took to make the app, for example `built: $1,299 (shared) + ~$37.62 est. · agent 16h 55m · active 12h 39m · first message → live 21h 33m · 70 deploys`:

@@ -11,7 +11,9 @@ python3 .claude/scripts/provision.py <app_id> --deploy            # prints the p
 python3 .claude/scripts/provision.py <app_id> --verify-db         # the database half of --deploy (vercel: creates projects + datastores, bootstraps Neon; vm: a private local Postgres)
 python3 .claude/scripts/provision.py <app_id> --verify-rls [--no-repair]   # re-prove isolation on what runs now; writes rls_verified
 python3 .claude/scripts/provision.py <app_id> --rollback          # every project back to its previous production deployment (Vercel)
-python3 .claude/scripts/provision.py <app_id> --smoke             # the post-deploy chat check alone, against what serves now (Vercel or its own server)
+python3 .claude/scripts/provision.py <app_id> --smoke             # the post-deploy chat check alone, against what serves now (Vercel or its own server); then the Google sign-in check
+python3 .claude/scripts/provision.py <app_id> --google-signin     # does "Continue with Google" work there: directly, through a hub, or NOT (with the steps); reads only
+python3 .claude/scripts/provision.py <app_id> --google-hub <other_app>|off [--dry-run]   # let an app whose Google sign-in works do the Google part for this one; state only, deploys nothing
 python3 .claude/scripts/provision.py <app_id> --operator <script> --dry-run -- <args>   # one of the mold's operator:* scripts: the exact command, nothing run
 python3 .claude/scripts/lib/deploy_gate.py <mold_id>              # did the mold source's CI pass for the pinned commit? read-only
 python3 .claude/scripts/provision.py <app_id> --deploy --dry-run  # the plan, the mold CI gate and whether a redeploy needs a sign-in; read-only
@@ -91,6 +93,23 @@ may not handle secret values). Missing secrets are the user's to set; report nam
 - **A sign-in is needed**: a redeploy refuses to start without the operator's session on hand (exit 3, nothing
   deployed). A first deploy ends exit 3 "needs a sign-in", deployed and healthy; once the operator has signed in
   (`mint.py <app> code-request` / `code`), `--smoke` settles it, and `mint.py <app> run` does that by itself.
+
+- **Google sign-in** (`lib/google_signin.py`): Google signs people in only at an address written by hand on the OAuth
+  client's page (no API adds one), and one client is reused across an operator's apps, so every new address starts
+  unlisted. After every deploy, and in `--smoke` and `--google-signin`, the factory asks Google whether it lists the
+  app's address and asks the app what its page shows, and says one of three things, recorded in
+  `infrastructure.json` `google_sign_in.check` and shown by `mint.py <app>` and the factory board:
+  - **works directly**: Google lists the address;
+  - **works through the hub**: the app signs in through another app Google does list (the mold's sign-in hub);
+  - **NOT WORKING**, with the two ways to fix it written out for the operator: one command
+    (`--google-hub <other_app>`, offered when another app with the same client works), or the click-by-click steps
+    in Google Cloud Console. People can still sign in with an emailed code meanwhile.
+  A first NOT WORKING is a warning in the result. A **regression** (it worked at the last check and does not now)
+  ends the deploy or `--smoke` with exit 1; nothing is rolled back for it. "Could not be checked" is never read
+  as broken. `--google-hub` and `mint.py <app> reuse-keys` only write state (`google_sign_in.hub` on the app,
+  `google_sign_in.answers_for` on the hub app): each app takes it up at its **own next deploy**
+  (`AUTH_GOOGLE_HUB_ORIGIN`, `AUTH_GOOGLE_HUB_ALLOWED_RETURNS`), so the hub, a live app, must be deployed once
+  after an app is added to it. Say so, and never deploy a live app without its own yes.
 
 There is no separate provision step: "deploy prints, then creates" with the refusal-before-creation gate is the
 whole safety, chosen because the operator is non-technical. `factory.py validate` and `lanes.py <app> --list` are

@@ -49,6 +49,16 @@ test('an app row says whether it runs the current mold snapshot, and its RLS pro
   expect(row.moldCommit).toBe('abc1234')
   expect(row.rls).toBe('62/62')
   expect(row.url).toBe('https://h.example')
+  expect(row.google).toBe('')
+})
+
+test('an app row carries what the last check said about Google sign-in', async () => {
+  const row = (google_sign_in: unknown) => appRow('x', { status: 'stamped' }, { target: 'vercel', google_sign_in }, {}, new Map())
+  expect(row({ check: { result: 'not_working', at: 't' } }).google).toBe('not_working')
+  expect(row({ check: { result: 'hub', at: 't' } }).google).toBe('hub')
+  expect(row({ check: { result: 'direct', at: 't' } }).google).toBe('direct')
+  expect(row({ hub: { origin: 'https://h.example' } }).google).toBe('')
+  expect(row({ check: { result: 'something else' } }).google).toBe('')
 })
 
 test('health verdicts, products, coming soon and ages', async () => {

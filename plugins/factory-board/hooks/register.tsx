@@ -376,6 +376,10 @@ export const register: Register = on => {
               </Text>
             ))}
             {app.rls && <Text dimColor>RLS {app.rls}</Text>}
+            {app.google === 'not_working' && <Text color="error">Google sign-in NOT working</Text>}
+            {(app.google === 'direct' || app.google === 'hub') && (
+              <Text dimColor>Google sign-in {app.google === 'hub' ? 'via hub' : 'ok'}</Text>
+            )}
             <Text dimColor>· deployed {ago(app.deployedAt, now)}</Text>
             <Text color={app.isCurrent ? 'success' : 'warning'}>
               {app.moldId}@{app.moldCommit || '?'} {app.isCurrent ? 'current' : 'behind'}
