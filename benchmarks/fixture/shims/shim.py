@@ -7,8 +7,13 @@ Every call is logged to FACTORY_CALL_LOG (default <rehearsal>/calls.jsonl) and a
 machine:
 
   vercel   projects, env and deployments live in <rehearsal>/vercel/projects/<project>.json. A secret value is kept only
-           as a 12-character hash; `env pull` never hands a value back. Deployments get an address under
-           .rehearsal.invalid, a name that can never resolve. A project whose framework is not nextjs fails its web build.
+           as a 12-character hash; `env pull` never hands a value back. Addresses are under .rehearsal.invalid, a
+           name that can never resolve, and are Vercel's to give, as on Vercel: a project's production address is a
+           domain in its own domain list (<project>.rehearsal.invalid when the factory claimed it or the first deploy
+           found it free, <project>-x7 when another project holds it), each deploy has a one-off address of its own
+           (<project>-<n>), and a domain is answered by the project's production deployment only. The factory reads
+           all of it back through `vercel api` (lib/vercel_addr.py): the project (by name or id), its domains, the
+           alias record of an address, a deployment's record. A project whose framework is not nextjs fails its web build.
   curl / http   the fake app at https://<project>.rehearsal.invalid: health endpoints, emailed sign-in codes (written to
            <rehearsal>/outbox/<email>.txt instead of being sent), sessions. Any other address: "could not resolve".
            Its production is one deployment (a rollback or promote names it; a rollback stops auto-promotion, as on
@@ -70,12 +75,49 @@ def production(st):
     return next((d for d in ready if d.get("uid") and d["uid"] == st.get("production")), None) or (ready[-1] if ready and not st.get("production") else None)
 
 
+SUF = ".rehearsal.invalid"
+
+
+def uid_of(p, d): return d.get("uid") or f"dpl_{p}_{d['n']}"
+def one_off(p, d): return f"{p}-{d['n']}{SUF}"          # the deployment's own address, as `vercel deploy` prints it
+
+
+def domain_owner(host):
+    """The project whose domain list carries this address, or None."""
+    return next((p for p in projects() if host in (store(p).get("domains") or [])), None)
+
+
+def aliases(p, st, d):
+    """The addresses that answer with this deployment: the project's domains, while it is the production deployment."""
+    prod = production(st)
+    return list(st.get("domains") or []) if prod is not None and uid_of(p, prod) == uid_of(p, d) else []
+
+
+def find_deployment(ref):
+    """(project, its store, the deployment) for a deployment id or a deployment's own address."""
+    for p in projects():
+        st = store(p)
+        for d in st.get("deployments", []):
+            if ref in (uid_of(p, d), one_off(p, d)): return p, st, d
+    return None, None, None
+
+
+def serving(host):
+    """(project, deployment) answering at this address: a project's domain -> its production deployment; a
+    deployment's own address -> that deployment; (None, None) when nobody serves it."""
+    p = domain_owner(host)
+    if p: return p, production(store(p))
+    p, _, d = find_deployment(host)
+    return (p, d) if d and d.get("state") == "READY" else (None, None)
+
+
 def meta(p):
     st = store(p); prod = production(st)
     return {"id": pid(p), "name": p, "accountId": "team_rehearsal",
             "framework": st.get("framework") or ("eve" if p.endswith("-api") else "nextjs"), "link": None,
             "autoAssignCustomDomains": st.get("auto_assign", True),
-            "targets": {"production": {"id": prod.get("uid") or f"dpl_{p}_{prod['n']}", "createdAt": prod.get("created", prod["n"]), "readyState": "READY"}} if prod else {}}
+            "targets": {"production": {"id": prod.get("uid") or f"dpl_{p}_{prod['n']}", "createdAt": prod.get("created", prod["n"]), "readyState": "READY",
+                                       "alias": aliases(p, st, prod)}} if prod else {}}
 
 
 def write_secret(p, key, value):
@@ -107,8 +149,33 @@ def vercel():
                 print(json.dumps({"error": {"message": "rehearsal: no such READY deployment"}})); return 1
             st["production"] = rm_.group(3); st["auto_assign"] = rm_.group(2) == "promote"; save(p, st); return 0
         if path.startswith("/v9/projects?"): log(); print(json.dumps({"projects": []})); return 0
+        # ---- addresses (lib/vercel_addr.py): Vercel says which project an address is filed under ----------------------
+        am = re.match(r"^/v4/aliases/([^/?]+)$", path)
+        if am:
+            log(); p, d = serving(am.group(1))
+            if not p or not d or not domain_owner(am.group(1)): print("Error: Response Error (404)", file=sys.stderr); return 1
+            print(json.dumps({"alias": am.group(1), "projectId": pid(p), "deploymentId": uid_of(p, d)})); return 0
+        am = re.match(r"^/v13/deployments/([^/?]+)$", path)
+        if am:
+            log(); p, st, d = find_deployment(am.group(1))
+            if not d: print("Error: Response Error (404)", file=sys.stderr); return 1
+            print(json.dumps({"id": uid_of(p, d), "projectId": pid(p), "url": one_off(p, d), "readyState": d["state"], "alias": aliases(p, st, d)})); return 0
+        am = re.match(r"^/v\d+/projects/([^/?]+)/domains$", path)
+        if am:
+            log(); p = by_id(am.group(1))
+            if not p: print(json.dumps({"error": {"code": "not_found", "message": "Project not found"}})); return 1
+            st = store(p)
+            if method == "POST":
+                fields = dict(x.split("=", 1) for x in (ARGS[i + 1] for i, a in enumerate(ARGS[:-1]) if a == "-f") if "=" in x)
+                host = (fields.get("name") or "").lower()
+                if not host.endswith(SUF) or domain_owner(host) or find_deployment(host)[2]:
+                    print(json.dumps({"error": {"code": "domain_already_in_use", "message": f"rehearsal: {host or 'no name'} is already in use"}})); return 1
+                st.setdefault("domains", []).append(host); save(p, st)      # it answers with the production deployment, when there is one
+                print(json.dumps({"name": host, "projectId": pid(p), "verified": True})); return 0
+            if method == "GET":
+                print(json.dumps({"domains": [{"name": h, "projectId": pid(p), "verified": True, "redirect": None} for h in st.get("domains") or []]})); return 0
         if m and not m.group(2):
-            p = m.group(1)
+            p = by_id(m.group(1)) or m.group(1)        # Vercel takes a project's name or its id
             if method == "GET":
                 log()
                 if not exists(p): print("Error: Project not found. (404)", file=sys.stderr); return 1
@@ -159,11 +226,17 @@ def vercel():
             print('Error: No Output Directory named "public" found after the Build completed. Configure the Output Directory '
                   'in your Project Settings. Alternatively, configure vercel.json#outputDirectory.', file=sys.stderr)
             st["deployments"].append({"n": n, "state": "ERROR", "framework": fw}); save(proj, st); log(result="error"); return 1
-        url = f"https://{proj}.rehearsal.invalid"
-        print("Building: Compiled successfully\nProduction: " + url)
-        uid = f"dpl_{proj}_{n}"
-        st["deployments"].append({"n": n, "uid": uid, "created": int(datetime.datetime.now().timestamp() * 1000) + n, "state": "READY", "framework": fw, "url": url})
-        if st.get("auto_assign", True): st["production"] = uid
+        # As Vercel: the deploy prints the deployment's OWN address; the production address is the project's domain,
+        # named at the first deploy when the factory did not claim one (<project>, or <project>-x7 when that is another
+        # project's), and it moves to this deployment unless the project is held on an earlier rollback.
+        dep = {"n": n, "uid": f"dpl_{proj}_{n}", "created": int(datetime.datetime.now().timestamp() * 1000) + n, "state": "READY", "framework": fw}
+        dep["url"] = "https://" + one_off(proj, dep)
+        print("Building: Compiled successfully\nProduction: " + dep["url"])
+        if not st.get("domains"):
+            st["domains"] = [next(h for h in (f"{proj}{SUF}", f"{proj}-x7{SUF}") if domain_owner(h) in (None, proj) and not find_deployment(h)[2])]
+        st["deployments"].append(dep)
+        if st.get("auto_assign", True):
+            st["production"] = dep["uid"]; print(f"Aliased: https://{st['domains'][0]}")
         save(proj, st); log(result="ready"); return 0
     if cmd in ("logs", "inspect"):
         log(); print("rehearsal: the factory keeps each deploy's log; see `python3 .claude/scripts/provision.py <app_id> status`"); return 0
@@ -181,8 +254,8 @@ def app(method, url, body, token):
     """(status, json body) for one request to the fake deployment."""
     m = re.match(r"^https://([a-z0-9-]+)\.rehearsal\.invalid(/[^?#]*)?", url or "")
     if not m: return None
-    p, path = m.group(1), (m.group(2) or "/").rstrip("/") or "/"
-    live = production(store(p)) if exists(p) else None
+    path = (m.group(2) or "/").rstrip("/") or "/"
+    p, live = serving(m.group(1) + SUF)      # a project's domain (its production deployment) or a deployment's own address
     if not live: return 404, {"error": "DEPLOYMENT_NOT_FOUND"}
     if path in ("/api/health", "/eve/v1/health"): return 200, {"ok": True}
     if path == "/api/ops/health": return 200, {"ok": True, "db": {"ok": True, "detail": "SELECT 1 ok · role app_rw (RLS enforced)"}}

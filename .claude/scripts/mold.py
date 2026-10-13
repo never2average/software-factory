@@ -24,6 +24,7 @@ import datetime, json, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 from factory_local import mold_source
+import asr
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
 # Never part of a snapshot (molds/mold_v1/MOLD.md): the source's own history, installed packages, and what the
@@ -237,6 +238,12 @@ def rehearsal_mold(root, mold_id):
         "codebase/services/task-workflow/package.json": json.dumps({"name": "task-workflow", "private": True}) + "\n",
         "codebase/vercel.json": json.dumps({"crons": []}) + "\n",
         "codebase/dm.md": "# Data room\n\nThe rehearsal mold's data room layout.\n",
+        # The stand-in is a CURRENT mold: it takes an app's speech model from its environment (lib/asr.py reads this
+        # file for the name ASR_MODEL and for each model id), as the real mold has since its per-app speech model.
+        # Without it every app intake writes (asr: on, today's model) was refused as "differs from the mold's own".
+        "codebase/lib/dictation-models.ts": "// Rehearsal stand-in. The deployment's choice: ASR_MODEL, ASR_LANGUAGE, ASR_ENABLED.\n"
+                                            "export const SPEECH_MODELS = {\n" + "".join(f"  {json.dumps(k)}: {{}},\n" for k in asr.MODELS) + "};\n"
+                                            "export const model = process.env.ASR_MODEL;\n",
         "codebase/node_modules/.keep": "",
         "branding/rules.json": json.dumps({"mold_id": mold_id, "product_name_default": "Workbench",
                                           "files": {"icon": "app/icon.svg", "layout": "app/layout.tsx", "globals": "app/globals.css"},
@@ -352,6 +359,11 @@ def self_test():
             lj = json.load(open(os.path.join(root, "molds", "r", "testing", "accessibility", "lane.json")))
             ok(rc == 0 and lj["lane"] == "accessibility" and os.path.exists(os.path.join(root, "molds", "r", "branding", "rules.json"))
                and os.path.isdir(os.path.join(root, "molds", "r", "codebase", "node_modules")), "--rehearsal: codebase, brand rules and five lanes, nothing cloned")
+            rcb = os.path.join(root, "molds", "r", "codebase")
+            ok(asr.mold_reads_env(rcb) and all(asr.mold_lists(rcb, k) for k in asr.MODELS)
+               and asr.problems("a", {"asr": {"enabled": True, "model": asr.DEFAULT_MODEL, "language": None}}, rcb, root) == []
+               and asr.problems("a", {"asr": {"enabled": True, "model": "@cf/deepgram/nova-3", "language": "hi"}}, rcb, root) == [],
+               "--rehearsal: the stand-in takes an app's speech model as the real mold does (what intake writes is not refused)")
         finally:
             if was is None: os.environ.pop("FACTORY_REHEARSAL", None)
             else: os.environ["FACTORY_REHEARSAL"] = was

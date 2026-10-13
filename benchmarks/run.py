@@ -1123,6 +1123,35 @@ def self_test():
         assert not any(c.get("secret_written") for c in reh.calls()) and "RESEND_API_KEY" not in reh.store(app_project(reh.root, "cobalt_app"))["env"]
         assert not any("re_SELFTEST" in json.dumps(c) for c in reh.calls())
         n += 5
+        # each deployed app has its own workspace with the operator as an owner (mint.py's workspaces station, run by
+        # build_world right after the deploys; mold_v1-245), an app that never deployed has none, and an address that
+        # belongs to no workspace is told so with nothing sent to the app
+        def station(app, name):
+            d = json.loads(m(app, "--json")); return next(x["status"] for x in d["details"]["stations"] if (x.get("id") or x.get("name")) == name)
+        ws = json.load(open(os.path.join(reh.reh, "workspaces.json")))
+        for app in ("alpha_app", "beta_app", "delta_app"):
+            assert station(app, "workspaces") == "done", (app, station(app, "workspaces"))
+            assert len(ws.get(app) or {}) == 1 and "owner" in set(next(iter(ws[app].values())).values()), (app, ws.get(app))
+        for app in ("cobalt_app", "gamma_app"): assert station(app, "workspaces") == "later" and app not in ws, (app, ws.get(app))
+        before = len(reh.calls())
+        r = subprocess.run([sys.executable, ".claude/scripts/mint.py", "alpha_app", "code-request", "nobody@elsewhere.example"], cwd=reh.root, env=env, capture_output=True, text=True)
+        assert r.returncode == 1 and "belongs to no workspace" in r.stdout + r.stderr and "Nothing was sent" in r.stdout + r.stderr, r.stdout + r.stderr
+        assert not any(c["tool"] in ("http", "curl") for c in reh.calls()[before:]) and not os.path.exists(os.path.join(reh.reh, "outbox")), reh.calls()[before:]
+        n += 2
+        # every address is Vercel's to give and is read back (mold_v1-239): the one recorded is the project's own domain on
+        # its production deployment, never the deploy's one-off address, and Vercel files it under that project only
+        va = lambda *a: subprocess.run([sys.executable, ".claude/scripts/lib/vercel_addr.py", *a, "--scope", "rehearsal-team"], cwd=reh.root, env=env, capture_output=True, text=True)
+        for app in ("alpha_app", "beta_app", "delta_app"):
+            proj = app_project(reh.root, app); v = json.load(open(os.path.join(reh.root, "state", "application", app, "infrastructure.json")))["vercel"]
+            assert (v["production_url"], v["api_url"], v["workflow_url"]) == tuple(f"https://{proj}{x}.rehearsal.invalid" for x in ("", "-api", "-workflow")), v
+            st = reh.store(proj)
+            assert st["domains"] == [f"{proj}.rehearsal.invalid"] and all(d["url"] != v["production_url"] for d in st["deployments"]), st
+            r = va(proj); assert r.returncode == 0 and r.stdout.startswith(v["production_url"] + " "), r.stdout + r.stderr
+            assert va("--verify", v["production_url"], proj).returncode == 0 and va("--verify", v["api_url"], proj).returncode == 1
+            assert va("--verify", st["deployments"][-1]["url"], proj).returncode == 0, "a deployment's own address is filed under its project"
+        assert va("--verify", "https://nobody-serves-this.rehearsal.invalid", app_project(reh.root, "alpha_app")).returncode == 1
+        assert va(app_project(reh.root, "cobalt_app")).returncode == 1, "a project never deployed has no production address"
+        n += 2
     finally: reh.close()
     for mode in ("good", "bad"):
         ag = Scripted(mode)
