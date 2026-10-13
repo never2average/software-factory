@@ -7,7 +7,18 @@
   branding.py <app_id> show                 this app's brand and the palette it derives
   branding.py <app_id> preview              build/<app_id>/brand-preview.html: sign-in tile and palette, light and dark
   branding.py <app_id> prepare [--force]    build/<app_id>/ = mold copy + brand overlay; prints the path
-  branding.py <app_id> check                verify a prepared copy carries the brand and no stale name
+  branding.py <app_id> check                verify a prepared copy carries the brand, no stale name, and a
+                                            complete favicon set of the right sizes, each file under 100 KB
+  branding.py --self-test                   the offline checks of the favicon set and of the overlay that writes it
+
+THE FAVICON SET. `prepare` writes, from the brand's mark (its logo file, or the monogram when there is none):
+app/favicon.ico (16, 32, 48), app/icon.png (32), app/apple-icon.png (180, opaque), the web manifest's
+public/icon-192.png, icon-512.png and icon-maskable-512.png, and app/icon.svg ONLY for a true vector mark. A
+raster logo is never wrapped in an SVG as base64 (that was a 171 KB tab icon that Safari did not draw, with
+/favicon.ico and /apple-icon.png answering 404). The pictures are made in lib/favicon.py, in standard-library
+Python; a JPG, WebP or SVG logo is first turned into a PNG by `sharp` from the mold's own node_modules, and when
+that is missing the set is drawn from the initials and `prepare` says so. `preview` shows the tab icon at 16 and
+32 px and the home-screen icon.
 
 THE SHORT WAY. A brand is three things a person actually has: a name, one colour, a logo file (PNG, JPG
 or SVG). `set` derives the rest — the light and dark palette from the colour, the app icon and sign-in
@@ -159,6 +170,24 @@ def resolve(app):
     `brand` that intake COPIES in at stamp time; after that the app owns it."""
     return dict(app.get("surface", {}).get("branding") or {})
 
+def mark_inputs(b):
+    """(initials, icon background, icon foreground): what the monogram, and any icon that needs an opaque
+    background, are drawn with."""
+    initials = "".join(w[0] for w in re.findall(r"[A-Za-z]+", b.get("product_name", "App"))[:2]).upper() or "A"
+    bg = b.get("icon_bg") or (b["brand_color"] if str(b.get("brand_color", "")).startswith("#") else "#0A0A0A")
+    return initials, bg, b.get("icon_fg") or legible_on(bg)
+
+def favicon_lib():
+    lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+    if lib not in sys.path: sys.path.insert(0, lib)
+    import favicon
+    return favicon
+
+def favicon_set(b, node_cwd):
+    """The brand's favicon files and what they were drawn from (lib/favicon.py build_set)."""
+    initials, bg, fg = mark_inputs(b)
+    return favicon_lib().build_set(b.get("icon_svg") or "", initials, bg, fg, node_cwd=node_cwd)
+
 def read_mark(b):
     """The brand's square mark as (full svg, inner elements). Falls back to a monogram."""
     svg = (b.get("icon_svg") or "").strip()
@@ -167,9 +196,7 @@ def read_mark(b):
             sys.exit('branding.icon_svg must use viewBox="0 0 32 32" so it fits every mark slot')
         inner = re.sub(r"^<svg[^>]*>|</svg>\s*$", "", svg, flags=re.S).strip()
         return svg, inner
-    initials = "".join(w[0] for w in re.findall(r"[A-Za-z]+", b.get("product_name", "App"))[:2]).upper() or "A"
-    bg = b.get("icon_bg") or (b["brand_color"] if str(b.get("brand_color", "")).startswith("#") else "#0A0A0A")
-    fg = b.get("icon_fg") or legible_on(bg)
+    initials, bg, fg = mark_inputs(b)
     inner = (f'<rect width="32" height="32" rx="8" fill="{bg}"/>'
              f'<text x="16" y="21" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" '
              f'font-size="14" font-weight="600" fill="{fg}" text-anchor="middle">{initials}</text>')
@@ -267,8 +294,9 @@ def set_brand(target, args):
     print(f"{kind} {ident}: brand set — {nb['product_name']!r}, colour {nb.get('brand_color', 'the mold greyscale')}, mark from {mark}, tagline {nb['tagline']!r}.")
     print(f"  see it: python3 .claude/scripts/branding.py {ident} preview" if kind == "app" else "  stamps of this product from now on carry it; existing apps keep theirs")
 
-def preview(app_id, b):
-    """One HTML file showing what the brand does to the sign-in tile and the palette, light and dark."""
+def preview(app_id, b, node_cwd=None):
+    """One HTML file showing what the brand does to the sign-in tile and the palette, light and dark, and the
+    favicon as a browser tab (16 and 32 px) and a phone's home screen show it."""
     pal = palette(b["brand_color"], b.get("neutral_chroma", 0.006)) if b.get("brand_color") else None
     if pal:
         for scheme in ("light", "dark"):
@@ -291,20 +319,22 @@ def preview(app_id, b):
 <style>body{{margin:0;padding:24px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#e9e9e9;color:#222}} h1{{font-size:16px;font-weight:600;margin:0 0 16px}}</style>
 <h1>{b["product_name"]} — what the sign-in page and palette will look like</h1>
 <div style="display:flex;gap:20px;flex-wrap:wrap">{side("light")}{side("dark")}</div>
+{favicon_lib().preview_html(favicon_set(b, node_cwd)[1])}
 <p style="font-size:12px;opacity:.7;margin-top:16px">Derived from colour {b.get("brand_color","(mold greyscale)")}, mark from {"logo file " + b["logo"] if b.get("logo") else "a monogram"}. Change with: branding.py {app_id} set --name … --color … --logo …</p>'''
     out = os.path.join(ROOT, "build", app_id, "brand-preview.html"); os.makedirs(os.path.dirname(out), exist_ok=True)
     open(out, "w").write(html); print(f"preview written: {os.path.relpath(out, ROOT)}"); return out
 
-def auth_mark_jsx(inner):
+def auth_mark_jsx(inner, mark_src="/icon.svg"):
     """The brand mark as JSX for the sign-in tile.
 
     The tile already paints a foreground-coloured square, so the mark's own background rect is
     dropped and its strokes and fills are re-pointed at the background colour. SVG attributes are
     hyphenated; JSX wants them camel-cased."""
     if is_logo_mark(inner):
-        # The same mark is already served as app/icon.svg (/icon.svg). Point at it rather than inlining a
+        # The same mark is already served as an icon file: /icon.svg for a vector logo, the manifest's 192 px PNG
+        # for a raster one (a 32 px tile is 64 to 96 device pixels on a phone). Point at it rather than inlining a
         # base64 copy: inlined, a raster logo was ~72 KB of every page's HTML AND of the JS bundle (upstream #64).
-        return '<img src="/icon.svg" alt="" className="size-8 rounded-md" aria-hidden />'
+        return f'<img src="{mark_src}" alt="" className="size-8 rounded-md" aria-hidden />'
     body = re.sub(r"<rect\b[^>]*/>", "", inner, count=1).strip()
     body = re.sub(r'\sfill="none"', "", body)
     body = re.sub(r'\sstroke="[^"]*"', ' className="stroke-background"', body)
@@ -323,8 +353,13 @@ def apply_overlay(build_dir, b, rules):
     name = b["product_name"]; old = rules["product_name_default"]
     applied = []
 
+    # The favicon set: favicon.ico, icon.png, apple-icon.png, the manifest's three PNGs, and icon.svg only for a
+    # vector mark. The mold's own app/icon.svg is replaced or removed, never left behind.
     svg, inner = read_mark(b)
-    open(f("icon"), "w").write(svg + "\n"); applied.append("icon")
+    fav = favicon_lib(); icons, icon_info = fav.build_set(b.get("icon_svg") or "", *mark_inputs(b), node_cwd=build_dir)
+    fav.write_set(build_dir, icons); icon_v = fav.version(icons)
+    applied.append("icons:" + icon_info["kind"]); apply_overlay.icon_info = icon_info
+    mark_src = "/icon.svg" if icon_info["svg"] else f"/icon-192.png?v={icon_v}"
 
     # A mold with a deployment profile (scripts/gen-deployment-profile.mjs) takes its NAME, tagline and description
     # from profiles/*.json, not from literals in source: the brand is written as profiles/90-brand.json (after any
@@ -344,7 +379,8 @@ def apply_overlay(build_dir, b, rules):
         applied.append("profile:90-brand")
 
     subs = {"description_literal": esc(b.get("description") or f"{name} — {b.get('tagline', '')}".strip(" —")),
-            "tagline": jsx_text(b.get("tagline", "")), "auth_mark_jsx": auth_mark_jsx(inner)}
+            "tagline": jsx_text(b.get("tagline", "")), "auth_mark_jsx": auth_mark_jsx(inner, mark_src),
+            "layout_icons": fav.LAYOUT_ICONS_TS, "manifest_icons": fav.manifest_icons_ts(icon_v)}
     for r in rules["replacements"]:
         if profiled and r.get("via_profile"): continue
         p = f(r["file"]); s = open(p).read()
@@ -411,13 +447,17 @@ def prepare(app_id, app, mold_dir, force=False):
     library.apply(build_dir, app, mold_dir)
     rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
     applied = apply_overlay(build_dir, b, rules)
+    info = getattr(apply_overlay, "icon_info", None)
+    if info:
+        print(f"favicon set drawn from {info['source']}: favicon.ico (16, 32, 48), icon.png, apple-icon.png, manifest icons 192 and 512 + maskable"
+              + (", icon.svg" if info["svg"] else "; no icon.svg (the mark is not a vector)"))
+        for n in info["notes"]: print("  note: " + n)
+    # last, on its own line: provision.py and vm_remote.py show the operator the final line of this step
     print(f"branded build copy: {os.path.relpath(build_dir, ROOT)}  ({b['product_name']}, {len(applied)} rule(s))")
     return build_dir
 
-def check(app_id, app, mold_dir):
-    build_dir = os.path.join(ROOT, "build", app_id)
-    if not os.path.isdir(build_dir): sys.exit(f"no build copy at build/{app_id}; run prepare first")
-    b = resolve(app); rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
+def check_build(build_dir, b, rules):
+    """What is wrong with a prepared copy's brand, as plain sentences ([] when it is right)."""
     name = b.get("product_name"); old = rules["product_name_default"]; bad = []
     gen = os.path.join(build_dir, "lib", "deployment-profile.generated.ts")
     if name and name != old and os.path.exists(gen):
@@ -439,11 +479,102 @@ def check(app_id, app, mold_dir):
         missing = [f"--{t}" for t in ("background", "primary", "ring") if f"--{t}: {pal['light'][t]};" not in css]
         if missing: bad.append("the light palette does not carry " + ", ".join(missing))
         if f"--primary: {pal['dark']['primary']};" not in css: bad.append("the dark palette does not carry --primary")
+    bad += check_icons(build_dir, b, rules)
+    return bad
+
+def check_icons(build_dir, b, rules):
+    """The favicon set: every file there, the right size, under 100 KB, no base64-wrapped raster, and the pages
+    pointing at files that exist."""
+    fav = favicon_lib()
+    kind = fav.read_mark(b.get("icon_svg") or "", *mark_inputs(b))["kind"]
+    # a raster logo must ship no icon.svg; whether a vector one does depends on sharp having read it, so either is right
+    bad = fav.check_set(build_dir, expect_svg=False if kind == "raster" else None)
+    has_svg = os.path.isfile(os.path.join(build_dir, fav.ICON_SVG))
+    def text(key):
+        p = os.path.join(build_dir, rules["files"].get(key, ""))
+        return open(p).read() if key in rules["files"] and os.path.isfile(p) else None
+    layout = text("layout")
+    if layout is not None and re.search(r'\bicons:\s*\{[^}]*icon\.svg', layout):
+        bad.append(f"{rules['files']['layout']} still links every icon to /icon.svg; with that block in place Next ignores favicon.ico's siblings (icon.png, apple-icon.png)")
+    man = text("manifest")
+    if man is not None:
+        for want in ("/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"):
+            if want not in man: bad.append(f"{rules['files']['manifest']} does not list {want}")
+        if "icon.svg" in man: bad.append(f"{rules['files']['manifest']} still lists /icon.svg, which a home-screen icon cannot be")
+        if '"maskable"' not in man: bad.append(f"{rules['files']['manifest']} has no maskable icon")
+    gate = text("auth_gate")
+    if gate is not None and 'src="/icon.svg"' in gate and not has_svg:
+        bad.append(f"{rules['files']['auth_gate']} shows /icon.svg on the sign-in page, but this build has no icon.svg")
+    return bad
+
+def check(app_id, app, mold_dir):
+    build_dir = os.path.join(ROOT, "build", app_id)
+    if not os.path.isdir(build_dir): sys.exit(f"no build copy at build/{app_id}; run prepare first")
+    b = resolve(app); rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
+    bad = check_build(build_dir, b, rules)
     for e in bad: print("  " + e)
     print("branding ok" if not bad else f"{len(bad)} problem(s)")
     sys.exit(1 if bad else 0)
 
+def self_test():
+    """The favicon set's own checks (lib/favicon.py), then the overlay that writes it, run against a scratch copy of
+    the mold's own branded files with the mold's own rules. Nothing here touches build/, state/ or the mold."""
+    import tempfile
+    fav = favicon_lib(); rc = fav.self_test()
+    if rc: return rc
+    checks = []
+    def ok(c, what):
+        checks.append(what)
+        if not c: raise AssertionError(what)
+    mold = os.path.join(ROOT, "molds", "mold_v1"); code = os.path.join(mold, "codebase")
+    if not os.path.isfile(os.path.join(code, "app", "layout.tsx")) or subprocess.run(["node", "-v"], capture_output=True).returncode:
+        print("branding: the mold is not on this machine (mold.py fetch mold_v1); the overlay checks were skipped"); return 0
+    rules = load(os.path.join(mold, "branding", "rules.json"))
+    logo = fav.png_encode(fav._disc(96, (30, 30, 30), 8))
+    def stamp(t, b):
+        for rel in set(rules["files"].values()):
+            os.makedirs(os.path.dirname(os.path.join(t, rel)), exist_ok=True); shutil.copy(os.path.join(code, rel), os.path.join(t, rel))
+        os.makedirs(os.path.join(t, "scripts")); open(os.path.join(t, "scripts", "gen-deployment-profile.mjs"), "w").write("// stand-in: the profile generator is the mold's own business\n")
+        applied = apply_overlay(t, b, rules)
+        os.makedirs(os.path.join(t, "lib"), exist_ok=True)               # what the real generator writes from profiles/90-brand.json
+        prod = load(os.path.join(t, "profiles", "90-brand.json"))["product"]
+        open(os.path.join(t, "lib", "deployment-profile.generated.ts"), "w").write(f'export const P = {{ "name": {json.dumps(prod["name"])} }};\n')
+        return applied
+    before = {rel: open(os.path.join(code, rel), "rb").read() for rel in set(rules["files"].values())}
+    with tempfile.TemporaryDirectory() as t:
+        with open(os.path.join(t, "logo.png"), "wb") as fh: fh.write(logo)
+        b = normalize({}, name="Acme Ops", color="#1F6F5C", logo=os.path.join(t, "logo.png"))
+        ok("base64" in b["icon_svg"], "set: a raster logo is still carried inside the app's state (state stays self-contained)")
+        build = os.path.join(t, "raster"); os.makedirs(build); applied = stamp(build, b)
+        ok("icons:raster" in applied and "layout_icons" in applied and "manifest_icons" in applied, "overlay: the icon set, the layout rule and the manifest rule all applied")
+        ok(not os.path.exists(os.path.join(build, "app", "icon.svg")), "raster logo: the mold's app/icon.svg is removed, and no base64 SVG takes its place")
+        for rel, size in (("app/icon.png", 32), ("app/apple-icon.png", 180), ("public/icon-192.png", 192), ("public/icon-512.png", 512), ("public/icon-maskable-512.png", 512)):
+            ok(fav.png_info(open(os.path.join(build, rel), "rb").read())[:2] == (size, size), f"overlay: {rel} is {size}x{size}")
+        ok([e[:2] for e in fav.ico_entries(open(os.path.join(build, "app", "favicon.ico"), "rb").read())] == [(16, 16), (32, 32), (48, 48)], "overlay: app/favicon.ico holds 16, 32 and 48")
+        layout = open(os.path.join(build, "app", "layout.tsx")).read(); man = open(os.path.join(build, "app", "manifest.ts")).read(); gate = open(os.path.join(build, "app", "_components", "auth-gate.tsx")).read()
+        ok("icon.svg" not in layout.replace(fav.LAYOUT_ICONS_TS, "") and "icons: {" not in layout, "layout: the block linking icon, shortcut and apple-touch to /icon.svg is gone, so Next links the files")
+        ok("icon.svg" not in man and man.count("/icon-") == 3 and 'purpose: "maskable"' in man and 'sizes: "192x192"' in man, "manifest: 192, 512 and a maskable 512, no SVG")
+        ok(re.search(r'<img src="/icon-192\.png\?v=[0-9a-f]{8}"', gate) and "/icon.svg" not in gate, "sign-in page: a raster logo is shown from the 192 px PNG, not from a missing /icon.svg")
+        bad = check_build(build, b, rules)
+        ok(bad == [], "check: the freshly branded copy passes" + "".join(" | " + x for x in bad))
+        shutil.copy(os.path.join(code, "app", "layout.tsx"), os.path.join(build, "app", "layout.tsx"))
+        open(os.path.join(build, "app", "icon.svg"), "w").write(b["icon_svg"]); os.remove(os.path.join(build, "app", "apple-icon.png"))
+        bad = check_build(build, b, rules)
+        ok(any("apple-icon.png is missing" in x for x in bad) and any("base64" in x for x in bad) and any("still links every icon" in x for x in bad),
+           "check: yesterday's build (one base64 SVG, no apple icon, three links to /icon.svg) fails on each count")
+        mono = normalize({}, name="Acme Ops", color="#1F6F5C")
+        build = os.path.join(t, "mono"); os.makedirs(build); applied = stamp(build, mono)
+        svg = open(os.path.join(build, "app", "icon.svg")).read()
+        ok("icons:monogram" in applied and "<text" not in svg and "base64" not in svg and len(svg) < 3000 and check_build(build, mono, rules) == [], "monogram: a small font-free icon.svg beside the ICO and PNGs, and check passes")
+        ok(fav.png_decode(open(os.path.join(build, "app", "apple-icon.png"), "rb").read()).at(0, 0)[:3] == (0x1F, 0x6F, 0x5C), "monogram: the apple icon is the brand colour to its corners")
+        html = fav.preview_html(favicon_set(b, None)[1])
+        ok('width="16" height="16"' in html and 'width="180" height="180"' in html, "preview: the tab icon at 16 and 32 px and the apple icon")
+    ok(all(open(os.path.join(code, rel), "rb").read() == v for rel, v in before.items()), "the mold's own files are untouched")
+    print(f"branding: {len(checks)} checks passed")
+    return 0
+
 def main(a):
+    if "--self-test" in a: sys.exit(self_test())
     if len(a) < 2: sys.exit(__doc__)
     if a[0] == "--product":
         if len(a) < 3 or a[2] != "set": sys.exit(__doc__)
@@ -454,7 +585,8 @@ def main(a):
     if step == "preview":
         b = resolve(app)
         if not b: sys.exit("no branding on this app; set one first: branding.py <app_id> set --name …")
-        return preview(app_id, b)
+        build_dir = os.path.join(ROOT, "build", app_id)       # sharp, for a JPG or SVG logo, comes from either copy's node_modules
+        return preview(app_id, b, build_dir if os.path.isdir(os.path.join(build_dir, "node_modules", "sharp")) else os.path.join(ROOT, "molds", app["mold_id"], "codebase"))
     mold_dir = os.path.join(ROOT, "molds", app["mold_id"], "codebase")
     if step == "show":
         b = resolve(app)
