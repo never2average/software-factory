@@ -210,7 +210,9 @@ def check(app_id, infra, http=None, hub_candidate=None):
     origin = res["address"]
     if not origin: return done("unknown", "this app has no deployed address yet")
     google = infra.get("google") or {}
-    cid = google.get("client_id") or client_in_bundle(origin, http)
+    # What the served page carries is what people sign in with; the recorded id is only a fallback (2026-10-13: a client
+    # changed in the deploy target left the record stale, and the check read "not working" for a button that worked).
+    cid = client_in_bundle(origin, http) or google.get("client_id")
     fix = lambda: how_to_fix(app_id, origin, hub_candidate, google.get("project_number"))
     if not cid:
         return done("not_working", "the page's scripts carry no Google client id, so the page has no Google sign-in at all",
