@@ -12,6 +12,7 @@ import { clearDesktopPrefs, forgetThisDevice } from "./desktop-notify";
 import { forgetQueueCache } from "./use-chat-queue";
 import { forgetStopState } from "./chat-stop-state";
 import { guestLinkOf, type GuestLink } from "@/lib/guest-invite-rules";
+import { HUB_ERROR_PARAM, HUB_START_PATH, decodeHubRoundTrip, explainHubRefusal, hubPageUrl } from "@/lib/google-hub";
 import { clearWorkspaceRefusal } from "@/lib/workspace-refusal";
 import { WorkspaceRefused, useWorkspaceRefused } from "./workspace-refused";
 
@@ -52,6 +53,14 @@ export const INVITE_RESULT_KEY = STORAGE_KEYS.inviteResult;
 
 const NONCE_KEY = STORAGE_KEYS.nonce;
 const RETURN_KEY = STORAGE_KEYS.signInReturn;
+const HUB_HANDOFF_KEY = STORAGE_KEYS.hubHandoff;
+
+/**
+ * How "Continue with Google" works at this address (lib/google-sign-in-mode.ts), asked of the server before the
+ * button is drawn: `direct` (Google lists this address), `hub` (another address signs people in for this one,
+ * lib/google-hub.ts) or `none` (no Google button: the emailed code is the sign-in). `checking` until it answers.
+ */
+type GoogleMode = "checking" | "direct" | "hub" | "none";
 
 /**
  * The shared chat this page was opened for, when it is a chat's link (`/?chatSession=…&org=…`), or null.
@@ -154,6 +163,7 @@ export function AuthGate() {
   const [picture, setPicture] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gisReady, setGisReady] = useState(false);
+  const [google, setGoogle] = useState<{ mode: GoogleMode; oneTap: boolean }>({ mode: "checking", oneTap: false });
   /** The shared chat this page was opened for (its link), read once the page is in the browser. */
   const [chatLink, setChatLink] = useState<GuestLink | null>(null);
   useEffect(() => setChatLink(chatLinkOnPage()), []);
@@ -321,6 +331,15 @@ export function AuthGate() {
     if (!window.location.hash.includes("id_token=")) return;
     const params = new URLSearchParams(window.location.hash.slice(1));
     const idToken = params.get("id_token");
+    // A sign-in this address is only the HUB for (lib/google-hub.ts): Google returns to the home page because that
+    // is the address its console lists. The token is not this page's to adopt. It goes back to the hub page, still
+    // in the fragment (never sent to a server), and the hub page checks the asking address against its allow-list
+    // again before posting anything.
+    const trip = decodeHubRoundTrip(params.get("state"));
+    if (trip) {
+      window.location.replace(`${hubPageUrl("", trip)}#id_token=${encodeURIComponent(idToken ?? "")}`);
+      return;
+    }
     // Back to the address the person left for Google from (a shared chat's link keeps its chat and workspace). Google
     // returns to the bare home page, which is the one address its console lists; only a same-site path is restored.
     const back = readStored(RETURN_KEY, "session");
@@ -338,6 +357,27 @@ export function AuthGate() {
     restoredRef.current = true; // don't re-prompt One Tap over a fresh session
     void acceptGoogleRef.current(idToken);
   }, [applyToken]);
+
+  // Coming back from the sign-in hub (lib/google-hub.ts): the server has verified Google's token (signature,
+  // audience, nonce, state) and left it in this tab's storage for one page load (app/api/auth/google-hub/callback).
+  // It is adopted exactly as a token Google returned directly: the same account check, the same guest door. A
+  // refusal arrives as a short code in the address, shown as a sentence and removed.
+  useEffect(() => {
+    const handed = readStored(HUB_HANDOFF_KEY, "session");
+    if (handed) {
+      removeStored(HUB_HANDOFF_KEY, "session");
+      restoredRef.current = true;
+      void acceptGoogleRef.current(handed);
+      return;
+    }
+    const q = new URLSearchParams(window.location.search);
+    if (!q.has(HUB_ERROR_PARAM)) return;
+    const why = explainHubRefusal(q.get(HUB_ERROR_PARAM));
+    q.delete(HUB_ERROR_PARAM);
+    const rest = q.toString();
+    history.replaceState(null, "", window.location.pathname + (rest ? `?${rest}` : ""));
+    if (why) setError(why);
+  }, []);
 
   // Restore a still-valid token across refreshes (before Google even loads).
   useEffect(() => {
@@ -357,6 +397,36 @@ export function AuthGate() {
     }
   }, [applyToken]);
 
+  // Ask how Google sign-in works here before drawing its button. Signed out only: `booted` turns true one render
+  // after the effects above have restored a session, so a signed-in load asks nothing, and a session that ends
+  // later (expired, refused, signed out) asks then. If the question itself fails (offline, an older server), the
+  // answer is what the page did before there was a question: the direct button.
+  const [booted, setBooted] = useState(false);
+  useEffect(() => setBooted(true), []);
+  useEffect(() => {
+    if (!booted || token) return;
+    if (!CLIENT_ID) {
+      setGoogle({ mode: "none", oneTap: false });
+      return;
+    }
+    let alive = true;
+    const ctl = new AbortController();
+    const giveUp = setTimeout(() => ctl.abort(), 6000);
+    fetch("/api/auth/google/availability", { signal: ctl.signal })
+      .then((r) => (r.ok ? (r.json() as Promise<{ google?: string; oneTap?: boolean }>) : null))
+      .catch(() => null)
+      .then((a) => {
+        if (!alive) return;
+        const mode: GoogleMode = a?.google === "hub" || a?.google === "none" ? a.google : "direct";
+        setGoogle({ mode, oneTap: mode === "direct" && a?.oneTap !== false });
+      });
+    return () => {
+      alive = false;
+      clearTimeout(giveUp);
+      ctl.abort();
+    };
+  }, [token, booted]);
+
   useEffect(() => {
     // Already signed in (fresh or restored from storage) — don't init/prompt.
     if (token || restoredRef.current) return;
@@ -364,6 +434,8 @@ export function AuthGate() {
       setError("Google sign-in is not configured (NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset).");
       return;
     }
+    // Google's own client (One Tap) only where Google lists this address for it; elsewhere it can only fail.
+    if (google.mode !== "direct" || !google.oneTap) return;
     let cancelled = false;
     loadGis()
       .then(() => {
@@ -393,7 +465,7 @@ export function AuthGate() {
       cancelled = true;
       if (expiryTimer.current) clearTimeout(expiryTimer.current);
     };
-  }, [token, applyToken]);
+  }, [token, applyToken, google]);
 
   // Does this identity have a workspace? A verified work email with none is a
   // new signup and belongs in onboarding, not an empty console. Fail-safe: any
@@ -528,6 +600,15 @@ export function AuthGate() {
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${p}`;
   };
 
+  /**
+   * Google sign-in through this deployment's hub (lib/google-hub.ts): the server makes the state and the nonce,
+   * keeps them in a cookie no script can read, and sends the browser to the hub's page. The person comes back to
+   * the address they left from (a shared chat's link above all).
+   */
+  const signInViaHub = () => {
+    window.location.assign(`${HUB_START_PATH}?back=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  };
+
   // Clicking our themed button when Google's overlaid button didn't paint (or
   // was clipped/blocked). Tries One Tap, and falls through to the redirect flow
   // whenever Google can't show it — so a blocker can't leave the user stuck.
@@ -637,10 +718,15 @@ export function AuthGate() {
          * cookies, nothing an ad blocker or a privacy mode can quietly break.
          * One Tap still runs on load for the returning-user convenience; it is
          * now strictly additive and can no longer block the deliberate click. */}
-        <div className="group/btn relative mt-9 h-10 w-full overflow-hidden rounded-full">
+        {/* Drawn only where it leads somewhere (lib/google-sign-in-mode.ts): at an address Google does not list
+            and no hub answers for, there is no Google button at all, and the emailed code below is open. While the
+            server is being asked, the space is held so nothing jumps. */}
+        {google.mode === "checking" ? <div data-google-checking aria-hidden className="mt-9 h-10 w-full" /> : null}
+        {google.mode === "direct" || google.mode === "hub" ? (
+        <div data-google-sign-in={google.mode} className="group/btn relative mt-9 h-10 w-full overflow-hidden rounded-full">
             <button
               type="button"
-              onClick={signInRedirect}
+              onClick={google.mode === "hub" ? signInViaHub : signInRedirect}
               disabled={false}
               className="flex h-full w-full cursor-pointer items-center justify-center gap-2.5 rounded-full border border-border bg-card font-medium text-foreground text-sm transition-colors duration-150 group-hover/btn:bg-muted"
             >
@@ -667,6 +753,7 @@ export function AuthGate() {
               className="pointer-events-none invisible absolute size-0 overflow-hidden"
             />
         </div>
+        ) : null}
         {error ? (
           <p className="mt-3 w-full rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-center text-destructive text-xs">
             {error}
@@ -680,12 +767,14 @@ export function AuthGate() {
          * gets redeemed by someone on gmail.com or any domain without a Google
          * Workspace. Kept visually secondary to Google, which remains the path
          * for everyone with a work account. */}
-        <EmailSignIn onToken={applyToken} chatLink={chatLink} />
+        <EmailSignIn onToken={applyToken} chatLink={chatLink} open={google.mode === "none"} />
 
         <p className="mt-3.5 text-center text-2xs text-muted-foreground">
           {chatLink
             ? "You will see only the chat that was shared with you."
-            : "Work Google accounts sign in directly. Any other address needs an invite."}
+            : google.mode === "none"
+              ? "Sign in with a code sent to your email address."
+              : "Work Google accounts sign in directly. Any other address needs an invite."}
         </p>
       </div>
 

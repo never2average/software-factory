@@ -19,8 +19,9 @@
  * page of its own: preview pages are compiled into production builds too (they
  * answer 404 there), and a new one regrouped the chat page's first-load chunks.
  *
- * At the bottom, the composer's REAL microphone (app/_components/dictation-slot.tsx and the recorder it loads), in a
- * message box and form shaped like the composer's (a `textarea` in a form; Enter sends), checked by
+ * At the bottom, the composer's REAL microphone (app/_components/dictation-slot.tsx and the button it loads), in a
+ * message box and form shaped like the composer's (a `textarea` that grows with its text, in a form whose rounded
+ * frame clips what overflows it, as components/ai-elements/prompt-input.tsx does; Enter sends), checked by
  * tests/dictation.spec.ts, which gives the server's answers (`/api/ops/dictation`) and a fake microphone. What the
  * form would send is counted, never sent anywhere: dictation must put words in the box and send nothing. Not the
  * ChatComposer itself: importing it here made it a module two pages share, and the bundler moved it out of the chat's
@@ -65,7 +66,7 @@ function DictationComposer() {
   return (
     <section data-testid="dictation-composer" className="flex flex-col gap-2">
       <form
-        className="flex flex-col gap-1 rounded-2xl border border-border bg-card p-2"
+        className="flex flex-col gap-1 overflow-hidden rounded-2xl border border-border bg-card p-2"
         onSubmit={(e) => {
           e.preventDefault();
           const box = e.currentTarget.elements.namedItem("message") as HTMLTextAreaElement;
@@ -76,7 +77,7 @@ function DictationComposer() {
         <textarea
           name="message"
           placeholder="Send a message…"
-          className="min-h-11 resize-none bg-transparent p-2 text-sm outline-none"
+          className="field-sizing-content max-h-48 min-h-11 resize-none bg-transparent p-2 text-sm outline-none"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();

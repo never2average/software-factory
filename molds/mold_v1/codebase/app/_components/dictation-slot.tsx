@@ -6,12 +6,13 @@
  *
  * It asks the server once per tab whether dictation is on (GET /api/ops/dictation: the profile's `asr.enabled` AND the
  * provider's credentials set), after the first screen's own reads, and draws nothing until it answers yes. Only then is
- * the recorder (app/_components/dictation-button.tsx) loaded: a deployment or a person without dictation never
- * downloads it, and the chat's first-load budget (scripts/check-bundle-budget.mjs) does not carry it.
+ * the button (app/_components/dictation-button.tsx) loaded, and what listens (the microphone, the level, the cut into
+ * sections: app/_components/dictation-engine.ts) only on the first press: a deployment or a person without dictation
+ * never downloads either, and the chat's first-load budget (scripts/check-bundle-budget.mjs) does not carry them.
  */
 import { lazy, Suspense, useEffect, useState } from "react";
 import { readActiveOrg, readStored, STORAGE_KEYS } from "@/lib/browser-storage";
-import type { DictationCapability } from "@/lib/dictation-text";
+import { DEFAULT_IDLE_STOP_SECONDS, DEFAULT_MAX_SESSION_SECONDS, type DictationCapability } from "@/lib/dictation-text";
 
 export const DICTATION_PATH = "/api/ops/dictation";
 
@@ -36,9 +37,16 @@ function readCapability(): Promise<DictationCapability | null> {
     .then(async (res) => {
       if (!res.ok) throw new Error(String(res.status));
       const body = (await res.json()) as Partial<DictationCapability>;
-      return body.enabled === true && typeof body.max_seconds === "number" && typeof body.max_bytes === "number"
-        ? { enabled: true, max_seconds: body.max_seconds, max_bytes: body.max_bytes }
-        : null;
+      if (body.enabled !== true || typeof body.max_seconds !== "number" || typeof body.max_bytes !== "number") return null;
+      // A server from before sections were streamed says neither of the last two: the profile's defaults.
+      const whole = (v: unknown, otherwise: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : otherwise);
+      return {
+        enabled: true,
+        max_seconds: body.max_seconds,
+        max_bytes: body.max_bytes,
+        max_session_seconds: whole(body.max_session_seconds, DEFAULT_MAX_SESSION_SECONDS),
+        idle_stop_seconds: whole(body.idle_stop_seconds, DEFAULT_IDLE_STOP_SECONDS),
+      };
     })
     .catch(() => {
       if (capabilityRead?.key === key) capabilityRead = null;

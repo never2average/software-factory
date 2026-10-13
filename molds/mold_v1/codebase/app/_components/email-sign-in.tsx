@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { GuestLink } from "@/lib/guest-invite-rules";
 
 /**
@@ -22,6 +22,7 @@ type Stage = "hidden" | "email" | "code";
 export function EmailSignIn({
   onToken,
   chatLink = null,
+  open = false,
 }: {
   readonly onToken: (token: string) => void;
   /**
@@ -29,6 +30,11 @@ export function EmailSignIn({
    * outside its workspace, with no workspace invite — gets a code, and the invite is checked again when they use it.
    */
   readonly chatLink?: GuestLink | null;
+  /**
+   * Show the form at once instead of the one-line link: where there is no Google button (Google sign-in cannot work
+   * at this address), this is the sign-in, not the second door.
+   */
+  readonly open?: boolean;
 }) {
   const linkFields = chatLink ? { org: chatLink.org, chat: chatLink.chat } : {};
   const [stage, setStage] = useState<Stage>("hidden");
@@ -37,6 +43,9 @@ export function EmailSignIn({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) setStage((s) => (s === "hidden" ? "email" : s));
+  }, [open]);
 
   const request = async () => {
     setBusy(true);

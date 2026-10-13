@@ -1,6 +1,6 @@
 /**
  * The composer's dictation rules that run in the BROWSER: the limits in plain words, the clock, where dictated text
- * goes in the box, what a microphone failure is called, and what the recorder asks for. The server's rules and the
+ * goes in the box, what a microphone failure is called, the button's gestures and what it says. The server's rules and the
  * profile's settings are lib/dictation.ts, which re-exports all of this.
  *
  * NO IMPORTS, on purpose. app/_components/dictation-button.tsx loads on demand (React.lazy), and a lazily loaded
@@ -9,24 +9,52 @@
  * and a few KB more brotli (scripts/check-bundle-budget.mjs measured it), more than the recorder it kept out.
  */
 
-/** The recorder's bit rate: speech at 32 kbps Opus is clear, and two minutes is about 0.5 MB. */
-export const RECORDER_BITS_PER_SECOND = 32_000;
-/** The containers the button asks MediaRecorder for, best first (Chromium and Firefox: WebM/Ogg Opus; Safari: MP4). */
-export const RECORDER_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm", "audio/mp4"] as const;
-
-/** What the server says to the button: whether to show it, and the limits to show and keep to. */
+/**
+ * What the server says to the button: whether to show it, and the limits to show and keep to. `max_seconds` and
+ * `max_bytes` bound ONE clip (a section of speech); `max_session_seconds` bounds one stretch of listening (a hold, or
+ * hands-free listening from the double-click to its stop), and `idle_stop_seconds` is how long hands-free listening
+ * waits in silence before it stops itself.
+ */
 export interface DictationCapability {
   readonly enabled: boolean;
   readonly max_seconds: number;
   readonly max_bytes: number;
+  readonly max_session_seconds: number;
+  readonly idle_stop_seconds: number;
 }
+/** What a server from before sections were streamed leaves out (the profile's defaults). */
+export const DEFAULT_MAX_SESSION_SECONDS = 600;
+export const DEFAULT_IDLE_STOP_SECONDS = 20;
+
+/* ---- the button's gestures --------------------------------------------------------------------------------------- */
+
+/** A press shorter than this is a tap, not a hold: nothing is recorded, and the hint says how the button works. */
+export const TAP_MS = 300;
+/** A second press this soon after a tap is a double-click: hands-free listening. */
+export const DOUBLE_PRESS_MS = 400;
+/** How long the hint and a notice stay up. */
+export const HINT_MS = 3_500;
+export const NOTICE_MS = 8_000;
+/** Sections in flight at once; the rest wait their turn (they still land in the order they were spoken). */
+export const MAX_UPLOADS_AT_ONCE = 3;
+
+export const HINT_TEXT = "Hold to talk · double-click to keep listening";
+export const MIC_LABEL = "Dictate a message. Hold to talk, or double-click to keep listening.";
+export const HOLD_STATUS = "Listening. Release to stop.";
+export const LATCHED_STATUS = "Listening hands-free. Click the microphone or press Escape to stop.";
+export const STOPPED_STATUS = "Stopped listening.";
+export const quietStopText = (seconds: number) => `Stopped listening after ${lengthText(seconds)} of silence.`;
+export const sessionLimitText = (seconds: number) => `Stopped listening: that was the limit of ${lengthText(seconds)} in one go. Press the microphone to carry on.`;
+export const SECTION_FAILED_TEXT = "Part of what you said could not be turned into text. Try again, or type it.";
+export const STALLED_TEXT = "The microphone is on but no sound is coming through. Press the microphone again, or type your message.";
+export const SEND_FAILED_TEXT = "The recording could not be sent. Check the connection and try again.";
 /** "2 minutes", "90 seconds", "1 minute". */
 export function lengthText(seconds: number): string {
   if (seconds % 60 === 0) {
     const m = seconds / 60;
     return `${m} ${m === 1 ? "minute" : "minutes"}`;
   }
-  return `${seconds} seconds`;
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
 }
 
 /** "4 MB", "512 KB". */

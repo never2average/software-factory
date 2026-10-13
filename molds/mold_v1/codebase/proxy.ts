@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { explainAuthFailure, verifyOpsAuth, verifyOpsAuthResult } from "@/lib/ops-auth";
+import { HUB_CALLBACK_PATH, HUB_PAGE_PATH } from "@/lib/google-hub";
 
 /**
  * Next.js 16 "proxy" (the renamed middleware convention). Two jobs:
@@ -104,6 +105,14 @@ export async function proxy(request: NextRequest) {
    * within ten minutes, five attempts, once. Both are rate limited, and neither
    * reveals whether an address qualifies.
    */
+  /**
+   * The sign-in hub's page and the page that hands a hub sign-in to the browser (lib/google-hub.ts) are not this
+   * site's ordinary documents: neither loads the app's bundles, and each sets its own, narrower policy (one script
+   * by nonce, nothing inline, never framed; the hub page's form may post to the one allowed origin, which the
+   * site-wide `form-action` would refuse). That policy must be the only one on the response, enforcing even when
+   * CSP_REPORT_ONLY is on, as for a stored object below.
+   */
+  if (pathname === HUB_PAGE_PATH || pathname === HUB_CALLBACK_PATH) return NextResponse.next();
   if (pathname.startsWith("/api/auth/")) {
     const passthrough = NextResponse.next();
     passthrough.headers.set(

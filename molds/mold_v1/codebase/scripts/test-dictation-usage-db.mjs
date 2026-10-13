@@ -12,6 +12,10 @@
  *   - a dictation is counted as a dictation (with its audio seconds), never as a chat turn or an agent step;
  *   - it is priced per audio minute (lib/inference-pricing.ts) and added to the chat's token cost;
  *   - a chat row written without the new columns reads kind "chat", 0 ms of audio (the migration's defaults);
+ *   - the sections of one stretch of listening (`session_id`, `seq`) are rows keyed by workspace, stretch and place;
+ *     what the stretch has used (its audio, its sections in the last minute: what the route's session limit and rate
+ *     are kept from) is read back in its own workspace only; the same session id sent from another workspace neither
+ *     collides with it nor counts against it; a section sent twice adds to its one row;
  *   - the bare handle, with no workspace set, sees none of it.
  *
  * It restores the policy and removes its rows afterwards.
@@ -78,18 +82,19 @@ try {
   if (who.b) throw new Error(`${who.u} bypasses RLS — this test would prove nothing`);
   console.log(`\nAs ${who.u}, chat_turn_usage failing closed:`);
 
-  const { recordDictationUsage, readUsage } = await import("../lib/usage-report.ts");
+  const { recordDictationUsage, readUsage, readDictationSession } = await import("../lib/usage-report.ts");
   const { estimateAudioCostUsd, estimateCostUsd } = await import("../lib/inference-pricing.ts");
   const at = new Date();
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   // A: two clips (60 s and 30 s) and one chat turn written the way the agent writes it (no kind, no audio).
-  await recordDictationUsage({ id: `${process.pid}-a1`, orgId: A, actorEmail: "ana@example.com", model: WHISPER, audioMs: 60_000, at });
-  await recordDictationUsage({ id: `${process.pid}-a2`, orgId: A, actorEmail: "ana@example.com", model: WHISPER, audioMs: 30_000, at });
+  const alone = { sessionId: null, seq: null };
+  await recordDictationUsage({ id: `${process.pid}-a1`, orgId: A, actorEmail: "ana@example.com", model: WHISPER, audioMs: 60_000, at, ...alone });
+  await recordDictationUsage({ id: `${process.pid}-a2`, orgId: A, actorEmail: "ana@example.com", model: WHISPER, audioMs: 30_000, at, ...alone });
   await admin`INSERT INTO chat_turn_usage (org_id, eve_session_id, turn_id, actor_email, model, steps, input_tokens, status)
               VALUES (${A}, ${`sess-${process.pid}`}, 'turn_1', 'ana@example.com', '@cf/zai-org/glm-5.2', 3, 1000000, 'success')`;
   // B: one two-minute clip.
-  await recordDictationUsage({ id: `${process.pid}-b1`, orgId: B, actorEmail: "bo@example.com", model: WHISPER, audioMs: 120_000, at });
+  await recordDictationUsage({ id: `${process.pid}-b1`, orgId: B, actorEmail: "bo@example.com", model: WHISPER, audioMs: 120_000, at, ...alone });
 
   const [chatRow] = await admin`SELECT kind, audio_ms FROM chat_turn_usage WHERE org_id = ${A} AND turn_id = 'turn_1'`;
   check("a chat row written without the new columns reads kind 'chat', 0 ms of audio", chatRow?.kind === "chat" && Number(chatRow?.audio_ms) === 0, chatRow);
@@ -122,6 +127,37 @@ try {
     })
     .catch((e) => e.code ?? String(e.message));
   check("…nor can a row be filed under A from B's scope", refused !== "written", refused);
+
+  // ONE STRETCH OF LISTENING, in sections: A sends sections 0, 2 and 1 of session S (4 s, 3 s, 2 s), one of them from
+  // two minutes ago; B sends its own section 0 under the very same session id.
+  console.log("\nSections of one stretch of listening:");
+  const S = `sess-${process.pid}-3f2b6c1e`;
+  const now = new Date();
+  const earlier = new Date(now.getTime() - 120_000);
+  const ana = { orgId: A, actorEmail: "ana@example.com", model: WHISPER };
+  check("a stretch nothing was sent for has used nothing", JSON.stringify(await readDictationSession(A, S, now)) === JSON.stringify({ audioMs: 0, lastMinute: 0 }));
+  await recordDictationUsage({ id: `${process.pid}-s0`, ...ana, audioMs: 4_000, at: earlier, sessionId: S, seq: 0 });
+  await recordDictationUsage({ id: `${process.pid}-s2`, ...ana, audioMs: 3_000, at: now, sessionId: S, seq: 2 });
+  await recordDictationUsage({ id: `${process.pid}-s1`, ...ana, audioMs: 2_000, at: now, sessionId: S, seq: 1 });
+  await recordDictationUsage({ id: `${process.pid}-bs0`, orgId: B, actorEmail: "bo@example.com", model: WHISPER, audioMs: 50_000, at: now, sessionId: S, seq: 0 });
+  const sectionRows = await admin`SELECT org_id, eve_session_id, turn_id, audio_ms, kind FROM chat_turn_usage WHERE org_id IN (${A}, ${B}) AND turn_id LIKE 'section-%' ORDER BY org_id, turn_id`;
+  check("each section is a row keyed by its workspace, its stretch and its place in it", sectionRows.length === 4 && sectionRows.filter((r) => r.org_id === A).map((r) => r.turn_id).join() === "section-0,section-1,section-2" && sectionRows.every((r) => r.eve_session_id === `dictation:${r.org_id}:${S}` && r.kind === "dictation"), sectionRows);
+  const usedA = await readDictationSession(A, S, now);
+  check("A's stretch has used its own 9 s, two of its sections in the last minute (what the session limit and the rate are kept from)", usedA.audioMs === 9_000 && usedA.lastMinute === 2, usedA);
+  const usedB = await readDictationSession(B, S, now);
+  check("B's stretch under the SAME session id is B's alone: neither collided with A's nor counted with it", usedB.audioMs === 50_000 && usedB.lastMinute === 1, usedB);
+  check("…A's clips sent on their own are not part of any stretch", (await readDictationSession(A, `${process.pid}-a1`, now)).audioMs === 0);
+  // The same section again (a retry that the server had already transcribed): one row, both lengths.
+  await recordDictationUsage({ id: `${process.pid}-s1-again`, ...ana, audioMs: 2_500, at: now, sessionId: S, seq: 1 });
+  const again = await admin`SELECT audio_ms FROM chat_turn_usage WHERE org_id = ${A} AND eve_session_id = ${`dictation:${A}:${S}`} ORDER BY turn_id`;
+  check("a section sent twice is one row holding both lengths: all that was paid for, counted once as a section", again.length === 3 && again.map((r) => Number(r.audio_ms)).join() === "4000,4500,3000" && (await readDictationSession(A, S, now)).audioMs === 11_500, again);
+  const a2 = await readUsage(A, since);
+  check("A's report counts each section as a dictation, with its audio", a2.totals.dictations === 5 && a2.totals.audio_seconds === 90 + 11.5 && a2.totals.turns === 1 && a2.totals.steps === 3, a2.totals);
+  const crossedSession = await app.begin(async (tx) => {
+    await tx`select set_config('app.org_id', ${B}, true)`;
+    return tx`SELECT count(*)::int AS n FROM chat_turn_usage WHERE eve_session_id = ${`dictation:${A}:${S}`}`;
+  });
+  check("inside B's scope, A's sections are not there to count", crossedSession[0].n === 0, crossedSession[0].n);
   await app.end();
 } catch (e) {
   failures++;

@@ -51,6 +51,11 @@ export const STORAGE_KEYS = {
    * they come back to it — a shared chat's link above all — rather than to the bare home page Google returns to.
    */
   signInReturn: "workspace-sign-in-return",
+  /**
+   * In sessionStorage, for the moment between the sign-in hub's answer and this page loading: the Google sign-in the
+   * server has just verified (app/api/auth/google-hub/callback writes it, the sign-in gate reads and removes it).
+   */
+  hubHandoff: "workspace-google-hub-handoff",
 } as const;
 
 /**

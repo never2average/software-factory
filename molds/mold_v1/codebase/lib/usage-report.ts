@@ -10,7 +10,7 @@
 import "server-only";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { chatTurnUsage } from "@/agent/lib/db/schema";
-import type { DictationUsage } from "@/lib/dictation";
+import type { DictationUsage, SessionTotals } from "@/lib/dictation";
 import { estimateAudioCostUsd, estimateCostUsd } from "@/lib/inference-pricing";
 import { withOrgRls } from "@/lib/ops-db";
 
@@ -147,12 +147,22 @@ export async function readUsage(orgId: string, since: Date): Promise<UsageReport
  * row-level security scope, so readUsage counts and prices it beside the chat's own turns. The audio's length, never
  * its words.
  */
+/**
+ * The ledger key of one stretch of listening's rows. The workspace is part of it: the id is the browser's, and two
+ * workspaces that happened (or tried) to send the same one must never meet in the table's unique index.
+ */
+const dictationSessionKey = (orgId: string, sessionId: string) => `dictation:${orgId}:${sessionId}`;
+
 export async function recordDictationUsage(row: DictationUsage): Promise<void> {
+  const sectioned = row.sessionId !== null && row.seq !== null;
   await withOrgRls(row.orgId, (tx) =>
-    tx.insert(chatTurnUsage).values({
+    tx
+      .insert(chatTurnUsage)
+      .values({
       orgId: row.orgId,
-      eveSessionId: `dictation:${row.id}`,
-      turnId: "dictation",
+      // A section is keyed by its stretch and its place in it; a clip sent on its own, by its own id, as before.
+      eveSessionId: sectioned ? dictationSessionKey(row.orgId, row.sessionId!) : `dictation:${row.id}`,
+      turnId: sectioned ? `section-${row.seq}` : "dictation",
       actorEmail: row.actorEmail,
       model: row.model,
       // Not an agent step: `steps` counts the chat's model calls, and the report keeps the two apart.
@@ -162,6 +172,32 @@ export async function recordDictationUsage(row: DictationUsage): Promise<void> {
       completedAt: row.at,
       kind: "dictation",
       audioMs: row.audioMs,
-    }),
+      })
+      // The same section sent twice (a retry) was transcribed twice: one row, with both lengths, so what was paid for
+      // is all there and a replay cannot hide audio from the session's limit.
+      .onConflictDoUpdate({
+        target: [chatTurnUsage.eveSessionId, chatTurnUsage.turnId],
+        set: { audioMs: sql`${chatTurnUsage.audioMs} + excluded.audio_ms`, completedAt: row.at },
+      }),
   );
+}
+
+/**
+ * What one stretch of listening has used so far (lib/dictation.ts keeps `max_session_seconds` and the per-minute rate
+ * with it), read from the rows above inside the caller's workspace scope. From the ledger rather than from memory: a
+ * deployment runs as many server instances, and each section may reach a different one.
+ */
+export async function readDictationSession(orgId: string, sessionId: string, now: Date): Promise<SessionTotals> {
+  const minuteAgo = new Date(now.getTime() - 60_000);
+  const rows = await withOrgRls(orgId, (tx) =>
+    tx
+      .select({
+        audio_ms: sql<string>`coalesce(sum(${chatTurnUsage.audioMs}), 0)`,
+        // gte(), not a bare ${minuteAgo}: the column is what tells the driver how to send a Date.
+        last_minute: sql<string>`count(*) filter (where ${gte(chatTurnUsage.startedAt, minuteAgo)})`,
+      })
+      .from(chatTurnUsage)
+      .where(and(eq(chatTurnUsage.orgId, orgId), eq(chatTurnUsage.eveSessionId, dictationSessionKey(orgId, sessionId)), eq(chatTurnUsage.kind, "dictation"))),
+  );
+  return { audioMs: Number(rows[0]?.audio_ms ?? 0), lastMinute: Number(rows[0]?.last_minute ?? 0) };
 }

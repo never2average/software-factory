@@ -22,8 +22,27 @@ import { W } from "@/lib/ui-words";
  * Web Crypto, no Node built-ins.
  */
 const GOOGLE_JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
-/** Google's signing keys. Only a test replaces them ({@link __setGoogleKeysForTest}), with keys it made itself. */
-let googleKeys: Parameters<typeof jwtVerify>[1] = GOOGLE_JWKS;
+/**
+ * Google's signing keys. Only a test replaces them, with keys it made itself: in-process with
+ * {@link __setGoogleKeysForTest}, or, for a test that drives a real browser against `next dev`
+ * (tests/google-hub.spec.ts), by naming a key set at a LOOPBACK address in GOOGLE_JWKS_URL_FOR_TEST. That setting is
+ * read only when NODE_ENV is not "production" (`next start` and every host set it, so a deployment never reads it:
+ * a production build started with the setting present verifies against Google's keys), and only for a loopback http
+ * address, so even a development server cannot be pointed at someone else's keys.
+ */
+function testKeySet(): Parameters<typeof jwtVerify>[1] | null {
+  if (process.env.NODE_ENV === "production") return null;
+  const raw = process.env.GOOGLE_JWKS_URL_FOR_TEST?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" || (url.hostname !== "127.0.0.1" && url.hostname !== "localhost")) return null;
+    return createRemoteJWKSet(url, { cooldownDuration: 0, cacheMaxAge: 0 });
+  } catch {
+    return null;
+  }
+}
+let googleKeys: Parameters<typeof jwtVerify>[1] = testKeySet() ?? GOOGLE_JWKS;
 
 /**
  * The OAuth clients whose ID tokens we accept — a token's `aud` must be one of
@@ -247,6 +266,41 @@ export async function verifiedGoogleAddress(
     return { email, ...(typeof payload.hd === "string" ? { hostedDomain: payload.hd } : {}) };
   } catch {
     return null;
+  }
+}
+
+/**
+ * A Google ID token that came back through the sign-in hub (lib/google-hub.ts), checked before the browser is handed
+ * it as its sign-in. The same signature, issuer and expiry checks as {@link verifyOpsAuth}, and two narrower ones:
+ *
+ *   - the audience is this deployment's WEB client and nothing else. The coding-agent package's clients mint tokens
+ *     too, but never through a browser on the hub, so they are not accepted at this door;
+ *   - the token's `nonce` is the one this browser's sign-in was started with. Google signs the nonce into the token,
+ *     so a token minted for another app, another person's session or an earlier sign-in does not carry it.
+ *
+ * Says which check failed and nothing else: never the token, never a claim from it.
+ */
+export async function verifyHubSignIn(
+  credential: string | null | undefined,
+  expectedNonce: string,
+): Promise<{ ok: true } | { ok: false; reason: "token" | "nonce" }> {
+  const token = credential?.trim();
+  const audience = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
+  if (!token || !audience || !expectedNonce) return { ok: false, reason: "token" };
+  try {
+    const { payload } = await jwtVerify(token, googleKeys, {
+      issuer: ["https://accounts.google.com", "accounts.google.com"],
+      audience,
+    });
+    // jose requires `exp` to be in the future only when the claim is present; a sign-in without one is not one.
+    if (typeof payload.exp !== "number") return { ok: false, reason: "token" };
+    const nonce = typeof payload.nonce === "string" ? payload.nonce : "";
+    if (nonce.length !== expectedNonce.length) return { ok: false, reason: "nonce" };
+    let diff = 0;
+    for (let i = 0; i < nonce.length; i++) diff |= nonce.charCodeAt(i) ^ expectedNonce.charCodeAt(i);
+    return diff === 0 ? { ok: true } : { ok: false, reason: "nonce" };
+  } catch {
+    return { ok: false, reason: "token" };
   }
 }
 

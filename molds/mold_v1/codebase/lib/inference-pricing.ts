@@ -97,6 +97,11 @@ export function estimateCostUsd(model: string | null | undefined, tokens: TokenC
  * audio minute", read on 2026-10-11. The pricing page (https://developers.cloudflare.com/workers-ai/platform/pricing/,
  * same day) rounds it to "$0.0005 per audio minute" and states the unit it is billed in: 46.63 neurons per audio
  * minute at $0.011 per 1,000 neurons = $0.000513. Whisper (the older model) is $0.000453 on its page (41.14 neurons).
+ * Deepgram Nova-3 (https://developers.cloudflare.com/workers-ai/models/nova-3/, read on 2026-10-12): "$0.0052 per audio
+ * minute" over plain HTTP, which is how dictation calls it (472.73 neurons); its WebSocket price ($0.0092) is not used.
+ *
+ * Every model dictation can call (lib/dictation-models.ts) must have a row here: a deployment that names one without
+ * a price has no dictation (it fails closed) rather than unpriced usage.
  *
  * Unknown model: null, never zero, as for the token table above.
  */
@@ -110,6 +115,8 @@ export const AUDIO_PRICES: Readonly<Record<string, AudioPrice>> = {
   "@cf/openai/whisper-large-v3-turbo": { perMinute: 0.000513 },
   // https://developers.cloudflare.com/workers-ai/models/whisper/ (2026-10-11)
   "@cf/openai/whisper": { perMinute: 0.000453 },
+  // https://developers.cloudflare.com/workers-ai/models/nova-3/ (2026-10-12): the HTTP price, not the WebSocket one
+  "@cf/deepgram/nova-3": { perMinute: 0.0052 },
 };
 
 /** The audio price row for a model id, or null when the model is not priced here. */

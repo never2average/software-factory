@@ -80,8 +80,10 @@ export interface DeploymentProfile {
   /**
    * Dictation in the chat composer: speech to text for writing a prompt, never sent on its own (lib/dictation.ts).
    * enabled: shown when the provider's credentials are set on the server. language: null = detected by the model.
+   * max_seconds, max_bytes: one clip (a section). max_session_seconds: one stretch of listening. idle_stop_seconds:
+   * the silence after which hands-free listening stops itself.
    */
-  asr: { enabled: boolean; provider: "cloudflare"; model: string; language: string | null; max_seconds: number; max_bytes: number };
+  asr: { enabled: boolean; provider: "cloudflare"; model: string; language: string | null; max_seconds: number; max_bytes: number; max_session_seconds: number; idle_stop_seconds: number };
   /**
    * The time-boxed periods that group tasks (the `cycles` table). mode "team": one shared period with a lead, a
    * capacity and a burndown. "individual": each person's own items within the period. "off": the feature does not
@@ -419,7 +421,9 @@ export const DEPLOYMENT_PROFILE: DeploymentProfile = {
     "model": "@cf/openai/whisper-large-v3-turbo",
     "language": null,
     "max_seconds": 120,
-    "max_bytes": 4194304
+    "max_bytes": 4194304,
+    "max_session_seconds": 600,
+    "idle_stop_seconds": 20
   },
   "account_fields": {
     "hidden": [],

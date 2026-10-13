@@ -116,6 +116,17 @@ jobs:
         if: always()
         run: npm run test:google-audiences
 
+      # "Continue with Google" at an address Google does not list: the sign-in hub (lib/google-hub.ts), end to end
+      # against a Google made in the test, through the real route handlers of both sides. Each property that keeps
+      # it safe has its own section: the hub answers only its allow-list (exact https origins, no open redirect, a
+      # fixed path), the nonce binds the token to one sign-in, the state binds the answer to the browser that
+      # started it, the token is never in an address or a log line, the hub page cannot be framed and names where
+      # the person is signing in to. And the button: drawn only where it leads somewhere (direct, hub, or none),
+      # never hidden on a guess. The same flow in a real browser is tests/google-hub.spec.ts (ui-behaviour).
+      - name: Google sign-in through the hub, and no button that cannot work
+        if: always()
+        run: npm run test:google-hub
+
       # Which Google Workspace domains may sign in to the agent (single-tenant) is WORKSPACE_LOGIN_DOMAINS, never a
       # domain written into eve.ts; unset is closed (no Google sign-in), never open.
       - name: Login domains come from the deployment's settings, and unset is closed
@@ -797,7 +808,10 @@ jobs:
       # real handler with a fake provider. Signed out is 401, a refused workspace is passed on unserved, the usage row is
       # the sign-in's workspace and person whatever the form says, the size and length limits hold before AND after the
       # paid call, a provider failure records nothing; the Workers AI call, the price per audio minute, the profile's
-      # `asr` rules and the migration. The composer half is tests/dictation.spec.ts (ui-behaviour job).
+      # `asr` rules and the migration. Sections of one stretch of listening (session_id, seq): filed under them, and
+      # bounded by max_session_seconds and a rate per minute before the paid call. The cut into sections at pauses
+      # (lib/dictation-segmenter.ts) and the order the text is put back in (lib/dictation-order.ts), as plain
+      # functions. The composer half is tests/dictation.spec.ts (ui-behaviour job).
       - name: Dictation (sign-in, workspace, limits, usage, price; a fake provider)
         if: always()
         run: npm run test:dictation
@@ -1449,7 +1463,9 @@ jobs:
 
       # DICTATION USAGE, AS THE APP WRITES AND READS IT. Each clip is a chat_turn_usage row of kind 'dictation'; this
       # writes them as app_rw for two workspaces with the policy failing closed, and reads each workspace's report:
-      # its own clips only, counted apart from chat turns, priced per audio minute.
+      # its own clips only, counted apart from chat turns, priced per audio minute. And the sections of one stretch
+      # of listening: keyed by workspace, stretch and place, what a stretch has used read back in its own workspace
+      # only (the session limit is kept from it), the same session id from another workspace never meeting it.
       - name: Dictation usage stays in its workspace and is priced, against a fail-closed Postgres
         if: always()
         run: |
