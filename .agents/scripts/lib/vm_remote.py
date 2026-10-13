@@ -3253,13 +3253,18 @@ def _surface_apply(surf, script, app_dir, run, written, clean):
 def build_run(a, fit=None):
     """`build-run --step S --serving <current> --file F --user U --home H --cwd C -- cmd...`: build.sh's every heavy step
     (mold_v1-232), sized and run by lib/buildfit.py, with env-run (the build user, the service's env file) inside it.
-    --serving names `current`: when it exists, a release serves beside this build and keeps its headroom."""
+    --serving names `current`: when it exists, a release serves beside this build and keeps its headroom. The step is
+    sized to the app in --cwd (its subagents, its last measured peak, kept under the install's name), queued behind any
+    other heavy build on the server, and has finished only when it left what it is for (mold_v1-247): --produces PATH
+    (under --cwd, repeatable), by default the eve build's .output/server/index.mjs."""
     i = a.index("--"); head = a[:i]; step = _opt(head, "--step", "generic")
     inner = [sys.executable or "python3", os.path.abspath(__file__), "env-run", "--file", _opt(head, "--file"), "--user", _opt(head, "--user"),
              "--home", _opt(head, "--home"), "--cwd", _opt(head, "--cwd"), "--", *a[i + 1:]]
     serving = bool(_opt(head, "--serving")) and os.path.lexists(_opt(head, "--serving"))
+    produces = [head[n + 1] for n, x in enumerate(head) if x == "--produces" and n + 1 < len(head)] or ([".output/server/index.mjs"] if step == "eve" else [])
+    who = os.path.basename(os.path.dirname(os.path.normpath(_opt(head, "--serving") or ""))) or _opt(head, "--cwd")
     return (fit or buildfit.run)(step if step in buildfit.STEPS else "generic", inner, serving=serving, label=f"{step} in {_opt(head, '--cwd')}",
-                                 wait_s=int(_opt(head, "--wait", str(buildfit.WAIT_S))))
+                                 wait_s=int(_opt(head, "--wait", str(buildfit.WAIT_S))), cwd=_opt(head, "--cwd"), produces=produces, who=who)
 
 def env_run(env_file, user, home, cwd, cmd):
     """Run one command as the service user with the env file loaded. The file is root's and mode 600, so root

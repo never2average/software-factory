@@ -654,6 +654,177 @@ def box(mem_gb, cpus, avail_frac=0.8, load=0.0, swap=0, room=None, limit=None, h
     return {"mem_total_mb": total, "mem_avail_mb": int(total * avail_frac), "swap_total_mb": swap, "swap_free_mb": swap, "cg_room_mb": room,
             "cg_limit_mb": limit, "cpus": cpus, "host_cpus": host or cpus, "load1": load, "disk_free_mb": disk}
 
+def _pack(tmp, name, n):
+    """A build copy with n subagents (agent/subagents/<i>/agent.ts)."""
+    d = os.path.join(tmp, name)
+    for i in range(n):
+        os.makedirs(os.path.join(d, "agent", "subagents", f"s{i}"), exist_ok=True); open(os.path.join(d, "agent", "subagents", f"s{i}", "agent.ts"), "w").write("export default {}\n")
+    os.makedirs(os.path.join(d, "agent", "subagents", "not-one"), exist_ok=True)
+    return d
+
+class _Eyes:
+    """Stand-in watchers, one per try: what each saw."""
+    def __init__(self, *seen): self.seen = list(seen); self.units = []
+    def __call__(self, unit=None):
+        self.units.append(unit); got = self.seen.pop(0) if self.seen else {}
+        class One:
+            def stop(_): return {"peak_mb": got.get("peak_mb"), "oom_kills": got.get("oom_kills", 0), "killed": got.get("killed", [])}
+        return One()
+
+def honest(check, tmp, go, roomy):
+    """mold_v1-247: a build has finished only when it left its product and none of its processes was killed; its output
+    is shown when it fails; its need is the app's; one heavy build at a time; swap when the need is above the memory."""
+    finished = lambda log: [l for l in log["said"] if " finished in " in l]
+    # ---- 1. a killed child with a parent that exits 0 ----
+    victim = {"pid": 843059, "name": "MainThread", "anon_mb": 4753}
+    rc, log = go([roomy], [0, 0], watch=_Eyes({"peak_mb": 4700, "oom_kills": 1, "killed": [victim]}, {"peak_mb": 3000}))
+    first = next((l for l in log["said"] if "FAILED" in l), "")
+    check("honest: the kernel killed a child and the build tool still exited 0: a FAILURE that says so (which process, at how many MB, that the exit was 0), "
+          "never `finished`; then the retry, tight, which finishes", rc == 0 and len(log["runs"]) == 2 and "killed one of its processes (MainThread, pid 843059)" in first
+          and "at 4753 MB" in first and "own exit was 0" in first and len(finished(log)) == 1 and log["said"].index(finished(log)[0]) > log["said"].index(first)
+          and log["runs"][1]["BUILD_CPUS"] == "1", log["said"])
+    rc, log = go([roomy], [0, 0], watch=_Eyes({"oom_kills": 1, "peak_mb": 4800}, {"oom_kills": 2, "peak_mb": 4900}))
+    check("honest:   ...killed again on the retry: the capacity exit and BUILD_SHORT with killed=1 and where it was killed, nothing `finished`",
+          rc == BF.CAPACITY_RC and not finished(log) and log["said"][-1].startswith("BUILD_SHORT") and "killed_at_mb=4900" in log["said"][-1]
+          and log["said"][-1].endswith("killed=1"), log["said"][-2:])
+    rc, log = go([roomy], [0], watch=_Eyes({"peak_mb": 2400}))
+    check("honest:   ...a watched build nobody killed finishes once, and says its peak", rc == 0 and len(log["runs"]) == 1 and "2400 MB at its most" in finished(log)[0], log["said"])
+    # the scope's own count, the kernel's log, and whose kill it was
+    cg = os.path.join(tmp, "cg247"); sc = os.path.join(cg, "system.slice", "sf-build-1-2-1.scope"); os.makedirs(sc)
+    for f_, t_ in (("memory.stat", f"anon {3 << 30}\nfile {1 << 30}\n"), ("memory.swap.current", str(1 << 30)), ("memory.events", "low 0\nhigh 9\noom 1\noom_kill 1\n"),
+                   ("cgroup.procs", "111\n222\n")): open(os.path.join(sc, f_), "w").write(t_)
+    klog = ("[100.5] oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/user.slice/session-1.scope,task=next-server (v1,pid=999,uid=0\n"
+            "[100.6] Out of memory: Killed process 999 (next-server (v1) total-vm:25882480kB, anon-rss:3858108kB, file-rss:3072kB, shmem-rss:0kB, UID:0 pgtables:17004kB oom_score_adj:0\n"
+            "[200.1] oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/system.slice/sf-build-1-2-1.scope,task=MainThread,pid=843059,uid=0\n"
+            "[200.2] Out of memory: Killed process 843059 (MainThread) total-vm:25426116kB, anon-rss:4867292kB, file-rss:2560kB, shmem-rss:0kB, UID:0 pgtables:89384kB oom_score_adj:0\n")
+    w = BF.Watch("sf-build-1-2-1", every=30, root=cg, dmesg=lambda: klog); w.since = 150.0; seen = w.stop()
+    check("honest: the watcher reads the step's own scope: its peak (anonymous + swapped, not the page cache), memory.events' oom_kill, and the kernel's log for "
+          "a kill in that scope, with the size it was killed at (4753 MB, the 2026-10-13 kill)", seen["peak_mb"] == 4096 and seen["oom_kills"] == 1
+          and seen["killed"] == [{"pid": 843059, "name": "MainThread", "anon_mb": 4753}], seen)
+    check("honest:   ...another app's kill (a dev server, another scope) and a kill before the step began are not this step's",
+          BF.oom_victims(klog, 0, [], "sf-build-1-2-1") == seen["killed"] and BF.oom_victims(klog, 250, [843059], "sf-build-1-2-1") == []
+          and BF.oom_victims(klog, 0, [999]) == [{"pid": 999, "name": "next-server (v1", "anon_mb": 3767}])
+    me = BF.Watch(None, every=30, dmesg=lambda: ""); seen = me.stop()
+    check("honest:   ...with no scope it follows this process's own descendants, and never fails the build it watches", seen["oom_kills"] == 0 and seen["killed"] == [], seen)
+    pl = BF.plan("eve", roomy); pl["unit"] = "sf-build-9-9-1"
+    if os.path.isdir("/run/systemd/system"):
+        check("honest:   ...the scope is named, so its cgroup can be found", "--unit=sf-build-9-9-1" in BF.wrap(["x"], pl, roomy, which=lambda c: "/usr/bin/" + c, euid=0))
+    # ---- 2. a missing product ----
+    app = _pack(tmp, "app14", 14); prod = os.path.join(".vercel", "output", "config.json")
+    def writes(argv, env, cwd): os.makedirs(os.path.join(cwd, ".vercel", "output"), exist_ok=True); open(os.path.join(cwd, prod), "w").write("{}"); return 0, "built\n"
+    rc, log = go([roomy], [0], cwd=app, produces=[prod])
+    check("honest: a build that exits 0 without what it is for (.vercel/output/config.json) FAILED: exit 1, the missing file named, never `finished`, and with no "
+          "sign of a kill it is not run again", rc == 1 and len(log["runs"]) == 1 and not finished(log) and any("did not leave " + prod in l for l in log["said"]), log["said"])
+    rc, log = go([roomy], [0, 0], cwd=app, produces=[prod], kills_seq=[3, 4, 4, 4, 4])
+    check("honest:   ...missing while the kernel's OOM count rose: killed for memory, so the retry (and still missing: a failure, not `finished`)",
+          rc == 1 and len(log["runs"]) == 2 and not finished(log) and log["runs"][1]["BUILD_CPUS"] == "1", log["said"])
+    rc, log = go([roomy], [0], cwd=app, produces=[prod], runner=writes)
+    check("honest:   ...and the build that leaves it has finished", rc == 0 and len(finished(log)) == 1, log["said"])
+    os.utime(os.path.join(app, prod), (1, 1))
+    rc, log = go([roomy], [0], cwd=app, produces=[prod])
+    check("honest:   ...an earlier build's product does not count: it must be this run's", rc == 1 and not finished(log), log["said"])
+    # ---- 3. the build's own output ----
+    noisy = "".join(f"line {i}\n" for i in range(1, 101)) + "postgres://app:hunter2secret@db.internal/x\nAUTH_TOKEN=abcd1234efgh\nError: boom\n"
+    kept = os.path.join(tmp, "out247", "deploy.eve-api-build.out")
+    rc, log = go([roomy], [1], tails=[noisy], out_file=kept)
+    shown = [l for l in log["said"] if l.startswith("  | ")]
+    check("honest: a failed build's last 60 lines are in the log, under a line that says so and names the file with the whole of it",
+          rc == 1 and len(shown) == BF.TAIL_LINES and shown[-1] == "  | Error: boom" and shown[0] == "  | line 44"
+          and any("the last 60 lines" in l and kept in l for l in log["said"]), (len(shown), shown[:1], shown[-1:]))
+    whole = open(kept).read()
+    check("honest:   ...secrets hidden in the log and in the file, which keeps every line and only its owner may read",
+          not any("hunter2secret" in l or "abcd1234efgh" in l for l in log["said"]) and "hunter2secret" not in whole and "abcd1234efgh" not in whole
+          and "line 1\n" in whole and "Error: boom" in whole and "postgres://***:***@db.internal" in whole and (os.stat(kept).st_mode & 0o077) == 0, whole[-200:])
+    rc, log = go([roomy], [0, 0], tails=["child gone\n", ""], watch=_Eyes({"oom_kills": 1}, {}))
+    check("honest:   ...a killed build's output is shown too", rc == 0 and "  | child gone" in log["said"], log["said"])
+    rc, log = go([roomy], [0], tails=[noisy])
+    check("honest:   ...a build that finished shows none of it", rc == 0 and not any(l.startswith("  | ") for l in log["said"]))
+    # ---- 4. the need is the app's ----
+    big = _pack(tmp, "app27", 27)
+    p14, p27 = BF.profile("eve", app, "a14", {}), BF.profile("eve", big, "a27", {})
+    check("sized to the app: the eve build's need grows with the subagents in the build copy: 14 is the usual 2600 MB, 27 is about 5 GB (5.06 GB measured), "
+          "with a heap that grows too (out of heap at 2656 MB, fine at 3852)", (BF.subagents(app), BF.subagents(big)) == (14, 27) and p14["need_mb"] == 2600 and p14["heap_mb"] == 1280
+          and 4900 <= p27["need_mb"] <= 5300 and p27["floor_mb"] > p14["need_mb"] and 3700 <= p27["heap_mb"] <= 4100, (p14, p27))
+    check("sized to the app:   ...the other steps, and a directory with no subagents, keep the usual numbers",
+          BF.profile("web", big, "a27", {})["need_mb"] == BF.STEPS["web"]["need_mb"] and BF.profile("eve", tmp, "x", {})["need_mb"] == 2600)
+    eight = dict(box(8, 4), mem_avail_mb=5253)       # 5.25 GB available, no swap: the 2026-10-13 machine, as the killed build was sized
+    check("sized to the app:   ...on 8 GB with 5.25 GB free and no swap, 14 subagents build roomy; 27 do not (they were sized as roomy, and killed)",
+          BF.plan("eve", eight, prof=p14)["mode"] == "roomy" and BF.plan("eve", eight, prof=p27)["mode"] != "roomy" and "27 subagents" in BF.plan("eve", eight, prof=p27)["why"])
+    peaks = os.path.join(tmp, "peaks247", "build-peaks.json")
+    rc, log = go([roomy], [0], cwd=big, who="a27", peaks=peaks, watch=_Eyes({"peak_mb": 4400}))
+    rec = BF.read_peaks(peaks).get("a27:eve") or {}
+    check("sized to the app: a build that finished leaves its measured peak for the app (with its subagent count), nowhere but the peaks file it was given",
+          rc == 0 and rec.get("peak_mb") == 4400 and rec.get("subagents") == 27 and "at_least_mb" not in rec, rec)
+    again = BF.profile("eve", big, "a27", BF.read_peaks(peaks))
+    check("sized to the app:   ...and the next build of that app is sized from it (the peak plus a tenth), not from the estimate; another app's is not",
+          again["need_mb"] == 4850 and again["measured_mb"] == 4400 and "peaked at 4400 MB" in again["basis"] and BF.profile("eve", big, "other", BF.read_peaks(peaks))["need_mb"] == p27["need_mb"], again)
+    grown = BF.profile("eve", _pack(tmp, "app30", 30), "a27", BF.read_peaks(peaks))
+    check("sized to the app:   ...subagents added since then are added to it", grown["need_mb"] == BF._up((4400 + 3 * BF.PER_SUBAGENT_MB) * BF.PEAK_MARGIN), grown["need_mb"])
+    rc, log = go([roomy], [0, 0], cwd=big, who="k27", peaks=peaks, watch=_Eyes({"oom_kills": 1, "peak_mb": 5600}, {"oom_kills": 1, "peak_mb": 5600}))
+    after_kill = BF.profile("eve", big, "k27", BF.read_peaks(peaks))
+    check("sized to the app:   ...a build killed at 5600 MB is remembered as needing more than that, until one finishes",
+          rc == BF.CAPACITY_RC and after_kill["need_mb"] >= 5600 and "killed at 5600 MB" in after_kill["basis"], after_kill)
+    four = box(4, 2, avail_frac=0.85, disk=3000)     # 4 GB, no swap, no disk for a swap file
+    rc, log = go([four], [0], cwd=big, who="a27")
+    line = BF.parse_short(log["said"][-1]) or {}
+    check("sized to the app: a machine that cannot give the app's need even with all of its memory and swap stops BEFORE building, with no wait: BUILD_SHORT "
+          "carries the app's need, its subagents and the most the machine has", rc == BF.CAPACITY_RC and not log["runs"] and not log["slept"]
+          and line.get("need_mb") == p27["need_mb"] and line.get("subagents") == 27 and line.get("most_mb") < line.get("floor_mb") and BF.too_small(line), log["said"][-2:])
+    words = BF.short_words(line)
+    check("sized to the app:   ...and the sentence names them: this app, its 27 subagents, what it needs, what the machine can give, that waiting will not help",
+          "for this app (27 subagents)" in words and f"{p27['need_mb']} MB" in words and f"is {line['most_mb']} MB" in words and "waiting will not help" in words, words)
+    rc, log = go([four], [0], cwd=app, who="a14")
+    check("sized to the app:   ...the same machine still builds the 14-subagent app", rc == 0 and len(log["runs"]) == 1, log["said"])
+    busy = box(8, 4, avail_frac=0.2, disk=3000)
+    check("sized to the app:   ...a machine that is only busy is not called too small", not BF.too_small(BF.parse_short(BF.short_line("eve", busy, True, prof=p14))))
+    # ---- 5. one heavy build at a time on a machine ----
+    import fcntl
+    lock_path = os.path.join(tmp, "lock247", "heavy-build.lock"); os.makedirs(os.path.dirname(lock_path))
+    holder = open(lock_path, "a+"); fcntl.flock(holder, fcntl.LOCK_EX)
+    holder.write(json.dumps({"who": "other_app", "pid": 4242, "since": 1000})); holder.flush()
+    order, slept = [], []
+    def nap(s_):
+        slept.append(s_)
+        if len(slept) == 3: order.append("other done"); holder.seek(0); holder.truncate(); fcntl.flock(holder, fcntl.LOCK_UN)
+    def lk(who, say, sleep): return BF.machine_lock(who, say=say, sleep=nap, path=lock_path, wait_s=600, poll_s=5, now=lambda: 1300)
+    rc, log = go([roomy], [0], lock=lk, who="this_app", runner=lambda a, e, c: order.append("this built") or (0, ""))
+    waiting = [l for l in log["said"] if "waiting for other_app's build" in l]
+    check("one at a time: a second app's build queues behind the first's, saying whose build it waits for and for how long, and starts only when that is done",
+          rc == 0 and order == ["other done", "this built"] and len(waiting) == 1 and "this_app" in waiting[0] and "pid 4242" in waiting[0] and "started 5 min ago" in waiting[0]
+          and sum(slept) == 15, (order, slept, log["said"][:3]))
+    check("one at a time:   ...it is sized only once it holds the machine (the plan comes after the wait), and its own processes are told the lock is held",
+          log["said"].index(next(l for l in log["said"] if "eve roomy" in l)) > log["said"].index(waiting[0]) and any("other_app's build is done" in l for l in log["said"]), log["said"])
+    env_seen = {}
+    rc, log = go([roomy], [0], lock=lk, who="this_app", runner=lambda a, e, c: env_seen.update(e) or (0, ""))
+    check("one at a time:   ...a free machine is taken at once, held for the build, and free again after", rc == 0 and env_seen.get(BF.LOCK_ENV) == "held"
+          and not any("waiting for" in l for l in log["said"]) and open(lock_path).read() == "", log["said"])
+    fcntl.flock(holder, fcntl.LOCK_EX); slept.clear()
+    def lk_short(who, say, sleep): return BF.machine_lock(who, say=say, sleep=slept.append, path=lock_path, wait_s=10, poll_s=5)
+    rc, log = go([roomy], [0], lock=lk_short, who="this_app")
+    check("one at a time:   ...and a build that is still held off at the end of the wait is NOT started: exit 1, saying so, nothing run",
+          rc == 1 and not log["runs"] and "was not started" in log["said"][-1], log["said"])
+    rc, log = go([roomy], [0], lock=lk_short, who="this_app", runner=lambda a, e, c: (0, ""))
+    fcntl.flock(holder, fcntl.LOCK_UN); holder.close()
+    with BF.machine_lock("a", say=lambda l: None, path=lock_path) as other:
+        check("one at a time:   ...the lock is a flock: it goes with its process, and its file is never something to delete", other is None and json.load(open(lock_path))["who"] == "a")
+    check("one at a time:   ...the machine's own lock and peaks file are under ~/.cache/software-factory", BF.LOCK_PATH.startswith(os.path.join(os.path.expanduser("~"), ".cache", "software-factory") + os.sep)
+          and os.path.dirname(BF.PEAKS_PATH) == os.path.dirname(BF.LOCK_PATH))
+    # ---- 6. swap whenever the need is above the memory ----
+    has_swap = dict(eight, swap_total_mb=8191, swap_free_mb=8000)
+    pl = BF.plan("eve", has_swap, prof=p27)
+    check("swap: the app's need above the free memory on a machine WITH swap: it runs, counting its swap (said in the plan), not short and not as if it were roomy",
+          pl["mode"] == "tight" and pl["swap_mb"] > 0 and pl["budget_mb"] >= p27["need_mb"] and "of it swap" in BF.plan_line(pl), pl)
+    rc, log = go([has_swap], [0], cwd=big, who="a27")
+    check("swap:   ...and no temporary file is made when the machine's own swap covers it", rc == 0 and not log["swap"] and len(log["runs"]) == 1, log["swap"])
+    check("swap:   ...none is counted, and none made, when the memory alone covers the need", BF.plan("eve", has_swap, prof=p14)["swap_mb"] == 0 and BF.swap_mb_for("eve", has_swap, False, p14, euid=0) == 0)
+    under = dict(eight, swap_total_mb=1024, swap_free_mb=0)            # above the floor, under the need, its own swap used up
+    rc, log = go([under, dict(under, swap_total_mb=5120, swap_free_mb=4296)], [0], cwd=big, who="a27", serving=False)
+    if os.geteuid() == 0:
+        check("swap:   ...a machine whose own swap does not cover the need gets the temporary file for what is missing, without being short first, removed after",
+              rc == 0 and log["swap"] and log["swap"][0][0] == "on" and log["swap"][-1] == ("off",) and not log["slept"], (log["swap"], log["said"][:2]))
+    check("swap:   ...only as root, and only with the disk to spare beside it", BF.swap_mb_for("eve", under, False, p27, euid=1000) == 0
+          and BF.swap_mb_for("eve", dict(under, disk_free_mb=4000), False, p27, euid=0) == 0 and BF.swap_mb_for("eve", under, False, p27, euid=0) >= 1024)
+
 def buildfit(check, tmp):
     # ---- the sizing table: 2, 4, 8 GB x 1-4 CPUs x idle and busy ----
     rows = {}
@@ -750,8 +921,10 @@ def buildfit(check, tmp):
         log = {"runs": [], "slept": [], "said": [], "swap": []}
         def runner(argv, env, cwd): log["runs"].append(dict(env)); return next(cs), next(ts)
         swap = (lambda mb, say: log["swap"].append(("on", mb)) or swap_made, lambda say: log["swap"].append(("off",)))
-        rc = BF.run("eve", ["npm", "run", "build:eve"], serving=True, wait_s=kw.pop("wait_s", 60), poll_s=15, env={}, probe=probe, runner=runner,
-                    sleep=log["slept"].append, kills=lambda: next(ks), swap=swap, wrapper=lambda a, p, f: a, say=log["said"].append, **kw)
+        # nothing of this machine's: no lock, no watcher, no peaks file (each has its own checks below)
+        for k_, v_ in (("watch", None), ("lock", None), ("peaks", False)): kw.setdefault(k_, v_)
+        rc = BF.run(kw.pop("step", "eve"), ["npm", "run", "build:eve"], serving=kw.pop("serving", True), wait_s=kw.pop("wait_s", 60), poll_s=15, env={}, probe=probe,
+                    runner=kw.pop("runner", None) or runner, sleep=log["slept"].append, kills=lambda: next(ks), swap=swap, wrapper=lambda a, p, f: a, say=log["said"].append, **kw)
         return rc, log
     roomy, short = box(8, 4, avail_frac=0.85), box(8, 4, avail_frac=0.2)
     rc, log = go([roomy], [0])
@@ -773,7 +946,8 @@ def buildfit(check, tmp):
     check("buildfit run: and if even that is short: CAPACITY_RC, nothing run, a BUILD_SHORT line with the measured numbers, the swap file removed",
           rc == BF.CAPACITY_RC and not log["runs"] and log["said"][-1].startswith("BUILD_SHORT step=eve") and "avail_mb=" in log["said"][-1] and log["swap"][-1] == ("off",), log["said"][-2:])
     rc, log = go([dict(short, swap_total_mb=1024, swap_free_mb=0)] * 6, [0])
-    check("buildfit run:   ...a machine that HAS swap (used up) gets no swap file of ours", rc == BF.CAPACITY_RC and not log["swap"], log["swap"])
+    check("buildfit run:   ...a machine whose own swap is used up gets the temporary file too (mold_v1-247), removed after",
+          rc == BF.CAPACITY_RC and log["swap"][0][0] == "on" and log["swap"][-1] == ("off",), log["swap"])
     rc, log = go([dict(short, disk_free_mb=3000)] * 6, [0])
     check("buildfit run:   ...nor one without the disk to spare", rc == BF.CAPACITY_RC and not log["swap"])
     rc, log = go([roomy], [137, 0], kills_seq=[3, 4, 4, 4])
@@ -789,6 +963,7 @@ def buildfit(check, tmp):
     check("buildfit run: killed again, tight: CAPACITY_RC and BUILD_SHORT ... killed=1, not the build's own exit", rc == BF.CAPACITY_RC and log["said"][-1].endswith("killed=1"), log["said"][-1])
     rc, log = go([roomy], [2])
     check("buildfit run: an ordinary failure is the build's own: its exit code, run once, no retry", rc == 2 and len(log["runs"]) == 1)
+    honest(check, tmp, go, roomy)
     short_line = BF.short_line("web", box(4, 2, avail_frac=0.3), True)
     parsed = BF.parse_short("noise\n" + short_line + "\n")
     words = BF.short_words(parsed)
@@ -859,5 +1034,7 @@ def buildfit_alone():
     finally: shutil.rmtree(tmp, ignore_errors=True)
     if fails: print("buildfit self-test FAILED:\n  " + "\n  ".join(fails)); return 1
     print(f"buildfit self-test ok: {n[0]} checks (sizing for 2/4/8 GB, 1-4 CPUs, idle and busy; cgroup limits; the wait, the swap file, "
-          "the retry and the capacity exit; build.sh, build-run, env-run; deploy's request for a bigger server). Offline, nothing on this machine changed")
+          "the retry and the capacity exit; a killed child or a missing product is a failure, its output shown; the need sized to the app's subagents and "
+          "its measured peak; one heavy build at a time; swap when the need is above the memory; build.sh, build-run, env-run; deploy's request for a "
+          "bigger server). Offline, nothing on this machine changed")
     return 0
