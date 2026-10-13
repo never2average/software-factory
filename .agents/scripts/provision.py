@@ -7,6 +7,13 @@
   provision.py <app_id> --rollback [--json]                every project back to its previous production deployment (Vercel)
   provision.py <app_id> --smoke [--json]                   the post-deploy chat check on its own, against what serves now
                                                            (Vercel or the app's own server; recorded as <target>.smoke)
+  provision.py <app_id> --google-signin [--json]           does "Continue with Google" work on what serves now: directly,
+                                                           through a sign-in hub, or NOT (then the steps to fix it). Reads
+                                                           only; recorded as google_sign_in.check. Also run by --smoke and
+                                                           after every deploy (lib/google_signin.py, mold_v1-242)
+  provision.py <app_id> --google-hub <other_app>|off [--dry-run]   let <other_app>, whose Google sign-in works, do the
+                                                           Google part for this app (the mold's sign-in hub). State only:
+                                                           it takes effect at each app's next deploy and deploys nothing
   provision.py <app_id> status [--json]                    the latest deploy: still running (and how far), or its result
   provision.py <app_id> --deploy --dry-run                 the plan, the mold CI gate and the sign-in a redeploy needs; read-only
   provision.py <app_id> --fix-addresses [--dry-run]        read each project's address back from Vercel, verify it is ours,
@@ -142,6 +149,7 @@ import deploy_gate          # only deploy a mold commit whose CI passed (lib/dep
 import buildfit             # a heavy build sized to this machine, now (lib/buildfit.py, mold_v1-232)
 import asr                  # the app's speech model for dictation, carried as ASR_* (lib/asr.py)
 import vercel_addr          # which addresses are this app's own on Vercel: read, verified, never derived (mold_v1-239)
+import google_signin        # does "Continue with Google" work at the app's address; the sign-in hub's settings (mold_v1-242)
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
@@ -1043,6 +1051,8 @@ def vercel_plan(app_id, app, infra, ds, mold_dir, proj, mode="deploy"):
                "OPS_MULTI_TENANT": infra.get("runtime_env", {}).get("OPS_MULTI_TENANT", "1")}
         try: cfg.update(asr.env_pairs(app, mold_dir))
         except SystemExit as x: create.append(f"NOTHING: the deploy stops before writing anything, because {x}")
+        hub_cfg = google_signin.env_pairs(infra, mold_dir)
+        if hub_cfg: create.append(f"env on {proj}, rewritten on every deploy (the Google sign-in hub): " + ", ".join(f"{k}={v}" for k, v in hub_cfg.items()))
         create.append(f"env on {proj} and {api}, rewritten on every deploy: " + ", ".join(f"{k}={v}" for k, v in cfg.items())
                       + "; PLATFORM_NOTIFY_FROM's display name set to this app's product name on all three projects")
         if not shared:
@@ -1772,6 +1782,15 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
     cfg.update(asr.env_pairs(app, mold_dir))
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=proj)
     for k, v in cfg.items(): _set_env(k, v, mold_dir, project=f"{proj}-api")   # build-time flags of the eve bundle: the API must agree with the web door
+    # The Google sign-in hub (lib/google_signin.py, mold_v1-242): which app does the Google part for this one, and
+    # which addresses this app does it for. The web door alone reads them; written from state on every deploy and
+    # removed when state no longer says them, and only for a mold that has the hub.
+    for k, v in google_signin.env_pairs(infra, mold_dir).items():
+        _set_env(k, v, mold_dir, project=proj); print(f"  {k} set from state on {proj}")
+    for k in google_signin.env_stale(infra, mold_dir):
+        if k in have:
+            vrun(f"vercel env rm {k} production --project {proj} --yes", shell=True, cwd=mold_dir, capture_output=True, text=True)
+            print(f"  {k} removed from {proj}: state no longer sets it")
     # The sender's display name is this app's brand, re-derived on every deploy so it cannot drift from
     # the product name the overlay writes into the email text (the operator only ever supplies the address).
     cur = pull_env(mold_dir, proj).get("PLATFORM_NOTIFY_FROM", "")
@@ -2028,20 +2047,62 @@ def rollback_vercel(app_id, infra, before, mold_dir, why, roles=None, by="the de
 def _smoke_record(res):
     return {k: res.get(k) for k in ("result", "detail", "at", "seconds", "workspace_list", "cleanup") if res.get(k) is not None}
 
+def google_signin_now(app_id, app, infra, adir, quiet=False):
+    """Does "Continue with Google" work on what serves now (lib/google_signin.py, mold_v1-242)? One reading, recorded
+    in infrastructure.json google_sign_in.check, printed as one of three results: works directly, works through the
+    hub, or NOT WORKING with the steps to fix it. -> (result dict, regressed). `regressed`: it worked at the last
+    reading that said either way and does not now; the caller fails on that. A first NOT WORKING is a warning, and
+    a reading that could not be made is neither. Reads only: public GETs to the app, its hub and Google.
+
+    Before the reading, an app that signs in through a hub has its address put on that hub's list in state
+    (sync_return): the address is only known once the app has deployed. That changes the HUB app's state file and
+    nothing that runs; the hub starts answering at its own next deploy, which is never started from here."""
+    said = []
+    hub_id = ((infra.get("google_sign_in") or {}).get("hub") or {}).get("app_id")
+    if hub_id and hub_id != app_id and google_signin.app_address(infra):
+        hub_path = os.path.join(ST, "application", hub_id, "infrastructure.json")
+        if os.path.isfile(hub_path):
+            hub_infra = load(hub_path); before = json.dumps(hub_infra.get("google_sign_in"), sort_keys=True)
+            lines = google_signin.sync_return(app_id, infra, hub_id, hub_infra, app=app, now=NOW)
+            if json.dumps(hub_infra.get("google_sign_in"), sort_keys=True) != before:
+                save(hub_path, hub_infra); said = lines
+    res = google_signin.check(app_id, infra, hub_candidate=google_signin.hub_candidate(app_id, infra, os.path.join(ST, "application")))
+    regressed = google_signin.record(infra, res)
+    save(os.path.join(adir, "infrastructure.json"), infra)
+    AR.detail("google_sign_in", dict(infra["google_sign_in"]["check"], regressed=regressed, next=res.get("next") or []))
+    if not quiet:
+        bang = res["result"] == "not_working"
+        print(("\n" + "!" * 100 + "\n" if bang else "") + google_signin.line(res)
+              + ("\n  REGRESSION: it worked when it was last checked" if regressed else ""))
+        for l in said + (res.get("next") or []): print("  " + l)
+        if bang: print("!" * 100)
+    return res, regressed
+
+def google_signin_tail(app_id, res, regressed):
+    """The words a summary carries about Google sign-in, and the exit a regression forces."""
+    words = google_signin.line(res)
+    if regressed: words += " REGRESSION: it worked when it was last checked."
+    how = f"python3 .claude/scripts/provision.py {app_id} --google-signin"
+    return words, (f" To see the steps again: {how}" if res.get("result") == "not_working" else "")
+
 def smoke_now(app_id, app, infra, adir, key):
     """`provision.py <app> --smoke`: lib/smoke.py once, against what serves now at infra[key].production_url (key is
     "vercel" or "vm_remote"); the result is recorded in infrastructure.json <key>.smoke and nothing is ever rolled back.
-    Exit 0 pass, 1 fail, 3 (stop_for_human, `needs` names the sign-in code and how to get it) needs a sign-in."""
+    Then the Google sign-in check (google_signin_now), on every outcome of the chat.
+    Exit 0 pass, 1 fail (the chat failed, or Google sign-in REGRESSED: it worked at the last check and does not now),
+    3 (stop_for_human, `needs` names the sign-in code and how to get it) needs a sign-in."""
     import smoke
     url = (infra.get(key) or {}).get("production_url")
     res = smoke.check(app_id, app, infra, url=url)
     infra.setdefault(key, {})["smoke"] = _smoke_record(res); save(os.path.join(adir, "infrastructure.json"), infra)
     print(f"smoke {res['result']}: {res['detail']}")
     AR.detail("smoke", infra[key]["smoke"])
+    g, regressed = google_signin_now(app_id, app, infra, adir)
+    gwords, ghow = google_signin_tail(app_id, g, regressed)
     if res["result"] == "needs_sign_in":
-        AR.need("code", "one-time sign-in code", smoke.sign_in_how(app_id)); stop_for_human(f"{app_id}: needs a sign-in: {res['detail']}")
-    AR.note(summary=f"{app_id}: smoke {res['result']}: {res['detail'][:200]}")
-    return 0 if res["result"] == "pass" else 1
+        AR.need("code", "one-time sign-in code", smoke.sign_in_how(app_id)); stop_for_human(f"{app_id}: needs a sign-in: {res['detail']}\n  {gwords}{ghow}")
+    AR.note(summary=f"{app_id}: smoke {res['result']}: {res['detail'][:200]}. {gwords}", **({"next": ghow.strip()} if ghow else {}))
+    return 0 if res["result"] == "pass" and not regressed else 1
 
 def verify_release(app_id, app, infra, ds, adir, mold_dir, before):
     """After the three deploys, before anything is recorded stamped: the health gate, then the smoke test. A failure of
@@ -2095,6 +2156,36 @@ def rollback_by_hand(app_id, app, infra, adir, mold_dir):
     AR.note(summary=f"{app_id}: {rb['result']} to the previous production deployment.",
             next=f"Fix the cause, then redeploy: python3 .claude/scripts/provision.py {app_id} --deploy")
     return 0 if rb["result"] == "rolled back" else 1
+
+def google_signin_cli(app_id, a, app, infra, adir, dry):
+    """--google-signin: the check on its own (exit 0 works or could not be checked, 1 NOT working).
+    --google-hub <other_app>|off: set or clear this app's sign-in hub in state. Deploys nothing, touches no running
+    app: each side takes it up at its own next deploy, and it says which deploys those are."""
+    if "--google-hub" in a:
+        i = a.index("--google-hub")
+        hub_id = a[i + 1] if i + 1 < len(a) and not a[i + 1].startswith("-") else ""
+        if not hub_id: sys.exit(f"--google-hub needs the app that will do the Google part, e.g. --google-hub <other_app_id>, or `off`")
+        cur = ((infra.get("google_sign_in") or {}).get("hub") or {}).get("app_id")
+        other_id = cur if hub_id == "off" else hub_id
+        other_path = os.path.join(ST, "application", other_id, "infrastructure.json") if other_id else ""
+        if hub_id != "off" and not os.path.isfile(other_path):
+            sys.exit(f"{hub_id}: no such application. Registered: {', '.join(sorted(x for x in os.listdir(os.path.join(ST, 'application')) if x != 'app_id'))}")
+        other = load(other_path) if other_path and os.path.isfile(other_path) else None
+        if hub_id == "off": good, said = True, google_signin.clear_hub(app_id, infra, other)
+        else: good, said = google_signin.set_hub(app_id, infra, hub_id, other, app=app, now=NOW)
+        for l in said: print(l)
+        if not good:
+            AR.note(summary=f"{app_id}: the sign-in hub was not set: {said[0][:300]}"); return 1
+        if dry: print("dry run: nothing was written."); return 0
+        save(os.path.join(adir, "infrastructure.json"), infra)
+        if other is not None: save(other_path, other)
+        AR.detail("google_sign_in", infra.get("google_sign_in"))
+        AR.note(summary=f"{app_id}: " + " ".join(said)[:600])
+        return 0
+    res, regressed = google_signin_now(app_id, app, infra, adir)
+    words, how = google_signin_tail(app_id, res, regressed)
+    AR.note(summary=f"{app_id}: {words}", **({"next": "\n".join(res.get("next") or [])} if res.get("next") else {}))
+    return 1 if res["result"] == "not_working" else 0
 
 def smoke_how(app_id):
     import smoke
@@ -3347,6 +3438,66 @@ def self_test_release(check):
         code, out = go("app1", "--smoke")
         check("--smoke once signed in: one chat answered in the operator's workspace, recorded",
               code == 0 and inf()["vercel"]["smoke"]["result"] == "pass" and '"org": "org_own"' in calls() and '"org": "customer_a"' not in calls(), out[-400:])
+        # mold_v1-242: Google sign-in is checked after a deploy and in --smoke (lib/google_signin.py). A rehearsal asks
+        # nobody; FACTORY_GOOGLE_SIGNIN says what the reading is, through the real recorder and the real exits.
+        check("mold_v1-242: every deploy and --smoke records a Google sign-in reading (in a rehearsal: could not be checked, never a failure)",
+              (inf().get("google_sign_in") or {}).get("check", {}).get("result") == "unknown" and "Google sign-in: could not be checked" in out, out[-400:])
+        def go_g(reading, *args):
+            r = subprocess.run([sys.executable, P, "app1", *args], cwd=t, env=dict(env, FACTORY_GOOGLE_SIGNIN=json.dumps(reading)), capture_output=True, text=True, timeout=300)
+            return r.returncode, r.stdout + r.stderr
+        gs = lambda: inf()["google_sign_in"]["check"]
+        code, out = go_g({"result": "not_working", "detail": "Google does not list this address"}, "--smoke")
+        check("  ...a first NOT WORKING is a warning: --smoke still exits 0 on a passing chat, says it in capitals with the numbered steps, and records it",
+              code == 0 and gs()["result"] == "not_working" and "Google sign-in: NOT WORKING" in out and "Authorised redirect URIs" in out and '"Save"' in out
+              and "https://app-one.rehearsal.invalid" in out and "REGRESSION" not in out and "next" not in gs(), out[-900:])
+        rj = subprocess.run([sys.executable, P, "app1", "--google-signin", "--json"], cwd=t, env=dict(env, FACTORY_GOOGLE_SIGNIN='{"result": "not_working"}'), capture_output=True, text=True, timeout=300)
+        code, out = rj.returncode, rj.stdout + rj.stderr
+        try: dj = json.loads(rj.stdout)
+        except ValueError: dj = {}
+        check("  ...--google-signin on its own: exit 1 when it does not work, one JSON result whose summary says so and whose next holds the steps",
+              code == 1 and "NOT WORKING" in dj.get("summary", "") and "console.cloud.google.com" in dj.get("next", "") and (dj.get("details") or {}).get("google_sign_in", {}).get("result") == "not_working", (code, out[-500:]))
+        code, out = go_g({"result": "direct", "detail": "Google lists it"}, "--google-signin")
+        check("  ...once it works: exit 0, 'works directly', recorded", code == 0 and gs()["result"] == "direct" and "Google sign-in: works directly" in out, out[-300:])
+        code, out = go_g({"result": "unknown"}, "--smoke")
+        check("  ...a reading that could not be made is no regression; what was last known is kept", code == 0 and gs()["result"] == "unknown" and gs()["last_known"]["result"] == "direct", (code, out[-300:]))
+        code, out = go_g({"result": "not_working", "detail": "Google no longer lists this address"}, "--smoke")
+        check("  ...a REGRESSION fails --smoke (exit 1) even though the chat passed, and says it worked before",
+              code == 1 and inf()["vercel"]["smoke"]["result"] == "pass" and "REGRESSION: it worked when it was last checked" in out and st()["status"] == "stamped", (code, out[-500:]))
+        code, out = go_g({"result": "hub", "detail": "signs in through https://hub.rehearsal.invalid"}, "--smoke")
+        check("  ...through the hub is the third result, and working", code == 0 and gs()["result"] == "hub" and "Google sign-in: works through the hub" in out, out[-300:])
+        n_before = ndeps(); p_before = prod()
+        code, out = go_g({"result": "not_working", "detail": "the hub no longer answers for this address"}, "--deploy")
+        check("  ...a REGRESSION fails the DEPLOY's result (exit 1) with the steps, after the app deployed healthy: stamped, promoted, nothing rolled back",
+              code == 1 and "Google sign-in REGRESSED" in out and "Nothing was rolled back" in out and st()["status"] == "stamped" and ndeps() == n_before + 3
+              and prod() != p_before and "rollback" not in inf()["vercel"], (code, st().get("status"), ndeps() - n_before, "rollback" in inf()["vercel"], out[:600]))
+        code, out = go_g({"result": "not_working"}, "--deploy")
+        check("  ...the deploy after it, still not working, is the warning again (exit 0): a failure is reported once, not on every deploy",
+              code == 0 and "NOT WORKING" in out and "REGRESS" not in out and st()["status"] == "stamped", (code, out[-500:]))
+        code, out = go_g({"result": "direct"}, "--smoke")
+        check("  ...and it is working again for what follows", code == 0 and gs()["result"] == "direct", out[-300:])
+        # --google-hub: state on both apps, nothing deployed, nothing sent anywhere
+        a3 = mkapp("app3", {"target": "vercel", "secret_store": "vercel_env", "vercel": {"team": "t", "project": "hub-app", "production_url": "https://hub-app.rehearsal.invalid"},
+                            "secrets": [], "secrets_user": [], "secrets_derived": []})
+        inf3 = lambda: load(os.path.join(a3, "infrastructure.json"))
+        n_before = ndeps(); calls_before = calls()
+        code, out = go("app1", "--google-hub", "app3", "--dry-run")
+        check("--google-hub --dry-run says what it would do and writes nothing", code == 0 and "will sign in with Google through app3" in out and "nothing was written" in out
+              and "hub" not in inf()["google_sign_in"] and "google_sign_in" not in inf3(), out[-500:])
+        code, out = go("app1", "--google-hub", "app3")
+        check("--google-hub: the hub is recorded on the app and the app's address on the hub's list, and it says each takes effect at its next deploy",
+              code == 0 and inf()["google_sign_in"]["hub"]["origin"] == "https://hub-app.rehearsal.invalid" and inf()["google_sign_in"]["hub"]["app_id"] == "app3"
+              and [(e["origin"], e["app_id"]) for e in inf3()["google_sign_in"]["answers_for"]] == [("https://app-one.rehearsal.invalid", "app1")]
+              and "takes effect when each app is next deployed" in out and "only when you say so" in out, out[-700:])
+        check("  ...and it deployed nothing and called nothing outside", ndeps() == n_before and calls() == calls_before, calls()[len(calls_before):][-300:])
+        code, out = go_g({"result": "hub", "detail": "signs in through the hub"}, "--smoke")
+        check("  ...a later check leaves the hub's list as it is (the address is already on it)", code == 0 and len(inf3()["google_sign_in"]["answers_for"]) == 1 and inf()["google_sign_in"]["check"]["result"] == "hub", out[-300:])
+        code, out = go("app1", "--google-hub", "nope")
+        check("--google-hub with an app that does not exist refuses and changes nothing", code != 0 and "no such application" in out and inf()["google_sign_in"]["hub"]["app_id"] == "app3", out[-300:])
+        code, out = go("app1", "--google-hub", "app1")
+        check("--google-hub refuses an app as its own hub", code == 1 and "cannot be its own sign-in hub" in out and inf()["google_sign_in"]["hub"]["app_id"] == "app3", out[-300:])
+        code, out = go("app1", "--google-hub", "off")
+        check("--google-hub off removes both halves", code == 0 and "hub" not in inf()["google_sign_in"] and inf3()["google_sign_in"]["answers_for"] == [], out[-300:])
+        shutil.rmtree(a3)
         # mold_v1-236: --smoke on an app on its own server runs the same check at vm_remote.production_url (it used to
         # print the offline check, "check only ... Ready", and never open a chat)
         a2 = os.path.join(t, "state", "application", "app2"); inf2 = lambda: load(os.path.join(a2, "infrastructure.json"))
@@ -3546,6 +3697,9 @@ def _main(a):
         # DATABASE_URL. Ahead of every other flag: the script's own arguments (after --) are never read as provision's.
         import operator_run
         sys.exit(operator_run.main_for(app_id, a, app, infra, ds, P=sys.modules[__name__]))
+    if "--google-signin" in a or "--google-hub" in a:
+        # Google sign-in (mold_v1-242), for every target: both read or write the factory's state and nothing else.
+        sys.exit(google_signin_cli(app_id, a, app, infra, adir, dry))
     if target == "vm_remote":
         # A server over SSH that serves the app (mold_v1-075/076). Nothing below this line applies to it: no
         # Vercel project, no local docker database, and --check must not reach for either. One module owns it.
@@ -3850,6 +4004,15 @@ def _main(a):
     app["status"] = "stamped"; save(os.path.join(adir, "application.json"), app)
     print(f"deployed: {infra.get('vercel',infra.get('vm',{})).get('production_url')}")
     AR.detail("production_url", infra.get('vercel', {}).get('production_url')); AR.detail("deployed_at", NOW)
+    # Google sign-in on what now serves (mold_v1-242): directly, through the hub, or NOT WORKING with the steps. A
+    # first NOT WORKING is a warning in the summary; a REGRESSION (it worked at the last check) fails the deploy's
+    # result below. Nothing is rolled back for it: the cause is on Google's page or in a hub's settings as often as
+    # in this build, and the app deployed and answered. A fault in the check itself never fails a deploy.
+    try: g, g_regressed = google_signin_now(app_id, app, infra, adir)
+    except Exception as e:
+        g, g_regressed = {"result": "unknown", "detail": f"the check itself stopped on {type(e).__name__}: {str(e)[:160]}", "next": []}, False
+        print(google_signin.line(g))
+    gwords, ghow = google_signin_tail(app_id, g, g_regressed)
     if smoked.get("result") == "needs_sign_in":
         # Deployed and healthy, but the chat check could not run: no sign-in was on hand (a first deploy has had no app
         # to sign in to). Said, not skipped: exit 3 with the one thing to do, then `--smoke` settles it.
@@ -3857,17 +4020,21 @@ def _main(a):
         repo_auto(app_id, adir, "a deploy")
         stop_for_human(f"{app_id} is deployed and healthy at {infra.get('vercel', {}).get('production_url')}, but the "
                        f"post-deploy chat check needs a sign-in: {smoked.get('detail')}.\n  {smoke_how(app_id)}\n"
-                       f"  Then: python3 .claude/scripts/provision.py {app_id} --smoke")
+                       f"  Then: python3 .claude/scripts/provision.py {app_id} --smoke\n  {gwords}{ghow}")
     AR.detail("smoke", infra.get("vercel", {}).get("smoke"))
-    AR.note(summary=f"{app_id} deployed: {infra.get('vercel', {}).get('production_url')}, tenant isolation proven on the app serving traffic.",
-            next=f"Run the five testing lanes: python3 .claude/scripts/lanes.py {app_id} --background --json")
+    AR.note(summary=f"{app_id} deployed: {infra.get('vercel', {}).get('production_url')}, tenant isolation proven on the app serving traffic. {gwords}",
+            next=f"Run the five testing lanes: python3 .claude/scripts/lanes.py {app_id} --background --json" + ghow)
     repo_auto(app_id, adir, "a deploy")
+    if g_regressed:
+        sys.exit(f"{app_id} deployed and is healthy, but Google sign-in REGRESSED: it worked when it was last checked and does not now. "
+                 f"{g.get('detail')}. Nothing was rolled back.\n  " + "\n  ".join(g.get("next") or [f"See: python3 .claude/scripts/provision.py {app_id} --google-signin"]))
 # ---- the agent interface: --json, --background, status, the deploy lock (lib/agent_result.py, lib/runs.py) ----------
 DEPLOY_FLAGS = ("--deploy", "--deploy-remote", "--rollback", "--rollback-remote")   # each under the app's deploy lock
 def _action(a):
     a = a[:a.index("--")] if "--" in a else a
     for f, act in (("--operator", "operator"), ("--set-secret", "set-secret"), ("--deploy-remote", "deploy"), ("--deploy", "deploy"), ("--rollback-remote", "rollback"), ("--rollback", "rollback"),
-                   ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke")):
+                   ("--verify-db", "verify-db"), ("--verify-rls", "verify-rls"), ("--smoke", "smoke"),
+                   ("--google-hub", "google-hub"), ("--google-signin", "google-signin")):
         if f in a: return act + ("-dry-run" if "--dry-run" in a else "")
     return "status" if a[1:2] == ["status"] else "check"
 

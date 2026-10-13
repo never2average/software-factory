@@ -59,6 +59,7 @@ import agent_result as AR, runs, services   # --json results, background runs, t
 PRIVATE = services.private_dir()   # FACTORY_PRIVATE_DIR, else ~/.cache/software-factory
 
 def load(p): return json.load(open(p))
+def save(p, o): json.dump(o, open(p, "w"), indent=2); open(p, "a").write("\n")
 def adir(app): return os.path.join(ROOT, "state", "application", app)
 def py(*a, **k): return subprocess.run([sys.executable, *a], cwd=ROOT, text=True, **k)
 def quiet(*a, env=None): return py(*a, capture_output=True, env=env)
@@ -142,7 +143,7 @@ def st_deploy(app, a, i):
             return OPERATOR, f"deploy to its own server, at your terminal: python3 .claude/scripts/provision.py {app} --deploy-remote (see every step first with --dry-run)"
         now = mold_commit(a["mold_id"]); was = a.get("mold_commit")
         if was and now and was != now: return OPERATOR, f"the mold moved ({was[:7]} -> {now[:7]}); redeploy at your terminal: python3 .claude/scripts/provision.py {app} --deploy-remote"
-        return DONE, f"{url} (deployed {i['deployed_at'][:16]})"
+        return DONE, f"{url} (deployed {i['deployed_at'][:16]}){google_note(app, i)}"
     if i.get("target") != "vercel": return NA, "vm target: see the VM tasks"
     if (not url or not i.get("deployed_at")) and a.get("status") == "reverted" and (a.get("revert") or {}).get("reason"):
         # The first deploy stopped and recorded why (provision.py _revert). Running it again unchanged would stop the same way.
@@ -162,7 +163,14 @@ def st_deploy(app, a, i):
     if (v.get("smoke") or {}).get("result") == "needs_sign_in" and session(app):
         return TODO, SMOKE_PENDING
     note = " (its chat check waits for a sign-in)" if (v.get("smoke") or {}).get("result") == "needs_sign_in" else ""
-    return DONE, f"{url} (deployed {i['deployed_at'][:16]}){note}"
+    return DONE, f"{url} (deployed {i['deployed_at'][:16]}){note}{google_note(app, i)}"
+
+def google_note(app, i):
+    """Said on the deploy line when the last check found Google sign-in not working (provision.py records it after
+    every deploy and --smoke; mold_v1-242). It never blocks a station: emailed codes still sign people in."""
+    c = ((i or {}).get("google_sign_in") or {}).get("check") or {}
+    if c.get("result") != "not_working": return ""
+    return f"; Google sign-in is NOT WORKING there (emailed codes work); the steps: python3 .claude/scripts/provision.py {app} --google-signin"
 SMOKE_PENDING = "deployed; now that a sign-in is on hand, run the post-deploy chat check"
 
 def st_workspaces(app, a, i):
@@ -240,9 +248,18 @@ def show(app, rows=None):
     nxt = next(((n, st, why) for n, st, why in rows if st in (TODO, OPERATOR, FAILED)), None)
     # Not a station: it never blocks, never runs by itself, and is only ever made when the operator asks (repo.py).
     print("  " + repository_line(app))
+    g = google_line(app)
+    if g: print("  " + g)
     print("\n" + (f"finished: nothing is left to do." if not nxt else
                   f"next: {nxt[0]} — {'this one needs the operator. ' if nxt[1] == OPERATOR else ''}{nxt[2]}" + ("" if nxt[1] != TODO else f"\n      python3 .claude/scripts/mint.py {app} run")))
     return rows
+
+def google_line(app):
+    """What the last check said about "Continue with Google" (lib/google_signin.py), or "" before any check."""
+    try:
+        sys.path.insert(0, os.path.join(S, "lib")); import google_signin
+        return google_signin.recorded_line(docs(app)[1])
+    except Exception: return ""
 
 def repository_line(app):
     try:
@@ -335,8 +352,30 @@ def reuse_keys(app, other):
         print(f"  PLATFORM_NOTIFY_FROM: {sender if r.returncode == 0 else 'NOT set: ' + clean(r.stderr).strip()[-160:]}"); names.append("PLATFORM_NOTIFY_FROM")
     left = [n for n in (i.get("secrets_user") or []) if n not in names]
     if left: print(f"still this app's own to set: {', '.join(left)}")
-    print("note: 'Continue with Google' works on the new address only after it is added to that Google client's Authorised JavaScript origins; emailed codes work at once.")
+    if "GOOGLE_CLIENT_ID" in names: google_hub_from(app, other)
     return 0
+
+def google_hub_from(app, other):
+    """After reuse-keys copied the Google client id: Google only signs people in at an address written by hand on that
+    client's page, and the new app's address is not on it. So the app the keys came from, when its own Google sign-in
+    works, becomes the new app's sign-in hub (lib/google_signin.py; the mold's lib/google-hub.ts). STATE only: the new
+    app takes it up at its first deploy, the other one at ITS next deploy, and nothing here deploys either."""
+    sys.path.insert(0, os.path.join(S, "lib")); import google_signin
+    _, i = docs(app); _, oi = docs(other)
+    i.setdefault("google_sign_in", {})["keys_from"] = other
+    seen = google_signin.check(other, oi)
+    google_signin.record(oi, seen)
+    if seen["result"] != "direct":
+        save(os.path.join(adir(app), "infrastructure.json"), i); save(os.path.join(adir(other), "infrastructure.json"), oi)
+        print(f"note: 'Continue with Google' will not work at the new app's address until Google is told about it, and {other} cannot do the Google part for it "
+              f"({google_signin.line(seen)}). Emailed codes work at once. After the first deploy, the deploy's summary gives the steps; or: "
+              f"python3 .claude/scripts/provision.py {app} --google-signin")
+        return
+    ok, said = google_signin.set_hub(app, i, other, oi, app=docs(app)[0])
+    save(os.path.join(adir(app), "infrastructure.json"), i); save(os.path.join(adir(other), "infrastructure.json"), oi)
+    print("Google sign-in: " + ("" if ok else "the sign-in hub was NOT set: ") + said[0])
+    for l in said[1:]: print("  " + l)
+    if ok: print(f"  Until then, and always: emailed codes work at once. To add the address in Google Cloud Console instead: python3 .claude/scripts/provision.py {app} --google-signin")
 
 def origin(app):
     u = lane_url.target_url(docs(app)[1] or {})
@@ -476,7 +515,48 @@ def self_test():
     # reuse-keys is the one trusted caller of a piped value, and says so with FACTORY_SECRET_FROM_STDIN=1
     import inspect
     assert inspect.getsource(reuse_keys).count('FACTORY_SECRET_FROM_STDIN="1"') == 2
-    print("mint: 31 checks passed"); return 0
+    # mold_v1-242: reuse-keys makes the app the keys came from the new app's sign-in hub, when that app's own Google
+    # sign-in works; in state only (nothing here can deploy), and it says which deploys make it real.
+    import tempfile, io, contextlib
+    sys.path.insert(0, os.path.join(S, "lib")); import google_signin as G
+    assert 'if "GOOGLE_CLIENT_ID" in names: google_hub_from(app, other)' in inspect.getsource(reuse_keys)
+    assert not re.search(r"--deploy|provision\.py\"\)|subprocess|py\(", inspect.getsource(google_hub_from).split('"""')[2].replace("python3 .claude/scripts/provision.py", ""))
+    real_adir, real_check, real_reh = adir, G.check, G.services.REHEARSAL
+    with tempfile.TemporaryDirectory() as t:
+        try:
+            globals()["adir"] = lambda app: os.path.join(t, app)
+            G.services.REHEARSAL = t          # so set_hub asks Google nothing here; the reading below is the scripted one
+            cid = {"client_id": "123456789012-" + "a" * 32 + ".apps.googleusercontent.com", "project_number": "123456789012"}
+            def put(app, infra, name=None):
+                os.makedirs(adir(app), exist_ok=True); save(os.path.join(adir(app), "infrastructure.json"), infra)
+                save(os.path.join(adir(app), "application.json"), {"app_id": app, "surface": {"branding": {"product_name": name or app}}})
+            def said(fn, *a):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf): fn(*a)
+                return buf.getvalue()
+            reading = {"result": "direct"}
+            G.check = lambda app_id, infra, **k: dict(reading, detail="scripted", address="https://old-app.example", at="t", next=[])
+            put("old", {"target": "vercel", "vercel": {"production_url": "https://old-app.example", "project": "old"}, "google": cid})
+            put("fresh", {"target": "vercel", "vercel": {"project": "fresh"}, "google": cid}, "Fresh App")
+            out = said(google_hub_from, "fresh", "old")
+            fi, oi = docs("fresh")[1], docs("old")[1]
+            assert fi["google_sign_in"]["hub"]["origin"] == "https://old-app.example" and fi["google_sign_in"]["hub"]["app_id"] == "old" and fi["google_sign_in"]["keys_from"] == "old", fi
+            assert oi["google_sign_in"]["check"]["result"] == "direct" and not oi["google_sign_in"].get("answers_for"), oi
+            assert "will sign in with Google through old" in out and "After its first deploy" in out and "emailed codes work at once" in out, out
+            put("moved", {"target": "vercel", "vercel": {"production_url": "https://new-app.example", "project": "moved"}, "google": cid}, "New App")
+            out = said(google_hub_from, "moved", "old")
+            oi = docs("old")[1]
+            assert [(e["origin"], e["name"], e["app_id"]) for e in oi["google_sign_in"]["answers_for"]] == [("https://new-app.example", "New App", "moved")], oi
+            assert "takes effect when each app is next deployed" in out and "old is live, so it is deployed only when you say so" in out, out
+            reading["result"] = "not_working"
+            put("alone", {"target": "vercel", "vercel": {"project": "alone"}, "google": cid})
+            out = said(google_hub_from, "alone", "old")
+            ai = docs("alone")[1]
+            assert "hub" not in ai["google_sign_in"] and ai["google_sign_in"]["keys_from"] == "old" and "will not work at the new app's address" in out and "--google-signin" in out, (ai, out)
+            assert google_note("x", {"google_sign_in": {"check": {"result": "not_working"}}}).startswith("; Google sign-in is NOT WORKING") and google_note("x", {"google_sign_in": {"check": {"result": "hub"}}}) == "" and google_note("x", {}) == ""
+        finally:
+            globals()["adir"] = real_adir; G.check = real_check; G.services.REHEARSAL = real_reh
+    print("mint: 42 checks passed"); return 0
 
 # ---- --json: the survey as one result (lib/agent_result.py) ---------------------------------------------------------
 def needs_for(app, name, why):

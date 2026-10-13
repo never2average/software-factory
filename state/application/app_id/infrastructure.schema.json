@@ -881,6 +881,54 @@
         "client_id"
       ]
     },
+    "google_sign_in": {
+      "type": "object",
+      "description": "Does 'Continue with Google' work at this app's address, and the mold's sign-in hub (lib/google_signin.py, mold_v1-242). Google signs people in only at an address written by hand on the OAuth client's page; an app at an address that is not there can sign in through another app that is (the hub). Written by provision.py (--google-signin, --smoke, every deploy, --google-hub) and mint.py reuse-keys, never by hand. Identifiers and addresses only, never a secret and never the client id.",
+      "properties": {
+        "check": {
+          "type": "object",
+          "description": "The last reading of what serves: direct (Google lists the address), hub (signs in through the hub), not_working, or unknown (Google could not be asked; never read as broken). last_known is the last reading that said either way: a not_working after a working one is a regression and fails that deploy or --smoke.",
+          "properties": {
+            "result": {"type": "string", "enum": ["direct", "hub", "not_working", "unknown"]},
+            "detail": {"type": "string"},
+            "address": {"type": "string"},
+            "at": {"type": "string"},
+            "hub": {"type": "string"},
+            "listed": {"type": "object"},
+            "last_known": {"type": "object"}
+          },
+          "required": ["result", "at"]
+        },
+        "hub": {
+          "type": "object",
+          "description": "This app signs in through that app: its https origin and its app id. Becomes AUTH_GOOGLE_HUB_ORIGIN at this app's next deploy.",
+          "properties": {
+            "origin": {"type": "string", "pattern": "^https://[a-z0-9.-]+(:[0-9]+)?$"},
+            "app_id": {"type": "string"},
+            "set_at": {"type": "string"}
+          },
+          "required": ["origin"]
+        },
+        "answers_for": {
+          "type": "array",
+          "description": "This app is the sign-in hub for these addresses (exact https origins, each with the name its page shows). Becomes AUTH_GOOGLE_HUB_ALLOWED_RETURNS at this app's next deploy.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "origin": {"type": "string", "pattern": "^https://[a-z0-9.-]+(:[0-9]+)?$"},
+              "name": {"type": "string"},
+              "app_id": {"type": "string"},
+              "added_at": {"type": "string"}
+            },
+            "required": ["origin"]
+          }
+        },
+        "keys_from": {
+          "type": "string",
+          "description": "The app this one's Google client id was copied from (mint.py reuse-keys): the first candidate for its hub."
+        }
+      }
+    },
     "agent_cli": {
       "type": "object",
       "additionalProperties": false,

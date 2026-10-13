@@ -75,6 +75,16 @@ export function healthChecks(application: Json, infrastructure: Json): Check[] {
   return checks
 }
 
+/**
+ * What provision.py last recorded about "Continue with Google" on this app (infrastructure.json google_sign_in.check,
+ * written after every deploy and --smoke): works directly, through the sign-in hub, not working, or could not be
+ * checked. '' when it was never checked. The board does not ask Google itself.
+ */
+export function googleSignIn(infrastructure: Json): AppRow['google'] {
+  const result = String(infrastructure.google_sign_in?.check?.result ?? '')
+  return result === 'direct' || result === 'hub' || result === 'not_working' || result === 'unknown' ? result : ''
+}
+
 export function appRow(id: string, application: Json, infrastructure: Json, datastores: Json, moldSnapshots: Map<string, string>): AppRow {
   const target = String(infrastructure.target ?? '?')
   const url = target === 'vm_remote' ? infrastructure.vm_remote?.production_url : infrastructure.vercel?.production_url
@@ -93,6 +103,7 @@ export function appRow(id: string, application: Json, infrastructure: Json, data
     url: String(url ?? ''),
     deployedAt: String(infrastructure.deployed_at ?? ''),
     rls: rls ? `${rls.protected ?? '?'}/${rls.org_scoped_tables ?? '?'}` : '',
+    google: googleSignIn(infrastructure),
     checks: healthChecks(application, infrastructure),
   }
 }
