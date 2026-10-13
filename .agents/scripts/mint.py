@@ -547,7 +547,7 @@ def self_test():
             out = said(google_hub_from, "moved", "old")
             oi = docs("old")[1]
             assert [(e["origin"], e["name"], e["app_id"]) for e in oi["google_sign_in"]["answers_for"]] == [("https://new-app.example", "New App", "moved")], oi
-            assert "takes effect when each app is next deployed" in out and "old is live, so it is deployed only when you say so" in out, out
+            assert "takes effect when each app is next deployed" in out and "old has people using it, so it is deployed only when you say so" in out, out
             reading["result"] = "not_working"
             put("alone", {"target": "vercel", "vercel": {"project": "alone"}, "google": cid})
             out = said(google_hub_from, "alone", "old")

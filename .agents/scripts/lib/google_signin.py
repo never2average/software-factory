@@ -182,6 +182,14 @@ def how_to_fix(app_id, origin, hub_app=None, project_number=None):
 def app_address(infra): return origin_of(lane_url.target_url(infra or {}))
 
 
+def deploy_line(app_id, infra=None, state_dir=None):
+    """The command that deploys this app, by where it runs (a server of its own deploys with --deploy-remote)."""
+    if infra is None:
+        try: infra = json.load(open(os.path.join(state_dir or os.path.join(ROOT, "state", "application"), app_id, "infrastructure.json")))
+        except (OSError, ValueError): infra = {}
+    return f"python3 .claude/scripts/provision.py {app_id} " + ("--deploy-remote" if (infra or {}).get("target") == "vm_remote" else "--deploy")
+
+
 def check(app_id, infra, http=None, hub_candidate=None):
     """One reading of what serves now. -> {result, detail, address, at, listed, hub?, app_says?, next: [lines]}.
     Reads only: a few public GETs to the app, to its hub and to Google. Sends no credential and no person's data."""
@@ -220,7 +228,7 @@ def check(app_id, infra, http=None, hub_candidate=None):
     hub_app = ((infra.get("google_sign_in") or {}).get("hub") or {}).get("app_id")
     if hub:
         res["hub"] = hub
-        redeploy = lambda a: f"    python3 .claude/scripts/provision.py {a} --deploy" + ("" if a == app_id else "    (that app is live: it is deployed only on your yes)")
+        redeploy = lambda a: "    " + deploy_line(a, infra if a == app_id else None) + ("" if a == app_id else "    (that app has people using it: it is deployed only on your yes)")
         if says is None:
             return done("not_working", f"this app is set to sign in through {hub}, but the build serving now is older than the sign-in hub",
                         next=["Deploy this app once the mold has the sign-in hub (mold.py check mold_v1 shows its version):", redeploy(app_id)])
@@ -366,10 +374,10 @@ def sync_return(app_id, infra, hub_id, hub_infra, app=None, now=None):
     lst[:] = [e for e in lst if e.get("origin") != own and e.get("app_id") != app_id]
     lst.append({k: v for k, v in (("origin", own), ("name", name), ("app_id", app_id), ("added_at", now or _now())) if v})
     return [f"{own} is now on {hub_id}'s list of addresses it signs people in for (in the factory's state).",
-            f"It takes effect when each app is next deployed. {hub_id} is live, so it is deployed only when you say so:",
-            f"    python3 .claude/scripts/provision.py {hub_id} --deploy",
-            f"    python3 .claude/scripts/provision.py {app_id} --deploy",
-            f"Until both are done, {app_id}'s page shows only the emailed-code sign-in (no Google button)."]
+            f"It takes effect when each app is next deployed. {hub_id} has people using it, so it is deployed only when you say so:",
+            f"    {deploy_line(hub_id, hub_infra)}",
+            f"    {deploy_line(app_id, infra)}",
+            f"Until both are done, Google sign-in does not work at {own}; signing in with an emailed code does."]
 
 
 def clear_hub(app_id, infra, hub_infra=None):
@@ -493,7 +501,7 @@ def self_test():
         r = check("new_app", state, http=World(redirect=[HUB], origins=[HUB], apps=apps))
         ok(r["result"] == "not_working" and why in r["detail"] and fixline in "\n".join(r["next"]), f"hub not working ({what}): says why and what to run", r)
     ok("only on your yes" in "\n".join(check("new_app", state, http=World(redirect=[HUB], apps={HUB: {"cid": CID}, NEW: app_hub}))["next"]),
-       "a step that deploys the hub (a live app) says it waits for a yes")
+       "a step that deploys the hub (an app people use) says it waits for a yes")
     r = check("new_app", state, http=World(apps={HUB: hub_ok, NEW: app_hub}))
     ok(r["result"] == "not_working" and "does not list the hub itself" in r["detail"], "a hub Google does not list is not a hub")
     r = check("new_app", vercel(NEW, **goog), http=World(redirect=[HUB], origins=[HUB], apps={HUB: hub_ok, NEW: app_hub}))
@@ -557,8 +565,11 @@ def self_test():
         ok(good and new_i["google_sign_in"]["hub"] == {"origin": HUB, "app_id": "hub_app", "set_at": "t0"}, "set_hub records the hub on the app")
         ok(hub_i["google_sign_in"]["answers_for"] == [{"origin": NEW, "name": "New App One", "app_id": "new_app", "added_at": "t0"}], "…and the app's address on the hub's list, with a plain name", hub_i["google_sign_in"])
         text = "\n".join(said)
-        ok("takes effect when each app is next deployed" in text and "only when you say so" in text and "provision.py hub_app --deploy" in text and "only the emailed-code sign-in" in text,
-           "it says the change waits for each app's next deploy, and that the live one waits for a yes")
+        ok("takes effect when each app is next deployed" in text and "only when you say so" in text and "provision.py hub_app --deploy" in text and "an emailed code does" in text,
+           "it says the change waits for each app's next deploy, and that the one people use waits for a yes")
+        own_server = {"target": "vm_remote", "deployed_at": "2026-10-01T00:00:00+00:00", "vm_remote": {"domain": "app.customer.example", "production_url": DOM}, **goog}
+        _, said_vm = set_hub("server_app", own_server, "hub_app", vercel(HUB, **goog), http=w, now="t0")
+        ok("provision.py server_app --deploy-remote" in "\n".join(said_vm) and "provision.py hub_app --deploy\n" in "\n".join(said_vm) + "\n", "an app on its own server is told its own deploy command")
         ok(env_pairs(new_i, new_mold) == {HUB_ENV: HUB} and env_pairs(hub_i, new_mold) == {RETURNS_ENV: f"{NEW}=New App One"}, "the settings become the two environment values, each on its own side")
         ok(env_pairs(new_i, old_mold) == {} and env_stale(new_i, old_mold) == [], "a mold that does not read them gets none")
         ok(env_stale(new_i, new_mold) == [RETURNS_ENV] and env_stale(hub_i, new_mold) == [HUB_ENV], "a value state does not say is removed at the deploy, not left behind")
