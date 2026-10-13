@@ -349,13 +349,69 @@ def wait_for_headroom(label, deadline_s=None, probe=_machine, sleep=time.sleep, 
                   f"Busiest: {_busiest()}", flush=True)
         step = min(every, max(deadline_s - waited, 1)); sleep(step); waited += step
 
-def heavy_build(cmd, cwd, label, env=None, wait=wait_for_headroom, runner=None, timeout=None, step="eve", **fit):
-    """Run a build that can exhaust this VM (mold_v1-109, mold_v1-232): after waiting for the load to drop, sized to
-    the memory and CPUs free right now by lib/buildfit.py (V8's heap, Next's workers, the native thread pools), at a
-    low CPU and IO priority, waited for when memory is short, and retried once tight if the kernel killed it anyway.
-    Returns the CompletedProcess; when even the step's smallest settings cannot fit, its exit is buildfit.CAPACITY_RC
-    and its stdout says what was measured. `fit` passes buildfit.run's stand-ins (probe, kills, sleep, swap) in tests."""
+def build_out_path(app_id, label):
+    """Where a local build's whole output is kept: beside this deploy's log (same name, .<label>.out), secrets hidden."""
+    log = os.environ.get("FACTORY_RUN_LOG") or ""
+    base = log[:-4] if log.endswith(".log") else os.path.join(AR.runs_dir(ROOT), app_id or "_factory", "deploy",
+                                                               time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{os.getpid()}")
+    return f"{base}.{re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-') or 'build'}.out"
+
+def factory_box_ask(app_id, short, box=None):
+    """A local build that this machine cannot fit even with all of its memory and swap (mold_v1-247): the request for a
+    bigger factory machine, asked of the operator as an approval (the deploy exits 3 and waits). Returns the text."""
+    import vm_capacity, socket
+    if box is None:
+        try: v = os.statvfs("/"); disk_gb = round(v.f_blocks * v.f_frsize / (1 << 30))
+        except OSError: disk_gb = None
+        box = {"vcpu": os.cpu_count(), "mem_mb": short.get("total_mb"), "disk_gb": disk_gb, "hostname": socket.gethostname()}
+    box["plan"] = vm_capacity.current_plan(box)
+    plan, resizable, _ = vm_capacity.choose(box, ["memory"])
+    cur = box.get("plan")
+    numbers = (f"it needs {short.get('need_mb')} MB of memory ({short.get('floor_mb')} MB at the very least), and the most this machine can give it, "
+               f"counting all {short.get('total_mb')} MB of its memory and its swap, is {short.get('most_mb')} MB")
+    if not plan or not resizable:
+        return (f"The factory's own machine is too small to build {app_id}: {numbers}. No DigitalOcean size in the factory's table that a resize "
+                f"reaches fits; this needs a different machine, planned first. Nothing was deployed.")
+    ask = "\n".join([
+        f"I need you to move the factory's own machine to a bigger size on DigitalOcean. It is too small to build {app_id}: {numbers}.",
+        "",
+        f"The size: {vm_capacity.plan_label(plan)}" + (f" (today it is ${cur['price']} a month)" if cur else "") + ". The Resize page shows the exact price before you confirm.",
+        "It takes about 10 minutes. This machine is off for about 5 of them, so this chat and anything running here stop and come back after.",
+        "",
+        "1. Open https://cloud.digitalocean.com/droplets and sign in.",
+        f"2. Click the server named `{box.get('hostname') or 'the factory machine'}`.",
+        "3. At the top right, click the switch that says \"ON\", then click \"Turn off\" to confirm. Wait until the switch says \"OFF\" (about a minute).",
+        "4. In the menu on the left, click \"Resize\".",
+        "5. Choose \"CPU and RAM only\".",
+        f"6. Under the plans, click \"{plan['family']}\"" + (f", then \"{plan['kind']}\"" if plan["kind"] else "") +
+        f", then click the box that shows {plan['vcpu']} CPUs and {plan['mem_gb']} GB memory (about ${plan['price']} a month; check the price it shows before the next step).",
+        "7. Click the \"Resize Droplet\" button at the bottom and wait until it finishes (a few minutes).",
+        "8. Click the switch at the top right again so it says \"ON\".",
+        "9. Open the chat again and write:",
+        "",
+        "```",
+        "resized",
+        "```",
+        "",
+        f"What happens next: the factory runs the deploy of {app_id} again, and sizes every build to the new machine by itself.",
+        "Nothing on the machine is erased. \"CPU and RAM only\" keeps the disk as it is, so it can go back to the smaller size later. DigitalOcean bills the new price from the resize on.",
+    ])
+    AR.need("approval", "a bigger factory machine", ask)
+    return ask
+
+def heavy_build(cmd, cwd, label, env=None, wait=wait_for_headroom, runner=None, timeout=None, step="eve", produces=(), who=None,
+                out_file=None, **fit):
+    """Run a build that can exhaust this VM (mold_v1-109, mold_v1-232, mold_v1-247): after waiting for the load to drop,
+    one heavy build at a time on this machine, sized by lib/buildfit.py to the memory and CPUs free right now and to the
+    app (V8's heap, Next's workers, the native thread pools), at a low CPU and IO priority, waited for when memory is
+    short, with swap for what is missing, and retried once tight if the kernel killed it or one of its processes.
+    `produces` (paths under cwd) is what the build is for: a build that exits 0 without it has FAILED. On a failure the
+    last lines of the build's own output are printed (secrets hidden) and the whole of it is kept in `out_file`.
+    Returns a CompletedProcess whose exit is never 0 for a build that did not finish; when even the step's smallest
+    settings cannot fit, it is buildfit.CAPACITY_RC and stderr says what was measured (and, when the machine itself is
+    too small, asks for a bigger one). `fit` passes buildfit.run's stand-ins (probe, kills, sleep, swap, watch, lock)."""
     runner = runner or (lambda c, e: vrun(c, shell=True, cwd=cwd, env=e, timeout=timeout or BUILD_TIMEOUT_S, what=label))
+    who = who or os.path.basename(os.path.normpath(cwd or "")) or label
     ok, now = wait(label)
     if not ok: print(f"  WARNING: building anyway, the VM is still busy after the wait ({now})", flush=True)
     got, said = {}, []
@@ -363,19 +419,30 @@ def heavy_build(cmd, cwd, label, env=None, wait=wait_for_headroom, runner=None, 
         got["r"] = r = runner(shlex.join(argv), e)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     def say(line): said.append(line); print("  " + line, flush=True)
-    rc = buildfit.run(step, ["bash", "-c", cmd], label=label, env=dict(os.environ if env is None else env), runner=one, say=say, **fit)
-    if rc == buildfit.CAPACITY_RC and (not got or got["r"].returncode != rc):
-        out = "\n".join(said)
-        short = buildfit.parse_short(out)
-        why = buildfit.short_words(short) if short else out[-600:]
-        return subprocess.CompletedProcess(cmd, rc, out, f"{label} could not run on this machine: {why} Nothing was deployed. "
-                                           "This is the factory's own machine being too busy or too small, not the app: run the deploy again when it is quieter.")
-    r = got["r"]
-    if rc == buildfit.CAPACITY_RC and r.returncode != rc:        # killed twice, the second time tight
+    rc = buildfit.run(step, ["bash", "-c", cmd], label=label, env=dict(os.environ if env is None else env), runner=one, say=say, cwd=cwd,
+                      produces=produces, who=who, out_file=out_file, hide=lambda t: AR.scrub(buildfit.redact(t)), **fit)
+    kept = f" The build's whole output: {out_file}." if out_file and os.path.exists(out_file) else ""
+    if rc == buildfit.CAPACITY_RC:
         short = buildfit.parse_short("\n".join(said))
+        if buildfit.too_small(short):
+            ask = factory_box_ask(who, short)
+            return subprocess.CompletedProcess(cmd, rc, "\n".join(said), f"{label} cannot run on this machine: {buildfit.short_words(short)} "
+                                               f"Nothing was deployed.{kept}\n\n{ask}")
+        if not got or not (short or {}).get("killed"):
+            why = buildfit.short_words(short) if short else "\n".join(said)[-600:]
+            return subprocess.CompletedProcess(cmd, rc, "\n".join(said), f"{label} could not run on this machine: {why} Nothing was deployed. "
+                                               "This is the factory's own machine being too busy or too small, not the app: run the deploy again when it is quieter.")
+        r = got["r"]                                                 # killed twice, the second time tight
         return subprocess.CompletedProcess(r.args, rc, r.stdout, (r.stderr or "") + f"\n{label} was killed for lack of memory twice, the second "
                                            f"time at its smallest settings: the machine, not the app. {buildfit.short_words(short) if short else ''} "
-                                           "Run the deploy again when the VM is quieter.")
+                                           f"Run the deploy again when the VM is quieter.{kept}")
+    if not got:                                                      # never started (another app's build held the machine past the wait)
+        return subprocess.CompletedProcess(cmd, rc or 1, "\n".join(said), "\n".join(l for l in said if "was not started" in l) or f"{label} was not started")
+    r = got["r"]
+    if rc != r.returncode:       # the build tool's own exit hid it (exit 0 with no product, or after a child was killed)
+        why = "\n".join(l for l in said if "FAILED" in l) or f"{label} did not finish (buildfit exit {rc})"
+        return subprocess.CompletedProcess(r.args, rc or 1, r.stdout, (r.stderr or "") + f"\n{why}{kept}")
+    if rc and kept: return subprocess.CompletedProcess(r.args, rc, r.stdout, (r.stderr or "") + "\n" + kept.strip())
     return r
 
 def vercel_env_names(cwd, project):
@@ -1800,13 +1867,14 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
             for p_ in (proj, f"{proj}-api", f"{proj}-workflow"): _set_env("PLATFORM_NOTIFY_FROM", want, mold_dir, project=p_)
             print(f"  PLATFORM_NOTIFY_FROM display name set from this app's branding: {want.split(' <')[0]}")
     SHIPPED.clear()
-    def run(cmd, env=None, label="", kind="deploy"):
+    def run(cmd, env=None, label="", kind="deploy", produces=()):
         # deploy: watched on the API, cancelled if stuck, bounded end to end (vercel_deploy).
-        # build: the local eve build, waited for, niced, heap-capped and retried once on an OOM kill (heavy_build).
+        # build: the local eve build, one at a time on this machine, sized to it and to the app, watched for a kill of
+        # any of its processes, checked for what it must produce, retried once on an OOM kill (heavy_build).
         if kind == "deploy":
             out = vercel_deploy(cmd, mold_dir, label or cmd, env=env)
         else:
-            r = heavy_build(cmd, mold_dir, label or cmd, env=env)
+            r = heavy_build(cmd, mold_dir, label or cmd, env=env, produces=produces, who=app_id, out_file=build_out_path(app_id, label or "build"))
             out = (r.stdout or "") + (r.stderr or "")
             if r.returncode: sys.exit(f"{label or cmd} failed:\n" + out.strip()[-1500:])
         return out
@@ -1855,7 +1923,8 @@ def deploy_vercel(app_id, app, infra, ds, mold_dir, adir):
         print(f"  {proj}-api: trusts {infra['vercel']['team']}/{proj} (production) as the service identity")
         subprocess.run("rm -rf .eve/sandbox-cache/template-locks/vercel .vercel/output", shell=True, cwd=mold_dir)
         env = dict(os.environ, VERCEL_USE_EXPERIMENTAL_FRAMEWORKS="1")
-        run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build", kind="build")
+        run(f"vercel build --prod --yes --project {proj}-api {scope} --local-config vercel.eve.json", env=env, label="eve api build", kind="build",
+            produces=(".vercel/output/config.json",))     # what `vercel deploy --prebuilt` uploads: without it the build did not finish (mold_v1-247)
         api_url = _deployed_address(f"{proj}-api", run(f"vercel deploy --prebuilt --prod --yes --project {proj}-api {scope}", label="eve api deploy"), mold_dir, infra)
         SHIPPED.append(("api", api_url))
         disconnect_git(f"{proj}-api", mold_dir)
@@ -3150,7 +3219,9 @@ def self_test():
         with contextlib.redirect_stdout(io.StringIO()): return fn(*a, **k)
     idle8 = {"mem_total_mb": 7941, "mem_avail_mb": 6000, "swap_total_mb": 0, "swap_free_mb": 0, "cg_room_mb": None, "cg_limit_mb": None,
              "cpus": 4, "host_cpus": 4, "load1": 0.2, "disk_free_mb": 50000}
-    fit = dict(probe=lambda: dict(idle8), kills=lambda: None, sleep=lambda s: None, swap=(lambda mb, say: False, lambda say: None))
+    # nothing of this machine's: no machine lock, no watcher, no peaks file
+    fit = dict(probe=lambda: dict(idle8), kills=lambda: None, sleep=lambda s: None, swap=(lambda mb, say: False, lambda say: None),
+               watch=None, lock=None, peaks=False)
     for codes, want_calls, want_rc in (([137, 0], 2, 0), ([137, 137], 2, buildfit.CAPACITY_RC), ([1, 0], 1, 1), ([0], 1, 0)):
         calls, it = [], iter(codes)
         def runner(c, e): calls.append((c, e.get("NODE_OPTIONS", ""), e.get("BUILD_CPUS"))); return CP(c, next(it), "", "")
@@ -3165,6 +3236,53 @@ def self_test():
     r = quietly(heavy_build, "vercel build", "/", "eve api build", env={}, wait=lambda l: (True, "quiet"), runner=lambda c, e: calls.append(c) or CP(c, 0, "", ""), **small)
     check("a machine that cannot fit the eve build: nothing run, the capacity exit, the measured numbers in words",
           not calls and r.returncode == buildfit.CAPACITY_RC and "900 MB of memory available" in r.stderr and "not the app" in r.stderr, (calls, r.returncode, r.stderr))
+    # mold_v1-247: `vercel build` exited 0 after the kernel killed its child, "finished" was logged and an output
+    # holding only builds.json was uploaded. A build has finished only when it left what the deploy uploads.
+    import contextlib as _cl, io as _io
+    work = tempfile.mkdtemp(prefix="provision-selftest-build-")
+    try:
+        prod = ".vercel/output/config.json"; outf = os.path.join(work, "runs", "20261013T185245Z-1.eve-api-build.out")
+        def builds(leave, text="ok\n"):
+            def runner(c, e):
+                if leave: os.makedirs(os.path.join(work, ".vercel/output"), exist_ok=True); open(os.path.join(work, prod), "w").write("{}")
+                return CP(c, 0, text, "")
+            return runner
+        buf = _io.StringIO()
+        with _cl.redirect_stdout(buf):
+            r = heavy_build("vercel build", work, "eve api build", env={}, wait=lambda l: (True, "quiet"), produces=(prod,), out_file=outf,
+                            runner=builds(False, "".join(f"step {i}\n" for i in range(80)) + "Bearer abcdefgh12345678\nBuild Completed in .vercel/output\n"), **fit)
+        logged = buf.getvalue()
+        check("a build that exits 0 without .vercel/output/config.json is a FAILED build: a non-zero exit, the missing file named, never `finished`",
+              r.returncode == 1 and "did not leave " + prod in r.stderr and " finished in " not in logged, (r.returncode, r.stderr[-300:]))
+        check("  ...its last 60 lines are in the deploy log, secrets hidden, and the whole of it in a file beside the log",
+              logged.count("\n    | ") == 60 and "| Build Completed in .vercel/output" in logged and "abcdefgh12345678" not in logged and outf in logged and outf in r.stderr
+              and "step 0\n" in open(outf).read() and "abcdefgh12345678" not in open(outf).read(), logged[-400:])
+        check("  ...the file sits beside the deploy's log, named after it and the build",
+              build_out_path("demo", "eve api build").endswith(".eve-api-build.out") and os.path.join("demo", "deploy") in build_out_path("demo", "eve api build"))
+        r = quietly(heavy_build, "vercel build", work, "eve api build", env={}, wait=lambda l: (True, "quiet"), produces=(prod,), runner=builds(True), **fit)
+        check("  ...and the build that leaves it is the one that finished", r.returncode == 0, r.returncode)
+        seen = iter([{"peak_mb": 4700, "oom_kills": 1, "killed": [{"pid": 7, "name": "MainThread", "anon_mb": 4753}]}, {"peak_mb": 3000, "oom_kills": 0, "killed": []}])
+        class Eye:
+            def __init__(self, unit=None): self.got = next(seen)
+            def stop(self): return self.got
+        calls = []
+        def runner(c, e): calls.append(e.get("BUILD_CPUS")); return builds(True)(c, e)
+        buf = _io.StringIO()
+        with _cl.redirect_stdout(buf):
+            r = heavy_build("vercel build", work, "eve api build", env={}, wait=lambda l: (True, "quiet"), produces=(prod,), runner=runner, **dict(fit, watch=Eye))
+        check("a build whose child the kernel killed while the tool exited 0: said (`killed ... at 4753 MB`), then built once more, tight",
+              r.returncode == 0 and len(calls) == 2 and calls[1] == "1" and "at 4753 MB" in buf.getvalue() and buf.getvalue().count(" finished in ") == 1, (calls, buf.getvalue()[-500:]))
+        # an app too big for the machine whatever leaves: stop before building, and ask for a bigger machine
+        for i in range(60): os.makedirs(os.path.join(work, "agent", "subagents", f"s{i}")); open(os.path.join(work, "agent", "subagents", f"s{i}", "agent.ts"), "w").write("")
+        calls = []; AR.NOTES.update({"needs": []})
+        r = quietly(heavy_build, "vercel build", work, "eve api build", env={}, wait=lambda l: (True, "quiet"), who="bigapp", produces=(prod,),
+                    runner=lambda c, e: calls.append(c) or CP(c, 0, "", ""), **dict(fit, probe=lambda: dict(idle8, disk_free_mb=1000)))
+        asked = [n for n in AR.NOTES["needs"] if n["kind"] == "approval" and "bigger factory machine" in n["name"]]
+        check("an app whose build needs more than all of this machine's memory and swap: nothing built, the capacity exit, the numbers, and the request for a "
+              "bigger machine as an approval only the operator gives", not calls and r.returncode == buildfit.CAPACITY_RC and "60 subagents" in r.stderr and len(asked) == 1
+              and "Resize" in asked[0]["how"] and "bigapp" in asked[0]["how"] and "16 GB memory" in asked[0]["how"], (calls, r.returncode, r.stderr[:500]))
+        AR.NOTES.update({"needs": []})
+    finally: shutil.rmtree(work, ignore_errors=True)
     check("an OOM reported only in the output counts", buildfit.killed(1, 'Error: Command "npm run build:eve" exited with 137', None, None) == "kernel")
     check("an ordinary failure does not", buildfit.killed(1, "Type error: foo", None, None) is None)
     # 5. the record a stopped deploy leaves
