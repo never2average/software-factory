@@ -112,6 +112,9 @@ def build_world(root):
     # 3: deployed and healthy; the post-deploy chat check waits for a sign-in nobody has given yet (a first deploy)
     for app in ("alpha_app", "beta_app", "delta_app"): run(".claude/scripts/provision.py", app, "--deploy", ok=(0, 3))
     run(".claude/scripts/provision.py", "gamma_app", "--deploy", ok=(1,))                  # the web build fails
+    # each deployed app's own workspace, the operator as its owner (what `mint.py <app> run` does right after a first
+    # deploy): without it the app emails nobody a sign-in code, and code-request says so instead of asking
+    for app in ("alpha_app", "beta_app", "delta_app"): run(".claude/scripts/mint.py", app, "run", "--only", "workspaces")
     run(".claude/scripts/lanes.py", "delta_app")                                            # signed-in checks skipped
     run(".claude/scripts/mint.py", "beta_app", "code-request", "owner@beta.example")
     proj = app_project(root, "beta_app")

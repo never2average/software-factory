@@ -3677,16 +3677,26 @@ def sandbox_load_remote(S, app, a, source, runner=real_runner, rig_runner=_run_r
 # ---------------------------------------------------------------------------------------------------------
 STATE_SEED = "application.json#workspace"       # the key the state's own workspace is recorded under in seed/orgs/.applied.json
 
-def state_seed(app):
+def OPERATOR_FALLBACK():
+    """The operator's own address on this machine, or "" (lib/membership.py operator_email)."""
+    try:
+        import membership
+        return membership.operator_email()
+    except Exception: return ""
+
+def state_seed(app, operator=None):
     """The application's own workspace (application.workspace) as a workspace seed: the org row (id, name, shown name,
     logo, hosted domain), the owner, the members with their roles, the platform administrators and the people roster.
     Raises Stop with one sentence when state does not say who owns it."""
     ws = app.get("workspace") or {}; org = ws.get("org") or {}
     me = (legacy.get(ws, "operator_self", {}).get("email") or "").strip().lower()
     members = [m for m in ws.get("members") or [] if isinstance(m, dict) and m.get("email")]
-    owner = next((m["email"].strip().lower() for m in members if m.get("role") == "owner"), "") or me
+    # mold_v1-245: a state that names no owner is the operator's own (state/factory.local.json defaults.operator_email),
+    # so a first workspace always has someone who can be emailed a sign-in code. Only when state names nobody.
+    owner = next((m["email"].strip().lower() for m in members if m.get("role") == "owner"), "") or me or (operator if operator is not None else OPERATOR_FALLBACK())
     if not org.get("org_id") or not org.get("name") or not owner:
-        raise Stop(f"{app.get('app_id')}: application.workspace does not name a workspace (org.org_id, org.name) and its owner (a member with role owner, or operator_self), so there is nothing to write.")
+        raise Stop(f"{app.get('app_id')}: application.workspace does not name a workspace (org.org_id, org.name) and its owner (a member with role owner, or operator_self), "
+                   f"and this machine names no operator (state/factory.local.json defaults.operator_email), so there is nothing to write.")
     named = {str(r.get("email", "")).lower(): r for r in ws.get("roster") or [] if isinstance(r, dict)}
     out_members = []
     for m in members:

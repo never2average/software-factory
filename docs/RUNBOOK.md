@@ -229,6 +229,10 @@ fresh one), tell the agent to run this, with your sign-in address:
 python3 .claude/scripts/mint.py <app_id> code-request <your email>
 ```
 
+The app emails a code only to an address that belongs to one of its workspaces (the factory creates the first one,
+with you as its owner, right after the first deploy). The command checks that first: if your address belongs to none it
+says so, sends nothing, and names the next step, so you are never left waiting for an email.
+
 A six-digit code arrives by email. Paste it into the chat and the agent runs
 `python3 .claude/scripts/mint.py <app_id> code <six digits> <your email>`. The code expires in ten minutes, and the session
 is stored only on the factory's machine, never in the repository or the chat.

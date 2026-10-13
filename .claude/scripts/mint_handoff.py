@@ -24,6 +24,10 @@ def load(p): return json.load(open(p))
 E = html.escape
 FORBIDDEN = [re.compile(p) for p in (r"[A-Za-z0-9._%+-]+@(?!company\.com|example\.com)[A-Za-z0-9.-]+\.[a-z]{2,}(?![\w/-])", r"\b(sk|re|npm|ghp|gho)_[A-Za-z0-9]{16,}", r"GOCSPX-", r"postgres(ql)?://", r"eyJ[A-Za-z0-9_-]{20,}\.")]
 
+def no_address(text):
+    """A station's own words, without anyone's email address (the workspaces station names the owner; this page never does)."""
+    return re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "(the operator)", text or "")
+
 def app_url(infra):
     """Where the application lives, per deploy target: vercel.production_url, or for a server of its own
     vm_remote.production_url once a deploy recorded it (lib/lane_url.py is the one reading)."""
@@ -55,7 +59,7 @@ def facts(app_id):
     for s in mint.seeds(app_id):
         d = load(s); c = s[:-5] + "/customers.json"
         spaces.append(dict(name=d.get("name"), people=len(d.get("members") or []) + (1 if d.get("owner") else 0), accounts=len(load(c).get("customers", [])) if os.path.exists(c) else 0))
-    stations = [dict(station=n, status=st, note=why) for n, st, why in mint.survey(app_id)]
+    stations = [dict(station=n, status=st, note=no_address(why)) for n, st, why in mint.survey(app_id)]
     rp = os.path.join(ROOT, "reports", "mint", app_id + ".json"); rep = load(rp) if os.path.exists(rp) else mint_report.build(app_id, live=False)
     ses = rep.get("sessions") or []; dep = (rep.get("calendar") or {}).get("deploys") or []; first = min((s["first"] for s in ses if s.get("first")), default=None)
     took = dict(first_message=first, first_deploy=dep[0] if dep else None, deploys=len(dep), model_hours=round(sum(s["model_s"] for s in ses) / 3600, 1), tool_hours=round(sum(s["tool_s"] for s in ses) / 3600, 1),
