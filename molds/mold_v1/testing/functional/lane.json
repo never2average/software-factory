@@ -107,6 +107,19 @@
       "why": "Sign-in plus org membership is the tenancy boundary at the front door."
     },
     {
+      "name": "test:google-hub",
+      "cwd": "default_profile",
+      "run": "npm run test:google-hub",
+      "timeout_s": 300,
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "\\n[1-9]\\d* checks passed"
+        ]
+      },
+      "why": "Google hands a sign-in only to an address written by hand on its client page, so the mold lets an address Google knows (the hub) do the Google part for one it does not. That hand-off is a cross-site sign-in: this drives the real route handlers of both sides against a Google made in the test and proves what must refuse does (an address off the allow-list, a token for another sign-in or another browser, a token in an address or a log line, a framed hub page), and that the button is drawn only where it leads somewhere. Offline but for its last two cases, which prove a production server ignores the test's keys by asking Google's own (refused whether or not Google answers). The browser half of the same flow (tests/google-hub.spec.ts) runs under `test:cards`."
+    },
+    {
       "name": "test:step-context",
       "cwd": "default_profile",
       "run": "npm run test:step-context",

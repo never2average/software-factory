@@ -1,6 +1,6 @@
 # Functional
 
-Existing: Playwright `codebase/tests/cards.spec.ts`, `stickloop.spec.ts` (`npm run test:cards`), plus the `test:*` node scripts (dataroom, syncs, alerts, schedules, render, sor, browser-security).
+Existing: Playwright `codebase/tests/cards.spec.ts`, `stickloop.spec.ts` (`npm run test:cards`), plus the `test:*` node scripts (dataroom, syncs, alerts, schedules, render, sor, browser-security, email-signin, google-hub).
 Covers: feature-parity checks for the Claude Code web surface, operator skills, workflow builder.
 
 ## Which copy a check runs in (mold_v1-146/147)
