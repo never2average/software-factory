@@ -1,5 +1,5 @@
 {
-  "$comment": "Branding overlay rules for mold_v1. The mold snapshot under codebase/ is never edited; branding.py copies it per app and applies these rules to the copy. Every rule must match at least once or the build is refused, so a mold refresh that moves this text fails loudly instead of shipping half-branded. Since upstream #15 the product name, tagline and description come from the deployment profile: branding.py writes profiles/90-brand.json and skips the rules marked via_profile and the product_name_files list; they remain for molds without a profile. The rule that rewrote the original layout description is gone: that literal left the source with upstream #15, and only a profiled mold is stamped.",
+  "$comment": "Branding overlay rules for mold_v1. The mold snapshot under codebase/ is never edited; branding.py copies it per app and applies these rules to the copy. Every rule must match at least once or the build is refused, so a mold refresh that moves this text fails loudly instead of shipping half-branded. Since upstream #15 the product name, tagline and description come from the deployment profile: branding.py writes profiles/90-brand.json and skips the rules marked via_profile and the product_name_files list; they remain for molds without a profile. The rule that rewrote the original layout description is gone: that literal left the source with upstream #15, and only a profiled mold is stamped. The favicon set (app/favicon.ico, app/icon.png, app/apple-icon.png, public/icon-*.png, and app/icon.svg only for a vector mark) is written by lib/favicon.py; layout_icons removes the metadata block that pointed icon, shortcut and apple-touch at /icon.svg (with that block present Next 16 does not link the icon files: resolve-metadata.js merges file-convention icons only when metadata.icons is unset), and manifest_icons replaces the single SVG entry with the 192, 512 and maskable PNGs.",
   "mold_id": "mold_v1",
   "product_name_default": "Delivered",
   "files": {
@@ -9,7 +9,8 @@
     "globals": "app/globals.css",
     "notify": "lib/platform-notify.ts",
     "onboard": "app/onboard/page.tsx",
-    "inbox": "app/_components/ops/inbox-panel.tsx"
+    "inbox": "app/_components/ops/inbox-panel.tsx",
+    "manifest": "app/manifest.ts"
   },
   "product_name_files": [
     "layout",
@@ -31,6 +32,18 @@
       "file": "auth_gate",
       "find": "<svg viewBox=\"0 0 32 32\" className=\"size-8\" fill=\"none\" aria-hidden>\n            <path\n              d=\"M9 16.5L14 21.5L23.5 11\"\n              className=\"stroke-background\"\n              strokeWidth=\"3.2\"\n              strokeLinecap=\"round\"\n              strokeLinejoin=\"round\"\n            />\n          </svg>",
       "replace": "{auth_mark_jsx}"
+    },
+    {
+      "id": "layout_icons",
+      "file": "layout",
+      "find": "  icons: {\n    icon: \"/icon.svg\",\n    shortcut: \"/icon.svg\",\n    apple: \"/icon.svg\",\n  },\n",
+      "replace": "{layout_icons}"
+    },
+    {
+      "id": "manifest_icons",
+      "file": "manifest",
+      "find": "icons: [{ src: \"/icon.svg\", sizes: \"any\", type: \"image/svg+xml\" }],",
+      "replace": "{manifest_icons}"
     }
   ],
   "palette_blocks": [
