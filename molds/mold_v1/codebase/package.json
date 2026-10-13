@@ -99,6 +99,7 @@
     "check:gates": "node --conditions=react-server --experimental-strip-types scripts/check-gates.mjs",
     "test:login-domains": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-login-domains.mjs",
     "test:google-audiences": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-google-audiences.mjs",
+    "test:google-hub": "node --conditions=react-server --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-google-hub.mjs",
     "test:chat-persistence": "node scripts/test-chat-persistence.mjs",
     "test:chat-persist-coalesce": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-persist-coalesce.mjs",
     "test:chat-turn-state": "node --experimental-strip-types scripts/test-chat-turn-state.mjs",

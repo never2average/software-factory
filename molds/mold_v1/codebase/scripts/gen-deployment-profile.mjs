@@ -8,6 +8,8 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateSource } from "./lib/profile-library.mjs";
+// Plain data with no imports but the price table; Node 24 reads the .ts as it is (type stripping).
+import { speechModelProblem } from "../lib/dictation-models.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 // PROFILES_DIR + --check let a test validate another set of profiles without touching the generated files.
@@ -346,7 +348,12 @@ for (const area of Object.keys(AREAS)) {
   if (!PROVIDERS.includes(a.provider)) fail(`${at}.provider: ${JSON.stringify(a.provider)} is not a provider. Use "cloudflare" (Workers AI, with the credentials the chat's models already use)`);
   if (typeof a.model !== "string" || !/^@cf\/[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(a.model)) fail(`${at}.model must be a Workers AI model id, for example "@cf/openai/whisper-large-v3-turbo"`);
   if (a.language !== null && (typeof a.language !== "string" || !/^[a-z]{2}$/.test(a.language))) fail(`${at}.language must be null (the model detects the language) or a two-letter ISO 639-1 code, for example "en"`);
+  // Only a model dictation knows how to call AND has a price for (lib/dictation-models.ts, lib/inference-pricing.ts).
+  const asrWhy = speechModelProblem(a.model, a.language);
+  if (asrWhy) fail(`${at}: ${asrWhy}`);
   if (!Number.isInteger(a.max_seconds) || a.max_seconds < 5 || a.max_seconds > 600) fail(`${at}.max_seconds must be a whole number of seconds from 5 to 600`);
+  if (!Number.isInteger(a.max_session_seconds) || a.max_session_seconds < 10 || a.max_session_seconds > 3600) fail(`${at}.max_session_seconds must be a whole number of seconds from 10 to 3600 (the most one stretch of listening may run)`);
+  if (!Number.isInteger(a.idle_stop_seconds) || a.idle_stop_seconds < 5 || a.idle_stop_seconds > 120) fail(`${at}.idle_stop_seconds must be a whole number of seconds from 5 to 120 (how long hands-free listening waits in silence before it stops)`);
   if (!Number.isInteger(a.max_bytes) || a.max_bytes < 65_536 || a.max_bytes > 10_485_760) fail(`${at}.max_bytes must be a whole number of bytes from 65536 (64 KB) to 10485760 (10 MB: the most the proxy in front of every /api/ops route passes on, Next's proxyClientMaxBodySize)`);
 }
 
@@ -509,8 +516,10 @@ export interface DeploymentProfile {
   /**
    * Dictation in the chat composer: speech to text for writing a prompt, never sent on its own (lib/dictation.ts).
    * enabled: shown when the provider's credentials are set on the server. language: null = detected by the model.
+   * max_seconds, max_bytes: one clip (a section). max_session_seconds: one stretch of listening. idle_stop_seconds:
+   * the silence after which hands-free listening stops itself.
    */
-  asr: { enabled: boolean; provider: "cloudflare"; model: string; language: string | null; max_seconds: number; max_bytes: number };
+  asr: { enabled: boolean; provider: "cloudflare"; model: string; language: string | null; max_seconds: number; max_bytes: number; max_session_seconds: number; idle_stop_seconds: number };
   /**
    * The time-boxed periods that group tasks (the \`cycles\` table). mode "team": one shared period with a lead, a
    * capacity and a burndown. "individual": each person's own items within the period. "off": the feature does not

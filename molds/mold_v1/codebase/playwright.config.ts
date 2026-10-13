@@ -23,6 +23,24 @@ if (OWN_PORT !== "" && !(/^\d{1,5}$/.test(OWN_PORT) && Number(OWN_PORT) >= 1 && 
 }
 const PORT = OWN_PORT === "" ? 3000 : Number(OWN_PORT);
 const BASE = `http://${HOST}:${PORT}`;
+/**
+ * tests/google-hub.spec.ts signs in through the sign-in hub (lib/google-hub.ts) in a real browser, with the dev
+ * server playing BOTH deployments: the app at `http://localhost:<port>` and its hub at `http://127.0.0.1:<port>`.
+ * To a browser those are two sites, so the cookie, the cross-site form POST and the page policies behave as they do
+ * between two real addresses. Google is tests/fake-google.mjs on the next port (PLAYWRIGHT_GOOGLE_PORT to choose
+ * another): the server verifies its tokens through GOOGLE_JWKS_URL_FOR_TEST, which lib/ops-auth.ts reads only
+ * when NODE_ENV is not "production" and only for a loopback address. AUTH_GOOGLE_ADDRESS_CHECK=off: no spec asks the real
+ * Google anything. The /preview specs sign nobody in and are not affected by any of it.
+ */
+const GOOGLE_PORT = Number(process.env.PLAYWRIGHT_GOOGLE_PORT?.trim() || (PORT < 65_535 ? PORT + 1 : PORT - 1));
+const FAKE_GOOGLE = `http://${HOST}:${GOOGLE_PORT}`;
+export const GOOGLE_HUB_TEST = {
+  app: `http://localhost:${PORT}`,
+  hub: BASE,
+  google: FAKE_GOOGLE,
+  clientId: "hub-test-client.apps.googleusercontent.com",
+  appName: "Test App",
+} as const;
 
 export default defineConfig({
   testDir: "./tests",
@@ -41,10 +59,25 @@ export default defineConfig({
     colorScheme: "dark",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: {
-    command: `npm run dev -- --hostname ${HOST} --port ${PORT}`,
-    url: `${BASE}/preview/cards`,
-    reuseExistingServer: OWN_PORT === "",
-    timeout: 180_000,
-  },
+  webServer: [
+    {
+      command: `node tests/fake-google.mjs --port ${GOOGLE_PORT}`,
+      url: `${FAKE_GOOGLE}/jwks`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: `npm run dev -- --hostname ${HOST} --port ${PORT}`,
+      url: `${BASE}/preview/cards`,
+      reuseExistingServer: OWN_PORT === "",
+      timeout: 180_000,
+      env: {
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: GOOGLE_HUB_TEST.clientId,
+        AUTH_GOOGLE_ADDRESS_CHECK: "off",
+        AUTH_GOOGLE_HUB_ORIGIN: GOOGLE_HUB_TEST.hub,
+        AUTH_GOOGLE_HUB_ALLOWED_RETURNS: `${GOOGLE_HUB_TEST.app}=${GOOGLE_HUB_TEST.appName}`,
+        GOOGLE_JWKS_URL_FOR_TEST: `${FAKE_GOOGLE}/jwks`,
+      },
+    },
+  ],
 });

@@ -947,7 +947,12 @@ def _records(check, tmp):
         hub_state = dict(docs["infrastructure"], google_sign_in={"hub": {"origin": "https://hub-app.example", "app_id": "hub"},
                                                                "answers_for": [{"origin": "https://other.example", "name": "Other App", "app_id": "other"}]})
         S2 = V.settings("vm_remote_fixture", docs["application"], hub_state, docs["datastores"])
-        check("  ...the hub's settings are not written for a mold that does not read them", "google_hub" in S2 and S2["google_hub"] == {} and G.HUB_ENV not in V.config_pairs(S2))
+        # Whether the snapshot on disk reads them changes with a refresh, so that is not what is asserted: settings() asks
+        # google_signin about the mold it builds from, and a mold without the file gets neither value.
+        check("  ...the hub's settings come from what the mold being built reads", "google_hub" in S2 and S2["google_hub"] == G.env_pairs(hub_state, S2["mold_src"]), S2.get("google_hub"))
+        with tempfile.TemporaryDirectory() as mold_without_hub:
+            S2["google_hub"] = G.env_pairs(hub_state, mold_without_hub)
+        check("  ...the hub's settings are not written for a mold that does not read them", S2["google_hub"] == {} and G.HUB_ENV not in V.config_pairs(S2))
         S2["google_hub"] = G.env_pairs(hub_state, mold_with_hub)
         c2 = V.config_pairs(S2)
         check("  ...and for a mold that does, the server's env file carries both from state", c2.get(G.HUB_ENV) == "https://hub-app.example" and c2.get(G.RETURNS_ENV) == "https://other.example=Other App", {k: c2.get(k) for k in (G.HUB_ENV, G.RETURNS_ENV)})

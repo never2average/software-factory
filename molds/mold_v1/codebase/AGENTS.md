@@ -96,6 +96,15 @@ Every environment variable the platform reads is documented in
 traps (Sensitive vars pulling as empty strings, trailing newlines changing which
 model provider you bill).
 
+### Google sign-in at a new address
+
+Google signs people in only at an address written by hand on the OAuth client's page; there is no API for adding
+one. The sign-in page asks the server how Google sign-in works at its address before it draws a button
+(`/api/auth/google/availability`: `direct`, `hub` or `none`), so a button is drawn only where it leads somewhere,
+and a deployment can name another, already listed, as its **sign-in hub** (`AUTH_GOOGLE_HUB_ORIGIN` on the app,
+`AUTH_GOOGLE_HUB_ALLOWED_RETURNS` on the hub). See [`docs/GOOGLE_SIGN_IN.md`](docs/GOOGLE_SIGN_IN.md);
+`npm run test:google-hub` holds the flow and every refusal, `tests/google-hub.spec.ts` drives it in a browser.
+
 ### Capability flags
 
 Three capabilities can be removed from a deployment entirely, for customers whose

@@ -542,37 +542,82 @@ No periods at all:
 
 ### `asr`
 
-Dictation in the chat composer: speech to text for writing a prompt. A person presses the microphone button, speaks,
-presses Stop (or Enter or Space on it; Escape cancels), and the words land in the message box **at the cursor**, to
-edit and send themselves. It never sends a message on its own and there are no spoken replies. Both composers carry
-it (the main chat and a specialist's steer box), after their own tools.
+Dictation in the chat composer: speech to text for writing a prompt. It is **one button** and it never changes the
+composer's height:
+
+| The person | What happens |
+|---|---|
+| holds the microphone (mouse, finger, or Space / Enter with it focused) and speaks | press-to-talk: it listens while held and stops on release |
+| double-clicks it (double-tap, double-press, or Shift+Enter) | it keeps listening hands-free, in its own colour with a solid ring (`aria-pressed`) |
+| clicks it again, or presses Escape | it stops |
+| clicks it once, quickly | nothing is recorded; a tooltip says "Hold to talk · double-click to keep listening" |
+
+While it listens the button beats: a ring that follows the voice's level (a still ring under
+`prefers-reduced-motion`), with the elapsed time as a small badge on the button. What is said arrives in the message
+box **section by section**, at each natural pause, while the person is still talking, **at the cursor** and in the
+order spoken; a small marker in the box shows where the next words will land. The box stays the person's to type in
+meanwhile: their edits move the landing place and are never overwritten. It never sends a message on its own and
+there are no spoken replies. Both composers carry it (the main chat and a specialist's steer box), after their own
+tools.
 
 | Key | Meaning | Default |
 |---|---|---|
 | `asr.enabled` | `true`: the button shows whenever the provider's credentials are set on the server; without them it stays hidden (the composer asks `GET /api/ops/dictation` once per tab). `false`: no dictation in this deployment, and `POST /api/ops/dictation` answers 404. | `true` |
 | `asr.provider` | `"cloudflare"`: Workers AI, with the `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` the chat's models already use. No new secret. | `"cloudflare"` |
-| `asr.model` | The provider's speech-to-text model id. Its price per audio minute is in `lib/inference-pricing.ts` (`AUDIO_PRICES`); add a row, with its source and date, when changing it, or its usage is reported unpriced. | `"@cf/openai/whisper-large-v3-turbo"` |
-| `asr.language` | An ISO 639-1 code (`"en"`, `"hi"`) to transcribe in, or `null` for the model to detect it. | `null` |
-| `asr.max_seconds` | The longest clip, 5 to 600. The recorder stops itself there and transcribes what was said; the button says the limit ("up to 2 minutes"). | `120` |
-| `asr.max_bytes` | The largest upload, 64 KB to 10 MB (the most the proxy in front of every `/api/ops` route passes on). The default stays under the 4.5 MB request body a Vercel function accepts; two minutes at the recorder's 32 kbps is about 0.5 MB. | `4194304` (4 MB) |
+| `asr.model` | The speech-to-text model: one of the models in `lib/dictation-models.ts`, each priced per audio minute in `lib/inference-pricing.ts` (`AUDIO_PRICES`). Any other id does not build. Today: `@cf/openai/whisper-large-v3-turbo` ($0.000513/min), `@cf/openai/whisper` ($0.000453/min; takes no language), `@cf/deepgram/nova-3` ($0.0052/min; en, es, fr, de, hi, ru, pt, ja, it, nl). | `"@cf/openai/whisper-large-v3-turbo"` |
+| `asr.language` | An ISO 639-1 code (`"en"`, `"hi"`) to transcribe in, or `null` for the model to detect it. It must be one the model takes. | `null` |
+| `asr.max_seconds` | The longest single clip (one section), 5 to 600. The button never sends a section longer than 10 seconds, or than this if it is shorter. | `120` |
+| `asr.max_bytes` | The largest upload, 64 KB to 10 MB (the most the proxy in front of every `/api/ops` route passes on). The default stays under the 4.5 MB request body a Vercel function accepts; a ten-second section is about 320 KB. | `4194304` (4 MB) |
+| `asr.max_session_seconds` | The most one stretch of listening may run (a hold, or hands-free from the double-click to its stop), 10 to 3600. The button stops itself there and says so ("that was the limit of 10 minutes in one go"); the server refuses a stretch's sections once that much of its audio has been transcribed (`429 session_limit`). | `600` |
+| `asr.idle_stop_seconds` | How long hands-free listening waits in silence before it stops itself, 5 to 120. | `20` |
 
-How it works (`lib/dictation.ts`, `app/api/ops/dictation/route.ts`, `app/_components/dictation-button.tsx`):
+A deployment may choose its own model and language over the profile's, in its environment, the way it chooses the
+chat's models per role: `ASR_MODEL` (a model from `lib/dictation-models.ts`), `ASR_LANGUAGE` (a two-letter code, or
+`auto` for the model to detect it) and `ASR_ENABLED` (`true` or `false`); unset or empty means the profile's. A model
+the app cannot call or price, or a language the model cannot take, **fails closed**: the microphone is hidden and the
+dictation route logs `[dictation] dictation is off: <why> (set by ASR_MODEL)`. Usage is recorded under the model that
+transcribed it, so the usage report prices whichever was chosen.
 
-- The browser records with `MediaRecorder` (WebM or Ogg Opus in Chromium and Firefox, MP4 in Safari) and the server
-  transcribes with the profile's model, so it works the same on Vercel and on a self-hosted server. No browser speech
-  service is used.
+How it works (`lib/dictation.ts`, `lib/dictation-segmenter.ts`, `lib/dictation-order.ts`, `lib/dictation-models.ts`,
+`app/api/ops/dictation/route.ts`, `app/_components/dictation-button.tsx`, `app/_components/dictation-engine.ts`):
+
+- **Sections.** The browser takes the microphone's raw samples through the Web Audio graph (an `AudioWorklet`,
+  `public/dictation-capture.worklet.js`; a `ScriptProcessorNode` where there is none), brings them down to 16 kHz mono
+  and cuts them where the person pauses: 600 ms of quiet closes a section, a section past 8 seconds closes at the
+  first short breath, and one at 10 seconds closes whatever is being said. Quiet between sections is never sent. Each
+  section is posted as it closes, as a complete 16-bit WAV file of its own, and the server transcribes it with the
+  deployment's model, so it works the same on Vercel and on a self-hosted server, and in Chromium, Firefox and Safari
+  alike. No browser speech service is used.
+- **Why not `MediaRecorder`, restarted at each pause:** stopping and starting a recorder loses the audio in between
+  (mid-word, at a length cut), it cannot reach back before the voice was noticed (a section here starts 240 ms
+  earlier, so the first consonant is kept), and it gives a different container per browser (WebM or Ogg Opus, or
+  Safari's fragmented MP4). Samples cut by index lose nothing and are the same bytes everywhere.
+- **Order.** Each section carries the stretch of listening it belongs to (`session_id`, the browser's random id) and
+  its place in it (`seq`). Up to three are in flight at once and their answers return in any order; the browser holds
+  an answer until every earlier section has been answered or given up on, so the text always reads as spoken.
+- **Loaded on use.** The button loads only once the server says dictation is on, and the engine (microphone, level,
+  cut) only on the first press: neither is in the chat's first load.
 - The route is signed in and workspace-scoped like every `/api/ops` route: the workspace is the sign-in's (a named
   one only for a member), never anything in the form.
-- The limits are checked on the server before the paid call (the upload's size, the length the recorder states) and
-  after it (the length the model measured: a longer clip is recorded as used, since it was paid for, and its text
-  refused).
+- The limits are checked on the server before the paid call (the upload's size, the length the browser states, and,
+  for a section, what its stretch has already used: `max_session_seconds` of audio, and 40 sections in any minute,
+  `429 rate_limited`) and after it (the length the model measured: a longer clip is recorded as used, since it was
+  paid for, and its text refused). A stretch's use is read from its usage rows, in the caller's workspace, so the limit
+  holds across server instances. A client that posts a single recording with no `session_id` is served as before.
 - No audio is kept: the clip is held in memory for the request and sent to the provider, nothing else.
-- Usage: one `chat_turn_usage` row per clip, of kind `dictation`, under the workspace and person who recorded it, with
-  the audio's length in milliseconds (`audio_ms`; migration `drizzle/0039_dictation_usage.sql`). `GET /api/ops/usage`
+- Usage: one `chat_turn_usage` row per clip (each section is one), of kind `dictation`, under the workspace and person
+  who recorded it, with the audio's length in milliseconds (`audio_ms`; migration `drizzle/0039_dictation_usage.sql`).
+  A section's row is keyed by workspace, stretch and place (`dictation:<workspace>:<session_id>`, `section-<seq>`; no
+  new column), so a stretch's sections group and a section sent twice adds to its one row. `GET /api/ops/usage`
   reports `dictations` and `audio_seconds` beside the chat's `turns`, the model as its own line in `by_model`, and
   prices it per audio minute in `est_cost_usd`.
-- Errors are said in plain words in the composer: a blocked microphone (how to allow it), no microphone, a browser that
-  cannot record, nothing heard, and the server's own refusal (too long, too large).
+- Errors are said in plain words in a popover anchored to the button, never a new row: a blocked microphone (how to
+  allow it), no microphone, a browser that cannot record, nothing heard, and the server's own refusal (too long, too
+  large, the session limit).
+- Accessibility: each change is announced once (`role=status`: listening, hands-free, stopped and why);
+  `aria-pressed` is the hands-free state; hold Space or Enter to talk, double-press or Shift+Enter for hands-free,
+  Escape to stop; a click with no press behind it (an assistive tool's "activate", which cannot hold) turns hands-free
+  on and off; on a phone a long press is a hold, never the browser's text selection or menu.
 
 Turning it off:
 
@@ -1136,9 +1181,9 @@ npm run test:custom-fields         # the custom-field validator, the agent's wri
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run test:work-periods          # work_periods: the generator's rules, each mode's views, words, tools and routes (three builds rendered), the default to the letter; offline
 npm run test:work-periods-db       # the same three modes against a real Postgres: two workspaces, the routes and the model's tools, rollover, whose an item is
-npm run test:dictation             # asr: the route's rules with a fake provider (sign-in, workspace, limits, usage, price), the generator's rules; offline
+npm run test:dictation             # asr: the route's rules with a fake provider (sign-in, workspace, limits, sections and the session limit, usage, price), the cut into sections, the order, the generator's rules; offline
 npm run test:dictation-usage-db    # dictation usage written and reported as app_rw, two workspaces, against a fail-closed Postgres
-npx playwright test tests/dictation.spec.ts      # the real composer with a fake microphone: record, stop, the words at the cursor, nothing sent
+npx playwright test tests/dictation.spec.ts      # the real button with a fake microphone: hold and release, hands-free, sections in order, typing meanwhile, an unchanged composer height, nothing sent
 npm run check:generated            # fails if a generated file is stale
 npm run typecheck
 ```
