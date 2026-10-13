@@ -18,11 +18,25 @@ python3 .claude/scripts/mint.py list                                        # ev
 Before the first app on a machine, the mold's codebase must be there: if `molds/<mold_id>/codebase` is missing, fetch it first (the `mold` skill, `python3 .claude/scripts/mold.py fetch <mold_id>`).
 
 Stations, in order: brief, state, packs, brand, keys, deploy, workspaces, tests, package, address. `run` is safe to
-repeat at any time. For an application on a server of its own (`target: vm_remote`) the workspaces station also writes
-the brief's own workspace and then the application's surface (default agent profile, subagent configs, workflow definitions
-and scripts), on that server (`provision.py <app_id> --workspace-remote`); if it stops because the server
-already has a workspace under another id, tell the user the two ids and ask which is right. The package, report and
-handoff stations read that application's address from `vm_remote.production_url`. Never drive the underlying scripts one by one unless a station failed and you are fixing it.
+repeat at any time. Never drive the underlying scripts one by one unless a station failed and you are fixing it.
+
+**The workspaces station creates the application's first workspace.** Right after the first deploy, `run` writes the
+application's own workspace (`application.json` `workspace.org`) into the app, with the operator
+(`state/factory.local.json` `defaults.operator_email`) as its owner and the people state names beside them; then every
+seed under `seed/orgs/`. It shows `done: workspace <id>, owner <email>`. This is a write to the app's own new database,
+and it is part of the deploy the operator already said yes to: a deployed app with no workspace can email nobody a
+sign-in code, so the deploy is not usable without it. It is safe to repeat: the station looks at the app first
+(read-only, as the app's own role) and writes nothing that is already there. On Vercel it goes through `workspace.py`;
+on a server of its own (`target: vm_remote`) through `provision.py <app_id> --workspace-remote`, which also writes the
+application's surface (default agent profile, subagent configs, workflow definitions and scripts).
+
+- If it says the operator's email address is not known (exit 3), ask the operator which address they sign in with,
+  put it in `state/factory.local.json` as `defaults.operator_email`, and `run` again.
+- If it stops because the app already has a workspace under another id, tell the user the two ids and ask which is right.
+- If another station stands in front of it (a redeploy that wants a sign-in nobody can get yet):
+  `mint.py <app_id> run --only workspaces` writes just the application's own workspace.
+
+The package, report and handoff stations read a `vm_remote` application's address from `vm_remote.production_url`.
 
 ## Starting from a conversation
 
@@ -52,6 +66,13 @@ web address, one paste per code block, what is hidden). What each station needs:
 - **tests** — the signed-in checks need a person who can sign in. Ask them to say "send the code"; then
   `mint.py <app_id> code-request <email>`, they paste the six digits, `mint.py <app_id> code <digits> <email>`,
   then `run`. The session lives in `~/.cache/software-factory/`, never in the repo or the chat.
+  **Believe what `code-request` prints, and repeat it to the operator as it is.** The app emails a code only to an
+  address that belongs to one of its workspaces or holds an invite, and it gives every address the same answer, so
+  `code-request` looks in the app's database first:
+  - "belongs to no workspace … Nothing was sent" (exit 1): no email is coming. Do the next step it names (create the
+    workspace, or have them invited), then ask again. Never tell the operator to wait for a code after this.
+  - "a six-digit code is on its way": the address was seen to be a member; tell them to look for it.
+  - "a code was requested … could not be checked": say exactly that, that it arrives only if the address is a member.
 - **package** — the operator runs `npm login` on this machine once (it prints a link). Never publish without them.
 - **address** — `domain.py <app_id> attach <domain>` prints the one DNS record for the domain's owner.
 

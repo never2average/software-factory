@@ -110,11 +110,19 @@ def app_url(infra):
     return None
 
 
-def sign_in_how(app_id):
+def sign_in_how(app_id, note=None):
+    """How the operator gives a sign-in. It ends with what lib/membership.py SEES (mold_v1-245): the app emails a code
+    only to an address that belongs to one of its workspaces, so when the operator's own address belongs to none, the
+    step that comes first is said here, instead of a code that never arrives."""
+    if note is None:
+        try:
+            import membership
+            note = membership.sign_in_note(app_id)
+        except Exception: note = ""
     return (f"Tell me which email address can sign in to {app_id} (your own) and say that I may send it a code. I then run "
             f"`python3 .claude/scripts/mint.py {app_id} code-request <email>`; a six-digit code arrives by email within a minute "
             f"and lasts ten minutes. Paste just the six digits here. The session it buys is kept in a private file on this "
-            f"machine, never shown, and lasts a week.")
+            f"machine, never shown, and lasts a week." + (" " + note if note else ""))
 
 
 # ---- HTTP: the real app, or the rehearsal's `http` fake ------------------------------------------------------------
@@ -298,6 +306,10 @@ def self_test():
             r = check("app_one", app, infra)
             ok(r["result"] == "needs_sign_in" and "no signed-in session" in r["detail"] and "code-request" in r["how"] and not calls(),
                "no session on hand: needs a sign-in, says how, and nothing is sent", r)
+            # mold_v1-245: the same words carry what was SEEN of the app's workspaces, so nobody waits for a code that cannot come
+            ok("only to an address that belongs to one of its workspaces" in r["how"], "the way to sign in says who the app emails a code to", r["how"])
+            ok(sign_in_how("app_one", note="FIRST: app_one has no workspace yet").endswith("lasts a week. FIRST: app_one has no workspace yet")
+               and sign_in_how("app_one", note="").endswith("lasts a week."), "the way to sign in ends with the step that comes first, when there is one")
             sp = os.path.join(priv, "app_one.session.json")
             json.dump({"token": tok, "expires_at": int(time.time()) + 86400}, open(sp, "w"))
             r = check("app_one", app, infra)

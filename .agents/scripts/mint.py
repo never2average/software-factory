@@ -7,7 +7,14 @@
                                    the operator (and say exactly what is needed) or at the first that fails
   mint.py <app_id> reuse-keys <other_app_id>   copy the operator's own service keys from an app that already
                                    runs (in memory, never printed), so a second app never asks for them again
-  mint.py <app_id> code-request <email>        email that person a one-time sign-in code (only when they said so)
+  mint.py <app_id> code-request <email>        email that person a one-time sign-in code (only when they said so).
+                                   It LOOKS first: the app emails a code only to an address that belongs to one of
+                                   its workspaces or holds an invite, and answers the same either way. An address in
+                                   none is told so, with the next step, and nothing is sent (lib/membership.py)
+  mint.py <app_id> run --only workspaces       write the application's own workspace (application.json workspace) to
+                                   the deployed app now, with the operator as its owner; safe to repeat. `run` does
+                                   this by itself right after the first deploy; this is that one step alone, for when
+                                   another station (a redeploy that wants a sign-in) stands in front of it
   mint.py <app_id> code <six digits> <email>   trade the code for a 7-day session kept in a private file, so the
                                    signed-in checks are measured and not skipped
   mint.py <app_id> report          what it took: time and money, each figure measured or plainly "not measured"
@@ -32,10 +39,12 @@ so `run` can be repeated at any time and picks up where things stand:
   brand      a name, a colour and a logo are set (or the mold's default look is accepted)
   keys       every credential the deploy needs is present BY NAME          <- the operator, once per operator
   deploy     the three services answer, on the current mold snapshot
-  workspaces every seed under state/application/<app_id>/seed/orgs/ is applied as it is now written; for an app on a
-             server of its own, the brief's own workspace too, and then the application's surface (the default agent
-             profile, per-subagent configs, workflow definitions and scripts), written on that server
-             (provision.py --workspace-remote)
+  workspaces the application's OWN workspace (application.json workspace.org) is on the deployed app, with the operator
+             (state/factory.local.json defaults.operator_email) as its owner: written right after the first deploy,
+             because an app with no workspace can email nobody a sign-in code (mold_v1-245). Then every seed under
+             state/application/<app_id>/seed/orgs/, applied as it is now written. On Vercel through workspace.py; for
+             an app on a server of its own, on that server, with the application's surface (the default agent profile,
+             per-subagent configs, workflow definitions and scripts) after it (provision.py --workspace-remote)
   tests      the five lanes ran after the last deploy, none failed, signed-in checks measured  <- a code from the operator
   package    the application's own agent package is published at the app's address (vercel.production_url, or
              vm_remote.production_url for a server of its own)                                <- the operator's npm sign-in
@@ -55,6 +64,7 @@ DONE, TODO, OPERATOR, FAILED, NA = "done", "next", "needs you", "failed", "not n
 
 sys.path.insert(0, os.path.join(S, "lib"))
 import lane_url   # target_url(infra): where the application lives, per deploy target (vercel, or a server of its own)
+import membership # who the deployed app will email a sign-in code to, read from its own database (mold_v1-245)
 import agent_result as AR, runs, services   # --json results, background runs, the rehearsal switch and call log
 PRIVATE = services.private_dir()   # FACTORY_PRIVATE_DIR, else ~/.cache/software-factory
 
@@ -157,9 +167,9 @@ def st_deploy(app, a, i):
               f"mint.py {app} code-request <email>, then mint.py {app} code <digits> <email>")
     if a.get("status") == "reverted":
         why = "rolled back" if "rolled back" in str((a.get("revert") or {}).get("reason", "")) else "a test lane failed"
-        return (TODO, f"{why}; redeploy once the cause is fixed") if session(app) else (OPERATOR, f"{why}; {signin}")
+        return (TODO, f"{why}; redeploy once the cause is fixed") if session(app) else (OPERATOR, f"{why}; {signin}{code_first(app, a)}")
     if was and now and was != now:
-        return (TODO, f"the mold moved ({was[:7]} -> {now[:7]}); redeploy to pick it up") if session(app) else (OPERATOR, f"the mold moved ({was[:7]} -> {now[:7]}); {signin}")
+        return (TODO, f"the mold moved ({was[:7]} -> {now[:7]}); redeploy to pick it up") if session(app) else (OPERATOR, f"the mold moved ({was[:7]} -> {now[:7]}); {signin}{code_first(app, a)}")
     if (v.get("smoke") or {}).get("result") == "needs_sign_in" and session(app):
         return TODO, SMOKE_PENDING
     note = " (its chat check waits for a sign-in)" if (v.get("smoke") or {}).get("result") == "needs_sign_in" else ""
@@ -173,24 +183,139 @@ def google_note(app, i):
     return f"; Google sign-in is NOT WORKING there (emailed codes work); the steps: python3 .claude/scripts/provision.py {app} --google-signin"
 SMOKE_PENDING = "deployed; now that a sign-in is on hand, run the post-deploy chat check"
 
+# ---- the workspaces station (mold_v1-245) ---------------------------------------------------------------------
+# A deployed app with no workspace can email nobody a sign-in code: it answers "on its way" to every address and sends
+# only to a member. So the application's OWN workspace is written right after the first deploy, owned by the operator.
+OWN = "application.json#workspace"     # the key the own workspace is recorded under in seed/orgs/.applied.json (vm_remote.STATE_SEED)
+
+def operator_email(): return membership.operator_email(ROOT)
+def look(app, emails): return membership.read(app, emails, ROOT)    # the deployed app's own database, read-only
+def seen_path(app): return os.path.join(PRIVATE, f"{app}.workspaces.json")
+def seen(app): return load(seen_path(app)) if os.path.exists(seen_path(app)) else {}
+def applied(app): return load(applied_path(app)) if os.path.exists(applied_path(app)) else {}
+def record_applied(app, key, digest):
+    done = applied(app); done[key] = digest
+    os.makedirs(os.path.dirname(applied_path(app)), exist_ok=True); json.dump(done, open(applied_path(app), "w"), indent=2)
+
+def own_org(a): return ((((a or {}).get("workspace") or {}).get("org") or {}).get("org_id") or "").strip()
+
+def own_seed(app, a):
+    """A Vercel application's own workspace as a workspace.py seed: application.json workspace (its id, name, people,
+    roster, administrators), OWNED BY THE OPERATOR; an owner state names keeps the owner's role beside them. It carries
+    the guard "no_other_workspace": a database that already holds workspaces, and not this one, is never given a new one.
+    (seed, "") or (None, why): why is "operator" when this machine does not know the operator's address."""
+    import vm_remote
+    ws = a.get("workspace") or {}; org = dict(ws.get("org") or {}); op = operator_email()
+    if not op: return None, "operator"
+    org.setdefault("name", org.get("org_id"))
+    try: seed = vm_remote.state_seed(dict(a, workspace=dict(ws, org=org)), operator=op)
+    except vm_remote.Stop as e: return None, str(e)
+    if seed["owner"] != op:
+        if not any(m["email"] == seed["owner"] for m in seed["members"]): seed["members"].append({"email": seed["owner"], "role": "owner"})
+        seed["owner"] = op
+    seed["guard"] = "no_other_workspace"
+    return seed, ""
+
+def own_customers(app, org): return os.path.join(adir(app), "seed", "orgs", org, "customers.json")
+def own_digest(app, seed):
+    h = hashlib.sha256(json.dumps(seed, sort_keys=True).encode()); c = own_customers(app, seed["org_id"])
+    if os.path.exists(c): h.update(open(c, "rb").read())
+    return h.hexdigest()
+
+def standing(app, a, i):
+    """Where a Vercel application's workspaces stand, by LOOKING: {"org", "operator", "seed", "why", "items", "error"}.
+    items: [{"key", "org", "digest", "emails", "path", "ok", "role"}], the own workspace first, then each seed file.
+    An item is ok when it was applied as it is now written (seed/orgs/.applied.json), or when the deployed app is SEEN to
+    hold it: the workspace exists, has an owner, and every person the seed names is a member (kept, as seen, in a private
+    file outside the repository, so the next look costs nothing). One read of the app's database answers for all of them."""
+    org = own_org(a); op = operator_email(); done = applied(app); cache = seen(app); items = []
+    seed, why = own_seed(app, a) if org else (None, "none")
+    if org:
+        items.append({"key": OWN, "org": org, "digest": own_digest(app, seed) if seed else "seen:" + org, "path": None,
+                      "emails": [seed["owner"]] + [m["email"] for m in seed["members"]] if seed else []})
+    for p in seeds(app):
+        try: d = load(p)
+        except ValueError: d = {}
+        items.append({"key": os.path.basename(p), "org": d.get("org_id") or os.path.basename(p)[:-5], "digest": seed_digest(p), "path": p,
+                      "emails": [str(e).strip().lower() for e in [d.get("owner")] + [m.get("email") for m in d.get("members") or [] if isinstance(m, dict)] if e]})
+    for it in items: it["ok"] = it["digest"] in (done.get(it["key"]), cache.get(it["key"])); it["role"] = cache.get(it["key"] + "#role")
+    # A seed file that describes the app's own workspace, applied as written, IS the own workspace.
+    if items and org and not items[0]["ok"] and any(x["ok"] and x["org"] == org for x in items[1:]): items[0]["ok"] = True
+    out = {"org": org, "operator": op, "seed": seed, "why": why, "items": items, "error": ""}
+    unsure = [it for it in items if not it["ok"]]
+    if not unsure or not (i.get("deployed_at") and lane_url.target_url(i)): return out
+    emails = list(dict.fromkeys([e for it in unsure for e in it["emails"]] + ([op] if op else [])))
+    raw = look(app, emails)
+    if raw.get("error") or not isinstance(raw.get("orgs"), list): out["error"] = str(raw.get("error") or "nothing was read")[:160]; return out
+    there = {o["org_id"]: o for o in raw["orgs"]}; fresh = False
+    for it in unsure:
+        o = there.get(it["org"])
+        if not o or o.get("error") or not o.get("owners"): continue
+        role = dict(zip(emails, [p.get("member") for p in o.get("people") or []]))
+        if all(role.get(e) for e in it["emails"]):
+            it["ok"] = True; cache[it["key"]] = it["digest"]; fresh = True
+            if it["key"] == OWN and op: it["role"] = cache[OWN + "#role"] = role.get(op) or "none"
+    if fresh:
+        try:
+            os.makedirs(PRIVATE, mode=0o700, exist_ok=True); json.dump(cache, open(seen_path(app), "w"), indent=1)
+        except OSError: pass
+    return out
+
+def own_words(st):
+    org, op, role = st["org"], st["operator"], (st["items"][0].get("role") if st["items"] else None)
+    if not op: return f"workspace {org} (on the app already, with an owner)"
+    if role in (None, "owner"): return f"workspace {org}, owner {op}"
+    return f"workspace {org} (on the app already; its owner is someone else, and {op} is {'not a member' if role == 'none' else 'a ' + role + ' there'})"
+
+NO_OPERATOR = ("the application's own workspace needs an owner, and this machine does not know the operator's email address: ask them which "
+               "address they sign in with and put it in state/factory.local.json as defaults.operator_email")
+
 def st_workspaces(app, a, i):
     ss = seeds(app)
-    done = load(applied_path(app)) if os.path.exists(applied_path(app)) else {}
+    done = applied(app)
     if i.get("target") == "vm_remote":
-        # A server of its own (mold_v1-152): the brief's own workspace is written by this station too (the Vercel path
-        # has clone.py configure for it), ON the server: provision.py <app> --workspace-remote.
+        # A server of its own (mold_v1-152): the brief's own workspace is written ON the server: provision.py <app>
+        # --workspace-remote. Its owner is the one state names, else the operator (mold_v1-245).
         import vm_remote
-        try: own = vm_remote.state_seed_digest(a, adir(app))
-        except vm_remote.Stop as e: return FAILED, str(e)[:220]
+        try: own = vm_remote.state_seed_digest(a, adir(app)); who = vm_remote.state_seed(a)
+        except vm_remote.Stop as e: return (FAILED, str(e)[:220]) if operator_email() or not own_org(a) else (OPERATOR, NO_OPERATOR)
         stale = (["the application's own workspace"] if done.get(vm_remote.STATE_SEED) != own else []) + [os.path.basename(s)[:-5] for s in ss if done.get(os.path.basename(s)) != seed_digest(s)]
         # mold_v1-163: the same command writes the application's surface after its own workspace (the Vercel path's
         # clone.py configure), and records it under its own key. An app whose state has no surface asks for none.
         surf = vm_remote.surface_digest(a)
         if surf and done.get(vm_remote.SURFACE_KEY) != surf: stale.append("the application's surface (agent profile, subagent configs, workflow definitions and scripts)")
-        return (TODO, f"write to the server's database: {', '.join(stale)}") if stale else (DONE, f"{len(ss) + 1} workspace(s) as written" + (", and the application's surface" if surf else ""))
-    if not ss: return NA, "no extra workspace is described under seed/orgs/"
-    stale = [os.path.basename(s)[:-5] for s in ss if done.get(os.path.basename(s)) != seed_digest(s)]
-    return (TODO, f"apply: {', '.join(stale)}") if stale else (DONE, f"{len(ss)} workspace(s) as written")
+        if stale: return TODO, f"write to the server's database: {', '.join(stale)}"
+        return DONE, f"workspace {who['org_id']}, owner {who['owner']}; {len(ss) + 1} workspace(s) as written" + (", and the application's surface" if surf else "")
+    if i.get("target") != "vercel" or not own_org(a):
+        if not ss: return NA, "no extra workspace is described under seed/orgs/"
+        stale = [os.path.basename(s)[:-5] for s in ss if done.get(os.path.basename(s)) != seed_digest(s)]
+        return (TODO, f"apply: {', '.join(stale)}") if stale else (DONE, f"{len(ss)} workspace(s) as written")
+    org, op = own_org(a), operator_email()
+    if not (i.get("deployed_at") and lane_url.target_url(i)):
+        return TODO, f"right after the first deploy: the application's own workspace {org}" + (f", owner {op}" if op else "")
+    st = standing(app, a, i); own = st["items"][0]
+    stale = [x["key"][:-5] for x in st["items"][1:] if not x["ok"]]
+    if not own["ok"]:
+        if not st["seed"]: return (OPERATOR, NO_OPERATOR) if st["why"] == "operator" else (FAILED, st["why"][:220])
+        return TODO, (f"create the application's own workspace {org}, owner {op}" + (f" (the app's database could not be looked at: {st['error']})" if st["error"] else "")
+                      + (f"; then apply: {', '.join(stale)}" if stale else ""))
+    if stale: return TODO, f"apply: {', '.join(stale)}" + (f" (the app's database could not be looked at: {st['error']})" if st["error"] else "")
+    return DONE, own_words(st) + (f"; {len(ss)} seed(s) under seed/orgs/ as written" if ss else "")
+
+CODE_FIRST = {}
+def code_first(app, a):
+    """For a line that asks the operator for a sign-in code: "" when their address can be emailed one (or that could not
+    be seen), else the step that comes first. The app emails a code only to a member of one of its workspaces."""
+    if app in CODE_FIRST: return CODE_FIRST[app]
+    out = ""
+    try:
+        op = operator_email()
+        known = OWN in applied(app) or seen(app).get(OWN + "#role") in ("owner", "admin", "engineer", "member")
+        if op and not known and membership.check(app, op, look).get("can") is False:
+            out = f". FIRST: {op} belongs to no workspace on {app}, so the app would email it no code: mint.py {app} run --only workspaces"
+    except Exception: pass
+    CODE_FIRST[app] = out
+    return out
 
 def st_tests(app, a, i):
     t = a.get("testing") or {}; dep = i.get("deployed_at") or ""
@@ -200,7 +325,7 @@ def st_tests(app, a, i):
     unsigned = [l for l in ("functional", "accessibility", "responsiveness") if (t.get(l) or {}).get("status") == "skipped"]
     if unsigned and not session(app):
         return OPERATOR, (f"nothing failed, but the signed-in checks in {', '.join(unsigned)} were skipped. They need a one-time code "
-                          f"from someone who can sign in: mint.py {app} code-request <email>, then mint.py {app} code <digits> <email>")
+                          f"from someone who can sign in: mint.py {app} code-request <email>, then mint.py {app} code <digits> <email>{code_first(app, a)}")
     if unsigned: return TODO, "a session is on hand: re-run the lanes signed in"
     return DONE, "five lanes, none failed, signed-in checks measured"
 
@@ -236,7 +361,9 @@ def survey(app):
         except Exception as e: st, why = FAILED, f"could not be read: {e}"
         # Everything after a station that is not finished is "later", except the optional ends (package, address),
         # which only wait for the deploy: an npm sign-in must not hold up testing, and the reverse.
-        if blocked and name not in ("package", "address") and st != NA: st, why = "later", ""
+        # ...and a workspace that is on the deployed app stays there through a redeploy: it is shown as it is, so a
+        # pending redeploy never hides whether anyone can be emailed a sign-in code (mold_v1-245).
+        if blocked and name not in ("package", "address") and st != NA and not (name == "workspaces" and st == DONE): st, why = "later", ""
         if st in (TODO, OPERATOR, FAILED) and name not in ("package", "address"): blocked = True
         rows.append((name, st, why))
     return rows
@@ -292,12 +419,17 @@ def do(app, name):
         # One command writes the application's own workspace and every seed, on the server, and records what it applied.
         return py(os.path.join(S, "provision.py"), app, "--workspace-remote").returncode == 0
     if name == "workspaces":
-        done = load(applied_path(app)) if os.path.exists(applied_path(app)) else {}
-        for s in seeds(app):
-            if done.get(os.path.basename(s)) == seed_digest(s): continue
-            c = s[:-5] + "/customers.json"
-            if py(os.path.join(S, "workspace.py"), app, s, *([c] if os.path.exists(c) else [])).returncode: return False
-            done[os.path.basename(s)] = seed_digest(s); json.dump(done, open(applied_path(app), "w"), indent=2)
+        # The application's own workspace first (the operator as its owner), then each seed file. Only what the look
+        # did not find: a rerun writes nothing.
+        st = standing(app, a, i) if i.get("target") == "vercel" else {"items": [{"key": os.path.basename(p), "path": p, "digest": seed_digest(p), "ok": applied(app).get(os.path.basename(p)) == seed_digest(p)} for p in seeds(app)]}
+        for it in st["items"]:
+            if it["ok"]: continue
+            if it["key"] == OWN:
+                if not write_own(app, st["seed"]): return False
+                continue
+            c = it["path"][:-5] + "/customers.json"
+            if not write_workspace(app, it["path"], c if os.path.exists(c) else None): return False
+            record_applied(app, it["key"], it["digest"])
         return True
     if name == "tests":
         s = session(app)
@@ -309,8 +441,46 @@ def do(app, name):
     if name == "address": return py(os.path.join(S, "domain.py"), app, "switch").returncode == 0
     return False
 
+def write_workspace(app, seed_path, customers=None):
+    """One workspace onto the deployed Vercel app: workspace.py (the app role, row-level security in force). In a
+    rehearsal the fake app's database is a file (lib/membership.py), so nothing is reached."""
+    if services.REHEARSAL: membership.rehearsal_write(app, dict({"members": []}, **load(seed_path))); return True
+    return py(os.path.join(S, "workspace.py"), app, seed_path, *([customers] if customers else [])).returncode == 0
+
+def write_own(app, seed):
+    """Write the application's own workspace and record it as applied. The seed is state plus the operator's address:
+    it is handed to workspace.py as a private file outside the repository, removed afterwards."""
+    if not seed: print(f"{app}: {NO_OPERATOR}"); return False
+    import tempfile
+    os.makedirs(PRIVATE, mode=0o700, exist_ok=True); fd, tmp = tempfile.mkstemp(prefix=f"{app}.own-workspace.", suffix=".json", dir=PRIVATE)
+    try:
+        os.write(fd, json.dumps(seed).encode()); os.close(fd)
+        c = own_customers(app, seed["org_id"])
+        if not write_workspace(app, tmp, c if os.path.exists(c) else None):
+            print(f"{app}: the application's own workspace {seed['org_id']} was NOT written. If the lines above name other_workspaces, the app's database already "
+                  f"holds those and not {seed['org_id']}: say which id is right before anything is written (application.json workspace.org.org_id).")
+            return False
+    finally:
+        if os.path.exists(tmp): os.remove(tmp)
+    record_applied(app, OWN, own_digest(app, seed)); CODE_FIRST.pop(app, None)
+    print(f"done: workspace {seed['org_id']}, owner {seed['owner']}")
+    return True
+
+def workspace(app):
+    """`mint.py <app> run --only workspaces`: the workspaces station's first half, by itself (when a later need, such as a redeploy
+    that wants a sign-in, stands in front of the station). Writes what state says now; every write is an upsert."""
+    a, i = docs(app)
+    if not a or not i: sys.exit(f"{app} has no state yet: python3 .claude/scripts/mint.py {app}")
+    if not (i.get("deployed_at") and lane_url.target_url(i)): print(f"{app} is not deployed yet, so it has no database to write a workspace to. It is written right after the first deploy."); return 2
+    if i.get("target") == "vm_remote": return py(os.path.join(S, "provision.py"), app, "--workspace-remote").returncode
+    if i.get("target") != "vercel" or not own_org(a): print(f"{app}: application.json names no workspace of its own (workspace.org.org_id), so there is nothing to write."); return 2
+    seed, why = own_seed(app, a)
+    if not seed and why == "operator": print(f"{app}: {NO_OPERATOR}"); return AR.EXIT["needs_human"]
+    if not seed: print(f"{app}: {why}"); return 1
+    return 0 if write_own(app, seed) else 1
+
 def run(app):
-    RAN.clear()
+    RAN.clear(); CODE_FIRST.clear()
     for _ in range(12):
         rows = survey(app); nxt = next(((n, st) for n, st, _ in rows if st in (TODO, OPERATOR, FAILED)), None)
         if not nxt or nxt[1] != TODO: break
@@ -398,8 +568,16 @@ def post(url, body):
         try: sys.exit(json.load(e).get("error") or f"refused ({e.code})")
         except ValueError: sys.exit(f"refused ({e.code})")
 
-def code_request(app, email):
-    post(origin(app) + "/api/auth/email/request", {"email": email}); print(f"a six-digit code is on its way to {email}; it lasts ten minutes"); return 0
+def code_request(app, email, check=None):
+    """Ask the app to email `email` a sign-in code, ONLY after looking whether it will (mold_v1-245). The app answers
+    the same "on its way" to every address and emails only a member or an invited one, so its answer says nothing:
+    an address seen in no workspace is told so and nothing is sent; one that could not be looked up is told the code
+    was requested and arrives only if it is a member. "On its way" is said only of an address seen to be one."""
+    url = origin(app)
+    m = (check or membership.check)(app, email, look)
+    send, words = membership.said(app, email, m)
+    if not send: print(words); return 1
+    post(url + "/api/auth/email/request", {"email": email}); print(words); return 0
 
 def code(app, digits, email):
     r = post(origin(app) + "/api/auth/email/verify", {"email": email, "code": digits})
@@ -433,6 +611,7 @@ def finish_new(app, brief_text):
         json.dump(i, open(os.path.join(adir(app), "infrastructure.json"), "w"), indent=2); open(os.path.join(adir(app), "infrastructure.json"), "a").write("\n")
 
 def self_test():
+    workspace_self_test()          # first: the checks below leave `survey` and `show` replaced
     assert clean("\x1b[32mok\x1b[0m") == "ok"
     assert [n for n, _ in STATIONS] == ["brief", "state", "packs", "brand", "keys", "deploy", "workspaces", "tests", "package", "address"]
     assert re.findall(r"--set-secret (\S+)", "  python3 x.py app --set-secret EXA_API_KEY\n  … --set-secret RESEND_API_KEY") == ["EXA_API_KEY", "RESEND_API_KEY"]
@@ -454,10 +633,10 @@ def self_test():
         st, why = st_workspaces("x", ws, {"target": "vm_remote"})
         assert st == TODO and "the application's own workspace" in why, (st, why)
         json.dump({vm_remote.STATE_SEED: vm_remote.state_seed_digest(ws, os.path.join(tmp, "x"))}, open(os.path.join(tmp, "x", "seed", "orgs", ".applied.json"), "w"))
-        assert st_workspaces("x", ws, {"target": "vm_remote"}) == (DONE, "1 workspace(s) as written")
+        assert st_workspaces("x", ws, {"target": "vm_remote"}) == (DONE, "workspace acme, owner o@acme.test; 1 workspace(s) as written")
         ws["workspace"]["members"].append({"email": "new@acme.test", "role": "member"})
         assert st_workspaces("x", ws, {"target": "vm_remote"})[0] == TODO          # state changed: the server no longer matches it
-        assert st_workspaces("x", ws, {"target": "vercel"}) == (NA, "no extra workspace is described under seed/orgs/")
+        assert st_workspaces("x", {"app_id": "x"}, {"target": "vercel"}) == (NA, "no extra workspace is described under seed/orgs/")   # a state that names no workspace of its own
         # mold_v1-163: a state with a surface is not done until the surface, as it is now written, is on the server too
         ap = os.path.join(tmp, "x", "seed", "orgs", ".applied.json")
         ws["surface"] = {"primary_context": {"instructions": {"persona_name": "Ava", "subagents": [{"agent_key": "research"}]}}, "custom_workflow_builder": {"definitions": [], "scripts": []}}
@@ -465,7 +644,7 @@ def self_test():
         st, why = st_workspaces("x", ws, {"target": "vm_remote"})
         assert st == TODO and "the application's surface" in why and "own workspace" not in why, (st, why)
         json.dump({vm_remote.STATE_SEED: vm_remote.state_seed_digest(ws, os.path.join(tmp, "x")), vm_remote.SURFACE_KEY: vm_remote.surface_digest(ws)}, open(ap, "w"))
-        assert st_workspaces("x", ws, {"target": "vm_remote"}) == (DONE, "1 workspace(s) as written, and the application's surface")
+        assert st_workspaces("x", ws, {"target": "vm_remote"}) == (DONE, "workspace acme, owner o@acme.test; 1 workspace(s) as written, and the application's surface")
         ws["surface"]["primary_context"]["instructions"]["persona_name"] = "Bo"
         assert st_workspaces("x", ws, {"target": "vm_remote"})[0] == TODO          # the surface changed in state: written again
     finally:
@@ -556,7 +735,135 @@ def self_test():
             assert google_note("x", {"google_sign_in": {"check": {"result": "not_working"}}}).startswith("; Google sign-in is NOT WORKING") and google_note("x", {"google_sign_in": {"check": {"result": "hub"}}}) == "" and google_note("x", {}) == ""
         finally:
             globals()["adir"] = real_adir; G.check = real_check; G.services.REHEARSAL = real_reh
-    print("mint: 42 checks passed"); return 0
+    print("mint: 74 checks passed"); return 0
+
+def workspace_self_test():
+    """mold_v1-245. A freshly deployed app had no workspace, so it emailed nobody a code, while code-request said one
+    was on its way. Every check here fails on the code before the fix: the station said "not needed", and
+    code-request asked the app whatever the address."""
+    import tempfile, io, contextlib
+    G = globals(); real = {k: G[k] for k in ("adir", "PRIVATE", "operator_email", "look", "py", "origin", "post", "quiet", "repository_line")}; real_reh = services.REHEARSAL
+    def said(fn, *a):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf): rc = fn(*a)
+        return rc, buf.getvalue()
+    with tempfile.TemporaryDirectory() as t:
+        try:
+            services.REHEARSAL = None
+            db, ran, posted, op = {}, [], [], ["op@factory.test"]     # db: the fake app's database, {workspace: {address: role}}
+            def fake_look(app, emails):
+                if db.get("#down"): return {"error": "the database did not answer"}
+                return {"orgs": [{"org_id": o, "owners": sum(1 for r in people.values() if r == "owner"), "people": [{"member": people.get(e), "invite": False} for e in emails]}
+                                 for o, people in sorted(db.items())]}
+            class Rc:
+                returncode = 0
+            def forget(*paths): [os.remove(x) for x in paths if os.path.exists(x)]
+            def fake_py(*a, **k):                                      # workspace.py: what lib/workspace_seed.mjs writes
+                ran.append(a)
+                if a[0].endswith("workspace.py"):
+                    seed = load(a[2]); ran[-1] = ("workspace.py", a[1], seed)
+                    db.setdefault(seed["org_id"], {}).update({m["email"]: m["role"] for m in seed["members"]}); db[seed["org_id"]][seed["owner"]] = "owner"
+                return Rc()
+            G.update(adir=lambda app: os.path.join(t, "state", app), PRIVATE=os.path.join(t, "private"), operator_email=lambda: op[0], look=fake_look, py=fake_py,
+                     origin=lambda app: "https://fresh.example", post=lambda url, body: posted.append((url, body)) or {"ok": True})
+            a = {"app_id": "fresh", "mold_id": "m", "status": "stamped", "workspace": {"org": {"org_id": "acme", "name": "Acme"}, "members": []}}
+            i = {"target": "vercel", "vercel": {"project": "fresh"}}
+            def put():
+                os.makedirs(adir("fresh"), exist_ok=True); save(os.path.join(adir("fresh"), "application.json"), a); save(os.path.join(adir("fresh"), "infrastructure.json"), i)
+            put()
+            # 1. before the deploy there is nothing to write to; right after the first one, the station is work to do
+            assert st_workspaces("fresh", a, i) == (TODO, "right after the first deploy: the application's own workspace acme, owner op@factory.test")
+            i.update(deployed_at="2026-10-13T00:00:00+00:00"); i["vercel"]["production_url"] = "https://fresh.example"; put()
+            assert st_workspaces("fresh", a, i) == (TODO, "create the application's own workspace acme, owner op@factory.test"), st_workspaces("fresh", a, i)
+            assert code_first("fresh", a).endswith("FIRST: op@factory.test belongs to no workspace on fresh, so the app would email it no code: mint.py fresh run --only workspaces")
+            # 2. a first deploy creates the workspace and its owner: one workspace.py run, the operator as owner
+            rc, out = said(do, "fresh", "workspaces")
+            assert rc is True and len(ran) == 1 and ran[0][:2] == ("workspace.py", "fresh"), ran
+            seed = ran[0][2]
+            assert (seed["org_id"], seed["name"], seed["owner"], seed["guard"]) == ("acme", "Acme", "op@factory.test", "no_other_workspace"), seed
+            assert db == {"acme": {"op@factory.test": "owner"}} and "done: workspace acme, owner op@factory.test" in out, (db, out)
+            assert not [f for f in os.listdir(PRIVATE) if "own-workspace" in f]                 # the seed handed to workspace.py is not left behind
+            assert st_workspaces("fresh", a, i) == (DONE, "workspace acme, owner op@factory.test")
+            assert applied("fresh") == {OWN: own_digest("fresh", own_seed("fresh", a)[0])} and code_first("fresh", a) == ""
+            # 3. a rerun is a no-op: nothing is written again, by the record...
+            ran.clear(); assert do("fresh", "workspaces") is True and ran == [], ran
+            # ...and without the record, by LOOKING at the app (a workspace made by hand is found, not written again)
+            os.remove(applied_path("fresh"))
+            assert st_workspaces("fresh", a, i) == (DONE, "workspace acme, owner op@factory.test") and do("fresh", "workspaces") is True and ran == [], ran
+            assert seen("fresh")[OWN + "#role"] == "owner"
+            db["#down"] = True                                         # what was seen is kept privately: the next look costs nothing
+            assert st_workspaces("fresh", a, i)[0] == DONE
+            os.remove(seen_path("fresh"))
+            st, why = st_workspaces("fresh", a, i)
+            assert st == TODO and "could not be looked at: the database did not answer" in why, (st, why)   # unseen is never called done
+            del db["#down"]
+            # an owner state names keeps the owner's role, beside the operator; state changed, so it is written again
+            a["workspace"]["members"] = [{"email": "Owner@Acme.test", "role": "owner"}, {"email": "ana@acme.test", "role": "admin"}]; put()
+            assert st_workspaces("fresh", a, i)[0] == TODO
+            said(do, "fresh", "workspaces")
+            assert db["acme"] == {"op@factory.test": "owner", "owner@acme.test": "owner", "ana@acme.test": "admin"}, db
+            assert st_workspaces("fresh", a, i) == (DONE, "workspace acme, owner op@factory.test")
+            # a workspace that is there under another owner is seen, never rewritten, and said as it is
+            forget(applied_path("fresh"), seen_path("fresh")); db["acme"]["op@factory.test"] = "admin"; ran.clear()
+            st, why = st_workspaces("fresh", a, i)
+            assert st == DONE and "its owner is someone else, and op@factory.test is a admin there" in why and ran == [], (st, why)
+            # 4. the operator's address unknown: nothing is written, and it is the one thing asked for (exit 3)
+            forget(seen_path("fresh")); db.clear(); op[0] = ""
+            assert st_workspaces("fresh", a, i) == (OPERATOR, NO_OPERATOR)
+            rc, out = said(workspace, "fresh"); assert rc == 3 and "defaults.operator_email" in out and ran == [], (rc, out)
+            rc, out = said(do, "fresh", "workspaces"); assert rc is False and ran == []
+            G["repository_line"] = lambda app: "repository: none"; real_status = runs.status; runs.status = lambda *x, **k: AR.result(True, "done", "", "", [], "", {"record": None})
+            try:
+                r = survey_result("fresh", [("deploy", DONE, ""), ("workspaces", OPERATOR, NO_OPERATOR)])
+            finally: runs.status = real_status
+            assert AR.exit_code(r) == 3 and r["needs"][0]["name"] == "the operator's email address" and "defaults.operator_email" in r["needs"][0]["how"], r
+            op[0] = "op@factory.test"
+            # `mint.py <app> run --only workspaces`: the same write by itself, and it refuses an app with no database yet
+            rc, out = said(workspace, "fresh"); assert rc == 0 and db["acme"]["op@factory.test"] == "owner" and "done: workspace acme" in out, out
+            # a seed file beside it: applied once, recorded, then left alone
+            os.makedirs(os.path.join(adir("fresh"), "seed", "orgs"), exist_ok=True)
+            save(os.path.join(adir("fresh"), "seed", "orgs", "second.json"), {"org_id": "second", "name": "Second", "owner": "cy@second.test", "members": [{"email": "di@second.test", "role": "member"}]})
+            assert st_workspaces("fresh", a, i) == (TODO, "apply: second")
+            ran.clear(); assert do("fresh", "workspaces") is True and [r[2]["org_id"] for r in ran] == ["second"], ran
+            assert st_workspaces("fresh", a, i) == (DONE, "workspace acme, owner op@factory.test; 1 seed(s) under seed/orgs/ as written")
+            ran.clear(); assert do("fresh", "workspaces") is True and ran == []
+            # 5. code-request for an address in no workspace: NOTHING is sent, and it says why and what to do
+            rc, out = said(code_request, "fresh", "stranger@example.com")
+            assert rc == 1 and posted == [] and out.startswith("stranger@example.com belongs to no workspace on fresh, so the app will not email it a code. Nothing was sent."), (rc, posted, out)
+            assert "invites stranger@example.com from inside the app" in out and "on its way" not in out, out
+            keep = dict(db); db.clear()                                # the 2026-10-13 case: a deployed app with no workspace at all
+            rc, out = said(code_request, "fresh", "op@factory.test")
+            assert rc == 1 and posted == [] and "fresh has no workspace at all yet" in out and "python3 .claude/scripts/mint.py fresh run --only workspaces" in out and "on its way" not in out, out
+            db.update(keep)
+            # 6. a member gets the request, once, and only then is a code said to be on its way
+            rc, out = said(code_request, "fresh", "op@factory.test")
+            assert rc == 0 and posted == [("https://fresh.example/api/auth/email/request", {"email": "op@factory.test"})] and "a six-digit code is on its way to op@factory.test (a member of acme)" in out, (posted, out)
+            # 7. membership could not be looked up: the code is requested, and never promised
+            posted.clear(); db["#down"] = True
+            rc, out = said(code_request, "fresh", "op@factory.test")
+            assert rc == 0 and len(posted) == 1 and "on its way" not in out and "a code was requested for op@factory.test" in out and "could not be checked (the database did not answer)" in out \
+                   and "only if op@factory.test is one" in out, out
+            del db["#down"]
+            # the lines that ask the operator for a code say what comes first, by the same look
+            CODE_FIRST.clear(); forget(applied_path("fresh"), seen_path("fresh")); db.clear()
+            i.update(deployed_at="2026-10-13T00:00:00+00:00"); a["testing"] = {l: {"status": "skipped" if l == "functional" else "pass", "run_at": "2026-10-14T00:00:00+00:00"} for l in ("functional", "context", "load", "accessibility", "responsiveness")}
+            st, why = st_tests("fresh", a, i)
+            assert st == OPERATOR and "FIRST: op@factory.test belongs to no workspace on fresh" in why, why
+            assert "FIRST: fresh has no workspace yet" in needs_for("fresh", "tests", why)[0]["how"]
+            # a redeploy that is due does not hide a workspace that is on the app; one not yet written still waits its turn
+            real_st = dict(STATIONS); rows = lambda: {n: st for n, st, _ in survey("fresh")}
+            try:
+                STATIONS[:] = [("deploy", lambda *x: (TODO, "the mold moved")), ("workspaces", lambda *x: (DONE, "workspace acme, owner op@factory.test")), ("tests", lambda *x: (DONE, ""))]
+                assert rows() == {"deploy": TODO, "workspaces": DONE, "tests": "later"}, rows()
+                STATIONS[1] = ("workspaces", lambda *x: (TODO, "create"))
+                assert rows() == {"deploy": TODO, "workspaces": "later", "tests": "later"}, rows()
+            finally: STATIONS[:] = list(real_st.items())
+            # the docs name the command, and the page for the next person never carries the owner's address
+            assert "mint.py <app_id> run --only workspaces" in __doc__ and "LOOKS first" in __doc__
+            import mint_handoff
+            assert mint_handoff.no_address("workspace acme, owner op@factory.test") == "workspace acme, owner (the operator)"
+        finally:
+            G.update(real); services.REHEARSAL = real_reh; CODE_FIRST.clear()
 
 # ---- --json: the survey as one result (lib/agent_result.py) ---------------------------------------------------------
 def needs_for(app, name, why):
@@ -569,7 +876,7 @@ def needs_for(app, name, why):
                  f"Tell me which email address can sign in to {app} and say that I may send it a code. I then run "
                  f"`python3 .claude/scripts/mint.py {app} code-request <email>` (only after you say so); a six-digit code arrives "
                  f"by email within a minute and lasts ten minutes. Paste just the six digits here; the session it buys is kept in "
-                 f"a private file, never shown."}]
+                 f"a private file, never shown. " + membership.sign_in_note(app, lambda x, e: membership.check(x, e, look), operator_email())}]
     if name == "package":
         return [{"kind": "login", "name": "npm sign-in", "how": "The operator runs `npm login` once in a separate terminal on this machine; it prints a link to open and confirm."}]
     if name == "address":
@@ -582,6 +889,10 @@ def needs_for(app, name, why):
         return [{"kind": "approval", "name": "intake questions", "how": f"Answer the questions in state/application/{app}/questions.json, one at a time; I write the answers to answers.json and run the state station again. {why}"}]
     if name == "brief":
         return [{"kind": "approval", "name": "brief", "how": why}]
+    if name == "workspaces":
+        return [{"kind": "approval", "name": "the operator's email address", "how":
+                 f"{app}'s own workspace needs an owner who can sign in. Ask the operator which email address they sign in with, then put it in "
+                 f"state/factory.local.json as defaults.operator_email (it is this machine's own file, never committed) and run: python3 .claude/scripts/mint.py {app} run"}]
     return [{"kind": "approval", "name": name, "how": why}]
 
 def survey_result(app, rows, ran=None):
@@ -617,6 +928,7 @@ def main_json(a):
         return AR.emit(AR.result(False, "failed", f"There is no application {app} (no state/application/{app}/ and no briefs/{app}.md).",
                                  f"python3 .claude/scripts/mint.py new {app} --brief briefs/{app}.md", [], "", {}))
     if len(a) == 1 or a[1] == "status": return AR.emit(survey_result(app, survey(app)))
+    if a[1] == "run" and "--only" in a: return None      # one station alone: plain words (main)
     if a[1] == "run":
         if "--background" in a:
             res, rc = runs.start_background(ROOT, "mint.py", app, "mint", [app, "run"], f"python3 .claude/scripts/mint.py {app} run --background --json")
@@ -651,6 +963,10 @@ def main(a):
         return new(a[1], a[3], a[a.index("--mold") + 1] if "--mold" in a else "mold_v1")
     app = a[0]
     if len(a) == 1 or a[1] == "status": show(app); return 0
+    if a[1] == "run" and "--only" in a:
+        # One station alone. It is spelled as a `run` so every tool's "ask before mint.py <app> run" rule covers it.
+        if a[2:] != ["--only", "workspaces"]: print("--only takes one station, and the only one that runs alone is: workspaces", file=sys.stderr); return 2
+        return workspace(app)
     if a[1] == "run" and "--background" in a:
         res, rc = runs.start_background(ROOT, "mint.py", app, "mint", [app, "run"], f"python3 .claude/scripts/mint.py {app} run --background")
         print(res["summary"] + f"\nnext: python3 .claude/scripts/mint.py {app}"); return rc
@@ -661,6 +977,7 @@ def main(a):
         return py(os.path.join(S, "mint_handoff.py"), app).returncode
     if a[1] == "reuse-keys" and len(a) == 3: return reuse_keys(app, a[2])
     if a[1] == "code-request" and len(a) == 3: return code_request(app, a[2])
+
     if a[1] == "code" and len(a) == 4: return code(app, a[2], a[3])
     sys.exit(__doc__)
 

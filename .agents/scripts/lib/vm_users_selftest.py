@@ -435,8 +435,15 @@ def workspace(check, tmp):
           and seed["members"] == [{"email": "operator@example.com", "role": "owner", "name": "Operator"}, {"email": "ana@example.com", "role": "admin", "name": "Ana"}, {"email": "ben@example.com", "role": "member"}], seed["members"])
     check("workspace:   ...the platform administrators and the people roster with reporting lines", seed["platform_admins"] == ["operator@example.com"] and seed["roster"][1]["manager_email"] == "operator@example.com" and seed["roster"][1]["escalations"])
     check("workspace:   ...and nothing that is not a name, an email, a role or the logo", set(seed) <= {"org_id", "name", "google_hosted_domain", "owner", "members", "platform_admins", "roster", "display_name", "logo_url"})
-    out, _ = B.quiet(V.state_seed, {"app_id": "x", "workspace": {"org": {"org_id": "x", "name": "X"}, "members": []}})
-    check("workspace: a state that names no owner is refused in a sentence", isinstance(out, V.Stop) and "owner" in str(out))
+    real_fallback = V.OPERATOR_FALLBACK
+    try:
+        V.OPERATOR_FALLBACK = lambda: ""
+        out, _ = B.quiet(V.state_seed, {"app_id": "x", "workspace": {"org": {"org_id": "x", "name": "X"}, "members": []}})
+        check("workspace: a state that names no owner, on a machine that names no operator, is refused in a sentence", isinstance(out, V.Stop) and "owner" in str(out) and "operator_email" in str(out))
+        V.OPERATOR_FALLBACK = lambda: "op@factory.test"
+        check("workspace: mold_v1-245: a state that names no owner is the operator's own", V.state_seed({"app_id": "x", "workspace": {"org": {"org_id": "x", "name": "X"}, "members": []}})["owner"] == "op@factory.test")
+        check("workspace:   ...and an owner named in state is never replaced by it", V.state_seed(app)["owner"] == "operator@example.com")
+    finally: V.OPERATOR_FALLBACK = real_fallback
     d, docs = _deployed(tmp, "ws-plan", lambda x: x["application"].update(workspace=app["workspace"], surface=SURFACE))
     sdir = os.path.join(d, "seed", "orgs"); os.makedirs(os.path.join(sdir, "second")); os.makedirs(os.path.join(sdir, "example"))
     json.dump({"org_id": "second", "name": "Second Desk", "google_hosted_domain": "second.example", "owner": "operator@example.com", "note": "x", "members": [{"email": "cy@second.example", "role": "member", "name": "Cy"}]}, open(os.path.join(sdir, "second.json"), "w"))
