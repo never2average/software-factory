@@ -31,6 +31,28 @@
   ],
   "molds": [
     {
+      "mold_id": "mold_v0",
+      "status": "coming_soon",
+      "definition": "product shell around an already-deployed MCP server: per-client install pages, generated docs and playground, onboarding, a metering gateway with per-user and per-workspace usage, a per-user credential vault, MCP OAuth for clients, an admin console and upstream health and changelog; no agent runtime",
+      "target_model": "none (proxies the upstream MCP server; runs no model)",
+      "capabilities": [
+        "install_pages",
+        "generated_docs",
+        "playground",
+        "onboarding",
+        "metering_gateway",
+        "usage_tracking",
+        "credential_vault",
+        "mcp_oauth",
+        "admin_console",
+        "upstream_health",
+        "tool_changelog",
+        "billing_hooks",
+        "email_notifications"
+      ],
+      "path": "molds/mold_v0"
+    },
+    {
       "mold_id": "mold_v1",
       "status": "active",
       "definition": "multi-workspace multi-agent claude code web at feature parity application that is purely vanilla and works with GLM 5.2",
