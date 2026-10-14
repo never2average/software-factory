@@ -17,6 +17,8 @@ import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { fill } from "./agent-vocabulary.ts";
 import { WORK_PERIODS, currentPeriod, progressByPerson } from "./work-periods.ts";
 import { ensureCurrentPeriod, goalsFor, newPeriodWindow, rollOverEnded, setMemberGoal, taskWriteRefusal } from "./work-period-store.ts";
+import { areaView, describeArea, describeField, type RecordField } from "./record-areas.ts";
+import { prepareTaskWrite, taskCustom } from "./task-area.ts";
 
 function callerEmail(ctx: {
   session: {
@@ -43,7 +45,71 @@ function requireDb() {
 const containerType = z.enum(["deployment", "implementation"]);
 const linkType = z.enum(["ticket", "customer", "app", "cron", "workflow", "chat"]);
 
-export const upsertTodoTool = modelFacing("upsert_todo", defineTool({
+/**
+ * The deployment's definition of a task (profiles records.areas.tasks; agent/lib/record-areas.ts). The two todo tools
+ * below are today's, to the byte, unless the profile REDEFINES tasks; then their words, states, priorities and own
+ * fields are the definition's. Every write is checked against it (agent/lib/task-area.ts) either way.
+ */
+const TASKS = areaView("tasks");
+const OWN_STATES = TASKS.redefined && TASKS.lifecycle?.own ? TASKS.lifecycle : null;
+
+/** One upsert_todo call, whichever definition the tool was built from. */
+async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: Parameters<typeof callerEmail>[0]) {
+  const { id, ...fields } = input as typeof input & { cycleId?: string | null; assignee?: string | null; title?: string };
+  const orgId = await orgForSession(ctx);
+  const actor = callerEmail(ctx);
+  if (!WORK_PERIODS.enabled) delete fields.cycleId;
+  if (WORK_PERIODS.individual) {
+    if (fields.cycleId === "current") {
+      const period = await withOrgDb(orgId, (tx) => ensureCurrentPeriod(tx, orgId, actor));
+      if (!period) throw new Error(`There is no current ${WORK_PERIODS.label.singular}. Create one with upsert_cycle first.`);
+      fields.cycleId = period.id;
+    }
+    const refused = await withOrgDb(orgId, (tx) => taskWriteRefusal(tx, orgId, actor, id ?? null, { cycleId: fields.cycleId, assignee: fields.assignee }));
+    if (refused) throw new Error(refused);
+  }
+  if (!id && !fields.title) throw new Error(`Creating a ${TASKS.redefined ? TASKS.noun : "todo"} needs a \`title\`.`);
+  // The deployment's definition of a task: a refused write never reaches the task service.
+  const prepared = prepareTaskWrite(id ? "update" : "create", fields, { actor });
+  if (!prepared.ok) throw new Error(prepared.errors.join(" "));
+  const body = prepared.body ?? fields;
+
+  if (id) {
+    const item = await taskWorkflowRequest<{ id: string; title: string; done: boolean }>(
+      orgId,
+      actor,
+      `/api/v1/tasks/${encodeURIComponent(id)}`,
+      { method: "PATCH", body },
+    );
+    return { updated: true as const, todo: { id: item.id, title: item.title, done: item.done } };
+  }
+
+  const item = await taskWorkflowRequest<{ id: string; title: string }>(
+    orgId,
+    actor,
+    "/api/v1/tasks",
+    { method: "POST", body },
+  );
+  return { created: true as const, todo: { id: item.id, title: item.title } };
+}
+
+/** An own field as a tool parameter: its choices as an enum, its label and help as the description. */
+function ownFieldParam(f: RecordField) {
+  const said = describeField(f).replace(/^`[^`]+` /, "");
+  const choices = (f.options ?? []).filter((o) => !o.retired).map((o) => o.value);
+  const base =
+    f.type === "pick_list" && choices.length ? z.enum(choices as [string, ...string[]])
+    : f.type === "multi_pick" || f.type === "tags" || f.many ? z.array(z.string())
+    : f.type === "integer" || f.type === "number" || f.type === "percent" || f.type === "money" ? z.number()
+    : f.type === "boolean" ? z.boolean()
+    : z.string();
+  return base.nullable().optional().describe(`${said}${f.help ? ` ${f.help}` : ""}`);
+}
+/** What a task carries in this deployment, for a tool's description: the area's card. */
+const TASK_CARD = describeArea("tasks") ?? "";
+
+export const upsertTodoTool = modelFacing("upsert_todo", !TASKS.redefined
+  ? defineTool({
   description:
     "Create OR update a TODO — the team's internal checklist item (NOT a {account} ticket; use create_ticket for those). Omit `id` to create; pass `id` to update just the fields you provide. A todo can be filed under a {deployment} or an {implementation} (the 'epic' — set container*), linked to a related object (a ticket/customer/app/cron/workflow/chat — set link*), assigned, prioritised, and given a due date. Use this for 'remind me to X', 'add a todo to Y', or to mark one done.",
   approval: once(),
@@ -87,42 +153,66 @@ export const upsertTodoTool = modelFacing("upsert_todo", defineTool({
       : {}),
   }),
   async execute(input, ctx) {
-    const { id, ...fields } = input as typeof input & { cycleId?: string | null };
-    const orgId = await orgForSession(ctx);
-    const actor = callerEmail(ctx);
-    if (!WORK_PERIODS.enabled) delete fields.cycleId;
-    if (WORK_PERIODS.individual) {
-      if (fields.cycleId === "current") {
-        const period = await withOrgDb(orgId, (tx) => ensureCurrentPeriod(tx, orgId, actor));
-        if (!period) throw new Error(`There is no current ${WORK_PERIODS.label.singular}. Create one with upsert_cycle first.`);
-        fields.cycleId = period.id;
-      }
-      const refused = await withOrgDb(orgId, (tx) => taskWriteRefusal(tx, orgId, actor, id ?? null, { cycleId: fields.cycleId, assignee: fields.assignee }));
-      if (refused) throw new Error(refused);
-    }
-
-    if (id) {
-      const item = await taskWorkflowRequest<{ id: string; title: string; done: boolean }>(
-        orgId,
-        actor,
-        `/api/v1/tasks/${encodeURIComponent(id)}`,
-        { method: "PATCH", body: fields },
-      );
-      return { updated: true as const, todo: { id: item.id, title: item.title, done: item.done } };
-    }
-
-    if (!fields.title) throw new Error("Creating a todo needs a `title`.");
-    const item = await taskWorkflowRequest<{ id: string; title: string }>(
-      orgId,
-      actor,
-      "/api/v1/tasks",
-      { method: "POST", body: fields },
-    );
-    return { created: true as const, todo: { id: item.id, title: item.title } };
+    return writeTodo(input as Record<string, unknown> & { id?: string }, ctx);
   },
-}));
+})
+  : defineTool({
+    description: fill(
+      `Create OR update ${/^[aeiou]/i.test(TASKS.noun) ? "an" : "a"} ${TASKS.noun} (the team's ${TASKS.nouns}; NOT a {account} ticket, use create_ticket for those). Omit \`id\` to create; pass \`id\` to update just the fields you provide.${OWN_STATES ? ` Move it by setting \`custom.${OWN_STATES.field}\` (its state); its status follows, never set it.` : ""} It can be filed under a {deployment} or an {implementation} (set container*), linked to a related object (set link*), assigned and given a due date.\n${TASK_CARD}`,
+    ),
+    approval: once(),
+    inputSchema: z.object({
+      id: z.string().optional().describe(`The ${TASKS.noun} id to UPDATE. Omit to create a new one.`),
+      title: z.string().min(1).max(TASKS.field("title")?.max_length ?? 300).optional().describe(`${TASKS.label("title", "Title")}. Required when creating.`),
+      ...(TASKS.field("notes")?.hidden ? {} : { notes: z.string().max(TASKS.field("notes")?.max_length ?? 4000).nullable().optional().describe(TASKS.label("notes", "Notes")) }),
+      ...(OWN_STATES
+        ? {}
+        : {
+            done: z.boolean().optional().describe("true marks it done (stamps done_at)."),
+            status: z
+              .enum(TASKS.options("status").map((o) => o.value) as [string, ...string[]])
+              .optional()
+              .describe(`Its state: ${TASKS.options("status").map((o) => `${o.value} ("${o.label}")`).join(" | ")}. Kept in sync with done.`),
+          }),
+      ...(TASKS.field("priority")?.hidden ? {} : { priority: z.enum(TASKS.options("priority").map((o) => o.value) as [string, ...string[]]).optional().describe(`${TASKS.label("priority", "Priority")}: ${TASKS.options("priority").map((o) => `${o.value} ("${o.label}")`).join(" | ")}.`) }),
+      dueAt: z.string().nullable().optional().describe(`${TASKS.label("dueAt", "Due")}: a date (yyyy-mm-dd) or an ISO-8601 date-time${TASKS.field("dueAt")?.required === true ? "; required" : ""}. null clears it.`),
+      containerType: containerType.nullable().optional().describe("'deployment' | 'implementation' — the record it's filed under."),
+      containerId: z.string().nullable().optional(),
+      containerLabel: z.string().nullable().optional().describe("Human label for the container chip."),
+      linkType: linkType.nullable().optional(),
+      linkId: z.string().nullable().optional(),
+      linkLabel: z.string().nullable().optional().describe("Human label for the link chip."),
+      assignee: z.string().nullable().optional().describe(`${TASKS.label("assignee", "Assignee")}: an email${TASKS.field("assignee")?.default === "{me}" ? "; you when omitted on create" : "; null = the creator"}.`),
+      ...(TASKS.ownFields.some((f) => !f.hidden && !f.computed)
+        ? {
+            custom: z
+              .object(Object.fromEntries(TASKS.ownFields.filter((f) => !f.hidden && !f.computed).map((f) => [f.key, ownFieldParam(f)])))
+              .partial()
+              .optional()
+              .describe(`The ${TASKS.noun}'s own fields, by key: only the ones you are changing; null clears one.`),
+          }
+        : {}),
+      ...(WORK_PERIODS.enabled
+        ? {
+            cycleId: z
+              .string()
+              .nullable()
+              .optional()
+              .describe(fill(
+                WORK_PERIODS.individual
+                  ? "Makes this a {period_item} of a {period}: the cycle id from list_cycles, or \"current\" for the {period} that contains today. null = not in any {period}."
+                  : "The cycle ({period}) id from list_cycles; null = backlog.",
+              )),
+          }
+        : {}),
+    }),
+    async execute(input, ctx) {
+      return writeTodo(input as Record<string, unknown> & { id?: string }, ctx);
+    },
+  }));
 
-export const listTodosTool = modelFacing("list_todos", defineTool({
+export const listTodosTool = modelFacing("list_todos", !TASKS.redefined
+  ? defineTool({
   description:
     "List the team's TODOs (the internal checklist), newest first. By default only OPEN, non-archived items; pass includeDone to also show completed ones.",
   inputSchema: z.object({
@@ -155,7 +245,48 @@ export const listTodosTool = modelFacing("list_todos", defineTool({
       }));
     return { todos: items };
   },
-}));
+})
+  : defineTool({
+    description: `List the team's ${TASKS.nouns}, newest first, with their state and their own fields (\`custom\`). By default only the ones still to do; pass includeDone to also show finished ones.${OWN_STATES ? ` A ${TASKS.noun}'s state is \`custom.${OWN_STATES.field}\`.` : ""}`,
+    inputSchema: z.object({
+      includeDone: z.boolean().default(false).describe(`Also include finished ${TASKS.nouns}.`),
+      assignee: z.string().optional().describe(`Only those whose ${TASKS.label("assignee", "assignee").toLowerCase()} is this email.`),
+      ...(TASKS.lifecycle
+        ? { state: z.enum(TASKS.lifecycle.states.map((st) => st.value) as [string, ...string[]]).optional().describe(`Only those in this state: ${TASKS.lifecycle.states.map((st) => `${st.value} ("${st.label}")`).join(" | ")}.`) }
+        : {}),
+    }),
+    async execute(input, ctx) {
+      const { includeDone, assignee, state } = input as { includeDone: boolean; assignee?: string; state?: string };
+      requireDb();
+      const orgId = await orgForSession(ctx);
+      const rows = await withOrgDb(orgId, (tx) =>
+        tx
+          .select()
+          .from(todos)
+          .where(and(eq(todos.orgId, orgId), isNull(todos.archivedAt)))
+          .orderBy(desc(todos.createdAt)),
+      );
+      const lc = TASKS.lifecycle;
+      const items = rows
+        .filter((t) => (includeDone ? true : !TASKS.closed(t as never)))
+        .filter((t) => (assignee ? t.assignee === assignee : true))
+        .filter((t) => (state && lc ? TASKS.get(t as never, lc.field) === state : true))
+        .map((t) => ({
+          id: t.id,
+          title: t.title,
+          ...(lc ? { state: TASKS.get(t as never, lc.field) ?? null } : {}),
+          done: t.done,
+          priority: t.priority,
+          dueAt: t.dueAt?.toISOString() ?? null,
+          container: t.containerType ? `${t.containerType}:${t.containerLabel ?? t.containerId}` : null,
+          link: t.linkType ? `${t.linkType}:${t.linkLabel ?? t.linkId}` : null,
+          assignee: t.assignee,
+          createdBy: t.createdBy,
+          custom: taskCustom(t),
+        }));
+      return { todos: items };
+    },
+  }));
 
 export const hideTodoTool = modelFacing("hide_todo", defineTool({
   description:

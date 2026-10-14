@@ -1,4 +1,4 @@
-import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { expect as playwrightExpect, test, type BrowserContext, type Page } from "@playwright/test";
 import { GOOGLE_HUB_TEST } from "../playwright.config";
 
 /**
@@ -20,6 +20,21 @@ import { GOOGLE_HUB_TEST } from "../playwright.config";
  */
 const { app: APP, hub: HUB, google: GOOGLE, clientId: CLIENT, appName: APP_NAME } = GOOGLE_HUB_TEST;
 const TOKEN_KEY = "workspace-google-token";
+
+/**
+ * How long an assertion here waits for the page: 45 s, the budget a spec has in playwright.config.ts, not Playwright's
+ * default 5 s.
+ *
+ * Everything these tests wait for after a navigation is drawn by the page's own script: the refusal sentence comes
+ * from an effect in app/_components/auth-gate.tsx (which shows it and only then takes the code out of the address),
+ * the adopted token from another, the button from the availability answer. `page.goto` returns at the load event, and
+ * `next dev` runs the page's script after it: 0.3 to 0.5 s on a quiet 4-core machine, 9.7 s when the server was
+ * compiling beside another worker. With the default wait "could not be matched to this browser" was then "not found"
+ * and the test failed with the page about to show it (the code was still in the address: nothing had been lost, and
+ * the sentence, once shown, stayed). The same lines fail every time with the browser's processor slowed 20x and pass
+ * with this wait. A sentence that never comes still fails, 40 s later.
+ */
+const expect = playwrightExpect.configure({ timeout: 45_000 });
 
 interface MintInput {
   nonce?: string | null;

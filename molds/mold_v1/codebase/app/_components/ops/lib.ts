@@ -192,6 +192,8 @@ export interface ApiTodo {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** The task's own fields, by key, when the deployment's definition of a task declares any (records.areas.tasks). */
+  custom?: Record<string, unknown>;
 }
 
 /** Owned reference rows for the TODO side-nav "My …" views (enriched pickers). */

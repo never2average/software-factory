@@ -34,6 +34,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { defaultMessageReducer } from "eve/client";
 import { compactTranscript } from "../lib/chat-snapshot.ts";
 import { continuationTurnId, projectAttached, turnFinished, withResumedSteps, withSessionEpochs } from "../lib/chat-turn-state.ts";
+import { ChildFold } from "../lib/child-feed.ts";
 
 let passed = 0;
 const check = (label, condition, detail) => {
@@ -229,36 +230,35 @@ console.log("\n5. The Control Panel's rail folds a specialist's own stream the s
 {
   // A specialist is an eve session like any other: when IT delegates (or is
   // resumed), eve restarts its step count exactly as it does the orchestrator's.
-  // The rail (app/_components/cockpit.tsx, useChildFeeds) folds that stream
-  // event by event into a feed; this is its fold, read from its source.
+  // The rail (app/_components/cockpit.tsx) folds that stream with lib/child-feed.ts
+  // (`ChildFold`); this runs that fold itself, frame by frame, as the rail shows it.
   const cockpit = readFileSync("app/_components/cockpit.tsx", "utf8");
+  const childFeed = readFileSync("lib/child-feed.ts", "utf8");
   check(
     "the rail mounts the chat's reducer: withSessionEpochs(defaultMessageReducer())",
-    /const childReducer = withSessionEpochs\(defaultMessageReducer\(\)\);/.test(cockpit),
+    /const childReducer = withSessionEpochs\(defaultMessageReducer\(\)/.test(childFeed) && /from "@\/lib\/child-feed"/.test(cockpit),
   );
   check(
     "each event is folded onto the feed's own previous projection, never a rebuilt { messages }",
-    /childReducer\.reduce\(\s*f\.transcript \?\? childReducer\.initial\(\)/.test(cockpit) &&
-      !/childReducer\.reduce\(\s*\{\s*messages:/.test(cockpit),
+    /this\.transcript = childReducer\.reduce\(this\.transcript, /.test(childFeed) && !/childReducer\.reduce\(\s*\{\s*messages:/.test(childFeed),
   );
   check(
     "a re-opened feed continues from where its fold stopped (no replay onto a full transcript)",
-    /let cursor = cursors\.current\[sid\] \?\? 0;/.test(cockpit) && /cursors\.current\[sid\] = cursor;/.test(cockpit),
+    /this\.o\.streamUrl\(e\.sid, e\.fold\.cursor\)/.test(childFeed) && !/startIndex=0/.test(childFeed),
   );
-  // The rail's fold, as written there: the feed keeps `transcript`, messages are read from it.
-  const railFold = (events, reducer) => {
-    let feed = { messages: [], transcript: undefined };
+  // The rail's fold, run: one ChildFold per feed, read after every line (a live rail flushes between events).
+  const railFold = (events) => {
+    const feed = new ChildFold();
     const frames = [];
     for (const event of events) {
-      const transcript = reducer.reduce(feed.transcript ?? reducer.initial(), event);
-      feed = { ...feed, transcript, messages: transcript.messages };
-      frames.push(feed.messages);
+      feed.push(JSON.stringify(event));
+      frames.push(feed.view().messages);
     }
     return frames;
   };
   const bodyOf = (messages) => assistantView({ messages });
   for (const [name, events] of [["reasoning-around-subagent", REASONING], ["text-before-subagent", SAY]]) {
-    const frames = railFold(events, withSessionEpochs(defaultMessageReducer()));
+    const frames = railFold(events);
     check(
       `${name}: the rail's detail reads thinking, card, later thinking, answer`,
       show(bodyOf(frames.at(-1))) === show(assistantView(fold(events))),

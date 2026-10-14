@@ -23,6 +23,18 @@
 import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type CustomFieldSpec, type DeploymentProfile, type DomainArea } from "./deployment-profile.generated.ts";
 import { createVocabulary, LEGACY_RECORDS, speakCodeWith, speakWith, verbatimWith, VOCABULARY, type Vocabulary, type VocabularyProfile } from "./agent-vocabulary.ts";
 import { DATAROOM_DOMAIN_IDS, type DataroomDomainId, type DataroomFolderId } from "./dataroom-folders.ts";
+import { RECORD_AREAS } from "./record-areas.generated.ts";
+import { describeArea, type RecordAreas } from "./record-areas.ts";
+
+/**
+ * A task as this deployment defines it (records.areas.tasks), when it redefines one: what a task is, its own fields,
+ * its states in order and what moving into each needs (agent/lib/record-areas.ts describeArea). Nothing under the
+ * default definition, so the default block is unchanged.
+ */
+function renderTaskArea(areas: RecordAreas): string[] {
+  const card = describeArea("tasks", areas);
+  return card ? [`${card}\n  Written with upsert_todo, read with list_todos.`] : [];
+}
 
 /** The account as the identifiers spell it: a profile whose word is this one needs no line saying so. */
 const DEFAULT_ACCOUNT = LEGACY_RECORDS.account.singular;
@@ -160,9 +172,9 @@ export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfil
   return lines;
 }
 
-export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string | null {
+export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE, areas: RecordAreas = RECORD_AREAS): string | null {
   const v = profile === DEPLOYMENT_PROFILE ? VOCABULARY : createVocabulary(profile as VocabularyProfile);
-  if (v.relabelled) return renderRelabelledBriefing(profile, v);
+  if (v.relabelled) return renderRelabelledBriefing(profile, v, areas);
   const { vocabulary: voc, dataroom, agent } = profile;
   const lines: string[] = [];
   if (voc.account.singular !== DEFAULT_ACCOUNT) {
@@ -183,6 +195,7 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string |
   lines.push(...renderAccountFieldsBriefing(profile));
   for (const area of ["deployments", "implementations"] as const) lines.push(...renderAreaIdentifiers(area, profile.domains, v.stored));
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, undefined, voc.account.singular, v.stored));
+  lines.push(...renderTaskArea(areas));
   const body = [lines.join("\n"), agent.briefing?.trim() ?? ""].filter(Boolean).join("\n\n");
   return body ? `## This workspace\n\n${body}` : null;
 }
@@ -191,7 +204,7 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE): string |
  * The block for a profile that renames things: the deployment's words only. Composed with the base identifiers
  * and spoken as a whole (speakWith), so each name is the one the model's tools, results and folders use.
  */
-function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary): string {
+function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary, areas: RecordAreas): string {
   const { vocabulary: voc, dataroom, agent } = profile;
   const own = (t: string) => verbatimWith(v, t);
   const lines: string[] = [];
@@ -215,6 +228,8 @@ function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary): st
   }
   lines.push(...renderAccountFieldsBriefing(profile, v));
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, v));
+  // The task card is the profile's own words (its labels and states): verbatim.
+  lines.push(...renderTaskArea(areas).map(own));
   // agent.briefing is the profile's own text, in its own words: passed verbatim.
   const body = [lines.join("\n"), agent.briefing?.trim() ? own(agent.briefing.trim()) : ""].filter(Boolean).join("\n\n");
   return speakWith(v, `## This workspace\n\n${body}`);

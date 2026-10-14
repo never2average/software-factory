@@ -124,7 +124,14 @@ check("a non-owner is refused with 404 (existence is not confirmed)", /status: 4
 // routes, so the handler built fine and was never reached. Measured, not guessed.
 check("the eve rewrite is a fallback so the gate wins", /fallback: \[/.test(nextCfg));
 check("…and no afterFiles rewrite shadows it", /afterFiles: \[\]/.test(nextCfg));
-check("the stream is passed through, never buffered", /new Response\(upstream\.body/.test(gate));
+// Passed through as it arrives; a read that asked for compression is compressed with a flush after every chunk
+// (lib/eve-stream-encoding.ts), which scripts/test-eve-proxy-stream.mjs EXECUTES: each event is readable before the
+// agent sends the next one.
+check(
+  "the stream is passed through, never buffered",
+  /const body = encoding === "br" && upstream\.body \? brotliFlushed\(upstream\.body\) : upstream\.body;/.test(gate) &&
+    /new Response\(body, \{ status: upstream\.status, headers \}\)/.test(gate),
+);
 // The rule itself lives in lib/chat-gate.ts, where it is EXECUTED — scripts/test-chat-access.mjs runs every branch
 // of it, and scripts/test-session-guard.mjs runs it through the agent's real channel.
 check(

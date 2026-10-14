@@ -76,7 +76,7 @@
       "custom_fields": [],
       "fields": {
         "deploymentId": {"placeholder": "DEP-…"},
-        "environment": {"label": "Environment"},
+        "environment": {"label": "Environment", "options": {"prod": "Production", "staging": "Staging", "uat": "UAT", "sandbox": "Sandbox", "dev": "Development"}},
         "region": {"label": "Region", "placeholder": "ap-south-1"},
         "deployedVersion": {"label": "Version", "placeholder": "1.0.0"},
         "releaseStatus": {"label": "Release status", "options": {"deployed": "Deployed", "in-progress": "In progress", "pending-approval": "Pending approval", "rolled-back": "Rolled back", "failed": "Failed"}},
@@ -136,6 +136,84 @@
     "auto_rollover": false,
     "length_days_range": [1, 90],
     "workspace_can_set_length": null
+  },
+  "records": {
+    "$comment": "RECORD AREAS: the one model behind the four kinds of record (docs/DEPLOYMENT_PROFILE.md, \"records\"). Each area is bound to the table it already has: deployments, implementations, tasks, periods. A profile may REDEFINE these four (brand-new kinds of record are not supported) and only here, at build time; a workspace's own settings keep only what they had (the period length, the task pipelines). An area's fields are a map keyed by field key (a column of its table, or the area's own field, stored in the table's `custom` column), each with a type, a label, choices with tones; a lifecycle maps every state to one of six categories (backlog, open, active, blocked, done, cancelled), which is all base code branches on. `enforce` says what a move outside the transitions does: off (default), warn, strict. deployments and implementations are also stated by `domains`, and periods by `work_periods` (the LEGACY forms): the build lowers them into these areas, so a profile may use either form for an area, never both. Checked by scripts/schemas/record-area.schema.json and scripts/lib/record-areas.mjs; compiled into RECORD_AREAS in lib/deployment-profile.generated.ts.",
+    "areas": {
+      "deployments": { "$comment": "Lowered from domains.deployments at build: its words, fields, choices and own fields." },
+      "implementations": { "$comment": "Lowered from domains.implementations at build, with the group (domains.implementations.group_by)." },
+      "tasks": {
+        "$comment": "The team's checklist (the todos table; the task-workflow service stores it). These are today's words, choices and views. The lifecycle sits on the status column, whose six values are the contract with the service; a profile that gives a task other states puts its lifecycle on an own pick_list field, and every write then sets the status from the state's category.",
+        "label": { "singular": "task", "plural": "tasks" },
+        "description": "The team's internal checklist.",
+        "icon": "list-todo",
+        "fields": {
+          "title": { "order": 10, "type": "text", "label": "Task", "max_length": 300, "placeholder": "Untitled task" },
+          "notes": { "order": 20, "type": "long_text", "label": "Notes", "max_length": 4000, "placeholder": "Any detail…" },
+          "status": {
+            "order": 30,
+            "type": "pick_list",
+            "label": "Status",
+            "options": [
+              { "value": "backlog", "label": "Backlog", "tone": "muted" },
+              { "value": "open", "label": "Open", "tone": "sky" },
+              { "value": "in_progress", "label": "In progress", "tone": "amber" },
+              { "value": "blocked", "label": "Blocked", "tone": "red" },
+              { "value": "done", "label": "Done", "tone": "green" },
+              { "value": "cancelled", "label": "Cancelled", "tone": "muted" }
+            ]
+          },
+          "priority": {
+            "order": 40,
+            "type": "pick_list",
+            "label": "Priority",
+            "options": [
+              { "value": "low", "label": "Low", "tone": "sky" },
+              { "value": "normal", "label": "Normal", "tone": "slate" },
+              { "value": "high", "label": "High", "tone": "red" }
+            ]
+          },
+          "dueAt": { "order": 50, "type": "date", "label": "Due" },
+          "assignee": { "order": 60, "type": "person", "label": "Assignee", "help": "Blank = the creator.", "placeholder": "name@company.com" }
+        },
+        "lifecycle": {
+          "field": "status",
+          "initial": "open",
+          "enforce": "off",
+          "categories": { "backlog": "backlog", "open": "open", "in_progress": "active", "blocked": "blocked", "done": "done", "cancelled": "cancelled" }
+        },
+        "relations": { "containers": ["deployments", "implementations"], "links": ["ticket", "customer", "app", "cron", "workflow", "chat"], "periods": true, "subtasks": true },
+        "views": {
+          "default": "board",
+          "available": ["board", "table", "timeline"],
+          "board": { "by": "status", "card": { "title": "title", "meta": ["dueAt", "assignee"], "badge": "priority" } },
+          "table": { "columns": ["title", "status", "priority", "cycleId", "dueAt", "assignee"] },
+          "timeline": { "start": "createdAt", "end": "dueAt" },
+          "sorts": [
+            { "field": "createdAt", "dir": "desc", "default": true, "label": "Newest" },
+            { "field": "priority", "label": "Priority" },
+            { "field": "dueAt", "dir": "asc", "label": "Due date" },
+            { "field": "title", "dir": "asc", "label": "Title" }
+          ],
+          "create": { "fields": ["title"], "submit_label": "New task" }
+        }
+      },
+      "periods": {
+        "$comment": "Lowered from work_periods at build (its mode, words, length and rollover). The state's lifecycle is today's three.",
+        "fields": {
+          "state": {
+            "type": "pick_list",
+            "label": "State",
+            "options": [
+              { "value": "planning", "label": "Planning", "tone": "muted" },
+              { "value": "active", "label": "Active", "tone": "green" },
+              { "value": "closed", "label": "Closed", "tone": "muted" }
+            ]
+          }
+        },
+        "lifecycle": { "field": "state", "initial": "planning", "enforce": "off", "categories": { "planning": "open", "active": "active", "closed": "done" } }
+      }
+    }
   },
   "asr": {
     "$comment": "Dictation in the chat composer: a microphone button listens, a speech-to-text (ASR) model turns what was said into text, and the text lands in the message box at the cursor for the person to edit and send. It is never sent on its own, there are no spoken replies, and no audio is kept after it is transcribed. enabled: true shows the button whenever the provider's credentials are set on the server (it stays hidden without them); false removes it. provider: \"cloudflare\" (Workers AI, with the CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN the chat's models already use; no new secret). model: one of the speech-to-text models in lib/dictation-models.ts (any other does not build; a deployment's ASR_MODEL may choose another from that list); its price per audio minute is in lib/inference-pricing.ts, and usage is recorded per workspace and person beside chat usage (GET /api/ops/usage). language: an ISO 639-1 code (\"en\", \"hi\") to transcribe in, or null to let the model detect it. The button is press-to-talk (hold it, speak, let go) and, on a double-click, keeps listening hands-free until it is clicked again; either way what is said is cut into sections at the natural pauses and each section is transcribed as it closes, so the text arrives while the person is still talking. max_seconds: the longest single clip (a section), from 5 to 600; the button itself never sends one longer than 10 seconds. max_session_seconds: the most one stretch of listening (a hold, or hands-free from the double-click to its stop) may run and have transcribed, from 10 to 3600; the button stops itself there and says so, and the server refuses a stretch's sections past it. idle_stop_seconds: how long hands-free listening waits in silence before it stops itself, from 5 to 120. max_bytes: the largest upload, from 64 KB to 10 MB (the most the proxy in front of every /api/ops route passes on); the default, 4 MB, stays under the 4.5 MB request body a Vercel function accepts, and a ten-second section is about 320 KB. See docs/DEPLOYMENT_PROFILE.md, \"asr\".",

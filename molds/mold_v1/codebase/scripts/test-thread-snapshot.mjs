@@ -665,10 +665,14 @@ check(
 
 console.log("\nThe client treats it as a cache, not as the truth:");
 const shell = readFileSync("app/_components/chat-shell.tsx", "utf8");
-check("the open verifies the seam before keeping the mount", /checkSeam\(cached, tail\?\.events\)/.test(shell));
+// The seam DECISION moved to lib/chat-snapshot.ts `seamVerdict` (scripts/test-chat-open-seam.mjs executes it): an
+// empty or unanswered seam read is no longer evidence against the copy, so it is retried, then kept unverified;
+// only a stream that positively disagrees discards it. These hold that the open still verifies and still discards.
+check("the open verifies the seam before keeping the mount", /seamVerdict\(cached, tail, 1\)/.test(shell));
 check(
-  "a seam that does not match falls through to the full replay",
-  /snapshot discarded \(\$\{seam\.status\}\) — replaying in full/.test(shell),
+  "a seam the stream positively disagrees with is replaced from the full replay",
+  /snapshot discarded \(\$\{verdict\.status\}\) — replacing it behind the painted chat/.test(shell) &&
+    /snapshot discarded \(\$\{verdict\.status\}\) — replaying in full/.test(shell),
 );
 check("…and forgets the row so the next open is not wrong twice", /method: "DELETE"[\s\S]{0,120}chat-snapshots|chat-snapshots[\s\S]{0,160}method: "DELETE"/.test(shell));
 check("the tail is read one event BEFORE the snapshot ends, so there is a seam to check", /startIndex: cached\.eventIndex - 1/.test(shell));

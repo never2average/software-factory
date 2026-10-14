@@ -9,6 +9,68 @@
 import { z } from "zod";
 import { DEPLOYMENT_PROFILE, DOMAIN_FIELDS, type CustomFieldArea, type DomainArea } from "@/lib/deployment-profile.generated";
 import { customFieldsOf, displayCustom, validateCustom, type CustomValues } from "@/agent/lib/custom-fields";
+import { CHOICE_MEANINGS } from "@/agent/lib/customer-schema";
+
+/**
+ * The stored values of a built-in choice column: its zod enum in agent/lib/customer-schema.ts, as the generator
+ * copied it into DOMAIN_FIELDS. The one list every write path checks against.
+ */
+export function choiceValues(area: DomainArea, key: string): readonly string[] {
+  const values = DOMAIN_FIELDS[area][key]?.values;
+  if (!values?.length) throw new Error(`${area}.${key} is not a choice field`);
+  return values;
+}
+
+/** The words this deployment shows for a stored value, when they are more than the value in other case. */
+function shownAs(area: DomainArea, key: string, value: string): string | null {
+  const label = DEPLOYMENT_PROFILE.domains[area].fields[key]?.options?.[value];
+  return label && label.toLowerCase() !== value.toLowerCase() ? label : null;
+}
+
+/** "healthy, degraded, down" — or, where this deployment shows a value in other words, `healthy ("On time")`. */
+export function choiceList(area: DomainArea, key: string): string {
+  return choiceValues(area, key)
+    .map((v) => (shownAs(area, key, v) ? `${v} ("${shownAs(area, key, v)}")` : v))
+    .join(", ");
+}
+
+/** The choice fields the record write tools take (setup/workspace-tools.mjs: implementation_upsert, deployment_upsert). */
+const TOOL_CHOICE_FIELDS = {
+  deployments: ["environment", "region", "releaseStatus", "healthStatus"],
+  implementations: ["implementationStage", "implementationRiskLevel"],
+} as const satisfies Record<DomainArea, readonly string[]>;
+
+/**
+ * The hosted tools' `ctx.choices`: each choice field's stored values, this deployment's word for each, and the
+ * value a new record gets when the caller names none. Read from the schema's enums, so the tools' text cannot name
+ * a value the API refuses.
+ */
+export function toolChoices(): Record<DomainArea, Record<string, { value: string; label: string; default?: true }[]>> {
+  const defaults: Record<DomainArea, Record<string, string>> = { deployments: CHOICE_MEANINGS.deployments.defaults, implementations: CHOICE_MEANINGS.implementations.defaults };
+  const area = (a: DomainArea) =>
+    Object.fromEntries(
+      TOOL_CHOICE_FIELDS[a].map((key) => [
+        key,
+        choiceValues(a, key).map((value) => ({ value, label: shownAs(a, key, value) ?? value, ...(defaults[a][key] === value ? { default: true as const } : {}) })),
+      ]),
+    );
+  return { deployments: area("deployments"), implementations: area("implementations") };
+}
+
+/**
+ * A built-in choice column on a write: one of its stored values, or a 400 that names them. It used to be any
+ * non-empty string, so a value no screen, count or filter knows ("production", "low", "scoping") was stored silently
+ * and the record dropped out of every view that groups by the field (mold_v1-251).
+ */
+export function choiceSchema(area: DomainArea, key: string) {
+  const values = choiceValues(area, key);
+  const label = DEPLOYMENT_PROFILE.domains[area].fields[key]?.label ?? key;
+  return z.string().superRefine((v, ctx) => {
+    if (!values.includes(v)) {
+      ctx.addIssue({ code: "custom", message: `${label}: ${JSON.stringify(v)} is not one of its values. Use one of: ${choiceList(area, key)}.` });
+    }
+  });
+}
 
 /** Optional zod entries for every writable column the route does not already declare. "" and null clear a value. */
 export function profileFieldSchemas(area: DomainArea, declared: readonly string[]): Record<string, z.ZodType> {
@@ -18,7 +80,7 @@ export function profileFieldSchemas(area: DomainArea, declared: readonly string[
     const blank = (v: unknown) => (v === "" ? null : v);
     out[key] =
       meta.type === "enum"
-        ? z.preprocess(blank, z.enum(meta.values as [string, ...string[]]).nullable().optional())
+        ? z.preprocess(blank, choiceSchema(area, key).nullable().optional())
         : meta.type === "number"
           ? z.preprocess(blank, z.coerce.number().nullable().optional())
           : z.preprocess(blank, z.string().trim().nullable().optional());

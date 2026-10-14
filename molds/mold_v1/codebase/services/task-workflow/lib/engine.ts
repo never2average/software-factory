@@ -6,6 +6,7 @@ import {
   legacyStatusForStage,
 } from "@/lib/stages";
 import { recordTaskChanges } from "@/lib/task-activity";
+import { customDelta, directStatus } from "@/lib/custom";
 import type {
   AssignRule,
   ServiceContext,
@@ -38,6 +39,8 @@ export interface TaskRow {
   archived_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  /** The task's own fields (lib/custom.ts). Absent until the column's migration has run. */
+  custom?: Record<string, unknown>;
 }
 
 interface InstanceRow {
@@ -98,7 +101,25 @@ function toTaskDto(task: TaskRow, workflow?: { stageId: string; stageLabel: stri
     createdAt: task.created_at.toISOString(),
     updatedAt: task.updated_at.toISOString(),
     workflow: workflow ?? null,
+    ...(task.custom !== undefined ? { custom: task.custom ?? {} } : {}),
   };
+}
+
+/**
+ * Merge a write's own fields onto what is stored, per key, at write time (lib/custom.ts). Only for a write that names
+ * `custom`: a body without it never touches the column (nor needs it to exist).
+ */
+async function writeCustom(sql: postgres.TransactionSql, orgId: string, taskId: string, custom: Record<string, unknown> | undefined): Promise<TaskRow | null> {
+  const delta = customDelta(custom);
+  if (!delta) return null;
+  const [row] = await sql<TaskRow[]>`
+    update todos
+       set custom = (coalesce(custom, '{}'::jsonb) || ${sql.json(delta.set as never)}::jsonb) - ${delta.clear}::text[],
+           updated_at = now()
+     where id = ${taskId} and org_id = ${orgId}
+    returning *`;
+  if (!row) throw new Error("Not found: Task not found");
+  return row;
 }
 
 async function readTask(sql: postgres.TransactionSql, orgId: string, taskId: string, lock = false): Promise<TaskRow | null> {
@@ -169,11 +190,12 @@ export async function listTasks(sql: postgres.TransactionSql, orgId: string) {
 }
 
 export async function createTask(sql: postgres.TransactionSql, ctx: ServiceContext, input: TaskCreateInput) {
-  const workflow = await defaultTaskWorkflow(sql, ctx.orgId);
+  // A status the deployment derived from its own task states starts the task there, outside any stage pipeline.
+  const workflow = input.statusFrom === "category" ? null : await defaultTaskWorkflow(sql, ctx.orgId);
   const initialStage = workflow?.stages[0] ?? null;
   const status = initialStage ? legacyStatusForStage(initialStage) : input.status ?? "open";
   const done = status === "done";
-  const [task] = await sql<TaskRow[]>`
+  const [inserted] = await sql<TaskRow[]>`
     insert into todos
       (org_id, cycle_id, parent_id, title, notes, done, done_at, status, priority,
        due_at, container_type, container_id, container_label, link_type, link_id,
@@ -184,7 +206,8 @@ export async function createTask(sql: postgres.TransactionSql, ctx: ServiceConte
        ${input.containerType ?? null}, ${input.containerId ?? null}, ${input.containerLabel ?? null},
        ${input.linkType ?? null}, ${input.linkId ?? null}, ${input.linkLabel ?? null}, ${ctx.actor}, ${input.assignee ?? null})
     returning *`;
-  if (!task) throw new Error("Invalid: Task was not created");
+  if (!inserted) throw new Error("Invalid: Task was not created");
+  const task = (await writeCustom(sql, ctx.orgId, inserted.id, input.custom)) ?? inserted;
   // Recorded for EVERY task, not only workflow-backed ones. Creation was
   // previously implied by "Workflow entered <stage>", which never fires for a
   // task with no workflow attached — so most tasks' feeds began mid-story.
@@ -252,9 +275,14 @@ export async function updateTask(sql: postgres.TransactionSql, ctx: ServiceConte
   const update = buildTaskUpdate(input);
   let workflowDto: { stageId: string; stageLabel: string; workflowId: string; automationState: string } | null = null;
   let automation: StageAutomationInput | null = null;
-  const requested = input.stageId ?? input.status ?? (input.done === true ? "done" : input.done === false ? "open" : null);
+  const direct = input.statusFrom === "category" && input.status ? input.status : null;
+  const requested = direct ? null : input.stageId ?? input.status ?? (input.done === true ? "done" : input.done === false ? "open" : null);
 
-  if (instance) {
+  if (direct) {
+    // The deployment's own task states moved; their category's status is stored as sent (lib/custom.ts).
+    Object.assign(update, directStatus(direct, before));
+  }
+  if (instance && !direct) {
     const [version] = await sql<VersionRow[]>`
       select id, stages from project_workflow_versions
        where id = ${instance.workflow_version_id} and org_id = ${ctx.orgId}`;
@@ -325,7 +353,8 @@ export async function updateTask(sql: postgres.TransactionSql, ctx: ServiceConte
     update.done_at = status === "done" ? new Date() : null;
   }
 
-  const task = await updateTaskRow(sql, ctx.orgId, taskId, update);
+  const row = await updateTaskRow(sql, ctx.orgId, taskId, update);
+  const task = (await writeCustom(sql, ctx.orgId, taskId, input.custom)) ?? row;
   await recordTaskChanges(sql, ctx, taskId, before, task);
   return { item: toTaskDto(task, workflowDto), automation };
 }

@@ -35,9 +35,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { defaultMessageReducer } from "eve/react";
 import type { EveMessage } from "eve/react";
-import { handbackStates, withSessionEpochs } from "@/lib/chat-turn-state";
+import { handbackStates } from "@/lib/chat-turn-state";
+import { type ChildFeed, type FeedMode, type FeedRow, type FeedStatus, childFeedStore } from "@/lib/child-feed";
+import { specialistStream } from "@/lib/chat-open-timing";
 import { DETACHED_LABEL } from "@/lib/detached-delegation";
 import { SESSION_DELEGATION_HEADER, canMessageSession, delegationFromHeader, refusalText, runControl } from "@/lib/specialist-run-actions";
 import { AgentMessage } from "./agent-message";
@@ -59,7 +60,7 @@ import type { ArtifactItem, CtxItem, Insights, PersonItem, SubagentRun } from ".
 import { deriveInsights, mergeInsights } from "./insights";
 import { RunStatusDot } from "./ops/detail";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
-import { type ApiWorkflowVersion, authToken, opsFetch, type OpsSection, unkebab } from "./ops/lib";
+import { type ApiWorkflowVersion, activeOrg, authToken, opsFetch, type OpsSection, unkebab } from "./ops/lib";
 import { pickSubagentName } from "@/lib/subagent-names";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
@@ -118,6 +119,7 @@ export function Cockpit({
   onHeldHandoffs,
   onOpenArtifact,
   onOpenOps,
+  harvestReady = true,
 }: {
   readonly insights: Insights;
   readonly onCollapse: () => void;
@@ -149,6 +151,11 @@ export function Cockpit({
   readonly onOpenArtifact?: (url: string, filename: string) => void;
   /** Open the Ops Center on a section, optionally deep-linked to a row id. */
   readonly onOpenOps?: (section: OpsSection, id?: string) => void;
+  /**
+   * The chat around the panel is up: its conversation has painted and its own read has settled. Until then FINISHED
+   * specialists are not read (lib/child-feed.ts); running, selected and parked ones attach at once regardless.
+   */
+  readonly harvestReady?: boolean;
 }) {
   noteRender("Cockpit");
   const [selected, setSelected] = useState<string | null>(null);
@@ -191,7 +198,22 @@ export function Cockpit({
     if (stepRun?.childSessionId) ids.add(stepRun.childSessionId);
     return [...ids];
   }, [insights.subagents, selected, stepRun]);
-  const { feeds, appendLocal, markTurnIdle } = useChildFeeds(feedTargets, liveTargets);
+  // Parked: the parent shows this specialist's question (or it was handed over as "reports later"). Its resume token
+  // comes only from its own `session.waiting`, so it is read at once, never behind the queue of finished ones.
+  const parkedTargets = useMemo(
+    () => insights.subagents.filter((s) => s.childSessionId && (s.detached || awaitsInput(s.delegationPart))).map((s) => s.childSessionId as string),
+    [insights.subagents],
+  );
+  const [nestedOfLive, setNestedOfLive] = useState<readonly string[]>([]);
+  const liveWithNested = useMemo(() => [...new Set([...liveTargets, ...nestedOfLive])], [liveTargets, nestedOfLive]);
+  const { feeds, appendLocal, markTurnIdle, retry } = useChildFeeds(feedTargets, liveWithNested, parkedTargets, harvestReady);
+  // A specialist below a RUNNING one may be running too: it stays attached like its parent, rather than being
+  // harvested and let go when it goes quiet.
+  useEffect(() => {
+    const found = new Set<string>();
+    for (const sid of liveTargets) for (const nested of feeds[sid]?.childSessions ?? []) found.add(nested);
+    setNestedOfLive((prev) => (prev.length === found.size && prev.every((s) => found.has(s)) ? prev : [...found]));
+  }, [liveTargets, feeds]);
 
   useEffect(() => {
     const found = new Set<string>();
@@ -207,15 +229,16 @@ export function Cockpit({
   // A stream event replaces only ITS session's message array, so keying the
   // per-child derivation on that array's identity keeps a busy run from
   // re-deriving every other attached session on every token.
-  const childCache = useRef(new WeakMap<object, Insights>());
+  // The feeds are flushed at most every 250 ms and a feed's `messages` keeps its identity until its fold changes, so
+  // this key is stable; and it is module-level, so a remount derives nothing it already derived.
   const merged = useMemo(() => {
     let out = insights;
     for (const f of Object.values(feeds)) {
       if (f.messages.length === 0) continue;
-      let derived = childCache.current.get(f.messages);
+      let derived = childCache.get(f.messages);
       if (!derived) {
         derived = deriveInsights(f.messages);
-        childCache.current.set(f.messages, derived);
+        childCache.set(f.messages, derived);
       }
       out = mergeInsights(out, derived);
     }
@@ -943,6 +966,7 @@ export function Cockpit({
       {selectedRun ? (
         <SubagentDetail
           appendLocal={appendLocal}
+          onRetry={retry}
           feed={selectedRun.childSessionId ? feeds[selectedRun.childSessionId] : undefined}
           onInputResponses={onInputResponses}
           onSteer={onSteer}
@@ -951,6 +975,7 @@ export function Cockpit({
       ) : stepRun ? (
         <SubagentDetail
           appendLocal={appendLocal}
+          onRetry={retry}
           feed={stepRun.childSessionId ? feeds[stepRun.childSessionId] : undefined}
           onInputResponses={onInputResponses}
           run={stepRun}
@@ -979,7 +1004,7 @@ export function Cockpit({
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
           {merged.subagents.length > 0 ? (
             <Section icon={Bot} title="Subagents" count={merged.subagents.length}>
-              <SubagentList feeds={feeds} runs={merged.subagents} nameOf={nameOf} onSelect={setSelected} />
+              <SubagentList feeds={feeds} runs={merged.subagents} nameOf={nameOf} onSelect={setSelected} onRetry={retry} />
             </Section>
           ) : null}
           {visibleRuns.length > 0 ? (
@@ -1129,12 +1154,15 @@ function SubagentList({
   runs,
   nameOf,
   onSelect,
+  onRetry,
 }: {
   readonly feeds: Record<string, ChildFeed>;
   readonly runs: SubagentRun[];
   /** The run's assigned codename (persisted). */
   readonly nameOf: (run: SubagentRun) => string;
   readonly onSelect: (callId: string) => void;
+  /** Read an unavailable specialist's stream again. */
+  readonly onRetry?: (sessionId: string) => void;
 }) {
   return (
     <ul className="flex flex-col gap-1">
@@ -1150,16 +1178,23 @@ function SubagentList({
         ) ?? [];
         const doneCount = toolRows.filter((row) => row.status === "done").length;
         const current = toolRows.findLast((row) => row.status === "running");
+        // Its stream could not be read (no answer inside the deadline, twice): say so, and offer to try again. A run
+        // the parent still shows as running keeps its running status: "unavailable" is never "ended".
+        const unavailable = feed?.status === "unavailable";
         const status =
           r.status === "running"
             ? current
               ? `${toolDisplayName(current.raw)} · ${doneCount} of ${toolRows.length} calls done`
               : toolRows.length > 0
                 ? `${doneCount} tool calls done · thinking…`
-                : "starting…"
-            : `done · ${toolRows.length || r.activity.length || "—"} calls`;
+                : unavailable
+                  ? "running · details unavailable"
+                  : "starting…"
+            : unavailable && toolRows.length === 0
+              ? "done · details unavailable"
+              : `done · ${toolRows.length || r.activity.length || "—"} calls`;
         return (
-          <li key={r.callId}>
+          <li key={r.callId} className="flex items-center gap-1" data-feed-status={feed?.status ?? "idle"}>
             <button
               type="button"
               onClick={() => onSelect(r.callId)}
@@ -1171,6 +1206,15 @@ function SubagentList({
                 <span className="block truncate text-2xs text-muted-foreground">{`${type} · ${status}`}</span>
               </span>
             </button>
+            {unavailable && r.childSessionId && onRetry ? (
+              <button
+                type="button"
+                onClick={() => onRetry(r.childSessionId as string)}
+                className="shrink-0 rounded-md px-2 py-1 text-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                Retry
+              </button>
+            ) : null}
           </li>
         );
       })}
@@ -2512,419 +2556,88 @@ function eveAuthHeaders(): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
-/** One row of a child session's live feed. Tool rows COALESCE: the request
- *  creates a running row, its result flips the same row to done — never two
- *  lines for one call. */
-type FeedRow =
-  | { kind: "step"; id: string; label: string }
-  | {
-      kind: "tool";
-      id: string;
-      /** Raw tool name, kept for result-matching; display uses toolDisplayName. */
-      raw: string;
-      summary: string | null;
-      status: "running" | "done";
-    }
-  | { kind: "reply"; id: string; text: string }
-  | {
-      kind: "wait";
-      id: string;
-      text: string;
-      request?: {
-        requestId: string;
-        prompt: string;
-        options: { id: string; label: string }[];
-      };
-    }
-  | { kind: "note"; id: string; text: string };
-
-let feedSeq = 0;
-const feedId = () => `f${++feedSeq}`;
-
-// The SAME reducer the main chat mounts (agent-chat.tsx): eve's message reducer
-// inside `withSessionEpochs`, which also applies `withResumedSteps` and names a
-// parked specialist's hand-back. Folding the child stream through it yields real
-// EveMessage parts — reasoning, tool calls with their input/output, text — so
-// the rail detail renders with the very same AgentMessage component as the main
-// thread instead of a bespoke row model. A specialist that delegates in turn is
-// resumed at step 0 again by eve, exactly like the orchestrator (#67); with
-// eve's reducer alone its later thinking was written into the block ABOVE its
-// own specialist's card. reduce() is pure, so one shared instance is fine — but
-// the wrappers keep their state on the reducer's DATA object (non-enumerable),
-// so each feed folds onto its own previous `transcript`, never onto a rebuilt
-// `{ messages }` (which would reset that state on every event).
-const childReducer = withSessionEpochs(defaultMessageReducer());
-type ChildTranscript = ReturnType<typeof childReducer.initial>;
-
-/** Fold one child-session stream event into the feed (loosely typed on purpose). */
-function applyFeedEvent(
-  rows: FeedRow[],
-  e: { type?: string; data?: Record<string, unknown> },
-): FeedRow[] {
-  const d = e.data ?? {};
-  switch (e.type) {
-    case "step.started": {
-      const label = `Step ${Number(d.stepIndex ?? 0) + 1}`;
-      return [...rows, { kind: "step", id: feedId(), label }];
-    }
-    case "actions.requested": {
-      const actions = Array.isArray(d.actions) ? (d.actions as Array<Record<string, unknown>>) : [];
-      const added: FeedRow[] = actions
-        .map((a): FeedRow | null => {
-          const raw = a.toolName ?? a.name;
-          if (typeof raw !== "string") return null;
-          const callId = a.toolCallId ?? a.callId ?? a.id;
-          return {
-            kind: "tool",
-            id: typeof callId === "string" ? callId : feedId(),
-            raw,
-            summary: toolCallSummary(raw, a.input ?? a.args ?? null),
-            status: "running",
-          };
-        })
-        .filter((r): r is FeedRow => r !== null);
-      return added.length ? [...rows, ...added] : rows;
-    }
-    case "action.result": {
-      const r = (d.result ?? {}) as Record<string, unknown>;
-      const callId = r.toolCallId ?? r.callId;
-      const raw = typeof r.toolName === "string" ? r.toolName : null;
-      // Flip the matching running row: by call id first, else the OLDEST
-      // running row with the same tool name (calls complete roughly in order).
-      let idx = -1;
-      if (typeof callId === "string") {
-        idx = rows.findIndex((row) => row.kind === "tool" && row.id === callId);
-      }
-      if (idx === -1 && raw) {
-        idx = rows.findIndex(
-          (row) => row.kind === "tool" && row.status === "running" && row.raw === raw,
-        );
-      }
-      if (idx === -1) {
-        return raw
-          ? [...rows, { kind: "tool", id: feedId(), raw, summary: null, status: "done" }]
-          : rows;
-      }
-      const next = [...rows];
-      next[idx] = { ...(next[idx] as Extract<FeedRow, { kind: "tool" }>), status: "done" };
-      return next;
-    }
-    case "message.completed": {
-      const msg = typeof d.message === "string" ? d.message.trim() : "";
-      if (!msg) return rows;
-      return [
-        ...rows,
-        { kind: "reply", id: feedId(), text: msg.length > 140 ? `${msg.slice(0, 140)}…` : msg },
-      ];
-    }
-    case "input.requested": {
-      const first = (Array.isArray(d.requests) ? d.requests[0] : undefined) as
-        | { requestId?: unknown; prompt?: unknown; options?: unknown }
-        | undefined;
-      const request =
-        first && typeof first.requestId === "string"
-          ? {
-              requestId: first.requestId,
-              prompt: typeof first.prompt === "string" ? first.prompt : "Approval requested",
-              options: Array.isArray(first.options)
-                ? (first.options as { id?: unknown; label?: unknown }[])
-                    .filter((o) => typeof o?.id === "string")
-                    .map((o) => ({
-                      id: o.id as string,
-                      label: typeof o.label === "string" ? o.label : (o.id as string),
-                    }))
-                : [],
-            }
-          : undefined;
-      return [...rows, { kind: "wait", id: feedId(), text: "Waiting for approval", request }];
-    }
-    case "subagent.called":
-      return [...rows, { kind: "note", id: feedId(), text: "Delegated further" }];
-    case "turn.completed":
-      return [...rows, { kind: "note", id: feedId(), text: "Turn finished" }];
-    case "step.failed":
-    case "turn.failed":
-    case "session.failed": {
-      // Every failure event carries the reason on the wire (eve's protocol:
-      // `{ code, message, details? }` — eve's own client store builds
-      // `Error(message)` with `name = code`). Surface it instead of a bare
-      // "Failed" the user can't act on; fall back only when the wire is empty.
-      const code = typeof d.code === "string" ? d.code : null;
-      const msg = typeof d.message === "string" ? d.message.trim() : "";
-      const reason = [code, msg].filter(Boolean).join(": ");
-      const detail = reason
-        ? reason.length > 140
-          ? `${reason.slice(0, 140)}…`
-          : reason
-        : "no error detail from the stream";
-      const text = `⚠ Failed — ${detail}`;
-      // A crash emits the cascade step.failed → turn.failed → session.failed
-      // carrying the SAME propagated code/message — collapse it to one row so
-      // the rail doesn't stack three identical "Failed" notes for one crash.
-      const last = rows[rows.length - 1];
-      if (last?.kind === "note" && last.text === text) return rows;
-      return [...rows, { kind: "note", id: feedId(), text }];
-    }
-    default:
-      return rows;
-  }
+/** A delegation part still waiting on the person: a proxied question or approval with no answer yet. */
+function awaitsInput(part: unknown): boolean {
+  const p = part as { state?: string; toolMetadata?: { eve?: { inputRequest?: unknown; inputResponse?: unknown } } } | undefined;
+  if (!p) return false;
+  if (p.state === "output-available" || p.state === "output-error" || p.state === "output-denied") return false;
+  return p.state === "approval-requested" || (Boolean(p.toolMetadata?.eve?.inputRequest) && !p.toolMetadata?.eve?.inputResponse);
 }
 
+/** Per specialist transcript, its derived insights: keyed by the feed's `messages` (see `merged`). */
+const childCache = new WeakMap<object, Insights>();
+
 /**
- * Attach to a delegated subagent's own session stream (the parent only emits
- * `subagent.called` + `childSessionId`; per eve's docs, progress is published on
- * the CHILD's stream) and fold its events into a live feed.
+ * The page's one specialist-feed store (lib/child-feed.ts): what a mount folded, the next mount finds. Every read
+ * reports to the chat open whose window is running (lib/chat-open-timing.ts `specialistStream`), so each open's record
+ * counts what the Control Panel's reads cost beside it; outside a window the probe does nothing.
  */
-type FeedStatus = "idle" | "live" | "ended" | "unavailable";
-interface ChildFeed {
-  rows: FeedRow[];
-  /** Real reduced messages (eve reducer) for the detail transcript — rendered
-   *  by AgentMessage, exactly as the main chat. `rows` stays for the list's
-   *  live tool-call counts. */
-  messages: EveMessage[];
-  /** The reducer's own projection `messages` is read from. Kept whole: it
-   *  carries the wrappers' step/epoch state, which `{ messages }` would drop. */
-  transcript?: ChildTranscript;
-  /** Local rail meta-notes (steer sent, cancel/resume, dead-run) — not part of
-   *  the model transcript, shown beneath it. */
-  notes: { id: string; text: string }[];
-  status: FeedStatus;
-  /** True while a turn is running (turn.started seen without a later
-   *  turn.completed/failed). Undefined = unknown (no turn events yet). */
-  turnActive?: boolean;
-  /** The child session emitted session.completed — genuinely done, NOT merely
-   *  parked on an approval (which emits session.waiting). Only a completed run
-   *  can be a "stuck handoff". */
-  completed?: boolean;
-  /** The agent's word on whether this session is a delegation (its stream's
-   *  `x-eve-session-delegation`); undefined until a stream has said. A message
-   *  to a delegation can only be refused, so none is offered
-   *  (lib/specialist-run-actions.ts). */
-  delegated?: boolean;
-  /** Its last turn was cancelled (`turn.cancelled`, cleared by the next
-   *  `turn.started`): a stopped specialist, which cannot be resumed on its own
-   *  (lib/specialist-run-actions.ts). */
-  stopped?: boolean;
-  /** The child session's resume handle (from its session.waiting events) —
-   *  REQUIRED to deliver a follow-up/steer message (posting without it is a
-   *  guaranteed 400). Latest one seen wins; mid-turn deliveries to it are
-   *  drained at workflow boundaries per eve's message-delivery semantics. */
-  continuationToken?: string;
-  /** Sessions this child delegated to in turn (from its own `subagent.called`
-   *  events). The rail attaches to them as well, so a grandchild's work rolls
-   *  up to the root the same way a child's does. */
-  childSessions: string[];
-}
+const feedStore = () =>
+  childFeedStore({
+    headers: eveAuthHeaders,
+    scope: () => activeOrg() ?? "",
+    summarize: toolCallSummary,
+    probe: (sid, live) => specialistStream(sid, { live }),
+  });
 
 /**
- * Attach to the session streams of EVERY targeted child session at once (the
- * parent only emits `subagent.called` + `childSessionId`; per eve's docs,
- * progress is published on the CHILD's stream). Feeds are owned HERE — above
- * the detail view — so the rail's list rows can show live tool-call counts and
- * a feed survives navigating into and back out of the detail. Connections open
- * when a session enters `targets` and abort when it leaves.
+ * The Control Panel's specialist feeds: every targeted child session (the parent only emits `subagent.called` +
+ * `childSessionId`; per eve's docs, progress is published on the CHILD's stream). Owned at the panel's level, above
+ * the detail view, so the rail's rows show live tool-call counts and a feed survives navigating in and out.
  *
- * `liveTargets` is the subset that needs to STAY connected (an unfinished run,
- * or the one the operator has open). Every other target is harvested instead:
- * the stream replays the session's whole history on attach, so once it reaches
- * a session boundary the feed already holds everything that session ever did
- * and the connection is dropped. That is what lets the rail roll up every
- * delegation's work without holding a socket open per finished run.
+ * The reading, the folding, the pool, the deadline and the cache are lib/child-feed.ts; this hook only says what the
+ * panel wants and hears, at most every 250 ms, what changed:
+ *
+ *   - `liveTargets` stay connected (an unfinished run, the one open in the rail);
+ *   - `parkedTargets` are read at once (a question waits on the person, and steering needs the run's token);
+ *   - every other target is a finished run, harvested once the chat is `ready`, a few at a time, and let go.
+ *
+ * A remount (a resync, a reattach) or a chat switch picks up each fold where it stopped: no request at all for a run
+ * already read to its end, a resume at its cursor for one that was interrupted.
  */
-function useChildFeeds(targets: readonly string[], liveTargets: readonly string[]) {
+function useChildFeeds(
+  targets: readonly string[],
+  liveTargets: readonly string[],
+  parkedTargets: readonly string[],
+  ready: boolean,
+) {
+  const store = feedStore();
+  const owner = useRef({});
   const [feeds, setFeeds] = useState<Record<string, ChildFeed>>({});
-  const conns = useRef<Record<string, { ctrl: AbortController; live: boolean }>>({});
-  /**
-   * Where each feed's fold stopped, in absolute stream events. The feed itself
-   * outlives its connection (a harvested run re-opened live, a target that left
-   * and came back), so a new connection CONTINUES the fold from here rather than
-   * replaying the history onto a transcript that already holds it: a replay
-   * appended every tool row a second time, and on the wrapped reducer it would
-   * re-enter a finished session's events under the NEXT session's epoch.
-   */
-  const cursors = useRef<Record<string, number>>({});
+  const wantedRef = useRef<ReadonlySet<string>>(new Set());
   const targetsKey = [...targets].sort().join(",");
   const liveKey = [...liveTargets].sort().join(",");
-  useEffect(() => {
-    const wanted = new Set(targetsKey ? targetsKey.split(",") : []);
-    const liveWanted = new Set(liveKey ? liveKey.split(",") : []);
-    for (const [sid, conn] of Object.entries(conns.current)) {
-      // Drop what left the target list, and re-open a harvested feed that has
-      // since become live (selected, or running again) — its connection is gone.
-      if (!wanted.has(sid) || (liveWanted.has(sid) && !conn.live)) {
-        conn.ctrl.abort();
-        delete conns.current[sid];
+  const parkedKey = [...parkedTargets].sort().join(",");
+  const merge = (changed: Readonly<Record<string, ChildFeed>>) =>
+    setFeeds((prev) => {
+      let next = prev;
+      for (const [sid, feed] of Object.entries(changed)) {
+        if (!wantedRef.current.has(sid) || prev[sid] === feed) continue;
+        if (next === prev) next = { ...prev };
+        next[sid] = feed;
       }
-    }
-    const patch = (sid: string, fn: (f: ChildFeed) => ChildFeed) =>
-      setFeeds((prev) => ({
-        ...prev,
-        [sid]: fn(prev[sid] ?? { rows: [], messages: [], notes: [], status: "idle", childSessions: [] }),
-      }));
-    for (const sid of wanted) {
-      if (conns.current[sid]) continue;
-      const ctrl = new AbortController();
-      const live = liveWanted.has(sid);
-      conns.current[sid] = { ctrl, live };
-      patch(sid, (f) => f);
-      (async () => {
-        /**
-         * Resume at a cursor, and reconnect when a segment ends.
-         *
-         * This read had neither. Two consequences, both seen together: the feed
-         * was severed at the ~120s stream boundary and the loop just broke, so
-         * the rail went quiet while still reporting "live" — it looked like the
-         * subagent had been dismissed. Then anything that reopened the feed
-         * started from index 0 and replayed the child's ENTIRE history, so six
-         * background subagents all flooded the Control Panel at once the moment
-         * the next prompt was sent.
-         *
-         * startIndex is an absolute event count, so the cursor advances on every
-         * line INCLUDING one that fails to parse — undercounting silently
-         * replays events already shown, which is the same flood in slow motion.
-         */
-        let cursor = cursors.current[sid] ?? 0;
-        let segments = 0;
-        try {
-          while (!ctrl.signal.aborted && segments < 60) {
-            segments++;
-            const res = await fetch(
-              `/eve/v1/session/${encodeURIComponent(sid)}/stream?startIndex=${cursor}`,
-              { headers: eveAuthHeaders(), signal: ctrl.signal },
-            );
-            if (!res.ok || !res.body) {
-              patch(sid, (f) => ({ ...f, status: "unavailable" }));
-              return;
-            }
-            const delegated = delegationFromHeader(res.headers.get(SESSION_DELEGATION_HEADER));
-            patch(sid, (f) => ({ ...f, status: "live", ...(delegated === undefined ? {} : { delegated }) }));
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buf = "";
-            let ended = false;
-            while (!ctrl.signal.aborted) {
-              const { done, value } = await reader.read();
-              if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            const rows = buf.split("\n");
-            buf = rows.pop() ?? "";
-            for (const row of rows) {
-              if (!row.trim()) continue;
-              // Count first: the cursor is an absolute event count, so a line we
-              // cannot parse still occupies a position.
-              cursor++;
-              cursors.current[sid] = cursor;
-              let event: { type?: string; data?: Record<string, unknown> };
-              try {
-                event = JSON.parse(row);
-              } catch {
-                continue;
-              }
-              if (
-                event.type === "turn.completed" ||
-                event.type === "turn.failed" ||
-                event.type === "session.completed" ||
-                event.type === "session.waiting"
-              ) {
-                ended = true;
-              }
-              patch(sid, (f) => {
-                const transcript = childReducer.reduce(
-                  f.transcript ?? childReducer.initial(),
-                  event as Parameters<typeof childReducer.reduce>[1],
-                );
-                return {
-                  ...f,
-                  rows: applyFeedEvent(f.rows, event).slice(-150),
-                  transcript,
-                  messages: transcript.messages as EveMessage[],
-                };
-              });
-              if (event.type === "turn.started") {
-                patch(sid, (f) => ({ ...f, turnActive: true, stopped: false }));
-              } else if (event.type === "turn.completed" || event.type === "turn.failed") {
-                patch(sid, (f) => ({ ...f, turnActive: false }));
-              } else if (event.type === "turn.cancelled") {
-                // `turnActive` is left as it was: Stop stays on a stopped specialist so pressing it again retries a
-                // hand-back that could not be delivered (agent/lib/specialist-handback.ts).
-                patch(sid, (f) => ({ ...f, stopped: true }));
-              }
-              // A delegation BELOW this child — record it so the rail attaches
-              // to the grandchild too and its work rolls up as well.
-              if (event.type === "subagent.called") {
-                const nested = (event.data as { childSessionId?: string } | undefined)?.childSessionId;
-                if (typeof nested === "string" && nested) {
-                  patch(sid, (f) =>
-                    f.childSessions.includes(nested)
-                      ? f
-                      : { ...f, childSessions: [...f.childSessions, nested] },
-                  );
-                }
-              }
-              if (event.type === "session.waiting") {
-                const token = (event.data as { continuationToken?: string } | undefined)
-                  ?.continuationToken;
-                patch(sid, (f) => ({
-                  ...f,
-                  status: "ended",
-                  ...(typeof token === "string" ? { continuationToken: token } : {}),
-                }));
-              } else if (event.type === "session.completed") {
-                // GENUINELY finished (not merely parked on an approval, which
-                // emits session.waiting instead) — the only state that counts as
-                // a completed run for stuck-handoff detection.
-                patch(sid, (f) => ({ ...f, status: "ended", completed: true }));
-              }
-              // Harvest-only: the replay has reached the end of this session's
-              // recorded life, so everything it produced is already folded in.
-              // Release the connection rather than idle on it.
-              if (
-                !live &&
-                (event.type === "session.waiting" ||
-                  event.type === "session.completed" ||
-                  event.type === "session.failed")
-              ) {
-                ctrl.abort();
-              }
-            }
-            }
-            // A terminal event means the child is genuinely done — stop. Anything
-            // else (a severed segment) means resume where the cursor left off,
-            // which is the difference between a rail that goes quiet forever and
-            // one that keeps reporting.
-            if (ended || ctrl.signal.aborted) break;
-          }
-          patch(sid, (f) => (f.status === "live" ? { ...f, status: "ended", turnActive: false } : f));
-        } catch {
-          // A deliberate detach (harvest finished, or the target left the list)
-          // is not a failure — the feed keeps everything it already replayed.
-          if (ctrl.signal.aborted) return;
-          patch(sid, (f) => (f.status === "live" ? { ...f, status: "ended" } : { ...f, status: "unavailable" }));
-        }
-      })();
-    }
-  }, [targetsKey, liveKey]);
-  useEffect(
-    () => () => {
-      for (const conn of Object.values(conns.current)) conn.ctrl.abort();
-    },
-    [],
-  );
-  const appendLocal = (sid: string, text: string) =>
-    setFeeds((prev) => {
-      const base =
-        prev[sid] ?? { rows: [], messages: [], notes: [], status: "idle" as FeedStatus, childSessions: [] };
-      return {
-        ...prev,
-        [sid]: { ...base, notes: [...base.notes, { id: feedId(), text }] },
-      };
+      return next;
     });
-  const markTurnIdle = (sid: string) =>
-    setFeeds((prev) => {
-      const f = prev[sid];
-      return f ? { ...prev, [sid]: { ...f, turnActive: false } } : prev;
-    });
-  return { feeds, appendLocal, markTurnIdle };
+  useEffect(() => store.subscribe(merge), [store]);
+  useEffect(() => {
+    const wanted = new Map<string, FeedMode>();
+    const live = new Set(liveKey ? liveKey.split(",") : []);
+    const parked = new Set(parkedKey ? parkedKey.split(",") : []);
+    for (const sid of targetsKey ? targetsKey.split(",") : []) {
+      wanted.set(sid, live.has(sid) ? "live" : parked.has(sid) ? "priority" : "harvest");
+    }
+    wantedRef.current = new Set(wanted.keys());
+    merge(store.sync(owner.current, wanted, ready));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetsKey, liveKey, parkedKey, ready, store]);
+  useEffect(() => {
+    const me = owner.current;
+    return () => store.release(me);
+  }, [store]);
+  const appendLocal = useCallback((sid: string, text: string) => store.appendLocal(sid, text), [store]);
+  const markTurnIdle = useCallback((sid: string) => store.markTurnIdle(sid), [store]);
+  const retry = useCallback((sid: string) => store.retry(sid), [store]);
+  return { feeds, appendLocal, markTurnIdle, retry };
 }
 
 /** The original delegation brief — full-width user-bubble styling, clamped to
@@ -2959,10 +2672,13 @@ function SubagentDetail({
   appendLocal,
   feed,
   onInputResponses,
+  onRetry,
   onSteer,
   run,
 }: {
   readonly appendLocal: (sessionId: string, text: string) => void;
+  /** Read an unavailable specialist's stream again. */
+  readonly onRetry?: (sessionId: string) => void;
   /** A note to this run when it is a delegation of the chat's main thread (mold_v1-235). */
   readonly onSteer?: (callId: string, text: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   readonly feed?: ChildFeed;
@@ -3053,7 +2769,9 @@ function SubagentDetail({
   // call the run dead once the stream has actually ended (never mid-turn)
   // with no token in hand. Guarding on the ended stream avoids falsely
   // declaring a live, pausing run dead and dropping deliverable guidance.
-  const streamEnded = feedStatus === "ended" || feedStatus === "unavailable";
+  // "Unavailable" means its stream could not be read, which for a run the parent still shows running is NOT an end:
+  // that run is retried, and keeps its running controls and its queued guidance meanwhile.
+  const streamEnded = feedStatus === "ended" || (feedStatus === "unavailable" && !live);
   const queueDead = streamEnded && feed?.turnActive === false && !feed?.continuationToken;
 
   const flushToken = feed?.continuationToken;
@@ -3192,6 +2910,22 @@ function SubagentDetail({
               ))}
             </div>
           )
+        ) : run.childSessionId && feedStatus === "unavailable" ? (
+          <div className="flex flex-col gap-3">
+            <p className="flex items-center gap-2 text-muted-foreground text-sm" data-testid="feed-unavailable">
+              {live ? "This run's details could not be loaded yet." : "This run's details could not be loaded."}
+              {onRetry ? (
+                <button
+                  type="button"
+                  onClick={() => onRetry(run.childSessionId as string)}
+                  className="rounded-md px-2 py-0.5 text-xs underline-offset-2 hover:underline"
+                >
+                  Retry
+                </button>
+              ) : null}
+            </p>
+            {run.output ? <MessageResponse className="text-sm">{run.output}</MessageResponse> : null}
+          </div>
         ) : run.childSessionId && feedStatus === "idle" ? (
           // Reopening a finished run: its stream is re-attaching and replaying
           // history. Show a loader — NOT the raw run.output (that flashed as

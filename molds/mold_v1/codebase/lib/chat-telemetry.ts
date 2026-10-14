@@ -119,6 +119,29 @@ export const CHAT_TELEMETRY_SENTENCES = {
    * refuses to deliver that as a success; each row is one it caught.
    */
   "model-unbacked-claim": "Recovered answer claimed a change no tool had made; it was withheld",
+
+  /* ---- opening a chat, measured in the browser that waited (lib/chat-open-timing.ts) ---------------------- */
+
+  /**
+   * One open that took over 2 s (to paint or to a usable composer), brought the loading shimmer back over a painted
+   * chat, or mounted the chat more than once. The detail is numbers only: route, paint, composer-ready, saved-copy
+   * and seam times, mounts and their causes, main-thread lag, and the specialist streams' requests and bytes.
+   */
+  "thread-open": "Chat open was slow or remounted",
+  /**
+   * Every open, counted by route and posted in batches: the denominator the slow rows never had. Without it, ten
+   * slow rows could be ten of ten opens or ten of ten thousand.
+   */
+  "thread-open-count": "Chat opens by route",
+  /**
+   * The server refused to store a chat's saved copy (too large, a version it does not project, not this person's to
+   * write). Swallowed until now, so a chat with no saved copy looked the same as a chat whose saves were refused.
+   */
+  "snapshot-refused": "Chat saved copy was refused",
+  /** The stream positively disagreed with a chat's saved copy, so the copy was dropped and the chat replaced. */
+  "snapshot-discarded": "Chat saved copy was discarded",
+  /** No saved copy was written for a chat, and why (a shared chat, nothing worth storing). Once per chat per load. */
+  "snapshot-skipped": "Chat saved copy was not written",
 } as const satisfies Record<string, string>;
 
 export type ChatTelemetryKind = keyof typeof CHAT_TELEMETRY_SENTENCES;

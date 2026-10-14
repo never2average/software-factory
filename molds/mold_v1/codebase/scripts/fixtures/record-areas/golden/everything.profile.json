@@ -1,0 +1,372 @@
+{
+ "product": {
+  "name": "Delivered",
+  "tagline": "The operations console for teams that run account work.",
+  "description": "{product} — an operations console: an eve-powered agent that runs account onboarding, deliveries, and the data room for your team."
+ },
+ "vocabulary": {
+  "account": {
+   "singular": "account",
+   "plural": "accounts"
+  },
+  "member": {
+   "singular": "member",
+   "plural": "members"
+  },
+  "owner": "Account owner",
+  "secondary_owner": "Secondary owner",
+  "account_context": "Account context"
+ },
+ "chat": {
+  "hero_lines": [
+   "{product}",
+   "What needs doing today?",
+   "Prep the stand-up",
+   "Chase the follow-ups",
+   "Keep every account close"
+  ],
+  "empty_sections": {
+   "urgent": "Urgent tickets",
+   "stalled": "Stalled accounts"
+  },
+  "user_messages": {
+   "collapse": true,
+   "collapsed_lines": 6
+  },
+  "sandbox_wait": {
+   "line": "Waiting for a free sandbox ({place} in line)…",
+   "next": "Waiting for a free sandbox (next in line)…"
+  },
+  "specialist_sweep": {
+   "frozen": "{name} showed no progress for {minutes} minutes, so it was stopped. The main agent has been told.",
+   "undelivered": "{name} had finished, but its result had not reached the main agent. It has been handed back.",
+   "stopped": "{name} stopped without reporting back. The main agent has been told.",
+   "failed": "{name} failed without reporting back. The main agent has been told.",
+   "waiting": "{name} has been waiting for your answer for {waited}."
+  },
+  "starter_cards": {
+   "owner_label": "Account owner",
+   "ticket_waiting": "One open ticket is waiting on us.",
+   "tickets_waiting": "{count} open tickets are waiting on us.",
+   "ticket_badge": "1 open",
+   "tickets_badge": "{count} open",
+   "triage_title": "Triage the open tickets",
+   "triage_prompt": "Triage the open tickets for {name}: what is blocking each one, who owns it, and what should we do next?",
+   "quiet_summary": "No contact logged in {days} days.",
+   "quiet_summary_long": "No contact logged for over a month.",
+   "quiet_badge": "{days}d quiet",
+   "quiet_title": "Draft a check-in",
+   "quiet_prompt": "{name} has been quiet for {days} days. Summarise where we left off and draft a check-in to their main contact."
+  },
+  "account_search": {
+   "title": "Account context",
+   "description": "Pick the accounts this conversation is about — the agent grounds itself in their record.",
+   "placeholder": "Search accounts…",
+   "empty": "No accounts found.",
+   "pill_empty": "Set the account context for this chat",
+   "pill_active": "{context}: {names} — click to change",
+   "pill_locked": "{context} is locked for this chat: {names}"
+  }
+ },
+ "dataroom": {
+  "root_label": "Data Room",
+  "domains": {
+   "accounts": {
+    "folder": "Accounts",
+    "visible": true,
+    "label": "Accounts"
+   },
+   "platform": {
+    "folder": "Platform",
+    "visible": true,
+    "label": "Platform"
+   },
+   "deliveries": {
+    "folder": "Deliveries",
+    "visible": true,
+    "label": "Deliveries"
+   },
+   "solutions": {
+    "folder": "Solutions",
+    "visible": true,
+    "label": "Solutions"
+   },
+   "projects": {
+    "folder": "Projects",
+    "visible": true,
+    "label": "Projects"
+   },
+   "tickets": {
+    "folder": "Tickets",
+    "visible": true,
+    "label": "Tickets"
+   },
+   "people": {
+    "folder": "People",
+    "visible": true,
+    "label": "People"
+   }
+  },
+  "uploads_folder": "Uploads",
+  "seed": null
+ },
+ "domains": {
+  "deployments": {
+   "label": {
+    "singular": "Shipment",
+    "plural": "Shipments"
+   },
+   "description": "Every shipment, by owner.",
+   "id_label": "Shipment id",
+   "kind_field": "runtime",
+   "kinds": [
+    "Parcel",
+    "Pallet",
+    "Container"
+   ],
+   "create_fields": [
+    "runtime",
+    "lastDeployAt",
+    "notes"
+   ],
+   "detail_fields": [
+    "runtime",
+    "lastDeployAt",
+    "approvedByEmail",
+    "notes"
+   ],
+   "custom_fields": [
+    {
+     "key": "weight_kg",
+     "label": "Weight (kg)",
+     "type": "number",
+     "required": true,
+     "show_in_list": true
+    },
+    {
+     "key": "fill_rate",
+     "label": "Fill rate",
+     "type": "percent",
+     "help": "Share of the box used."
+    },
+    {
+     "key": "arrives_on",
+     "label": "Arrives on",
+     "type": "date",
+     "show_in_list": true
+    },
+    {
+     "key": "contact",
+     "label": "Contact",
+     "type": "email"
+    },
+    {
+     "key": "tracking",
+     "label": "Tracking link",
+     "type": "link"
+    },
+    {
+     "key": "carrier",
+     "label": "Carrier",
+     "type": "pick_list",
+     "options": [
+      "Road",
+      "Rail",
+      "Air"
+     ],
+     "show_in_list": true
+    },
+    {
+     "key": "reference",
+     "label": "Reference",
+     "type": "text"
+    },
+    {
+     "key": "handling",
+     "label": "Handling notes",
+     "type": "long_text"
+    }
+   ],
+   "fields": {
+    "deploymentId": {
+     "placeholder": "SHP-001"
+    },
+    "environment": {
+     "label": "Environment",
+     "options": {
+      "prod": "Production",
+      "staging": "Staging",
+      "uat": "UAT",
+      "sandbox": "Sandbox",
+      "dev": "Development"
+     },
+     "hidden": true,
+     "fixed": "prod"
+    },
+    "region": {
+     "label": "Depot",
+     "placeholder": "ap-south-1",
+     "options": {
+      "eu-west-1": "West depot",
+      "ap-south-1": "South depot"
+     }
+    },
+    "deployedVersion": {
+     "label": "Version",
+     "placeholder": "1.0.0"
+    },
+    "releaseStatus": {
+     "label": "State",
+     "options": {
+      "deployed": "Delivered",
+      "in-progress": "In transit",
+      "pending-approval": "Pending approval",
+      "rolled-back": "Rolled back",
+      "failed": "Failed"
+     },
+     "short_label": "State",
+     "help": "Where the shipment is."
+    },
+    "healthStatus": {
+     "label": "Health",
+     "options": {
+      "healthy": "Healthy",
+      "degraded": "Degraded",
+      "down": "Down"
+     },
+     "hidden": true,
+     "fixed": "unknown"
+    },
+    "deployOwnerEmail": {
+     "label": "Owner",
+     "placeholder": "name@company.com"
+    },
+    "lastDeployAt": {
+     "label": "Shipped on",
+     "placeholder": "2026-01-31"
+    },
+    "approvedByEmail": {
+     "label": "Signed by"
+    },
+    "notes": {
+     "label": "Remarks"
+    }
+   }
+  },
+  "implementations": {
+   "label": {
+    "singular": "Route",
+    "plural": "Routes"
+   },
+   "description": "Routes, grouped by network.",
+   "id_label": "Route",
+   "kind_field": null,
+   "kinds": [],
+   "create_fields": [],
+   "detail_fields": [
+    "rolloutId",
+    "currentMilestone",
+    "blocker"
+   ],
+   "custom_fields": [
+    {
+     "key": "lane_count",
+     "label": "Lanes",
+     "type": "number",
+     "show_in_list": true
+    }
+   ],
+   "group_by": "rolloutId",
+   "group_label": {
+    "singular": "Network",
+    "plural": "Networks"
+   },
+   "fields": {
+    "implementationStage": {
+     "label": "Phase",
+     "options": {
+      "Kickoff": "Planned",
+      "Discovery": "Discovery",
+      "Configuration": "Configuration",
+      "Integration": "Integration",
+      "UAT": "UAT",
+      "Pilot": "Pilot",
+      "Go-Live": "Running",
+      "Stabilization": "Stabilization",
+      "Steady State": "Steady State",
+      "On Hold": "On Hold"
+     }
+    },
+    "implementationRiskLevel": {
+     "label": "Risk"
+    },
+    "implementationProgressPct": {
+     "label": "Progress"
+    },
+    "implementationOwnerEmail": {
+     "label": "Owner",
+     "placeholder": "name@company.com"
+    },
+    "launchScopeSolutionIds": {
+     "label": "Solution"
+    },
+    "targetGoLiveDate": {
+     "label": "Go-live"
+    }
+   }
+  }
+ },
+ "agent": {
+  "briefing": null,
+  "compaction": {
+   "orchestrator_tokens": null,
+   "specialist_tokens": 160000,
+   "specialists": {}
+  }
+ },
+ "persona": {
+  "base": true
+ },
+ "specialists": {
+  "exclude": []
+ },
+ "library": {
+  "sources": {}
+ },
+ "work_periods": {
+  "mode": "individual",
+  "label": {
+   "singular": "week",
+   "plural": "weeks"
+  },
+  "list_label": {
+   "singular": "week",
+   "plural": "weeks"
+  },
+  "item_label": {
+   "singular": "goal",
+   "plural": "goals"
+  },
+  "length_days": 7,
+  "auto_rollover": true,
+  "length_days_range": [
+   7,
+   14
+  ],
+  "workspace_can_set_length": false
+ },
+ "asr": {
+  "enabled": true,
+  "provider": "cloudflare",
+  "model": "@cf/openai/whisper-large-v3-turbo",
+  "language": null,
+  "max_seconds": 120,
+  "max_bytes": 4194304,
+  "max_session_seconds": 600,
+  "idle_stop_seconds": 20
+ },
+ "account_fields": {
+  "hidden": [],
+  "custom_fields": []
+ }
+}

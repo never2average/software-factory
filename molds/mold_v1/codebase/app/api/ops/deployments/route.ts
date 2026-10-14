@@ -6,7 +6,8 @@ import { customers, deployments } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
-import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { choiceSchema, customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { CHOICE_MEANINGS } from "@/agent/lib/customer-schema";
 import { asCustomValues, customDelta } from "@/agent/lib/custom-fields";
 import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
@@ -19,19 +20,20 @@ export const dynamic = "force-dynamic";
 
 /** POST /api/ops/deployments — create a deployment record, or UPDATE the one with this (customerId, deploymentId).
  *
- *  A create needs the identity fields (they're NOT NULL); health/release default to sane values the operator
- *  refines in the detail panel. An update changes ONLY the fields the body names ("" or null clears an optional
+ *  A create needs the identity fields (they're NOT NULL); health/release default to CHOICE_MEANINGS' values, which
+ *  the operator refines in the detail panel. Every choice column must be one of its stored values. An update changes ONLY the fields the body names ("" or null clears an optional
  *  one), and its `custom` only by the keys it names, merged in SQL onto what is stored at write time. It used to be
  *  insert-only, so the MCP tool `deployment_upsert` could create a record and never correct one: a second call for
  *  the same id was a unique-key error. */
 const createSchema = z.object({
   customerId: z.string().min(1, `Pick ${an(W.account)} ${W.account}.`),
   deploymentId: z.string().min(1, `${upperFirst(an(W.deployment))} ${W.deployment} id is required.`),
-  environment: z.string().min(1, "An environment is required."),
-  region: z.string().min(1, "A region is required."),
+  // The choice columns take one of their stored values (the schema's enums), or a 400 that lists them.
+  environment: z.string().min(1, "An environment is required.").pipe(choiceSchema("deployments", "environment")),
+  region: z.string().min(1, "A region is required.").pipe(choiceSchema("deployments", "region")),
   deployedVersion: z.string().min(1, "A version is required."),
-  releaseStatus: z.string().min(1).default("deployed"),
-  healthStatus: z.string().min(1).default("healthy"),
+  releaseStatus: choiceSchema("deployments", "releaseStatus").default(CHOICE_MEANINGS.deployments.defaults.releaseStatus),
+  healthStatus: choiceSchema("deployments", "healthStatus").default(CHOICE_MEANINGS.deployments.defaults.healthStatus),
   deployOwnerEmail: z.string().trim().optional().nullable(),
   displayName: z.string().trim().optional().nullable(),
   // Any other single-value column, for a deployment profile that puts it on the "New …" form (`domains`).
@@ -43,11 +45,11 @@ const createSchema = z.object({
 const updateSchema = createSchema.partial().extend({
   customerId: createSchema.shape.customerId,
   deploymentId: createSchema.shape.deploymentId,
-  environment: z.string().min(1, "An environment cannot be cleared.").optional(),
-  region: z.string().min(1, "A region cannot be cleared.").optional(),
+  environment: z.string().min(1, "An environment cannot be cleared.").pipe(choiceSchema("deployments", "environment")).optional(),
+  region: z.string().min(1, "A region cannot be cleared.").pipe(choiceSchema("deployments", "region")).optional(),
   deployedVersion: z.string().min(1, "A version cannot be cleared.").optional(),
-  releaseStatus: z.string().min(1).optional(),
-  healthStatus: z.string().min(1).optional(),
+  releaseStatus: choiceSchema("deployments", "releaseStatus").optional(),
+  healthStatus: choiceSchema("deployments", "healthStatus").optional(),
 });
 
 export async function POST(request: NextRequest) {

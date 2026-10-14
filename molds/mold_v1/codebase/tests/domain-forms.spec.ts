@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE } from "../lib/deployment-profile.generated";
+import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, DOMAIN_FIELDS } from "../lib/deployment-profile.generated";
 
 // The account word on these forms is the BUILD's vocabulary, not part of the `domains` section under test: a
 // deployment whose profile says "company" shows "Company" here even on the default-domains page. The spec
@@ -29,6 +29,11 @@ async function mockApi(page: Page): Promise<{ posts: Record<string, unknown>[] }
   return seen;
 }
 const labels = async (page: Page, form: string) => page.getByTestId(form).locator("label > span:first-child").allInnerTexts();
+/** The values a form's select submits, in order: what the API stores. */
+const optionValues = async (page: Page, form: string, label: string) =>
+  page.getByTestId(form).locator("label", { hasText: label }).locator("select option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+/** A choice column's stored values: its zod enum in agent/lib/customer-schema.ts, as the generator copied it. */
+const stored = (area: "deployments" | "implementations", key: string): string[] => [...(DOMAIN_FIELDS[area][key]?.values ?? [])];
 
 // "Today's forms" can only be graded on a build whose profile IS the default: the preview page takes its field
 // list from DEFAULT_DOMAINS, but option labels and the account word follow the build's own profile, so on a
@@ -51,14 +56,29 @@ test("default profile: the forms are today's, and nothing fixed is submitted", a
   expect(await labels(page, "form-deployments")).toEqual([ACCOUNT, DEFAULT_ID, "Environment", "Region", "Version", "Release status", "Health", "Owner"]);
   expect(await labels(page, "form-implementations")).toEqual([ACCOUNT, "Stage", "Risk", "Owner"]);
   await expect(dep.locator("label", { hasText: "Release status" }).locator("option")).toHaveText(["Deployed", "In progress", "Pending approval", "Rolled back", "Failed"]);
+  // Every choice offered is a stored value, all of them, in the enum's order (mold_v1-251: risk offered
+  // low/medium/high/critical and environment production/development, which the schema refuses; region was free text).
+  expect.soft(await optionValues(page, "form-deployments", "Environment")).toEqual(stored("deployments", "environment"));
+  await expect.soft(dep.locator("label", { hasText: "Environment" }).locator("option")).toHaveText(Object.values(DEFAULT_DOMAINS.deployments.fields.environment.options ?? {}));
+  expect.soft(await optionValues(page, "form-deployments", "Region")).toEqual(stored("deployments", "region"));
+  expect.soft(await optionValues(page, "form-implementations", "Stage")).toEqual(stored("implementations", "implementationStage"));
+  expect.soft(await optionValues(page, "form-implementations", "Risk")).toEqual(stored("implementations", "implementationRiskLevel"));
 
-  await dep.locator("label", { hasText: ACCOUNT }).locator("select").selectOption("hdfc");
+  // The account is the first field (a region's option "customer-vpc" reads in the account word, so not by its text).
+  await dep.locator("label").first().locator("select").selectOption("hdfc");
   await dep.getByPlaceholder("DEP-…").fill("DEP-1");
-  await dep.getByPlaceholder("ap-south-1").fill("eu-west-1");
+  await dep.locator("label", { hasText: "Region" }).locator("select").selectOption("eu-west-1");
   await dep.getByPlaceholder("1.0.0").fill("2.3.1");
   await dep.getByRole("button", { name: `Create ${DEFAULT_AREA}` }).click();
   await expect(page.getByTestId("created")).toHaveText("deployments:DEP-1");
-  expect(seen.posts[0]).toEqual({ area: "deployments", customerId: "hdfc", deploymentId: "DEP-1", environment: "production", region: "eu-west-1", deployedVersion: "2.3.1", releaseStatus: "deployed", healthStatus: "healthy" });
+  expect(seen.posts[0]).toEqual({ area: "deployments", customerId: "hdfc", deploymentId: "DEP-1", environment: stored("deployments", "environment")[0], region: "eu-west-1", deployedVersion: "2.3.1", releaseStatus: "deployed", healthStatus: "healthy" });
+
+  // The other area's form submits stored values too, the first of each when nobody picks.
+  const imp = page.getByTestId("form-implementations");
+  await imp.locator("label").first().locator("select").selectOption("aavas");
+  await imp.getByRole("button", { name: `Create ${DEFAULT_DOMAINS.implementations.label.singular.toLowerCase()}` }).click();
+  await expect(page.getByTestId("created")).toContainText("implementations:aavas");
+  expect(seen.posts[1]).toEqual({ area: "implementations", customerId: "aavas", implementationStage: stored("implementations", "implementationStage")[0], implementationRiskLevel: stored("implementations", "implementationRiskLevel")[0] });
 });
 
 test("equity-research example: relabelled fields, hidden ones gone, real values and the fixed region submitted", async ({ page }) => {

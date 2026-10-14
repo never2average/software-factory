@@ -46,6 +46,15 @@
 export const PARKED_IDLE_MS = 400;
 export const IN_FLIGHT_IDLE_MS = 2500;
 
+/**
+ * The idle window for the next upstream read: the short parked window only once a chunk has arrived and the stream
+ * is (or is assumed) parked; the in-flight window before the first chunk and while a turn may still be running.
+ * See `firstChunk` in {@link boundedReplay}.
+ */
+export function idleWindowMs(state: { readonly parked: boolean; readonly firstChunk: boolean }): number {
+  return state.parked && state.firstChunk ? PARKED_IDLE_MS : IN_FLIGHT_IDLE_MS;
+}
+
 /** Session-level events that mean the run is over — the replay cannot grow. */
 const TERMINAL_EVENTS = new Set(["session.completed", "session.failed"]);
 
@@ -167,6 +176,11 @@ export interface BoundedReplayOptions {
    * a session that is by definition silent. The caller holding a live
    * continuation token is the one piece of evidence available, and it is only
    * ever used to SHORTEN a wait, never to end a read early on content.
+   *
+   * It shortens only the waits AFTER the first upstream chunk (see `firstChunk`
+   * in boundedReplay): the wait for eve's first byte is the in-flight window
+   * whatever the caller assumes, because ending a read before its first byte is
+   * exactly how a healthy seam read came back empty.
    */
   readonly assumeParked?: boolean;
 }
@@ -191,6 +205,25 @@ export function boundedReplay(
   let parked = Boolean(options.assumeParked);
   let terminal = false;
   let markerSent = false;
+  /**
+   * Has ANY upstream chunk arrived yet?
+   *
+   * The short parked window is a judgement about silence BETWEEN events: right after a `session.waiting`, a quiet
+   * stream means the history is complete. Before the first chunk there is no such judgement to make: the silence is
+   * eve's time to first byte (opening the run's stream, the store's read), which is the same for a parked session
+   * as for any other. `assumeParked` used to arm the 400 ms window on the very first read, so a seam read
+   * (`startIndex = eventIndex - 1`, which is expected to return ONE event) lost the race whenever that first byte
+   * took longer than 400 ms: measured at 7 of 24 and 2 of 18 reads, and 2 of 4 cold first reads, on a live app. The
+   * reader got a marker with no event, read it as "the saved copy is ahead of the stream", deleted a healthy copy and
+   * replayed the whole conversation from event zero.
+   *
+   * So the first read always gets the in-flight window, and the parked window applies only once something has
+   * arrived. PARKED_IDLE_MS itself is unchanged: it is also the drain window of a full replay after its last park.
+   * A tail read of a parked session with genuinely nothing after it now ends after IN_FLIGHT_IDLE_MS instead of
+   * PARKED_IDLE_MS; the seam read is one event EARLIER, so it always has that one event to deliver and ends 400 ms
+   * after it as before.
+   */
+  let firstChunk = false;
   let pending: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
 
   /**
@@ -254,7 +287,7 @@ export function boundedReplay(
         : await Promise.race<ReadableStreamReadResult<Uint8Array> | "idle">([
             pending,
             new Promise((resolve) => {
-              timer = setTimeout(() => resolve("idle"), parked ? PARKED_IDLE_MS : IN_FLIGHT_IDLE_MS);
+              timer = setTimeout(() => resolve("idle"), idleWindowMs({ parked, firstChunk }));
             }),
           ]);
       if (timer !== undefined) clearTimeout(timer);
@@ -271,6 +304,7 @@ export function boundedReplay(
       }
 
       pending = null;
+      if (!next.done) firstChunk = true;
       if (next.done) {
         // The upstream closed. That is the severance, not the end of history —
         // unless a terminal event already said the run is over.

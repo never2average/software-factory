@@ -1,0 +1,252 @@
+/**
+ * THE RECORD AREAS, AS EVERY SURFACE READS THEM: a view model over the compiled definitions (RECORD_AREAS, written by
+ * scripts/gen-deployment-profile.mjs from profiles `records.areas`; docs/DEPLOYMENT_PROFILE.md "records").
+ *
+ * `areaView(id)` answers what a list, a board, a form, the agent's tools and its briefing need to know about an area:
+ * its words, its fields in order and how to read one off a row (a column, or the area's own field under `custom`),
+ * each field's choices with their tones and how a stored value is shown, the lifecycle (each state's category, the
+ * moves a transition list allows), the board's columns, the table's columns, the sorts and filters, the create form.
+ *
+ * Base code branches on CATEGORIES (backlog, open, active, blocked, done, cancelled) and on field TYPES, never on a
+ * value a profile chose. Where an area is not redefined (`redefined: false`) a caller keeps the literals it has today;
+ * the default definitions carry exactly those words, so either way reads the same.
+ *
+ * Pure: no React, no database, no fetch. `areas` is a parameter so a preview page or a test can pass another
+ * profile's compiled definitions. It lives under agent/lib so both the agent and the web app can import it.
+ */
+import { RECORD_AREAS, type RecordArea, type RecordAreaId, type RecordCategory, type RecordField, type RecordOption, type RecordRole, type RecordTone, type RecordTransition } from "./record-areas.generated.ts";
+
+export type { RecordArea, RecordAreaId, RecordCategory, RecordField, RecordOption, RecordRole, RecordTone, RecordTransition };
+export type RecordAreas = Record<RecordAreaId, RecordArea>;
+
+export const CATEGORIES: readonly RecordCategory[] = ["backlog", "open", "active", "blocked", "done", "cancelled"];
+/** The stored task status (the task-workflow service's contract) each category writes. */
+export const CATEGORY_STATUS: Record<RecordCategory, string> = { backlog: "backlog", open: "open", active: "in_progress", blocked: "blocked", done: "done", cancelled: "cancelled" };
+/** Categories in which a record is still to be done: what "overdue" and "open work" count. */
+export const OPEN_CATEGORIES: ReadonlySet<RecordCategory> = new Set(["backlog", "open", "active", "blocked"]);
+
+/** A tone as the dot / chip colour class the ops UI uses (Tailwind). */
+export const TONE_CLASS: Record<RecordTone, string> = {
+  slate: "bg-slate-400",
+  sky: "bg-sky-500",
+  blue: "bg-blue-500",
+  green: "bg-emerald-500",
+  amber: "bg-amber-500",
+  orange: "bg-orange-500",
+  red: "bg-red-500",
+  violet: "bg-violet-500",
+  muted: "bg-muted-foreground/40",
+};
+
+export const upperFirst = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
+/** "Coverage report" -> "coverage report"; "KPI table" stays. For use mid-sentence. */
+export function lowerFirst(s: string): string {
+  return s.length > 1 && s[1] === s[1].toLowerCase() ? s[0].toLowerCase() + s.slice(1) : s;
+}
+
+/** The control a form draws for a field. */
+export type InputKind = "text" | "textarea" | "number" | "date" | "datetime" | "select" | "multiselect" | "checkbox" | "email" | "url" | "person" | "record" | "file" | "tags";
+export function inputFor(f: Pick<RecordField, "type" | "many">): InputKind {
+  switch (f.type) {
+    case "long_text": return "textarea";
+    case "integer": case "number": case "percent": case "money": return "number";
+    case "date": return "date";
+    case "datetime": return "datetime";
+    case "boolean": return "checkbox";
+    case "pick_list": return "select";
+    case "multi_pick": return "multiselect";
+    case "email": return "email";
+    case "link": return "url";
+    case "person": return "person";
+    case "record": return "record";
+    case "file": return "file";
+    case "tags": return "tags";
+    default: return "text";
+  }
+}
+
+/** A row as the API returns it: columns by key, the area's own fields under `custom`. */
+export type AreaRow = Record<string, unknown> & { custom?: Record<string, unknown> | null };
+
+export function areaView(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS) {
+  const area = areas[id];
+  const fields = Object.values(area.fields).sort((a, b) => a.order - b.order || (a.key < b.key ? -1 : 1));
+  const byKey = new Map(fields.map((f) => [f.key, f]));
+  const byAlias = new Map(fields.flatMap((f) => (f.alias ? [[f.alias, f] as const] : [])));
+  const label = area.label ?? { singular: id, plural: id };
+  const lc = area.lifecycle ?? null;
+  const field = (key: string): RecordField | undefined => byKey.get(key) ?? byAlias.get(key);
+  const optionsOf = (key: string): RecordOption[] => field(key)?.options ?? [];
+  const optionLabel = (o: RecordOption) => o.label ?? o.value;
+
+  const view = {
+    id,
+    area,
+    enabled: area.enabled,
+    redefined: area.redefined,
+    /** "Task", "Tasks"; mid-sentence "task", "tasks". */
+    singular: upperFirst(label.singular),
+    plural: upperFirst(label.plural),
+    noun: lowerFirst(label.singular),
+    nouns: lowerFirst(label.plural),
+    description: area.description ?? "",
+    /** Every field in order (hidden ones included: a row may still carry them). */
+    fields,
+    /** The fields a person sees, in order. */
+    visibleFields: fields.filter((f) => !f.hidden),
+    /** The area's OWN fields (stored under `custom`), in order. */
+    ownFields: fields.filter((f) => !f.column),
+    field,
+    has: (key: string) => byKey.has(key),
+    /** A field's label, or `fallback` (what the spot said before) when the definition gives none. */
+    label: (key: string, fallback?: string, variant: "full" | "short" = "full"): string => {
+      const f = field(key);
+      return (variant === "short" ? f?.short_label ?? f?.label : f?.label) ?? fallback ?? key;
+    },
+    /** A field's value on a row: a column by key, an own field under `custom` (or the key older rows carry it under). */
+    get: (row: AreaRow, key: string): unknown => {
+      const f = field(key);
+      if (!f) return row[key];
+      if (f.column) return row[f.key];
+      const custom = row.custom ?? {};
+      if (f.key in custom) return custom[f.key];
+      return f.renamed_from ? custom[f.renamed_from] : undefined;
+    },
+    /** A choice field's choices that may still be picked (retired ones are shown, never offered). */
+    options: (key: string): { value: string; label: string; tone?: RecordTone; attention?: boolean }[] =>
+      optionsOf(key).filter((o) => !o.retired).map((o) => ({ value: o.value, label: optionLabel(o), ...(o.tone ? { tone: o.tone } : {}), ...(o.attention ? { attention: true } : {}) })),
+    /** A stored value as the option value it is read as (a legacy spelling mapped), or as it was stored. */
+    canonical: (key: string, value: string): string => field(key)?.legacy_values?.[value] ?? value,
+    /** A stored value as a person reads it: its choice's label, else the value. "" when unset. */
+    display: (key: string, value: unknown): string => {
+      if (value === null || value === undefined || value === "") return "";
+      if (Array.isArray(value)) return value.map((v) => view.display(key, v)).join(", ");
+      const f = field(key);
+      const v = String(value);
+      const o = f?.options?.find((x) => x.value === (f.legacy_values?.[v] ?? v));
+      if (o) return optionLabel(o);
+      if (f?.type === "percent" && typeof value === "number") return `${value}%`;
+      if ((f?.type === "number" || f?.type === "money") && typeof value === "number") return `${value.toLocaleString("en-US", { maximumFractionDigits: 6 })}${f.type === "money" && f.currency ? ` ${f.currency}` : ""}`;
+      if (f?.type === "boolean") return value ? "Yes" : "No";
+      return v;
+    },
+    /** The tone of a stored choice value, if the definition gives one. */
+    tone: (key: string, value: unknown): RecordTone | undefined => {
+      const f = field(key);
+      const v = String(value ?? "");
+      return f?.options?.find((x) => x.value === (f.legacy_values?.[v] ?? v))?.tone;
+    },
+    /** The reverse of display: what a person read or typed, as the value to store. Unknown text comes back as it was. */
+    valueOf: (key: string, shown: string): string => {
+      const t = shown.trim().toLowerCase();
+      return optionsOf(key).find((o) => o.value.toLowerCase() === t || optionLabel(o).toLowerCase() === t)?.value ?? shown;
+    },
+    inputFor: (key: string): InputKind => inputFor(field(key) ?? { type: "text" }),
+    /** What the forms submit for the fields nobody sees. */
+    fixedValues: (): Record<string, unknown> => Object.fromEntries(fields.filter((f) => f.hidden && f.fixed !== undefined).map((f) => [f.key, f.fixed])),
+
+    // --- the lifecycle -------------------------------------------------------------------------------------------
+    lifecycle: lc
+      ? {
+          field: lc.field,
+          /** Is the lifecycle on the area's own field (a redefined task) rather than a column? */
+          own: !byKey.get(lc.field)?.column,
+          initial: lc.initial ?? optionsOf(lc.field)[0]?.value ?? null,
+          enforce: lc.enforce ?? "off",
+          states: optionsOf(lc.field).map((o) => ({ value: o.value, label: optionLabel(o), tone: o.tone, category: lc.categories[o.value], retired: Boolean(o.retired) })),
+          categoryOf: (state: unknown): RecordCategory | null => (typeof state === "string" ? lc.categories[view.canonical(lc.field, state)] ?? null : null),
+          /**
+           * The moves from `state` the transitions list allows for `role` (all when the list is empty), each with what it
+           * needs. Whether a move outside them goes through is `enforce`'s ("off", "warn", "strict"): enforced by the
+           * write path, not here.
+           */
+          movesFrom: (state: string | null, role?: RecordRole): { to: string; transition: RecordTransition | null }[] => {
+            const states = optionsOf(lc.field).filter((o) => !o.retired).map((o) => o.value);
+            const ts = lc.transitions ?? [];
+            if (!ts.length) return states.filter((s) => s !== state).map((to) => ({ to, transition: null }));
+            return ts
+              .filter((t) => t.from === "*" || (state !== null && t.from.includes(state)))
+              .filter((t) => t.to !== state && (!role || !t.roles || t.roles.includes(role)))
+              .map((t) => ({ to: t.to, transition: t }));
+          },
+        }
+      : null,
+    /** The category of a row (its lifecycle state's), or null when the area has no lifecycle. */
+    categoryOfRow: (row: AreaRow): RecordCategory | null => (lc ? view.lifecycle!.categoryOf(view.get(row, lc.field)) : null),
+    /** Is a row finished (its state's category is done or cancelled)? */
+    closed: (row: AreaRow): boolean => {
+      const c = view.categoryOfRow(row);
+      return c === "done" || c === "cancelled";
+    },
+
+    // --- the views -----------------------------------------------------------------------------------------------
+    /** The board: the field it is grouped by and its columns, the choices in order. */
+    board: (() => {
+      const by = area.views?.board?.by ?? lc?.field ?? null;
+      return by ? { by, columns: optionsOf(by).filter((o) => !o.retired).map((o) => ({ key: o.value, label: optionLabel(o), tone: o.tone })), card: area.views?.board?.card ?? {} } : null;
+    })(),
+    /** The table's columns: the definition's list, else every visible field shown in lists. */
+    tableColumns: (): string[] => area.views?.table?.columns ?? fields.filter((f) => !f.hidden && f.show_in_list).map((f) => f.key),
+    sorts: (area.views?.sorts ?? []).map((s) => ({ field: s.field, dir: s.dir ?? "asc", label: s.label ?? field(s.field)?.label ?? s.field, default: Boolean(s.default) })),
+    filters: area.views?.filters ?? [],
+    groupBy: area.views?.group_by ?? [],
+    /** The create form's fields (the definition's, else the required ones), and its button. */
+    createFields: (): RecordField[] => {
+      const keys = area.views?.create?.fields ?? fields.filter((f) => f.required === true && !f.hidden).map((f) => f.key);
+      return keys.flatMap((k) => byKey.get(k) ?? []);
+    },
+    submitLabel: area.views?.create?.submit_label ?? `New ${lowerFirst(label.singular)}`,
+    detailSections: area.views?.detail?.sections ?? [],
+    relations: area.relations ?? {},
+  };
+  return view;
+}
+
+export type AreaView = ReturnType<typeof areaView>;
+
+/**
+ * The area as a short card for the model (agent/lib/deployment-briefing.ts, the tool descriptions): what a record is,
+ * its own fields with their types and which are required, the states in order with what moving into each needs, and
+ * the rules. Only for an area the deployment redefines; null otherwise, so the default model surface is unchanged.
+ */
+export function describeArea(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS): string | null {
+  const v = areaView(id, areas);
+  if (!v.redefined || !v.enabled) return null;
+  const a = v.area;
+  const lines: string[] = [];
+  lines.push(`- ${/^[aeiou]/i.test(v.noun) ? "An" : "A"} **${v.noun}** (plural: ${v.nouns})${a.description ? `: ${a.description}` : "."}`);
+  const own = v.ownFields.filter((f) => !f.hidden);
+  if (own.length) lines.push(`  Its own fields (in \`custom\`): ${own.map((f) => describeField(f)).join("; ")}.`);
+  if (v.lifecycle) {
+    const states = v.lifecycle.states.filter((s) => !s.retired).map((s) => {
+      const into = (a.lifecycle?.transitions ?? []).filter((t) => t.to === s.value);
+      const needs = [...new Set(into.flatMap((t) => t.requires ?? []))].map((k) => `"${v.label(k)}"`);
+      const roles = [...new Set(into.flatMap((t) => t.roles ?? []))];
+      const extra = [roles.length ? `${roles.join("/")} only` : "", needs.length ? `needs ${needs.join(", ")}` : ""].filter(Boolean).join("; ");
+      return `"${s.label}"${extra ? ` (${extra})` : ""}`;
+    });
+    lines.push(`  ${v.lifecycle.own ? `\`custom.${v.lifecycle.field}\`` : `\`${v.lifecycle.field}\``} moves through: ${states.join(" → ")}.`);
+  }
+  const computed = v.fields.filter((f) => f.computed && !f.hidden);
+  if (computed.length) lines.push(`  Computed, never set: ${computed.map((f) => `\`${f.key}\``).join(", ")}.`);
+  if (a.agent?.describe) lines.push(`  ${a.agent.describe}`);
+  for (const r of a.agent?.rules ?? []) lines.push(`  - ${r}`);
+  return lines.join("\n");
+}
+
+/** `key` ("Label", type, required?, choices): how a tool description and the briefing name a field. */
+export function describeField(f: RecordField): string {
+  const choices = (f.options ?? []).filter((o) => !o.retired);
+  const type =
+    f.type === "pick_list" ? `one of ${choices.map((o) => JSON.stringify(o.value) + (o.label && o.label !== o.value ? ` (${JSON.stringify(o.label)})` : "")).join(" | ")}`
+    : f.type === "multi_pick" ? `a list of ${choices.map((o) => JSON.stringify(o.value)).join(" | ")}`
+    : f.type === "date" ? "date yyyy-mm-dd"
+    : f.type === "datetime" ? "ISO date-time"
+    : f.type === "percent" ? "percent 0-100"
+    : f.type === "money" ? `amount${f.currency ? ` in ${f.currency}` : ""}`
+    : f.type === "link" ? "http(s) link"
+    : f.type === "person" ? (f.many ? "a list of emails" : "an email")
+    : f.type === "file" ? (f.many ? "a list of data-room paths" : "a data-room path")
+    : f.type.replace("_", " ");
+  return `\`${f.key}\` ("${f.label ?? f.key}", ${type}${f.required === true ? ", required" : f.required === "on_create" ? ", required when created" : ""})`;
+}

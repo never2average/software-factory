@@ -1,0 +1,1218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "record-area.schema.json",
+  "$comment": "One record area of a deployment profile (`records.areas.<area id>`, docs/DEPLOYMENT_PROFILE.md \"records\"). scripts/gen-deployment-profile.mjs checks every area against this first (scripts/lib/json-schema.mjs), then runs the semantic checks in scripts/lib/record-areas.mjs (field bindings, options, the lifecycle's reachability, view references, limits). A profile that fails either is not built.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$comment": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "kind": {
+      "enum": [
+        "record",
+        "task",
+        "period"
+      ]
+    },
+    "storage": {
+      "enum": [
+        "deployments",
+        "implementation",
+        "todos",
+        "cycles"
+      ]
+    },
+    "label": {
+      "$ref": "#/$defs/pair"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "icon": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]{1,40}$"
+    },
+    "nav": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
+      }
+    },
+    "columns": {
+      "enum": [
+        "all",
+        "listed"
+      ]
+    },
+    "id": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "placeholder": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "generate": {
+          "type": "string",
+          "pattern": "^(seq|slug):"
+        }
+      }
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/field"
+      }
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/lifecycle"
+    },
+    "relations": {
+      "$ref": "#/$defs/relations"
+    },
+    "views": {
+      "$ref": "#/$defs/views"
+    },
+    "permissions": {
+      "$ref": "#/$defs/permissions"
+    },
+    "reminders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reminder"
+      },
+      "maxItems": 8
+    },
+    "recurrence": {
+      "$ref": "#/$defs/recurrence"
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/metric"
+      },
+      "maxItems": 12
+    },
+    "agent": {
+      "$ref": "#/$defs/agent"
+    },
+    "io": {
+      "$ref": "#/$defs/io"
+    },
+    "period": {
+      "$ref": "#/$defs/period"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/target"
+      },
+      "maxItems": 8
+    }
+  },
+  "$defs": {
+    "pair": {
+      "type": "object",
+      "required": [
+        "singular",
+        "plural"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "singular": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "plural": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "column": {
+          "type": "boolean"
+        },
+        "alias": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,39}$"
+        },
+        "type": {
+          "enum": [
+            "text",
+            "long_text",
+            "integer",
+            "number",
+            "percent",
+            "money",
+            "date",
+            "datetime",
+            "boolean",
+            "email",
+            "link",
+            "pick_list",
+            "multi_pick",
+            "person",
+            "record",
+            "file",
+            "tags"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "short_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "help": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "placeholder": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "required": {
+          "enum": [
+            true,
+            false,
+            "on_create"
+          ]
+        },
+        "default": {},
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/option"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "legacy_values": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "renamed_from": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,39}$"
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "max_length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "many": {
+          "type": "boolean"
+        },
+        "record": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "area": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "folder": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "computed": {
+          "$ref": "#/$defs/computed"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "fixed": {},
+        "index": {
+          "enum": [
+            "none",
+            "filter",
+            "sort",
+            "unique"
+          ]
+        },
+        "search": {
+          "type": "boolean"
+        },
+        "show_in_list": {
+          "type": "boolean"
+        },
+        "pii": {
+          "type": "boolean"
+        }
+      }
+    },
+    "option": {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "tone": {
+          "enum": [
+            "slate",
+            "sky",
+            "blue",
+            "green",
+            "amber",
+            "orange",
+            "red",
+            "violet",
+            "muted"
+          ]
+        },
+        "attention": {
+          "type": "boolean"
+        },
+        "retired": {
+          "type": "boolean"
+        }
+      }
+    },
+    "computed": {
+      "type": "object",
+      "required": [
+        "when"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": [
+              "if",
+              "then"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "if": {
+                "$ref": "#/$defs/where"
+              },
+              "then": {}
+            }
+          }
+        },
+        "else": {}
+      }
+    },
+    "where": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "eq": {},
+              "ne": {},
+              "in": {
+                "type": "array"
+              },
+              "not_in": {
+                "type": "array"
+              },
+              "lt": {},
+              "lte": {},
+              "gt": {},
+              "gte": {},
+              "set": {
+                "type": "boolean"
+              },
+              "category": {}
+            }
+          }
+        ]
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": [
+        "field"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "initial": {
+          "type": "string",
+          "minLength": 1
+        },
+        "categories": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "backlog",
+              "open",
+              "active",
+              "blocked",
+              "done",
+              "cancelled"
+            ]
+          }
+        },
+        "enforce": {
+          "enum": [
+            "off",
+            "warn",
+            "strict"
+          ]
+        },
+        "transitions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "anyOf": [
+                  {
+                    "const": "*"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1
+                  }
+                ]
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "owner",
+                    "admin",
+                    "engineer",
+                    "member"
+                  ]
+                }
+              },
+              "requires": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "requires_comment": {
+                "type": "boolean"
+              },
+              "not_by": {
+                "type": "string"
+              },
+              "set": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "relations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tasks": {
+          "type": "boolean"
+        },
+        "periods": {
+          "type": "boolean"
+        },
+        "subtasks": {
+          "type": "boolean"
+        },
+        "group": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "label": {
+              "$ref": "#/$defs/pair"
+            }
+          }
+        }
+      }
+    },
+    "views": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "enum": [
+            "table",
+            "board",
+            "timeline",
+            "calendar"
+          ]
+        },
+        "available": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "table",
+              "board",
+              "timeline",
+              "calendar"
+            ]
+          },
+          "minItems": 1
+        },
+        "table": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "page_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            }
+          }
+        },
+        "board": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "by": {
+              "type": "string"
+            },
+            "card": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "meta": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "badge": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "timeline": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "start": {
+              "type": "string"
+            },
+            "end": {
+              "type": "string"
+            }
+          }
+        },
+        "calendar": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "date": {
+              "type": "string"
+            }
+          }
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "scope": {
+                "enum": [
+                  "people"
+                ]
+              },
+              "presets": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "overdue",
+                    "due_7d",
+                    "due_30d",
+                    "this_period",
+                    "mine",
+                    "unassigned"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "sorts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "field"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "dir": {
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              },
+              "default": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              }
+            }
+          }
+        },
+        "group_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "detail": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "fields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "related": {
+                    "enum": [
+                      "tasks",
+                      "files",
+                      "activity",
+                      "comments",
+                      "subtasks"
+                    ]
+                  }
+                }
+              }
+            },
+            "append": {
+              "type": "boolean"
+            }
+          }
+        },
+        "create": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "submit_label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "append": {
+              "type": "boolean"
+            }
+          }
+        },
+        "empty": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "loading": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/roles"
+        },
+        "create": {
+          "$ref": "#/$defs/roles"
+        },
+        "update": {
+          "$ref": "#/$defs/roles"
+        },
+        "delete": {
+          "$ref": "#/$defs/roles"
+        },
+        "own": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "may": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "update",
+                  "delete",
+                  "transition"
+                ]
+              }
+            }
+          }
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "update": {
+                "$ref": "#/$defs/roles"
+              }
+            }
+          }
+        }
+      }
+    },
+    "roles": {
+      "anyOf": [
+        {
+          "const": "*"
+        },
+        {
+          "type": "array",
+          "items": {
+            "enum": [
+              "owner",
+              "admin",
+              "engineer",
+              "member"
+            ]
+          }
+        }
+      ]
+    },
+    "reminder": {
+      "type": "object",
+      "required": [
+        "id",
+        "date",
+        "notify"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]{1,40}$"
+        },
+        "date": {
+          "type": "string"
+        },
+        "before_days": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          }
+        },
+        "after_days": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          }
+        },
+        "unless": {
+          "$ref": "#/$defs/where"
+        },
+        "notify": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "inbox",
+              "push",
+              "email"
+            ]
+          }
+        }
+      }
+    },
+    "recurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "on": {
+          "enum": [
+            "done",
+            "schedule"
+          ]
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "every": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^\\+[0-9]+[dwMy]$"
+          }
+        },
+        "copy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]{1,40}$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "count": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "where": {
+              "$ref": "#/$defs/where"
+            }
+          }
+        },
+        "ratio": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "num": {
+              "$ref": "#/$defs/where"
+            },
+            "den": {
+              "$ref": "#/$defs/where"
+            }
+          }
+        },
+        "sum": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "where": {
+              "$ref": "#/$defs/where"
+            }
+          }
+        },
+        "attention": {
+          "type": "boolean"
+        },
+        "format": {
+          "enum": [
+            "count",
+            "percent",
+            "money"
+          ]
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "read": {
+              "type": "boolean"
+            },
+            "write": {
+              "type": "boolean"
+            },
+            "delete": {
+              "type": "boolean"
+            }
+          }
+        },
+        "describe": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "maxItems": 8
+        },
+        "examples": {
+          "type": "array",
+          "maxItems": 3
+        }
+      }
+    },
+    "io": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "export": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "csv": {
+              "type": "boolean"
+            },
+            "workbook_sheet": {
+              "type": "boolean"
+            }
+          }
+        },
+        "import": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "csv": {
+              "type": "boolean"
+            },
+            "match_on": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "off",
+            "team",
+            "individual"
+          ]
+        },
+        "list_label": {
+          "$ref": "#/$defs/pair"
+        },
+        "item_label": {
+          "$ref": "#/$defs/pair"
+        },
+        "length_days": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "auto_rollover": {
+          "type": "boolean"
+        },
+        "length_days_range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "workspace_can_set_length": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "starts_on": {
+          "enum": [
+            "any",
+            "monday",
+            "sunday",
+            "first_of_month"
+          ]
+        },
+        "time_zone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": [
+        "key",
+        "label",
+        "measure"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,39}$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "per": {
+          "enum": [
+            "team",
+            "person"
+          ]
+        },
+        "measure": {
+          "type": "object",
+          "required": [
+            "area"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "area": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "where": {
+              "$ref": "#/$defs/where"
+            },
+            "person": {
+              "type": "string"
+            }
+          }
+        },
+        "goal": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "count",
+                "percent_of"
+              ]
+            },
+            "of": {
+              "type": "object"
+            },
+            "default": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    }
+  }
+}

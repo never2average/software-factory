@@ -1,0 +1,491 @@
+{
+  "$comment": "Worked example (c) of the record-areas design: a task redefined as a compliance obligation (records.areas.tasks): its own states in custom.state mapped to categories (the stored status follows them), own fields of the new types (file, person), recurrence, reminders on inbox and push, a review lifecycle under warn. A test fixture; no deployment ships it.",
+  "records": {
+    "areas": {
+      "tasks": {
+        "label": {
+          "singular": "obligation",
+          "plural": "obligations"
+        },
+        "description": "Something the company must do for a regulator by a date, with the evidence that it was done.",
+        "icon": "shield-check",
+        "nav": {
+          "order": 10,
+          "label": "Obligations"
+        },
+        "fields": {
+          "title": {
+            "order": 10,
+            "label": "Obligation",
+            "max_length": 300
+          },
+          "notes": {
+            "order": 20,
+            "label": "What is required"
+          },
+          "dueAt": {
+            "order": 30,
+            "label": "Due",
+            "required": true,
+            "index": "sort"
+          },
+          "assignee": {
+            "order": 40,
+            "type": "person",
+            "label": "Owner",
+            "required": true,
+            "default": "{me}"
+          },
+          "priority": {
+            "order": 50,
+            "label": "Criticality",
+            "options": [
+              {
+                "value": "high",
+                "label": "Critical",
+                "tone": "red"
+              },
+              {
+                "value": "normal",
+                "label": "Standard",
+                "tone": "slate"
+              },
+              {
+                "value": "low",
+                "label": "Low",
+                "tone": "sky"
+              }
+            ]
+          },
+          "state": {
+            "order": 60,
+            "type": "pick_list",
+            "label": "Status",
+            "index": "filter",
+            "options": [
+              {
+                "value": "not_started",
+                "label": "Not started",
+                "tone": "slate"
+              },
+              {
+                "value": "in_progress",
+                "label": "In progress",
+                "tone": "amber"
+              },
+              {
+                "value": "evidence_submitted",
+                "label": "Evidence submitted",
+                "tone": "sky"
+              },
+              {
+                "value": "under_review",
+                "label": "Under review",
+                "tone": "violet"
+              },
+              {
+                "value": "closed",
+                "label": "Complied",
+                "tone": "green"
+              },
+              {
+                "value": "not_applicable",
+                "label": "Not applicable",
+                "tone": "muted"
+              }
+            ]
+          },
+          "frequency": {
+            "order": 70,
+            "type": "pick_list",
+            "label": "Frequency",
+            "options": [
+              {
+                "value": "One-time"
+              },
+              {
+                "value": "Monthly"
+              },
+              {
+                "value": "Quarterly"
+              },
+              {
+                "value": "Half-yearly"
+              },
+              {
+                "value": "Annual"
+              },
+              {
+                "value": "Event-based"
+              }
+            ]
+          },
+          "obligation_ref": {
+            "order": 80,
+            "type": "text",
+            "label": "Obligation id",
+            "pattern": "^OBL-[0-9]{4,}$",
+            "index": "filter",
+            "help": "The obligation's id in the obligations register."
+          },
+          "clause": {
+            "order": 90,
+            "type": "link",
+            "label": "Circular clause"
+          },
+          "department": {
+            "order": 100,
+            "type": "pick_list",
+            "label": "Department",
+            "index": "filter",
+            "options": [
+              {
+                "value": "Compliance"
+              },
+              {
+                "value": "Finance"
+              },
+              {
+                "value": "Operations"
+              },
+              {
+                "value": "Risk"
+              },
+              {
+                "value": "Legal"
+              },
+              {
+                "value": "IT"
+              },
+              {
+                "value": "HR"
+              }
+            ]
+          },
+          "evidence": {
+            "order": 110,
+            "type": "file",
+            "many": true,
+            "label": "Evidence",
+            "folder": "{folder:platform}/obligations/evidence/{id}/"
+          },
+          "reviewer": {
+            "order": 120,
+            "type": "person",
+            "label": "Reviewer"
+          }
+        },
+        "lifecycle": {
+          "field": "state",
+          "initial": "not_started",
+          "enforce": "warn",
+          "categories": {
+            "not_started": "open",
+            "in_progress": "active",
+            "evidence_submitted": "active",
+            "under_review": "active",
+            "closed": "done",
+            "not_applicable": "cancelled"
+          },
+          "transitions": [
+            {
+              "from": [
+                "not_started"
+              ],
+              "to": "in_progress",
+              "label": "Start"
+            },
+            {
+              "from": [
+                "not_started",
+                "in_progress"
+              ],
+              "to": "evidence_submitted",
+              "label": "Submit evidence",
+              "requires": [
+                "evidence"
+              ]
+            },
+            {
+              "from": [
+                "evidence_submitted"
+              ],
+              "to": "under_review",
+              "label": "Take for review",
+              "set": {
+                "reviewer": "{me}"
+              },
+              "not_by": "assignee"
+            },
+            {
+              "from": [
+                "under_review"
+              ],
+              "to": "closed",
+              "label": "Mark complied",
+              "roles": [
+                "owner",
+                "admin"
+              ],
+              "not_by": "assignee"
+            },
+            {
+              "from": [
+                "under_review",
+                "evidence_submitted"
+              ],
+              "to": "in_progress",
+              "label": "Ask for more evidence",
+              "requires_comment": true
+            },
+            {
+              "from": [
+                "not_started",
+                "in_progress"
+              ],
+              "to": "not_applicable",
+              "label": "Not applicable",
+              "roles": [
+                "owner",
+                "admin"
+              ],
+              "requires_comment": true
+            }
+          ]
+        },
+        "relations": {
+          "containers": [
+            "implementations",
+            "deployments"
+          ],
+          "links": [
+            "customer",
+            "ticket"
+          ],
+          "periods": true,
+          "subtasks": true
+        },
+        "recurrence": {
+          "field": "frequency",
+          "on": "done",
+          "anchor": "dueAt",
+          "every": {
+            "Monthly": "+1M",
+            "Quarterly": "+3M",
+            "Half-yearly": "+6M",
+            "Annual": "+1y"
+          },
+          "copy": [
+            "title",
+            "notes",
+            "assignee",
+            "priority",
+            "frequency",
+            "obligation_ref",
+            "clause",
+            "department",
+            "containerType",
+            "containerId",
+            "containerLabel",
+            "linkType",
+            "linkId",
+            "linkLabel"
+          ]
+        },
+        "reminders": [
+          {
+            "id": "due-soon",
+            "date": "dueAt",
+            "before_days": [
+              7,
+              1
+            ],
+            "unless": {
+              "state": {
+                "category": [
+                  "done",
+                  "cancelled"
+                ]
+              }
+            },
+            "notify": [
+              "assignee"
+            ],
+            "channels": [
+              "inbox",
+              "push"
+            ]
+          },
+          {
+            "id": "overdue",
+            "date": "dueAt",
+            "after_days": [
+              0,
+              3,
+              7
+            ],
+            "unless": {
+              "state": {
+                "category": [
+                  "done",
+                  "cancelled"
+                ]
+              }
+            },
+            "notify": [
+              "assignee",
+              "{manager_of:assignee}"
+            ],
+            "channels": [
+              "inbox",
+              "push"
+            ]
+          }
+        ],
+        "views": {
+          "default": "board",
+          "available": [
+            "board",
+            "table",
+            "calendar"
+          ],
+          "board": {
+            "by": "state",
+            "card": {
+              "title": "title",
+              "meta": [
+                "dueAt",
+                "assignee",
+                "department"
+              ],
+              "badge": "priority"
+            }
+          },
+          "table": {
+            "columns": [
+              "title",
+              "state",
+              "dueAt",
+              "frequency",
+              "department",
+              "assignee",
+              "obligation_ref"
+            ]
+          },
+          "calendar": {
+            "date": "dueAt"
+          },
+          "filters": [
+            {
+              "field": "state"
+            },
+            {
+              "field": "department"
+            },
+            {
+              "field": "frequency"
+            },
+            {
+              "field": "dueAt",
+              "presets": [
+                "overdue",
+                "due_7d",
+                "this_period"
+              ]
+            },
+            {
+              "scope": "people",
+              "field": "assignee"
+            }
+          ],
+          "sorts": [
+            {
+              "field": "dueAt",
+              "dir": "asc",
+              "default": true
+            },
+            {
+              "field": "priority"
+            },
+            {
+              "field": "title"
+            }
+          ],
+          "group_by": [
+            "department",
+            "containerId"
+          ],
+          "create": {
+            "fields": [
+              "title",
+              "dueAt",
+              "assignee",
+              "frequency",
+              "department",
+              "obligation_ref",
+              "clause"
+            ],
+            "submit_label": "Add obligation"
+          }
+        },
+        "permissions": {
+          "read": "*",
+          "create": "*",
+          "update": "*",
+          "delete": [
+            "owner",
+            "admin"
+          ],
+          "own": {
+            "field": "assignee",
+            "may": [
+              "update",
+              "transition"
+            ]
+          }
+        },
+        "metrics": [
+          {
+            "id": "overdue",
+            "label": "Overdue obligations",
+            "count": {
+              "where": {
+                "dueAt": {
+                  "lt": "{today}"
+                },
+                "state": {
+                  "category": [
+                    "open",
+                    "active"
+                  ]
+                }
+              }
+            },
+            "attention": true
+          },
+          {
+            "id": "awaiting-review",
+            "label": "Evidence awaiting review",
+            "count": {
+              "where": {
+                "state": "evidence_submitted"
+              }
+            }
+          }
+        ],
+        "agent": {
+          "tools": {
+            "read": true,
+            "write": true,
+            "delete": false
+          },
+          "describe": "An obligation is closed only on evidence. Draft obligations from a circular with the clause link and the obligation id; never mark one complied yourself.",
+          "rules": [
+            "Set the due date on every obligation.",
+            "Attach evidence by its data-room path, then move it to Evidence submitted."
+          ]
+        }
+      }
+    }
+  }
+}

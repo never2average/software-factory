@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CUSTOM_KEY, CUSTOM_MAX_BYTES } from "./custom.ts";
 
 const qualifiers = {
   department: z.string().trim().min(1).max(120).optional(),
@@ -76,6 +77,15 @@ export const definitionPatchSchema = definitionCreateSchema.partial().refine((va
 const containerType = z.enum(["deployment", "implementation"]);
 const linkType = z.enum(["ticket", "customer", "app", "cron", "workflow", "chat"]);
 const taskStatus = z.enum(["backlog", "open", "in_progress", "blocked", "done", "cancelled"]);
+/**
+ * A task's own fields, by key (lib/custom.ts): sent by a deployment whose tasks declare them, already checked against
+ * its definition by the app. null clears a key on an update.
+ */
+const custom = z
+  .record(z.string().regex(CUSTOM_KEY, "an own field's key is snake_case"), z.unknown())
+  .refine((v) => JSON.stringify(v).length <= CUSTOM_MAX_BYTES, { message: `custom is larger than ${CUSTOM_MAX_BYTES} bytes` });
+/** "category": `status` is the one the deployment's own task state maps to; stored as sent (lib/custom.ts). */
+const statusFrom = z.literal("category");
 
 export const taskCreateSchema = z.strictObject({
   title: z.string().trim().min(1).max(300),
@@ -93,7 +103,9 @@ export const taskCreateSchema = z.strictObject({
   cycleId: z.string().uuid().nullable().optional(),
   parentId: z.string().uuid().nullable().optional(),
   createdBy: z.string().optional(),
-});
+  custom: custom.optional(),
+  statusFrom: statusFrom.optional(),
+}).refine((v) => !v.statusFrom || v.status, { message: "statusFrom needs the status", path: ["status"] });
 
 export const taskPatchSchema = z.strictObject({
   title: z.string().trim().min(1).max(300).optional(),
@@ -116,7 +128,9 @@ export const taskPatchSchema = z.strictObject({
   actor: z.string().optional(),
   reason: z.string().max(2000).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
-});
+  custom: custom.optional(),
+  statusFrom: statusFrom.optional(),
+}).refine((v) => !v.statusFrom || v.status, { message: "statusFrom needs the status", path: ["status"] });
 
 export type TaskCreateInput = z.infer<typeof taskCreateSchema>;
 export type TaskPatchInput = z.infer<typeof taskPatchSchema>;

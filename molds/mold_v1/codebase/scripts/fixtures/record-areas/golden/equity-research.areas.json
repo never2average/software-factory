@@ -1,0 +1,1923 @@
+{
+ "deployments": {
+  "enabled": true,
+  "kind": "record",
+  "storage": "deployments",
+  "columns": "all",
+  "fields": {
+   "deploymentId": {
+    "order": 10010,
+    "type": "text",
+    "required": true,
+    "placeholder": "Q2FY26-results",
+    "key": "deploymentId",
+    "column": true
+   },
+   "environment": {
+    "order": 10020,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "prod",
+      "label": "Production"
+     },
+     {
+      "value": "staging",
+      "label": "Staging"
+     },
+     {
+      "value": "uat",
+      "label": "UAT"
+     },
+     {
+      "value": "sandbox",
+      "label": "Sandbox"
+     },
+     {
+      "value": "dev",
+      "label": "Development"
+     }
+    ],
+    "label": "Environment",
+    "hidden": true,
+    "fixed": "prod",
+    "key": "environment",
+    "column": true
+   },
+   "region": {
+    "order": 10030,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "us-east-1"
+     },
+     {
+      "value": "us-west-2"
+     },
+     {
+      "value": "eu-west-1"
+     },
+     {
+      "value": "eu-central-1"
+     },
+     {
+      "value": "ap-southeast-1"
+     },
+     {
+      "value": "ap-south-1"
+     },
+     {
+      "value": "ca-central-1"
+     },
+     {
+      "value": "customer-vpc"
+     },
+     {
+      "value": "on-prem"
+     }
+    ],
+    "label": "Region",
+    "placeholder": "ap-south-1",
+    "hidden": true,
+    "fixed": "ap-south-1",
+    "key": "region",
+    "column": true
+   },
+   "cloudProvider": {
+    "order": 10040,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "aws"
+     },
+     {
+      "value": "gcp"
+     },
+     {
+      "value": "azure"
+     },
+     {
+      "value": "vercel"
+     },
+     {
+      "value": "customer_cloud"
+     },
+     {
+      "value": "on_prem"
+     }
+    ],
+    "hidden": true,
+    "key": "cloudProvider",
+    "column": true
+   },
+   "runtime": {
+    "order": 10050,
+    "type": "pick_list",
+    "label": "Report type",
+    "short_label": "Type",
+    "options": [
+     {
+      "value": "Initiation"
+     },
+     {
+      "value": "Quarterly results update"
+     },
+     {
+      "value": "Annual report review"
+     },
+     {
+      "value": "Event / rating update"
+     },
+     {
+      "value": "Sector note"
+     }
+    ],
+    "key": "runtime",
+    "column": true
+   },
+   "deploymentStrategy": {
+    "order": 10060,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "rolling"
+     },
+     {
+      "value": "blue_green"
+     },
+     {
+      "value": "canary"
+     },
+     {
+      "value": "preview"
+     },
+     {
+      "value": "manual"
+     }
+    ],
+    "hidden": true,
+    "key": "deploymentStrategy",
+    "column": true
+   },
+   "deployedVersion": {
+    "order": 10070,
+    "type": "text",
+    "required": true,
+    "label": "Period / basis",
+    "short_label": "Period",
+    "placeholder": "Q2 FY26 · standalone · unaudited",
+    "key": "deployedVersion",
+    "column": true
+   },
+   "releaseId": {
+    "order": 10080,
+    "type": "text",
+    "key": "releaseId",
+    "column": true
+   },
+   "releaseChannel": {
+    "order": 10090,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "stable"
+     },
+     {
+      "value": "rc"
+     },
+     {
+      "value": "beta"
+     },
+     {
+      "value": "hotfix"
+     },
+     {
+      "value": "preview"
+     }
+    ],
+    "key": "releaseChannel",
+    "column": true
+   },
+   "buildSha": {
+    "order": 10100,
+    "type": "text",
+    "hidden": true,
+    "key": "buildSha",
+    "column": true
+   },
+   "runtimeVersion": {
+    "order": 10110,
+    "type": "text",
+    "key": "runtimeVersion",
+    "column": true
+   },
+   "configVersion": {
+    "order": 10120,
+    "type": "text",
+    "key": "configVersion",
+    "column": true
+   },
+   "approvedByEmail": {
+    "order": 10130,
+    "type": "text",
+    "label": "Reviewer",
+    "placeholder": "name@company.com",
+    "key": "approvedByEmail",
+    "column": true
+   },
+   "approvedAt": {
+    "order": 10140,
+    "type": "text",
+    "key": "approvedAt",
+    "column": true
+   },
+   "modelRouteId": {
+    "order": 10150,
+    "type": "text",
+    "hidden": true,
+    "key": "modelRouteId",
+    "column": true
+   },
+   "modelRoutingMode": {
+    "order": 10160,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "primary_only"
+     },
+     {
+      "value": "fallback"
+     },
+     {
+      "value": "traffic_split"
+     },
+     {
+      "value": "shadow"
+     },
+     {
+      "value": "disabled"
+     }
+    ],
+    "hidden": true,
+    "key": "modelRoutingMode",
+    "column": true
+   },
+   "primaryModelRef": {
+    "order": 10170,
+    "type": "text",
+    "hidden": true,
+    "key": "primaryModelRef",
+    "column": true
+   },
+   "primaryModelVersion": {
+    "order": 10180,
+    "type": "text",
+    "hidden": true,
+    "key": "primaryModelVersion",
+    "column": true
+   },
+   "fallbackModelRef": {
+    "order": 10190,
+    "type": "text",
+    "hidden": true,
+    "key": "fallbackModelRef",
+    "column": true
+   },
+   "fallbackModelVersion": {
+    "order": 10200,
+    "type": "text",
+    "hidden": true,
+    "key": "fallbackModelVersion",
+    "column": true
+   },
+   "modelTrafficPrimaryPct": {
+    "order": 10210,
+    "type": "percent",
+    "hidden": true,
+    "key": "modelTrafficPrimaryPct",
+    "column": true
+   },
+   "lastDeployAt": {
+    "order": 10220,
+    "type": "text",
+    "label": "Results date",
+    "placeholder": "2025-10-24",
+    "key": "lastDeployAt",
+    "column": true
+   },
+   "releaseStatus": {
+    "order": 10230,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "deployed",
+      "label": "Published"
+     },
+     {
+      "value": "in-progress",
+      "label": "In progress"
+     },
+     {
+      "value": "pending-approval",
+      "label": "Awaiting review"
+     },
+     {
+      "value": "rolled-back",
+      "label": "Restated"
+     },
+     {
+      "value": "failed",
+      "label": "Failed"
+     }
+    ],
+    "label": "Status",
+    "key": "releaseStatus",
+    "column": true
+   },
+   "rollbackVersion": {
+    "order": 10240,
+    "type": "text",
+    "hidden": true,
+    "key": "rollbackVersion",
+    "column": true
+   },
+   "rollbackStatus": {
+    "order": 10250,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "not_required"
+     },
+     {
+      "value": "ready"
+     },
+     {
+      "value": "in_progress"
+     },
+     {
+      "value": "completed"
+     },
+     {
+      "value": "failed"
+     },
+     {
+      "value": "blocked"
+     }
+    ],
+    "hidden": true,
+    "key": "rollbackStatus",
+    "column": true
+   },
+   "rollbackTestedAt": {
+    "order": 10260,
+    "type": "text",
+    "hidden": true,
+    "key": "rollbackTestedAt",
+    "column": true
+   },
+   "healthStatus": {
+    "order": 10270,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "healthy",
+      "label": "Complete"
+     },
+     {
+      "value": "degraded",
+      "label": "Partial (values carried forward)"
+     },
+     {
+      "value": "down",
+      "label": "Missing"
+     },
+     {
+      "value": "unknown",
+      "label": "Unknown"
+     }
+    ],
+    "label": "Data quality",
+    "key": "healthStatus",
+    "column": true
+   },
+   "uptime30dPct": {
+    "order": 10280,
+    "type": "percent",
+    "hidden": true,
+    "key": "uptime30dPct",
+    "column": true
+   },
+   "errorRate30dPct": {
+    "order": 10290,
+    "type": "percent",
+    "hidden": true,
+    "key": "errorRate30dPct",
+    "column": true
+   },
+   "latencyP95Ms": {
+    "order": 10300,
+    "type": "number",
+    "hidden": true,
+    "key": "latencyP95Ms",
+    "column": true
+   },
+   "latencySloMs": {
+    "order": 10310,
+    "type": "number",
+    "hidden": true,
+    "key": "latencySloMs",
+    "column": true
+   },
+   "requestCount30d": {
+    "order": 10320,
+    "type": "number",
+    "hidden": true,
+    "key": "requestCount30d",
+    "column": true
+   },
+   "llmRequestCount30d": {
+    "order": 10330,
+    "type": "number",
+    "hidden": true,
+    "key": "llmRequestCount30d",
+    "column": true
+   },
+   "inputTokens30d": {
+    "order": 10340,
+    "type": "number",
+    "hidden": true,
+    "key": "inputTokens30d",
+    "column": true
+   },
+   "outputTokens30d": {
+    "order": 10350,
+    "type": "number",
+    "hidden": true,
+    "key": "outputTokens30d",
+    "column": true
+   },
+   "cacheHitRate30dPct": {
+    "order": 10360,
+    "type": "percent",
+    "hidden": true,
+    "key": "cacheHitRate30dPct",
+    "column": true
+   },
+   "guardrailBlockRate30dPct": {
+    "order": 10370,
+    "type": "percent",
+    "hidden": true,
+    "key": "guardrailBlockRate30dPct",
+    "column": true
+   },
+   "cost30dUsd": {
+    "order": 10380,
+    "type": "number",
+    "hidden": true,
+    "key": "cost30dUsd",
+    "column": true
+   },
+   "costBudget30dUsd": {
+    "order": 10390,
+    "type": "number",
+    "hidden": true,
+    "key": "costBudget30dUsd",
+    "column": true
+   },
+   "projectedCost30dUsd": {
+    "order": 10400,
+    "type": "number",
+    "hidden": true,
+    "key": "projectedCost30dUsd",
+    "column": true
+   },
+   "capacityLimitRpm": {
+    "order": 10410,
+    "type": "number",
+    "hidden": true,
+    "key": "capacityLimitRpm",
+    "column": true
+   },
+   "peakRpm30d": {
+    "order": 10420,
+    "type": "number",
+    "hidden": true,
+    "key": "peakRpm30d",
+    "column": true
+   },
+   "utilization30dPct": {
+    "order": 10430,
+    "type": "percent",
+    "hidden": true,
+    "key": "utilization30dPct",
+    "column": true
+   },
+   "liveUrl": {
+    "order": 10440,
+    "type": "text",
+    "label": "Published report link",
+    "placeholder": "https://…",
+    "key": "liveUrl",
+    "column": true
+   },
+   "deployOwnerEmail": {
+    "order": 10450,
+    "type": "text",
+    "label": "Analyst",
+    "placeholder": "name@company.com",
+    "key": "deployOwnerEmail",
+    "column": true
+   },
+   "lastIncidentRef": {
+    "order": 10460,
+    "type": "text",
+    "hidden": true,
+    "key": "lastIncidentRef",
+    "column": true
+   },
+   "activeIncidentRefs": {
+    "order": 10470,
+    "type": "tags",
+    "hidden": true,
+    "key": "activeIncidentRefs",
+    "column": true
+   },
+   "incidentCount30d": {
+    "order": 10480,
+    "type": "number",
+    "hidden": true,
+    "key": "incidentCount30d",
+    "column": true
+   },
+   "dashboardUrl": {
+    "order": 10490,
+    "type": "text",
+    "hidden": true,
+    "key": "dashboardUrl",
+    "column": true
+   },
+   "runbookUrl": {
+    "order": 10500,
+    "type": "text",
+    "hidden": true,
+    "key": "runbookUrl",
+    "column": true
+   },
+   "lastTelemetryAt": {
+    "order": 10510,
+    "type": "text",
+    "hidden": true,
+    "key": "lastTelemetryAt",
+    "column": true
+   },
+   "notes": {
+    "order": 10520,
+    "type": "text",
+    "label": "What changed / needs review",
+    "key": "notes",
+    "column": true
+   },
+   "rating": {
+    "order": 100000,
+    "type": "pick_list",
+    "label": "Rating",
+    "required": true,
+    "options": [
+     {
+      "value": "Buy"
+     },
+     {
+      "value": "Add"
+     },
+     {
+      "value": "Hold"
+     },
+     {
+      "value": "Reduce"
+     },
+     {
+      "value": "Sell"
+     }
+    ],
+    "show_in_list": true,
+    "key": "rating",
+    "column": false
+   },
+   "target_price": {
+    "order": 100010,
+    "type": "number",
+    "label": "Target price",
+    "help": "In the listing currency, per share.",
+    "show_in_list": true,
+    "key": "target_price",
+    "column": false
+   },
+   "data_completeness": {
+    "order": 100020,
+    "type": "percent",
+    "label": "Data completeness",
+    "help": "Share of the KPI table filled from this period's filings.",
+    "show_in_list": true,
+    "key": "data_completeness",
+    "column": false
+   },
+   "publish_date": {
+    "order": 100030,
+    "type": "date",
+    "label": "Publish date",
+    "key": "publish_date",
+    "column": false
+   },
+   "source_link": {
+    "order": 100040,
+    "type": "link",
+    "label": "Source filing",
+    "key": "source_link",
+    "column": false
+   },
+   "thesis": {
+    "order": 100050,
+    "type": "long_text",
+    "label": "Thesis in brief",
+    "key": "thesis",
+    "column": false
+   }
+  },
+  "label": {
+   "singular": "Coverage report",
+   "plural": "Coverage reports"
+  },
+  "description": "One row per company per report: what was published, for which period, and how complete its data is.",
+  "id": {
+   "field": "deploymentId",
+   "label": "Report id"
+  },
+  "views": {
+   "create": {
+    "fields": [
+     "runtime",
+     "lastDeployAt",
+     "approvedByEmail",
+     "notes"
+    ],
+    "append": true
+   },
+   "detail": {
+    "sections": [
+     {
+      "fields": [
+       "runtime",
+       "lastDeployAt",
+       "approvedByEmail",
+       "liveUrl",
+       "notes"
+      ]
+     }
+    ],
+    "append": true
+   }
+  },
+  "relations": {
+   "account": {
+    "required": true
+   },
+   "tasks": true
+  },
+  "redefined": true
+ },
+ "implementations": {
+  "enabled": true,
+  "kind": "record",
+  "storage": "implementation",
+  "columns": "all",
+  "fields": {
+   "rolloutId": {
+    "order": 10010,
+    "type": "text",
+    "label": "Portfolio",
+    "key": "rolloutId",
+    "column": true
+   },
+   "launchScopeSolutionIds": {
+    "order": 10020,
+    "type": "tags",
+    "label": "Solution",
+    "hidden": true,
+    "key": "launchScopeSolutionIds",
+    "column": true
+   },
+   "implementationStage": {
+    "order": 10030,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "Kickoff",
+      "label": "Not started"
+     },
+     {
+      "value": "Discovery",
+      "label": "Sources identified"
+     },
+     {
+      "value": "Configuration",
+      "label": "Filings ingested"
+     },
+     {
+      "value": "Integration",
+      "label": "Presentations ingested"
+     },
+     {
+      "value": "UAT",
+      "label": "KPI table built"
+     },
+     {
+      "value": "Pilot",
+      "label": "Under review"
+     },
+     {
+      "value": "Go-Live",
+      "label": "Published"
+     },
+     {
+      "value": "Stabilization",
+      "label": "First update done"
+     },
+     {
+      "value": "Steady State",
+      "label": "Steady coverage"
+     },
+     {
+      "value": "On Hold",
+      "label": "On hold"
+     }
+    ],
+    "label": "Build-out stage",
+    "short_label": "Stage",
+    "key": "implementationStage",
+    "column": true
+   },
+   "implementationOwnerEmail": {
+    "order": 10040,
+    "type": "text",
+    "label": "Analyst",
+    "placeholder": "name@company.com",
+    "key": "implementationOwnerEmail",
+    "column": true
+   },
+   "rolloutGovernanceStatus": {
+    "order": 10050,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Draft"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Changes Requested"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "rolloutGovernanceStatus",
+    "column": true
+   },
+   "customerLaunchApproverEmail": {
+    "order": 10060,
+    "type": "text",
+    "hidden": true,
+    "key": "customerLaunchApproverEmail",
+    "column": true
+   },
+   "providerLaunchApproverEmail": {
+    "order": 10070,
+    "type": "text",
+    "hidden": true,
+    "key": "providerLaunchApproverEmail",
+    "column": true
+   },
+   "launchDecision": {
+    "order": 10080,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Pending"
+     },
+     {
+      "value": "Go"
+     },
+     {
+      "value": "No-Go"
+     },
+     {
+      "value": "Deferred"
+     }
+    ],
+    "hidden": true,
+    "key": "launchDecision",
+    "column": true
+   },
+   "launchDecisionDate": {
+    "order": 10090,
+    "type": "text",
+    "hidden": true,
+    "key": "launchDecisionDate",
+    "column": true
+   },
+   "implementationProgressPct": {
+    "order": 10100,
+    "type": "percent",
+    "required": true,
+    "label": "Progress %",
+    "short_label": "Progress",
+    "key": "implementationProgressPct",
+    "column": true
+   },
+   "implementationRiskLevel": {
+    "order": 10110,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "Green",
+      "label": "Green"
+     },
+     {
+      "value": "Yellow",
+      "label": "Yellow"
+     },
+     {
+      "value": "Red",
+      "label": "Red"
+     }
+    ],
+    "label": "Risk",
+    "key": "implementationRiskLevel",
+    "column": true
+   },
+   "dataReadinessPct": {
+    "order": 10120,
+    "type": "percent",
+    "label": "Filings completeness",
+    "short_label": "Filings",
+    "key": "dataReadinessPct",
+    "column": true
+   },
+   "integrationReadinessPct": {
+    "order": 10130,
+    "type": "percent",
+    "label": "Presentations & concalls completeness",
+    "short_label": "Decks & calls",
+    "key": "integrationReadinessPct",
+    "column": true
+   },
+   "dataSourceInventoryStatus": {
+    "order": 10140,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Complete"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "dataSourceInventoryStatus",
+    "column": true
+   },
+   "dataAccessStatus": {
+    "order": 10150,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Requested"
+     },
+     {
+      "value": "Requested"
+     },
+     {
+      "value": "Granted"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Revoked"
+     }
+    ],
+    "key": "dataAccessStatus",
+    "column": true
+   },
+   "dataQualityStatus": {
+    "order": 10160,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Assessed"
+     },
+     {
+      "value": "Issues Found"
+     },
+     {
+      "value": "Passed"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "label": "Validation",
+    "key": "dataQualityStatus",
+    "column": true
+   },
+   "connectorProvisioningStatus": {
+    "order": 10170,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Connected"
+     },
+     {
+      "value": "Failing"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "connectorProvisioningStatus",
+    "column": true
+   },
+   "integrationTestStatus": {
+    "order": 10180,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Passed"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "integrationTestStatus",
+    "column": true
+   },
+   "securityReviewStatus": {
+    "order": 10190,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Rejected"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "securityReviewStatus",
+    "column": true
+   },
+   "privacyReviewStatus": {
+    "order": 10200,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Rejected"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "privacyReviewStatus",
+    "column": true
+   },
+   "evalAcceptanceStatus": {
+    "order": 10210,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Accepted"
+     },
+     {
+      "value": "Rejected"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "label": "Reviewer sign-off",
+    "short_label": "Sign-off",
+    "key": "evalAcceptanceStatus",
+    "column": true
+   },
+   "acceptanceEvidenceLink": {
+    "order": 10220,
+    "type": "text",
+    "key": "acceptanceEvidenceLink",
+    "column": true
+   },
+   "uatStatus": {
+    "order": 10230,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Passed"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "label": "Analyst check",
+    "key": "uatStatus",
+    "column": true
+   },
+   "trainingStatus": {
+    "order": 10240,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Scheduled"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Complete"
+     }
+    ],
+    "hidden": true,
+    "key": "trainingStatus",
+    "column": true
+   },
+   "launchCriteria": {
+    "order": 10250,
+    "type": "text",
+    "key": "launchCriteria",
+    "column": true
+   },
+   "launchCriteriaStatus": {
+    "order": 10260,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Defined"
+     },
+     {
+      "value": "Defined"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Met"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "launchCriteriaStatus",
+    "column": true
+   },
+   "goLiveConfidencePct": {
+    "order": 10270,
+    "type": "percent",
+    "key": "goLiveConfidencePct",
+    "column": true
+   },
+   "targetGoLiveDate": {
+    "order": 10280,
+    "type": "text",
+    "label": "Coverage initiation (target)",
+    "short_label": "Initiation",
+    "placeholder": "2025-12-01",
+    "key": "targetGoLiveDate",
+    "column": true
+   },
+   "actualGoLiveDate": {
+    "order": 10290,
+    "type": "text",
+    "label": "Coverage initiation (actual)",
+    "placeholder": "2025-12-01",
+    "key": "actualGoLiveDate",
+    "column": true
+   },
+   "launchWindowStartAt": {
+    "order": 10300,
+    "type": "text",
+    "hidden": true,
+    "key": "launchWindowStartAt",
+    "column": true
+   },
+   "launchWindowEndAt": {
+    "order": 10310,
+    "type": "text",
+    "hidden": true,
+    "key": "launchWindowEndAt",
+    "column": true
+   },
+   "runbookStatus": {
+    "order": 10320,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Draft"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Not Required"
+     }
+    ],
+    "hidden": true,
+    "key": "runbookStatus",
+    "column": true
+   },
+   "runbookLink": {
+    "order": 10330,
+    "type": "text",
+    "hidden": true,
+    "key": "runbookLink",
+    "column": true
+   },
+   "supportHandoffStatus": {
+    "order": 10340,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Scheduled"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Complete"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "supportHandoffStatus",
+    "column": true
+   },
+   "supportOwnerEmail": {
+    "order": 10350,
+    "type": "text",
+    "hidden": true,
+    "key": "supportOwnerEmail",
+    "column": true
+   },
+   "supportChannelRef": {
+    "order": 10360,
+    "type": "text",
+    "hidden": true,
+    "key": "supportChannelRef",
+    "column": true
+   },
+   "billingReadinessStatus": {
+    "order": 10370,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Ready"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "billingReadinessStatus",
+    "column": true
+   },
+   "entitlementProvisioningStatus": {
+    "order": 10380,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Provisioned"
+     },
+     {
+      "value": "Validated"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "hidden": true,
+    "key": "entitlementProvisioningStatus",
+    "column": true
+   },
+   "billingStartDate": {
+    "order": 10390,
+    "type": "text",
+    "hidden": true,
+    "key": "billingStartDate",
+    "column": true
+   },
+   "currentMilestone": {
+    "order": 10400,
+    "type": "text",
+    "label": "Current milestone",
+    "key": "currentMilestone",
+    "column": true
+   },
+   "currentMilestoneDueDate": {
+    "order": 10410,
+    "type": "text",
+    "label": "Milestone due",
+    "placeholder": "2025-11-15",
+    "key": "currentMilestoneDueDate",
+    "column": true
+   },
+   "blocker": {
+    "order": 10420,
+    "type": "text",
+    "label": "Blocker",
+    "key": "blocker",
+    "column": true
+   },
+   "blockerOwner": {
+    "order": 10430,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "Provider",
+      "label": "Us"
+     },
+     {
+      "value": "Customer",
+      "label": "Company"
+     },
+     {
+      "value": "Third-Party Vendor",
+      "label": "Exchange / third party"
+     },
+     {
+      "value": "None",
+      "label": "None"
+     }
+    ],
+    "label": "Blocker owner",
+    "key": "blockerOwner",
+    "column": true
+   },
+   "blockerSeverity": {
+    "order": 10440,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "None"
+     },
+     {
+      "value": "Low"
+     },
+     {
+      "value": "Medium"
+     },
+     {
+      "value": "High"
+     },
+     {
+      "value": "Critical"
+     }
+    ],
+    "key": "blockerSeverity",
+    "column": true
+   },
+   "blockedSinceDate": {
+    "order": 10450,
+    "type": "text",
+    "key": "blockedSinceDate",
+    "column": true
+   },
+   "riskMitigationPlan": {
+    "order": 10460,
+    "type": "text",
+    "key": "riskMitigationPlan",
+    "column": true
+   },
+   "criticalBlockerTicketIds": {
+    "order": 10470,
+    "type": "tags",
+    "key": "criticalBlockerTicketIds",
+    "column": true
+   },
+   "openBlockerCount": {
+    "order": 10480,
+    "type": "number",
+    "key": "openBlockerCount",
+    "column": true
+   },
+   "implementationNextStep": {
+    "order": 10490,
+    "type": "text",
+    "key": "implementationNextStep",
+    "column": true
+   },
+   "implementationLastUpdatedAt": {
+    "order": 10500,
+    "type": "text",
+    "key": "implementationLastUpdatedAt",
+    "column": true
+   },
+   "benchmark": {
+    "order": 100000,
+    "type": "text",
+    "label": "Benchmark",
+    "help": "The index this company's weight is measured against.",
+    "show_in_list": true,
+    "key": "benchmark",
+    "column": false
+   },
+   "next_rebalance": {
+    "order": 100010,
+    "type": "date",
+    "label": "Next rebalance",
+    "key": "next_rebalance",
+    "column": false
+   }
+  },
+  "label": {
+   "singular": "Portfolio entry",
+   "plural": "Portfolio entries"
+  },
+  "description": "Named sets of companies a desk covers, with each company's coverage build-out.",
+  "id": {
+   "label": "Portfolio"
+  },
+  "views": {
+   "detail": {
+    "sections": [
+     {
+      "fields": [
+       "rolloutId",
+       "implementationProgressPct",
+       "dataReadinessPct",
+       "integrationReadinessPct",
+       "dataQualityStatus",
+       "evalAcceptanceStatus",
+       "uatStatus",
+       "currentMilestone",
+       "currentMilestoneDueDate",
+       "blocker",
+       "blockerOwner",
+       "targetGoLiveDate",
+       "actualGoLiveDate"
+      ]
+     }
+    ],
+    "append": true
+   }
+  },
+  "relations": {
+   "account": {
+    "required": true
+   },
+   "tasks": true,
+   "group": {
+    "field": "rolloutId",
+    "label": {
+     "singular": "Portfolio",
+     "plural": "Portfolios"
+    }
+   }
+  },
+  "redefined": true
+ },
+ "tasks": {
+  "enabled": true,
+  "kind": "task",
+  "storage": "todos",
+  "columns": "all",
+  "fields": {
+   "cycleId": {
+    "order": 10010,
+    "type": "record",
+    "key": "cycleId",
+    "column": true
+   },
+   "parentId": {
+    "order": 10020,
+    "type": "record",
+    "key": "parentId",
+    "column": true
+   },
+   "title": {
+    "order": 10,
+    "type": "text",
+    "required": true,
+    "label": "Task",
+    "max_length": 300,
+    "placeholder": "Untitled task",
+    "key": "title",
+    "column": true
+   },
+   "notes": {
+    "order": 20,
+    "type": "long_text",
+    "label": "Notes",
+    "max_length": 4000,
+    "placeholder": "Any detail…",
+    "key": "notes",
+    "column": true
+   },
+   "done": {
+    "order": 10050,
+    "type": "boolean",
+    "key": "done",
+    "column": true
+   },
+   "doneAt": {
+    "order": 10060,
+    "type": "datetime",
+    "key": "doneAt",
+    "column": true
+   },
+   "status": {
+    "order": 30,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "backlog",
+      "label": "Backlog",
+      "tone": "muted"
+     },
+     {
+      "value": "open",
+      "label": "Open",
+      "tone": "sky"
+     },
+     {
+      "value": "in_progress",
+      "label": "In progress",
+      "tone": "amber"
+     },
+     {
+      "value": "blocked",
+      "label": "Blocked",
+      "tone": "red"
+     },
+     {
+      "value": "done",
+      "label": "Done",
+      "tone": "green"
+     },
+     {
+      "value": "cancelled",
+      "label": "Cancelled",
+      "tone": "muted"
+     }
+    ],
+    "label": "Status",
+    "key": "status",
+    "column": true
+   },
+   "priority": {
+    "order": 40,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "low",
+      "label": "Low",
+      "tone": "sky"
+     },
+     {
+      "value": "normal",
+      "label": "Normal",
+      "tone": "slate"
+     },
+     {
+      "value": "high",
+      "label": "High",
+      "tone": "red"
+     }
+    ],
+    "label": "Priority",
+    "key": "priority",
+    "column": true
+   },
+   "dueAt": {
+    "order": 50,
+    "type": "date",
+    "label": "Due",
+    "key": "dueAt",
+    "column": true
+   },
+   "containerType": {
+    "order": 10100,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "deployment"
+     },
+     {
+      "value": "implementation"
+     }
+    ],
+    "key": "containerType",
+    "column": true
+   },
+   "containerId": {
+    "order": 10110,
+    "type": "text",
+    "key": "containerId",
+    "column": true
+   },
+   "containerLabel": {
+    "order": 10120,
+    "type": "text",
+    "key": "containerLabel",
+    "column": true
+   },
+   "linkType": {
+    "order": 10130,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "ticket"
+     },
+     {
+      "value": "customer"
+     },
+     {
+      "value": "app"
+     },
+     {
+      "value": "cron"
+     },
+     {
+      "value": "workflow"
+     },
+     {
+      "value": "chat"
+     }
+    ],
+    "key": "linkType",
+    "column": true
+   },
+   "linkId": {
+    "order": 10140,
+    "type": "text",
+    "key": "linkId",
+    "column": true
+   },
+   "linkLabel": {
+    "order": 10150,
+    "type": "text",
+    "key": "linkLabel",
+    "column": true
+   },
+   "createdBy": {
+    "order": 10160,
+    "type": "text",
+    "key": "createdBy",
+    "column": true
+   },
+   "assignee": {
+    "order": 60,
+    "type": "person",
+    "label": "Assignee",
+    "help": "Blank = the creator.",
+    "placeholder": "name@company.com",
+    "key": "assignee",
+    "column": true
+   },
+   "createdAt": {
+    "order": 10180,
+    "type": "datetime",
+    "key": "createdAt",
+    "column": true
+   },
+   "updatedAt": {
+    "order": 10190,
+    "type": "datetime",
+    "key": "updatedAt",
+    "column": true
+   }
+  },
+  "label": {
+   "singular": "task",
+   "plural": "tasks"
+  },
+  "description": "The team's internal checklist.",
+  "icon": "list-todo",
+  "lifecycle": {
+   "field": "status",
+   "initial": "open",
+   "enforce": "off",
+   "categories": {
+    "backlog": "backlog",
+    "open": "open",
+    "in_progress": "active",
+    "blocked": "blocked",
+    "done": "done",
+    "cancelled": "cancelled"
+   }
+  },
+  "relations": {
+   "containers": [
+    "deployments",
+    "implementations"
+   ],
+   "links": [
+    "ticket",
+    "customer",
+    "app",
+    "cron",
+    "workflow",
+    "chat"
+   ],
+   "periods": true,
+   "subtasks": true
+  },
+  "views": {
+   "default": "board",
+   "available": [
+    "board",
+    "table",
+    "timeline"
+   ],
+   "board": {
+    "by": "status",
+    "card": {
+     "title": "title",
+     "meta": [
+      "dueAt",
+      "assignee"
+     ],
+     "badge": "priority"
+    }
+   },
+   "table": {
+    "columns": [
+     "title",
+     "status",
+     "priority",
+     "cycleId",
+     "dueAt",
+     "assignee"
+    ]
+   },
+   "timeline": {
+    "start": "createdAt",
+    "end": "dueAt"
+   },
+   "sorts": [
+    {
+     "field": "createdAt",
+     "dir": "desc",
+     "default": true,
+     "label": "Newest"
+    },
+    {
+     "field": "priority",
+     "label": "Priority"
+    },
+    {
+     "field": "dueAt",
+     "dir": "asc",
+     "label": "Due date"
+    },
+    {
+     "field": "title",
+     "dir": "asc",
+     "label": "Title"
+    }
+   ],
+   "create": {
+    "fields": [
+     "title"
+    ],
+    "submit_label": "New task"
+   }
+  },
+  "redefined": false
+ },
+ "periods": {
+  "enabled": true,
+  "kind": "period",
+  "storage": "cycles",
+  "columns": "all",
+  "fields": {
+   "name": {
+    "order": 10010,
+    "type": "text",
+    "required": true,
+    "key": "name",
+    "column": true
+   },
+   "startsAt": {
+    "order": 10020,
+    "type": "datetime",
+    "key": "startsAt",
+    "column": true
+   },
+   "endsAt": {
+    "order": 10030,
+    "type": "datetime",
+    "key": "endsAt",
+    "column": true
+   },
+   "state": {
+    "order": 10040,
+    "type": "pick_list",
+    "label": "State",
+    "options": [
+     {
+      "value": "planning",
+      "label": "Planning",
+      "tone": "muted"
+     },
+     {
+      "value": "active",
+      "label": "Active",
+      "tone": "green"
+     },
+     {
+      "value": "closed",
+      "label": "Closed",
+      "tone": "muted"
+     }
+    ],
+    "key": "state",
+    "column": true
+   },
+   "goal": {
+    "order": 10050,
+    "type": "text",
+    "key": "goal",
+    "column": true
+   },
+   "lead": {
+    "order": 10060,
+    "type": "text",
+    "key": "lead",
+    "column": true
+   },
+   "capacity": {
+    "order": 10070,
+    "type": "integer",
+    "key": "capacity",
+    "column": true
+   },
+   "createdBy": {
+    "order": 10080,
+    "type": "text",
+    "key": "createdBy",
+    "column": true
+   },
+   "createdAt": {
+    "order": 10090,
+    "type": "datetime",
+    "key": "createdAt",
+    "column": true
+   },
+   "updatedAt": {
+    "order": 10100,
+    "type": "datetime",
+    "key": "updatedAt",
+    "column": true
+   }
+  },
+  "label": {
+   "singular": "sprint",
+   "plural": "sprints"
+  },
+  "period": {
+   "mode": "team",
+   "list_label": {
+    "singular": "cycle",
+    "plural": "cycles"
+   },
+   "item_label": {
+    "singular": "target",
+    "plural": "targets"
+   },
+   "length_days": null,
+   "auto_rollover": false,
+   "length_days_range": [
+    1,
+    90
+   ],
+   "workspace_can_set_length": true
+  },
+  "lifecycle": {
+   "field": "state",
+   "initial": "planning",
+   "enforce": "off",
+   "categories": {
+    "planning": "open",
+    "active": "active",
+    "closed": "done"
+   }
+  },
+  "redefined": false
+ }
+}

@@ -156,6 +156,7 @@
       "profiles/00-default.json": "The default profile: work_periods.label is where the word lives.",
       "lib/deployment-profile.generated.ts": "Generated from profiles/*.json (the web app's copy of the merged profile).",
       "agent/lib/deployment-profile.generated.ts": "Generated from profiles/*.json (the agent's copy of the merged profile).",
+      "agent/lib/record-areas.generated.ts": "Generated from profiles/*.json (the compiled record areas; the periods area's label is work_periods.label).",
       "setup/deployment.generated.mjs": "Generated from the default profile: the generic coding-agent package's settings (workPeriods.label)."
     },
     "legacy_definition": {

@@ -1022,12 +1022,17 @@ export const todos = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // The task's OWN fields, by key: what a deployment profile's tasks area declares beyond these columns
+    // (records.areas.tasks; agent/lib/record-validate.ts checks every write, the task-workflow service merges it
+    // per key). drizzle/0041_todos_custom.sql.
+    custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
   },
   (t) => [
     index("todos_done_idx").on(t.done),
     index("todos_status_idx").on(t.status),
     index("todos_assignee_idx").on(t.assignee),
     index("todos_container_idx").on(t.containerType, t.containerId),
+    index("todos_custom_idx").using("gin", t.custom.op("jsonb_path_ops")),
   ],
 );
 

@@ -285,6 +285,29 @@ jobs:
         if: always()
         run: npm run test:custom-fields
 
+      # RECORD AREAS (profiles `records.areas`): the four kinds of record as one declarative model, compiled by the profile
+      # generator. An old profile (the default, both live packs' record sections, the docs' and fixtures' examples) emits
+      # exactly the profile it emitted before, byte for byte; the design's worked examples compile; every class of bad
+      # profile fails the build with its file, its path and a sentence; the view model and the one write validator.
+      - name: Record areas (schema, compiler, lowering of the legacy forms, view model, validator)
+        if: always()
+        run: npm run test:record-areas
+
+      # TASKS FROM THE PROFILE'S DEFINITION (records.areas.tasks). With no profile redefining tasks, the root prompt,
+      # its briefing and the todo tools are byte for byte the recorded surface, and the coding agent's task tools are
+      # upstream main's; under the obligation example (a copy) the todo tools and the briefing are built from the
+      # definition and nothing else the model reads moves; a write is prepared as the API and the tools send it.
+      - name: Tasks from the profile's definition (the model's and the coding agent's surface, default and redefined; writes)
+        if: always()
+        run: npm run test:task-area
+
+      # A choice column's values live in one place, the zod enums in agent/lib/customer-schema.ts. The meanings base
+      # code gives a value (defaults, what counts as attention), the Ops API's check and the MCP tools' text are all
+      # read from it; a hand-made copy of each had drifted (mold_v1-251). The routes against a database are below.
+      - name: Record choice values come from the schema (defaults, attention, the API's check, MCP text)
+        if: always()
+        run: npm run test:record-values
+
       # Each deployment publishes its own agent package (docs/AGENT_CLI.md). This builds real ones and proves the
       # safety gate keeps secrets, operator rulebooks and other deployments' addresses out of a public package.
       - name: Per-deployment agent package builds, and its safety gate holds
@@ -545,6 +568,17 @@ jobs:
         if: always()
         run: npm run test:thread-snapshot
 
+      # REOPENING A CHAT, measured and decided. The seam read that checks a saved copy against the stream came back
+      # empty on 10-30% of measured reads because the server's 400 ms parked window raced eve's FIRST byte; the open
+      # then deleted a healthy copy, put the shimmer back over the painted chat and replayed from event zero. These run
+      # the real modules: the replay marker with a slow first chunk (a fake upstream, timed), the seam verdict (empty and
+      # unknown keep the copy; only a stream that positively disagrees replaces it), the one-open-at-a-time guard, and
+      # the per-open record and the telemetry rows it sends (and never throws). tests/chat-open.spec.ts is the browser
+      # half, in ui-behaviour.
+      - name: Chat open (seam verdict, replay marker timing, stale clicks, per-open record)
+        if: always()
+        run: npm run test:chat-replay-stream && npm run test:chat-open-seam && npm run test:chat-open-timing
+
       # WHO MAY REACH A CONVERSATION. Every hole closed here was a
       # correct-looking rule sitting on top of a read that returned nothing —
       # the gate in front of eve's own session routes said "deny when it belongs
@@ -790,6 +824,25 @@ jobs:
       - name: Chat parts in event order (behavioural)
         if: always()
         run: npm run test:chat-event-order
+
+      # The Control Panel's specialist feeds (lib/child-feed.ts). Measured on the live app, every chat open re-read
+      # each specialist's raw stream from event 0 (9.4 MB to over 147 MB), at mount, all at once, one panel update per
+      # read, with no deadline on the 6 of 12 that never answered. Held here on the real reducer: skipping superseded
+      # cumulative deltas and resuming at a cursor fold exactly like a fold of every line from 0 (no tool row twice);
+      # updates are batched; finished specialists wait for the chat and go 3 at a time, a boundary-less stream frees
+      # its slot when quiet; no headers in 10 s is retried once then "unavailable"; a running one is never ended by a
+      # timer; a parked one is read first; a remount or a chat switch reads nothing again; the cache is bounded. The
+      # rendered half is tests/control-panel.spec.ts.
+      - name: Control Panel specialist feeds (fold parity, pool, deadline, cache)
+        if: always()
+        run: npm run test:child-feed
+
+      # The /eve session gate as a stream, the real route against a real streaming agent: a reader that leaves stops
+      # the agent's read (even before any headers, the stalled-specialist case), a POST is still delivered, a read
+      # that asks is brotli and every event is readable before the agent sends the next one, and nothing else changes.
+      - name: Session gate streams (abort upstream, compressed without buffering)
+        if: always()
+        run: npm run test:eve-proxy-stream
 
       # The offline half of the attachment contract. The end-to-end companion
       # (test:attachment-e2e) needs production credentials and a live agent, so
@@ -1427,6 +1480,18 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-areas-db
 
+      # TASKS AS THE DEPLOYMENT DEFINES THEM (records.areas.tasks). The migration (todos.custom, its GIN index, the drift
+      # plan before and after), then the real todo routes and the agent's real todo tools in front of the real
+      # task-workflow engine, under the default definition and under a redefined one (the obligation example): a
+      # refused write is a 400 / a tool error and reaches nothing; a redefined write is normalised, its status follows
+      # its state's category, own fields merge per key; workspace B reaches none of A's tasks or own fields.
+      - name: Tasks from the profile's definition (migration, routes, tools, service), two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:task-area-db
+
       # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
       # (the eve session id) while ownership was checked only on eveSessionId,
       # so a colleague in the same workspace who knew a session id could post
@@ -1460,6 +1525,15 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:workspace-attention-db
+
+      # The same values through the real routes: the summary counts what is stored, a create stores enum values, and a
+      # value that is not one of the column's is a 400 listing the real ones that writes nothing (mold_v1-251).
+      - name: Record choice values through the Ops API (summary counts, create defaults, 400 on a wrong value), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-values-db
 
       # DICTATION USAGE, AS THE APP WRITES AND READS IT. Each clip is a chat_turn_usage row of kind 'dictation'; this
       # writes them as app_rw for two workspaces with the policy failing closed, and reads each workspace's report:

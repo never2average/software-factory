@@ -153,6 +153,8 @@ function ownerSlot(email?: string | null): React.ReactNode {
 export type TaskCardData = {
   title: string;
   priority: string;
+  /** The priority as the deployment's definition of a task words it; the stored value when absent. */
+  priorityLabel?: string;
   done?: boolean;
   assignee?: string | null;
   cycleLabel?: string | null;
@@ -184,7 +186,7 @@ export function TaskCard({
               icon={task.priority === "high" ? ChevronsUpIcon : ChevronsDownIcon}
               className="capitalize"
             >
-              {task.priority}
+              {task.priorityLabel ?? task.priority}
             </Badge>
           ) : null}
           {task.containerLabel ? (

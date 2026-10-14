@@ -8,7 +8,6 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { XIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -62,6 +61,8 @@ export function OpsCenter({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        // No dismiss icon: a corner X collided with each panel's own detail-panel close. The modal closes with
+        // Escape (when nothing inside it claims the key, below) and by a click outside it (Radix's default).
         showCloseButton={false}
         // Escape belongs to the INNERMOST thing that is open. Radix portals a
         // dropdown outside this dialog, so the dialog cannot see that a menu owns
@@ -88,24 +89,6 @@ export function OpsCenter({
           <DialogDescription>{meta.blurb}</DialogDescription>
         </DialogHeader>
 
-        {/*
-          One dismiss for the whole modal.
-          
-          showCloseButton is false because Radix's default X sits at the very
-          corner and collides with each panel's own detail-panel close. But that
-          left NO visible way out — only Escape, which is not discoverable and
-          which this dialog deliberately yields to whatever is open inside it.
-          This sits above the panel content and always closes the Ops Center.
-        */}
-        <button
-          type="button"
-          onClick={() => onOpenChange(false)}
-          aria-label="Close"
-          title="Close (Esc)"
-          className="absolute right-3 top-3 z-30 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <XIcon className="size-4" />
-        </button>
         {section === "connectors" ? (
           <ConnectorsPanel
             authorEmail={authorEmail}

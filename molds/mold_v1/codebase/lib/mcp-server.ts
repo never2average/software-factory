@@ -57,6 +57,17 @@ export interface McpDeps {
   customFields?: { deployments: unknown[]; implementations: unknown[]; account?: unknown[] };
   /** The profile's `work_periods` (mode and words), so the period tools follow them. Absent = shared periods, a neutral word. */
   workPeriods?: { mode: string; label: { singular: string; plural: string }; itemLabel: { singular: string; plural: string } };
+  /** The record write tools' choice values (the schema's enums, in this deployment's words): lib/ops-domain-fields.ts toolChoices. */
+  choices?: Record<string, Record<string, { value: string; label: string; default?: true }[]>>;
+  /** This deployment's definition of a task, only when its profile redefines one (setup/workspace-tools.mjs `tasks`). */
+  tasks?: {
+    noun: string;
+    nouns: string;
+    stateField: string;
+    states: { value: string; label: string }[];
+    priorities: { value: string; label: string }[];
+    ownFields: { key: string; label: string; type: string; required?: boolean | "on_create"; help?: string; options?: { value: string; label: string }[]; many?: boolean }[];
+  };
   /** Injected for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
   /** Extra addresses this deployment answers on (WEB_ORIGIN), for the Origin check and links. */
@@ -221,6 +232,8 @@ export async function handleMcpRequest(request: Request, deps: McpDeps): Promise
     folders: deps.folders,
     customFields: deps.customFields,
     workPeriods: deps.workPeriods,
+    choices: deps.choices,
+    tasks: deps.tasks,
     // No direct blob access: the data room is reached through the Ops API, as the caller, org-scoped and audited.
     blobStore: () => null,
     parseClaudeTranscript,

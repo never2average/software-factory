@@ -144,6 +144,8 @@ export function domainView(area: DomainArea, domains: Domains = DEPLOYMENT_PROFI
       if (legacy) return legacy.map((c) => ({ value: c.value, label: said(c.value, c.label) }));
       return (meta[key]?.values ?? []).map((value) => ({ value, label: said(value, value) }));
     },
+    /** A choice field's stored values, in the enum's order: its zod enum in agent/lib/customer-schema.ts. */
+    values: (key: string): readonly string[] => meta[key]?.values ?? [],
     /** A stored value, as a person reads it. `legacy` is how this spot rendered it before (default: the value). */
     display: (key: string, value: string | null | undefined, legacy?: string): string => {
       if (value == null || value === "") return legacy ?? "";

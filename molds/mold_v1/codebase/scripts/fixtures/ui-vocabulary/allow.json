@@ -86,6 +86,11 @@
     "why": "blockerOwner's STORED value `Customer`, the key of the profile's option labels ({ \"Customer\": \"Company\" }). A person reads the label; the enum pass (1b) proves every visible enum value is shown through one."
   },
   {
+    "source": "^agent/lib/record-areas\\.generated\\.ts$",
+    "literal": "^Customer$",
+    "why": "blockerOwner's STORED value `Customer`, as a choice VALUE of the compiled implementations area (RECORD_AREAS); its label is the profile's when it gives one. A person reads a choice through its label (agent/lib/record-areas.ts display), never the value; the enum pass (1b) proves every visible enum value is shown through one."
+  },
+  {
     "source": "^(agent/)?lib/deployment-profile\\.generated\\.ts$",
     "literal": "^Customers/README\\.md$",
     "why": "A seed file's STORED path (dataroom.seed[].path): the folder in storage is Customers/. The data room shows it under the domain's label."

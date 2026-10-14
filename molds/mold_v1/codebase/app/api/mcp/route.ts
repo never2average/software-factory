@@ -5,7 +5,23 @@ import { FOLDER, fillFolders } from "@/agent/lib/dataroom-folders";
 import { WORK_PERIODS } from "@/agent/lib/work-periods";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import { handleMcpRequest, type McpDeps } from "@/lib/mcp-server";
+import { toolChoices } from "@/lib/ops-domain-fields";
 import { verifyOpsAuth } from "@/lib/ops-auth";
+import { areaView } from "@/agent/lib/record-areas";
+
+/** This deployment's definition of a task, for the task tools: only when its profile redefines one. */
+function taskTools(): McpDeps["tasks"] {
+  const v = areaView("tasks");
+  if (!v.redefined || !v.lifecycle) return undefined;
+  return {
+    noun: v.noun,
+    nouns: v.nouns,
+    stateField: v.lifecycle.field,
+    states: v.lifecycle.states.filter((s) => !s.retired).map((s) => ({ value: s.value, label: s.label })),
+    priorities: v.options("priority").map((o) => ({ value: o.value, label: o.label })),
+    ownFields: v.ownFields.filter((f) => !f.hidden && !f.computed).map((f) => ({ key: f.key, label: f.label ?? f.key, type: f.type, required: f.required, ...(f.help ? { help: f.help } : {}), ...(f.options ? { options: f.options.filter((o) => !o.retired).map((o) => ({ value: o.value, label: o.label ?? o.value })) } : {}), ...(f.many ? { many: true } : {}) })),
+  };
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +55,10 @@ const deps: McpDeps = {
   },
   // What a period is for this deployment (its profile's work_periods): the period tools follow the mode and the words.
   workPeriods: { mode: WORK_PERIODS.mode, label: WORK_PERIODS.label, itemLabel: WORK_PERIODS.itemLabel },
+  // The values the record write tools' choice fields take (stage, risk, environment, health): the schema's enums.
+  choices: toolChoices(),
+  // What a task is here, when the profile redefines it (records.areas.tasks): the task tools' states, priorities, own fields.
+  tasks: taskTools(),
   webOrigin: process.env.WEB_ORIGIN?.trim() || null,
   internalOrigin: process.env.MCP_INTERNAL_ORIGIN?.trim() || null,
 };

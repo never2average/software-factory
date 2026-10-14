@@ -709,6 +709,89 @@ What differs from the areas:
   the MCP tool, and appear in pickers), so the fields are not shown in the web app yet. Not covered either: the
   data-room workbook (`Master.xlsx`) and the account report.
 
+### `records`
+
+**Record areas**: the one model behind the four kinds of record a deployment shapes. Each area is bound to the table
+it already has, and a profile may only REDEFINE these four, only here, at build time (a workspace's own settings keep
+what they had: the period length and the task pipelines):
+
+| Area | Table | Legacy form (still accepted) |
+|---|---|---|
+| `deployments` | `deployments` | `domains.deployments` |
+| `implementations` | `implementation` | `domains.implementations` |
+| `tasks` | `todos` (stored by the task-workflow service) | none: `00-default.json`'s `records.areas.tasks` is today's |
+| `periods` | `cycles` | `work_periods` |
+
+```jsonc
+"records": { "areas": { "tasks": {
+  "label": { "singular": "obligation", "plural": "obligations" },
+  "fields": {
+    "dueAt":     { "label": "Due", "required": true },                       // a column of the table: relabelled, typed
+    "state":     { "type": "pick_list", "label": "Status",                    // the area's OWN field, stored in `custom`
+                   "options": [ { "value": "not_started", "label": "Not started", "tone": "slate" }, … ] },
+    "frequency": { "type": "pick_list", "label": "Frequency", "options": [ { "value": "Monthly" }, … ] }
+  },
+  "lifecycle": { "field": "state", "initial": "not_started", "enforce": "warn",
+                 "categories": { "not_started": "open", "in_progress": "active", "closed": "done", … },
+                 "transitions": [ { "from": ["under_review"], "to": "closed", "roles": ["owner", "admin"], "not_by": "assignee" } ] },
+  "views": { "board": { "by": "state" }, "create": { "fields": ["title", "dueAt", "frequency"], "submit_label": "Add obligation" } }
+} } }
+```
+
+- **Fields** are a map keyed by field key, so a later file changes one without restating the list. A key that names a
+  column of the area's table is that column (its type must fit it: a column with a fixed list of values is a
+  `pick_list` of exactly those values, relabelled with `label`); any other key is the area's own field, stored by key
+  in the table's `custom` jsonb column (snake_case, never a column's name in any spelling). Types: text, long_text,
+  integer, number, percent, money, date, datetime, boolean, email, link, pick_list, multi_pick, person, record, file,
+  tags. A field may carry `required` (`true` or `"on_create"`), `default` (a value, `{today}`, `{today+7d}`, `{me}`),
+  `min`/`max`, `max_length`, `pattern`, `hidden` with `fixed`, `computed`, `legacy_values`, `renamed_from`, `index`.
+  `columns: "listed"` hides every column the area does not name (a hidden required column still needs `fixed`).
+- **Choices** are ordered `{ value, label?, tone?, attention?, retired? }`: the value is what is stored, the label what
+  a person reads, the tone its colour (slate, sky, blue, green, amber, orange, red, violet, muted).
+- **A lifecycle** names a `pick_list` field whose choices are the states, and maps every state to one of six
+  CATEGORIES: backlog, open, active, blocked, done, cancelled. Base code branches on the category, never on a pack's
+  value. `transitions` list the moves (with `roles`, `requires`, `requires_comment`, `not_by`, `set`); `enforce` says
+  what a move outside them does: `"off"` (the default: it goes through), `"warn"` (it goes through and is noted), or
+  `"strict"` (refused). A pack's first lifecycle should be `"warn"`. A lifecycle on another field replaces the one
+  before it whole. The tasks area's lifecycle is the `status` column (its six values are the contract with the
+  task-workflow service, so each keeps its meaning) or an own `pick_list`; then the status follows the state's
+  category on every write (open→`open`, active→`in_progress`, done→`done`, …) and nobody sets it directly.
+- **Relations, views, permissions, reminders, recurrence, metrics, agent, io, period, targets** are declared and
+  checked here at build; the surfaces that act on them (forms and boards per area, enforcement, reminders, metrics)
+  arrive one area at a time, and until then a declaration changes nothing at runtime. Email reminders are refused
+  (off in this release).
+
+**The legacy forms** (`domains.<area>`, `work_periods`) are lowered into the areas at build: `label`, `description`,
+`id_label` → `label`, `description`, `id`; `fields.<k>` → that column's field; `options` → its choices; `kind_field` +
+`kinds` → that column as a `pick_list`; `custom_fields[]` → own fields in their order (`show_in_list` kept);
+`create_fields` / `detail_fields` → `views.create` / `views.detail` with `append: true`; `group_by` / `group_label` →
+`relations.group`; `work_periods` → `label` + `period`. A profile may state an area in either form, **never both** (in
+one file or across files). An area written in the record-area form is raised back to the legacy form for every
+reader that still takes it, so `DEPLOYMENT_PROFILE.domains` and `.work_periods` stay complete; an own field of a type
+the legacy form lacks (file, multi_pick, …) is compiled but not yet on those readers, and the build says so.
+
+**Compiled** into `agent/lib/record-areas.generated.ts` (`RECORD_AREAS`, its own module: `DEPLOYMENT_PROFILE` is
+byte for byte what it was for any profile that does not use the record-area form). Each area carries
+`redefined`: whether this deployment says anything about it the default does not. Read it through
+`agent/lib/record-areas.ts` (`areaView(id)`: words, ordered fields, `get(row, key)`, choices and how a value is shown,
+the lifecycle's categories and moves, the board, table, sorts and create form; `describeArea(id)`: a short card for the
+model, null for an area that is not redefined). Every write goes through `agent/lib/record-validate.ts`
+(`validateRecordWrite`): types, choices, limits, required and defaults, computed and system fields never written, own
+fields as a per-key delta, the lifecycle's category, status and move.
+
+**Build-time checks** (`scripts/schemas/record-area.schema.json`, then `scripts/lib/record-areas.mjs`), each failing
+the build with `profiles/<file>: records.areas.<area>.<path>: <reason>`: an area other than the four; both forms for
+one area; an unknown key or a wrong type; an own key that is not snake_case or shadows a column; a type a column
+cannot hold; a column's choices outside its stored values; a choice listed twice or two choices with one label; two
+fields with one label; a hidden required field without `fixed`; a `fixed` or `default` the field would not take; a
+file folder that is not `{folder:<domain>}/…`; a computed field that reads itself; more than 60 own fields or 6
+indexed ones; a lifecycle on a field that is not a pick_list, a state without a category, no `done` state, an
+`initial` or transition state that does not exist, `requires`/`set`/`not_by` naming a field the area lacks or of the
+wrong type, a `"strict"` lifecycle with a state nothing reaches, the task status given another meaning; a view, sort,
+filter, group, detail or create field that does not exist or is hidden; a sort on a type that cannot sort; a create
+form that leaves out a required field with no default; a container that cannot hold tasks; an email reminder;
+`agent.describe` over 1200 characters.
+
 ## Merge rules
 
 1. **Filename order.** Every `profiles/NN-<name>.json` (two digits, then lower-case
@@ -735,6 +818,9 @@ What differs from the areas:
    key in `create_fields` / `detail_fields`, and any key a field entry does not take.
 8. The build also rejects: an empty `chat.hero_lines`, an empty vocabulary word, a
    malformed `dataroom.seed` entry, and an `agent.briefing` over 400 words.
+9. **`records.areas` takes the four built-in areas only**, each in one form (record-area or legacy) across every
+   file. Inside an area, what may be said is the record-area schema's (not the default's keys): `fields` is a map,
+   so a later file adds or changes one field; a `lifecycle` naming another `field` replaces the one before it whole.
 
 A bad profile **fails the build, never the page**: the generator exits non-zero with
 `profiles/<file>: <path>: <what is wrong>`.
@@ -1178,6 +1264,7 @@ npm run check:vocabulary           # its static half, in seconds (no build)
 npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, library rows, unlabelled enum values, the generator during a build; the record words (labels, kinds, the README, the seeders) under the default, the relabelled and a neutral-records profile; the record-word audit
 npm run test:agent-vocabulary      # what the model writes in the profile's words lands in unchanged storage; specialists.exclude moves and restores
 npm run test:custom-fields         # the custom-field validator, the agent's write path, the MCP inputs, the migration; offline
+npm run test:record-areas          # records.areas: an old profile emits exactly what it did (goldens from before record areas), the legacy forms lowered, the worked examples compile, every bad-profile class fails with its path, the view model and the write validator; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run test:work-periods          # work_periods: the generator's rules, each mode's views, words, tools and routes (three builds rendered), the default to the letter; offline
 npm run test:work-periods-db       # the same three modes against a real Postgres: two workspaces, the routes and the model's tools, rollover, whose an item is

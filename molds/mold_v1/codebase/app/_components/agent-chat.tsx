@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { STORAGE_KEYS, readStored, writeStored } from "@/lib/browser-storage";
 import { sharedGet } from "@/lib/startup-fetch";
+import { afterChatOpenSettled } from "@/lib/chat-open-timing";
 
 /** Approx model context window for the gauge (Claude/GLM-class). Approximate on
  *  purpose — the ring is an indicator; eve owns the real compaction threshold. */
@@ -643,6 +644,33 @@ interface Presence {
  *  typing window when the local user is composing) and take the live roster +
  *  current turn-holder from the same response. Best-effort; a failed beat is
  *  silently ignored. Inert when `threadId` is undefined (single-player chat). */
+/**
+ * Is the conversation up, so the Control Panel may start reading FINISHED specialists (lib/child-feed.ts)?
+ *
+ * Measured on the live app, a chat's specialists were read in full at mount (9.4 MB to over 147 MB each), beside the
+ * chat's own first read. This holds those reads until the conversation has painted (a frame, or 500 ms in a hidden
+ * tab, which gets no frames) AND the chat open has settled: what it shows is decided, so the saved copy, the seam
+ * reads and any full replay are done (lib/chat-open-timing.ts `afterChatOpenSettled`, which resolves at once for a
+ * mount with no open in progress). If settle never comes, a safety timeout (`HARVEST_SAFETY_MS`, 5 s) lets them go.
+ * Running, selected and parked specialists never wait. Once true it stays true for this mount; a remount starts it
+ * again, and finds the specialists already folded.
+ */
+function useConversationSettled(): boolean {
+  const [painted, setPainted] = useState(false);
+  const [openSettled, setOpenSettled] = useState(false);
+  useEffect(() => {
+    const fallback = setTimeout(() => setPainted(true), 500);
+    const frame =
+      typeof requestAnimationFrame === "function" ? requestAnimationFrame(() => setTimeout(() => setPainted(true), 0)) : 0;
+    return () => {
+      clearTimeout(fallback);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+  useEffect(() => afterChatOpenSettled(() => setOpenSettled(true)), []);
+  return painted && openSettled;
+}
+
 function usePresence(threadId: string | undefined, typing: boolean): Presence {
   const [presence, setPresence] = useState<Presence>({ online: [], turnHolder: null });
   const typingRef = useRef(typing);
@@ -1345,6 +1373,8 @@ export function AgentChat({
    * read live would remount the chat and throw away the reader for nothing.
    */
   const [attachLive, setAttachLive] = useState(false);
+  /** The conversation is up: the Control Panel may read finished specialists now (see `useConversationSettled`). */
+  const harvestReady = useConversationSettled();
   /** Bumped when a reader gives up, to arm the next attempt within the budget. */
   const [attachEpoch, setAttachEpoch] = useState(0);
   /** Forgive the reader's spent budget once an answer is accepted — see `freshAttachAfterAnswer`. */
@@ -5135,6 +5165,7 @@ export function AgentChat({
               // closing the preview brings the cockpit back.
               onOpenArtifact={(url, filename) => setPreviewArtifact({ url, filename })}
               onOpenOps={onOpenOps}
+              harvestReady={harvestReady}
             />
           </ErrorBoundary>
         </aside>
