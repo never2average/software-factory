@@ -1,7 +1,7 @@
 "use client";
 
 import { noteRender } from "@/lib/render-census";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { lazyPanel } from "@/components/lazy-panel";
 import { INVITE_RESULT_KEY } from "./auth-gate";
 import { STORAGE_KEYS, readStored, removeStored, writeStored } from "@/lib/browser-storage";
@@ -18,7 +18,8 @@ import { isWorkspaceRefusalBody, noteChatRefused } from "@/lib/workspace-refusal
 import {
   SNAPSHOT_VERSION,
   buildSnapshot,
-  checkSeam,
+  seamVerdict,
+  replaceDecision,
   mountFromSnapshot,
   snapshotUsable,
   splitClientEvents,
@@ -28,6 +29,19 @@ import {
   snapshotWriteNeeded,
 } from "@/lib/chat-snapshot";
 import { withFreshestToken } from "@/lib/chat-session-cursor";
+import { createOpenGuard, type OpenTicket } from "@/lib/chat-open-guard";
+import {
+  beginChatOpen,
+  browserLagSampler,
+  browserStorageChars,
+  configureChatOpenTiming,
+  flushOpenCounter,
+  noteChatCommit,
+  reportSnapshotEvent,
+  type ChatMountCause,
+  type ChatOpenHandle,
+  type SavedCopyWrite,
+} from "@/lib/chat-open-timing";
 import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker } from "@/lib/chat-turn-state";
 import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
@@ -62,6 +76,38 @@ interface ReplayResult {
    * They lead to opposite decisions about a cached transcript.
    */
   stop?: string;
+  /**
+   * The UPSTREAM closed the response (the server's marker said so, or a direct
+   * read reached a real end of body), as opposed to a read that stopped on
+   * silence. A tail read that ended with nothing in it is the one empty read
+   * that is evidence about a cached transcript (lib/chat-snapshot.ts
+   * `seamVerdict`).
+   */
+  ended?: boolean;
+}
+
+/**
+ * A shared open paints only after its seam read returns, so a second seam read
+ * is visible delay there. It is taken only when the first one came back within
+ * this long, which keeps both inside the shared read's bound (8 s a read, 12 s
+ * an open).
+ */
+const SHARED_SEAM_RETRY_WITHIN_MS = 4_000;
+
+/**
+ * Does this transcript end at rest (a park, a finished turn, a finished
+ * session)? The same list `handlePersist` uses to decide a saved copy may be
+ * written; an open that mounts a transcript NOT at rest mounted a running turn.
+ */
+function endsAtRest(events: readonly unknown[] | undefined): boolean {
+  const lastServer = splitClientEvents(events ?? []).server.at(-1) as { type?: string } | undefined;
+  return (
+    lastServer?.type === "session.waiting" ||
+    lastServer?.type === "turn.completed" ||
+    lastServer?.type === "turn.failed" ||
+    lastServer?.type === "session.completed" ||
+    lastServer?.type === "session.failed"
+  );
 }
 
 /** A thread shared with the current user (from GET /api/ops/threads). Never
@@ -979,15 +1025,21 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const snapshotMarkersRef = useRef<Map<string, number>>(new Map());
 
   const fetchSnapshot = useCallback(
-    async (sessionId: string): Promise<TranscriptSnapshot | null> => {
+    async (sessionId: string, signal?: AbortSignal): Promise<TranscriptSnapshot | null> => {
       try {
         const res = await fetch(`/api/ops/chat-snapshots?session=${encodeURIComponent(sessionId)}`, {
           headers: getAuthHeaders(),
+          signal,
         });
         // 403 (not shared with me), 503 (store down), 404 (not deployed yet) —
         // every one of them means "open it the old way", which is always
-        // correct and never wrong, only slow.
-        if (!res.ok) return null;
+        // correct and never wrong, only slow. Slow for a reason worth knowing,
+        // though: a chat refused its saved copy on every open is a chat that
+        // pays the full replay on every open, and nothing said so.
+        if (!res.ok) {
+          reportSnapshotEvent("snapshot-refused", { sessionId, status: res.status, reason: "read" });
+          return null;
+        }
         const { snapshot } = (await res.json()) as { snapshot?: TranscriptSnapshot | null };
         if (!snapshotUsable(snapshot, { eveSessionId: sessionId })) return null;
         snapshotIndexRef.current.set(sessionId, snapshot.eventIndex);
@@ -1011,13 +1063,32 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       chatSessionId?: string;
       events: readonly unknown[] | undefined;
       streamIndex: number | undefined;
+      /** What became of the write, for the open's record (lib/chat-open-timing.ts). Never throws into the caller. */
+      onOutcome?: (outcome: SavedCopyWrite, status?: number) => void;
     }) => {
+      const outcome = (o: SavedCopyWrite, status?: number) => {
+        try {
+          input.onOutcome?.(o, status);
+        } catch {
+          /* never */
+        }
+      };
       const snapshot = buildSnapshot({
         eveSessionId: input.sessionId,
         streamIndex: input.streamIndex,
         events: input.events,
       });
-      if (!snapshot) return;
+      if (!snapshot) {
+        // Nothing worth storing (no session, no server events, a mid-turn cursor). Said once per chat per load.
+        if (input.sessionId) {
+          reportSnapshotEvent("snapshot-skipped", {
+            sessionId: input.sessionId,
+            reason: !input.events?.length ? "no-events" : "not-at-a-boundary",
+          });
+        }
+        outcome("skipped");
+        return;
+      }
       const knownIndex = snapshotIndexRef.current.get(snapshot.eveSessionId);
       // Never move a thread's transcript backwards — a truncated read must not
       // overwrite a complete one — but DO rewrite the same position when it
@@ -1031,8 +1102,10 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
             : { eventIndex: knownIndex, markers: snapshotMarkersRef.current.get(snapshot.eveSessionId) ?? 0 },
         )
       ) {
+        outcome("not-needed");
         return;
       }
+      outcome("sent");
       snapshotIndexRef.current.set(snapshot.eveSessionId, snapshot.eventIndex);
       snapshotMarkersRef.current.set(snapshot.eveSessionId, snapshot.clientEvents.length);
       void fetch("/api/ops/chat-snapshots", {
@@ -1047,13 +1120,31 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           clientEvents: snapshot.clientEvents,
         }),
       })
-        .then((r) => {
+        .then(async (r) => {
           // Refused (too large, a version the server does not project, a thread
           // that is not mine to write): forget that we believe it is stored, so
           // a later, smaller or better-placed write is still attempted.
-          if (!r.ok) snapshotIndexRef.current.delete(snapshot.eveSessionId);
+          if (r.ok) {
+            outcome("stored", r.status);
+            return;
+          }
+          snapshotIndexRef.current.delete(snapshot.eveSessionId);
+          outcome("refused", r.status);
+          // Swallowed until now: a chat whose saves are refused looks exactly like one that was never saved. Only
+          // the route's short code (too-large, version, index) and the size are sent, never the body's sentences.
+          const body = (await r.json().catch(() => null)) as { reason?: unknown; bytes?: unknown } | null;
+          const code = typeof body?.reason === "string" && /^[a-z-]{1,24}$/.test(body.reason) ? body.reason : "refused";
+          const bytes = typeof body?.bytes === "number" ? ` bytes=${Math.round(body.bytes)}` : "";
+          reportSnapshotEvent("snapshot-refused", {
+            sessionId: snapshot.eveSessionId,
+            status: r.status,
+            reason: `write:${code}${bytes} events=${snapshot.events.length}`,
+          });
         })
-        .catch(() => snapshotIndexRef.current.delete(snapshot.eveSessionId));
+        .catch(() => {
+          snapshotIndexRef.current.delete(snapshot.eveSessionId);
+          outcome("failed");
+        });
     },
     [getAuthHeaders],
   );
@@ -1075,6 +1166,50 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
    * the full pass on its own.
    */
   const deduperRef = useRef(createEventDeduper<unknown>());
+
+  /**
+   * Why the chat's NEXT mount happens, for the open's record (lib/chat-open-timing.ts): set just before the state
+   * change that remounts it, read and reset by the commit hook. A ref, so recording never renders anything.
+   */
+  const mountCauseRef = useRef<ChatMountCause>("open");
+
+  /**
+   * One open at a time (lib/chat-open-guard.ts). Every path that puts something in the chat pane claims a ticket;
+   * an open checks its own after every await and before every state write, so a slower, earlier click can never land
+   * on top of a later one.
+   */
+  const openGuardRef = useRef(createOpenGuard());
+  /** Set just before the page load's own reopen calls `openChat`, so that open's clock starts at navigation. */
+  const pageLoadOpenRef = useRef(false);
+  /**
+   * The chat pane, for the two things the shell must know about the composer without owning it: whether it holds a
+   * draft (a background replacement waits rather than throw the draft away) and when its first frame is usable.
+   */
+  const chatPaneRef = useRef<HTMLDivElement | null>(null);
+  /** Sent anything since the current open began? (performance.now() of the last send, 0 for none.) */
+  const sentAtRef = useRef(0);
+  /** A replacement of the transcript waiting for the composer to be free (see `replaceDecision`). */
+  const pendingSwapRef = useRef<(() => void) | null>(null);
+  const composerHasDraft = useCallback((): boolean => {
+    try {
+      const box = chatPaneRef.current?.querySelector<HTMLTextAreaElement>('textarea[name="message"]');
+      return Boolean(box && box.value.trim().length > 0);
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /**
+   * Something other than `openChat` is taking the chat pane (a new chat, a fork, a shared chat, an automation's
+   * session): cancel the open in flight, drop a waiting replacement, and take down the shimmer that open put up,
+   * since it can no longer take it down itself.
+   */
+  const supersedeOpen = useCallback((): OpenTicket => {
+    const ticket = openGuardRef.current.claim();
+    pendingSwapRef.current = null;
+    setOpeningChat(false);
+    return ticket;
+  }, []);
 
   // Called by the live chat as it gains a server session + a first line.
   /**
@@ -1103,6 +1238,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
      */
     setInitialSession(withFreshestToken(session, clean));
     setInitialEvents(clean);
+    mountCauseRef.current = "reattach";
     setAttachNonce((n) => n + 1);
   }, []);
 
@@ -1134,6 +1270,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         // SERVER events only — see openChat for why never `merged.length`.
         streamIndex: fresh.index ?? (fresh.events as unknown[]).length,
       } as AgentSession);
+      mountCauseRef.current = "resync";
       setAttachNonce((n) => n + 1);
       return true;
     },
@@ -1182,7 +1319,14 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       // with no share marker, because as far as the sidebar was concerned it
       // was one of yours. Same shape as the thread-row fork this had on the
       // server: opening someone's thread quietly made you a copy of it.
-      if (chatKey.startsWith("eve-") || chatKey.startsWith("shared-")) return;
+      if (chatKey.startsWith("eve-") || chatKey.startsWith("shared-")) {
+        // No saved copy is ever written for these, and that used to be silent. Once per chat per page load.
+        reportSnapshotEvent("snapshot-skipped", {
+          sessionId: id,
+          reason: chatKey.startsWith("shared-") ? "shared" : "automation",
+        });
+        return;
+      }
       setActiveId((prev) => prev ?? id); // highlight the new chat without remounting it
       setSessions((prev) => {
         const now = Date.now();
@@ -1338,6 +1482,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   }, [email, syncSessionsToDb, mergedFromDb]);
 
   const newChat = useCallback(() => {
+    supersedeOpen();
     newCount.current += 1;
     setInitialSession(undefined);
     setInitialEvents(undefined);
@@ -1351,11 +1496,12 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     setSharedReopen(null);
     setMountKey(mintKey("new"));
     setSearchOpen(false);
-  }, []);
+  }, [supersedeOpen]);
 
   // Fork a finished plan into a fresh thread: same customer context, plan mode
   // off, and the plan itself auto-sent as the first message with a go signal.
   const forkPlan = useCallback((plan: string) => {
+    supersedeOpen();
     newCount.current += 1;
     const srcId = activeIdRef.current;
     const src = srcId ? sessionsRef.current.find((s) => s.id === srcId) : undefined;
@@ -1371,13 +1517,14 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     setSharedReopen(null);
     setMountKey(mintKey("fork"));
     setSearchOpen(false);
-  }, []);
+  }, [supersedeOpen]);
 
   // Compact: the context ring's click hands us a summary of the current thread;
   // open a FRESH, short thread seeded with it (so the model continues from the
   // brief instead of the full transcript). Same mount path as fork, different
   // seed framing; back-link points at the original.
   const compactThread = useCallback((summary: string) => {
+    supersedeOpen();
     newCount.current += 1;
     const srcId = activeIdRef.current;
     const src = srcId ? sessionsRef.current.find((s) => s.id === srcId) : undefined;
@@ -1393,7 +1540,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     setSharedReopen(null);
     setMountKey(mintKey("compact"));
     setSearchOpen(false);
-  }, []);
+  }, [supersedeOpen]);
 
   // Re-read a session's stream from the server, newest-first, so a thread that
   // was persisted MID-STREAM (its turn still generating, so no boundary event
@@ -1450,6 +1597,13 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
        * definition silent.
        */
       tail?: { startIndex: number; parked?: boolean },
+      /**
+       * `signal`: the open this read belongs to. When a later click takes over
+       * (lib/chat-open-guard.ts) the read is cancelled, so an abandoned open
+       * stops costing bandwidth and its stop reads "cancelled", never
+       * "timeout".
+       */
+      opts?: { signal?: AbortSignal },
     ): Promise<ReplayResult | null> => {
       const base = Math.max(0, Math.floor(tail?.startIndex ?? 0));
       const events: unknown[] = [];
@@ -1484,7 +1638,13 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         | "quiet"
         | "eof"
         | "timeout"
-        | "segment-cap" = "eof";
+        | "segment-cap"
+        // The request was refused or failed: the read learned nothing.
+        | "error"
+        // A later open took over (lib/chat-open-guard.ts).
+        | "cancelled" = "eof";
+      /** The upstream itself closed (see ReplayResult.ended). */
+      let upstreamEnded = false;
 
       const bounded = Boolean(viaThreadId);
       /**
@@ -1532,8 +1692,15 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
 
       /** One open. Returns how many real events it contributed. */
       const readSegment = async (startIndex: number): Promise<number> => {
+        const outer = opts?.signal;
+        if (outer?.aborted) {
+          stopReason = "cancelled";
+          return 0;
+        }
         const ctrl = new AbortController();
         const hardTimer = setTimeout(() => ctrl.abort(), bounded ? 8_000 : 15_000);
+        const cancel = () => ctrl.abort();
+        outer?.addEventListener("abort", cancel);
         let got = 0;
         let sawAnyEvent = false;
         /**
@@ -1576,7 +1743,21 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
               { headers: getAuthHeaders(), signal: ctrl.signal },
             );
           }
-          if (!res.ok || !res.body) return 0;
+          if (!res.ok || !res.body) {
+            stopReason = "error";
+            return 0;
+          }
+          /**
+           * Is this answer from a route that injects the end marker? Then the
+           * server decides when the backlog is drained, including how long to
+           * wait for the first byte (lib/chat-replay-stream.ts), and this
+           * client must not race it with a shorter window of its own: its
+           * 1,200 ms pre-first-byte window fired first on every seam read the
+           * server was still waiting on, and an empty seam read was what got
+           * a healthy saved copy deleted. The direct /eve fallback has no
+           * marker, so it keeps the window.
+           */
+          const markerRoute = Boolean(viaThreadId) || markerRouteOk;
           const reader = res.body.getReader();
           const dec = new TextDecoder();
           let buf = "";
@@ -1595,20 +1776,31 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
             // fallback path (no end marker) worse than what it replaced. Here,
             // silence IS the answer, so it only has to be long enough to outlast
             // a slow first flush.
-            const quietWindow = atBoundary ? 300 : sawAnyEvent ? 1_500 : tail ? 1_200 : 0;
+            const quietWindow = atBoundary ? 300 : sawAnyEvent ? 1_500 : tail && !markerRoute ? 1_200 : 0;
             const waitedFrom = performance.now();
+            // A read that REJECTS (the connection dropped) is marked, so it is never mistaken for the upstream
+            // closing the stream, which is evidence about a saved copy; a dropped connection is not.
+            const failedRead = { done: true as const, value: undefined, failed: true as const };
             const r = quietWindow
               ? await Promise.race([
-                  read.catch(() => ({ done: true as const, value: undefined })),
+                  read.catch(() => failedRead),
                   new Promise<{ done: true; value: undefined; quiet: true }>((resolve) =>
                     setTimeout(() => resolve({ done: true, value: undefined, quiet: true }), quietWindow),
                   ),
                 ])
-              : await read.catch(() => ({ done: true as const, value: undefined }));
+              : await read.catch(() => failedRead);
             // Only a window that WON the race cost anything; the rest of the
             // time the read came back first and the timer was free.
             if ((r as { quiet?: true }).quiet) quietMs += performance.now() - waitedFrom;
-            if (r.done) break;
+            if (r.done) {
+              // A real end of body (not our own quiet window, not an abort): the upstream closed.
+              if ((r as { failed?: true }).failed) {
+                if (!ctrl.signal.aborted) stopReason = "error";
+              } else if (!(r as { quiet?: true }).quiet && !ctrl.signal.aborted) {
+                upstreamEnded = true;
+              }
+              break;
+            }
             buf += dec.decode(r.value, { stream: true });
             const lines = buf.split("\n");
             buf = lines.pop() ?? "";
@@ -1631,6 +1823,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
                   if (ev.data?.drained !== false) {
                     stopReason = "marker";
                     finished = true;
+                  } else {
+                    upstreamEnded = true;
                   }
                   continue;
                 }
@@ -1664,9 +1858,11 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           }
         } catch {
           /* fall back to whatever we collected */
+          if (!ctrl.signal.aborted) stopReason = "error";
         } finally {
           clearTimeout(hardTimer);
-          if (ctrl.signal.aborted) stopReason = "timeout";
+          outer?.removeEventListener("abort", cancel);
+          if (ctrl.signal.aborted) stopReason = outer?.aborted ? "cancelled" : "timeout";
           ctrl.abort();
         }
         return got;
@@ -1677,6 +1873,10 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       for (;;) {
         segments += 1;
         const got = await readSegment(cursor);
+        if (opts?.signal?.aborted) {
+          stopReason = "cancelled";
+          break;
+        }
         // Prefer the server's own count: it saw every line, including any this
         // client could not parse.
         cursor = serverIndex ?? base + events.length;
@@ -1718,6 +1918,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           startIndex: base,
           shared: bounded,
           sessionId,
+          ended: upstreamEnded,
           at: new Date().toISOString(),
         };
         // Kept on the window so a slow open can be inspected after the fact —
@@ -1744,7 +1945,13 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
        * answer either way.
        */
       if (!events.length && !tail) return null;
-      return { events, continuationToken, index: serverIndex ?? base + events.length, stop: stopReason };
+      return {
+        events,
+        continuationToken,
+        index: serverIndex ?? base + events.length,
+        stop: stopReason,
+        ended: upstreamEnded,
+      };
     },
     [getAuthHeaders],
   );
@@ -1761,38 +1968,197 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
    * there is (a membership check and a second hop on top of the replay) and
    * whose mount rebuilds several pieces of state at once.
    *
-   * It is the same cache with the same rules: the seam is re-read from the
-   * stream, and a snapshot the stream disagrees with is discarded in favour of
-   * the full replay. Returning `null` still means "we learned nothing".
+   * It is the same cache with the same rules (lib/chat-snapshot.ts
+   * `seamVerdict`): the seam is re-read from the stream, an EMPTY or unanswered
+   * seam read is not evidence against the cache and keeps it, and only a stream
+   * that positively disagrees discards it in favour of the full replay.
+   * Returning `null` still means "we learned nothing".
+   *
+   * The one difference from `openChat`: nothing is on screen while this runs, so
+   * a second seam read is visible delay, not background work. It is taken only
+   * while the first one left room for it inside the shared read's own bound
+   * (8 s per read, 12 s per open); otherwise the first read is final.
    */
   const replayFromCache = useCallback(
-    async (sessionId: string, viaThreadId?: string, parked?: boolean): Promise<ReplayResult | null> => {
-      const cached = await fetchSnapshot(sessionId);
+    async (
+      sessionId: string,
+      viaThreadId?: string,
+      parked?: boolean,
+      signal?: AbortSignal,
+    ): Promise<ReplayResult | null> => {
+      const cached = await fetchSnapshot(sessionId, signal);
       if (cached) {
-        const tail = await replaySession(sessionId, viaThreadId, {
-          startIndex: cached.eventIndex - 1,
-          parked,
-        });
-        const seam = checkSeam(cached, tail?.events);
-        if (seam.status === "match" || tail?.stop === "timeout") {
-          // A stalled tail proves nothing about the cache (see openChat), and
-          // the cached transcript beats showing nothing at all.
+        const startedAt = performance.now();
+        const readSeam = () =>
+          replaySession(sessionId, viaThreadId, { startIndex: cached.eventIndex - 1, parked }, { signal });
+        let tail = await readSeam();
+        let verdict = seamVerdict(cached, tail, 1);
+        if (verdict.action === "retry") {
+          const roomForASecondRead = performance.now() - startedAt < SHARED_SEAM_RETRY_WITHIN_MS && !signal?.aborted;
+          if (roomForASecondRead) tail = await readSeam();
+          verdict = seamVerdict(cached, tail, 2);
+        }
+        if (verdict.action === "keep" || verdict.action === "extend") {
+          // An unanswered read proves nothing about the cache (see openChat),
+          // and the cached transcript beats showing nothing at all.
           return {
-            events: [...cached.events, ...seam.tail],
+            events: [...cached.events, ...verdict.tail],
             continuationToken: tail?.continuationToken,
-            index: cached.eventIndex + seam.tail.length,
+            index: cached.eventIndex + verdict.tail.length,
           };
         }
-        console.warn(`[thread-open] snapshot discarded (${seam.status}) — replaying in full`);
+        console.warn(`[thread-open] snapshot discarded (${verdict.status}) — replaying in full`);
+        reportSnapshotEvent("snapshot-discarded", { sessionId, reason: `${verdict.status}${viaThreadId ? " shared" : ""}` });
         snapshotIndexRef.current.delete(sessionId);
       }
-      return replaySession(sessionId, viaThreadId);
+      if (signal?.aborted) return null;
+      return replaySession(sessionId, viaThreadId, undefined, { signal });
     },
     [fetchSnapshot, replaySession],
   );
 
+  /**
+   * Mount a full replay of a stored chat: the foreground replay of a chat with
+   * no saved copy, and the background replacement of a saved copy the stream
+   * disagreed with. `remount` bumps the attach nonce, because the replacement
+   * lands on a chat that is ALREADY mounted under the same key: without it the
+   * eve store, which reads `initialEvents` only when it is created, kept the
+   * discarded copy on screen and the authoritative replay was fetched and never
+   * shown.
+   */
+  const mountReplayed = useCallback(
+    (s: StoredSession, sessionId: string, fresh: ReplayResult, timing: ChatOpenHandle, remount: boolean) => {
+      // The server stream has no client-side markers, so carry the ones this
+      // browser persisted forward — answered inputs (`client.input.responded`)
+      // and Stops (`client.turn.stopped`) — otherwise questions answered or
+      // stopped earlier revert to live, and a stopped specialist to "Running".
+      const answered = markersOf(s);
+      // Dedupe the merge so the streamIndex matches the mounted length exactly
+      // (a stale/off index is what re-streams already-present events into
+      // duplicates).
+      const merged = dedupeEvents([...(fresh.events as unknown[]), ...answered]);
+      const freshSession = {
+        ...s.session,
+        continuationToken: fresh.continuationToken,
+        /**
+         * SERVER events only — never `merged.length`.
+         *
+         * streamIndex is an absolute count of events the server has sent,
+         * and eve passes it straight through as the next `startIndex`. The
+         * merge deliberately adds `client.input.responded` markers, which
+         * the server has never heard of, and the dedupe then removes an
+         * unknown number of rows. Counting that total told eve to start N
+         * events late, so the next turn silently SKIPPED N real events —
+         * tool results and text that simply never rendered. The shared-open
+         * path below already counts the right thing and says why.
+         */
+        streamIndex: fresh.index ?? (fresh.events as unknown[]).length,
+      } as AgentSession;
+      setInitialEvents(merged as AgentEvents);
+      setInitialSession(freshSession);
+      setMountKey(s.id);
+      if (remount) {
+        mountCauseRef.current = "seam-replace";
+        setAttachNonce((n) => n + 1);
+      }
+      // Cache the replayed transcript back so the NEXT open of this thread is
+      // INSTANT (no server replay). The active thread is spared from the
+      // localStorage quota prune, so this survives.
+      persist(
+        sessionsRef.current.map((x) =>
+          x.id === s.id ? { ...x, events: merged as AgentEvents, session: freshSession } : x,
+        ),
+      );
+      // And durably, so this is the LAST time any device pays for the whole
+      // conversation. localStorage caches it for this browser only, and only
+      // until the quota prune reaches it.
+      storeSnapshot({
+        sessionId,
+        chatSessionId: s.id,
+        events: merged,
+        streamIndex: freshSession.streamIndex,
+        onOutcome: timing.savedCopy,
+      });
+    },
+    [persist, storeSnapshot],
+  );
+
+  /**
+   * Replace a painted chat whose saved copy the stream positively disagreed
+   * with: a full replay BEHIND the chat that is on screen, never the shimmer
+   * over it, then one remount onto the replay, if and when the person is free
+   * (lib/chat-snapshot.ts `replaceDecision`):
+   *
+   *   - typing a draft: wait; the swap runs when the draft is sent or cleared;
+   *   - has sent since the open began: the swap is FORCED, from a read taken
+   *     after the send. The copy mounted the chat at the copy's stream index,
+   *     and the reader of the turn just sent starts there: if the copy claimed
+   *     more events than the stream has, the new turn's events fall below that
+   *     cursor and never render, so keeping the mount would lose the reply. The
+   *     message itself is durable on the server, so the fresh read contains it,
+   *     the remounted chat attaches to the running turn, and the composer is
+   *     empty at that moment, so nothing typed is lost. What IS lost is the
+   *     scroll position, once;
+   *   - otherwise: swap now.
+   *
+   * Guarded like `resync`: a later click (the ticket) or another chat on screen
+   * (the mount key) and nothing is written.
+   */
+  const replaceBehindPaint = useCallback(
+    async (s: StoredSession, sessionId: string, ticket: OpenTicket, timing: ChatOpenHandle): Promise<void> => {
+      const startedAt = performance.now();
+      const fresh = await replaySession(sessionId, undefined, undefined, { signal: ticket.signal });
+      timing.replay(performance.now() - startedAt, fresh?.events.length ?? 0);
+      if (!fresh) return;
+      const swap = () => {
+        if (!ticket.current() || mountKeyRef.current !== s.id) return;
+        const decision = replaceDecision({ typing: composerHasDraft(), sent: sentAtRef.current > 0 });
+        if (decision === "wait") {
+          pendingSwapRef.current = swap;
+          return;
+        }
+        if (decision === "swap-fresh" && sentAtRef.current > startedAt) {
+          // This replay was read before the send: read again, so the mount carries the turn just sent.
+          void replaceBehindPaint(s, sessionId, ticket, timing);
+          return;
+        }
+        mountReplayed(s, sessionId, fresh, timing, true);
+      };
+      swap();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recursion through its own binding; every dependency is stable
+    [replaySession, mountReplayed, composerHasDraft],
+  );
+
   const openChat = useCallback(
     async (s: StoredSession) => {
+      /**
+       * This click is now the open the person wants. Claiming cancels the open in
+       * flight (its requests abort, and it can no longer write), and drops any
+       * replacement still waiting for the composer.
+       */
+      const ticket = openGuardRef.current.claim();
+      pendingSwapRef.current = null;
+      sentAtRef.current = 0;
+      const pageLoad = pageLoadOpenRef.current;
+      pageLoadOpenRef.current = false;
+      /**
+       * One record per click (lib/chat-open-timing.ts), the local mount
+       * included: route, saved-copy and seam times, paint, composer-ready,
+       * mounts, the shimmer, the saved-copy write, main-thread lag and the
+       * specialist streams for 30 s. Never throws, never renders.
+       */
+      const timing = beginChatOpen({
+        chatId: s.id,
+        sessionId: s.session?.sessionId,
+        storedEvents: s.events?.length ?? 0,
+        storedToken: Boolean(s.session?.continuationToken),
+        pageLoad,
+      });
+      mountCauseRef.current = "open";
+      // However the open ends, it has then decided what it shows: `whenChatOpenSettled` (lib/chat-open-timing.ts)
+      // lets work that should not compete with it (the Control Panel's finished specialists) start.
+      try {
       setReadOnlyOwner(undefined);
       setRelayThreadId(undefined);
       setSharedReopen(null);
@@ -1810,6 +2176,20 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         const sessionId = s.session.sessionId;
         setOpeningChat(true);
         /**
+         * The chat being LEFT is unmounted now, not when this open lands.
+         *
+         * The shimmer is an overlay: the previous chat stayed mounted under it for the whole of this open, and its
+         * Control Panel kept downloading and folding its specialists' streams while this chat's saved copy, seam read
+         * or full replay competed with it for the network and the main thread. Nothing of it is visible under the
+         * shimmer, so an empty mount in its place costs nothing to look at, and unmounting aborts its reads.
+         * Re-opening the chat already on screen keeps it.
+         */
+        if (mountKeyRef.current !== s.id) {
+          setInitialEvents(undefined);
+          setInitialSession(undefined);
+          setMountKey(mintKey("opening"));
+        }
+        /**
          * THE FAST PATH: mount the cached transcript, then read only the tail.
          *
          * This is the whole fix for "reopening an old chat is very very slow".
@@ -1825,7 +2205,11 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
          * moment after the conversation is already on screen, instead of a
          * conversation's worth of events beforehand.
          */
-        const cached = await fetchSnapshot(sessionId);
+        const snapshotStartedAt = performance.now();
+        const cached = await fetchSnapshot(sessionId, ticket.signal);
+        timing.snapshot(performance.now() - snapshotStartedAt, Boolean(cached));
+        // A later click took over while the saved copy was on its way: that open owns the pane, and the shimmer.
+        if (!ticket.current()) return;
         if (cached) {
           const localMarkers = dedupeEvents([
             ...((s.events ?? []) as unknown[]).filter((e) => (e as { type?: string }).type?.startsWith("client.")),
@@ -1845,6 +2229,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
             { ...s.session, streamIndex: mountNow.streamIndex } as AgentSession,
             mountNow.events,
           );
+          timing.route("snapshot");
           setInitialEvents(mountNow.events as AgentEvents);
           setInitialSession(cachedSession);
           setMountKey(s.id);
@@ -1854,31 +2239,63 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
            * Now the tail, from ONE event before the snapshot ends.
            *
            * That extra event is the seam: the stream's own copy of the last
-           * event the snapshot claims. If it is missing the snapshot is ahead of
-           * the stream; if it differs the snapshot is not this conversation's.
-           * Either way the cache is discarded and the full replay takes over, so
-           * a reopened thread can never settle on something a full replay would
-           * not show.
+           * event the snapshot claims. lib/chat-snapshot.ts `seamVerdict` reads
+           * the answer, and only POSITIVE evidence counts against the copy: a
+           * different event at the seam, or a stream that closed with nothing
+           * there. An EMPTY or unanswered read is not evidence — a parked
+           * stream never ends, so "nothing came back" is a timer's verdict,
+           * and the timer lost to eve's first byte on 10-30% of measured seam
+           * reads — so it is read once more, behind the painted chat, and if
+           * it is still silent the copy stays on screen unverified, exactly as
+           * a timed-out read always left it. Nothing is deleted and the
+           * shimmer never comes back over a painted chat.
            */
-          const tail = await replaySession(sessionId, undefined, {
-            startIndex: cached.eventIndex - 1,
-            parked: Boolean(s.session.continuationToken),
-          });
-          const seam = checkSeam(cached, tail?.events);
-          if (seam.status === "match") {
-            if (seam.tail.length === 0) {
-              // Nothing new: the mount stands. Cache it in this browser too, so
-              // the next open of this thread costs no request at all — that is
-              // what `writeSessions` is for, and this transcript is the
-              // compacted one, which is what fits in the quota.
-              persist(
-                sessionsRef.current.map((x) =>
-                  x.id === s.id ? { ...x, events: mountNow.events as AgentEvents, session: cachedSession } : x,
-                ),
-              );
+          const readSeam = async () => {
+            const startedAt = performance.now();
+            const tail = await replaySession(
+              sessionId,
+              undefined,
+              { startIndex: cached.eventIndex - 1, parked: Boolean(s.session.continuationToken) },
+              { signal: ticket.signal },
+            );
+            return { tail, ms: performance.now() - startedAt };
+          };
+          let { tail, ms } = await readSeam();
+          let verdict = seamVerdict(cached, tail, 1);
+          timing.seam(verdict.status, ms);
+          if (!ticket.current()) return;
+          if (verdict.action === "retry") {
+            console.warn(`[thread-open] seam read came back ${verdict.status} — reading it once more behind the painted chat`);
+            ({ tail, ms } = await readSeam());
+            verdict = seamVerdict(cached, tail, 2);
+            timing.seam(verdict.status, ms);
+            if (!ticket.current()) return;
+          }
+          if (verdict.action === "keep") {
+            if (verdict.status !== "match") {
+              console.warn(`[thread-open] seam read ${verdict.status} twice — keeping the cached transcript unverified`);
               return;
             }
-            const merged = mountFromSnapshot(cached, seam.tail, localMarkers);
+            // Nothing new: the mount stands. Cache it in this browser too, so
+            // the next open of this thread costs no request at all — that is
+            // what `writeSessions` is for, and this transcript is the
+            // compacted one, which is what fits in the quota.
+            persist(
+              sessionsRef.current.map((x) =>
+                x.id === s.id ? { ...x, events: mountNow.events as AgentEvents, session: cachedSession } : x,
+              ),
+            );
+            return;
+          }
+          /**
+           * The chat-switch guard, as `resync` has it: whatever comes next
+           * replaces the transcript of THIS chat, so it must still be the chat
+           * on screen. (The ticket covers a later click; this covers anything
+           * else that changed the pane without one.)
+           */
+          if (mountKeyRef.current !== s.id) return;
+          if (verdict.action === "extend") {
+            const merged = mountFromSnapshot(cached, verdict.tail, localMarkers);
             const nextSession = withFreshestToken(
               {
                 ...cachedSession,
@@ -1893,6 +2310,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
             // Remount so the store re-seeds from the fuller transcript. Only
             // when there IS something new: a remount on every open would throw
             // away scroll position to display the identical conversation.
+            mountCauseRef.current = "seam-tail";
             setAttachNonce((n) => n + 1);
             persist(
               sessionsRef.current.map((x) =>
@@ -1904,102 +2322,157 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
               chatSessionId: s.id,
               events: merged.events,
               streamIndex: merged.streamIndex,
+              onOutcome: timing.savedCopy,
             });
             return;
           }
-          /**
-           * A tail that never got an ANSWER proves nothing.
-           *
-           * "The stream has nothing at that index" and "the read timed out" both
-           * arrive here as zero events, and they call for opposite decisions.
-           * Only the first is evidence against the snapshot. On a stalled read
-           * the cached transcript stays on screen — it is what this browser
-           * would have shown anyway — and the next open checks again.
-           */
-          if (tail?.stop === "timeout") {
-            console.warn("[thread-open] tail read timed out — keeping the cached transcript unverified");
-            return;
-          }
-          // The stream disagreed. Say so — a cache that is silently wrong is
-          // worse than no cache — forget the row, and fall through to the full
-          // replay below, which is authoritative.
-          console.warn(`[thread-open] snapshot discarded (${seam.status}) — replaying in full`);
+          // The stream positively disagreed. Say so — a cache that is silently
+          // wrong is worse than no cache — forget the row, and replace the
+          // transcript from the full replay, which is authoritative: behind the
+          // painted chat, not under the shimmer.
+          timing.route("snapshot-discarded");
+          console.warn(`[thread-open] snapshot discarded (${verdict.status}) — replacing it behind the painted chat`);
+          reportSnapshotEvent("snapshot-discarded", { sessionId, reason: verdict.status });
           snapshotIndexRef.current.delete(sessionId);
           void fetch(`/api/ops/chat-snapshots?session=${encodeURIComponent(sessionId)}`, {
             method: "DELETE",
             headers: getAuthHeaders(),
           }).catch(() => {});
-          setOpeningChat(true);
+          await replaceBehindPaint(s, sessionId, ticket, timing);
+          return;
         }
 
+        timing.route("full-replay");
         let fresh: Awaited<ReturnType<typeof replaySession>> = null;
+        const replayStartedAt = performance.now();
         try {
-          fresh = await replaySession(sessionId);
+          fresh = await replaySession(sessionId, undefined, undefined, { signal: ticket.signal });
         } finally {
-          setOpeningChat(false);
+          // Only the open that put the shimmer up may take it down: a later click owns it now.
+          if (ticket.current()) setOpeningChat(false);
         }
+        if (!ticket.current()) return;
         if (fresh) {
-          // The server stream has no client-side markers, so carry the ones this
-          // browser persisted forward — answered inputs (`client.input.responded`)
-          // and Stops (`client.turn.stopped`) — otherwise questions answered or
-          // stopped earlier revert to live, and a stopped specialist to "Running".
-          const answered = markersOf(s);
-          // Dedupe the merge so the streamIndex matches the mounted length exactly
-          // (a stale/off index is what re-streams already-present events into
-          // duplicates).
-          const merged = dedupeEvents([...(fresh.events as unknown[]), ...answered]);
-          const freshSession = {
-            ...s.session,
-            continuationToken: fresh.continuationToken,
-            /**
-             * SERVER events only — never `merged.length`.
-             *
-             * streamIndex is an absolute count of events the server has sent,
-             * and eve passes it straight through as the next `startIndex`. The
-             * merge deliberately adds `client.input.responded` markers, which
-             * the server has never heard of, and the dedupe then removes an
-             * unknown number of rows. Counting that total told eve to start N
-             * events late, so the next turn silently SKIPPED N real events —
-             * tool results and text that simply never rendered. The shared-open
-             * path below already counts the right thing and says why.
-             */
-            streamIndex: fresh.index ?? (fresh.events as unknown[]).length,
-          } as AgentSession;
-          setInitialEvents(merged as AgentEvents);
-          setInitialSession(freshSession);
-          setMountKey(s.id);
-          // Cache the replayed transcript back so the NEXT open of this thread is
-          // INSTANT (no server replay). The active thread is spared from the
-          // localStorage quota prune, so this survives.
-          persist(
-            sessionsRef.current.map((x) =>
-              x.id === s.id ? { ...x, events: merged as AgentEvents, session: freshSession } : x,
-            ),
-          );
-          // And durably, so this is the LAST time any device pays for the whole
-          // conversation. localStorage caches it for this browser only, and only
-          // until the quota prune reaches it.
-          storeSnapshot({
-            sessionId,
-            chatSessionId: s.id,
-            events: merged,
-            streamIndex: freshSession.streamIndex,
-          });
+          timing.replay(performance.now() - replayStartedAt, fresh.events.length);
+          if (!endsAtRest(fresh.events)) timing.route("running");
+          mountReplayed(s, sessionId, fresh, timing, false);
           return;
         }
       }
+      // A network open in flight may have put the shimmer up; this click cancelled it, so take it down.
+      setOpeningChat(false);
+      if (timing.record.route === "pending") timing.route(!s.events?.length || endsAtRest(s.events) ? "local" : "running");
       setInitialSession(s.session);
       setInitialEvents(dedupeEvents([...((s.events ?? []) as unknown[]), ...(s.markers ?? [])]) as AgentEvents);
       setMountKey(s.id);
+      } finally {
+        if (ticket.current()) timing.settled();
+      }
     },
-    [replaySession, persist, fetchSnapshot, storeSnapshot, getAuthHeaders],
+    [replaySession, persist, fetchSnapshot, storeSnapshot, getAuthHeaders, mountReplayed, replaceBehindPaint],
   );
 
   // The last chat, when the cache could not show it by itself (no transcript or no resume token here): open it the
   // way a click would, once, right after the first render.
   useEffect(() => {
-    if (boot.last && !boot.instant) void openChat(boot.last);
+    if (boot.last && !boot.instant) {
+      // The page load's own open: its record's clock starts at navigation, not at a click.
+      pageLoadOpenRef.current = true;
+      void openChat(boot.last);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for the chat the first render found
+  }, []);
+
+  /**
+   * The open's instrument (lib/chat-open-timing.ts), wired to this page: rows go
+   * through the same fire-and-forget route as every other chat incident, the
+   * composer is found in the chat pane, and lag is sampled by the browser.
+   * Declared before the commit hook below so the page load's own chat, mounted
+   * straight from the cache by the first render, is recorded too.
+   */
+  const authHeadersRef = useRef(getAuthHeaders);
+  authHeadersRef.current = getAuthHeaders;
+  useLayoutEffect(() => {
+    configureChatOpenTiming({
+      post: (row, keepalive) => {
+        try {
+          void fetch("/api/ops/chat-telemetry", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...authHeadersRef.current() },
+            body: JSON.stringify(row),
+            keepalive,
+          }).catch(() => {});
+        } catch {
+          /* never */
+        }
+      },
+      composerReady: () => {
+        const box = chatPaneRef.current?.querySelector<HTMLTextAreaElement>('textarea[name="message"]');
+        return Boolean(box && !box.disabled);
+      },
+      lagSampler: browserLagSampler,
+      storageChars: browserStorageChars,
+    });
+    if (boot.instant) {
+      const t = beginChatOpen({
+        chatId: boot.instant.id,
+        sessionId: boot.instant.session?.sessionId,
+        storedEvents: boot.instant.events?.length ?? 0,
+        storedToken: Boolean(boot.instant.session?.continuationToken),
+        pageLoad: true,
+      });
+      t.route(endsAtRest(boot.instant.events) ? "local" : "running");
+      t.settled();
+    }
+    // The counter of opens leaves with the tab: a hidden or closing page gets one keepalive POST.
+    const flush = () => flushOpenCounter(true);
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHidden);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHidden);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once; the live values are read through refs
+  }, []);
+
+  /**
+   * Every commit of the chat pane, for the open's record: a new React key for
+   * the open's chat is a mount (with the cause set just before it), and the
+   * first commit with messages and no shimmer over them is the paint. Writes to
+   * the record only; never sets state.
+   */
+  useLayoutEffect(() => {
+    noteChatCommit({
+      mountKey,
+      reactKey: `${mountKey}#${attachNonce}`,
+      hasMessages: Boolean(initialEvents?.length),
+      shimmer: openingChat,
+      cause: mountCauseRef.current,
+    });
+    mountCauseRef.current = "other";
+  }, [mountKey, attachNonce, initialEvents, openingChat]);
+
+  /**
+   * The composer, as far as a waiting replacement cares (`replaceBehindPaint`):
+   * a send marks the open as "has sent" and runs the replacement after the
+   * message has had a moment to reach the server; a draft cleared to nothing
+   * runs it at once.
+   */
+  const onPaneInput = useCallback(() => {
+    if (!pendingSwapRef.current || composerHasDraft()) return;
+    const run = pendingSwapRef.current;
+    pendingSwapRef.current = null;
+    run();
+  }, [composerHasDraft]);
+  const onPaneSubmit = useCallback(() => {
+    sentAtRef.current = performance.now();
+    if (!pendingSwapRef.current) return;
+    const run = pendingSwapRef.current;
+    pendingSwapRef.current = null;
+    setTimeout(run, 1_500);
   }, []);
 
   // Remember which chat is open, so the next load reopens it; a new chat (or a shared one) forgets it.
@@ -2029,6 +2502,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   // current state rather than hanging on the open stream.
   const mountEveSession = useCallback(
     async (sessionId: string) => {
+      const ticket = supersedeOpen();
       const events: unknown[] = [];
       let continuationToken: string | undefined;
       try {
@@ -2077,6 +2551,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       } catch {
         /* mount with whatever we collected */
       }
+      // A chat clicked while this session was being read is the one the person wants now.
+      if (!ticket.current()) return;
       newCount.current += 1;
       setSeedPrompt(undefined);
       setForkedFrom(undefined);
@@ -2090,7 +2566,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       setMountKey(`eve-${sessionId}`);
       setOpsOpen(false);
     },
-    [getAuthHeaders],
+    [getAuthHeaders, supersedeOpen],
   );
 
   // Poll the threads shared WITH me (owner-side shares appear in the normal list
@@ -2119,12 +2595,15 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     async (thread: SharedThread) => {
       // A shared open replays through the proxy and is the SLOWEST kind, and it
       // was the one path that showed nothing at all while it waited.
+      const ticket = supersedeOpen();
       setOpeningChat(true);
       try {
       // Read via the membership-checked proxy so a revoked member is cut off —
       // starting from the cached transcript, whose read is gated by the same
       // membership rule, so revoking still cuts everything off at once.
-      const fresh = await replayFromCache(thread.eveSessionId, thread.id);
+      const fresh = await replayFromCache(thread.eveSessionId, thread.id, undefined, ticket.signal);
+      // A later click took over while this replayed: it owns the pane now.
+      if (!ticket.current()) return;
       newCount.current += 1;
       setSeedPrompt(undefined);
       setForkedFrom(undefined);
@@ -2176,10 +2655,11 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       setMountKey(mintKey(`shared-${thread.id}`));
       setOpsOpen(false);
       } finally {
-        setOpeningChat(false);
+        // Only while this is still the open the person asked for: a later one owns the shimmer.
+        if (ticket.current()) setOpeningChat(false);
       }
     },
-    [replayFromCache],
+    [replayFromCache, supersedeOpen],
   );
 
   // "Auto-triggered" badge shown at the top of a chat opened from a cron
@@ -2263,6 +2743,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   useEffect(() => {
     const seed = new URLSearchParams(window.location.search).get("seed");
     if (!seed) return;
+    supersedeOpen();
     newCount.current += 1;
     setInitialSession(undefined);
     setInitialEvents(undefined);
@@ -2427,7 +2908,12 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         </>
       )}
 
-      <div className="relative flex min-w-0 flex-1 overflow-hidden">
+      <div
+        ref={chatPaneRef}
+        className="relative flex min-w-0 flex-1 overflow-hidden"
+        onInputCapture={onPaneInput}
+        onSubmitCapture={onPaneSubmit}
+      >
       <AgentChat
         key={`${mountKey}#${attachNonce}`}
         chatKey={mountKey}

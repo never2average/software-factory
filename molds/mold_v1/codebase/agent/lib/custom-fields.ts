@@ -13,6 +13,7 @@
  * pass another profile's.
  */
 import { DEPLOYMENT_PROFILE, type CustomFieldArea, type CustomFieldSpec, type CustomFieldType } from "./deployment-profile.generated.ts";
+import { coerceFieldValue, LONG_TEXT_MAX } from "./record-values.ts";
 
 /** The product install, as a person reads it: "deployment", or "workspace" once the profile renames the deployment
  *  record area (then "deployment" means that record). The rule lib/ui-words.ts `W.install` and speak() follow. */
@@ -21,10 +22,6 @@ const INSTALL = DEPLOYMENT_PROFILE.domains.deployments.label.singular.trim().toL
 export type CustomValue = string | number;
 export type CustomValues = Record<string, CustomValue>;
 export type CustomResult = { ok: true; values: CustomValues } | { ok: false; errors: string[] };
-
-const TEXT_MAX = 500;
-const LONG_TEXT_MAX = 20000;
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** The declared fields of a record: `account` is the account record itself (customers.custom). */
 export function customFieldsOf(area: CustomFieldArea, profile: Pick<typeof DEPLOYMENT_PROFILE, "domains" | "account_fields"> = DEPLOYMENT_PROFILE): CustomFieldSpec[] {
@@ -39,59 +36,13 @@ export function asCustomValues(stored: unknown): CustomValues {
 
 const isBlank = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
-function realDate(text: string): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (!m) return false;
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
-}
-
-/** One value, normalised for its type, or the sentence that says what is wrong with it. */
+/**
+ * One value, normalised for its type, or the sentence that says what is wrong with it: the record areas' one rule
+ * per type (agent/lib/record-values.ts), so an own field means the same thing on every kind of record.
+ */
 function coerce(f: CustomFieldSpec, raw: unknown): { value: CustomValue } | { error: string } {
-  const name = `"${f.label}" (${f.key})`;
-  if (typeof raw !== "string" && typeof raw !== "number") return { error: `${name} must be a single ${f.type === "number" || f.type === "percent" ? "number" : "text value"}, not a list or an object.` };
-  const text = String(raw).trim();
-  // Postgres cannot store a NUL character in text or jsonb: refused here, in a sentence, rather than by the
-  // database as a raw "Failed query … params" error the model cannot act on.
-  if (text.includes("\u0000")) return { error: `${name} contains a NUL character (\\u0000), which cannot be stored. Remove it and send the value again.` };
-  switch (f.type) {
-    case "text":
-      if (/[\r\n]/.test(text)) return { error: `${name} is a single line of text. Remove the line breaks.` };
-      if (text.length > TEXT_MAX) return { error: `${name} is too long: keep it under ${TEXT_MAX} characters.` };
-      return { value: text };
-    case "long_text":
-      if (text.length > LONG_TEXT_MAX) return { error: `${name} is too long: keep it under ${LONG_TEXT_MAX} characters.` };
-      return { value: text };
-    case "number":
-    case "percent": {
-      // People type "1,250.50" and "85%"; both mean the number.
-      const cleaned = f.type === "percent" ? text.replace(/\s*%$/, "") : text;
-      const n = typeof raw === "number" ? raw : /^[+-]?(\d{1,3}(,\d{3})+|\d*)(\.\d+)?$/.test(cleaned) && /\d/.test(cleaned) ? Number(cleaned.replace(/,/g, "")) : NaN;
-      if (!Number.isFinite(n)) return { error: `${name} must be a number${f.type === "percent" ? " from 0 to 100" : ", for example 1250.5"}.` };
-      if (f.type === "percent" && (n < 0 || n > 100)) return { error: `${name} is a percentage: it must be from 0 to 100.` };
-      return { value: n };
-    }
-    case "date":
-      if (!realDate(text)) return { error: `${name} must be a real date written as year-month-day, for example 2026-07-31.` };
-      return { value: text };
-    case "email":
-      if (!EMAIL.test(text) || text.length > 254) return { error: `${name} must be an email address, for example name@company.com.` };
-      return { value: text };
-    case "link": {
-      let url: URL | null = null;
-      try { url = new URL(text); } catch { /* reported below */ }
-      if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return { error: `${name} must be a web link that starts with https:// or http://.` };
-      return { value: url.toString() };
-    }
-    case "pick_list": {
-      const hit = (f.options ?? []).find((o) => o.trim().toLowerCase() === text.toLowerCase());
-      // Quoted, as describeCustomField does: a choice is the profile's own word, and a message the product writes
-      // to the model is spoken through the vocabulary layer, which leaves a quoted span alone. Unquoted, a choice
-      // that happens to be a base word ("Customer", "Deployment") was relabelled and the model's retry refused again.
-      if (!hit) return { error: `${name} must be one of: ${(f.options ?? []).map((o) => JSON.stringify(o)).join(", ")}.` };
-      return { value: hit };
-    }
-  }
+  const out = coerceFieldValue({ key: f.key, label: f.label, type: f.type, ...(f.options ? { options: f.options.map((value) => ({ value })) } : {}) }, raw);
+  return out as { value: CustomValue } | { error: string };
 }
 
 /**

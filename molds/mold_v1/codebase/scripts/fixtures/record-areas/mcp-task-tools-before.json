@@ -1,0 +1,451 @@
+{
+ "host-default": {
+  "task_update": {
+   "description": "Correct or close an existing task. Without this the task list can only ACCUMULATE: every correction becomes a new task pointing at a stale one, and a task whose notes turned out to be wrong stays in the backlog asserting something false. Set status:'done' to close, or rewrite title/notes when you learn the original was mistaken.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "Task id from task_list."
+     },
+     "title": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "backlog",
+       "open",
+       "in_progress",
+       "blocked",
+       "done",
+       "cancelled"
+      ]
+     },
+     "priority": {
+      "type": "string",
+      "enum": [
+       "low",
+       "normal",
+       "high"
+      ]
+     },
+     "assignee": {
+      "type": "string"
+     },
+     "dueAt": {
+      "type": "string",
+      "description": "ISO-8601"
+     },
+     "cycleId": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  "task_delete": {
+   "description": "Delete a task outright. Prefer task_update with status 'cancelled' when the work was considered and dropped — that keeps the reasoning. Delete is for tasks filed in error.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  "task_list": {
+   "description": "The team's TODOs: status, assignee, period, container and any linked object.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "includeDone": {
+      "type": "boolean"
+     }
+    },
+    "required": []
+   }
+  },
+  "task_create": {
+   "description": "Create a task, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under a period (cycleId) or a deployment/implementation (containerType + containerId).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "backlog",
+       "open",
+       "in_progress",
+       "blocked",
+       "done",
+       "cancelled"
+      ]
+     },
+     "priority": {
+      "type": "string",
+      "enum": [
+       "low",
+       "normal",
+       "high"
+      ]
+     },
+     "dueAt": {
+      "type": "string",
+      "description": "ISO-8601"
+     },
+     "assignee": {
+      "type": "string"
+     },
+     "cycleId": {
+      "type": "string",
+      "description": "Period id from sprint_list."
+     },
+     "linkType": {
+      "type": "string",
+      "enum": [
+       "ticket",
+       "customer",
+       "app",
+       "cron",
+       "workflow",
+       "chat"
+      ]
+     },
+     "linkId": {
+      "type": "string"
+     },
+     "linkLabel": {
+      "type": "string"
+     },
+     "containerType": {
+      "type": "string",
+      "enum": [
+       "deployment",
+       "implementation"
+      ]
+     },
+     "containerId": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "title"
+    ]
+   }
+  }
+ },
+ "individual": {
+  "task_update": {
+   "description": "Correct or close an existing task. Without this the task list can only ACCUMULATE: every correction becomes a new task pointing at a stale one, and a task whose notes turned out to be wrong stays in the backlog asserting something false. Set status:'done' to close, or rewrite title/notes when you learn the original was mistaken.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "Task id from task_list."
+     },
+     "title": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "backlog",
+       "open",
+       "in_progress",
+       "blocked",
+       "done",
+       "cancelled"
+      ]
+     },
+     "priority": {
+      "type": "string",
+      "enum": [
+       "low",
+       "normal",
+       "high"
+      ]
+     },
+     "assignee": {
+      "type": "string"
+     },
+     "dueAt": {
+      "type": "string",
+      "description": "ISO-8601"
+     },
+     "cycleId": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  "task_delete": {
+   "description": "Delete a task outright. Prefer task_update with status 'cancelled' when the work was considered and dropped — that keeps the reasoning. Delete is for tasks filed in error.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  "task_list": {
+   "description": "The team's TODOs: status, assignee, week, container and any linked object.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "includeDone": {
+      "type": "boolean"
+     }
+    },
+    "required": []
+   }
+  },
+  "task_create": {
+   "description": "Create a task, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under a week (cycleId) or a deployment/implementation (containerType + containerId).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "backlog",
+       "open",
+       "in_progress",
+       "blocked",
+       "done",
+       "cancelled"
+      ]
+     },
+     "priority": {
+      "type": "string",
+      "enum": [
+       "low",
+       "normal",
+       "high"
+      ]
+     },
+     "dueAt": {
+      "type": "string",
+      "description": "ISO-8601"
+     },
+     "assignee": {
+      "type": "string"
+     },
+     "cycleId": {
+      "type": "string",
+      "description": "Week id from sprint_list."
+     },
+     "linkType": {
+      "type": "string",
+      "enum": [
+       "ticket",
+       "customer",
+       "app",
+       "cron",
+       "workflow",
+       "chat"
+      ]
+     },
+     "linkId": {
+      "type": "string"
+     },
+     "linkLabel": {
+      "type": "string"
+     },
+     "containerType": {
+      "type": "string",
+      "enum": [
+       "deployment",
+       "implementation"
+      ]
+     },
+     "containerId": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "title"
+    ]
+   }
+  }
+ },
+ "off": {
+  "task_update": {
+   "description": "Correct or close an existing task. Without this the task list can only ACCUMULATE: every correction becomes a new task pointing at a stale one, and a task whose notes turned out to be wrong stays in the backlog asserting something false. Set status:'done' to close, or rewrite title/notes when you learn the original was mistaken.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "Task id from task_list."
+     },
+     "title": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "backlog",
+       "open",
+       "in_progress",
+       "blocked",
+       "done",
+       "cancelled"
+      ]
+     },
+     "priority": {
+      "type": "string",
+      "enum": [
+       "low",
+       "normal",
+       "high"
+      ]
+     },
+     "assignee": {
+      "type": "string"
+     },
+     "dueAt": {
+      "type": "string",
+      "description": "ISO-8601"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  "task_delete": {
+   "description": "Delete a task outright. Prefer task_update with status 'cancelled' when the work was considered and dropped — that keeps the reasoning. Delete is for tasks filed in error.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  "task_list": {
+   "description": "The team's TODOs: status, assignee, container and any linked object.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "includeDone": {
+      "type": "boolean"
+     }
+    },
+    "required": []
+   }
+  },
+  "task_create": {
+   "description": "Create a task, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under a deployment/implementation (containerType + containerId).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "notes": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "backlog",
+       "open",
+       "in_progress",
+       "blocked",
+       "done",
+       "cancelled"
+      ]
+     },
+     "priority": {
+      "type": "string",
+      "enum": [
+       "low",
+       "normal",
+       "high"
+      ]
+     },
+     "dueAt": {
+      "type": "string",
+      "description": "ISO-8601"
+     },
+     "assignee": {
+      "type": "string"
+     },
+     "linkType": {
+      "type": "string",
+      "enum": [
+       "ticket",
+       "customer",
+       "app",
+       "cron",
+       "workflow",
+       "chat"
+      ]
+     },
+     "linkId": {
+      "type": "string"
+     },
+     "linkLabel": {
+      "type": "string"
+     },
+     "containerType": {
+      "type": "string",
+      "enum": [
+       "deployment",
+       "implementation"
+      ]
+     },
+     "containerId": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "title"
+    ]
+   }
+  }
+ }
+}

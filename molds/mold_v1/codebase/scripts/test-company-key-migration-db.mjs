@@ -174,9 +174,15 @@ const LATER_COLUMNS = "- 'secondary_owner' - 'starter_key'";
  * after 0038 (later entries ride along). Moving it is not a change; losing or altering it is.
  */
 const ROW = `((to_jsonb(x) || jsonb_build_object('~owner', coalesce(to_jsonb(x)->>'account_owner', to_jsonb(x)->>'${LK.account_owner}', to_jsonb(x)->>'solution_owner', to_jsonb(x)->>'${LK.solution_owner}'))) - 'account_owner' - 'solution_owner' - '${LK.account_owner}' - '${LK.solution_owner}' ${LATER_COLUMNS})`;
+/**
+ * Columns a later entry adds to ONE table, by table: 0041's todos.custom (a task's own fields, '{}' on every row).
+ * Left out of that table's rows only: deployments.custom and implementation.custom (0017) are older, and stay counted.
+ */
+const LATER_TABLE_COLUMNS = { todos: "- 'custom'" };
+const rowOf = (t) => (LATER_TABLE_COLUMNS[t] ? `(${ROW} ${LATER_TABLE_COLUMNS[t]})` : ROW);
 const fingerprint = async (db) => {
   const out = {};
-  for (const t of [...KEYED, ...LOOSE]) out[t] = (await db.unsafe(`select md5(coalesce(string_agg(${ROW}::text, '|' order by ${ROW}::text), '')) as h from ${t} x`))[0].h;
+  for (const t of [...KEYED, ...LOOSE]) out[t] = (await db.unsafe(`select md5(coalesce(string_agg(${rowOf(t)}::text, '|' order by ${rowOf(t)}::text), '')) as h from ${t} x`))[0].h;
   return out;
 };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);

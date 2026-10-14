@@ -5,6 +5,7 @@ import { agentUrlFallback } from "@/lib/agent-url";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { ORG_HEADER, isWorkspaceRefusal, resolveOrgForIdentity, workspaceRefusedResponse } from "@/lib/org-context";
 import { SESSION_DELEGATION_HEADER } from "@/lib/specialist-run-actions";
+import { COMPRESSED_PARAM, brotliFlushed, streamEncoding, upstreamSearch } from "@/lib/eve-stream-encoding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -152,17 +153,38 @@ async function proxy(request: NextRequest, segments: string[]): Promise<Response
     }
   }
 
-  const url = `${AGENT}/eve/v1/session/${segments.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
+  // The gate's own flag (`compressed`, lib/eve-stream-encoding.ts) is the gate's business; the agent sees the
+  // reader's query exactly as before.
+  const asked = request.nextUrl.searchParams.get(COMPRESSED_PARAM);
+  const search = asked === null ? request.nextUrl.search : upstreamSearch(request.nextUrl.searchParams);
+  const url = `${AGENT}/eve/v1/session/${segments.map(encodeURIComponent).join("/")}${search}`;
   const method = request.method;
   const hasBody = method !== "GET" && method !== "HEAD";
-  const upstream = await fetch(url, {
-    method,
-    headers: forwardHeaders(request),
-    body: hasBody ? request.body : undefined,
-    // Required by undici when streaming a request body through.
-    ...(hasBody ? { duplex: "half" } : {}),
-    redirect: "manual",
-  } as RequestInit & { duplex?: "half" });
+  /**
+   * A READ gets the reader's own signal, so a reader that leaves stops the agent's read as well.
+   *
+   * Without it, a reader that gave up was still holding this function AND the agent's open until the agent answered
+   * or the 800 s ceiling: measured on the live app, 6 of 12 specialist streams sent no response headers in 60-240 s,
+   * and every chat open started them again. Next aborts `request.signal` only when the reader disconnects before the
+   * response has finished (next/dist/server/web/spec-extension/adapters/next-request.js), never on a normal end.
+   * Only a read: a message, an answer or a Stop that has been sent is delivered even if the tab closes meanwhile.
+   */
+  let upstream: Response;
+  try {
+    upstream = await fetch(url, {
+      method,
+      headers: forwardHeaders(request),
+      body: hasBody ? request.body : undefined,
+      // Required by undici when streaming a request body through.
+      ...(hasBody ? { duplex: "half" } : {}),
+      redirect: "manual",
+      ...(method === "GET" ? { signal: request.signal } : {}),
+    } as RequestInit & { duplex?: "half" });
+  } catch (error) {
+    // Nobody is waiting for this answer any more; say so rather than log an error for it.
+    if (request.signal.aborted) return new Response(null, { status: 499 });
+    throw error;
+  }
 
   // Stream the body straight through — never buffer. The session stream is a
   // live tail, and reading it into memory here would hold the whole answer back
@@ -190,8 +212,25 @@ async function proxy(request: NextRequest, segments: string[]): Promise<Response
    */
   headers.set("cache-control", "no-cache, no-store, no-transform");
   headers.set("x-accel-buffering", "no");
-  headers.set("content-encoding", "identity");
-  return new Response(upstream.body, { status: upstream.status, headers });
+  /**
+   * Identity, unless the reader asked for a compressed stream and accepts brotli: then the gate compresses it
+   * itself and FLUSHES after every chunk the agent sends, so nothing waits in a compression window and a live stream
+   * stays exactly as live (lib/eve-stream-encoding.ts; scripts/test-eve-proxy-stream.mjs). Only the Control Panel's
+   * specialist feeds ask; the chat's own reads do not, and are unchanged.
+   */
+  const encoding = upstream.body
+    ? streamEncoding({
+        method,
+        segments,
+        asked,
+        acceptEncoding: request.headers.get("accept-encoding"),
+        status: upstream.status,
+      })
+    : "identity";
+  headers.set("content-encoding", encoding);
+  if (asked !== null) headers.set("vary", "accept-encoding");
+  const body = encoding === "br" && upstream.body ? brotliFlushed(upstream.body) : upstream.body;
+  return new Response(body, { status: upstream.status, headers });
 }
 
 type Ctx = { params: Promise<{ segments: string[] }> };

@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, lt, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 // Relative, with extensions: Next's bundler and plain node (scripts/test-workspace-attention-db.mjs) both load this.
 import type * as schema from "../agent/lib/db/schema.ts";
@@ -10,6 +10,7 @@ import {
   todos,
   workflowRuns,
 } from "../agent/lib/db/schema.ts";
+import { CHOICE_MEANINGS } from "../agent/lib/customer-schema.ts";
 
 type Tx = PostgresJsDatabase<typeof schema>;
 
@@ -43,8 +44,31 @@ export type InWorkspace = <T>(orgId: string, fn: (tx: Tx) => Promise<T>) => Prom
  * the workspace's transaction for the others.
  */
 
-const OPEN_TICKETS = ["Open", "In Progress", "Needs Triage", "Reopened", "Blocked"];
-const URGENT = ["P0-Critical", "P1-High"];
+/*
+ * What counts, as conditions on one workspace's rows. The switcher's counts here and the workspace's own summary
+ * (app/api/ops/summary/route.ts) share them, so the two numbers cannot disagree. The values are the stored ones,
+ * from the schema's enums (CHOICE_MEANINGS in agent/lib/customer-schema.ts), never a copy: a copy compared health
+ * with "Healthy" and risk with "High"/"Critical", values no row holds (mold_v1-251).
+ */
+
+/** Open tickets of an urgent priority. */
+export const urgentTicket = (orgId: string): SQL | undefined =>
+  and(
+    eq(tickets.orgId, orgId),
+    inArray(tickets.ticketStatus, [...CHOICE_MEANINGS.tickets.open]),
+    inArray(tickets.ticketPriority, [...CHOICE_MEANINGS.tickets.urgent]),
+  );
+
+/** Records whose health is anything but healthy (degraded, down, not known). */
+export const unhealthyDeployment = (orgId: string): SQL | undefined =>
+  and(eq(deployments.orgId, orgId), notInArray(deployments.healthStatus, [...CHOICE_MEANINGS.deployments.healthy]));
+
+/** Records at risk, or blocked whatever their risk. */
+export const implementationAtRisk = (orgId: string): SQL | undefined =>
+  and(
+    eq(implementation.orgId, orgId),
+    or(inArray(implementation.implementationRiskLevel, [...CHOICE_MEANINGS.implementations.atRisk]), isNotNull(implementation.blocker)),
+  );
 
 export async function attentionCounts(
   orgIds: readonly string[],
@@ -80,13 +104,7 @@ export async function attentionCounts(
         db
           .select({ n })
           .from(tickets)
-          .where(
-            and(
-              eq(tickets.orgId, orgId),
-              inArray(tickets.ticketStatus, OPEN_TICKETS),
-              inArray(tickets.ticketPriority, URGENT),
-            ),
-          ),
+          .where(urgentTicket(orgId)),
       );
       await safe((db) =>
         db
@@ -103,21 +121,13 @@ export async function attentionCounts(
           ),
       );
       await safe((db) =>
-        db.select({ n }).from(deployments).where(and(eq(deployments.orgId, orgId), ne(deployments.healthStatus, "Healthy"))),
+        db.select({ n }).from(deployments).where(unhealthyDeployment(orgId)),
       );
       await safe((db) =>
         db
           .select({ n })
           .from(implementation)
-          .where(
-            and(
-              eq(implementation.orgId, orgId),
-              or(
-                inArray(implementation.implementationRiskLevel, ["High", "Critical"]),
-                isNotNull(implementation.blocker),
-              ),
-            ),
-          ),
+          .where(implementationAtRisk(orgId)),
       );
       await safe((db) =>
         db

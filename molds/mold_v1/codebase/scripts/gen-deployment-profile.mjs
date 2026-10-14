@@ -8,22 +8,30 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateSource } from "./lib/profile-library.mjs";
+import { assertSupported } from "./lib/json-schema.mjs";
+import { AREA_IDS, checkArea, compileArea, formsIn, raiseDomain, raisePeriods, READ_ONLY, schemaProblem, SYSTEM_KEYS as AREA_SYSTEM_KEYS } from "./lib/record-areas.mjs";
 // Plain data with no imports but the price table; Node 24 reads the .ts as it is (type stripping).
 import { speechModelProblem } from "../lib/dictation-models.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 // PROFILES_DIR + --check let a test validate another set of profiles without touching the generated files.
 const DIR = process.env.PROFILES_DIR ? process.env.PROFILES_DIR : join(ROOT, "profiles");
-const CHECK_ONLY = process.argv.includes("--check") || process.argv.includes("--print");
+const CHECK_ONLY = process.argv.includes("--check") || process.argv.includes("--print") || process.argv.includes("--print-areas");
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function merge(base, over, path, shape) {
   const out = { ...base };
   for (const [k, v] of Object.entries(over)) {
     if (k === "$comment") continue;
     const here = path ? `${path}.${k}` : k;
+    // A profile redefines the four built-in record areas; it cannot add a fifth (scripts/lib/record-areas.mjs).
+    if (path === "records.areas" && !AREA_IDS.includes(k)) fail(`${here}: a profile may redefine only the four built-in record areas (${AREA_IDS.join(", ")}); a new kind of record is not supported`);
     // dataroom.domains keys and free-form maps aside, a key the default does not have is a typo, not an extension.
-    if (shape && !(k in shape) && !FREE.some((f) => path === f) && !FIELD_MAP.test(path) && !((k === "description" || k === "label") && path.startsWith("dataroom.domains."))) fail(`${here}: unknown key (not in profiles/00-default.json)`);
-    out[k] = isObj(v) && isObj(base[k]) ? merge(base[k], v, here, shape?.[k]) : v;
+    // Inside a record area, what may be said is the record-area schema's to decide (checked once merged, below).
+    if (shape && !(k in shape) && !FREE.some((f) => path === f) && !FIELD_MAP.test(path) && !RECORD_AREA.test(path) && !((k === "description" || k === "label") && path.startsWith("dataroom.domains."))) fail(`${here}: unknown key (not in profiles/00-default.json)`);
+    // A lifecycle on another field is another lifecycle: it replaces the one before it whole (its states, categories
+    // and transitions are that field's), instead of merging into it.
+    const relifed = k === "lifecycle" && RECORD_AREA.test(here) && isObj(v) && isObj(base[k]) && "field" in v && v.field !== base[k].field;
+    out[k] = isObj(v) && isObj(base[k]) && !relifed ? merge(base[k], v, here, shape?.[k]) : v;
   }
   return out;
 }
@@ -34,6 +42,8 @@ const uncomment = (v) => (Array.isArray(v) ? v.map(uncomment) : isObj(v) ? Objec
 const FREE = ["dataroom.domains", "library.sources", "agent.compaction.specialists"];
 // domains.<area>.fields is a map keyed by real field keys; its entries are validated against the schemas below.
 const FIELD_MAP = /^domains\.(deployments|implementations)\.fields(\.|$)/;
+// records.areas.<area>: the area's own shape (scripts/schemas/record-area.schema.json), not the default's keys.
+const RECORD_AREA = /^records\.areas\.[a-z]+(\.|$)/;
 let current = "";
 function fail(msg) { console.error(`profiles/${current}: ${msg}`); process.exit(1); }
 
@@ -70,6 +80,8 @@ function readDomains(doc, file) {
   }
 }
 let profile = {}; let shape = null; let defaults = null;
+/** Record areas by the form each profile file states them in: legacy (domains.*, work_periods) or records.areas. */
+const legacyBy = new Map(); const freshBy = new Map();
 for (const f of files) {
   current = f;
   let doc;
@@ -77,6 +89,13 @@ for (const f of files) {
   if (!isObj(doc)) fail("must be a JSON object");
   doc = uncomment(doc);
   readDomains(doc, f);
+  if (f !== "00-default.json") {
+    const { legacy, fresh } = formsIn(doc);
+    const legacyAt = (id) => (id === "periods" ? "work_periods" : `domains.${id}`);
+    for (const id of fresh) if (legacy.has(id)) fail(`records.areas.${id} and ${legacyAt(id)} both describe the ${id} area. Keep one form: records.areas.${id} (the record-area form) or ${legacyAt(id)} (the legacy form)`);
+    for (const id of legacy) legacyBy.set(id, [...(legacyBy.get(id) ?? []), f]);
+    for (const id of fresh) freshBy.set(id, [...(freshBy.get(id) ?? []), f]);
+  }
   profile = shape ? merge(profile, doc, "", shape) : merge({}, doc, "", null);
   if (!shape) { shape = profile; defaults = structuredClone(profile); }
 }
@@ -230,6 +249,90 @@ for (const [area, [zodName, table]] of Object.entries(AREAS)) {
   }
   domainFields[area] = all;
 }
+
+// --- records.areas: the record areas, compiled (scripts/lib/record-areas.mjs) ------------------------------------
+// The columns each area's table has, typed from the source: the two record areas' from the zod schemas and drizzle
+// tables above; the tasks' from the todos table and the task-workflow service's enums (the contract it validates);
+// the periods' from the cycles table.
+const RECORD_SCHEMA = JSON.parse(readFileSync(join(ROOT, "scripts/schemas/record-area.schema.json"), "utf8"));
+assertSupported(RECORD_SCHEMA);
+function tableColumns(name, skip) {
+  const start = dbSrc.indexOf(`export const ${name} = pgTable(`);
+  if (start < 0) { console.error(`gen-deployment-profile: table ${name} not found in agent/lib/db/schema.ts`); process.exit(1); }
+  const end = dbSrc.indexOf("\nexport const ", start + 1);
+  const block = dbSrc.slice(start, end < 0 ? undefined : end);
+  const out = {};
+  for (const c of block.split(/\n(?=\s+[A-Za-z0-9_]+: (?:text|doublePrecision|bigint|integer|jsonb|boolean|timestamp|uuid)\()/).slice(1)) {
+    const [, key, kind] = c.match(/^\s+([A-Za-z0-9_]+): (\w+)\(/);
+    if (skip.includes(key)) continue;
+    const stmt = c.split(/\n\s*\},?\n|\n\s*\(t\) =>/)[0];
+    out[key] = { kind: kind === "doublePrecision" || kind === "bigint" ? "number" : kind === "jsonb" ? "list" : kind, required: /\.notNull\(\)|\.primaryKey\(\)/.test(stmt) && !/\.default/.test(stmt) };
+  }
+  return out;
+}
+function zodEnum(file, pattern) {
+  const src = readFileSync(join(ROOT, file), "utf8");
+  const m = src.match(pattern);
+  if (!m) { console.error(`gen-deployment-profile: ${pattern} not found in ${file}`); process.exit(1); }
+  return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+}
+// The task enums as the agent's todo tools declare them (the same contract the task-workflow service validates;
+// scripts/test-record-areas.mjs holds the two equal). Read from agent/: a stamped copy of the checkout has no services/.
+const TASK_TYPES = "agent/lib/todo-tools.ts";
+const areaColumns = {
+  deployments: Object.fromEntries(Object.entries(domainFields.deployments).map(([k, m]) => [k, { kind: m.type, ...(m.values ? { values: m.values } : {}), required: m.required }])),
+  implementations: Object.fromEntries(Object.entries(domainFields.implementations).map(([k, m]) => [k, { kind: m.type, ...(m.values ? { values: m.values } : {}), required: m.required }])),
+  tasks: (() => {
+    const c = tableColumns("todos", AREA_SYSTEM_KEYS);
+    const enums = {
+      status: zodEnum(TASK_TYPES, /status: z\s*\.enum\(\[([^\]]*)\]\)/),
+      priority: zodEnum(TASK_TYPES, /priority: z\.enum\(\[([^\]]*)\]\)/),
+      containerType: zodEnum(TASK_TYPES, /const containerType = z\.enum\(\[([^\]]*)\]\)/),
+      linkType: zodEnum(TASK_TYPES, /const linkType = z\.enum\(\[([^\]]*)\]\)/),
+    };
+    for (const [k, values] of Object.entries(enums)) c[k] = { ...c[k], kind: "enum", values };
+    c.title.required = true;
+    return c;
+  })(),
+  // The cycles table's state is a text column; its three states are the default profile's (records.areas.periods),
+  // held equal to the cycles route's by scripts/test-record-areas.mjs.
+  periods: tableColumns("cycles", AREA_SYSTEM_KEYS),
+};
+const declaredAreas = profile.records?.areas ?? {};
+const legacyOf = (p, id) => (id === "periods" ? p.work_periods : id === "tasks" ? undefined : p.domains?.[id]);
+// An area may be stated in one form across the files: two files disagreeing on the form is the same mistake as one.
+for (const id of AREA_IDS) {
+  if (legacyBy.has(id) && freshBy.has(id)) {
+    current = freshBy.get(id).at(-1);
+    fail(`records.areas.${id}: ${legacyBy.get(id).join(", ")} ${legacyBy.get(id).length === 1 ? "states" : "state"} this area in the legacy form (${id === "periods" ? "work_periods" : `domains.${id}`}) and ${freshBy.get(id).join(", ")} in the record-area form. Use one form for an area across every profile file`);
+  }
+}
+const DOMAIN_IDS_FOR_FOLDERS = DOMAINS;
+function areaFail(id, p) {
+  current = freshBy.get(id)?.at(-1) ?? legacyBy.get(id)?.at(-1) ?? "00-default.json";
+  fail(`records.areas.${id}${p.path ? `.${p.path}` : ""}: ${p.message}`);
+}
+/** Compile every area of a merged profile; `isFresh(id)`: is it stated in the record-area form? */
+function compileAll(p, legacySource, isFresh) {
+  const out = {};
+  for (const id of AREA_IDS) out[id] = compileArea(id, { cols: areaColumns[id], legacy: isFresh(id) ? legacySource(id) : legacyOf(p, id), declared: p.records?.areas?.[id] });
+  return out;
+}
+// A profile written in the record-area form: raise it to the legacy form every current reader takes.
+const raisedNotes = [];
+const prelim = freshBy.size ? compileAll(profile, (id) => legacyOf(defaults, id), (id) => freshBy.has(id)) : null;
+for (const id of AREA_IDS) {
+  if (!freshBy.has(id) || id === "tasks") continue;
+  const problem = schemaProblem(RECORD_SCHEMA, declaredAreas[id]) ?? checkArea(id, prelim[id], { cols: areaColumns[id], areas: prelim, folders: DOMAINS, declared: declaredAreas[id] });
+  if (problem) areaFail(id, problem);
+  const area = prelim[id];
+  if (id === "periods") profile.work_periods = raisePeriods(area, profile.work_periods);
+  else {
+    const { domain, dropped } = raiseDomain(id, area, profile.domains[id], areaColumns[id]);
+    profile.domains[id] = domain;
+    if (dropped.length) raisedNotes.push(`records.areas.${id}: ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} compiled into the area but not yet on its list, forms or API (they still read the legacy form, which has no such type)`);
+  }
+}
 const validValue = (meta, v) => (meta.type === "enum" ? meta.values.includes(v) : meta.type === "number" ? typeof v === "number" && Number.isFinite(v) : meta.type === "text" ? typeof v === "string" && v.trim() !== "" : false);
 for (const area of Object.keys(AREAS)) {
   const at = `domains.${area}`; const d = profile.domains?.[area]; const known = domainFields[area];
@@ -339,6 +442,22 @@ for (const area of Object.keys(AREAS)) {
   if (wp.workspace_can_set_length === null) wp.workspace_can_set_length = wp.mode !== "off";
 }
 
+// The compiled areas (after work_periods above is resolved), each checked: what the profile said against the schema,
+// then the compiled area against the rules a schema cannot say (field bindings, choices, the lifecycle, the views).
+const RECORD_AREAS = compileAll(profile, (id) => legacyOf(defaults, id), (id) => freshBy.has(id) && id !== "periods");
+for (const id of AREA_IDS) {
+  const problem = schemaProblem(RECORD_SCHEMA, declaredAreas[id]) ?? checkArea(id, RECORD_AREAS[id], { cols: areaColumns[id], areas: RECORD_AREAS, folders: DOMAIN_IDS_FOR_FOLDERS, declared: declaredAreas[id] });
+  if (problem) areaFail(id, problem);
+}
+// What the default profile alone compiles to: an area that differs from it is REDEFINED by this deployment.
+{
+  const d = structuredClone(defaults);
+  if (d.work_periods.workspace_can_set_length === null) d.work_periods.workspace_can_set_length = d.work_periods.mode !== "off";
+  const defaultAreas = compileAll(d, () => undefined, () => false);
+  for (const id of AREA_IDS) RECORD_AREAS[id].redefined = JSON.stringify(RECORD_AREAS[id]) !== JSON.stringify(defaultAreas[id]);
+}
+for (const note of raisedNotes) console.warn(`gen-deployment-profile: note: ${note}`);
+
 // --- asr: dictation in the chat composer (speech to text, never spoken replies) ---------------------------------
 {
   const a = profile.asr; const at = "asr";
@@ -433,6 +552,120 @@ if (Object.keys(defaults.library.sources).length) fail("library.sources: the def
   }
 }
 
+const TYPES = `export type RecordAreaId = "deployments" | "implementations" | "tasks" | "periods";
+export type RecordFieldType = "text" | "long_text" | "integer" | "number" | "percent" | "money" | "date" | "datetime" | "boolean" | "email" | "link" | "pick_list" | "multi_pick" | "person" | "record" | "file" | "tags";
+export type RecordCategory = "backlog" | "open" | "active" | "blocked" | "done" | "cancelled";
+export type RecordRole = "owner" | "admin" | "engineer" | "member";
+export type RecordTone = "slate" | "sky" | "blue" | "green" | "amber" | "orange" | "red" | "violet" | "muted";
+/** A field's condition: equal to a value, or an operator. */
+export type RecordWhere = Record<string, string | number | boolean | null | { eq?: unknown; ne?: unknown; in?: unknown[]; not_in?: unknown[]; lt?: unknown; lte?: unknown; gt?: unknown; gte?: unknown; set?: boolean; category?: RecordCategory | RecordCategory[] }>;
+export interface RecordOption { value: string; label?: string; tone?: RecordTone; attention?: boolean; retired?: boolean }
+export interface RecordField {
+  /** The field's key: a column of the area's table (\`column\`), or the area's own, stored under it in \`custom\`. */
+  key: string;
+  column: boolean;
+  order: number;
+  type: RecordFieldType;
+  alias?: string;
+  label?: string;
+  short_label?: string;
+  help?: string;
+  placeholder?: string;
+  /** true: a record cannot be created without it nor have it cleared; "on_create": only when it is created. */
+  required?: boolean | "on_create";
+  /** A value, or "{today}", "{today+7d}", "{me}", "{account.owner}". */
+  default?: unknown;
+  options?: RecordOption[];
+  /** A stored spelling -> the option value it is read as. */
+  legacy_values?: Record<string, string>;
+  /** Own fields: the key older rows carry the value under. */
+  renamed_from?: string;
+  min?: number;
+  max?: number;
+  max_length?: number;
+  pattern?: string;
+  currency?: string;
+  many?: boolean;
+  record?: { area: string };
+  folder?: string;
+  computed?: { when: { if: RecordWhere; then: unknown }[]; else?: unknown };
+  hidden?: boolean;
+  fixed?: unknown;
+  index?: "none" | "filter" | "sort" | "unique";
+  search?: boolean;
+  show_in_list?: boolean;
+  pii?: boolean;
+}
+export interface RecordTransition { from: "*" | string[]; to: string; label?: string; roles?: RecordRole[]; requires?: string[]; requires_comment?: boolean; not_by?: string; set?: Record<string, unknown> }
+export interface RecordLifecycle {
+  field: string;
+  initial?: string;
+  categories: Record<string, RecordCategory>;
+  /** What a move outside \`transitions\` does: "off" (allowed, the default), "warn" (allowed and noted), "strict" (refused). */
+  enforce?: "off" | "warn" | "strict";
+  transitions?: RecordTransition[];
+}
+export type RecordRoles = "*" | RecordRole[];
+export interface RecordArea {
+  enabled: boolean;
+  kind: "record" | "task" | "period";
+  storage: "deployments" | "implementation" | "todos" | "cycles";
+  columns: "all" | "listed";
+  label?: { singular: string; plural: string };
+  description?: string;
+  icon?: string;
+  nav?: { order?: number; label?: string };
+  id?: { field?: string; label?: string; placeholder?: string; pattern?: string; generate?: string };
+  title?: string;
+  fields: Record<string, RecordField>;
+  lifecycle?: RecordLifecycle;
+  relations?: {
+    account?: { required?: boolean; label?: string };
+    containers?: string[];
+    links?: string[];
+    tasks?: boolean;
+    periods?: boolean;
+    subtasks?: boolean;
+    group?: { field?: string | null; label?: { singular: string; plural: string } };
+  };
+  views?: {
+    default?: "table" | "board" | "timeline" | "calendar";
+    available?: ("table" | "board" | "timeline" | "calendar")[];
+    table?: { columns?: string[]; page_size?: number };
+    board?: { by?: string; card?: { title?: string; meta?: string[]; badge?: string } };
+    timeline?: { start?: string; end?: string };
+    calendar?: { date?: string };
+    filters?: { field?: string; scope?: "people"; presets?: ("overdue" | "due_7d" | "due_30d" | "this_period" | "mine" | "unassigned")[] }[];
+    sorts?: { field: string; dir?: "asc" | "desc"; default?: boolean; label?: string }[];
+    group_by?: string[];
+    detail?: { sections?: { label?: string; fields?: string[]; related?: "tasks" | "files" | "activity" | "comments" | "subtasks" }[]; append?: boolean };
+    /** \`append\`: the listed fields come after the built-in form's own (the legacy create_fields). */
+    create?: { fields?: string[]; submit_label?: string; title?: string; append?: boolean };
+    empty?: string;
+    loading?: string;
+  };
+  permissions?: { read?: RecordRoles; create?: RecordRoles; update?: RecordRoles; delete?: RecordRoles; own?: { field?: string; may?: ("update" | "delete" | "transition")[] }; fields?: Record<string, { update?: RecordRoles }> };
+  reminders?: { id: string; date: string; before_days?: number[]; after_days?: number[]; unless?: RecordWhere; notify: string[]; channels?: ("inbox" | "push" | "email")[] }[];
+  recurrence?: { field?: string; on?: "done" | "schedule"; anchor?: string; every?: Record<string, string>; copy?: string[] };
+  metrics?: { id: string; label: string; count?: { where?: RecordWhere }; ratio?: { num?: RecordWhere; den?: RecordWhere }; sum?: { field?: string; where?: RecordWhere }; attention?: boolean; format?: "count" | "percent" | "money" }[];
+  agent?: { tools?: { read?: boolean; write?: boolean; delete?: boolean }; describe?: string; rules?: string[]; examples?: unknown[] };
+  io?: { export?: { csv?: boolean; workbook_sheet?: boolean }; import?: { csv?: boolean; match_on?: string[] } };
+  period?: { mode?: WorkPeriodMode; list_label?: { singular: string; plural: string }; item_label?: { singular: string; plural: string }; length_days?: number | null; auto_rollover?: boolean; length_days_range?: number[]; workspace_can_set_length?: boolean | null; starts_on?: "any" | "monday" | "sunday" | "first_of_month"; time_zone?: string | null; name?: string };
+  targets?: { key: string; label: string; per?: "team" | "person"; measure: { area: string; date?: string; where?: RecordWhere; person?: string }; goal?: { kind?: "count" | "percent_of"; of?: Record<string, unknown>; default?: number } }[];
+  /** This deployment says something about the area that the default profile does not. */
+  redefined: boolean;
+}`;
+const DOC = `/**
+ * THE RECORD AREAS (profiles \`records.areas\`, docs/DEPLOYMENT_PROFILE.md "records"), compiled: the four built-in kinds of
+ * record, each bound to its table, with every field typed (a column of the table, or the area's own field stored in its
+ * \`custom\` column), the choices with their tones, the lifecycle with each state's category, the views. The profile's
+ * \`domains\` and \`work_periods\` (DEPLOYMENT_PROFILE) are the legacy forms of three of them, lowered into these. \`redefined\`: this deployment says
+ * something about the area the default profile does not. Read through agent/lib/record-areas.ts; every write is
+ * checked by agent/lib/record-validate.ts.
+ */
+`;
+// The profile as every current reader takes it: the record areas are emitted on their own (RECORD_AREAS), compiled.
+const { records: _records, ...profileOut } = profile;
 const banner = `// AUTO-GENERATED by scripts/gen-deployment-profile.mjs from profiles/*.json — do not edit by hand.
 // Sources, in merge order: ${files.join(", ")}
 `;
@@ -596,7 +829,7 @@ export type CustomFieldArea = DomainArea | "account";
 /** What a form needs to know about a field: read from agent/lib/customer-schema.ts and agent/lib/db/schema.ts. */
 export interface DomainFieldMeta { type: "enum" | "number" | "text" | "list"; values?: string[]; column: boolean; required: boolean }
 
-export const DEPLOYMENT_PROFILE: DeploymentProfile = ${JSON.stringify(profile, null, 2)};
+export const DEPLOYMENT_PROFILE: DeploymentProfile = ${JSON.stringify(profileOut, null, 2)};
 
 /** domains as profiles/00-default.json states them: "has this deployment redefined the area?" is a comparison with this. */
 export const DEFAULT_DOMAINS: DeploymentProfile["domains"] = ${JSON.stringify(defaults.domains)};
@@ -613,6 +846,21 @@ export function fillProfileText(text: string, slots: Record<string, string | num
 }
 `;
 if (!CHECK_ONLY) for (const target of ["lib/deployment-profile.generated.ts", "agent/lib/deployment-profile.generated.ts"]) writeFileSync(join(ROOT, target), body);
+// The compiled record areas as their own module: only what reads them (agent/lib/record-areas.ts and its readers)
+// carries them, and the profile module above stays exactly what it was for a profile that does not redefine them.
+if (!CHECK_ONLY) {
+  writeFileSync(
+    join(ROOT, "agent/lib/record-areas.generated.ts"),
+    `// AUTO-GENERATED by scripts/gen-deployment-profile.mjs from profiles/*.json — do not edit by hand.
+// Sources, in merge order: ${files.join(", ")}
+import type { WorkPeriodMode } from "./deployment-profile.generated.ts";
+
+${TYPES}
+
+${DOC}export const RECORD_AREAS: Record<RecordAreaId, RecordArea> = ${JSON.stringify(RECORD_AREAS, null, 2)};
+`,
+  );
+}
 // The former folder names as a module the SERVER can import (the store's write guard). Kept out of the profile
 // module on purpose: that one is bundled for the browser, and no page has a use for them.
 if (!CHECK_ONLY) {
@@ -655,5 +903,6 @@ if (!CHECK_ONLY) {
   }
 }
 // --print: the merged, validated profile as JSON on stdout (scripts/test-deployment-profile.mjs reads an example this way).
-if (process.argv.includes("--print")) { console.log(JSON.stringify(profile)); process.exit(0); }
-console.log(`deployment profile: ${files.join(" + ")} -> product "${profile.product.name}", ${profile.vocabulary.account.plural}, ${Object.values(profile.dataroom.domains).filter((d) => d.visible).length}/${DOMAINS.length} data-room domains visible${["deployments", "implementations"].filter((a) => JSON.stringify(profile.domains[a]) !== JSON.stringify(defaults.domains[a])).map((a) => `, ${a} shown as "${profile.domains[a].group_by ? profile.domains[a].group_label.plural : profile.domains[a].label.plural}"`).join("")}`);
+if (process.argv.includes("--print-areas")) { console.log(JSON.stringify(RECORD_AREAS)); process.exit(0); }
+if (process.argv.includes("--print")) { console.log(JSON.stringify(profileOut)); process.exit(0); }
+console.log(`deployment profile: ${files.join(" + ")} -> product "${profile.product.name}", ${profile.vocabulary.account.plural}, ${Object.values(profile.dataroom.domains).filter((d) => d.visible).length}/${DOMAINS.length} data-room domains visible${["deployments", "implementations"].filter((a) => JSON.stringify(profile.domains[a]) !== JSON.stringify(defaults.domains[a])).map((a) => `, ${a} shown as "${profile.domains[a].group_by ? profile.domains[a].group_label.plural : profile.domains[a].label.plural}"`).join("")}${RECORD_AREAS.tasks.redefined ? `, tasks shown as "${RECORD_AREAS.tasks.label.plural}"` : ""}`);

@@ -84,6 +84,9 @@ import { bundleToMarkdown, exportJson, type ExportBundle } from "@/lib/record-ex
 import { PERIOD_UI, PERIOD_VIEW, resolveTodoView, todoViews, type PeriodUi, type TodoViewKey } from "@/lib/work-periods-ui";
 import { currentPeriod, managesPerson, progressByPerson, type PersonProgress } from "@/agent/lib/work-periods";
 import { domainView, groupRows, groupSlug, groupTitle, withProfileFields, type DomainFormField, type DomainView } from "@/lib/profile-domains";
+import { RECORD_AREAS } from "@/agent/lib/record-areas.generated";
+import { areaView, type AreaView, type RecordAreas } from "@/agent/lib/record-areas";
+import { moveTo, stateOf, TaskCreatePanel, TaskOwnFields, taskUi, type TaskSortKey, type TaskUi } from "./task-area";
 
 /**
  * The two record areas as THIS deployment names them (docs/DEPLOYMENT_PROFILE.md, `domains`). Every label below
@@ -101,26 +104,13 @@ const PRIORITY_DOT: Record<string, string> = {
   low: "bg-sky-500/60",
 };
 
-const TASK_STATUSES = [
-  { value: "backlog", label: "Backlog", tone: "bg-muted-foreground/40" },
-  { value: "open", label: "Open", tone: "bg-sky-500" },
-  { value: "in_progress", label: "In progress", tone: "bg-amber-500" },
-  { value: "blocked", label: "Blocked", tone: "bg-red-500" },
-  { value: "done", label: "Done", tone: "bg-emerald-500" },
-  { value: "cancelled", label: "Cancelled", tone: "bg-muted-foreground/25" },
-] as const;
-const TASK_COLUMNS: BoardColumn[] = TASK_STATUSES.map((s) => ({ key: s.value, label: s.label, tone: s.tone }));
+// The Tasks view's states, priorities, sorts and words are the deployment's definition of a task (./task-area.tsx
+// taskUi): today's literals under the default one. BUILD_TASKS is this build's; the panel takes a preview's too.
+const BUILD_TASKS = taskUi(areaView("tasks"));
 
 /* ------------------------------ org scope --------------------------------- */
 
 type ScopeKey = "me" | "reportees" | "team" | "everyone";
-
-const TASK_SORTS = [
-  { value: "created", label: "Newest" },
-  { value: "priority", label: "Priority" },
-  { value: "due", label: "Due date" },
-  { value: "title", label: "Title" },
-] as const;
 
 const DEPLOYMENT_SORTS = [
   { value: "customer", label: ACCOUNT_LABEL },
@@ -439,9 +429,12 @@ export function TodosPanel({
   initialSelectedId,
   initialView,
   onInitialConsumed,
+  tasksArea,
 }: {
   readonly authorEmail?: string;
   readonly onClose: () => void;
+  /** Another profile's compiled record areas (a preview page); this build's when absent. */
+  readonly tasksArea?: RecordAreas;
   /** Deep-link (`/?ops=todos&id=<todo id>`): the task to open on first show. */
   readonly initialSelectedId?: string;
   /** Deep-link (`&view=<tab>`): which tab to open on first show. */
@@ -449,11 +442,17 @@ export function TodosPanel({
   readonly onInitialConsumed?: () => void;
 }) {
   const { items, error, refetch, loading } = useOpsList<ApiTodo>("/api/ops/todos");
+  // What a task is in this deployment (records.areas.tasks): the default's literals unless it is redefined.
+  const areas = tasksArea ?? RECORD_AREAS;
+  const tv = useMemo(() => areaView("tasks", areas), [areas]);
+  const TU = useMemo(() => (tasksArea ? taskUi(tv) : BUILD_TASKS), [tasksArea, tv]);
+  const nav = useMemo(() => NAV.map((n) => (n.key === "tasks" && TU.redefined ? { ...n, label: TU.navLabel, blurb: TU.navBlurb } : n)), [TU]);
+  const [creating, setCreating] = useState(false);
   const [view, setView] = useState<TodoView>(resolveTodoView(initialView));
   const [taskView, setTaskView] = useState<ViewMode>("kanban");
   const { scopes, setScopes, inScope } = useScope(authorEmail, []);
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<"created" | "priority" | "due" | "title">("created");
+  const [sort, setSort] = useState<TaskSortKey>(TU.defaultSort);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -482,19 +481,27 @@ export function TodosPanel({
               s === "backlog" ? !t.cycleId : s === "current" ? t.cycleId === currentCycle?.id : t.cycleId === s,
             )) &&
           (!query ||
-            [t.title, t.notes ?? "", t.containerLabel ?? "", t.linkLabel ?? "", t.assignee ?? ""]
+            [t.title, t.notes ?? "", t.containerLabel ?? "", t.linkLabel ?? "", t.assignee ?? "", ...(TU.redefined ? Object.keys(t.custom ?? {}).map((k) => tv.display(k, t.custom?.[k])) : [])]
               .join(" ")
               .toLowerCase()
               .includes(query)),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, inScope, query, cycleSel, currentCycle?.id],
+    [items, inScope, query, cycleSel, currentCycle?.id, TU, tv],
   );
   const sorted = useMemo(() => {
-    const rank = { high: 0, normal: 1, low: 2 } as const;
+    const rank: Record<string, number> = TU.redefined ? Object.fromEntries(TU.priorities.map((p, i) => [p.value, i])) : { high: 0, normal: 1, low: 2 };
     const arr = [...filtered];
     arr.sort((a, b) => {
-      if (sort === "priority") return rank[a.priority] - rank[b.priority];
+      if (sort === "priority") return (rank[a.priority] ?? 9) - (rank[b.priority] ?? 9);
+      if (sort.startsWith("field:")) {
+        const key = sort.slice("field:".length);
+        const av = tv.get(a as never, key);
+        const bv = tv.get(b as never, key);
+        if (av == null || av === "") return bv == null || bv === "" ? 0 : 1;
+        if (bv == null || bv === "") return -1;
+        return typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
+      }
       if (sort === "title") return a.title.localeCompare(b.title);
       if (sort === "due") {
         const av = a.dueAt ? Date.parse(a.dueAt) : Infinity;
@@ -504,7 +511,7 @@ export function TodosPanel({
       return Date.parse(b.createdAt) - Date.parse(a.createdAt); // created (newest)
     });
     return arr;
-  }, [filtered, sort]);
+  }, [filtered, sort, TU, tv]);
   const selected = items?.find((t) => t.id === selectedId) ?? null;
 
   // Deep-link (`/?ops=todos&id=…`): once todos load, open that task's detail on
@@ -534,8 +541,9 @@ export function TodosPanel({
   };
   // "New task" from the toolbar: create a placeholder and open its detail so
   // the title can be typed straight away (the app's Add-then-edit pattern).
+  // A redefined task asks for its required fields up front (./task-area.tsx TaskCreatePanel).
   const createTask = () =>
-    run(null, async () => {
+    TU.redefined ? (setSelectedId(null), setCreating(true)) : run(null, async () => {
       const res = await opsFetch<{ item: { id: string } }>("/api/ops/todos", {
         method: "POST",
         body: JSON.stringify({ title: "New task", createdBy: authorEmail ?? "web" }),
@@ -591,14 +599,14 @@ export function TodosPanel({
   const list = (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       <TabToolbar
-        noun="todo"
+        noun={TU.noun}
         q={q}
         setQ={setQ}
         onCreate={createTask}
-        createLabel="New task"
+        createLabel={TU.createLabel}
         sort={sort}
         setSort={(v) => setSort(v as typeof sort)}
-        sortOptions={TASK_SORTS}
+        sortOptions={TU.sorts}
         onClose={onClose}
         viewSwitcher={<ViewSwitcher view={taskView} setView={setTaskView} />}
         filter={
@@ -624,14 +632,14 @@ export function TodosPanel({
         }
       />
 
-      <Banners loadError={error} actionError={actionError} noun="todo" />
+      <Banners loadError={error} actionError={actionError} noun={TU.noun} />
 
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {loading && !items ? (
-            <p className={cn("py-10 text-center text-muted-foreground", TYPE.meta)}>Loading todos…</p>
+            <p className={cn("py-10 text-center text-muted-foreground", TYPE.meta)}>{TU.loading}</p>
           ) : (items?.length ?? 0) === 0 ? (
-            <p className={cn("py-16 text-center text-muted-foreground/60 italic", TYPE.meta)}>No todos yet — hit New task.</p>
+            <p className={cn("py-16 text-center text-muted-foreground/60 italic", TYPE.meta)}>{TU.empty}</p>
           ) : (
             <WorkspaceViews
           view={taskView}
@@ -644,6 +652,7 @@ export function TodosPanel({
                 task={{
                   title: t.title,
                   priority: t.priority,
+                  ...(TU.redefined ? { priorityLabel: TU.priorities.find((p) => p.value === t.priority)?.label } : {}),
                   done: t.done,
                   assignee: t.assignee,
                   cycleLabel: cycleName(t.cycleId),
@@ -656,11 +665,11 @@ export function TodosPanel({
               />
             ),
             kanban: {
-              columns: TASK_COLUMNS,
-              columnOf: (t) => (TASK_STATUSES.some((s) => s.value === t.status) ? t.status : "open"),
-              onMove: (t, col) => patch(t.id, { status: col }),
+              columns: TU.columns,
+              columnOf: (t) => stateOf(TU, tv, t),
+              onMove: (t, col) => patch(t.id, moveTo(TU, col)),
             },
-            table: [
+            table: TU.tableColumns ? taskTableColumns(TU, tv, cycleName) : [
               { key: "title", label: "Task", render: (t) => <span className={cn("font-medium", t.done && "text-muted-foreground/60 line-through")}>{t.title}</span> },
               { key: "status", label: "Status", render: (t) => <span className="capitalize">{t.status.replace("_", " ")}</span> },
               { key: "priority", label: "Priority", render: (t) => <span className="capitalize">{t.priority}</span> },
@@ -677,6 +686,22 @@ export function TodosPanel({
         />
           )}
         </div>
+        {creating && TU.redefined && !selected ? (
+          <SidePanel onClose={() => setCreating(false)}>
+            <TaskCreatePanel
+              view={tv}
+              areas={areas}
+              me={authorEmail}
+              onCancel={() => setCreating(false)}
+              onCreate={async (body) => {
+                const res = await opsFetch<{ item: { id: string } }>("/api/ops/todos", { method: "POST", body: JSON.stringify(body) });
+                setCreating(false);
+                await refetch();
+                setSelectedId(res.item.id);
+              }}
+            />
+          </SidePanel>
+        ) : null}
         {selected ? (
           <SidePanel
             onClose={() => setSelectedId(null)}
@@ -684,7 +709,7 @@ export function TodosPanel({
               <PanelActionsMenu
                 shareView="tasks"
                 shareId={selected.id}
-                deleteLabel="Delete task"
+                deleteLabel={TU.deleteLabel}
                 onDelete={() => hide(selected.id)}
                 exportType="task"
                 exportId={selected.id}
@@ -698,10 +723,12 @@ export function TodosPanel({
               busy={busyId === selected.id}
               authorEmail={authorEmail}
               slug={seqSlug("TS", taskSeq.get(selected.id) ?? 0)}
+              ui={TU}
+              view={tv}
               onPatch={(body) => patch(selected.id, body)}
               subtasks={(items ?? []).filter((t) => t.parentId === selected.id)}
               onAddSubtask={(title) => addTodoTo({ title, parentId: selected.id })}
-              onToggleSubtask={(id, done) => patch(id, { status: done ? "done" : "open" })}
+              onToggleSubtask={(id, done) => patch(id, moveTo(TU, done ? TU.doneState : TU.initialState))}
               onOpenSubtask={(id) => setSelectedId(id)}
             />
           </SidePanel>
@@ -714,7 +741,7 @@ export function TodosPanel({
     <div className="flex h-full min-h-0">
       {/* Side-nav: the TODO workspace's five views. */}
       <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-border/60 border-r bg-muted/20 p-3">
-        {NAV.map((n) => {
+        {nav.map((n) => {
           const isActive = view === n.key;
           return (
             <button
@@ -845,7 +872,7 @@ export function TodosPanel({
                 onAddSubtask={(title) =>
                   addTodoTo({ title, containerType: "deployment", containerId: d.id, containerLabel: d.label })
                 }
-                onToggleSubtask={(id, done) => patch(id, { status: done ? "done" : "open" })}
+                onToggleSubtask={(id, done) => patch(id, moveTo(TU, done ? TU.doneState : TU.initialState))}
                 onOpenTodo={openTodo}
               />
             )}
@@ -955,7 +982,7 @@ export function TodosPanel({
                 onAddSubtask={(title) =>
                   addTodoTo({ title, containerType: "implementation", containerId: r.id, containerLabel: r.label })
                 }
-                onToggleSubtask={(id, done) => patch(id, { status: done ? "done" : "open" })}
+                onToggleSubtask={(id, done) => patch(id, moveTo(TU, done ? TU.doneState : TU.initialState))}
                 onOpenTodo={openTodo}
               />
             )}
@@ -1053,17 +1080,10 @@ export function deploymentCreateFields(view: DomainView): RefCreateField[] {
     [
       { key: "customerId", label: ACCOUNT_LABEL, kind: "customer", required: true },
       { key: "deploymentId", label: view.idLabel, kind: "text", placeholder: view.placeholder("deploymentId", "DEP-…"), required: true },
-      {
-        key: "environment",
-        label: view.label("environment", "Environment"),
-        kind: "select",
-        options: view.options("environment", [
-          { value: "production", label: "Production" },
-          { value: "staging", label: "Staging" },
-          { value: "development", label: "Development" },
-        ]),
-      },
-      { key: "region", label: view.label("region", "Region"), kind: "text", placeholder: view.placeholder("region", "ap-south-1"), required: true },
+      // The choices are the stored values (the schema's enum) in the profile's words. This form offered
+      // production/development, which are not values of the enum, and a free-text region (mold_v1-251).
+      { key: "environment", label: view.label("environment", "Environment"), kind: "select", options: view.options("environment") },
+      { key: "region", label: view.label("region", "Region"), kind: "select", options: view.options("region") },
       { key: "deployedVersion", label: view.label("deployedVersion", "Version"), kind: "text", placeholder: view.placeholder("deployedVersion", "1.0.0"), required: true },
       { key: "releaseStatus", label: view.label("releaseStatus", "Release status"), kind: "select", options: view.options("releaseStatus", DEPLOY_COLUMNS.map((c) => ({ value: c.key, label: c.label }))) },
       {
@@ -1089,18 +1109,10 @@ export function implementationCreateFields(view: DomainView): RefCreateField[] {
     [
       { key: "customerId", label: ACCOUNT_LABEL, kind: "customer", required: true },
       ...(group ? [group as RefCreateField] : []),
-      { key: "implementationStage", label: view.label("implementationStage", "Stage"), kind: "select", options: view.options("implementationStage", IMPL_STAGES.map((st) => ({ value: st, label: st }))) },
-      {
-        key: "implementationRiskLevel",
-        label: view.label("implementationRiskLevel", "Risk"),
-        kind: "select",
-        options: view.options("implementationRiskLevel", [
-          { value: "low", label: "Low" },
-          { value: "medium", label: "Medium" },
-          { value: "high", label: "High" },
-          { value: "critical", label: "Critical" },
-        ]),
-      },
+      // The stored values (the schema's enums) in the profile's words. Risk offered low/medium/high/critical, which
+      // the enum (Green/Yellow/Red) refuses (mold_v1-251).
+      { key: "implementationStage", label: view.label("implementationStage", "Stage"), kind: "select", options: view.options("implementationStage") },
+      { key: "implementationRiskLevel", label: view.label("implementationRiskLevel", "Risk"), kind: "select", options: view.options("implementationRiskLevel") },
       { key: "implementationOwnerEmail", label: view.label("implementationOwnerEmail", "Owner"), kind: "text", placeholder: view.placeholder("implementationOwnerEmail", "name@company.com") },
     ],
     view.spec.create_fields,
@@ -1579,20 +1591,9 @@ const DEPLOY_COLUMNS: BoardColumn[] = [
   { key: "failed", label: "Failed", tone: "bg-red-500" },
 ].map((c) => ({ ...c, label: DEP.display("releaseStatus", c.key, c.label) }));
 
-// The full implementation pipeline (matches the customer-schema enum exactly),
-// so every stage is a column even when empty — you can drag a rollout into any.
-const IMPL_STAGES = [
-  "Kickoff",
-  "Discovery",
-  "Configuration",
-  "Integration",
-  "UAT",
-  "Pilot",
-  "Go-Live",
-  "Stabilization",
-  "Steady State",
-  "On Hold",
-] as const;
+// Every stage is a column even when empty, so a record can be dragged into any: the stage enum's own values
+// (agent/lib/customer-schema.ts, through the generated profile), not a copy of them.
+const IMPL_STAGES = IMP.values("implementationStage");
 const IMPL_COLUMNS: BoardColumn[] = IMPL_STAGES.map((s) => ({ key: s, label: IMP.display("implementationStage", s) }));
 
 const CYCLE_COLUMNS: BoardColumn[] = [
@@ -1770,6 +1771,29 @@ function ReferenceDetail({
   );
 }
 
+/**
+ * A redefined task's table: the definition's columns, each read off the row (a column, or an own field under
+ * `custom`) and shown as the definition says. The title strikes through when done, as today's table does.
+ */
+function taskTableColumns(ui: TaskUi, v: AreaView, cycleName: (id: string | null) => string | null) {
+  return (ui.tableColumns ?? []).map((key) => ({
+    key,
+    label: key === ui.stateField ? ui.labels.status : key === "cycleId" ? PERIOD_UI.listLabel : v.label(key, key, "short"),
+    render: (t: ApiTodo): React.ReactNode =>
+      key === "title" ? (
+        <span className={cn("font-medium", t.done && "text-muted-foreground/60 line-through")}>{t.title}</span>
+      ) : key === "dueAt" ? (
+        t.dueAt ? dueLabel(t.dueAt).text : "—"
+      ) : key === "assignee" ? (
+        t.assignee ? t.assignee.split("@")[0] : "—"
+      ) : key === "cycleId" ? (
+        cycleName(t.cycleId) ?? "—"
+      ) : (
+        v.display(key, key === ui.stateField ? stateOf(ui, v, t) : v.get(t as never, key)) || "—"
+      ),
+  }));
+}
+
 /* ------------------------------- todo detail ------------------------------ */
 
 const CONTAINER_KINDS = [
@@ -1792,6 +1816,8 @@ function TodoDetail({
   busy,
   authorEmail,
   slug,
+  ui,
+  view,
   onPatch,
   subtasks,
   onAddSubtask,
@@ -1803,6 +1829,8 @@ function TodoDetail({
   readonly busy: boolean;
   readonly authorEmail?: string;
   readonly slug: string;
+  readonly ui: TaskUi;
+  readonly view: AreaView;
   readonly onPatch: (body: Record<string, unknown>) => void;
   readonly subtasks: readonly ApiTodo[];
   readonly onAddSubtask: (title: string) => void;
@@ -1815,10 +1843,10 @@ function TodoDetail({
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       {/* Header — an eyebrow + the title as a borderless, document-style input
           (the create panel opens here too, so "New task" is editable in place). */}
-      <PanelHeader eyebrow="Task" eyebrowDot={priorityTone} slug={slug}>
+      <PanelHeader eyebrow={ui.eyebrow} eyebrowDot={priorityTone} slug={slug}>
         <input
           defaultValue={todo.title}
-          placeholder="Untitled task"
+          placeholder={ui.untitled}
           className="w-full bg-transparent font-semibold text-[15px] text-foreground leading-snug outline-none placeholder:text-muted-foreground/40"
           onBlur={(e) => {
             const v = e.target.value.trim();
@@ -1828,11 +1856,11 @@ function TodoDetail({
       </PanelHeader>
 
       <div className="flex flex-col gap-5 px-5 py-4">
-        <Field label="Notes">
+        <Field label={ui.labels.notes}>
           <OpsTextarea
             rows={3}
             defaultValue={todo.notes ?? ""}
-            placeholder="Any detail…"
+            placeholder={ui.notesPlaceholder}
             onBlur={(e) => {
               const v = e.target.value.trim();
               if (v !== (todo.notes ?? "")) onPatch({ notes: v || null });
@@ -1843,23 +1871,25 @@ function TodoDetail({
         <PanelSection label="Properties">
           {/* Even 2-col grid — no orphaned field (Due used to sit alone). */}
           <div className="grid grid-cols-2 gap-x-3 gap-y-4">
-            <Field label="Status">
-              <OpsSelect value={todo.status} disabled={busy} onChange={(e) => onPatch({ status: e.target.value })}>
-                {TASK_STATUSES.map((s) => (
+            <Field label={ui.labels.status}>
+              <OpsSelect value={stateOf(ui, view, todo)} disabled={busy} onChange={(e) => onPatch(moveTo(ui, e.target.value))}>
+                {ui.states.map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}
                   </option>
                 ))}
               </OpsSelect>
             </Field>
-            <Field label="Priority">
+            <Field label={ui.labels.priority}>
               <OpsSelect value={todo.priority} disabled={busy} onChange={(e) => onPatch({ priority: e.target.value })}>
-                <option value="low">Low</option>
-                <option value="normal">Normal</option>
-                <option value="high">High</option>
+                {ui.priorities.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
               </OpsSelect>
             </Field>
-            <Field label="Due">
+            <Field label={ui.labels.due}>
               <OpsInput
                 type="date"
                 defaultValue={todo.dueAt ? todo.dueAt.slice(0, 10) : ""}
@@ -1868,10 +1898,10 @@ function TodoDetail({
                 }
               />
             </Field>
-            <Field label="Assignee" hint="Blank = the creator.">
+            <Field label={ui.labels.assignee} hint={ui.assigneeHint}>
               <OpsInput
                 defaultValue={todo.assignee ?? ""}
-                placeholder="name@company.com"
+                placeholder={ui.assigneePlaceholder}
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v !== (todo.assignee ?? "")) onPatch({ assignee: v || null });
@@ -1898,6 +1928,12 @@ function TodoDetail({
             ) : null}
           </div>
         </PanelSection>
+
+        {ui.redefined ? (
+          <PanelSection label="Details">
+            <TaskOwnFields view={view} ui={ui} custom={todo.custom ?? {}} busy={busy} onPatch={onPatch} />
+          </PanelSection>
+        ) : null}
 
         <PanelSection label="Links">
           <div className="grid grid-cols-2 gap-x-3 gap-y-4">
@@ -2556,7 +2592,7 @@ function CyclesManager({
     run(() =>
       opsFetch(`/api/ops/todos/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ status: done ? "done" : "open", actor: authorEmail }),
+        body: JSON.stringify({ ...moveTo(BUILD_TASKS, done ? BUILD_TASKS.doneState : BUILD_TASKS.initialState), actor: authorEmail }),
       }),
     );
 

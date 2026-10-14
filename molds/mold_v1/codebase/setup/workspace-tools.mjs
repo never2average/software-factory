@@ -26,6 +26,16 @@
  *                             fields this deployment's profile declares on the two record areas and on the
  *                             account record (custom_fields). The hosted endpoint knows them; the package
  *                             does not and describes `custom` generically
+ *   choices                   optional { deployments: { <key>: [{ value, label, default? }] }, implementations }: the
+ *                             stored values of the record areas' choice fields (the schema's enums) and this
+ *                             deployment's word for each. The hosted endpoint knows them; the package does not and
+ *                             names none (the Ops API refuses a wrong value with the list)
+ *   tasks                     optional { noun, nouns, stateField, states: [{ value, label }], priorities: [{ value,
+ *                             label }], ownFields: [{ key, label, type, options?, required?, help? }] }: this
+ *                             deployment's definition of a task (profile records.areas.tasks), given only when it
+ *                             REDEFINES one. `stateField` is "status" or the task's own state field (then the status
+ *                             follows the state and is never sent). Without it the task tools are today's, to the
+ *                             byte; the Ops API checks every task write against the definition either way
  *   workPeriods               optional { mode: "team" | "individual" | "off", label: { singular, plural },
  *                             itemLabel: { singular, plural } }: this deployment's profile `work_periods`. What a
  *                             period is called is the deployment's, so no period word is written in this file; under
@@ -97,6 +107,49 @@ export function createTools(ctx) {
       type: "object",
       additionalProperties: { type: ["string", "number", "null"] },
       description: `This deployment's own fields on the record, by field key. Send only the keys you are changing: the rest are kept, and null clears one. ${which}`,
+    };
+  };
+  /**
+   * A choice input of the record write tools (stage, risk, environment, health, ...): the stored values the Ops API
+   * accepts, from the host's `ctx.choices` (the schema's enums, in this deployment's words). A host that does not
+   * know them names none: the API refuses a value that is not one of them and answers with the list. No value is
+   * written in this file, because a copy here drifted: it named stages that do not exist (mold_v1-251).
+   */
+  const choiceInput = (area, key, what) => {
+    const list = ctx.choices?.[area]?.[key];
+    if (!Array.isArray(list) || !list.length) {
+      return { type: "string", description: `${what}. A value that is not one of this deployment's is refused with the list of valid ones.` };
+    }
+    const shown = (c) => (c.label && c.label.toLowerCase() !== c.value.toLowerCase() ? `${c.value} ("${c.label}")` : c.value);
+    const fallback = list.find((c) => c.default);
+    return { type: "string", enum: list.map((c) => c.value), description: `${what}: one of ${list.map(shown).join(", ")}.${fallback ? ` A new record left without one gets ${fallback.value}.` : ""}` };
+  };
+  /**
+   * The task tools' inputs under a REDEFINED task (ctx.tasks): its states, priorities and own fields by their stored
+   * values, so the caller is led to the right ones; the Ops API checks every write against the definition and answers
+   * a wrong one with the list. Null without ctx.tasks: the tools below are then today's.
+   */
+  const T = ctx.tasks && Array.isArray(ctx.tasks.states) ? ctx.tasks : null;
+  const ownState = T && T.stateField !== "status" ? T.stateField : null;
+  const shownChoice = (c) => (c.label && c.label.toLowerCase() !== c.value.toLowerCase() ? `${c.value} ("${c.label}")` : c.value);
+  const taskInputs = () => {
+    if (!T) return null;
+    const own = (T.ownFields ?? []).map((f) => {
+      const choices = (f.options ?? []).map((o) => (typeof o === "string" ? { value: o } : o));
+      const type = f.type === "pick_list" ? { type: "string", enum: choices.map((c) => c.value) }
+        : ["multi_pick", "tags", "file"].includes(f.type) || f.many ? { type: "array", items: { type: "string" } }
+        : ["integer", "number", "percent", "money"].includes(f.type) ? { type: "number" }
+        : f.type === "boolean" ? { type: "boolean" }
+        : { type: "string" };
+      const what = f.type === "pick_list" ? `one of ${choices.map(shownChoice).join(", ")}` : f.type === "date" ? "a date yyyy-mm-dd" : f.type.replace("_", " ");
+      return [f.key, { ...type, description: `${f.label}: ${what}${f.required === true ? "; required" : ""}.${f.help ? ` ${f.help}` : ""}` }];
+    });
+    return {
+      ...(ownState ? {} : { status: { type: "string", enum: T.states.map((c) => c.value), description: `Its state: one of ${T.states.map(shownChoice).join(", ")}.` } }),
+      priority: { type: "string", enum: (T.priorities ?? []).map((c) => c.value), description: `One of ${(T.priorities ?? []).map(shownChoice).join(", ")}.` },
+      ...(own.length
+        ? { custom: { type: "object", properties: Object.fromEntries(own), additionalProperties: false, description: `The ${T.noun}'s own fields, by key: only the ones you are changing; null clears one.${ownState ? ` Its state is custom.${ownState} (${T.states.map(shownChoice).join(", ")}); the status follows it.` : ""}` } }
+        : {}),
     };
   };
   /** A direct blob store, or null when this host reaches the data room through the Ops API. */
@@ -665,13 +718,13 @@ const TOOLS = [
   {
     name: "implementation_upsert",
     description:
-      "Create or update a customer rollout: stage (scoping/configuration/integration/uat/go-live), risk, progress and owner. Keyed on customerId, and genuinely an upsert — call it again to move the stage.\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`): this record holds a foreign key to it. If you are thinking in terms of 'rollout' this is the tool you reach for first, and it will fail until the customer row is there.",
+      "Create or update a customer rollout: stage, risk, progress and owner. Keyed on customerId, and genuinely an upsert — call it again to move the stage.\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`): this record holds a foreign key to it. If you are thinking in terms of 'rollout' this is the tool you reach for first, and it will fail until the customer row is there.",
     inputSchema: {
       type: "object",
       properties: {
         customerId: { type: "string" },
-        implementationStage: { type: "string" },
-        implementationRiskLevel: { type: "string" },
+        implementationStage: choiceInput("implementations", "implementationStage", "The stage"),
+        implementationRiskLevel: choiceInput("implementations", "implementationRiskLevel", "The risk"),
         implementationProgressPct: { type: "number" },
         implementationOwnerEmail: { type: "string" },
         displayName: { type: "string" },
@@ -684,17 +737,17 @@ const TOOLS = [
   {
     name: "deployment_upsert",
     description:
-      "Create or update a deployment record, keyed on customerId + deploymentId. A new record needs environment, region and deployedVersion (release and health status default to deployed / healthy). Calling it again for the same deploymentId UPDATES that record: only the fields you pass change, everything else is kept; send \"\" to clear an optional field, and in `custom` only the keys you are changing (null clears one).\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`).",
+      "Create or update a deployment record, keyed on customerId + deploymentId. A new record needs environment, region and deployedVersion (release and health status take a default when left out). Calling it again for the same deploymentId UPDATES that record: only the fields you pass change, everything else is kept; send \"\" to clear an optional field, and in `custom` only the keys you are changing (null clears one).\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`).",
     inputSchema: {
       type: "object",
       properties: {
         customerId: { type: "string" },
         deploymentId: { type: "string" },
-        environment: { type: "string" },
-        region: { type: "string" },
+        environment: choiceInput("deployments", "environment", "The environment"),
+        region: choiceInput("deployments", "region", "The region"),
         deployedVersion: { type: "string" },
-        releaseStatus: { type: "string" },
-        healthStatus: { type: "string" },
+        releaseStatus: choiceInput("deployments", "releaseStatus", "The release status"),
+        healthStatus: choiceInput("deployments", "healthStatus", "The health"),
         deployOwnerEmail: { type: "string" },
         displayName: { type: "string" },
         custom: customInput("deployments", "deployment_list"),
@@ -707,15 +760,19 @@ const TOOLS = [
   {
     name: "task_update",
     description:
-      "Correct or close an existing task. Without this the task list can only ACCUMULATE: every correction becomes a new task pointing at a stale one, and a task whose notes turned out to be wrong stays in the backlog asserting something false. Set status:'done' to close, or rewrite title/notes when you learn the original was mistaken.",
+      T
+        ? `Correct, move or close an existing ${T.noun}. ${ownState ? `Move it by setting custom.${ownState}; its status follows.` : "Set status to move or close it."} Rewrite title/notes when you learn the original was mistaken.`
+        : "Correct or close an existing task. Without this the task list can only ACCUMULATE: every correction becomes a new task pointing at a stale one, and a task whose notes turned out to be wrong stays in the backlog asserting something false. Set status:'done' to close, or rewrite title/notes when you learn the original was mistaken.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Task id from task_list." },
         title: { type: "string" },
         notes: { type: "string" },
-        status: { type: "string", enum: ["backlog", "open", "in_progress", "blocked", "done", "cancelled"] },
-        priority: { type: "string", enum: ["low", "normal", "high"] },
+        ...(T ? taskInputs() : {
+          status: { type: "string", enum: ["backlog", "open", "in_progress", "blocked", "done", "cancelled"] },
+          priority: { type: "string", enum: ["low", "normal", "high"] },
+        }),
         assignee: { type: "string" },
         dueAt: { type: "string", description: "ISO-8601" },
         ...periodParam(),
@@ -761,7 +818,9 @@ const TOOLS = [
   },
   {
     name: "task_list",
-    description: `The team's TODOs: status, assignee, ${WP.enabled ? `${WP.label.singular}, ` : ""}container and any linked object.`,
+    description: T
+      ? `The team's ${T.nouns}: state, assignee, ${WP.enabled ? `${WP.label.singular}, ` : ""}container, any linked object and their own fields (custom).`
+      : `The team's TODOs: status, assignee, ${WP.enabled ? `${WP.label.singular}, ` : ""}container and any linked object.`,
     inputSchema: {
       type: "object",
       properties: { includeDone: { type: "boolean" } },
@@ -773,14 +832,16 @@ const TOOLS = [
   {
     name: "task_create",
     description:
-      `Create a task, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under ${WP.enabled ? `a ${WP.label.singular} (cycleId) or ` : ""}a deployment/implementation (containerType + containerId).`,
+      `Create ${T ? `${/^[aeiou]/i.test(T.noun) ? "an" : "a"} ${T.noun}` : "a task"}, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under ${WP.enabled ? `a ${WP.label.singular} (cycleId) or ` : ""}a deployment/implementation (containerType + containerId).${T && (T.ownFields ?? []).some((f) => f.required === true) ? ` Required: ${(T.ownFields ?? []).filter((f) => f.required === true).map((f) => `custom.${f.key}`).join(", ")}.` : ""}`,
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
         notes: { type: "string" },
-        status: { type: "string", enum: ["backlog", "open", "in_progress", "blocked", "done", "cancelled"] },
-        priority: { type: "string", enum: ["low", "normal", "high"] },
+        ...(T ? taskInputs() : {
+          status: { type: "string", enum: ["backlog", "open", "in_progress", "blocked", "done", "cancelled"] },
+          priority: { type: "string", enum: ["low", "normal", "high"] },
+        }),
         dueAt: { type: "string", description: "ISO-8601" },
         assignee: { type: "string" },
         ...periodParam(`${capFirst(WP.label.singular)} id from sprint_list.`),

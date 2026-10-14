@@ -679,3 +679,40 @@ export type Interaction = z.infer<typeof interactionSchema>;
 export type Platform = z.infer<typeof platformSchema>;
 export type Solution = z.infer<typeof solutionSchema>;
 export type Ticket = z.infer<typeof ticketSchema>;
+
+/**
+ * The few stored choice values that base code gives a meaning to: a new record's values, and which values count as
+ * needing attention. Each one is typed against its enum above, so a value no row can hold does not compile.
+ *
+ * mold_v1-251: these were copied by hand, and each copy had drifted. The attention counts compared health with
+ * "Healthy" (stored lower case, so every record counted) and risk with "High"/"Critical" (not risk values, so a Red
+ * record was never counted). The create route defaulted stage and risk to "scoping" and "low", and the blocker owner
+ * to "", none of them a value.
+ *
+ * A profile relabels these values (`domains.<area>.fields.<key>.options`) but never changes them, so these meanings
+ * hold under every profile. Read the full list of a choice from its enum (`deploymentSchema.shape.healthStatus.options`,
+ * or DOMAIN_FIELDS in lib/deployment-profile.generated.ts), never from a copy.
+ */
+export const CHOICE_MEANINGS = {
+  deployments: {
+    /** What a new record holds when the caller names no value. */
+    defaults: { releaseStatus: "deployed", healthStatus: "healthy" } as const satisfies Pick<Deployment, "releaseStatus" | "healthStatus">,
+    /** Health values that need nobody's attention. Every other health value is counted. */
+    healthy: ["healthy"] as const satisfies readonly Deployment["healthStatus"][],
+  },
+  implementations: {
+    /** What a new record holds when the caller names no value: the first stage, no risk and no blocker owner yet. */
+    defaults: { implementationStage: "Kickoff", implementationRiskLevel: "Green", blockerOwner: "None" } as const satisfies Pick<
+      Implementation,
+      "implementationStage" | "implementationRiskLevel" | "blockerOwner"
+    >,
+    /** Risk values that need attention (a record with a blocker counts whatever its risk). */
+    atRisk: ["Red"] as const satisfies readonly Implementation["implementationRiskLevel"][],
+  },
+  tickets: {
+    /** Statuses that are still open. */
+    open: ["Open", "In Progress", "Needs Triage", "Reopened", "Blocked"] as const satisfies readonly Ticket["ticketStatus"][],
+    /** Priorities that are urgent. */
+    urgent: ["P0-Critical", "P1-High"] as const satisfies readonly Ticket["ticketPriority"][],
+  },
+};

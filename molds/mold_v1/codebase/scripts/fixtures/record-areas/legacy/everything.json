@@ -1,0 +1,58 @@
+{
+  "$comment": "Every key of the legacy record forms (domains.<area>, work_periods) at once, in neutral words, for scripts/test-record-areas.mjs: kinds on a free-text column, relabelled and hidden fields with fixed values, extra create and detail fields, own fields of every legacy type, rows grouped by a free-text column, and periods each person holds their own items in.",
+  "domains": {
+    "deployments": {
+      "label": { "singular": "Shipment", "plural": "Shipments" },
+      "description": "Every shipment, by owner.",
+      "id_label": "Shipment id",
+      "kind_field": "runtime",
+      "kinds": ["Parcel", "Pallet", "Container"],
+      "create_fields": ["runtime", "lastDeployAt", "notes"],
+      "detail_fields": ["runtime", "lastDeployAt", "approvedByEmail", "notes"],
+      "fields": {
+        "deploymentId": { "placeholder": "SHP-001" },
+        "environment": { "hidden": true, "fixed": "prod" },
+        "region": { "label": "Depot", "options": { "eu-west-1": "West depot", "ap-south-1": "South depot" } },
+        "releaseStatus": { "label": "State", "short_label": "State", "help": "Where the shipment is.", "options": { "deployed": "Delivered", "in-progress": "In transit" } },
+        "healthStatus": { "hidden": true, "fixed": "unknown" },
+        "lastDeployAt": { "label": "Shipped on", "placeholder": "2026-01-31" },
+        "approvedByEmail": { "label": "Signed by" },
+        "notes": { "label": "Remarks" }
+      },
+      "custom_fields": [
+        { "key": "weight_kg", "label": "Weight (kg)", "type": "number", "required": true, "show_in_list": true },
+        { "key": "fill_rate", "label": "Fill rate", "type": "percent", "help": "Share of the box used." },
+        { "key": "arrives_on", "label": "Arrives on", "type": "date", "show_in_list": true },
+        { "key": "contact", "label": "Contact", "type": "email" },
+        { "key": "tracking", "label": "Tracking link", "type": "link" },
+        { "key": "carrier", "label": "Carrier", "type": "pick_list", "options": ["Road", "Rail", "Air"], "show_in_list": true },
+        { "key": "reference", "label": "Reference", "type": "text" },
+        { "key": "handling", "label": "Handling notes", "type": "long_text" }
+      ]
+    },
+    "implementations": {
+      "label": { "singular": "Route", "plural": "Routes" },
+      "description": "Routes, grouped by network.",
+      "id_label": "Route",
+      "group_by": "rolloutId",
+      "group_label": { "singular": "Network", "plural": "Networks" },
+      "detail_fields": ["rolloutId", "currentMilestone", "blocker"],
+      "fields": {
+        "implementationStage": { "label": "Phase", "options": { "Kickoff": "Planned", "Go-Live": "Running" } },
+        "implementationRiskLevel": { "label": "Risk" }
+      },
+      "custom_fields": [
+        { "key": "lane_count", "label": "Lanes", "type": "number", "show_in_list": true }
+      ]
+    }
+  },
+  "work_periods": {
+    "mode": "individual",
+    "label": { "singular": "week", "plural": "weeks" },
+    "item_label": { "singular": "goal", "plural": "goals" },
+    "length_days": 7,
+    "auto_rollover": true,
+    "length_days_range": [7, 14],
+    "workspace_can_set_length": false
+  }
+}

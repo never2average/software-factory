@@ -1,0 +1,741 @@
+{
+  "$comment": "Worked examples (a) and (d) of the record-areas design: a compliance desk's regulatory filing (records.areas.deployments, a sign-off lifecycle under warn, a computed timeliness, an evidence file field) and its weekly targets measured from those filings and from tasks (records.areas.periods). Lifecycles warn (the operator's default for a pack's first rules). A test fixture; no deployment ships it.",
+  "records": {
+    "areas": {
+      "deployments": {
+        "label": {
+          "singular": "Regulatory filing",
+          "plural": "Regulatory filings"
+        },
+        "description": "One row per return, disclosure or report filed with a regulator: the period, who prepared and signed it off, and whether it went in on time.",
+        "icon": "file-check",
+        "nav": {
+          "order": 20
+        },
+        "columns": "listed",
+        "id": {
+          "field": "deploymentId",
+          "label": "Filing id",
+          "placeholder": "Q2FY27-ALM-return",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$"
+        },
+        "title": "{runtime} · {deployedVersion}",
+        "fields": {
+          "runtime": {
+            "order": 10,
+            "type": "pick_list",
+            "alias": "filing_type",
+            "label": "Filing type",
+            "short_label": "Type",
+            "required": true,
+            "index": "filter",
+            "options": [
+              {
+                "value": "Periodic return"
+              },
+              {
+                "value": "Event-based disclosure"
+              },
+              {
+                "value": "Board / committee report"
+              },
+              {
+                "value": "Response to regulator"
+              },
+              {
+                "value": "Certificate / attestation"
+              }
+            ]
+          },
+          "deployedVersion": {
+            "order": 20,
+            "type": "text",
+            "alias": "period",
+            "label": "Period",
+            "placeholder": "Q2 FY27",
+            "required": true,
+            "search": true
+          },
+          "releaseStatus": {
+            "order": 30,
+            "type": "pick_list",
+            "alias": "status",
+            "label": "Status",
+            "options": [
+              {
+                "value": "in-progress",
+                "label": "In preparation",
+                "tone": "amber"
+              },
+              {
+                "value": "pending-approval",
+                "label": "Awaiting sign-off",
+                "tone": "sky"
+              },
+              {
+                "value": "deployed",
+                "label": "Filed",
+                "tone": "green"
+              },
+              {
+                "value": "rolled-back",
+                "label": "Revised / refiled",
+                "tone": "slate"
+              },
+              {
+                "value": "failed",
+                "label": "Missed",
+                "tone": "red",
+                "attention": true
+              }
+            ]
+          },
+          "due_date": {
+            "order": 40,
+            "type": "date",
+            "label": "Due date",
+            "required": true,
+            "index": "sort"
+          },
+          "lastDeployAt": {
+            "order": 50,
+            "type": "date",
+            "alias": "filed_on",
+            "label": "Filed on"
+          },
+          "timeliness": {
+            "order": 60,
+            "type": "pick_list",
+            "label": "Timeliness",
+            "computed": {
+              "when": [
+                {
+                  "if": {
+                    "lastDeployAt": {
+                      "set": false
+                    },
+                    "due_date": {
+                      "lt": "{today}"
+                    }
+                  },
+                  "then": "Overdue"
+                },
+                {
+                  "if": {
+                    "lastDeployAt": {
+                      "lte": "{due_date}"
+                    }
+                  },
+                  "then": "On time"
+                },
+                {
+                  "if": {
+                    "lastDeployAt": {
+                      "set": true
+                    }
+                  },
+                  "then": "Filed late"
+                }
+              ],
+              "else": "Not yet due"
+            },
+            "options": [
+              {
+                "value": "On time",
+                "tone": "green"
+              },
+              {
+                "value": "Filed late",
+                "tone": "amber"
+              },
+              {
+                "value": "Overdue",
+                "tone": "red",
+                "attention": true
+              },
+              {
+                "value": "Not yet due",
+                "tone": "slate"
+              }
+            ]
+          },
+          "deployOwnerEmail": {
+            "order": 70,
+            "type": "person",
+            "alias": "preparer",
+            "label": "Preparer",
+            "default": "{me}",
+            "index": "filter"
+          },
+          "approvedByEmail": {
+            "order": 80,
+            "type": "person",
+            "alias": "signed_off_by",
+            "label": "Signed off by"
+          },
+          "liveUrl": {
+            "order": 90,
+            "type": "link",
+            "alias": "acknowledgement",
+            "label": "Acknowledgement / filing link"
+          },
+          "evidence": {
+            "order": 95,
+            "type": "file",
+            "many": true,
+            "label": "Filed copy and workings",
+            "folder": "{folder:deliveries}/{customer_id}/{id}/"
+          },
+          "source_requirement": {
+            "order": 100,
+            "type": "link",
+            "label": "Source requirement",
+            "help": "The obligation or circular clause that requires this filing."
+          },
+          "penalty_exposure": {
+            "order": 110,
+            "type": "pick_list",
+            "label": "Penalty exposure",
+            "index": "filter",
+            "options": [
+              {
+                "value": "None",
+                "tone": "slate"
+              },
+              {
+                "value": "Late fee",
+                "tone": "amber"
+              },
+              {
+                "value": "Penalty",
+                "tone": "orange"
+              },
+              {
+                "value": "Enforcement risk",
+                "tone": "red",
+                "attention": true
+              }
+            ]
+          },
+          "notes": {
+            "order": 120,
+            "type": "long_text",
+            "alias": "remarks",
+            "label": "Remarks"
+          },
+          "region": {
+            "hidden": true,
+            "fixed": "ap-south-1"
+          },
+          "environment": {
+            "hidden": true,
+            "fixed": "prod"
+          },
+          "healthStatus": {
+            "hidden": true,
+            "fixed": "unknown"
+          }
+        },
+        "lifecycle": {
+          "field": "releaseStatus",
+          "initial": "in-progress",
+          "enforce": "warn",
+          "categories": {
+            "in-progress": "active",
+            "pending-approval": "active",
+            "deployed": "done",
+            "rolled-back": "done",
+            "failed": "cancelled"
+          },
+          "transitions": [
+            {
+              "from": [
+                "in-progress"
+              ],
+              "to": "pending-approval",
+              "label": "Send for sign-off",
+              "requires": [
+                "deployOwnerEmail",
+                "evidence"
+              ]
+            },
+            {
+              "from": [
+                "pending-approval"
+              ],
+              "to": "in-progress",
+              "label": "Send back",
+              "requires_comment": true
+            },
+            {
+              "from": [
+                "pending-approval"
+              ],
+              "to": "deployed",
+              "label": "Mark filed",
+              "roles": [
+                "owner",
+                "admin"
+              ],
+              "not_by": "deployOwnerEmail",
+              "requires": [
+                "lastDeployAt",
+                "liveUrl"
+              ],
+              "set": {
+                "approvedByEmail": "{me}"
+              }
+            },
+            {
+              "from": [
+                "in-progress",
+                "pending-approval"
+              ],
+              "to": "failed",
+              "label": "Mark missed",
+              "roles": [
+                "owner",
+                "admin"
+              ],
+              "requires_comment": true
+            },
+            {
+              "from": [
+                "deployed"
+              ],
+              "to": "rolled-back",
+              "label": "Refile"
+            },
+            {
+              "from": [
+                "rolled-back"
+              ],
+              "to": "pending-approval",
+              "label": "Send for sign-off"
+            }
+          ]
+        },
+        "relations": {
+          "account": {
+            "required": true
+          },
+          "tasks": true
+        },
+        "views": {
+          "default": "table",
+          "available": [
+            "table",
+            "board",
+            "calendar"
+          ],
+          "table": {
+            "columns": [
+              "account",
+              "runtime",
+              "deployedVersion",
+              "due_date",
+              "releaseStatus",
+              "timeliness",
+              "penalty_exposure",
+              "deployOwnerEmail"
+            ]
+          },
+          "board": {
+            "by": "releaseStatus",
+            "card": {
+              "title": "title",
+              "meta": [
+                "due_date",
+                "deployOwnerEmail"
+              ],
+              "badge": "timeliness"
+            }
+          },
+          "calendar": {
+            "date": "due_date"
+          },
+          "filters": [
+            {
+              "field": "releaseStatus"
+            },
+            {
+              "field": "runtime"
+            },
+            {
+              "field": "penalty_exposure"
+            },
+            {
+              "field": "due_date",
+              "presets": [
+                "overdue",
+                "due_7d",
+                "due_30d"
+              ]
+            },
+            {
+              "scope": "people",
+              "field": "deployOwnerEmail"
+            }
+          ],
+          "sorts": [
+            {
+              "field": "due_date",
+              "dir": "asc",
+              "default": true
+            },
+            {
+              "field": "account"
+            },
+            {
+              "field": "releaseStatus"
+            }
+          ],
+          "group_by": [
+            "account",
+            "runtime"
+          ],
+          "detail": {
+            "sections": [
+              {
+                "label": "Filing",
+                "fields": [
+                  "runtime",
+                  "deployedVersion",
+                  "due_date",
+                  "releaseStatus",
+                  "timeliness"
+                ]
+              },
+              {
+                "label": "Sign-off",
+                "fields": [
+                  "deployOwnerEmail",
+                  "approvedByEmail",
+                  "lastDeployAt",
+                  "liveUrl"
+                ]
+              },
+              {
+                "label": "Basis",
+                "fields": [
+                  "source_requirement",
+                  "penalty_exposure",
+                  "notes"
+                ]
+              },
+              {
+                "related": "files"
+              },
+              {
+                "related": "tasks"
+              },
+              {
+                "related": "activity"
+              },
+              {
+                "related": "comments"
+              }
+            ]
+          },
+          "create": {
+            "fields": [
+              "account",
+              "deploymentId",
+              "runtime",
+              "deployedVersion",
+              "due_date",
+              "deployOwnerEmail",
+              "source_requirement"
+            ],
+            "submit_label": "Add filing"
+          }
+        },
+        "permissions": {
+          "read": "*",
+          "create": "*",
+          "update": "*",
+          "delete": [
+            "owner",
+            "admin"
+          ],
+          "fields": {
+            "approvedByEmail": {
+              "update": [
+                "owner",
+                "admin"
+              ]
+            }
+          }
+        },
+        "reminders": [
+          {
+            "id": "due-soon",
+            "date": "due_date",
+            "before_days": [
+              7,
+              2
+            ],
+            "unless": {
+              "releaseStatus": {
+                "category": [
+                  "done",
+                  "cancelled"
+                ]
+              }
+            },
+            "notify": [
+              "deployOwnerEmail"
+            ],
+            "channels": [
+              "inbox",
+              "push"
+            ]
+          },
+          {
+            "id": "overdue",
+            "date": "due_date",
+            "after_days": [
+              0,
+              3
+            ],
+            "unless": {
+              "releaseStatus": {
+                "category": [
+                  "done",
+                  "cancelled"
+                ]
+              }
+            },
+            "notify": [
+              "deployOwnerEmail",
+              "{manager_of:deployOwnerEmail}"
+            ],
+            "channels": [
+              "inbox",
+              "push"
+            ]
+          }
+        ],
+        "metrics": [
+          {
+            "id": "overdue",
+            "label": "Overdue filings",
+            "count": {
+              "where": {
+                "timeliness": "Overdue"
+              }
+            },
+            "attention": true
+          },
+          {
+            "id": "on-time-rate",
+            "label": "Filed on time",
+            "format": "percent",
+            "ratio": {
+              "num": {
+                "timeliness": "On time"
+              },
+              "den": {
+                "releaseStatus": {
+                  "category": "done"
+                }
+              }
+            }
+          }
+        ],
+        "agent": {
+          "tools": {
+            "read": true,
+            "write": true,
+            "delete": false
+          },
+          "describe": "A filing is one submission to one regulator for one period. Always record the due date. A filing is marked filed only by an admin who did not prepare it, and only with the filed-on date and the acknowledgement link.",
+          "rules": [
+            "Never mark a filing filed without the acknowledgement link.",
+            "Timeliness is computed: never set it."
+          ]
+        },
+        "io": {
+          "export": {
+            "csv": true,
+            "workbook_sheet": true
+          },
+          "import": {
+            "csv": true,
+            "match_on": [
+              "account",
+              "deploymentId"
+            ]
+          }
+        }
+      },
+      "periods": {
+        "label": {
+          "singular": "compliance week",
+          "plural": "compliance weeks"
+        },
+        "description": "A Monday-to-Sunday week with the team's compliance targets and each person's own obligations for it.",
+        "icon": "target",
+        "period": {
+          "mode": "individual",
+          "list_label": {
+            "singular": "week",
+            "plural": "weeks"
+          },
+          "item_label": {
+            "singular": "obligation",
+            "plural": "obligations"
+          },
+          "length_days": 7,
+          "length_days_range": [
+            7,
+            7
+          ],
+          "workspace_can_set_length": false,
+          "auto_rollover": true,
+          "starts_on": "monday",
+          "time_zone": "Asia/Kolkata",
+          "name": "Week of {start:d MMM yyyy}"
+        },
+        "fields": {
+          "goal": {
+            "label": "Focus this week"
+          },
+          "focus_regulators": {
+            "type": "multi_pick",
+            "label": "Regulators in focus",
+            "options": [
+              {
+                "value": "RBI"
+              },
+              {
+                "value": "SEBI"
+              },
+              {
+                "value": "NHB"
+              },
+              {
+                "value": "MCA"
+              },
+              {
+                "value": "IRDAI"
+              }
+            ]
+          },
+          "risk_note": {
+            "type": "long_text",
+            "label": "Risks to this week's targets"
+          }
+        },
+        "lifecycle": {
+          "field": "state",
+          "categories": {
+            "planning": "open",
+            "active": "active",
+            "closed": "done"
+          },
+          "transitions": [
+            {
+              "from": [
+                "planning"
+              ],
+              "to": "active"
+            },
+            {
+              "from": [
+                "active"
+              ],
+              "to": "closed",
+              "roles": [
+                "owner",
+                "admin"
+              ]
+            }
+          ]
+        },
+        "targets": [
+          {
+            "key": "filings_on_time",
+            "label": "Filings due this week filed on time",
+            "per": "team",
+            "measure": {
+              "area": "deployments",
+              "date": "due_date",
+              "where": {
+                "timeliness": "On time"
+              }
+            },
+            "goal": {
+              "kind": "percent_of",
+              "of": {
+                "area": "deployments",
+                "date": "due_date"
+              },
+              "default": 100
+            }
+          },
+          {
+            "key": "obligations_closed",
+            "label": "Obligations complied",
+            "per": "person",
+            "measure": {
+              "area": "tasks",
+              "date": "doneAt",
+              "person": "assignee",
+              "where": {
+                "state": "closed"
+              }
+            },
+            "goal": {
+              "kind": "count"
+            }
+          },
+          {
+            "key": "evidence_reviewed",
+            "label": "Evidence reviews done",
+            "per": "person",
+            "measure": {
+              "area": "tasks",
+              "date": "updatedAt",
+              "person": "reviewer",
+              "where": {
+                "state": {
+                  "in": [
+                    "closed",
+                    "in_progress"
+                  ]
+                }
+              }
+            },
+            "goal": {
+              "kind": "count",
+              "default": 10
+            }
+          }
+        ],
+        "reminders": [
+          {
+            "id": "week-ending",
+            "date": "endsAt",
+            "before_days": [
+              1
+            ],
+            "notify": [
+              "{members_behind_target}"
+            ],
+            "channels": [
+              "inbox"
+            ]
+          }
+        ],
+        "agent": {
+          "tools": {
+            "read": true,
+            "write": true
+          },
+          "describe": "Each week has team targets (measured from filings and obligations, never typed in) and each person's own obligations for the week. Set a person's goal for a target only for yourself or someone who reports to you."
+        }
+      }
+    }
+  }
+}

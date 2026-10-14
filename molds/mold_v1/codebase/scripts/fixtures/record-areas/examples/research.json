@@ -1,0 +1,390 @@
+{
+  "$comment": "Worked example (b) of the record-areas design: the first record area redefined as a research desk's coverage report, in the record-area form (records.areas.deployments), with a review lifecycle (warn), own fields of the new types (money) and views. A test fixture; no deployment ships it.",
+  "records": {
+    "areas": {
+      "deployments": {
+        "label": {
+          "singular": "Coverage report",
+          "plural": "Coverage reports"
+        },
+        "description": "One row per company per report: what was published, for which period, and how complete its data is.",
+        "icon": "file-text",
+        "columns": "listed",
+        "id": {
+          "field": "deploymentId",
+          "label": "Report id",
+          "placeholder": "Q2FY26-results"
+        },
+        "title": "{runtime} · {deployedVersion}",
+        "fields": {
+          "runtime": {
+            "order": 10,
+            "type": "pick_list",
+            "alias": "report_type",
+            "label": "Report type",
+            "short_label": "Type",
+            "required": true,
+            "options": [
+              {
+                "value": "Initiation"
+              },
+              {
+                "value": "Quarterly results update"
+              },
+              {
+                "value": "Annual report review"
+              },
+              {
+                "value": "Event / rating update"
+              },
+              {
+                "value": "Sector note"
+              }
+            ]
+          },
+          "deployedVersion": {
+            "order": 20,
+            "type": "text",
+            "alias": "period",
+            "label": "Period / basis",
+            "short_label": "Period",
+            "required": true,
+            "placeholder": "Q2 FY26 · standalone · unaudited"
+          },
+          "releaseStatus": {
+            "order": 30,
+            "type": "pick_list",
+            "alias": "status",
+            "label": "Status",
+            "options": [
+              {
+                "value": "in-progress",
+                "label": "In progress",
+                "tone": "amber"
+              },
+              {
+                "value": "pending-approval",
+                "label": "Awaiting review",
+                "tone": "sky"
+              },
+              {
+                "value": "deployed",
+                "label": "Published",
+                "tone": "green"
+              },
+              {
+                "value": "rolled-back",
+                "label": "Restated",
+                "tone": "violet"
+              },
+              {
+                "value": "failed",
+                "label": "Failed",
+                "tone": "red",
+                "attention": true
+              }
+            ]
+          },
+          "healthStatus": {
+            "order": 40,
+            "type": "pick_list",
+            "alias": "data_quality",
+            "label": "Data quality",
+            "options": [
+              {
+                "value": "healthy",
+                "label": "Complete",
+                "tone": "green"
+              },
+              {
+                "value": "degraded",
+                "label": "Partial (values carried forward)",
+                "tone": "amber"
+              },
+              {
+                "value": "down",
+                "label": "Missing",
+                "tone": "red",
+                "attention": true
+              },
+              {
+                "value": "unknown",
+                "label": "Unknown",
+                "tone": "slate"
+              }
+            ]
+          },
+          "lastDeployAt": {
+            "order": 50,
+            "type": "date",
+            "alias": "results_date",
+            "label": "Results date",
+            "index": "sort"
+          },
+          "rating": {
+            "order": 60,
+            "type": "pick_list",
+            "label": "Rating",
+            "required": "on_create",
+            "index": "filter",
+            "options": [
+              {
+                "value": "Buy",
+                "tone": "green"
+              },
+              {
+                "value": "Add",
+                "tone": "blue"
+              },
+              {
+                "value": "Hold",
+                "tone": "slate"
+              },
+              {
+                "value": "Reduce",
+                "tone": "amber"
+              },
+              {
+                "value": "Sell",
+                "tone": "red"
+              },
+              {
+                "value": "Not rated",
+                "tone": "muted"
+              }
+            ]
+          },
+          "target_price": {
+            "order": 70,
+            "type": "money",
+            "currency": "INR",
+            "label": "Target price",
+            "min": 0,
+            "help": "Per share. Leave blank for a debt-listed company.",
+            "index": "sort"
+          },
+          "kpi_completeness": {
+            "order": 80,
+            "type": "percent",
+            "label": "KPI table completeness"
+          },
+          "aum_cr": {
+            "order": 90,
+            "type": "number",
+            "label": "AUM (₹ crore)",
+            "min": 0
+          },
+          "gnpa_pct": {
+            "order": 100,
+            "type": "percent",
+            "label": "Gross NPA"
+          },
+          "source_filing": {
+            "order": 110,
+            "type": "link",
+            "label": "Source filing"
+          },
+          "deployOwnerEmail": {
+            "order": 120,
+            "type": "person",
+            "alias": "analyst",
+            "label": "Analyst",
+            "default": "{me}"
+          },
+          "approvedByEmail": {
+            "order": 130,
+            "type": "person",
+            "alias": "reviewer",
+            "label": "Reviewer"
+          },
+          "liveUrl": {
+            "order": 140,
+            "type": "link",
+            "alias": "published_link",
+            "label": "Published report link"
+          },
+          "notes": {
+            "order": 150,
+            "type": "long_text",
+            "label": "What changed / needs review"
+          },
+          "region": {
+            "hidden": true,
+            "fixed": "ap-south-1"
+          },
+          "environment": {
+            "hidden": true,
+            "fixed": "prod"
+          }
+        },
+        "lifecycle": {
+          "field": "releaseStatus",
+          "initial": "in-progress",
+          "enforce": "warn",
+          "categories": {
+            "in-progress": "active",
+            "pending-approval": "active",
+            "deployed": "done",
+            "rolled-back": "done",
+            "failed": "cancelled"
+          },
+          "transitions": [
+            {
+              "from": [
+                "in-progress"
+              ],
+              "to": "pending-approval",
+              "label": "Send for review",
+              "requires": [
+                "rating",
+                "kpi_completeness"
+              ]
+            },
+            {
+              "from": [
+                "pending-approval"
+              ],
+              "to": "deployed",
+              "label": "Publish",
+              "not_by": "deployOwnerEmail",
+              "requires": [
+                "liveUrl"
+              ],
+              "set": {
+                "approvedByEmail": "{me}"
+              }
+            },
+            {
+              "from": [
+                "pending-approval"
+              ],
+              "to": "in-progress",
+              "label": "Return to analyst"
+            },
+            {
+              "from": [
+                "deployed"
+              ],
+              "to": "rolled-back",
+              "label": "Restate",
+              "requires_comment": true
+            },
+            {
+              "from": "*",
+              "to": "failed",
+              "roles": [
+                "owner",
+                "admin"
+              ]
+            }
+          ]
+        },
+        "relations": {
+          "account": {
+            "required": true
+          },
+          "tasks": true
+        },
+        "views": {
+          "default": "table",
+          "available": [
+            "table",
+            "board",
+            "timeline"
+          ],
+          "table": {
+            "columns": [
+              "account",
+              "runtime",
+              "deployedVersion",
+              "rating",
+              "target_price",
+              "kpi_completeness",
+              "releaseStatus",
+              "deployOwnerEmail"
+            ]
+          },
+          "board": {
+            "by": "releaseStatus",
+            "card": {
+              "title": "title",
+              "meta": [
+                "lastDeployAt",
+                "deployOwnerEmail"
+              ],
+              "badge": "rating"
+            }
+          },
+          "timeline": {
+            "start": "lastDeployAt",
+            "end": "lastDeployAt"
+          },
+          "filters": [
+            {
+              "field": "rating"
+            },
+            {
+              "field": "runtime"
+            },
+            {
+              "field": "releaseStatus"
+            },
+            {
+              "scope": "people",
+              "field": "deployOwnerEmail"
+            }
+          ],
+          "sorts": [
+            {
+              "field": "lastDeployAt",
+              "dir": "desc",
+              "default": true
+            },
+            {
+              "field": "target_price"
+            },
+            {
+              "field": "account"
+            }
+          ],
+          "group_by": [
+            "rating",
+            "account"
+          ]
+        },
+        "metrics": [
+          {
+            "id": "awaiting-review",
+            "label": "Awaiting review",
+            "count": {
+              "where": {
+                "releaseStatus": "pending-approval"
+              }
+            },
+            "attention": true
+          },
+          {
+            "id": "incomplete-data",
+            "label": "Reports with missing data",
+            "count": {
+              "where": {
+                "healthStatus": "down"
+              }
+            },
+            "attention": true
+          }
+        ],
+        "agent": {
+          "tools": {
+            "read": true,
+            "write": true
+          },
+          "describe": "Write a coverage report row when a report is drafted; keep KPI completeness current as the table fills. Cite the source filing.",
+          "rules": [
+            "Target price is per share in rupees; leave it empty for a debt-listed company."
+          ]
+        }
+      }
+    }
+  }
+}

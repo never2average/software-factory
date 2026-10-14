@@ -1,0 +1,439 @@
+{
+  "$comment": "The record sections (vocabulary, domains, work_periods) of a live subagent pack's profile, copied on 2026-10-14 for scripts/test-record-areas.mjs: lowering them into records.areas must leave what the build emits byte for byte as it was (golden/compliance-pack.profile.json, from the generator before record areas).",
+  "vocabulary": {
+    "account": {
+      "singular": "regulator",
+      "plural": "regulators"
+    },
+    "owner": "Regulatory liaison",
+    "account_context": "Regulator context"
+  },
+  "domains": {
+    "deployments": {
+      "label": {
+        "singular": "Regulatory filing",
+        "plural": "Regulatory filings"
+      },
+      "description": "One row per return, disclosure or report filed with a regulator: the period, who prepared and signed it off, and whether it went in on time.",
+      "id_label": "Filing id",
+      "kind_field": "runtime",
+      "kinds": [
+        "Periodic return",
+        "Event-based disclosure",
+        "Board / committee report",
+        "Response to regulator",
+        "Certificate / attestation"
+      ],
+      "create_fields": [
+        "runtime",
+        "lastDeployAt",
+        "approvedByEmail",
+        "notes"
+      ],
+      "detail_fields": [
+        "runtime",
+        "lastDeployAt",
+        "approvedByEmail",
+        "liveUrl",
+        "notes"
+      ],
+      "fields": {
+        "deploymentId": {
+          "placeholder": "Q2FY27-ALM-return"
+        },
+        "runtime": {
+          "label": "Filing type",
+          "short_label": "Type"
+        },
+        "deployedVersion": {
+          "label": "Period",
+          "short_label": "Period",
+          "placeholder": "Q2 FY27"
+        },
+        "releaseStatus": {
+          "label": "Status",
+          "options": {
+            "deployed": "Filed",
+            "in-progress": "In preparation",
+            "pending-approval": "Awaiting sign-off",
+            "rolled-back": "Revised / refiled",
+            "failed": "Missed"
+          }
+        },
+        "healthStatus": {
+          "label": "Timeliness",
+          "options": {
+            "healthy": "On time",
+            "degraded": "Filed late",
+            "down": "Overdue",
+            "unknown": "Unknown"
+          }
+        },
+        "lastDeployAt": {
+          "label": "Filed on",
+          "placeholder": "2026-10-15"
+        },
+        "approvedByEmail": {
+          "label": "Signed off by",
+          "placeholder": "name@company.com"
+        },
+        "deployOwnerEmail": {
+          "label": "Preparer"
+        },
+        "notes": {
+          "label": "Remarks"
+        },
+        "liveUrl": {
+          "label": "Acknowledgement / filing link",
+          "placeholder": "https://…"
+        },
+        "region": {
+          "hidden": true,
+          "fixed": "ap-south-1"
+        },
+        "environment": {
+          "hidden": true,
+          "fixed": "prod"
+        },
+        "cloudProvider": {
+          "hidden": true
+        },
+        "deploymentStrategy": {
+          "hidden": true
+        },
+        "buildSha": {
+          "hidden": true
+        },
+        "modelRouteId": {
+          "hidden": true
+        },
+        "modelRoutingMode": {
+          "hidden": true
+        },
+        "primaryModelRef": {
+          "hidden": true
+        },
+        "primaryModelVersion": {
+          "hidden": true
+        },
+        "fallbackModelRef": {
+          "hidden": true
+        },
+        "fallbackModelVersion": {
+          "hidden": true
+        },
+        "modelTrafficPrimaryPct": {
+          "hidden": true
+        },
+        "uptime30dPct": {
+          "hidden": true
+        },
+        "errorRate30dPct": {
+          "hidden": true
+        },
+        "latencyP95Ms": {
+          "hidden": true
+        },
+        "latencySloMs": {
+          "hidden": true
+        },
+        "requestCount30d": {
+          "hidden": true
+        },
+        "llmRequestCount30d": {
+          "hidden": true
+        },
+        "inputTokens30d": {
+          "hidden": true
+        },
+        "outputTokens30d": {
+          "hidden": true
+        },
+        "cacheHitRate30dPct": {
+          "hidden": true
+        },
+        "guardrailBlockRate30dPct": {
+          "hidden": true
+        },
+        "cost30dUsd": {
+          "hidden": true
+        },
+        "costBudget30dUsd": {
+          "hidden": true
+        },
+        "projectedCost30dUsd": {
+          "hidden": true
+        },
+        "capacityLimitRpm": {
+          "hidden": true
+        },
+        "peakRpm30d": {
+          "hidden": true
+        },
+        "utilization30dPct": {
+          "hidden": true
+        },
+        "rollbackVersion": {
+          "hidden": true
+        },
+        "rollbackStatus": {
+          "hidden": true
+        },
+        "rollbackTestedAt": {
+          "hidden": true
+        },
+        "lastIncidentRef": {
+          "hidden": true
+        },
+        "activeIncidentRefs": {
+          "hidden": true
+        },
+        "incidentCount30d": {
+          "hidden": true
+        },
+        "dashboardUrl": {
+          "hidden": true
+        },
+        "runbookUrl": {
+          "hidden": true
+        },
+        "lastTelemetryAt": {
+          "hidden": true
+        }
+      },
+      "custom_fields": [
+        {
+          "key": "due_date",
+          "label": "Due date",
+          "type": "date",
+          "show_in_list": true
+        },
+        {
+          "key": "source_requirement",
+          "label": "Source requirement",
+          "type": "link",
+          "help": "The obligation or circular clause that requires this filing."
+        },
+        {
+          "key": "penalty_exposure",
+          "label": "Penalty exposure",
+          "type": "pick_list",
+          "options": [
+            "None",
+            "Late fee",
+            "Penalty",
+            "Enforcement risk"
+          ],
+          "show_in_list": true
+        }
+      ]
+    },
+    "implementations": {
+      "label": {
+        "singular": "Programme entry",
+        "plural": "Programme entries"
+      },
+      "description": "Compliance programmes (implementing a circular, a review cycle, a remediation plan) and how far each has got.",
+      "id_label": "Programme",
+      "group_by": "rolloutId",
+      "group_label": {
+        "singular": "Programme",
+        "plural": "Programmes"
+      },
+      "create_fields": [],
+      "detail_fields": [
+        "rolloutId",
+        "implementationProgressPct",
+        "dataReadinessPct",
+        "integrationReadinessPct",
+        "dataQualityStatus",
+        "evalAcceptanceStatus",
+        "uatStatus",
+        "currentMilestone",
+        "currentMilestoneDueDate",
+        "blocker",
+        "blockerOwner",
+        "targetGoLiveDate",
+        "actualGoLiveDate"
+      ],
+      "fields": {
+        "rolloutId": {
+          "label": "Programme"
+        },
+        "implementationOwnerEmail": {
+          "label": "Owner"
+        },
+        "implementationStage": {
+          "label": "Stage",
+          "short_label": "Stage",
+          "options": {
+            "Kickoff": "Not started",
+            "Discovery": "Applicability assessed",
+            "Configuration": "Obligations mapped",
+            "Integration": "Controls and policies linked",
+            "UAT": "Evidence collected",
+            "Pilot": "Under review",
+            "Go-Live": "Compliant",
+            "Stabilization": "Monitoring",
+            "Steady State": "Business as usual",
+            "On Hold": "On hold"
+          }
+        },
+        "implementationProgressPct": {
+          "label": "Progress %",
+          "short_label": "Progress"
+        },
+        "implementationRiskLevel": {
+          "label": "Risk",
+          "options": {
+            "Green": "Green",
+            "Yellow": "Yellow",
+            "Red": "Red"
+          }
+        },
+        "dataReadinessPct": {
+          "label": "Obligations mapped",
+          "short_label": "Obligations"
+        },
+        "integrationReadinessPct": {
+          "label": "Controls and policies linked",
+          "short_label": "Linked"
+        },
+        "dataQualityStatus": {
+          "label": "Validation"
+        },
+        "evalAcceptanceStatus": {
+          "label": "Compliance sign-off",
+          "short_label": "Sign-off"
+        },
+        "uatStatus": {
+          "label": "Business check"
+        },
+        "currentMilestone": {
+          "label": "Current milestone"
+        },
+        "currentMilestoneDueDate": {
+          "label": "Milestone due",
+          "placeholder": "2025-11-15"
+        },
+        "blocker": {
+          "label": "Blocker"
+        },
+        "blockerOwner": {
+          "label": "Blocker owner",
+          "options": {
+            "Provider": "Compliance team",
+            "Customer": "Regulator",
+            "Third-Party Vendor": "Business unit / third party",
+            "None": "None"
+          }
+        },
+        "targetGoLiveDate": {
+          "label": "Compliance deadline",
+          "short_label": "Deadline",
+          "placeholder": "2026-12-31"
+        },
+        "actualGoLiveDate": {
+          "label": "Compliant since",
+          "placeholder": "2026-12-31"
+        },
+        "launchScopeSolutionIds": {
+          "hidden": true
+        },
+        "securityReviewStatus": {
+          "hidden": true
+        },
+        "privacyReviewStatus": {
+          "hidden": true
+        },
+        "billingReadinessStatus": {
+          "hidden": true
+        },
+        "entitlementProvisioningStatus": {
+          "hidden": true
+        },
+        "billingStartDate": {
+          "hidden": true
+        },
+        "runbookStatus": {
+          "hidden": true
+        },
+        "runbookLink": {
+          "hidden": true
+        },
+        "supportHandoffStatus": {
+          "hidden": true
+        },
+        "supportOwnerEmail": {
+          "hidden": true
+        },
+        "supportChannelRef": {
+          "hidden": true
+        },
+        "launchWindowStartAt": {
+          "hidden": true
+        },
+        "launchWindowEndAt": {
+          "hidden": true
+        },
+        "connectorProvisioningStatus": {
+          "hidden": true
+        },
+        "integrationTestStatus": {
+          "hidden": true
+        },
+        "trainingStatus": {
+          "hidden": true
+        },
+        "launchDecision": {
+          "hidden": true
+        },
+        "launchDecisionDate": {
+          "hidden": true
+        },
+        "rolloutGovernanceStatus": {
+          "hidden": true
+        },
+        "customerLaunchApproverEmail": {
+          "hidden": true
+        },
+        "providerLaunchApproverEmail": {
+          "hidden": true
+        }
+      },
+      "custom_fields": [
+        {
+          "key": "programme_kind",
+          "label": "Kind",
+          "type": "pick_list",
+          "options": [
+            "New circular",
+            "Review cycle",
+            "Remediation",
+            "Audit follow-up"
+          ],
+          "show_in_list": true
+        },
+        {
+          "key": "next_review",
+          "label": "Next review",
+          "type": "date",
+          "show_in_list": true
+        }
+      ]
+    }
+  },
+  "work_periods": {
+    "mode": "individual",
+    "label": {
+      "singular": "compliance target",
+      "plural": "compliance targets"
+    },
+    "item_label": {
+      "singular": "task",
+      "plural": "tasks"
+    },
+    "length_days": 7,
+    "auto_rollover": true
+  }
+}

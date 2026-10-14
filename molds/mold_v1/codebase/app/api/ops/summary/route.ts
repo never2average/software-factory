@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, gt, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, lt, ne } from "drizzle-orm";
 import {
   deployments,
   implementation,
@@ -11,6 +11,7 @@ import {
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { W } from "@/lib/ui-words";
+import { implementationAtRisk, unhealthyDeployment, urgentTicket } from "@/lib/workspace-attention";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,9 +32,6 @@ export const dynamic = "force-dynamic";
  * Counts come back with a sample of the actual rows: "4 overdue" is a number,
  * "4 overdue, the oldest being X" is something you can act on.
  */
-
-const OPEN_TICKETS = ["Open", "In Progress", "Needs Triage", "Reopened", "Blocked"];
-const URGENT = ["P0-Critical", "P1-High"];
 
 export async function GET(request: NextRequest) {
   const ctx = await orgContextForRequest(request);
@@ -88,13 +86,8 @@ export async function GET(request: NextRequest) {
             priority: tickets.ticketPriority,
           })
           .from(tickets)
-          .where(
-            and(
-              eq(tickets.orgId, org),
-              inArray(tickets.ticketStatus, OPEN_TICKETS),
-              inArray(tickets.ticketPriority, URGENT),
-            ),
-          )
+          // The switcher's conditions (lib/workspace-attention.ts), so its count and this one agree.
+          .where(urgentTicket(org))
           .limit(50),
       [] as { id: string; customerId: string; summary: string; priority: string }[],
     ),
@@ -125,7 +118,7 @@ export async function GET(request: NextRequest) {
             health: deployments.healthStatus,
           })
           .from(deployments)
-          .where(and(eq(deployments.orgId, org), ne(deployments.healthStatus, "Healthy")))
+          .where(unhealthyDeployment(org))
           .limit(50),
       [] as { id: string; customerId: string; health: string }[],
     ),
@@ -139,15 +132,7 @@ export async function GET(request: NextRequest) {
             blocker: implementation.blocker,
           })
           .from(implementation)
-          .where(
-            and(
-              eq(implementation.orgId, org),
-              or(
-                inArray(implementation.implementationRiskLevel, ["High", "Critical"]),
-                isNotNull(implementation.blocker),
-              ),
-            ),
-          )
+          .where(implementationAtRisk(org))
           .limit(50),
       [] as { customerId: string; stage: string; risk: string; blocker: string | null }[],
     ),

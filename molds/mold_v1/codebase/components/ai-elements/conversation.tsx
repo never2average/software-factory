@@ -10,10 +10,17 @@ import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
 
+/**
+ * `initial="instant"`: a chat that opens with its history already there lands at the bottom on its first frame.
+ * It was `smooth`, so every mount (each open, and each remount a reattach or a resync causes) started at the top and
+ * spring-scrolled through the whole transcript to the bottom, 0.4-1.8 s of history going past by the library's own
+ * constants. `resize` stays `smooth`: content that GROWS while the person watches (a reply streaming in) still follows
+ * smoothly. tests/chat-open.spec.ts samples every frame of a 20,000 px open.
+ */
 export const Conversation = ({ className, ...props }: ConversationProps) => (
   <StickToBottom
     className={cn("relative flex-1 overflow-y-hidden", className)}
-    initial="smooth"
+    initial="instant"
     resize="smooth"
     role="log"
     {...props}

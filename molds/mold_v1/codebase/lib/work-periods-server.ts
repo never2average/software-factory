@@ -14,6 +14,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { WORK_PERIODS, type WorkPeriods } from "@/agent/lib/work-periods";
 import { taskWriteRefusal } from "@/agent/lib/work-period-store";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
+import { RECORD_AREAS } from "@/agent/lib/record-areas.generated";
+import type { RecordAreas } from "@/agent/lib/record-areas";
+import { prepareTaskWrite } from "@/agent/lib/task-area";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 
 /** The answer of a route that does not exist in this deployment: the same body Next gives an unknown path's API. */
@@ -37,16 +40,21 @@ export function periodHeaders(wp: WorkPeriods = WORK_PERIODS): Record<string, st
 /**
  * A task write (POST a new one with `taskId` null, PATCH an existing one), checked before it is forwarded. Returns a
  * response to send instead, or the body text to forward.
+ *
+ * First against the deployment's definition of a task (records.areas.tasks; agent/lib/task-area.ts): a body it
+ * refuses is a 400 with the reasons, and nothing reaches the task-workflow service. The default definition sends a
+ * valid body on exactly as it came; a redefined one sends the checked body (its own fields as `custom`, the status
+ * its state's category maps to). Then the work periods' rules below.
  */
 export async function guardTaskRequest(
   request: NextRequest,
   orgId: string,
   taskId: string | null,
   wp: WorkPeriods = WORK_PERIODS,
+  areas: RecordAreas = RECORD_AREAS,
 ): Promise<{ response: NextResponse } | { body: string | undefined }> {
   if (request.method === "GET" || request.method === "HEAD" || request.method === "DELETE") return { body: undefined };
-  const text = await request.text();
-  if (wp.team) return { body: text };
+  let text = await request.text();
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -54,6 +62,15 @@ export async function guardTaskRequest(
     return { body: text }; // the service answers a body it cannot read
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { body: text };
+  // {me} on a redefined task is the signed-in person (the default definition fills nothing in).
+  const me = areas.tasks.redefined ? (await callerEmail(request)) ?? "" : "";
+  const prepared = prepareTaskWrite(taskId ? "update" : "create", parsed as Record<string, unknown>, { actor: me }, areas);
+  if (!prepared.ok) return { response: NextResponse.json({ error: prepared.errors.join(" "), errors: prepared.errors }, { status: 400 }) };
+  if (prepared.body) {
+    parsed = prepared.body;
+    text = JSON.stringify(prepared.body);
+  }
+  if (wp.team) return { body: text };
   const patch = parsed as { cycleId?: unknown; assignee?: unknown };
   if (!wp.enabled) {
     // "cycleId: null" clears nothing a person can see; anything else names a feature this deployment does not have.

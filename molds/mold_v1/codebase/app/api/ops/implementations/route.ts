@@ -6,7 +6,8 @@ import { customers, implementation, solutions } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
 import { isForeignKeyViolation, isUniqueViolation } from "@/lib/pg-error";
-import { customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { choiceSchema, customBodySchema, customForWrite, pickProfileFields, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { CHOICE_MEANINGS } from "@/agent/lib/customer-schema";
 import { asCustomValues, customDelta } from "@/agent/lib/custom-fields";
 import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
@@ -27,8 +28,10 @@ export const dynamic = "force-dynamic";
  *  fresh rollout the operator refines in the detail panel. */
 const createSchema = z.object({
   customerId: z.string().min(1, `Pick ${an(W.account)} ${W.account}.`),
-  implementationStage: z.string().min(1).default("scoping"),
-  implementationRiskLevel: z.string().min(1).default("low"),
+  // One of the stored values (the schema's enums), or a 400 that lists them. The defaults are values of those enums
+  // (CHOICE_MEANINGS): they were "scoping" and "low", which no screen, count or check knew (mold_v1-251).
+  implementationStage: choiceSchema("implementations", "implementationStage").default(CHOICE_MEANINGS.implementations.defaults.implementationStage),
+  implementationRiskLevel: choiceSchema("implementations", "implementationRiskLevel").default(CHOICE_MEANINGS.implementations.defaults.implementationRiskLevel),
   implementationProgressPct: z.number().min(0).max(100).default(0),
   implementationOwnerEmail: z.string().trim().optional().nullable(),
   displayName: z.string().trim().optional().nullable(),
@@ -78,8 +81,8 @@ export async function POST(request: NextRequest) {
       orgId: ctx.orgId,
       implementationOwnerEmail: data.implementationOwnerEmail || null,
       displayName: data.displayName || null,
-      // NOT NULL with no DB default — empty means "no blocker owner yet".
-      blockerOwner: "",
+      // NOT NULL with no DB default: "no blocker owner yet" is the enum's own value for it (it was "", not a value).
+      blockerOwner: CHOICE_MEANINGS.implementations.defaults.blockerOwner,
     };
     const update: Record<string, unknown> = {
       ...Object.fromEntries(Object.entries(data).filter(([k, v]) => k !== "customerId" && v !== undefined && sent.has(k))),

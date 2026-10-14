@@ -51,6 +51,7 @@ function Column({
   return (
     <div
       ref={setNodeRef}
+      data-board-column={col.key}
       className={cn(
         "flex w-96 shrink-0 flex-col rounded-lg border border-border/60 bg-muted/15 transition-colors",
         isOver && "border-foreground/30 bg-muted/40",

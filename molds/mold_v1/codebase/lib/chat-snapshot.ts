@@ -371,6 +371,100 @@ export function checkSeam(
 }
 
 /**
+ * What a seam read came back as, as much of it as {@link seamVerdict} needs.
+ *
+ * `stop` is the reader's own stop reason (chat-shell `replaySession`). `ended`
+ * is true only when the UPSTREAM CLOSED the response: the server's marker said
+ * the upstream ended (`drained: false`), or a direct read reached a real end of
+ * body. It is false for a read that stopped on silence (the server's drained
+ * marker, or the reader's own quiet window), which says nothing about where the
+ * stream ends.
+ */
+export interface SeamRead {
+  readonly events: readonly unknown[];
+  readonly stop?: string;
+  readonly ended?: boolean;
+}
+
+/**
+ * What the stream said about a saved copy, and what to do about it.
+ *
+ *   `match`     the seam event agrees and nothing follows it         → keep
+ *   `ahead`     the seam agrees and the STREAM has moved on past it   → extend (mount the tail)
+ *   `mismatch`  the stream's event at the seam is a different event   → replace
+ *   `behind`    the stream CLOSED with nothing at the seam: the copy
+ *               claims events the stream does not have (a finished
+ *               session read past its end)                            → retry once, then replace
+ *   `empty`     the read ANSWERED with nothing, on silence: the server
+ *               or the reader stopped waiting before the seam event
+ *               arrived. Not evidence against the copy               → retry once, then keep
+ *   `unknown`   no answer at all: an error, a timeout, a cancelled
+ *               read, or no read                                     → retry once, then keep
+ *
+ * WHY "EMPTY" IS NOT "BEHIND". {@link checkSeam} calls every empty read
+ * `behind`, and the open treated that as proof the copy was ahead of the
+ * stream: it deleted the saved copy, covered the painted chat with the loading
+ * shimmer and replayed the conversation from event zero. But a parked session's
+ * stream never ends, so "nothing came back" is decided by a timer, and the timer
+ * lost to eve's first byte on 10-30% of measured seam reads. A healthy copy was
+ * deleted on every one of them. Only a read that returned a DIFFERENT event, or
+ * a stream that closed with nothing at that index, says anything about the copy.
+ *
+ * `attempt` is 1 for the first read and 2 for the background retry. The retry
+ * settles every open: after it, an empty or unknown read keeps the copy
+ * (unverified, as a timed-out read always did) and only positive evidence
+ * replaces it.
+ */
+export type SeamStatus = "match" | "ahead" | "mismatch" | "behind" | "empty" | "unknown";
+export type SeamAction = "keep" | "extend" | "replace" | "retry";
+
+export function seamVerdict(
+  snapshot: TranscriptSnapshot,
+  read: SeamRead | null | undefined,
+  attempt = 1,
+): { readonly status: SeamStatus; readonly action: SeamAction; readonly tail: readonly unknown[] } {
+  const last = attempt >= 2;
+  if (!read || read.stop === "timeout" || read.stop === "error" || read.stop === "cancelled") {
+    return { status: "unknown", action: last ? "keep" : "retry", tail: [] };
+  }
+  if (read.events.length === 0) {
+    if (read.ended) return { status: "behind", action: last ? "replace" : "retry", tail: [] };
+    return { status: "empty", action: last ? "keep" : "retry", tail: [] };
+  }
+  const seam = checkSeam(snapshot, read.events);
+  if (seam.status === "mismatch") return { status: "mismatch", action: "replace", tail: [] };
+  if (seam.tail.length === 0) return { status: "match", action: "keep", tail: [] };
+  return { status: "ahead", action: "extend", tail: seam.tail };
+}
+
+/**
+ * May a seam verdict that says "replace" remount the chat NOW?
+ *
+ * The replacement runs in the background, behind a chat that is already on
+ * screen, and swapping it in remounts the chat: the scroll position and anything
+ * typed in the composer go with it.
+ *
+ *   - Typing (the composer holds a draft that was not sent): WAIT, whatever
+ *     else is true. The swap happens when the draft is sent or cleared; a
+ *     person's unsent words are never thrown away for a correction they did
+ *     not ask for.
+ *   - Has sent since the chat was painted: SWAP, from a FRESH read taken after
+ *     the send. A copy the stream disagrees with mounted the chat at the copy's
+ *     stream index, and the reader of the turn just sent starts at that index:
+ *     if the copy claimed more events than the stream has, the new turn's events
+ *     are below the cursor and never appear, so keeping the mount would lose the
+ *     reply. The sent message itself is durable on the server, so the fresh read
+ *     contains it, the remounted chat attaches to the running turn, and the
+ *     composer is empty at that moment, so nothing typed is lost.
+ *   - Otherwise: SWAP now.
+ */
+export function replaceDecision(input: { readonly typing: boolean; readonly sent: boolean }): "swap" | "wait" | "swap-fresh" {
+  if (input.typing) return "wait";
+  if (input.sent) return "swap-fresh";
+  return "swap";
+}
+
+/**
  * The mount: the snapshot's transcript, the new events after it, and the
  * browser-only markers last.
  *

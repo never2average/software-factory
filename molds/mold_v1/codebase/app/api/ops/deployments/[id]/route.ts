@@ -6,7 +6,7 @@ import { deployments } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordFieldChanges } from "@/lib/ops-activity";
 import { customerInOrg, orgContextForRequest } from "@/lib/org-context";
-import { customBodySchema, customFieldChanges, customForWrite, profileFieldLabel, profileFieldSchemas } from "@/lib/ops-domain-fields";
+import { choiceSchema, customBodySchema, customFieldChanges, customForWrite, profileFieldLabel, profileFieldSchemas } from "@/lib/ops-domain-fields";
 import { customDelta } from "@/agent/lib/custom-fields";
 import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { W } from "@/lib/ui-words";
@@ -26,8 +26,9 @@ interface RouteContext {
 const patchSchema = z.strictObject({
   customerId: z.string().min(1),
   deployOwnerEmail: z.string().min(1).optional(),
-  healthStatus: z.string().min(1).optional(),
-  releaseStatus: z.string().min(1).optional(),
+  // One of the stored values (the schema's enum), or a 400 that lists them.
+  healthStatus: choiceSchema("deployments", "healthStatus").optional(),
+  releaseStatus: choiceSchema("deployments", "releaseStatus").optional(),
   // Empty string clears it → the label falls back to the composed identity.
   displayName: z.string().optional(),
   actor: z.string().min(1).optional(),

@@ -40,6 +40,20 @@ if (!adminUrl || !appUrl) {
   process.exit(0);
 }
 
+// Stored-shaped rows: every choice value is one the schema's enums allow, read from them (mold_v1-251). The seed used
+// "Degraded"/"Healthy" and risk "High", which no write path stores, and so it passed against a count that compared
+// health with "Healthy" (every real record counted unhealthy) and risk with "High"/"Critical" (no Red one counted).
+const { deploymentSchema, implementationSchema } = await import("../agent/lib/customer-schema.ts");
+const HEALTH = deploymentSchema.shape.healthStatus.options;
+const RISK = implementationSchema.shape.implementationRiskLevel.options;
+const STAGE = implementationSchema.shape.implementationStage.options;
+const OWNER = implementationSchema.shape.blockerOwner.options;
+const ENV = deploymentSchema.shape.environment.options[0];
+const REGION = deploymentSchema.shape.region.options[0];
+const RELEASE = deploymentSchema.shape.releaseStatus.options[0];
+const [HEALTHY, DEGRADED] = HEALTH;
+const RED = RISK.at(-1);
+
 const TABLES = ["inbox_items", "tickets", "todos", "deployments", "implementation", "workflow_runs", "customers"];
 const A = `org-attention-a-${process.pid}`;
 const B = `org-attention-b-${process.pid}`;
@@ -79,14 +93,15 @@ async function seed(org, k) {
                 VALUES (${org}, ${"overdue " + i}, 'test', false, 'open', ${new Date(Date.now() - 2 * hour)})`;
     await admin`INSERT INTO deployments (customer_id, deployment_id, org_id, environment, region, deployed_version,
                   health_status, release_status)
-                VALUES (${cust}, ${`D-${i}`}, ${org}, 'prod', 'in', '1.0', 'Degraded', 'Live')`;
+                VALUES (${cust}, ${`D-${i}`}, ${org}, ${ENV}, ${REGION}, '1.0', ${DEGRADED}, ${RELEASE})`;
     await admin`INSERT INTO implementation (customer_id, org_id, implementation_stage, implementation_progress_pct,
                   implementation_risk_level, blocker_owner)
-                VALUES (${cust}, ${org}, 'Build', 50, 'High', 'nobody')`;
+                VALUES (${cust}, ${org}, ${STAGE[0]}, 50, ${RED}, ${OWNER.at(-1)})`;
     await admin`INSERT INTO workflow_runs (org_id, run_id, workflow_name, status, updated_at)
                 VALUES (${org}, ${`wfr_attention_${org}_${i}`}, 'probe', 'failed', now())`;
   }
-  // Not attention: a read inbox item, a low-priority ticket, a to-do not yet due, a healthy deployment, an old failure.
+  // Not attention: a read inbox item, a low-priority ticket, a to-do not yet due, a healthy deployment, a project at
+  // every risk below the highest with no blocker, an old failure.
   const calm = `${org}-calm`;
   await admin`INSERT INTO customers (customer_id, org_id, customer_name) VALUES (${calm}, ${org}, 'Calm')`;
   await admin`INSERT INTO inbox_items (org_id, source, external_id, thread_key, occurred_at, status)
@@ -95,7 +110,16 @@ async function seed(org, k) {
               VALUES (${org}, 'later', 'test', false, 'open', ${new Date(Date.now() + 48 * hour)})`;
   await admin`INSERT INTO deployments (customer_id, deployment_id, org_id, environment, region, deployed_version,
                 health_status, release_status)
-              VALUES (${calm}, 'D-calm', ${org}, 'prod', 'in', '1.0', 'Healthy', 'Live')`;
+              VALUES (${calm}, 'D-calm', ${org}, ${ENV}, ${REGION}, '1.0', ${HEALTHY}, ${RELEASE})`;
+  await admin`INSERT INTO implementation (customer_id, org_id, implementation_stage, implementation_progress_pct,
+                implementation_risk_level, blocker_owner)
+              VALUES (${calm}, ${org}, ${STAGE[0]}, 10, ${RISK[0]}, ${OWNER.at(-1)})`;
+  for (const [j, risk] of RISK.slice(1, -1).entries()) {
+    await admin`INSERT INTO customers (customer_id, org_id, customer_name) VALUES (${`${calm}-${j}`}, ${org}, 'Calm too')`;
+    await admin`INSERT INTO implementation (customer_id, org_id, implementation_stage, implementation_progress_pct,
+                  implementation_risk_level, blocker_owner)
+                VALUES (${`${calm}-${j}`}, ${org}, ${STAGE[0]}, 10, ${risk}, ${OWNER.at(-1)})`;
+  }
   await admin`INSERT INTO workflow_runs (org_id, run_id, workflow_name, status, updated_at)
               VALUES (${org}, ${`wfr_attention_${org}_old`}, 'probe', 'failed', ${new Date(Date.now() - 72 * hour)})`;
 }
