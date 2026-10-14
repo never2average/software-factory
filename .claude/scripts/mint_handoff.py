@@ -48,12 +48,23 @@ def facts(app_id):
             sj = os.path.join(ROOT, "packs", pid, "files", "agent", "subagents", k, "subagent.json"); d = load(sj) if os.path.exists(sj) else {}
             skills = len(glob.glob(os.path.join(os.path.dirname(sj), "skills", "*", "SKILL.md")))
             subs.append(dict(key=k, name=d.get("name", k), summary=d.get("summary", ""), skills=skills))
-        prof = {}
-        for pf in sorted(glob.glob(os.path.join(ROOT, "packs", pid, "files", "profiles", "*.json"))): prof = load(pf)
+        # Every profile file of the pack, merged in order (a later file used to replace an earlier one whole, so a
+        # folders-only file hid the record areas). Areas come from the old `domains` form or `records.areas`.
+        prof, areas_new = {}, {}
+        for pf in sorted(glob.glob(os.path.join(ROOT, "packs", pid, "files", "profiles", "*.json"))):
+            p = load(pf); areas_new.update(((p.get("records") or {}).get("areas")) or {})
+            prof.update({k: v for k, v in p.items() if k not in ("domains", "records")})
+            prof.setdefault("domains", {}).update(p.get("domains") or {})
         areas = []
         for a, d in (prof.get("domains") or {}).items():
             shown = (d.get("group_label") or {}).get("plural") if d.get("group_by") else (d.get("label") or {}).get("plural")
             areas.append(dict(area=a, shown_as=shown, description=d.get("description", ""), kinds=d.get("kinds") or [], own_fields=[dict(label=f["label"], type=f["type"], options=f.get("options")) for f in d.get("custom_fields") or []]))
+        for a, d in areas_new.items():
+            lab = d.get("label") or {}; flds = d.get("fields") or {}
+            own = [dict(label=f.get("label", k), type=f.get("type"), options=f.get("options")) for k, f in flds.items() if isinstance(f, dict) and f.get("type") and not f.get("column")]
+            st = ((d.get("lifecycle") or {}).get("states")) or []
+            areas.append(dict(area=a, shown_as=lab.get("plural") if isinstance(lab, dict) else lab, description=d.get("description", ""),
+                              kinds=[s.get("label", s.get("key")) if isinstance(s, dict) else s for s in (st.values() if isinstance(st, dict) else st)], own_fields=own))
         packs.append(dict(pack_id=pid, name=m.get("name"), description=m.get("description"), specialists=subs, record_areas=areas, vocabulary=prof.get("vocabulary")))
     spaces = []
     for s in mint.seeds(app_id):
