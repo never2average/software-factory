@@ -221,7 +221,9 @@ export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
      * ops surfaces — because they all filter by workspace. Sixty-six customers
      * were created this way and none of them showed up anywhere.
      */
-    return { customer: await upsertCustomer(patch, await orgForSession(ctx)) };
+    // The verified caller fills a `{me}` default of a record area drawn from its definition (its nested rows go through
+    // the one validator, agent/lib/record-area-write.ts); nothing else reads it.
+    return { customer: await upsertCustomer(patch, await orgForSession(ctx), { actor: callerEmail(ctx) ?? "agent" }) };
   },
 }), {
   // A profile's hidden fields are not offered to the model, and a stored hidden value survives its rewrite.

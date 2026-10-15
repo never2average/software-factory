@@ -148,10 +148,11 @@ console.log("\nOne open at a time:");
 
 /* ---- 4. the shell uses them ----------------------------------------------------------------------------------- */
 console.log("\nThe shell:");
-const shell = readFileSync("app/_components/chat-shell.tsx", "utf8");
+// The replay reader moved out of the shell into lib/chat-replay-read.ts (unchanged), so it is read with it.
+const shell = readFileSync("app/_components/chat-shell.tsx", "utf8") + readFileSync("lib/chat-replay-read.ts", "utf8");
 const openChat = shell.slice(shell.indexOf("const openChat = useCallback("), shell.indexOf("// The last chat, when the cache could not show it"));
 check("openChat claims a ticket before anything else", /const ticket = openGuardRef\.current\.claim\(\);/.test(openChat.slice(0, 600)));
-check("…and stops after the saved copy if a later click took over", /await fetchSnapshot\(sessionId, ticket\.signal\)[\s\S]{0,400}if \(!ticket\.current\(\)\) return;/.test(openChat));
+check("…and stops after the saved copy if a later click took over", /await fetchSnapshot\(sessionId, ticket\.signal[,)][\s\S]{0,460}if \(!ticket\.current\(\)\) return;/.test(openChat));
 check("the seam read decides through seamVerdict, with a second attempt", /seamVerdict\(cached, tail, 1\)/.test(openChat) && /seamVerdict\(cached, tail, 2\)/.test(openChat));
 check("…never checkSeam's 'empty means behind'", !/checkSeam\(/.test(openChat));
 check(

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { customDelta, directStatus } from "../lib/custom.ts";
+import { customDelta, directStatus, isRecursFromConflict } from "../lib/custom.ts";
+import { errorResponse } from "../lib/http.ts";
 import { taskCreateSchema, taskPatchSchema } from "../lib/types.ts";
 
 // A task's own fields and a category-derived status (lib/custom.ts): what this service does with them, knowing no
@@ -40,4 +41,14 @@ test("a category-derived status: done follows it, and an earlier done time is ke
   assert.deepEqual(directStatus("done", { done: false, done_at: null }, now), { status: "done", done: true, done_at: now });
   assert.deepEqual(directStatus("done", { done: true, done_at: then }, now), { status: "done", done: true, done_at: then });
   assert.deepEqual(directStatus("in_progress", { done: true, done_at: then }, now), { status: "in_progress", done: false, done_at: null });
+});
+
+test("a second next occurrence of one task (todos_recurs_from_uidx) is a conflict, answered 409; other unique violations are not", async () => {
+  assert.equal(isRecursFromConflict({ code: "23505", constraint_name: "todos_recurs_from_uidx" }), true);
+  assert.equal(isRecursFromConflict({ code: "23505", constraint_name: "apps_org_starter_key_uq" }), false);
+  assert.equal(isRecursFromConflict({ code: "23503", constraint_name: "todos_recurs_from_uidx" }), false);
+  assert.equal(isRecursFromConflict(null), false);
+  const res = errorResponse(new Error("Conflict: the task already has its next occurrence"));
+  assert.equal(res.status, 409);
+  assert.deepEqual(await res.json(), { error: "the task already has its next occurrence" });
 });

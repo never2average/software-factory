@@ -43,3 +43,12 @@ export function directStatus(status: string, before: { done: boolean; done_at: D
   const done = status === "done";
   return { status, done, done_at: done ? (before?.done ? before.done_at ?? now : now) : null };
 }
+
+/**
+ * The unique violation of todos_recurs_from_uidx (the app's drizzle/0042_todos_recurs_from_unique.sql): a second next
+ * occurrence of one task. The write that hits it is answered 409, and the app's recurrence takes that as done.
+ */
+export function isRecursFromConflict(error: unknown): boolean {
+  const e = error as { code?: unknown; constraint_name?: unknown; constraint?: unknown } | null;
+  return Boolean(e && e.code === "23505" && (e.constraint_name ?? e.constraint) === "todos_recurs_from_uidx");
+}

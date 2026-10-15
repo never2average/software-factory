@@ -339,7 +339,8 @@ console.log("\nThe saved-copy rows that were swallowed:");
 
 /* ---- 8. the shell calls it ----------------------------------------------------------------------------------- */
 console.log("\nThe shell:");
-const shell = readFileSync("app/_components/chat-shell.tsx", "utf8");
+// The replay reader moved out of the shell into lib/chat-replay-read.ts (unchanged), so it is read with it.
+const shell = readFileSync("app/_components/chat-shell.tsx", "utf8") + readFileSync("lib/chat-replay-read.ts", "utf8");
 const openChat = shell.slice(shell.indexOf("const openChat = useCallback("), shell.indexOf("// The last chat, when the cache could not show it"));
 check("a record starts at the TOP of every openChat", openChat.indexOf("beginChatOpen(") > 0 && openChat.indexOf("beginChatOpen(") < openChat.indexOf("setReadOnlyOwner(undefined)"));
 check("the local mount writes its route (it wrote nothing before)", /timing\.route\(!s\.events\?\.length \|\| endsAtRest\(s\.events\) \? "local" : "running"\)/.test(openChat));

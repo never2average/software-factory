@@ -22,13 +22,17 @@ const VIEW_META: { v: ViewMode; icon: typeof LayoutGridIcon; label: string }[] =
 export function ViewSwitcher({
   view,
   setView,
+  modes,
 }: {
   readonly view: ViewMode;
   readonly setView: (v: ViewMode) => void;
+  /** The views to offer, in order (a record area's declared ones); all three when absent. */
+  readonly modes?: readonly ViewMode[];
 }) {
+  const offered = modes ? modes.flatMap((m) => VIEW_META.filter((o) => o.v === m)) : VIEW_META;
   return (
     <div className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-border/60 p-0.5">
-      {VIEW_META.map((o) => (
+      {offered.map((o) => (
         <button
           key={o.v}
           type="button"
@@ -179,7 +183,13 @@ export type WorkspaceViewConfig<T extends { id: string }> = {
   onSelect: (id: string) => void;
   /** Kanban card renderer. */
   renderCard: (t: T) => React.ReactNode;
-  kanban: { columns: readonly BoardColumn[]; columnOf: (t: T) => string; onMove: (t: T, col: string) => void };
+  kanban: {
+    columns: readonly BoardColumn[];
+    columnOf: (t: T) => string;
+    onMove: (t: T, col: string) => void;
+    /** Why `t` may not be dropped in `col` (a strict lifecycle), or null; absent: every column takes every card. */
+    canDrop?: (t: T, col: string) => string | null;
+  };
   table: readonly TableColumn<T>[];
   timeline: { rangeOf: (t: T) => TimelineRange; labelOf: (t: T) => React.ReactNode; toneOf?: (t: T) => string };
 };
@@ -213,6 +223,7 @@ export function WorkspaceViews<T extends { id: string }>({
         items={config.items as T[]}
         columnOf={config.kanban.columnOf}
         onMove={config.kanban.onMove}
+        canDrop={config.kanban.canDrop}
         renderCard={config.renderCard}
       />
     </div>

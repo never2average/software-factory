@@ -16,7 +16,14 @@ import { taskWriteRefusal } from "@/agent/lib/work-period-store";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { RECORD_AREAS } from "@/agent/lib/record-areas.generated";
 import type { RecordAreas } from "@/agent/lib/record-areas";
-import { prepareTaskWrite } from "@/agent/lib/task-area";
+import { prepareTaskWrite, taskLifecycleEnforced } from "@/agent/lib/task-area";
+import { permissionsDeclared } from "@/agent/lib/record-permissions";
+import { areaView, type AreaRow } from "@/agent/lib/record-areas";
+import type { RecordRole } from "@/agent/lib/record-areas.generated";
+import { needsEnteredBy } from "@/agent/lib/record-lifecycle";
+import { recursOnDone } from "@/agent/lib/task-recurrence";
+import { stageStateOf, storedTask, whoEntered } from "@/agent/lib/record-lifecycle-store";
+import { lifecycleConflictResponse, type TaskLifecycleOutcome } from "@/lib/record-lifecycle-server";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 
 /** The answer of a route that does not exist in this deployment: the same body Next gives an unknown path's API. */
@@ -45,6 +52,14 @@ export function periodHeaders(wp: WorkPeriods = WORK_PERIODS): Record<string, st
  * refuses is a 400 with the reasons, and nothing reaches the task-workflow service. The default definition sends a
  * valid body on exactly as it came; a redefined one sends the checked body (its own fields as `custom`, the status
  * its state's category maps to). Then the work periods' rules below.
+ *
+ * When the tasks' lifecycle is enforced ("warn" or "strict"; agent/lib/record-lifecycle.ts), an update is checked
+ * against the stored task as the caller's role (`who.role`), with its `reason` as the comment and, for a four-eyes move,
+ * who entered the stored state: under "strict" a move that breaks a rule is a 409 (the sentence, the broken rules, the
+ * allowed moves) and reaches nothing; otherwise `lifecycle` carries the move for the route to write to the activity
+ * feed once the service took it (lib/record-lifecycle-server.ts afterTaskWrite: and, under "warn", into the answer's
+ * `warnings`). A recurring task's stored row goes the same way, for the next occurrence. Under "off" (the default) with
+ * no recurrence nothing more is read and the answer is what it was.
  */
 export async function guardTaskRequest(
   request: NextRequest,
@@ -52,7 +67,8 @@ export async function guardTaskRequest(
   taskId: string | null,
   wp: WorkPeriods = WORK_PERIODS,
   areas: RecordAreas = RECORD_AREAS,
-): Promise<{ response: NextResponse } | { body: string | undefined }> {
+  who: { role?: RecordRole } = {},
+): Promise<{ response: NextResponse } | { body: string | undefined; lifecycle?: TaskLifecycleOutcome }> {
   if (request.method === "GET" || request.method === "HEAD" || request.method === "DELETE") return { body: undefined };
   let text = await request.text();
   let parsed: unknown;
@@ -63,13 +79,54 @@ export async function guardTaskRequest(
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { body: text };
   // {me} on a redefined task is the signed-in person (the default definition fills nothing in).
-  const me = areas.tasks.redefined ? (await callerEmail(request)) ?? "" : "";
-  const prepared = prepareTaskWrite(taskId ? "update" : "create", parsed as Record<string, unknown>, { actor: me }, areas);
-  if (!prepared.ok) return { response: NextResponse.json({ error: prepared.errors.join(" "), errors: prepared.errors }, { status: 400 }) };
+  const enforced = taskLifecycleEnforced(areas);
+  // A recurring task (records.areas.tasks.recurrence) needs the stored task too: completing it creates the next one.
+  const recurs = recursOnDone(areas);
+  // Who may (records.areas.tasks.permissions) reads the caller and the stored task (an `own` rule); a refusal is a 403.
+  const perms = permissionsDeclared("tasks", areas);
+  const me = areas.tasks.redefined || enforced || recurs || perms ? (await callerEmail(request)) ?? "" : "";
+  const lifecycleInputs = enforced || recurs || perms ? await taskLifecycleInputs(orgId, taskId, parsed as Record<string, unknown>, areas) : {};
+  const prepared = prepareTaskWrite(taskId ? "update" : "create", parsed as Record<string, unknown>, { actor: me, role: who.role, ...lifecycleInputs }, areas);
+  if (!prepared.ok) {
+    if (prepared.conflict) return { response: lifecycleConflictResponse(prepared.conflict) };
+    return { response: NextResponse.json({ error: prepared.errors.join(" "), errors: prepared.errors }, { status: prepared.forbidden ? 403 : 400 }) };
+  }
+  const reason = (parsed as { reason?: unknown }).reason;
+  const lifecycle = prepared.lifecycle || (recurs && lifecycleInputs.before)
+    ? { check: prepared.lifecycle ?? null, before: lifecycleInputs.before ?? null, actor: me, comment: typeof reason === "string" ? reason : null, areas }
+    : undefined;
   if (prepared.body) {
     parsed = prepared.body;
     text = JSON.stringify(prepared.body);
   }
+  const guarded = await periodRules(request, orgId, taskId, wp, parsed, text);
+  return "body" in guarded && lifecycle ? { ...guarded, lifecycle } : guarded;
+}
+
+/** The stored task, the state a requested stage stands for, and who entered the stored state (a four-eyes move). */
+async function taskLifecycleInputs(orgId: string, taskId: string | null, body: Record<string, unknown>, areas: RecordAreas): Promise<{ before?: AreaRow | null; stageState?: string | null; enteredBy?: string | null }> {
+  if (!taskId || !getOpsDb()) return {};
+  const v = areaView("tasks", areas);
+  const lc = v.lifecycle!;
+  return withOrgRls(orgId, async (tx) => {
+    const before = await storedTask(tx, orgId, taskId);
+    if (!before) return {};
+    const stageState = !lc.own && typeof body.stageId === "string" ? await stageStateOf(tx, orgId, v, taskId, body.stageId) : null;
+    const from = v.get(before, lc.field);
+    const by = typeof from === "string" && needsEnteredBy(v, from) ? await whoEntered(tx, orgId, { type: "task", id: taskId }, v, before, from) : null;
+    return { before, stageState, enteredBy: by };
+  });
+}
+
+/** The work periods' rules for a task write (see the file's header), on the body as it will be sent. */
+async function periodRules(
+  request: NextRequest,
+  orgId: string,
+  taskId: string | null,
+  wp: WorkPeriods,
+  parsed: unknown,
+  text: string,
+): Promise<{ response: NextResponse } | { body: string | undefined }> {
   if (wp.team) return { body: text };
   const patch = parsed as { cycleId?: unknown; assignee?: unknown };
   if (!wp.enabled) {

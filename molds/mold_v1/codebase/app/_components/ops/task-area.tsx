@@ -45,6 +45,8 @@ const LEGACY_UI = {
   empty: "No todos yet — hit New task.",
   eyebrow: "Task",
   untitled: "Untitled task",
+  /** The subtask line's placeholder. */
+  addSubtask: "Add subtask…",
   deleteLabel: "Delete task",
   states: LEGACY_STATES,
   columns: LEGACY_STATES.map((s) => ({ key: s.value, label: s.label, tone: s.tone })) as BoardColumn[],
@@ -91,7 +93,8 @@ export function taskUi(v: AreaView): TaskUi {
     loading: v.area.views?.loading ?? `Loading ${v.nouns}…`,
     empty: v.area.views?.empty ?? `No ${v.nouns} yet — hit ${submit}.`,
     eyebrow: v.singular,
-    untitled: `Untitled ${v.noun}`,
+    untitled: titlePlaceholder(v),
+    addSubtask: `Add sub-${v.noun}…`,
     deleteLabel: `Delete ${v.noun}`,
     states,
     columns: states.map((s) => ({ key: s.value, label: s.label, tone: s.tone })),
@@ -118,6 +121,16 @@ export function taskUi(v: AreaView): TaskUi {
       return d ? SORT_KEY[d.field] ?? `field:${d.field}` : LEGACY_UI.defaultSort;
     })(),
   };
+}
+
+/**
+ * The title's placeholder: the definition's own, else "Untitled <its word>". A redefined area that names its records
+ * but not the title's placeholder inherits the default's ("Untitled task") when profiles merge; that one is the
+ * default's word, so it is read as unset.
+ */
+function titlePlaceholder(v: AreaView): string {
+  const own = v.field("title")?.placeholder;
+  return own && own !== LEGACY_UI.untitled ? own : `Untitled ${v.noun}`;
 }
 
 /** A task's state: its status, or its own state field's value (the initial state when none is stored yet). */
@@ -282,7 +295,8 @@ export function TaskCreatePanel({
   readonly onCreate: (body: Record<string, unknown>) => Promise<void>;
   readonly onCancel: () => void;
 }) {
-  const fields = useMemo(() => view.createFields(), [view]);
+  // The title's placeholder in the area's own word (titlePlaceholder), as the detail's title shows it.
+  const fields = useMemo(() => view.createFields().map((f) => (f.key === "title" ? { ...f, placeholder: taskUi(view).untitled } : f)), [view]);
   const [values, setValues] = useState<Record<string, FormValue>>(() => Object.fromEntries(fields.map((f) => [f.key, initialValue(f, me)])));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);

@@ -1,0 +1,343 @@
+{
+  "$comment": "A compliance programme (records.areas.implementations in the record-area form): one per regulated company, its phase as the board, the regulators it covers (a multi-pick), its evidence (files), a budget (money), a board sign-off (yes/no), and two computed fields the server filters and sorts on (schedule from a date and the phase's category, size from the budget). A test fixture for the declared implementations screens, routes and tools; no deployment ships it.",
+  "records": {
+    "areas": {
+      "implementations": {
+        "label": {
+          "singular": "Compliance programme",
+          "plural": "Compliance programmes"
+        },
+        "description": "One programme per regulated company: where its compliance build-out stands, which regulators it covers, and the evidence behind it.",
+        "columns": "listed",
+        "title": "{implementationStage} · {regulators}",
+        "fields": {
+          "implementationStage": {
+            "order": 10,
+            "label": "Phase",
+            "options": [
+              {
+                "value": "Kickoff",
+                "label": "Scoping",
+                "tone": "slate"
+              },
+              {
+                "value": "Discovery",
+                "label": "Gap assessment",
+                "tone": "sky"
+              },
+              {
+                "value": "Configuration",
+                "label": "Remediation",
+                "tone": "amber"
+              },
+              {
+                "value": "Go-Live",
+                "label": "Operating",
+                "tone": "green"
+              },
+              {
+                "value": "On Hold",
+                "label": "Paused",
+                "tone": "muted"
+              }
+            ]
+          },
+          "implementationRiskLevel": {
+            "order": 20,
+            "label": "Risk",
+            "default": "Green",
+            "options": [
+              {
+                "value": "Green",
+                "label": "On track",
+                "tone": "green"
+              },
+              {
+                "value": "Yellow",
+                "label": "Watch",
+                "tone": "amber"
+              },
+              {
+                "value": "Red",
+                "label": "At risk",
+                "tone": "red",
+                "attention": true
+              }
+            ]
+          },
+          "implementationOwnerEmail": {
+            "order": 30,
+            "type": "person",
+            "label": "Programme lead",
+            "default": "{me}"
+          },
+          "targetGoLiveDate": {
+            "order": 40,
+            "type": "date",
+            "label": "Target date",
+            "index": "sort"
+          },
+          "implementationProgressPct": {
+            "order": 50,
+            "label": "Progress",
+            "default": 0
+          },
+          "regulators": {
+            "order": 60,
+            "type": "multi_pick",
+            "label": "Regulators",
+            "index": "filter",
+            "options": [
+              {
+                "value": "RBI"
+              },
+              {
+                "value": "SEBI"
+              },
+              {
+                "value": "NHB"
+              },
+              {
+                "value": "MCA"
+              }
+            ]
+          },
+          "evidence": {
+            "order": 70,
+            "type": "file",
+            "many": true,
+            "label": "Evidence",
+            "folder": "{folder:projects}/{customer_id}/evidence/"
+          },
+          "budget": {
+            "order": 80,
+            "type": "money",
+            "currency": "INR",
+            "label": "Budget",
+            "min": 0,
+            "index": "sort"
+          },
+          "board_approved": {
+            "order": 90,
+            "type": "boolean",
+            "label": "Board approved"
+          },
+          "blockerOwner": {
+            "hidden": true,
+            "fixed": "None"
+          },
+          "schedule": {
+            "order": 96,
+            "type": "pick_list",
+            "label": "Schedule",
+            "computed": {
+              "when": [
+                {
+                  "if": {
+                    "targetGoLiveDate": {
+                      "lt": "{today}"
+                    },
+                    "implementationStage": {
+                      "category": [
+                        "open",
+                        "active",
+                        "blocked"
+                      ]
+                    }
+                  },
+                  "then": "Late"
+                },
+                {
+                  "if": {
+                    "targetGoLiveDate": {
+                      "set": true
+                    }
+                  },
+                  "then": "Scheduled"
+                }
+              ],
+              "else": "No date"
+            },
+            "options": [
+              {
+                "value": "Late",
+                "tone": "red",
+                "attention": true
+              },
+              {
+                "value": "Scheduled",
+                "tone": "green"
+              },
+              {
+                "value": "No date",
+                "tone": "slate"
+              }
+            ]
+          },
+          "size": {
+            "order": 97,
+            "type": "pick_list",
+            "label": "Size",
+            "computed": {
+              "when": [
+                {
+                  "if": {
+                    "budget": {
+                      "gte": 100000
+                    }
+                  },
+                  "then": "Large"
+                },
+                {
+                  "if": {
+                    "budget": {
+                      "set": true
+                    }
+                  },
+                  "then": "Small"
+                }
+              ]
+            },
+            "options": [
+              {
+                "value": "Large"
+              },
+              {
+                "value": "Small"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "field": "implementationStage",
+          "initial": "Kickoff",
+          "categories": {
+            "Kickoff": "open",
+            "Discovery": "active",
+            "Configuration": "active",
+            "Go-Live": "done",
+            "On Hold": "blocked"
+          }
+        },
+        "relations": {
+          "account": {
+            "required": true
+          },
+          "tasks": true
+        },
+        "views": {
+          "default": "table",
+          "available": [
+            "table",
+            "board"
+          ],
+          "table": {
+            "columns": [
+              "account",
+              "implementationStage",
+              "implementationRiskLevel",
+              "regulators",
+              "budget",
+              "targetGoLiveDate",
+              "implementationOwnerEmail"
+            ]
+          },
+          "board": {
+            "by": "implementationStage",
+            "card": {
+              "title": "title",
+              "meta": [
+                "targetGoLiveDate",
+                "implementationOwnerEmail"
+              ],
+              "badge": "implementationRiskLevel"
+            }
+          },
+          "filters": [
+            {
+              "field": "implementationStage"
+            },
+            {
+              "field": "regulators"
+            },
+            {
+              "field": "implementationRiskLevel"
+            },
+            {
+              "field": "targetGoLiveDate",
+              "presets": [
+                "overdue",
+                "due_30d"
+              ]
+            },
+            {
+              "scope": "people",
+              "field": "implementationOwnerEmail"
+            }
+          ],
+          "sorts": [
+            {
+              "field": "targetGoLiveDate",
+              "dir": "asc",
+              "default": true
+            },
+            {
+              "field": "budget",
+              "dir": "desc"
+            },
+            {
+              "field": "account"
+            }
+          ],
+          "group_by": [
+            "implementationRiskLevel",
+            "account"
+          ],
+          "detail": {
+            "sections": [
+              {
+                "label": "Programme",
+                "fields": [
+                  "implementationStage",
+                  "implementationRiskLevel",
+                  "implementationProgressPct",
+                  "targetGoLiveDate",
+                  "implementationOwnerEmail"
+                ]
+              },
+              {
+                "label": "Scope and evidence",
+                "fields": [
+                  "regulators",
+                  "evidence",
+                  "budget",
+                  "board_approved"
+                ]
+              },
+              {
+                "related": "tasks"
+              }
+            ]
+          },
+          "create": {
+            "fields": [
+              "account",
+              "implementationStage",
+              "regulators",
+              "targetGoLiveDate",
+              "budget"
+            ],
+            "submit_label": "Add programme"
+          }
+        },
+        "agent": {
+          "tools": {
+            "read": true,
+            "write": true
+          },
+          "describe": "A programme is the company's compliance build-out. Keep its phase and regulators current; attach evidence by data-room path."
+        }
+      }
+    }
+  }
+}

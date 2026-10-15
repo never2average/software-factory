@@ -5,6 +5,11 @@ import { verifyOpsAuth } from "@/lib/ops-auth";
 import type { OrgContext } from "@/lib/org-context";
 import { WORK_PERIODS } from "@/agent/lib/work-periods";
 import { periodHeaders, withoutPeriod } from "@/lib/work-periods-server";
+import { areaView } from "@/agent/lib/record-areas";
+import { taskStatesHeader } from "@/agent/lib/record-lifecycle";
+
+/** The deployment's task states, for the service to map a pipeline stage to a status by category (once per process). */
+const TASK_STATES_HEADER = taskStatesHeader(areaView("tasks"));
 
 function serviceConfig(): { url: string; token: string } | null {
   const url = process.env.TASK_WORKFLOW_SERVICE_URL?.replace(/\/$/, "");
@@ -40,6 +45,7 @@ export async function proxyTaskWorkflow(
         "x-actor-email": identity.email.toLowerCase(),
         "x-actor-role": ctx.role,
         ...periodHeaders(),
+        ...TASK_STATES_HEADER,
       },
       body: hasBody ? (bodyText ?? (await request.text())) : undefined,
       cache: "no-store",

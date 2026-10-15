@@ -57,6 +57,14 @@ import {
 import { getDataroomStore } from "./dataroom-store.ts";
 import { FOLDER } from "./dataroom-folders.ts";
 import { DEFAULT_ORG } from "./org-context.ts";
+import { isDeclared } from "./record-area-records.ts";
+import { checkOnly, prepareRecordWrite } from "./record-area-write.ts";
+import { enforced, enteredByOf, memberRole, recordEntityId } from "./record-area-store.ts";
+import { deleteRefusal, permissionsDeclared } from "./record-permissions.ts";
+import { writeOutcome } from "./record-lifecycle-store.ts";
+import type { MoveCheck } from "./record-lifecycle.ts";
+import type { RecordRole } from "./record-areas.generated.ts";
+import { areaView, type AreaRow } from "./record-areas.ts";
 import { LONG_TEXT_LIMIT, asCustomValues, customDelta, customFieldsOf, replacedKeys, validateAppend, validateCustom, type CustomDelta, type CustomValues } from "./custom-fields.ts";
 import { customMergeSql } from "./custom-merge-sql.ts";
 import { fill, wordFor } from "./agent-vocabulary.ts";
@@ -483,8 +491,52 @@ export function applyCustomFields(
   existing: Customer | null,
   /** The declared fields per record; this build's profile unless a test passes another's (a missing one = none). */
   declared?: Partial<Record<CustomFieldArea, CustomFieldSpec[]>>,
+  actor?: string,
 ): CustomerPatch {
-  return applyCustomFieldsWithDelta(patch, existing, declared).patch;
+  return applyCustomFieldsWithDelta(patch, existing, declared, actor).patch;
+}
+
+/**
+ * What an enforced lifecycle of a nested row reads besides the patch: the writer's role, who entered each stored state.
+ * The role is also what the areas' permissions read (agent/lib/record-permissions.ts); without it a declared rule
+ * fails closed.
+ */
+export interface NestedLifecycleContext {
+  role?: RecordRole;
+  /** By `deployments:<deploymentId>` and `implementations:implementation`. */
+  enteredBy?: Map<string, string | null | undefined>;
+}
+/** A nested row's checked lifecycle move, written to the activity feed once the patch landed. */
+export interface NestedOutcome {
+  area: "deployments" | "implementations";
+  entity: { type: "deployment" | "implementation"; id: string };
+  check: MoveCheck;
+}
+
+/**
+ * Read, in the caller's workspace, what the lifecycle of the patch's nested rows needs (only for an area drawn from its
+ * definition whose lifecycle is enforced; {} otherwise, with no query): the writer's role, and who moved each stored
+ * row the patch names into its state, for four eyes (`not_by: "{entered_by}"`), as the routes read it.
+ */
+export async function nestedLifecycleContext(org: string, patch: CustomerPatch, existing: Customer | null, actor: string): Promise<NestedLifecycleContext> {
+  const dep = areaView("deployments");
+  const imp = areaView("implementations");
+  const deps = isDeclared("deployments") && enforced(dep) ? (patch.deployments ?? []).filter((d) => !d.remove) : [];
+  const withImp = isDeclared("implementations") && enforced(imp) && patch.implementation && !patch.implementation.remove;
+  // Who may write the rows (records.areas.<area>.permissions) reads the writer's role too, removes included.
+  const permitted = (isDeclared("deployments") && permissionsDeclared("deployments") && (patch.deployments?.length ?? 0) > 0)
+    || (isDeclared("implementations") && permissionsDeclared("implementations") && Boolean(patch.implementation));
+  if (!deps.length && !withImp) return permitted ? { role: await withOrgDb(org, (tx) => memberRole(tx, org, actor)) } : {};
+  return withOrgDb(org, async (tx) => {
+    const enteredBy = new Map<string, string | null | undefined>();
+    for (const d of deps) {
+      const before = existing?.deployments?.find((p) => p.deploymentId === d.deploymentId) as AreaRow | undefined;
+      if (before) enteredBy.set(`deployments:${d.deploymentId}`, await enteredByOf(tx, org, dep, { type: "deployment", id: recordEntityId("deployments", before) }, before));
+    }
+    const beforeImp = existing?.implementation as AreaRow | undefined;
+    if (withImp && beforeImp) enteredBy.set("implementations:implementation", await enteredByOf(tx, org, imp, { type: "implementation", id: recordEntityId("implementations", { customerId: patch.id, ...beforeImp }) }, beforeImp));
+    return { role: await memberRole(tx, org, actor), enteredBy };
+  });
 }
 
 /** What a patch changes in each nested row's `custom`, by row (the implementation has one), for the SQL merge. */
@@ -506,8 +558,47 @@ export function applyCustomFieldsWithDelta(
   patch: CustomerPatch,
   existing: Customer | null,
   declared: Partial<Record<CustomFieldArea, CustomFieldSpec[]>> = { account: customFieldsOf("account"), deployments: customFieldsOf("deployments"), implementations: customFieldsOf("implementations") },
-): { patch: CustomerPatch; accountDelta?: CustomDelta; rowDeltas: RowCustomDeltas } {
+  /** Who writes: fills a `{me}` default of an area drawn from its definition. */
+  actor = "agent",
+  /** What an enforced lifecycle reads besides the patch (nestedLifecycleContext): the writer's role, who entered each stored row's state. */
+  lifecycleCx: NestedLifecycleContext = {},
+): { patch: CustomerPatch; accountDelta?: CustomDelta; rowDeltas: RowCustomDeltas; outcomes: NestedOutcome[] } {
+  const outcomes: NestedOutcome[] = [];
   const errors: string[] = [];
+  const areaErrors: string[] = [];
+  /**
+   * A nested row of an area the profile draws from its definition (records.areas, `declared`): the one validator
+   * (agent/lib/record-area-write.ts) checks it and its result is what is written: the columns it names (null clears),
+   * the defaults and fixed values a new row needs, its own fields as a per-key delta. Undefined for any other area.
+   * For any other area the same validator runs too (checkOnly), and only its refusal is used.
+   */
+  const throughArea = (area: "deployments" | "implementations", what: string, row: Record<string, unknown>, prev: Record<string, unknown> | undefined, keyName: string | null): Record<string, unknown> | undefined => {
+    const { remove: _r, ...fields } = row;
+    const body = Object.fromEntries(Object.entries(fields).filter(([k, x]) => x !== undefined && k !== keyName));
+    if (!isDeclared(area)) {
+      // The fields the row names, each against its type and choices. Its own values are validateCustom's below (the
+      // same per-type rule), and what a NEW row must carry is the record schema's (checkRowPatch), as before.
+      const { custom: _own, ...columns } = body;
+      const refusal = checkOnly(area, "update", columns, { actor, before: prev ?? null });
+      areaErrors.push(...refusal.map((e) => `${what}: ${e}`));
+      return undefined;
+    }
+    const entityKey = area === "deployments" ? String(row[keyName!]) : "implementation";
+    const r = prepareRecordWrite(area, prev ? "update" : "create", keyName ? { ...body, [keyName]: row[keyName] } : body, { actor, role: lifecycleCx.role, before: prev ?? null, enteredBy: lifecycleCx.enteredBy?.get(`${area}:${entityKey}`) });
+    if (!r.ok) {
+      areaErrors.push(...r.errors.map((e) => `${what}: ${e}`));
+      return row;
+    }
+    // The move, for the activity feed once the write landed (as the routes write it): the next four-eyes check reads it.
+    if (r.lifecycle) outcomes.push({ area, entity: { type: area === "deployments" ? "deployment" : "implementation", id: recordEntityId(area, { ...(prev ?? {}), ...row, ...r.columns } as AreaRow) }, check: r.lifecycle });
+    const delta = r.customDelta ? ({ set: r.customDelta.set, clear: r.customDelta.clear, append: {} } as unknown as CustomDelta) : undefined;
+    if (area === "deployments") {
+      if (delta) rowDeltas.deployments.set(String(row[keyName!]), delta);
+    } else rowDeltas.implementation = delta;
+    const out: Record<string, unknown> = { ...(keyName ? { [keyName]: row[keyName] } : {}), ...r.columns };
+    if (r.customDelta || !prev) out.custom = r.customAfter;
+    return out;
+  };
   let accountDelta: CustomDelta | undefined;
   const rowDeltas: RowCustomDeltas = { deployments: new Map() };
   const check = (area: CustomFieldArea, what: string, custom: unknown, prev: { custom?: unknown } | undefined, append?: unknown, onDelta?: (d: CustomDelta | undefined) => void) => {
@@ -549,21 +640,38 @@ export function applyCustomFieldsWithDelta(
   else if (patch.custom !== undefined) delete out.custom;
   if (patch.deployments) {
     out.deployments = patch.deployments.map((d) => {
-      if (d.remove) return d;
+      const prevRow = existing?.deployments?.find((p) => p.deploymentId === d.deploymentId) as Record<string, unknown> | undefined;
+      if (d.remove) {
+        // Who may delete it (records.areas.deployments.permissions); nothing is asked of an area that declares none.
+        const refusal = isDeclared("deployments") ? deleteRefusal("deployments", (prevRow as AreaRow | undefined) ?? null, { role: lifecycleCx.role, actor }) : null;
+        if (refusal) areaErrors.push(`${d.deploymentId}: ${refusal}`);
+        return d;
+      }
+      const viaArea = throughArea("deployments", d.deploymentId, d as Record<string, unknown>, prevRow, "deploymentId");
+      if (viaArea) return viaArea as typeof d;
       const custom = check("deployments", d.deploymentId, d.custom, existing?.deployments?.find((p) => p.deploymentId === d.deploymentId), undefined, (delta) => {
         if (delta) rowDeltas.deployments.set(d.deploymentId, delta);
       });
       return custom === undefined ? d : { ...d, custom };
     });
   }
-  if (patch.implementation && !patch.implementation.remove) {
+  const implVia = patch.implementation && !patch.implementation.remove
+    ? throughArea("implementations", String(patch.implementation.rolloutId ?? existing?.implementation?.rolloutId ?? patch.id), patch.implementation as Record<string, unknown>, existing?.implementation as Record<string, unknown> | undefined, null)
+    : undefined;
+  if (patch.implementation?.remove && isDeclared("implementations")) {
+    const refusal = deleteRefusal("implementations", (existing?.implementation as AreaRow | undefined) ?? null, { role: lifecycleCx.role, actor });
+    if (refusal) areaErrors.push(`${String(existing?.implementation?.rolloutId ?? patch.id)}: ${refusal}`);
+  }
+  if (implVia) out.implementation = implVia as typeof patch.implementation;
+  else if (patch.implementation && !patch.implementation.remove) {
     const custom = check("implementations", patch.implementation.rolloutId ?? existing?.implementation?.rolloutId ?? patch.id, patch.implementation.custom, existing?.implementation, undefined, (delta) => {
       rowDeltas.implementation = delta;
     });
     if (custom !== undefined) out.implementation = { ...patch.implementation, custom };
   }
-  if (errors.length) throw new Error(`Custom fields were not accepted, so nothing was written. ${errors.join(" ")}`);
-  return { patch: out, accountDelta, rowDeltas };
+  if (errors.length) throw new Error(`Custom fields were not accepted, so nothing was written. ${[...errors, ...areaErrors].join(" ")}`);
+  if (areaErrors.length) throw new Error(`Nothing was written. ${areaErrors.join(" ")}`);
+  return { patch: out, accountDelta, rowDeltas, outcomes };
 }
 
 /** An account whose own values were all cleared has no `custom`, as one that never had any (customers.custom is NULL). */
@@ -792,7 +900,9 @@ export async function writeCustomerPatchToPostgres(
           if (!hit) throw new Error(`Nothing was written. ${name} of ${id} was removed after it was read; send it again as a new one if it should exist.`);
         } else {
           const full = part.schema.parse(mergeRow(undefined, row, part.id)) as Row;
-          const values = "custom" in full || part.key === "deployments" || part.key === "implementation" ? { ...full, custom: asCustomValues(full.custom) } : full;
+          // An area drawn from its definition keeps its own values as the validator wrote them (a list stays a list).
+          const declaredPart = (part.key === "deployments" && isDeclared("deployments")) || (part.key === "implementation" && isDeclared("implementations"));
+          const values = "custom" in full || part.key === "deployments" || part.key === "implementation" ? { ...full, custom: declaredPart ? (full.custom ?? {}) : asCustomValues(full.custom) } : full;
           const insertRow = stamp(fullRow(part.table, { customerId: id, ...values }) as Row);
           // The row's whole key: (org_id, customer_id[, its id]).
           const target = part.id ? [t.orgId, t.customerId, t[part.id]] : [t.orgId, t.customerId];
@@ -828,8 +938,8 @@ function parsePatch(patch: CustomerPatch): CustomerPatch {
 export async function upsertCustomer(
   patch: CustomerPatch,
   orgId?: string | null,
-  /** Tests only: the declared custom fields, when this build's profile declares none. */
-  opts: { declared?: Partial<Record<CustomFieldArea, CustomFieldSpec[]>> } = {},
+  /** Tests only: the declared custom fields, when this build's profile declares none. `actor`: who writes (fills {me}). */
+  opts: { declared?: Partial<Record<CustomFieldArea, CustomFieldSpec[]>>; actor?: string } = {},
 ): Promise<Customer> {
   const parsedPatch = parsePatch(patch);
   const db = getDb();
@@ -839,9 +949,17 @@ export async function upsertCustomer(
     // and the refusal text carried every merged value back to the model.
     const org = scopeFor(parsedPatch.id, orgId);
     const existing = await dbGetCustomer(db, parsedPatch.id, org);
-    const { patch: validPatch, accountDelta, rowDeltas } = applyCustomFieldsWithDelta(parsedPatch, existing, opts.declared);
+    const actor = opts.actor ?? "agent";
+    const lifecycleCx = await nestedLifecycleContext(org, parsedPatch, existing, actor);
+    const { patch: validPatch, accountDelta, rowDeltas, outcomes } = applyCustomFieldsWithDelta(parsedPatch, existing, opts.declared, actor, lifecycleCx);
     // Only what the patch names, each change applied in SQL onto what is stored at write time.
     await writeCustomerPatchToPostgres(db, validPatch, existing, org, { accountCustom: accountDelta, rows: rowDeltas });
+    // Each nested row's lifecycle move (and, under "warn", the rule it broke) in the activity feed, as the routes note it.
+    if (outcomes.length) {
+      await withOrgDb(org, async (tx) => {
+        for (const o of outcomes) await writeOutcome(tx, org, o.entity, actor, areaView(o.area), o.check);
+      });
+    }
     // The record AS STORED after the write, not the one computed from the read: a change someone else made in
     // between is part of it, and the caller is not told a stale value was kept.
     const after = await dbGetCustomer(db, parsedPatch.id, org);
@@ -851,7 +969,7 @@ export async function upsertCustomer(
   const store = await readStore();
   const idx = store.customers.findIndex((c) => c.id === parsedPatch.id);
   const existing = idx === -1 ? null : store.customers[idx];
-  const validPatch = applyCustomFields(parsedPatch, existing, opts.declared);
+  const validPatch = applyCustomFields(parsedPatch, existing, opts.declared, opts.actor);
   const merged = applyPatchToRecord(existing, validPatch);
   if (idx === -1) store.customers.push(merged);
   else store.customers[idx] = merged;

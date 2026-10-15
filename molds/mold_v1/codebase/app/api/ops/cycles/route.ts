@@ -3,10 +3,17 @@ import { errorText } from "@/lib/ops-errors";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { cycles } from "@/agent/lib/db/schema";
+import { areaView } from "@/agent/lib/record-areas";
+import { lifecycleEnforced } from "@/lib/record-lifecycle-server";
+import { callerEmail } from "@/lib/work-periods-server";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { newPeriodWindow, rollOverEnded, workspacePeriodLength } from "@/agent/lib/work-period-store";
 import { periodsNotFound } from "@/lib/work-periods-server";
+import { periodForbidden } from "@/lib/record-permissions-server";
+
+/** The periods' lifecycle is enforced ("warn" or "strict"; agent/lib/record-lifecycle.ts). */
+const PERIODS_ENFORCED = lifecycleEnforced("periods");
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,6 +75,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
     }
     const { startsAt, endsAt, ...rest } = parsed.data;
+    // Who may open a period (records.areas.periods.permissions): a 403 with the sentence; nothing read when undeclared.
+    const no = await periodForbidden(request, ctx, "create", { patch: parsed.data });
+    if (no) return no;
+    // An enforced periods lifecycle (agent/lib/record-lifecycle.ts): a new period starts in its initial state, and is
+    // filed under the signed-in person, not a label the body chose, since four eyes may fall back to its creator
+    // (agent/lib/record-lifecycle-store.ts whoEntered). Under "off" (the default) the create is what it was.
+    if (PERIODS_ENFORCED) {
+      const me = await callerEmail(request);
+      if (me) rest.createdBy = me;
+      const initial = areaView("periods").lifecycle?.initial;
+      if (initial) (rest as Record<string, unknown>).state = initial;
+    }
     const [item] = await withOrgRls(ctx.orgId, async (tx) => {
       const window = startsAt == null && endsAt == null ? await newPeriodWindow(tx, ctx.orgId) : null;
       if (window) {

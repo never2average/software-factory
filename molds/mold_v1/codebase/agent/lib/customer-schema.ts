@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { FOLDER } from "./dataroom-folders.ts";
+import { RECORD_AREAS } from "./record-areas.generated.ts";
 
 export const ticketStatusSchema = z.enum([
   "Open",
@@ -46,6 +47,19 @@ const urlOrEmptySchema = z.string().url().or(z.literal(""));
 const customValuesSchema = z
   .record(z.string(), z.union([z.string(), z.number(), z.null()]))
   .describe("This workspace's own fields on the record, by field key. Only the keys its profile declares are accepted; send just the ones you are changing, null to clear one.");
+
+/**
+ * The own values of a deployments / implementation row. A profile that draws an area from its definition
+ * (records.areas.<area>, `declared`) may give it own fields that hold a list (multi_pick, tags, files, people) or a
+ * yes/no: then the row's values take those too, still checked key by key by the one validator
+ * (agent/lib/record-area-write.ts). Any other profile keeps exactly the shape above.
+ */
+const areaCustomValuesSchema = (id: "deployments" | "implementations") =>
+  RECORD_AREAS[id].declared
+    ? z
+        .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string()), z.null()]))
+        .describe("This workspace's own fields on the record, by field key (a list field takes a list). Only the keys its profile declares are accepted; send just the ones you are changing, null to clear one.")
+    : customValuesSchema;
 
 export const platformSchema = z.object({
   tenantId: z.string().min(1).optional(),
@@ -149,7 +163,7 @@ export const deploymentSchema = z.object({
   runbookUrl: z.string().url().optional(),
   lastTelemetryAt: z.string().optional(),
   notes: z.string().optional(),
-  custom: customValuesSchema.optional(),
+  custom: areaCustomValuesSchema("deployments").optional(),
 });
 
 export const solutionSchema = z.object({
@@ -308,7 +322,7 @@ export const implementationSchema = z.object({
   openBlockerCount: z.number().int().nonnegative().optional(),
   implementationNextStep: z.string().optional(),
   implementationLastUpdatedAt: z.string().optional(),
-  custom: customValuesSchema.optional(),
+  custom: areaCustomValuesSchema("implementations").optional(),
 });
 
 export const ticketSchema = z.object({

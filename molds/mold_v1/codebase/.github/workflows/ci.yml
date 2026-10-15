@@ -301,6 +301,34 @@ jobs:
         if: always()
         run: npm run test:task-area
 
+      # DEPLOYMENTS AND IMPLEMENTATIONS DRAWN FROM THEIR DEFINITION (records.areas.<area> in the record-area form). An old
+      # profile (the default, both live packs' record sections, the relabelling fixture) declares no area, so its screens,
+      # routes and tools are today's, and the model reads byte for byte what it read at upstream main; the worked
+      # examples' screens (columns, board, sorts, filters, groups, detail, create form) come from the definition; every
+      # write is checked by the one validator; the server query takes only the definition's keys; the per-area tools are
+      # named and described from the definition.
+      - name: Deployments and implementations from their definition (old profiles unchanged, screens, writes, query, tools)
+        if: always()
+        run: npm run test:record-area-panels
+
+      # WHO MAY WRITE A RECORD, AND THE DECLARED METRICS (records.areas.<area>.permissions / .metrics). The default
+      # declares nothing, so nothing is refused to anyone and the validator answers as before; under the permissions
+      # example every role rule (create, update, delete, own row, a field, a move alone, an archive) for every role and
+      # none; the write paths' one check refuses with the 403's sentence; what a screen offers equals what the server
+      # allows; the metrics compile to one SELECT over the list query's conditions.
+      - name: Who may write a record, and the declared metrics (default unchanged, every role rule, screens, metric SQL)
+        if: always()
+        run: npm run test:record-permissions
+
+      # LIFECYCLES ENFORCED (agent/lib/record-lifecycle.ts): under enforce "off" every task write answers byte for byte
+      # what upstream main answered (a recorded baseline); under "warn" each rule (transitions, roles, required fields,
+      # a comment, four eyes by a person field or by who entered the state, stamps) lets the move through and reports
+      # it, under "strict" it is refused with the 409 body; the refusal, the activity lines and the model's card;
+      # stage pipelines mapped by category; recurrence's intervals and next occurrence; the warnings' shape.
+      - name: Lifecycles enforced (off unchanged, every rule in warn and strict, words, recurrence)
+        if: always()
+        run: npm run test:record-lifecycle
+
       # A choice column's values live in one place, the zod enums in agent/lib/customer-schema.ts. The meanings base
       # code gives a value (defaults, what counts as attention), the Ops API's check and the MCP tools' text are all
       # read from it; a hand-made copy of each had drifted (mold_v1-251). The routes against a database are below.
@@ -579,6 +607,16 @@ jobs:
         if: always()
         run: npm run test:chat-replay-stream && npm run test:chat-open-seam && npm run test:chat-open-timing
 
+      # REOPENING A CHAT, the follow-ups. A full replay with a stall after a mid-history park reaches its end marker
+      # (the parked flag follows the last line); a replay that stopped early is never stored over a longer copy; a
+      # running chat this browser holds opens from it with no request and resumes at its exact absolute index (through
+      # the browser cache's round trip); a read that reaches a running turn's live edge hands over to the live reader
+      # within ~2 s of a pause instead of running to its 60 s deadline (a fake eve on a real clock, the real reader and
+      # the real live reader: every event exactly once); and both routes' Server-Timing reaches the open's record.
+      - name: Chat open follow-ups (live edge, running reopen, truncated replays, Server-Timing)
+        if: always()
+        run: npm run test:chat-replay-read && npm run test:chat-open-route && npm run test:chat-server-timing
+
       # WHO MAY REACH A CONVERSATION. Every hole closed here was a
       # correct-looking rule sitting on top of a read that returned nothing —
       # the gate in front of eve's own session routes said "deny when it belongs
@@ -831,9 +869,12 @@ jobs:
       # cumulative deltas and resuming at a cursor fold exactly like a fold of every line from 0 (no tool row twice);
       # updates are batched; finished specialists wait for the chat and go 3 at a time, a boundary-less stream frees
       # its slot when quiet; no headers in 10 s is retried once then "unavailable"; a running one is never ended by a
-      # timer; a parked one is read first; a remount or a chat switch reads nothing again; the cache is bounded. The
-      # rendered half is tests/control-panel.spec.ts.
-      - name: Control Panel specialist feeds (fold parity, pool, deadline, cache)
+      # timer; a parked one is read first; a remount or a chat switch reads nothing again; the cache is bounded. And a
+      # saved copy per specialist (lib/child-copy.ts): copy + seam + tail equals the whole fold at every boundary of
+      # every stream, a second page shows the details from the copy and reads no stream from event 0, a stale copy
+      # heals with nothing in between shown, the seam rules are the parent's. The rendered half is
+      # tests/control-panel.spec.ts.
+      - name: Control Panel specialist feeds (fold parity, pool, deadline, cache, saved copies)
         if: always()
         run: npm run test:child-feed
 
@@ -1268,7 +1309,7 @@ jobs:
   # No sandbox is created (no KVM here). Its own job: two eve builds do not fit in verify's budget.
   sandbox-coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -1282,6 +1323,14 @@ jobs:
 
       - name: Every sandbox takes the SANDBOX_* settings (real eve build; unset is eve's own choice)
         run: npm run test:sandbox-coverage
+
+      # An optional tool switched off (`disableTool()` from a file that is not one of eve's own tools: the record-area
+      # tools, the work-period tools under work_periods "off", read_image) is simply not registered: two real eve
+      # builds, every optional tool off and every one on, each resolved the way eve's runtime resolves the agent graph
+      # and read by `sandbox:prewarm --plan`. eve as published threw on it, so no agent could start (mold_v1-263).
+      - name: An optional tool switched off is not registered, and the agent graph resolves (real eve build)
+        if: always()
+        run: npm run test:optional-tools
 
       # Nothing this job ran left a stamp on the checkout: profiles/ and every generated file are the commit
       # (mold_v1-188). A step that builds under another profile works in a copy (scripts/lib/checkout-copy.mjs).
@@ -1355,6 +1404,19 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           node scripts/test-chat-access-db.mjs
+
+      # A SAVED COPY OF A SPECIALIST'S FEED (/api/ops/chat-snapshots with kind=child, lib/child-copy.ts): the real
+      # route, signed-in requests, as app_rw against the production fail-closed policies. The owner stores a copy and
+      # reads it back byte for byte; a colleague, a participant of the shared chat, the owner from another workspace,
+      # a chat's own session and an unknown one all get 404; over the size cap 413, a shorter copy never replaces a
+      # longer one (409), the chat's own route cannot reach it, deleting the chat deletes it, and app_rw outside the
+      # workspace's scope sees no row. On the code before kind=child 21 of its 30 checks fail.
+      - name: Specialist saved copies (owner-only, workspace-scoped, capped), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:child-copy-db
 
       # WHOSE SESSION IS IT — enforced by the AGENT, for every caller. The agent API is its own public deployment,
       # and eve's per-session routes authenticate a caller and then act on any session id: a signed-in person from
@@ -1491,6 +1553,42 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:task-area-db
+
+      # LIFECYCLES ENFORCED, against a fail-closed Postgres: the real todo routes, upsert_todo, MCP's task_update and the
+      # real engine under the pipeline fixture in strict (409s, four eyes from the activity feed, a stage move checked),
+      # warn (through, the rule in the feed and in the answer's warnings) and off (as before, nothing noted), the
+      # obligation example (completing a recurring task creates its next occurrence once, also under three completions
+      # at once: drizzle/0042's unique index), the periods fixture on the cycles routes (strict, warn, off), four eyes
+      # with no move line (the last changer, else the creator), and the default; workspace B moves none of A's tasks
+      # and reads none of A's lines.
+      - name: Lifecycles enforced (routes, tools, MCP, service, recurrence), two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-lifecycle-db
+
+      # DEPLOYMENTS AND IMPLEMENTATIONS FROM THEIR DEFINITION, against the real routes, upsert_customer and the per-area
+      # tools: the default's writes and list as before (a list query filtered, sorted and paged in the database); a
+      # declared area's writes all through the one validator, own fields merged per key, the list filtered and sorted on
+      # columns and own fields and paged by a cursor; workspace B, holding an account of the same id, reaches none of A's.
+      - name: Deployments and implementations from their definition (routes, nested writes, tools, server query), two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-area-db
+
+      # WHO MAY WRITE A RECORD, against the real routes, upsert_customer, the agent's tools, MCP and the task engine:
+      # the default as before (a member does everything); under the permissions example every role rule on every path
+      # is a 403 with the sentence that changes nothing, "own row" lets a member change only their own, and the metrics
+      # equal the list query's counts; workspace B reaches and counts none of A's records.
+      - name: Who may write a record, and the declared metrics (routes, nested rows, tools, MCP), two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-permissions-db
 
       # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
       # (the eve session id) while ownership was checked only on eveSessionId,

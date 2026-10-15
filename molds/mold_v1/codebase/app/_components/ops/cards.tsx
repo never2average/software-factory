@@ -161,6 +161,8 @@ export type TaskCardData = {
   containerType?: string | null;
   containerLabel?: string | null;
   due?: { text: string; overdue: boolean } | null;
+  /** Other fields the definition puts on a card (an own field such as a department), as a person reads them. */
+  fields?: readonly { key: string; label: string; text: string }[];
 };
 
 export function TaskCard({
@@ -175,7 +177,7 @@ export function TaskCard({
   readonly testid?: string;
 }) {
   const showPriority = task.priority !== "normal" && Boolean(task.priority);
-  const hasFooter = Boolean(showPriority || task.cycleLabel || task.containerLabel || task.due || task.assignee);
+  const hasFooter = Boolean(showPriority || task.cycleLabel || task.containerLabel || task.due || task.assignee || task.fields?.length);
   return (
     <WorkspaceCard title={task.title} titleTestid="task-title" strike={task.done} selected={selected} onClick={onClick} testid={testid}>
       {hasFooter ? (
@@ -197,6 +199,11 @@ export function TaskCard({
               {task.cycleLabel}
             </Badge>
           ) : null}
+          {task.fields?.map((f) => (
+            <span key={f.key} data-card-field={f.key} title={`${f.label}: ${f.text}`} className="min-w-0">
+              <Badge>{f.text}</Badge>
+            </span>
+          ))}
           <span className="ml-auto flex items-center gap-2">
             {task.due ? (
               <span className={cn("flex items-center gap-1 font-medium text-xs", task.due.overdue ? "text-red-400" : "text-muted-foreground")}>

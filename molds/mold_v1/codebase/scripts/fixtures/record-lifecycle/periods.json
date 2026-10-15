@@ -1,0 +1,20 @@
+{
+  "$comment": "A test fixture for the enforced periods lifecycle (records.areas.periods; app/api/ops/cycles/[id]): roles, four eyes by who entered the state ({entered_by}), a required comment and a stamp. Strict here; the tests set warn and off on copies. No deployment ships it.",
+  "records": {
+    "areas": {
+      "periods": {
+        "lifecycle": {
+          "field": "state",
+          "initial": "planning",
+          "enforce": "strict",
+          "transitions": [
+            { "from": ["planning"], "to": "active", "label": "Start", "roles": ["owner", "admin"], "set": { "startsAt": "{now}" } },
+            { "from": ["active"], "to": "planning", "label": "Back to planning", "requires_comment": true },
+            { "from": ["active"], "to": "closed", "label": "Close", "not_by": "{entered_by}" },
+            { "from": ["closed"], "to": "active", "label": "Reopen", "roles": ["owner", "admin"], "requires_comment": true }
+          ]
+        }
+      }
+    }
+  }
+}

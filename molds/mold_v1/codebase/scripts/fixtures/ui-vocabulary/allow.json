@@ -99,5 +99,15 @@
     "source": "^lib/ui-keys\\.ts$",
     "literal": "^(customers?|deployments?|implementations?|rollouts?)$",
     "why": "lib/ui-keys.ts's own table of which base words a KEY may carry: what it translates FROM, never rendered."
+  },
+  {
+    "source": "^\\(unmapped\\)$",
+    "literal": "^\\{\"deployments\":\\{\"enabled\":true,\"kind\":\"record\",\"storage\":\"deployments\",",
+    "why": "A compiled record-areas fixture (scripts/fixtures/record-areas/golden/*.areas.json) inlined by the bundler as one JSON.parse string, imported only by the design previews app/preview/record-areas and app/preview/record-tasks (app/preview/layout.tsx calls notFound() in production). Plain data (stored keys and ids), never rendered as text; the source map does not name a JSON file, so it reads as unmapped."
+  },
+  {
+    "source": "^agent/lib/customer-schema\\.ts$",
+    "literal": "^(Customer|Waiting on Customer|Customer Stakeholders|Customer Verified)$",
+    "why": "Stored choice values of the record schema's enums (blockerOwner, a ticket's waiting state, a stakeholder group, valueEvidenceStatus), in the client because the record-area create form runs the API's validator (agent/lib/record-area-write.ts, CHOICE_MEANINGS). A person reads a choice through its label (the enum-values and rendered-page passes of this check), never the stored value; renaming it would change what is stored."
   }
 ]

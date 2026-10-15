@@ -25,12 +25,21 @@
  *      each specialist's reads (requests, bytes, headers, settle, when it started, live or not).
  *  12. Finished specialists are harvested when the open SETTLES (`afterChatOpenSettled`), not on a fixed delay; a
  *      safety timeout lets them go if settle never comes; an unmounted panel is never woken.
+ *  13. A saved copy per specialist (lib/child-copy.ts): a copy taken at any session boundary, folded again and
+ *      continued from its cursor, equals the fold of the whole stream (messages, rows, nested specialists, completed,
+ *      the resume token, turn state), on every recorded and generated stream; the token is never in the copy. On a
+ *      second page the details are there from the copy before any stream is read, finished specialists make ZERO
+ *      reads from event 0 (only the one-event seam read), parked and running ones read from the stored index; a copy
+ *      the stream disagrees with is replaced with no intermediate state shown; the parent's seam rules (retry once,
+ *      then replace on "behind", keep on silence or error); never a copy at or below the stored cursor, never one
+ *      over the size cap; a copy that never answers is not waited for.
  *
  * Run: npm run test:child-feed
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { ChildFeedStore, ChildFold, foldLines, peekDelta, takeLines } from "../lib/child-feed.ts";
+import { CHILD_COPY_VERSION, childCopyUsable, childSeamVerdict } from "../lib/child-copy.ts";
 import { specialistStream } from "./fixtures/child-feed/make-stream.mjs";
 import * as timing from "../lib/chat-open-timing.ts";
 
@@ -713,6 +722,336 @@ console.log("\n12. Finished specialists are harvested when the open settles, not
   check("agent-chat.tsx: the harvest gate waits on the open's settle", /afterChatOpenSettled\(/.test(hook), hook.slice(0, 400));
   check("agent-chat.tsx: …not on the old fixed 2.5 s after paint", !/2_500|2500/.test(hook), hook);
   check("agent-chat.tsx: the gate feeds the panel's harvestReady", /const harvestReady = useConversationSettled\(\)/.test(chat) && /harvestReady=\{harvestReady\}/.test(chat));
+}
+
+/* ---------------------------------------------------------------------------------------------------------------- */
+console.log("\n13. A saved copy per specialist: parity, zero full reads on reopen, the seam, healing, the caps");
+
+const BOUNDARY = /"type":"session\.(waiting|completed|failed)"/;
+/** What a round trip through Postgres jsonb does to a value: object keys come back shortest first, then bytewise. */
+const jsonb = (x) => {
+  const reorder = (v) => {
+    if (Array.isArray(v)) return v.map(reorder);
+    if (!v || typeof v !== "object") return v;
+    const keys = Object.keys(v).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+    return Object.fromEntries(keys.map((k) => [k, reorder(v[k])]));
+  };
+  return reorder(JSON.parse(JSON.stringify(x)));
+};
+/** Restore a copy and continue it the way the store does: the seam (the event at cursor - 1), then the tail. */
+const restoreAndContinue = (copy, lines) => {
+  const fold = ChildFold.fromCopy(copy, { summarize });
+  const seamLine = lines[copy.cursor - 1];
+  const seamEvent = JSON.parse(seamLine);
+  const verdict = childSeamVerdict(copy, { events: [seamEvent] }, 1);
+  if (verdict.status !== "match") return { fold, verdict };
+  fold.adoptSeam(seamEvent);
+  for (const l of lines.slice(copy.cursor)) fold.push(l);
+  fold.foldHeld();
+  return { fold, verdict };
+};
+{
+  // A stream that parks, is resumed, delegates further and parks again: two boundaries and a nested specialist.
+  const first = specialistStream({ seed: 401, steps: 2, reasoningChars: 3_000, token: "eve:first" });
+  const second = specialistStream({ seed: 402, steps: 2, reasoningChars: 3_000, nested: "wrun_NEST2", token: "eve:second" }).slice(1);
+  const resumed = [...first, ...second];
+  const streams = [...recorded, ...generated, { name: "parked, resumed, parked again", lines: resumed }];
+  let boundaries = 0;
+  let copies = 0;
+  let mismatches = 0;
+  let tokenLeaks = 0;
+  let dup = 0;
+  const failures = [];
+  for (const { name, lines } of streams) {
+    const whole = visible(foldLines(lines, { summarize }));
+    for (let k = 0; k < lines.length; k++) {
+      if (!BOUNDARY.test(lines[k])) continue;
+      boundaries++;
+      const fold = new ChildFold({ summarize });
+      for (const l of lines.slice(0, k + 1)) fold.push(l);
+      const copy = fold.copy("wrun_P");
+      if (!copy) {
+        failures.push(`${name}@${k}: no copy at a boundary`);
+        continue;
+      }
+      copies++;
+      if (/continuationToken/.test(JSON.stringify(copy))) tokenLeaks++;
+      if (!childCopyUsable(jsonb(copy), "wrun_P")) failures.push(`${name}@${k}: copy not usable`);
+      const { fold: restored, verdict } = restoreAndContinue(jsonb(copy), lines);
+      if (verdict.status !== "match") failures.push(`${name}@${k}: seam ${verdict.status}`);
+      if (visible(restored) !== whole) mismatches++;
+      dup += dupes(toolRowIds(restored)).length;
+    }
+  }
+  check(`boundaries found in the recorded and generated streams (${boundaries})`, boundaries >= 15, boundaries);
+  check(`a copy at every boundary (${copies} of ${boundaries})`, copies === boundaries && failures.length === 0, failures.slice(0, 5));
+  check("copy + seam + tail equals the whole fold at every boundary of every stream", mismatches === 0, mismatches);
+  check("…with no tool row twice", dup === 0, dup);
+  check("no copy carries a resume token", tokenLeaks === 0, tokenLeaks);
+  {
+    const fold = foldLines(resumed, { summarize });
+    const copy = fold.copy("wrun_P");
+    check("the nested specialist and the latest token come back (token from the seam read)", (() => {
+      const r = restoreAndContinue(jsonb(copy), resumed).fold.view();
+      return r.childSessions.includes("wrun_NEST2") && r.continuationToken === "eve:second";
+    })());
+    const compact = JSON.stringify(copy).length;
+    const raw = resumed.join("\n").length;
+    check(`the copy is a fraction of the raw stream (${compact} of ${raw} characters)`, compact < raw / 5, { compact, raw });
+  }
+  {
+    // Key order is visible (a row's summary can be the first string field of a tool's input), and jsonb reorders keys:
+    // the copy keeps each event as text, so it comes back as the stream wrote it.
+    const lines = [
+      JSON.stringify({ data: { sequence: 0, turnId: "turn_0" }, type: "turn.started" }),
+      JSON.stringify({ data: { actions: [{ callId: "c1", input: { zeta: "first field", a: "second" }, kind: "tool-call", toolName: "custom" }], sequence: 0, stepIndex: 0, turnId: "turn_0" }, type: "actions.requested" }),
+      JSON.stringify({ data: { sequence: 0, turnId: "turn_0" }, type: "turn.completed" }),
+      JSON.stringify({ data: { continuationToken: "eve:k", wait: "next-user-message" }, type: "session.waiting" }),
+    ];
+    const whole = foldLines(lines, { summarize });
+    const restored = restoreAndContinue(jsonb(whole.copy("wrun_K")), lines).fold;
+    check("key order survives the store (a summary from the first input field is unchanged)", visible(restored) === visible(whole) && restored.view().rows.some((r) => r.summary?.includes("zeta")), restored.view().rows);
+  }
+  {
+    const lines = generated[0].lines;
+    const fold = new ChildFold({ summarize });
+    for (const l of lines.slice(0, 40)) fold.push(l);
+    check("mid-turn (no boundary): no copy", fold.copy("wrun_P") === null);
+    const cut = foldLines(specialistStream({ seed: 403, steps: 2, end: "input" }), { summarize });
+    check("a stream that stops on input.requested: no copy", cut.copy("wrun_P") === null);
+    const bad = foldLines([...first, "{not json"], { summarize });
+    check("a trailing line that does not parse: no copy (the seam would not be the copy's last event)", bad.copy("wrun_P") === null);
+  }
+  {
+    const copy = jsonb(foldLines(first, { summarize }).copy("wrun_P"));
+    check("usable: the right copy", childCopyUsable(copy, "wrun_P"));
+    check("unusable: another session's", !childCopyUsable(copy, "wrun_Q"));
+    check("unusable: another version", !childCopyUsable({ ...copy, version: CHILD_COPY_VERSION + 1 }, "wrun_P"));
+    check("unusable: more events than its cursor", !childCopyUsable({ ...copy, cursor: 1 }, "wrun_P"));
+    check("unusable: indexes out of order", !childCopyUsable({ ...copy, events: [...copy.events].reverse() }, "wrun_P"));
+    check("unusable: not ending at a boundary", !childCopyUsable({ ...copy, events: copy.events.slice(0, -1) }, "wrun_P"));
+  }
+}
+
+/** Where a page keeps copies: the route's rules (never backwards, a size cap), in memory, on the harness's clock. */
+function copyServer({ loadMs = 120, maxBytes = Infinity, never = false } = {}) {
+  const rows = new Map();
+  const log = [];
+  let clock = null;
+  const io = {
+    load: (sid, signal) =>
+      new Promise((resolve) => {
+        log.push(["load", sid]);
+        if (never) return;
+        clock.setTimer(() => resolve(signal.aborted ? null : rows.has(sid) ? jsonb(rows.get(sid)) : null), loadMs);
+      }),
+    save: async (copy) => {
+      log.push(["save", copy.sessionId, copy.cursor]);
+      const prev = rows.get(copy.sessionId);
+      if (prev && prev.cursor > copy.cursor) return "refused";
+      if (JSON.stringify(copy.events).length > maxBytes) return "refused";
+      rows.set(copy.sessionId, jsonb(copy));
+      return "stored";
+    },
+    discard: async (sid) => {
+      log.push(["discard", sid]);
+      rows.delete(sid);
+    },
+  };
+  return { rows, log, io, bind: (h) => (clock = h.clock) };
+}
+const page = (srv, extra = {}) => {
+  const h = harness({ copies: srv.io, ...extra });
+  srv.bind(h);
+  return h;
+};
+const feedVisible = (f) =>
+  f &&
+  JSON.stringify({
+    messages: f.messages,
+    rows: f.rows,
+    childSessions: f.childSessions,
+    completed: f.completed,
+    continuationToken: f.continuationToken,
+    turnActive: f.turnActive,
+    stopped: f.stopped,
+  });
+const noToken = (json) => json?.replace(/,?"continuationToken":"[^"]*"/, "");
+{
+  const srv = copyServer();
+  const sids = ["wrun_C1", "wrun_C2", "wrun_C3", "wrun_C4", "wrun_C5"];
+  const streams = Object.fromEntries(sids.map((s, i) => [s, { lines: specialistStream({ seed: 500 + i, steps: 3, reasoningChars: 20_000, nested: i === 0 ? "wrun_N500" : undefined }), hold: true }]));
+  // Page 1: today's first harvest, which stores a copy of each.
+  const p1 = page(srv);
+  for (const s of sids) p1.streams.set(s, streams[s]);
+  p1.store.sync("panel", wants(sids.map((s) => [s, "harvest"])), true);
+  await p1.advance(20_000);
+  check("first page: every finished specialist read from 0 once, as before", p1.requests.length === 5 && p1.requests.every((r) => r.startIndex === 0), p1.requests.map((r) => r.startIndex));
+  check("…and a copy of each stored at its boundary", sids.every((s) => srv.rows.get(s)?.cursor === streams[s].lines.length), [...srv.rows.values()].map((c) => c.cursor));
+  const reference = Object.fromEntries(sids.map((s) => [s, feedVisible(p1.store.peek(s))]));
+
+  // Page 2: a new page (a reload), before the conversation is up.
+  const p2 = page(srv);
+  for (const s of sids) p2.streams.set(s, streams[s]);
+  p2.store.sync("panel", wants(sids.map((s) => [s, "harvest"])), false);
+  await p2.advance(150);
+  check("second page, 150 ms in, before the chat is ready: every specialist's details are on screen", sids.every((s) => noToken(feedVisible(p2.store.peek(s))) === noToken(reference[s])), sids.map((s) => p2.store.peek(s)?.rows.length));
+  check("…from the copy, with no stream read at all", p2.requests.length === 0, p2.requests.length);
+  check("…including the nested specialist", p2.store.peek("wrun_C1").childSessions.includes("wrun_N500"));
+  check("…and shown as ended, not idle", sids.every((s) => p2.store.peek(s).status === "ended"));
+  p2.store.sync("panel", wants(sids.map((s) => [s, "harvest"])), true);
+  await p2.advance(20_000);
+  check("after the chat is up: ZERO reads from event 0", p2.requests.every((r) => r.startIndex > 0) && p2.store.stats().every((x) => x.fullReads === 0), p2.requests.map((r) => r.startIndex));
+  check("…one seam read each, from cursor - 1", p2.requests.length === 5 && sids.every((s) => p2.requests.some((r) => r.sid === s && r.startIndex === streams[s].lines.length - 1)), p2.requests.map((r) => [r.sid, r.startIndex]));
+  check("…and the details equal the full fold, resume token included", sids.every((s) => feedVisible(p2.store.peek(s)) === reference[s]));
+  check("…bytes read on reopen: one event each, not the stream", p2.store.stats().reduce((a, x) => a + x.bytes, 0) < p1.store.stats().reduce((a, x) => a + x.bytes, 0) / 50, { p1: p1.store.stats().reduce((a, x) => a + x.bytes, 0), p2: p2.store.stats().reduce((a, x) => a + x.bytes, 0) });
+  check("…nothing stored again (the copy is not longer than the stored one)", srv.log.filter((x) => x[0] === "save").length === 5, srv.log.filter((x) => x[0] === "save"));
+  check("…and stats say so", p2.store.stats().every((x) => x.fromCopy));
+}
+{
+  // A parked specialist (priority) and a running one (live): read at once, from the stored index.
+  const srv = copyServer();
+  const first = specialistStream({ seed: 511, steps: 1, reasoningChars: 2_000, token: "eve:park-1" });
+  const more = specialistStream({ seed: 512, steps: 2, reasoningChars: 2_000, token: "eve:park-2" }).slice(1);
+  const p1 = page(srv);
+  p1.streams.set("wrun_PK", { lines: first, hold: true });
+  p1.streams.set("wrun_RN", { lines: first, hold: true });
+  p1.store.sync("panel", wants([["wrun_PK", "priority"], ["wrun_RN", "harvest"]]), true);
+  await p1.advance(5_000);
+  check("page 1: both parked, both copied", srv.rows.get("wrun_PK")?.cursor === first.length && srv.rows.get("wrun_RN")?.cursor === first.length);
+  const p2 = page(srv);
+  p2.streams.set("wrun_PK", { lines: first, hold: true });
+  // The running one was resumed since: its stream has a second turn, still going (no boundary yet), then parks.
+  p2.streams.set("wrun_RN", { lines: [...first, ...more], chunk: 30, every: 100, hold: true });
+  p2.store.sync("panel", wants([["wrun_PK", "priority"], ["wrun_RN", "live"]]), false);
+  await p2.advance(400);
+  const pk = p2.requests.filter((r) => r.sid === "wrun_PK");
+  const rn = p2.requests.filter((r) => r.sid === "wrun_RN");
+  check("the parked one is read at once, before the chat is ready, from the stored index", pk.length === 1 && pk[0].startIndex === first.length - 1, pk);
+  check("…and its resume token is there (from the seam read; the copy has none)", p2.store.peek("wrun_PK").continuationToken === "eve:park-1");
+  check("the running one attaches live at once, from the stored index", rn.length === 1 && rn[0].startIndex === first.length - 1, rn);
+  await p2.advance(10_000);
+  const whole = visible(foldLines([...first, ...more], { summarize }));
+  check("…and folds the new turn onto the copy: equal to the whole fold, no tool row twice", feedVisible(p2.store.peek("wrun_RN")) === whole && dupes(p2.store.peek("wrun_RN").rows.filter((r) => r.kind === "tool").map((r) => r.id)).length === 0);
+  check("…still connected (live), never a read from 0", p2.store.inFlight().open >= 1 && p2.store.stats().every((x) => x.fullReads === 0));
+  check("…and at its next boundary a LONGER copy is stored", srv.rows.get("wrun_RN")?.cursor === first.length + more.length, srv.rows.get("wrun_RN")?.cursor);
+}
+{
+  // A STALE COPY HEALS: the stored copy is of something else (a re-minted session, a restored database).
+  const srv = copyServer();
+  const wrong = specialistStream({ seed: 520, steps: 2, reasoningChars: 2_000 });
+  const right = specialistStream({ seed: 521, steps: 4, reasoningChars: 4_000 });
+  srv.rows.set("wrun_ST", jsonb(foldLines(wrong, { summarize }).copy("wrun_ST")));
+  const h = page(srv);
+  h.streams.set("wrun_ST", { lines: right, chunk: 40, every: 50, hold: true });
+  const seen = [];
+  h.store.subscribe((changed) => changed.wrun_ST && seen.push(feedVisible(changed.wrun_ST)));
+  h.store.sync("panel", wants([["wrun_ST", "harvest"]]), true);
+  await h.advance(30_000);
+  const stale = noToken(visible(foldLines(wrong, { summarize })));
+  const healed = visible(foldLines(right, { summarize }));
+  check("the stale copy was shown at once", seen.length > 0 && noToken(seen[0]) === stale);
+  check("the seam disagreed: the stream was read again from 0", h.requests.length === 2 && h.requests[0].startIndex === wrong.length - 1 && h.requests[1].startIndex === 0, h.requests.map((r) => r.startIndex));
+  check("no intermediate state was ever shown: every update is the stale copy or the healed fold (no flicker)", seen.every((v) => noToken(v) === stale || v === healed), seen.map((v) => (noToken(v) === stale ? "stale" : v === healed ? "healed" : `OTHER ${Object.entries(JSON.parse(v)).filter(([k, x]) => JSON.stringify(x) !== JSON.stringify(JSON.parse(stale)[k])).map(([k]) => k)}`)));
+  check("…and it ends healed", feedVisible(h.store.peek("wrun_ST")) === healed);
+  const order = srv.log.filter((x) => x[0] !== "load").map((x) => x[0]);
+  check("the stale copy was discarded BEFORE the new one was stored", JSON.stringify(order) === JSON.stringify(["discard", "save"]), srv.log);
+  check("…and the stored copy is now the stream's", srv.rows.get("wrun_ST")?.cursor === right.length);
+}
+{
+  // …and for a RUNNING specialist (live): the copy stays until the stream's own fold has read as far, never an empty panel.
+  const srv = copyServer();
+  const wrong = specialistStream({ seed: 522, steps: 2, reasoningChars: 2_000 });
+  const right = specialistStream({ seed: 523, steps: 4, reasoningChars: 4_000, end: "running" });
+  srv.rows.set("wrun_SL", jsonb(foldLines(wrong, { summarize }).copy("wrun_SL")));
+  const h = page(srv);
+  h.streams.set("wrun_SL", { lines: right, chunk: 40, every: 50, hold: true });
+  const seen = [];
+  h.store.subscribe((changed) => changed.wrun_SL && seen.push(changed.wrun_SL));
+  h.store.sync("panel", wants([["wrun_SL", "live"]]), true);
+  await h.advance(30_000);
+  check("live: the stale copy is replaced from 0 and the panel is never empty meanwhile", h.requests.map((r) => r.startIndex).join() === `${wrong.length - 1},0` && seen.every((f) => f.rows.length > 0), { starts: h.requests.map((r) => r.startIndex), rows: seen.map((f) => f.rows.length) });
+  check("…and it ends on the stream's own fold, still attached", feedVisible(h.store.peek("wrun_SL")) === visible(foldLines(right, { summarize })) && h.store.inFlight().open === 1);
+  check("…no copy stored mid-turn (no boundary yet), the stale one gone", !srv.rows.has("wrun_SL") && !srv.log.some((x) => x[0] === "save"), srv.log);
+}
+{
+  // The parent's seam rules: the stream closed with nothing at the seam ("behind") → retry once, then replace.
+  const srv = copyServer();
+  const long = specialistStream({ seed: 530, steps: 3, reasoningChars: 2_000 });
+  const short = specialistStream({ seed: 531, steps: 1, reasoningChars: 500 });
+  srv.rows.set("wrun_BH", jsonb(foldLines(long, { summarize }).copy("wrun_BH")));
+  const h = page(srv);
+  h.streams.set("wrun_BH", { lines: short, hold: false });
+  h.store.sync("panel", wants([["wrun_BH", "harvest"]]), true);
+  await h.advance(20_000);
+  const starts = h.requests.map((r) => r.startIndex);
+  check("behind: retried once, then read from 0", JSON.stringify(starts) === JSON.stringify([long.length - 1, long.length - 1, 0]), starts);
+  check("…and the copy replaced by the stream's", feedVisible(h.store.peek("wrun_BH")) === visible(foldLines(short, { summarize })) && srv.rows.get("wrun_BH")?.cursor === short.length);
+}
+{
+  // Silence at the seam ("empty": eve's first byte is slower than the quiet window) → retry once, then KEEP.
+  const srv = copyServer();
+  const lines = specialistStream({ seed: 540, steps: 2, reasoningChars: 2_000 });
+  srv.rows.set("wrun_SI", jsonb(foldLines(lines, { summarize }).copy("wrun_SI")));
+  const h = page(srv);
+  h.streams.set("wrun_SI", { lines: [], hold: true });
+  h.store.sync("panel", wants([["wrun_SI", "harvest"]]), true);
+  await h.advance(30_000);
+  check("empty: retried once, never read from 0", h.requests.length === 2 && h.requests.every((r) => r.startIndex === lines.length - 1), h.requests.map((r) => r.startIndex));
+  check("…and the copy KEPT (not discarded), shown as ended", !srv.log.some((x) => x[0] === "discard") && h.store.peek("wrun_SI").status === "ended" && h.store.peek("wrun_SI").rows.length > 0);
+}
+{
+  // An error at the seam (no answer at all) keeps the copy on screen, never "details unavailable".
+  const srv = copyServer();
+  const lines = specialistStream({ seed: 541, steps: 2, reasoningChars: 2_000 });
+  srv.rows.set("wrun_ER", jsonb(foldLines(lines, { summarize }).copy("wrun_ER")));
+  const h = page(srv);
+  h.streams.set("wrun_ER", { headersAfter: Infinity });
+  h.store.sync("panel", wants([["wrun_ER", "harvest"]]), true);
+  await h.advance(30_000);
+  check("no headers twice: the copy stays, ended, not unavailable", h.requests.length === 2 && h.store.peek("wrun_ER").status === "ended" && h.store.peek("wrun_ER").rows.length > 0, h.store.peek("wrun_ER").status);
+  check("…and nothing discarded", !srv.log.some((x) => x[0] === "discard"));
+}
+{
+  // The caps: a copy over the size cap is never sent; one at or below the stored cursor is never sent again.
+  const srv = copyServer();
+  const h = page(srv, { maxCopyBytes: 2_000 });
+  h.streams.set("wrun_BIG2", { lines: specialistStream({ seed: 550, steps: 3, reasoningChars: 8_000 }), hold: true });
+  h.store.sync("panel", wants([["wrun_BIG2", "harvest"]]), true);
+  await h.advance(10_000);
+  check("over the size cap: not sent, and the specialist is still shown", !srv.log.some((x) => x[0] === "save") && h.store.peek("wrun_BIG2").status === "ended");
+  const srv2 = copyServer();
+  const lines = specialistStream({ seed: 551, steps: 2, reasoningChars: 2_000 });
+  const longer = [...lines, ...specialistStream({ seed: 552, steps: 1, reasoningChars: 500, token: "eve:later" }).slice(1)];
+  srv2.rows.set("wrun_OLD", jsonb(foldLines(longer, { summarize }).copy("wrun_OLD")));
+  // A second tab that still sees only the shorter stream (its copy load lost the race): it may not shrink the copy.
+  const h2 = page(srv2, { copyDeadlineMs: 50 });
+  srv2.io.load = () => new Promise(() => {});
+  h2.streams.set("wrun_OLD", { lines, hold: true });
+  h2.store.sync("panel", wants([["wrun_OLD", "harvest"]]), true);
+  await h2.advance(10_000);
+  check("a copy that never answers is not waited for (read from 0 after the deadline)", h2.requests.length === 1 && h2.requests[0].startIndex === 0 && h2.requests[0].at >= 50, h2.requests);
+  check("a shorter copy is refused over a longer one (the stored copy is unchanged)", srv2.rows.get("wrun_OLD").cursor === longer.length);
+  check("…and this page does not offer it again", (h2.store.retry("wrun_OLD"), await h2.advance(5_000), srv2.log.filter((x) => x[0] === "save").length === 1), srv2.log);
+}
+{
+  // A copy that is not this session's (or not this version) is never folded.
+  const srv = copyServer();
+  const lines = specialistStream({ seed: 560, steps: 2, reasoningChars: 2_000 });
+  srv.rows.set("wrun_X1", { ...jsonb(foldLines(lines, { summarize }).copy("wrun_OTHER")) });
+  srv.rows.set("wrun_X2", { ...jsonb(foldLines(lines, { summarize }).copy("wrun_X2")), version: CHILD_COPY_VERSION + 1 });
+  const h = page(srv);
+  h.streams.set("wrun_X1", { lines, hold: true });
+  h.streams.set("wrun_X2", { lines, hold: true });
+  h.store.sync("panel", wants([["wrun_X1", "harvest"], ["wrun_X2", "harvest"]]), true);
+  await h.advance(10_000);
+  check("another session's copy, or another version's, is ignored: read from 0", h.requests.length === 2 && h.requests.every((r) => r.startIndex === 0), h.requests.map((r) => r.startIndex));
+}
+{
+  // Wired the way the page wires it.
+  const cockpit = readFileSync("app/_components/cockpit.tsx", "utf8");
+  const storeDecl = cockpit.slice(cockpit.indexOf("const feedStore = () =>"), cockpit.indexOf("function useChildFeeds("));
+  check("cockpit.tsx: the page's feed store keeps saved copies through /api/ops/chat-snapshots (kind=child)", /copies:\s*childCopyIO/.test(storeDecl) && /kind=child/.test(cockpit), storeDecl.slice(0, 600));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

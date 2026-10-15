@@ -67,6 +67,10 @@ export interface McpDeps {
     states: { value: string; label: string }[];
     priorities: { value: string; label: string }[];
     ownFields: { key: string; label: string; type: string; required?: boolean | "on_create"; help?: string; options?: { value: string; label: string }[]; many?: boolean }[];
+    /** Some move of the enforced lifecycle needs a comment: task_update takes it as `reason`. */
+    takesComment?: boolean;
+    /** The lifecycle as its moves (agent/lib/record-areas.ts describeMoves), when it lists transitions. */
+    moves?: string;
   };
   /** Injected for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;

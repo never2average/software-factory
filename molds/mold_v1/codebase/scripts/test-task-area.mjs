@@ -95,11 +95,12 @@ check("list_todos lists obligations with their state and own fields, and filters
   assert.match(list, /List the team's obligations, newest first, with their state and their own fields/);
   assert.deepEqual(schemaOf(list).properties.state.enum, ["not_started", "in_progress", "evidence_submitted", "under_review", "closed", "not_applicable"]);
 });
-check("the per-turn briefing carries the obligation's card: its own fields, its states in order and what each needs", () => {
+check("the per-turn briefing carries the obligation's card: its own fields, its states, and from each the moves there are with what each needs", () => {
   const prompt = redefined.get("root :: per-turn briefing");
   assert.match(prompt, /- An \*\*obligation\*\* \(plural: obligations\): Something the company must do/);
-  assert.match(prompt, /`custom\.state` moves through: "Not started" → "In progress" → "Evidence submitted" \(needs "Evidence"\)/);
-  assert.match(prompt, /"Complied" \(owner\/admin only\)/);
+  assert.match(prompt, /Its state is `custom\.state`: "not_started" \("Not started"\), "in_progress" \("In progress"\)/);
+  assert.match(prompt, /- From "In progress" you can go to "Evidence submitted" \(Submit evidence; needs "Evidence" set\)/);
+  assert.match(prompt, /"Complied" \(Mark complied; owner or admin only; not by its owner\)/);
   assert.match(prompt, /Written with upsert_todo, read with list_todos\./);
 });
 check("nothing else the model reads moved: every other section is the default's", () => {

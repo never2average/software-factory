@@ -3,7 +3,9 @@
 agent-workspace depends on [eve](https://github.com/vercel/eve), a third-party framework, at exactly **0.25.1**, and changes it
 in one place: `patches/eve+0.25.1.patch`, applied to the installed copy. Nothing is forked, published or filed upstream.
 What it changes and why is in docs/SPECIALIST_HANDBACK.md ("Per-result delegation") and, for compaction, in
-docs/SPECIALIST_CONTEXT.md; this page is how it is applied and kept honest.
+docs/SPECIALIST_CONTEXT.md; one small change lets a tool file of the app's own export `disableTool()` to switch an
+optional tool off (eve threw on any name but its own tools'; scripts/eve-patch/changes.mjs, mold_v1-263, held by
+`npm run test:optional-tools`). This page is how it is applied and kept honest.
 
 ## The mechanism: patch-package
 

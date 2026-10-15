@@ -36,16 +36,34 @@
  *       "unavailable" with a retry control. Never a live one: a running specialist the parent still shows as running
  *       is never given up on by a timer, and "unavailable" is never read as "ended" for it (cockpit.tsx).
  *
- * Nothing here touches what the server stores. A saved copy per specialist (so even the FIRST open of a page does not
- * read the raw stream) is the next step; it needs (1) the specialist's compacted events plus its absolute index from
- * this fold at a boundary, (2) the snapshot route to admit a child session for its root's owner, (3) the parked and
- * running cases still read live from the stored index.
+ *   (e) A SAVED COPY PER SPECIALIST (lib/child-copy.ts), so the raw stream is read from event 0 at most once per
+ *       specialist, not once per page load. When a fold reaches a session boundary it hands back the events it kept
+ *       (with their absolute indexes) and its cursor ({@link ChildFold.copy}); the store sends that to
+ *       /api/ops/chat-snapshots (`kind=child`: owner-only, workspace-scoped, size-capped, never moved backwards). On
+ *       the next page the store asks for the copy FIRST, folds it ({@link ChildFold.fromCopy}: the same rows,
+ *       messages and nested specialists as the whole stream) and shows it at once, then reads only from
+ *       `cursor - 1`: the first event there must be the copy's last one (the parent's seam rules,
+ *       lib/chat-snapshot.ts `seamVerdict`), and what follows is new. Running and parked specialists still read
+ *       live, from that index. A copy the stream disagrees with is read again from 0 into a SHADOW fold while the
+ *       copy stays on screen, swapped in when the shadow reaches a boundary or settles: no flicker, no empty panel.
  */
 import { defaultMessageReducer } from "eve/client";
 import type { EveMessage } from "eve/react";
 import { withSessionEpochs, type TurnEvent } from "./chat-turn-state.ts";
 import { SESSION_DELEGATION_HEADER, delegationFromHeader } from "./specialist-run-actions.ts";
 import type { SpecialistStreamOutcome, SpecialistStreamProbe } from "./chat-open-timing.ts";
+import {
+  CHILD_COPY_MAX_BYTES,
+  CHILD_COPY_VERSION,
+  childCopyBytes,
+  childCopyUsable,
+  childSeamVerdict,
+  parseLine,
+  storedForm,
+  type ChildCopy,
+} from "./child-copy.ts";
+
+export type { ChildCopy } from "./child-copy.ts";
 
 /* ================================================================================================================ */
 /* The feed a panel renders.                                                                                         */
@@ -135,6 +153,10 @@ export interface ChildFeedStats {
   /** Events the fold skipped unparsed (superseded cumulative deltas). */
   readonly skippedEvents: number;
   readonly status: FeedStatus;
+  /** Reads of this session that started at event 0 (the whole stream). 0 for one restored from a saved copy. */
+  readonly fullReads: number;
+  /** Shown from a saved copy (lib/child-copy.ts) rather than read from its stream. */
+  readonly fromCopy: boolean;
 }
 
 /** How one read of a specialist's stream ended: the chat-open record's own outcomes (lib/chat-open-timing.ts). */
@@ -360,6 +382,8 @@ export class ChildFold {
   private stopped: boolean | undefined;
   private continuationToken: string | undefined;
   private childSessions: string[] = [];
+  /** Every event folded, with its absolute index: what a saved copy is made of (the superseded deltas are not here). */
+  private kept: { i: number; e: LooseEvent }[] = [];
   private version = 0;
   private viewed = -1;
   private lastView: FoldView | null = null;
@@ -461,6 +485,52 @@ export class ChildFold {
     return this.lastView;
   }
 
+  /**
+   * The saved copy of this fold, or null when it is not at a session boundary.
+   *
+   * Only at a boundary: the last folded event must be the line just before the cursor AND a `session.waiting`,
+   * `session.completed` or `session.failed`, so the seam a later open checks (the event at `cursor - 1`) is the copy's
+   * own last event. A held delta, a trailing line that did not parse, or a stream cut off mid-turn give no copy.
+   * The resume token is stripped (lib/child-copy.ts `storedForm`); the seam read hands it back.
+   */
+  copy(sessionId: string): ChildCopy | null {
+    if (this.held || this.kept.length === 0) return null;
+    const last = this.kept[this.kept.length - 1];
+    if (last.i !== this.cursor - 1) return null;
+    const type = (last.e as LooseEvent)?.type;
+    if (type !== "session.waiting" && type !== "session.completed" && type !== "session.failed") return null;
+    return {
+      version: CHILD_COPY_VERSION,
+      sessionId,
+      cursor: this.cursor,
+      events: this.kept.map((k) => ({ i: k.i, line: JSON.stringify(storedForm(k.e)) })),
+    };
+  }
+
+  /**
+   * A fold rebuilt from a saved copy: each kept event folded at its own absolute index (row ids are derived from it),
+   * the cursor where the copy stopped. Equal to folding the whole stream up to that cursor, except the resume token,
+   * which {@link adoptSeam} restores from the seam read.
+   */
+  static fromCopy(copy: ChildCopy, options: FoldOptions = {}): ChildFold {
+    const fold = new ChildFold(options);
+    for (const k of copy.events) {
+      const event = parseLine(k.line);
+      if (event) fold.apply(event as LooseEvent, k.i);
+    }
+    fold.cursor = copy.cursor;
+    return fold;
+  }
+
+  /** The seam event matched: take what the copy does not keep from it (the resume token). Nothing is folded twice. */
+  adoptSeam(event: unknown): void {
+    const e = event as LooseEvent;
+    const token = e?.type === "session.waiting" ? e.data?.continuationToken : undefined;
+    if (typeof token !== "string" || token === this.continuationToken) return;
+    this.continuationToken = token;
+    this.version++;
+  }
+
   /** A note from outside the stream that the turn is over (a Stop that found no active turn). */
   markTurnIdle(): void {
     this.turnActive = false;
@@ -479,6 +549,7 @@ export class ChildFold {
 
   private apply(event: LooseEvent, index: number): void {
     this.version++;
+    this.kept.push({ i: index, e: event });
     this.transcript = childReducer.reduce(this.transcript, event as TurnEvent);
     let k = 0;
     const nextId = () => `e${index}${k++ ? `.${k - 1}` : ""}`;
@@ -558,6 +629,21 @@ export const CACHE_BUDGET_CHARS = 24_000_000;
 export const LIVE_RETRY_MS: readonly number[] = [2_000, 5_000, 15_000, 30_000, 60_000];
 /** Stream segments one connection will reopen (eve ends a segment about every 120 s). */
 export const MAX_SEGMENTS = 60;
+/** A saved copy that has not arrived by then is not waited for: the specialist is read from its stream as before. */
+export const COPY_DEADLINE_MS = 3_000;
+
+/**
+ * Where saved copies are kept (app/_components/cockpit.tsx: /api/ops/chat-snapshots with `kind=child`). Every method
+ * is best-effort: a copy that cannot be read or written costs a slow open, never a wrong one.
+ */
+export interface ChildCopyIO {
+  /** The saved copy of a session, or null (none, refused, unreachable). */
+  load(sessionId: string, signal: AbortSignal): Promise<unknown>;
+  /** Store a copy. "refused": the server will not take it (not the owner's, too large, older than the stored one). */
+  save(copy: ChildCopy): Promise<"stored" | "refused" | "failed">;
+  /** Forget a copy the stream disagreed with. */
+  discard(sessionId: string): Promise<void>;
+}
 
 type Timer = unknown;
 
@@ -582,6 +668,11 @@ export interface StoreOptions {
   readonly streamUrl?: (sessionId: string, startIndex: number) => string;
   /** A reporter per read, for the chat-open record (see {@link ChildFeedProbe}). */
   readonly probe?: (sessionId: string, live: boolean) => ChildFeedProbe;
+  /** Saved copies (see {@link ChildCopyIO}). None: every specialist is read from its stream, as before. */
+  readonly copies?: ChildCopyIO | null;
+  readonly copyDeadlineMs?: number;
+  /** The largest copy this store will send (the route refuses larger ones anyway). */
+  readonly maxCopyBytes?: number;
 }
 
 interface Conn {
@@ -622,6 +713,22 @@ interface Entry {
   firstRequestAt: number | null;
   headersAt: number | null;
   settledAt: number | null;
+  /** Saved copy: not asked yet, being fetched, or answered (whatever the answer). */
+  copyState: "none" | "loading" | "done";
+  /** The server will not take a copy of this session (refused, or too large): not offered again on this page. */
+  copyBlocked: boolean;
+  /** The cursor of the copy the server holds, as far as this page knows (0: none). Never sent again at or below it. */
+  savedCursor: number;
+  /** The copy this fold was restored from, while its seam is unverified, and which read of it this is (1 or 2). */
+  seam: { copy: ChildCopy; attempt: number } | null;
+  /** The stream disagreed with the copy: the stream read again from 0, here, while the copy stays on screen. */
+  shadow: ChildFold | null;
+  /** The cursor of the copy a shadow replaces: a live shadow is shown once it has read this far. */
+  shadowUntil: number;
+  /** A discard of the stale copy in flight: a save waits for it, so the new copy is never deleted after it lands. */
+  discarding: Promise<void> | null;
+  fullReads: number;
+  fromCopy: boolean;
 }
 
 let noteSeq = 0;
@@ -654,6 +761,9 @@ export class ChildFeedStore {
         options.streamUrl ??
         ((sid, startIndex) => `/eve/v1/session/${encodeURIComponent(sid)}/stream?startIndex=${startIndex}&compressed=1`),
       probe: options.probe ?? (() => NO_PROBE),
+      copies: options.copies ?? null,
+      copyDeadlineMs: options.copyDeadlineMs ?? COPY_DEADLINE_MS,
+      maxCopyBytes: options.maxCopyBytes ?? CHILD_COPY_MAX_BYTES,
     };
   }
 
@@ -675,6 +785,9 @@ export class ChildFeedStore {
         this.o.clearTimer(e.graceTimer);
         e.graceTimer = null;
       }
+      // Ask for the saved copy first, whatever the mode: it is one small read, and a specialist read from it needs
+      // its stream only from the copy's cursor. Its stream waits for the answer (or COPY_DEADLINE_MS).
+      if (this.o.copies && e.copyState === "none" && e.fold.cursor === 0 && !e.conn) this.loadCopy(e);
       out[sid] = this.snapshotOf(e);
     }
     this.pump();
@@ -730,6 +843,8 @@ export class ChildFeedStore {
       timeToSettleMs: e.firstRequestAt !== null && e.settledAt !== null ? e.settledAt - e.firstRequestAt : null,
       skippedEvents: e.fold.skipped,
       status: e.status,
+      fullReads: e.fullReads,
+      fromCopy: e.fromCopy,
     }));
   }
 
@@ -782,6 +897,15 @@ export class ChildFeedStore {
         firstRequestAt: null,
         headersAt: null,
         settledAt: null,
+        copyState: "none",
+        copyBlocked: false,
+        savedCursor: 0,
+        seam: null,
+        shadow: null,
+        shadowUntil: 0,
+        discarding: null,
+        fullReads: 0,
+        fromCopy: false,
       };
       this.entries.set(key, e);
     }
@@ -838,6 +962,8 @@ export class ChildFeedStore {
         }
         continue;
       }
+      // The saved copy is on its way: its stream is read from the copy's cursor, so not before it answers.
+      if (e.copyState === "loading") continue;
       if (mode === "live") {
         if (e.conn) {
           if (!e.conn.live) {
@@ -896,11 +1022,110 @@ export class ChildFeedStore {
     e.settled = status !== "unavailable";
     e.status = status;
     e.settledAt ??= this.o.now();
+    // A seam never answered (silence after the retry): the copy is kept, unverified, as the parent keeps its own.
+    e.seam = null;
+    this.promote(e);
     e.fold.foldHeld();
     this.close(e, "caught-up");
     this.measure(e);
+    this.saveCopy(e);
     this.touch(e, true);
     this.pump();
+  }
+
+  /* ---- saved copies ----------------------------------------------------------------------------------------- */
+
+  private loadCopy(e: Entry): void {
+    const io = this.o.copies;
+    if (!io) return;
+    e.copyState = "loading";
+    const ctrl = new AbortController();
+    let timer: Timer | null = null;
+    const finish = (copy: unknown) => {
+      if (e.copyState !== "loading") return;
+      e.copyState = "done";
+      if (timer !== null) this.o.clearTimer(timer);
+      if (copy && childCopyUsable(copy, e.sid) && e.fold.cursor === 0 && !e.conn) {
+        e.fold = ChildFold.fromCopy(copy, { summarize: this.o.summarize });
+        e.savedCursor = copy.cursor;
+        e.seam = { copy, attempt: 1 };
+        e.fromCopy = true;
+        if (e.status === "idle") e.status = "ended";
+        this.measure(e);
+        this.touch(e, true);
+      }
+      this.pump();
+    };
+    timer = this.o.setTimer(() => {
+      timer = null;
+      ctrl.abort();
+      finish(null);
+    }, this.o.copyDeadlineMs);
+    let pending: Promise<unknown>;
+    try {
+      pending = io.load(e.sid, ctrl.signal);
+    } catch {
+      pending = Promise.resolve(null);
+    }
+    pending.then(finish, () => finish(null));
+  }
+
+  /** The stream disagreed with the copy: forget it, and read the stream from 0 into a shadow fold. */
+  private replaceCopy(e: Entry): void {
+    e.seam = null;
+    e.shadowUntil = e.fold.cursor;
+    e.shadow = new ChildFold({ summarize: this.o.summarize });
+    e.savedCursor = 0;
+    const io = this.o.copies;
+    if (!io) return;
+    let pending: Promise<void>;
+    try {
+      pending = io.discard(e.sid).catch(() => undefined);
+    } catch {
+      pending = Promise.resolve();
+    }
+    e.discarding = pending;
+  }
+
+  /** The shadow fold is the stream's own answer: show it now (at a boundary, or when the read settles). */
+  private promote(e: Entry): void {
+    if (!e.shadow) return;
+    e.fold = e.shadow;
+    e.shadow = null;
+    e.fromCopy = false;
+    e.dirty = true;
+  }
+
+  /** At a session boundary: store the fold's copy, if it is longer than the one the server holds. */
+  private saveCopy(e: Entry): void {
+    const io = this.o.copies;
+    if (!io || e.copyBlocked || e.shadow) return;
+    const copy = e.fold.copy(e.sid);
+    if (!copy || copy.cursor <= e.savedCursor) return;
+    let bytes = 0;
+    try {
+      bytes = childCopyBytes(copy);
+    } catch {
+      return;
+    }
+    if (bytes > this.o.maxCopyBytes) {
+      e.copyBlocked = true;
+      return;
+    }
+    e.savedCursor = copy.cursor;
+    const before = e.discarding ?? Promise.resolve();
+    void before
+      .then(() => io.save(copy))
+      .then(
+        (outcome) => {
+          if (outcome === "refused") e.copyBlocked = true;
+          // A failed write is not known to be stored: the next boundary on this page offers it again.
+          if (outcome === "failed" && e.savedCursor === copy.cursor) e.savedCursor = 0;
+        },
+        () => {
+          if (e.savedCursor === copy.cursor) e.savedCursor = 0;
+        },
+      );
   }
 
   /* ---- one connection --------------------------------------------------------------------------------------- */
@@ -922,6 +1147,8 @@ export class ChildFeedStore {
     let timeouts = 0;
     let timedOut = false;
     let inputRequested = false;
+    /** The seam matched and nothing new has come after it: a finished specialist has nothing more to say. */
+    let onlySeam = false;
     const call = (fn: () => void) => {
       try {
         fn();
@@ -930,6 +1157,8 @@ export class ChildFeedStore {
       }
     };
     let quiet: Timer | null = null;
+    /** Set when the quiet window ends a read whose seam never answered: the read is retried once (seamVerdict). */
+    let seamSilent: (() => void) | null = null;
     const stopQuiet = () => {
       if (quiet !== null) this.o.clearTimer(quiet);
       quiet = null;
@@ -939,9 +1168,14 @@ export class ChildFeedStore {
       if (conn.live) return;
       quiet = this.o.setTimer(() => {
         quiet = null;
+        if (e.conn !== conn || conn.live) return;
+        if (e.seam && !e.shadow && seamSilent) {
+          seamSilent();
+          return;
+        }
         // A harvest has read all there is: the stream is a live tail, and it has stopped talking.
-        if (e.conn === conn && !conn.live) this.settle(e, "ended");
-      }, inputRequested ? this.o.inputQuietMs : this.o.quietMs);
+        this.settle(e, "ended");
+      }, inputRequested || onlySeam ? this.o.inputQuietMs : this.o.quietMs);
     };
     try {
       while (!conn.ctrl.signal.aborted && segments < MAX_SEGMENTS) {
@@ -960,12 +1194,18 @@ export class ChildFeedStore {
           }, this.o.headerDeadlineMs);
         }
         timedOut = false;
+        // Where this read starts: the fold's cursor, or one earlier when a restored copy's seam is to be checked
+        // (the first event read is then the copy's last). A replaced copy reads its shadow from 0.
+        const target = e.shadow ?? e.fold;
+        const seam = e.shadow ? null : e.seam;
+        const start = seam ? target.cursor - 1 : target.cursor;
+        if (start === 0) e.fullReads++;
         call(() => conn.probe.request());
         e.requests++;
         e.firstRequestAt ??= this.o.now();
         let res: Response;
         try {
-          res = await this.o.fetch(this.o.streamUrl(e.sid, e.fold.cursor), {
+          res = await this.o.fetch(this.o.streamUrl(e.sid, start), {
             headers: this.o.headers(),
             signal: req.signal,
           });
@@ -1002,11 +1242,21 @@ export class ChildFeedStore {
         e.liveFailures = 0;
         if (e.status !== "ended" || conn.live) e.status = "live";
         this.touch(e, false);
+        let seamPending = seam !== null;
+        let silent = false;
+        seamSilent = seamPending
+          ? () => {
+              silent = true;
+              req.abort();
+            }
+          : null;
         armQuiet();
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
         let ended = false;
+        let closed = false;
+        let replaced = false;
         let readThisSegment = 0;
         let stop = false;
         while (!stop && !conn.ctrl.signal.aborted) {
@@ -1014,10 +1264,13 @@ export class ChildFeedStore {
           try {
             chunk = await reader.read();
           } catch (error) {
-            if (conn.ctrl.signal.aborted) break;
+            if (conn.ctrl.signal.aborted || silent) break;
             throw error;
           }
-          if (chunk.done) break;
+          if (chunk.done) {
+            closed = true;
+            break;
+          }
           e.bytes += chunk.value.byteLength;
           const n = chunk.value.byteLength;
           call(() => conn.probe.bytes(n));
@@ -1025,10 +1278,41 @@ export class ChildFeedStore {
           buf = taken.rest;
           for (const line of taken.lines) {
             if (!line.trim()) continue;
+            if (seamPending && seam) {
+              // THE SEAM: the stream's event at `cursor - 1` against the copy's last event.
+              seamPending = false;
+              seamSilent = null;
+              let event: unknown = null;
+              try {
+                event = JSON.parse(line);
+              } catch {
+                event = { unparsed: line };
+              }
+              const verdict = childSeamVerdict(seam.copy, { events: [event] }, seam.attempt);
+              if (verdict.action === "replace") {
+                this.replaceCopy(e);
+                replaced = true;
+                stop = true;
+                break;
+              }
+              e.seam = null;
+              e.fold.adoptSeam(event);
+              onlySeam = true;
+              // The seam IS the copy's boundary: a segment that closes after it has reached the end, as a segment
+              // that read that boundary itself would have (a live read is not reopened 60 times on a closed stream).
+              const seamType = (event as { type?: unknown } | null)?.type;
+              if (seamType === "session.waiting" || seamType === "session.completed") ended = true;
+              this.touch(e, false);
+              continue;
+            }
             readThisSegment++;
-            const effect = e.fold.push(line);
+            onlySeam = false;
+            const fold = e.shadow ?? e.fold;
+            const effect = fold.push(line);
             if (effect.type === "input.requested") inputRequested = true;
             if (effect.type === "turn.started" || effect.type === "step.started") inputRequested = false;
+            // A new turn after the seam's boundary: the session is running again, not at its end.
+            if (effect.type === "turn.started") ended = false;
             if (
               effect.type === "turn.completed" ||
               effect.type === "turn.failed" ||
@@ -1041,10 +1325,18 @@ export class ChildFeedStore {
             if (effect.boundary && !conn.live) {
               // Harvest-only: the replay has reached the end of this session's recorded life. Stop HERE, in the line
               // loop: a line after the boundary is not folded and not counted, so a later live read starts at it.
-              // settle() aborts the connection, and with it this request.
+              // settle() aborts the connection, and with it this request (and stores the copy).
               stopQuiet();
               this.settle(e, "ended");
               return;
+            }
+            if (effect.boundary) {
+              // Live, at a boundary: the shadow (if any) is the stream's answer now, and this is a copy worth keeping.
+              this.promote(e);
+              this.saveCopy(e);
+            } else if (conn.live && e.shadow && fold === e.shadow && fold.cursor >= e.shadowUntil) {
+              // Live, mid-turn: the shadow has read as far as the copy claimed to go, so it shows at least as much.
+              this.promote(e);
             }
           }
           if (taken.lines.length) {
@@ -1054,8 +1346,30 @@ export class ChildFeedStore {
         }
         conn.ctrl.signal.removeEventListener("abort", onAbort);
         stopQuiet();
+        seamSilent = null;
         if (conn.ctrl.signal.aborted) break;
-        e.fold.foldHeld();
+        if (replaced) {
+          // Read the stream again from 0, into the shadow; the copy stays on screen meanwhile.
+          req.abort();
+          continue;
+        }
+        if (seamPending && seam) {
+          // The read ended before the seam event arrived: closed with nothing there ("behind"), or silent ("empty").
+          req.abort();
+          const verdict = childSeamVerdict(seam.copy, { events: [], ended: closed && !silent }, seam.attempt);
+          if (verdict.action === "retry") {
+            seam.attempt++;
+            continue;
+          }
+          if (verdict.action === "replace") {
+            this.replaceCopy(e);
+            continue;
+          }
+          // Keep it, unverified.
+          e.seam = null;
+          break;
+        }
+        (e.shadow ?? e.fold).foldHeld();
         // The segment closed. A terminal event means done; a harvest that read nothing new in it has read it all;
         // anything else is a severed segment, resumed at the cursor.
         if (ended || (!conn.live && readThisSegment === 0)) break;
@@ -1066,6 +1380,7 @@ export class ChildFeedStore {
         e.conn = null;
         this.report(conn, "ended");
         e.liveSpent = true;
+        this.promote(e);
         if (e.status === "live") {
           e.status = "ended";
           e.fold.markTurnIdle();
@@ -1094,6 +1409,19 @@ export class ChildFeedStore {
           this.touch(e, false);
           return;
         }
+      }
+      if (e.fromCopy && !conn.live) {
+        // The copy is on screen and the stream could not be read: keep the copy (an unanswered seam is not evidence
+        // against it), and do not cover its details with "unavailable".
+        this.report(conn, timedOut ? "unavailable" : "failed");
+        e.seam = null;
+        e.shadow = null;
+        e.settled = true;
+        e.status = "ended";
+        e.settledAt ??= this.o.now();
+        this.touch(e, true);
+        this.pump();
+        return;
       }
       this.report(conn, timedOut ? "unavailable" : "failed");
       e.status = "unavailable";

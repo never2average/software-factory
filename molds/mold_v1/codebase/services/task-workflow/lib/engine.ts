@@ -3,10 +3,10 @@ import { ensureVersion } from "@/lib/definitions";
 import {
   allowedManualTransition,
   findRequestedStage,
-  legacyStatusForStage,
+  statusForStage,
 } from "@/lib/stages";
 import { recordTaskChanges } from "@/lib/task-activity";
-import { customDelta, directStatus } from "@/lib/custom";
+import { customDelta, directStatus, isRecursFromConflict } from "@/lib/custom";
 import type {
   AssignRule,
   ServiceContext,
@@ -112,12 +112,20 @@ function toTaskDto(task: TaskRow, workflow?: { stageId: string; stageLabel: stri
 async function writeCustom(sql: postgres.TransactionSql, orgId: string, taskId: string, custom: Record<string, unknown> | undefined): Promise<TaskRow | null> {
   const delta = customDelta(custom);
   if (!delta) return null;
-  const [row] = await sql<TaskRow[]>`
-    update todos
-       set custom = (coalesce(custom, '{}'::jsonb) || ${sql.json(delta.set as never)}::jsonb) - ${delta.clear}::text[],
-           updated_at = now()
-     where id = ${taskId} and org_id = ${orgId}
-    returning *`;
+  let row: TaskRow | undefined;
+  try {
+    [row] = await sql<TaskRow[]>`
+      update todos
+         set custom = (coalesce(custom, '{}'::jsonb) || ${sql.json(delta.set as never)}::jsonb) - ${delta.clear}::text[],
+             updated_at = now()
+       where id = ${taskId} and org_id = ${orgId}
+      returning *`;
+  } catch (error) {
+    // drizzle/0042: a task has one next occurrence. A second one (two completions at once) is refused, and the whole
+    // create with it: a 409 the app's write path takes as "already made" (agent/lib/task-recurrence-run.ts).
+    if (isRecursFromConflict(error)) throw new Error("Conflict: the task already has its next occurrence");
+    throw error;
+  }
   if (!row) throw new Error("Not found: Task not found");
   return row;
 }
@@ -193,7 +201,7 @@ export async function createTask(sql: postgres.TransactionSql, ctx: ServiceConte
   // A status the deployment derived from its own task states starts the task there, outside any stage pipeline.
   const workflow = input.statusFrom === "category" ? null : await defaultTaskWorkflow(sql, ctx.orgId);
   const initialStage = workflow?.stages[0] ?? null;
-  const status = initialStage ? legacyStatusForStage(initialStage) : input.status ?? "open";
+  const status = initialStage ? statusForStage(initialStage, ctx.taskStates) : input.status ?? "open";
   const done = status === "done";
   const [inserted] = await sql<TaskRow[]>`
     insert into todos
@@ -314,7 +322,7 @@ export async function updateTask(sql: postgres.TransactionSql, ctx: ServiceConte
             };
           }
         }
-        const status = legacyStatusForStage(target);
+        const status = statusForStage(target, ctx.taskStates);
         update.status = status;
         update.done = status === "done";
         update.done_at = status === "done" ? new Date() : null;

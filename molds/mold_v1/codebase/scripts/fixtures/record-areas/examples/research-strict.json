@@ -1,0 +1,19 @@
+{
+  "$comment": "On top of research.json: the coverage report's lifecycle made strict, publishing limited to owners and admins and to someone other than whoever sent the report for review (four eyes, {entered_by}). A test fixture for the agent's write paths (upsert_customer's nested rows, the per-area tools); no deployment ships it.",
+  "records": {
+    "areas": {
+      "deployments": {
+        "lifecycle": {
+          "enforce": "strict",
+          "transitions": [
+            { "from": ["in-progress"], "to": "pending-approval", "label": "Send for review" },
+            { "from": ["pending-approval"], "to": "deployed", "label": "Publish", "roles": ["owner", "admin"], "not_by": "{entered_by}" },
+            { "from": ["pending-approval"], "to": "in-progress", "label": "Return to analyst" },
+            { "from": ["deployed"], "to": "rolled-back", "label": "Restate" },
+            { "from": "*", "to": "failed" }
+          ]
+        }
+      }
+    }
+  }
+}

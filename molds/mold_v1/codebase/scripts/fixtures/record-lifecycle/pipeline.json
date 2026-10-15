@@ -1,0 +1,23 @@
+{
+  "$comment": "A test fixture for the enforced lifecycle (agent/lib/record-lifecycle.ts): the default task, its lifecycle on the status column, given transitions with every rule: roles, a required field, a comment, four eyes by who entered the state ({entered_by}) and a stamp. Strict here; the tests set warn and off on copies. No deployment ships it.",
+  "records": {
+    "areas": {
+      "tasks": {
+        "lifecycle": {
+          "field": "status",
+          "initial": "open",
+          "enforce": "strict",
+          "transitions": [
+            { "from": ["backlog"], "to": "open", "label": "Plan" },
+            { "from": ["open"], "to": "backlog", "label": "Park" },
+            { "from": ["open"], "to": "in_progress", "label": "Start", "set": { "assignee": "{me}" } },
+            { "from": ["in_progress"], "to": "blocked", "label": "Block", "requires_comment": true },
+            { "from": ["blocked"], "to": "in_progress", "label": "Unblock" },
+            { "from": ["in_progress"], "to": "done", "label": "Sign off", "requires": ["dueAt"], "not_by": "{entered_by}" },
+            { "from": "*", "to": "cancelled", "label": "Cancel", "roles": ["owner", "admin"], "requires_comment": true }
+          ]
+        }
+      }
+    }
+  }
+}

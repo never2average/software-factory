@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import type { EveMessage } from "eve/react";
 import { handbackStates } from "@/lib/chat-turn-state";
-import { type ChildFeed, type FeedMode, type FeedRow, type FeedStatus, childFeedStore } from "@/lib/child-feed";
+import { type ChildCopyIO, type ChildFeed, type FeedMode, type FeedRow, type FeedStatus, childFeedStore } from "@/lib/child-feed";
 import { specialistStream } from "@/lib/chat-open-timing";
 import { DETACHED_LABEL } from "@/lib/detached-delegation";
 import { SESSION_DELEGATION_HEADER, canMessageSession, delegationFromHeader, refusalText, runControl } from "@/lib/specialist-run-actions";
@@ -2567,10 +2567,57 @@ function awaitsInput(part: unknown): boolean {
 /** Per specialist transcript, its derived insights: keyed by the feed's `messages` (see `merged`). */
 const childCache = new WeakMap<object, Insights>();
 
+/** The copy route's headers: the sign-in, and the workspace this tab is in (the store keys every fold by it). */
+function copyHeaders(): Record<string, string> {
+  const org = activeOrg();
+  return { ...eveAuthHeaders(), ...(org ? { "x-ops-org": org } : {}) };
+}
+
 /**
- * The page's one specialist-feed store (lib/child-feed.ts): what a mount folded, the next mount finds. Every read
- * reports to the chat open whose window is running (lib/chat-open-timing.ts `specialistStream`), so each open's record
- * counts what the Control Panel's reads cost beside it; outside a window the probe does nothing.
+ * SAVED COPIES OF SPECIALIST FEEDS (lib/child-copy.ts), kept by /api/ops/chat-snapshots with `kind=child`: the
+ * specialist's kept events and cursor, written at a session boundary, read first on the next page so its details show
+ * without reading its stream from event 0. Owner-only and workspace-scoped on the server; every refusal (404 for a
+ * session that is not the caller's own specialist, 413 over the size cap, 409 shorter than the stored copy) means
+ * "read the stream as before", never an error on screen.
+ */
+const childCopyIO: ChildCopyIO = {
+  async load(sid, signal) {
+    const res = await fetch(`/api/ops/chat-snapshots?kind=child&session=${encodeURIComponent(sid)}`, {
+      headers: copyHeaders(),
+      signal,
+    });
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as { copy?: unknown } | null;
+    return body?.copy ?? null;
+  },
+  async save(copy) {
+    try {
+      const res = await fetch("/api/ops/chat-snapshots", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...copyHeaders() },
+        body: JSON.stringify({ kind: "child", ...copy }),
+      });
+      if (res.status >= 500) return "failed";
+      if (!res.ok) return "refused";
+      const body = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      return body?.ok ? "stored" : "refused";
+    } catch {
+      return "failed";
+    }
+  },
+  async discard(sid) {
+    await fetch(`/api/ops/chat-snapshots?kind=child&session=${encodeURIComponent(sid)}`, {
+      method: "DELETE",
+      headers: copyHeaders(),
+    }).catch(() => undefined);
+  },
+};
+
+/**
+ * The page's one specialist-feed store (lib/child-feed.ts): what a mount folded, the next mount finds, and what a
+ * page folded to a boundary, the next page finds in its saved copy. Every read reports to the chat open whose window
+ * is running (lib/chat-open-timing.ts `specialistStream`), so each open's record counts what the Control Panel's reads
+ * cost beside it; outside a window the probe does nothing.
  */
 const feedStore = () =>
   childFeedStore({
@@ -2578,6 +2625,7 @@ const feedStore = () =>
     scope: () => activeOrg() ?? "",
     summarize: toolCallSummary,
     probe: (sid, live) => specialistStream(sid, { live }),
+    copies: childCopyIO,
   });
 
 /**

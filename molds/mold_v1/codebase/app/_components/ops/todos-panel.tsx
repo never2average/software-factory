@@ -87,6 +87,14 @@ import { domainView, groupRows, groupSlug, groupTitle, withProfileFields, type D
 import { RECORD_AREAS } from "@/agent/lib/record-areas.generated";
 import { areaView, type AreaView, type RecordAreas } from "@/agent/lib/record-areas";
 import { moveTo, stateOf, TaskCreatePanel, TaskOwnFields, taskUi, type TaskSortKey, type TaskUi } from "./task-area";
+import type { RecordRole } from "@/agent/lib/record-areas";
+import { clientMove, taskCardChips, taskCardSpec, taskFilterFacets, taskMetrics, taskViewModes, timelineRange, writeNotes, type TaskReadContext } from "./task-area-model";
+import { MoveReasonDialog, TaskMetricStrip, TaskWarningsToast, type PendingMove } from "./task-area-parts";
+import { RecordAreaPanel, type RecordAreaChrome, type RecordAreaRow } from "./record-area-panel";
+import { isDeclared } from "@/agent/lib/record-area-records";
+import { recordAreaUi } from "@/lib/record-area-ui";
+import { useRecordAccess } from "./record-access";
+import type { AreaRow } from "@/agent/lib/record-areas";
 
 /**
  * The two record areas as THIS deployment names them (docs/DEPLOYMENT_PROFILE.md, `domains`). Every label below
@@ -430,11 +438,14 @@ export function TodosPanel({
   initialView,
   onInitialConsumed,
   tasksArea,
+  role,
 }: {
   readonly authorEmail?: string;
   readonly onClose: () => void;
   /** Another profile's compiled record areas (a preview page); this build's when absent. */
   readonly tasksArea?: RecordAreas;
+  /** The signed-in person's role, when known: a strict lifecycle's `roles` are read with it (else the API decides). */
+  readonly role?: RecordRole;
   /** Deep-link (`/?ops=todos&id=<todo id>`): the task to open on first show. */
   readonly initialSelectedId?: string;
   /** Deep-link (`&view=<tab>`): which tab to open on first show. */
@@ -446,10 +457,35 @@ export function TodosPanel({
   const areas = tasksArea ?? RECORD_AREAS;
   const tv = useMemo(() => areaView("tasks", areas), [areas]);
   const TU = useMemo(() => (tasksArea ? taskUi(tv) : BUILD_TASKS), [tasksArea, tv]);
-  const nav = useMemo(() => NAV.map((n) => (n.key === "tasks" && TU.redefined ? { ...n, label: TU.navLabel, blurb: TU.navBlurb } : n)), [TU]);
+  // A record area the profile states in the record-area form is drawn from its definition (./record-area-panel.tsx);
+  // any other is today's list below.
+  const declared = useMemo(() => ({ deployments: isDeclared("deployments", areas), implementations: isDeclared("implementations", areas) }), [areas]);
+  const nav = useMemo(
+    () =>
+      NAV.map((n) =>
+        n.key === "tasks" && TU.redefined
+          ? { ...n, label: TU.navLabel, blurb: TU.navBlurb }
+          : (n.key === "deployments" || n.key === "implementations") && declared[n.key]
+            ? (() => {
+                const ui = recordAreaUi(n.key, areas, ACCOUNT_LABEL);
+                return { ...n, label: ui.navLabel, blurb: ui.blurb };
+              })()
+            : n,
+      ),
+    [TU, declared, areas],
+  );
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<TodoView>(resolveTodoView(initialView));
-  const [taskView, setTaskView] = useState<ViewMode>("kanban");
+  // The views the definition declares (the default's: board, table, timeline), opening on its default.
+  const modes = useMemo(() => taskViewModes(tv), [tv]);
+  const [taskView, setTaskView] = useState<ViewMode>(modes.initial);
+  const cardSpec = useMemo(() => taskCardSpec(tv), [tv]);
+  // The definition's filters (presets and fields), its metrics, and the warnings a write answered with.
+  const [facetSel, setFacetSel] = useState<Record<string, string[]>>({});
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const dismissWarnings = useCallback(() => setWarnings([]), []);
+  // A move whose transition needs a comment, waiting for its reason (MoveReasonDialog).
+  const [pendingMove, setPendingMove] = useState<(PendingMove & { id: string; body: Record<string, unknown> }) | null>(null);
   const { scopes, setScopes, inScope } = useScope(authorEmail, []);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<TaskSortKey>(TU.defaultSort);
@@ -459,6 +495,8 @@ export function TodosPanel({
   const [cycleSel, setCycleSel] = useState<string[]>([]);
   const cyclesQ = useOpsList<ApiCycle>(PERIOD_UI.enabled ? "/api/ops/cycles" : null);
   const cycles = cyclesQ.items ?? [];
+  // Who may (records.areas.tasks.permissions): what this person may not do is not offered (./record-access.ts).
+  const taskAccess = useRecordAccess("tasks", authorEmail, areas);
   const now = Date.now();
   const currentCycle = cycles.find(
     (c) => c.startsAt && c.endsAt && Date.parse(c.startsAt) <= now && now <= Date.parse(c.endsAt),
@@ -470,12 +508,19 @@ export function TodosPanel({
     [items],
   );
 
+  const readCtx = useMemo<TaskReadContext>(
+    () => ({ now: Date.now(), me: authorEmail, stateOf: (row) => stateOf(TU, tv, row as never), currentPeriodId: currentCycle?.id ?? null }),
+    [authorEmail, TU, tv, currentCycle?.id],
+  );
+  const facets = useMemo(() => taskFilterFacets(tv, (items ?? []) as never[], readCtx, { periodLabel: PERIOD_UI.enabled ? PERIOD_UI.listLabel : null }), [tv, items, readCtx]);
+  const metrics = useMemo(() => taskMetrics(tv, (items ?? []) as never[], readCtx), [tv, items, readCtx]);
   const query = q.trim().toLowerCase();
   const filtered = useMemo(
     () =>
       (items ?? []).filter(
         (t) =>
           inScope(t.assignee ?? t.createdBy) &&
+          facets.every((f) => !facetSel[f.id]?.length || f.passes(t as never, facetSel[f.id])) &&
           (cycleSel.length === 0 ||
             cycleSel.some((s) =>
               s === "backlog" ? !t.cycleId : s === "current" ? t.cycleId === currentCycle?.id : t.cycleId === s,
@@ -487,7 +532,7 @@ export function TodosPanel({
               .includes(query)),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, inScope, query, cycleSel, currentCycle?.id, TU, tv],
+    [items, inScope, query, cycleSel, currentCycle?.id, TU, tv, facets, facetSel],
   );
   const sorted = useMemo(() => {
     const rank: Record<string, number> = TU.redefined ? Object.fromEntries(TU.priorities.map((p, i) => [p.value, i])) : { high: 0, normal: 1, low: 2 };
@@ -531,7 +576,10 @@ export function TodosPanel({
     setBusyId(id ?? "new");
     setActionError(null);
     try {
-      await fn();
+      // A write the lifecycle let through with a warning (enforce "warn"), or one that created a recurring task's next
+      // occurrence, says so in a toast; nothing waits on it.
+      const said = writeNotes(await fn());
+      if (said.length) setWarnings(said);
       await refetch();
     } catch (e) {
       setActionError(errMessage(e));
@@ -553,6 +601,18 @@ export function TodosPanel({
     });
   const patch = (id: string, body: Record<string, unknown>) =>
     run(id, () => opsFetch(`/api/ops/todos/${id}`, { method: "PATCH", body: JSON.stringify({ ...body, actor: authorEmail }) }));
+  // A move by state, as the definition's lifecycle reads it (clientMove): refused here under strict (the board and the
+  // detail never offer it), asked for its reason when its transition needs a comment, else sent. The default
+  // definition's lifecycle is off: every move is sent as before.
+  const requestMove = (t: ApiTodo, to: string) => {
+    const from = stateOf(TU, tv, t);
+    const m = clientMove(tv, t as never, from, to, { me: authorEmail, role });
+    if (m.blocked) return;
+    const body = moveTo(TU, to);
+    if (!m.needsComment) return void patch(t.id, body);
+    const stateLabel = (x: string) => TU.states.find((s) => s.value === x)?.label ?? x;
+    setPendingMove({ id: t.id, body, title: t.title, from: stateLabel(from), to: stateLabel(to), action: m.action });
+  };
   const hide = (id: string) =>
     run(id, async () => {
       await opsFetch(`/api/ops/todos/${id}`, { method: "DELETE" });
@@ -602,16 +662,22 @@ export function TodosPanel({
         noun={TU.noun}
         q={q}
         setQ={setQ}
-        onCreate={createTask}
+        onCreate={taskAccess.create ? createTask : undefined}
         createLabel={TU.createLabel}
         sort={sort}
         setSort={(v) => setSort(v as typeof sort)}
         sortOptions={TU.sorts}
         onClose={onClose}
-        viewSwitcher={<ViewSwitcher view={taskView} setView={setTaskView} />}
+        viewSwitcher={<ViewSwitcher view={taskView} setView={setTaskView} modes={modes.modes} />}
         filter={
           <FilterMenu
             groups={[
+              ...facets.map((f) => ({
+                label: f.label,
+                selected: facetSel[f.id] ?? [],
+                onChange: (next: string[]) => setFacetSel((p) => ({ ...p, [f.id]: next })),
+                options: f.options,
+              })),
               { label: "Scope", selected: scopes, onChange: setScopes, options: SCOPE_OPTIONS },
               ...(PERIOD_UI.enabled
                 ? [
@@ -633,6 +699,17 @@ export function TodosPanel({
       />
 
       <Banners loadError={error} actionError={actionError} noun={TU.noun} />
+      <TaskMetricStrip metrics={metrics} />
+      <TaskWarningsToast warnings={warnings} onDismiss={dismissWarnings} />
+      <MoveReasonDialog
+        move={pendingMove}
+        onCancel={() => setPendingMove(null)}
+        onConfirm={(reason) => {
+          const p = pendingMove;
+          setPendingMove(null);
+          if (p) void patch(p.id, { ...p.body, reason });
+        }}
+      />
 
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -650,15 +727,17 @@ export function TodosPanel({
             renderCard: (t) => (
               <TaskCard
                 task={{
-                  title: t.title,
-                  priority: t.priority,
+                  // What the definition puts on a card (views.board.card): its title, badge and meta fields.
+                  title: cardSpec.titleKey === "title" ? t.title : tv.display(cardSpec.titleKey, tv.get(t as never, cardSpec.titleKey)) || t.title,
+                  priority: cardSpec.priorityBadge ? t.priority : "",
                   ...(TU.redefined ? { priorityLabel: TU.priorities.find((p) => p.value === t.priority)?.label } : {}),
                   done: t.done,
-                  assignee: t.assignee,
+                  assignee: cardSpec.showAssignee ? t.assignee : null,
                   cycleLabel: cycleName(t.cycleId),
                   containerType: t.containerType,
                   containerLabel: t.containerLabel,
-                  due: t.dueAt ? dueLabel(t.dueAt) : null,
+                  due: cardSpec.showDue && t.dueAt ? dueLabel(t.dueAt) : null,
+                  ...(cardSpec.chips.length ? { fields: taskCardChips(tv, cardSpec.chips, t as never, readCtx.stateOf) } : {}),
                 }}
                 selected={selectedId === t.id}
                 onClick={() => setSelectedId(t.id)}
@@ -667,7 +746,9 @@ export function TodosPanel({
             kanban: {
               columns: TU.columns,
               columnOf: (t) => stateOf(TU, tv, t),
-              onMove: (t, col) => patch(t.id, moveTo(TU, col)),
+              onMove: (t, col) => requestMove(t, col),
+              // A strict lifecycle: the moves it forbids are greyed out while a card is dragged, the reason in a tooltip.
+              ...(tv.lifecycle?.enforce === "strict" ? { canDrop: (t: ApiTodo, col: string) => clientMove(tv, t as never, stateOf(TU, tv, t), col, { me: authorEmail, role }).blocked } : {}),
             },
             table: TU.tableColumns ? taskTableColumns(TU, tv, cycleName) : [
               { key: "title", label: "Task", render: (t) => <span className={cn("font-medium", t.done && "text-muted-foreground/60 line-through")}>{t.title}</span> },
@@ -678,7 +759,7 @@ export function TodosPanel({
               { key: "assignee", label: "Assignee", render: (t) => (t.assignee ? t.assignee.split("@")[0] : "—") },
             ],
             timeline: {
-              rangeOf: (t) => ({ start: t.createdAt, end: t.dueAt ?? t.createdAt }),
+              rangeOf: (t) => timelineRange(tv, t as never),
               labelOf: (t) => t.title,
               toneOf: (t) => (t.done ? "bg-emerald-500/60" : t.priority === "high" ? "bg-red-500/70" : "bg-indigo-500/70"),
             },
@@ -695,6 +776,8 @@ export function TodosPanel({
               onCancel={() => setCreating(false)}
               onCreate={async (body) => {
                 const res = await opsFetch<{ item: { id: string } }>("/api/ops/todos", { method: "POST", body: JSON.stringify(body) });
+                const said = writeNotes(res);
+                if (said.length) setWarnings(said);
                 setCreating(false);
                 await refetch();
                 setSelectedId(res.item.id);
@@ -710,7 +793,7 @@ export function TodosPanel({
                 shareView="tasks"
                 shareId={selected.id}
                 deleteLabel={TU.deleteLabel}
-                onDelete={() => hide(selected.id)}
+                onDelete={taskAccess.delete(selected as unknown as AreaRow) ? () => hide(selected.id) : undefined}
                 exportType="task"
                 exportId={selected.id}
                 copyTitle={selected.title}
@@ -720,11 +803,13 @@ export function TodosPanel({
             <TodoDetail
               todo={selected}
               cycles={cycles}
-              busy={busyId === selected.id}
+              busy={busyId === selected.id || !taskAccess.transition(selected as unknown as AreaRow)}
               authorEmail={authorEmail}
               slug={seqSlug("TS", taskSeq.get(selected.id) ?? 0)}
               ui={TU}
               view={tv}
+              {...(tv.lifecycle?.enforce === "strict" ? { moveBlock: (to: string) => clientMove(tv, selected as never, stateOf(TU, tv, selected), to, { me: authorEmail, role }).blocked } : {})}
+              onMove={(to) => requestMove(selected, to)}
               onPatch={(body) => patch(selected.id, body)}
               subtasks={(items ?? []).filter((t) => t.parentId === selected.id)}
               onAddSubtask={(title) => addTodoTo({ title, parentId: selected.id })}
@@ -780,6 +865,46 @@ export function TodosPanel({
             }}
             onClose={onClose}
             onOpenTodo={openTodo}
+          />
+        ) : (view === "deployments" || view === "implementations") && declared[view] ? (
+          <RecordAreaPanel
+            key={view}
+            area={view}
+            areas={areas}
+            accountLabel={ACCOUNT_LABEL}
+            authorEmail={authorEmail}
+            onClose={onClose}
+            chrome={RECORD_CHROME}
+            accountPicker={({ value, onChange, disabled }) => <ReferenceSelect kind="customer" value={value || null} disabled={disabled} onChange={(ref) => onChange(ref?.id ?? "")} />}
+            renderActions={(row, done, can) => (
+              <PanelActionsMenu
+                shareView={view}
+                shareId={row.id}
+                deleteLabel={`Delete ${recordAreaUi(view, areas, ACCOUNT_LABEL).noun}`}
+                onDelete={!can.delete ? undefined : () => {
+                  const target = view === "deployments" ? row.recordId ?? row.id : row.id;
+                  void opsFetch(`/api/ops/${view}/${encodeURIComponent(target)}?customerId=${encodeURIComponent(row.customer ?? "")}`, { method: "DELETE" })
+                    .then(done)
+                    .catch(() => {});
+                }}
+                exportType={view === "deployments" ? "deployment" : "implementation"}
+                exportId={row.id}
+                exportCustomerId={row.customer}
+                copyTitle={row.label}
+              />
+            )}
+            renderRelated={(row) => (
+              <RelatedWork
+                entity={view === "deployments" ? "deployment" : "implementation"}
+                row={row}
+                authorEmail={authorEmail}
+                busy={busyId === "new"}
+                related={todos.filter((td) => td.containerType === (view === "deployments" ? "deployment" : "implementation") && td.containerId === row.id)}
+                onAdd={(title) => addTodoTo({ title, containerType: view === "deployments" ? "deployment" : "implementation", containerId: row.id, containerLabel: row.label })}
+                onToggle={(id, done) => patch(id, moveTo(TU, done ? TU.doneState : TU.initialState))}
+                onOpen={openTodo}
+              />
+            )}
           />
         ) : view === "deployments" ? (
           <MineList<ApiDeploymentRef>
@@ -1771,6 +1896,48 @@ function ReferenceDetail({
   );
 }
 
+/** todos-panel's toolbar and panel chrome, for an area drawn from its definition (./record-area-panel.tsx). */
+const RECORD_CHROME: RecordAreaChrome = {
+  Toolbar: (p) => <TabToolbar {...p} />,
+  FilterMenu: (p) => <FilterMenu {...p} />,
+  PanelHeader: (p) => <PanelHeader {...p} />,
+  PanelSection: (p) => <PanelSection {...p} />,
+};
+
+/** The related work under a record drawn from its definition: its tasks, its activity, its comments (as ReferenceDetail). */
+function RelatedWork({
+  entity,
+  row,
+  authorEmail,
+  busy,
+  related,
+  onAdd,
+  onToggle,
+  onOpen,
+}: {
+  readonly entity: "deployment" | "implementation";
+  readonly row: RecordAreaRow;
+  readonly authorEmail?: string;
+  readonly busy: boolean;
+  readonly related: readonly ApiTodo[];
+  readonly onAdd: (title: string) => void;
+  readonly onToggle: (id: string, done: boolean) => void;
+  readonly onOpen: (id: string) => void;
+}) {
+  const ordered = [...related].sort((a, b) => Date.parse(a.dueAt ?? a.createdAt) - Date.parse(b.dueAt ?? b.createdAt));
+  return (
+    <>
+      <div className="px-5 pb-4">
+        <SubtaskList items={ordered} busy={busy} onToggle={onToggle} onAdd={onAdd} onOpen={onOpen} />
+      </div>
+      <div className="flex flex-col gap-4 border-border/60 border-t px-5 py-4">
+        <ActivityFeed entity={entity} id={row.id} />
+        <CommentThread entity={entity} id={row.id} label={row.label} authorEmail={authorEmail} />
+      </div>
+    </>
+  );
+}
+
 /**
  * A redefined task's table: the definition's columns, each read off the row (a column, or an own field under
  * `custom`) and shown as the definition says. The title strikes through when done, as today's table does.
@@ -1818,12 +1985,18 @@ function TodoDetail({
   slug,
   ui,
   view,
+  moveBlock,
+  onMove,
   onPatch,
   subtasks,
   onAddSubtask,
   onToggleSubtask,
   onOpenSubtask,
 }: {
+  /** Why a strict lifecycle refuses moving this task to a state (that choice is greyed out), or null. */
+  readonly moveBlock?: (to: string) => string | null;
+  /** Move the task to a state (the panel asks for a reason when the move needs one); a plain write when absent. */
+  readonly onMove?: (to: string) => void;
   readonly todo: ApiTodo;
   readonly cycles: ApiCycle[];
   readonly busy: boolean;
@@ -1872,12 +2045,15 @@ function TodoDetail({
           {/* Even 2-col grid — no orphaned field (Due used to sit alone). */}
           <div className="grid grid-cols-2 gap-x-3 gap-y-4">
             <Field label={ui.labels.status}>
-              <OpsSelect value={stateOf(ui, view, todo)} disabled={busy} onChange={(e) => onPatch(moveTo(ui, e.target.value))}>
-                {ui.states.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.label}
-                  </option>
-                ))}
+              <OpsSelect value={stateOf(ui, view, todo)} disabled={busy} onChange={(e) => (onMove ? onMove(e.target.value) : onPatch(moveTo(ui, e.target.value)))}>
+                {ui.states.map((s) => {
+                  const blocked = moveBlock?.(s.value) ?? null;
+                  return (
+                    <option key={s.value} value={s.value} disabled={blocked ? true : undefined} title={blocked ?? undefined}>
+                      {s.label}
+                    </option>
+                  );
+                })}
               </OpsSelect>
             </Field>
             <Field label={ui.labels.priority}>
@@ -2009,6 +2185,7 @@ function TodoDetail({
           onToggle={onToggleSubtask}
           onAdd={onAddSubtask}
           onOpen={onOpenSubtask}
+          placeholder={ui.addSubtask}
         />
       </div>
 
@@ -2133,7 +2310,8 @@ function PanelActionsMenu({
 }: {
   readonly shareView: TodoViewKey;
   readonly shareId: string;
-  readonly onDelete: () => void;
+  /** Omitted: the delete is not offered (the area's permissions do not let this person delete it). */
+  readonly onDelete?: () => void;
   readonly deleteLabel: string;
   /** The entity to export (Copy as JSON / Markdown) — resolved server-side into
    *  the full picture (pointers + data-room context). Omit for no export. */
@@ -2210,11 +2388,15 @@ function PanelActionsMenu({
             </DropdownMenuItem>
           </>
         ) : null}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onDelete} className="gap-2 text-red-400">
-          <Trash2Icon className="size-3.5" />
-          {deleteLabel}
-        </DropdownMenuItem>
+        {onDelete ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onDelete} className="gap-2 text-red-400">
+              <Trash2Icon className="size-3.5" />
+              {deleteLabel}
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -2229,12 +2411,15 @@ function SubtaskList({
   onAdd,
   onOpen,
   busy,
+  placeholder = "Add subtask…",
 }: {
   readonly items: readonly ApiTodo[];
   readonly onToggle: (id: string, done: boolean) => void;
   readonly onAdd: (title: string) => void;
   readonly onOpen: (id: string) => void;
   readonly busy?: boolean;
+  /** The add line's placeholder (a redefined task's own word). */
+  readonly placeholder?: string;
 }) {
   const [draft, setDraft] = useState("");
   const done = items.filter((t) => t.done).length;
@@ -2289,7 +2474,7 @@ function SubtaskList({
               submit();
             }
           }}
-          placeholder="Add subtask…"
+          placeholder={placeholder}
           className={cn("min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground/40", TYPE.body)}
         />
       </div>
@@ -2536,6 +2721,8 @@ function CyclesManager({
   const roster = rosterItems ?? [];
   // Mode team: a period is its lead's, so the list opens on "mine". Mode individual: a period is everyone's.
   const { scopes, setScopes, inScope } = useScope(authorEmail, PERIOD_UI.individual ? [] : ["me"]);
+  // Who may (records.areas.periods.permissions): what this person may not do is not offered (./record-access.ts).
+  const periodAccess = useRecordAccess("periods", authorEmail);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -2633,7 +2820,7 @@ function CyclesManager({
         nounPlural={PERIOD_UI.searchNounPlural}
         q={q}
         setQ={setQ}
-        onCreate={create}
+        onCreate={periodAccess.create ? create : undefined}
         createLabel={PERIOD_UI.createLabel}
         sort={sort}
         setSort={setSort}
@@ -2704,10 +2891,10 @@ function CyclesManager({
                 shareView={PERIOD_VIEW}
                 shareId={selectedCycle.id}
                 deleteLabel={PERIOD_UI.deleteLabel}
-                onDelete={() => {
+                onDelete={periodAccess.delete(selectedCycle as unknown as AreaRow) ? () => {
                   void archive(selectedCycle.id);
                   setSelectedCycleId(null);
-                }}
+                } : undefined}
               />
             }
           >
@@ -2733,7 +2920,7 @@ function CyclesManager({
               cycle={selectedCycle}
               stats={statsFor(selectedCycle)}
               roster={roster}
-              busy={busy}
+              busy={busy || !periodAccess.update(selectedCycle as unknown as AreaRow)}
               authorEmail={authorEmail}
               tasks={todos.filter((t) => t.cycleId === selectedCycle.id)}
               slug={seqSlug(PERIOD_UI.slugPrefix, cycleSeq.get(selectedCycle.id) ?? 0)}

@@ -4,6 +4,7 @@ import { orgContextForRequest } from "@/lib/org-context";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { accessForSession } from "@/lib/chat-session-access";
 import { boundedReplay } from "@/lib/chat-replay-stream";
+import { serverStopwatch } from "@/lib/server-timing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,11 +56,19 @@ const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
  * stream proxy and touches no tenant table.
  */
 export async function GET(request: NextRequest) {
+  /**
+   * Server-Timing (lib/server-timing.ts): sign-in, the access check, eve's response headers, and the total up to
+   * this response's own headers. What happens after those (eve's first body chunk, the marker) is carried by the
+   * marker line itself (`timing`, lib/chat-replay-stream.ts).
+   */
+  const startedAt = performance.now();
+  const watch = serverStopwatch();
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   if (!AGENT_URL) return NextResponse.json({ error: "Agent URL not configured" }, { status: 503 });
   const authHeader = request.headers.get("authorization");
   const identity = await verifyOpsAuth(authHeader);
+  watch.mark("auth");
   if (!identity || !authHeader) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
@@ -79,6 +88,7 @@ export async function GET(request: NextRequest) {
   const startIndex = rawStart === null ? 0 : Number(rawStart);
 
   const access = await accessForSession(ctx.orgId, identity.email.toLowerCase(), sessionId);
+  watch.mark("access");
   if (!access.read) {
     return NextResponse.json({ error: "That conversation isn't yours." }, { status: 403 });
   }
@@ -90,6 +100,7 @@ export async function GET(request: NextRequest) {
     `${AGENT_URL}/eve/v1/session/${encodeURIComponent(sessionId)}/stream${query}`,
     { headers: { authorization: authHeader } },
   );
+  watch.mark("eve");
   if (!upstream.ok || !upstream.body) {
     return NextResponse.json({ error: `Stream unavailable (${upstream.status}).` }, { status: 502 });
   }
@@ -112,6 +123,7 @@ export async function GET(request: NextRequest) {
        * marker is still emitted on silence, never on content.
        */
       assumeParked: params.get("parked") === "1",
+      timing: { startedAt },
     }),
     {
       status: 200,
@@ -119,6 +131,7 @@ export async function GET(request: NextRequest) {
         "content-type": upstream.headers.get("content-type") ?? "application/x-ndjson",
         "cache-control": "no-store, no-transform",
         "x-accel-buffering": "no",
+        "server-timing": watch.header(),
       },
     },
   );

@@ -217,16 +217,7 @@ export function describeArea(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS
   lines.push(`- ${/^[aeiou]/i.test(v.noun) ? "An" : "A"} **${v.noun}** (plural: ${v.nouns})${a.description ? `: ${a.description}` : "."}`);
   const own = v.ownFields.filter((f) => !f.hidden);
   if (own.length) lines.push(`  Its own fields (in \`custom\`): ${own.map((f) => describeField(f)).join("; ")}.`);
-  if (v.lifecycle) {
-    const states = v.lifecycle.states.filter((s) => !s.retired).map((s) => {
-      const into = (a.lifecycle?.transitions ?? []).filter((t) => t.to === s.value);
-      const needs = [...new Set(into.flatMap((t) => t.requires ?? []))].map((k) => `"${v.label(k)}"`);
-      const roles = [...new Set(into.flatMap((t) => t.roles ?? []))];
-      const extra = [roles.length ? `${roles.join("/")} only` : "", needs.length ? `needs ${needs.join(", ")}` : ""].filter(Boolean).join("; ");
-      return `"${s.label}"${extra ? ` (${extra})` : ""}`;
-    });
-    lines.push(`  ${v.lifecycle.own ? `\`custom.${v.lifecycle.field}\`` : `\`${v.lifecycle.field}\``} moves through: ${states.join(" → ")}.`);
-  }
+  lines.push(...describeMoves(id, areas));
   const computed = v.fields.filter((f) => f.computed && !f.hidden);
   if (computed.length) lines.push(`  Computed, never set: ${computed.map((f) => `\`${f.key}\``).join(", ")}.`);
   if (a.agent?.describe) lines.push(`  ${a.agent.describe}`);
@@ -249,4 +240,50 @@ export function describeField(f: RecordField): string {
     : f.type === "file" ? (f.many ? "a list of data-room paths" : "a data-room path")
     : f.type.replace("_", " ");
   return `\`${f.key}\` ("${f.label ?? f.key}", ${type}${f.required === true ? ", required" : f.required === "on_create" ? ", required when created" : ""})`;
+}
+
+/**
+ * An area's lifecycle as its MOVES, for the model (the card, MCP's task tools): its states, then from each state the
+ * moves there are, each with who may make it, who may not (four eyes), what it needs set, whether it needs a comment,
+ * and what it stamps, then what the enforce mode does. Never one line of states, which reads as an order the record
+ * goes through. [] when the area has no lifecycle.
+ */
+export function describeMoves(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS): string[] {
+  const v = areaView(id, areas);
+  const a = v.area;
+  const lines: string[] = [];
+  if (!v.lifecycle) return lines;
+  // The lifecycle as its MOVES, never as one line of states (which reads as an order the record goes through): the
+  // states, then from each state the moves there are, each with who may make it, who may not (four eyes), what it
+  // needs set, whether it needs a comment, and what it stamps.
+  const lc = v.lifecycle;
+  const name = lc.own ? `\`custom.${lc.field}\`` : `\`${lc.field}\``;
+  const shown = (s: string) => `"${v.display(lc.field, s)}"`;
+  const live = lc.states.filter((s) => !s.retired);
+  lines.push(`  Its state is ${name}: ${live.map((s) => `${JSON.stringify(s.value)} (${shown(s.value)})`).join(", ")}${lc.initial ? `; a new one starts in ${shown(lc.initial)}` : ""}.`);
+  const ts = a.lifecycle?.transitions ?? [];
+  if (!ts.length) lines.push("  Any state may move to any other.");
+  else {
+    const rule = (t: RecordTransition) => {
+      const r = [
+        t.label ?? "",
+        t.roles?.length ? `${t.roles.join(" or ")} only` : "",
+        t.not_by === "{entered_by}" ? "not by whoever moved it into the state it leaves: a second person must" : t.not_by ? `not by its ${v.label(t.not_by).toLowerCase()}` : "",
+        t.requires?.length ? `needs ${t.requires.map((k) => `"${v.label(k)}"`).join(" and ")} set` : "",
+        t.requires_comment ? `needs a comment saying why${id === "tasks" ? " (`reason`)" : ""}` : "",
+        ...Object.entries(t.set ?? {}).map(([k, x]) => `sets "${v.label(k)}" to ${x === "{me}" ? "you" : x === "{today}" || x === "{now}" ? "today" : JSON.stringify(x)}`),
+      ].filter(Boolean);
+      return `${shown(t.to)}${r.length ? ` (${r.join("; ")})` : ""}`;
+    };
+    const any = ts.filter((t) => t.from === "*");
+    for (const s of live) {
+      const out = ts.filter((t) => t.from !== "*" && t.from.includes(s.value) && t.to !== s.value);
+      if (out.length) lines.push(`  - From ${shown(s.value)} you can go to ${out.map(rule).join(", ")}.`);
+    }
+    if (any.length) lines.push(`  - From any state you can go to ${any.map(rule).join(", ")}.`);
+    const ends = live.filter((s) => !ts.some((t) => t.to !== s.value && (t.from === "*" || t.from.includes(s.value))));
+    if (ends.length) lines.push(`  - ${ends.map((s) => shown(s.value)).join(", ")}: no move out.`);
+    if (lc.enforce !== "off") lines.push(`  A move not listed here, or that breaks its rule, is ${lc.enforce === "strict" ? "refused, and the refusal names the moves you can make" : "let through but noted in the activity feed: keep to them"}.`);
+  }
+  return lines;
 }

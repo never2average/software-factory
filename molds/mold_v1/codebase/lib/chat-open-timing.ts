@@ -171,8 +171,31 @@ export interface ChatOpenRecord {
   specialists: SpecialistStreamStats[];
   /** Characters this origin holds in localStorage, read once when the record closes (the quota question). */
   storageChars: number | null;
+  /**
+   * What the SERVER said about its own time (`Server-Timing`, lib/server-timing.ts), beside the browser's times
+   * above: the saved copy's read (`snapshot`: sign-in, access, the database read, total) and each replay read
+   * (`replay`, at most {@link SERVER_TIMING_MAX_READS}: sign-in, access, eve's headers, total to the response
+   * headers, and from the end marker eve's first body chunk and the marker itself). Null / empty when the route did
+   * not say (an older deployment, a direct read of eve).
+   */
+  server: {
+    snapshot: Readonly<Record<string, number>> | null;
+    replay: ServerReplayTiming[];
+  };
   closed: boolean;
 }
+
+/** One replay read's server-side times, in ms from the start of the request on the server. */
+export interface ServerReplayTiming {
+  readonly phases: Readonly<Record<string, number>>;
+  /** eve's first body chunk; null when none came before the marker. */
+  readonly firstByte: number | null;
+  /** The end marker. */
+  readonly marker: number | null;
+}
+
+/** Replay reads kept per record: the seam read, its retry, and the first segments of a full replay. */
+export const SERVER_TIMING_MAX_READS = 6;
 
 /* ---------------------------------------------------------------------------------------------------------------- */
 /* Configuration and module state                                                                                    */
@@ -295,6 +318,12 @@ export interface ChatOpenHandle {
   replay(ms: number, events: number): void;
   shimmerReturned(): void;
   savedCopy(outcome: SavedCopyWrite, status?: number): void;
+  /**
+   * What a route's `Server-Timing` (and, for a replay, its end marker) said: the saved copy's read, or one replay
+   * read. Kept even after the window closed, like a write's answer: it belongs to this record.
+   */
+  serverTiming(kind: "snapshot", phases: Readonly<Record<string, number>>): void;
+  serverTiming(kind: "replay", phases: Readonly<Record<string, number>>, marker?: { firstByte: number | null; marker: number | null }): void;
   /** The open has decided what it shows (see `settledMs`). Wakes {@link whenChatOpenSettled}. */
   settled(): void;
   /** A newer click took over, or the open was abandoned. Closes the record now. */
@@ -309,6 +338,7 @@ const NOOP_HANDLE: ChatOpenHandle = Object.freeze({
   replay() {},
   shimmerReturned() {},
   savedCopy() {},
+  serverTiming() {},
   settled() {},
   cancel() {},
 });
@@ -352,6 +382,7 @@ export function beginChatOpen(input: {
       lag: { source: "none", count: 0, totalMs: 0, maxMs: 0, windowMs: 0 },
       specialists: [],
       storageChars: null,
+      server: { snapshot: null, replay: [] },
       closed: false,
     };
     const state: OpenState = {
@@ -435,6 +466,22 @@ function handleFor(state: OpenState): ChatOpenHandle {
         if (typeof status === "number") r.savedCopyStatus = status;
       }, undefined);
     },
+    serverTiming(kind: "snapshot" | "replay", phases: Readonly<Record<string, number>>, marker?: { firstByte: number | null; marker: number | null }) {
+      safe(() => {
+        // Only this open's own requests call it, so it is kept even if the answer lands after another click.
+        const clean = cleanPhases(phases);
+        if (kind === "snapshot") {
+          r.server.snapshot = clean;
+          return;
+        }
+        if (r.server.replay.length >= SERVER_TIMING_MAX_READS) return;
+        r.server.replay.push({
+          phases: clean,
+          firstByte: typeof marker?.firstByte === "number" && Number.isFinite(marker.firstByte) ? Math.round(marker.firstByte) : null,
+          marker: typeof marker?.marker === "number" && Number.isFinite(marker.marker) ? Math.round(marker.marker) : null,
+        });
+      }, undefined);
+    },
     settled() {
       safe(() => {
         if (!live() || r.settledMs !== null) return;
@@ -450,6 +497,20 @@ function handleFor(state: OpenState): ChatOpenHandle {
       }, undefined);
     },
   };
+}
+
+/** Plain-token names with finite, non-negative durations, at most 8 of them: nothing else reaches the record. */
+function cleanPhases(phases: Readonly<Record<string, number>> | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!phases || typeof phases !== "object") return out;
+  let kept = 0;
+  for (const [name, ms] of Object.entries(phases)) {
+    if (kept >= 8) break;
+    if (!/^[a-z][a-z0-9-]{0,23}$/.test(name) || typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) continue;
+    out[name] = Math.round(ms);
+    kept += 1;
+  }
+  return out;
 }
 
 function wake(state: OpenState): void {
@@ -749,9 +810,28 @@ export function formatOpenDetail(r: ChatOpenRecord): string {
     t.count
       ? `spec=${t.count} req=${t.requests} rx=${kb(t.bytes)} rx5=${kb(t.bytesFirst5s)} hdr=${n(t.maxHeadersMs)} settle=${n(t.maxSettleMs)} pend=${t.pending}`
       : "spec=0",
+    formatServerDetail(r.server),
     r.storageChars !== null ? `ls=${Math.round(r.storageChars / 1000)}k` : "",
   ].filter(Boolean);
   return parts.join(" ").slice(0, DETAIL_MAX);
+}
+
+/**
+ * The server's side of the open, for the detailed row: `srv=snap:<db>/<total>` for the saved copy's read (the
+ * database read and the route's total) and `eve:<headers>/<first byte>/<marker>` for the FIRST replay read (eve's
+ * response headers, its first body chunk, the end marker), `+n` when more reads followed. Empty when no route said.
+ */
+export function formatServerDetail(server: ChatOpenRecord["server"] | undefined): string {
+  if (!server) return "";
+  const parts: string[] = [];
+  if (server.snapshot && Object.keys(server.snapshot).length) {
+    parts.push(`snap:${n(server.snapshot.snapshot)}/${n(server.snapshot.total)}`);
+  }
+  const first = server.replay[0];
+  if (first) {
+    parts.push(`eve:${n(first.phases.eve)}/${n(first.firstByte)}/${n(first.marker)}${server.replay.length > 1 ? `+${server.replay.length - 1}` : ""}`);
+  }
+  return parts.length ? `srv=${parts.join(",")}` : "";
 }
 
 /* ---- the counter -------------------------------------------------------------------------------------------- */

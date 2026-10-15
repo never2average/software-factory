@@ -10,15 +10,22 @@ import { once } from "eve/tools/approval";
 import { z } from "zod";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
-import { todos } from "./db/schema.ts";
+import { orgMembers, todos } from "./db/schema.ts";
 import { orgForSession } from "./org-context.ts";
 import { taskWorkflowRequest } from "./task-workflow-service.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { fill } from "./agent-vocabulary.ts";
 import { WORK_PERIODS, currentPeriod, progressByPerson } from "./work-periods.ts";
 import { ensureCurrentPeriod, goalsFor, newPeriodWindow, rollOverEnded, setMemberGoal, taskWriteRefusal } from "./work-period-store.ts";
-import { areaView, describeArea, describeField, type RecordField } from "./record-areas.ts";
-import { prepareTaskWrite, taskCustom } from "./task-area.ts";
+import { areaView, describeArea, describeField, type AreaRow, type RecordField } from "./record-areas.ts";
+import { prepareTaskWrite, taskCustom, taskLifecycleEnforced } from "./task-area.ts";
+import { permissionsDeclared } from "./record-permissions.ts";
+import { periodRefusal, taskDeleteRefusal } from "./record-permissions-store.ts";
+import { needsEnteredBy, type NextOccurrence } from "./record-lifecycle.ts";
+import { recursOnDone } from "./task-recurrence.ts";
+import { recurAfterWrite } from "./task-recurrence-run.ts";
+import { storedTask, whoEntered, writeOutcome } from "./record-lifecycle-store.ts";
+import type { RecordRole } from "./record-areas.generated.ts";
 
 function callerEmail(ctx: {
   session: {
@@ -52,6 +59,29 @@ const linkType = z.enum(["ticket", "customer", "app", "cron", "workflow", "chat"
  */
 const TASKS = areaView("tasks");
 const OWN_STATES = TASKS.redefined && TASKS.lifecycle?.own ? TASKS.lifecycle : null;
+/**
+ * The lifecycle's rules are enforced ("warn" or "strict"; agent/lib/record-lifecycle.ts): a move is checked against
+ * the stored task, as the caller's role in the workspace, exactly as the ops API checks it. Off by default.
+ */
+const ENFORCED = taskLifecycleEnforced();
+/** A recurring task (records.areas.tasks.recurrence): completing one creates the next (agent/lib/task-recurrence.ts). */
+const RECURS = recursOnDone();
+/**
+ * The tasks say who may create, change or delete them (records.areas.tasks.permissions; agent/lib/record-permissions.ts):
+ * a write reads the caller's role and the stored task, as the ops API does. Off by default.
+ */
+const PERMS = permissionsDeclared("tasks");
+/** Some move needs a comment: the tool takes one (`reason`), only then. */
+const TAKES_COMMENT = ENFORCED && (TASKS.area.lifecycle?.transitions ?? []).some((t) => t.requires_comment);
+
+/** The caller's role in the workspace (org_members), for a transition's `roles`; "member" when none is recorded. */
+async function roleOf(orgId: string, email: string): Promise<RecordRole> {
+  const [row] = await withOrgDb(orgId, (tx) =>
+    tx.select({ role: orgMembers.role }).from(orgMembers).where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.email, email.toLowerCase()))).limit(1),
+  );
+  const role = row?.role;
+  return role === "owner" || role === "admin" || role === "engineer" ? role : "member";
+}
 
 /** One upsert_todo call, whichever definition the tool was built from. */
 async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: Parameters<typeof callerEmail>[0]) {
@@ -69,10 +99,30 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
     if (refused) throw new Error(refused);
   }
   if (!id && !fields.title) throw new Error(`Creating a ${TASKS.redefined ? TASKS.noun : "todo"} needs a \`title\`.`);
-  // The deployment's definition of a task: a refused write never reaches the task service.
-  const prepared = prepareTaskWrite(id ? "update" : "create", fields, { actor });
+  // The deployment's definition of a task: a refused write never reaches the task service. With its lifecycle
+  // enforced, a move is checked against the stored task as the caller's role (a refusal names the moves there are).
+  const lifecycle = ENFORCED || RECURS || PERMS ? await lifecycleInputs(orgId, actor, id ?? null) : {};
+  const prepared = prepareTaskWrite(id ? "update" : "create", fields, { actor, ...lifecycle });
   if (!prepared.ok) throw new Error(prepared.errors.join(" "));
   const body = prepared.body ?? fields;
+  // After the write: the next occurrence of a recurring task it completed (once), then its move in the feed.
+  const recur = async (item: unknown): Promise<{ next?: NextOccurrence }> => {
+    if (!RECURS) return {};
+    try {
+      const next = await recurAfterWrite({ orgId, actor, before: (lifecycle as { before?: AreaRow | null }).before ?? null, item: item as AreaRow, withTx: (fn) => withOrgDb(orgId, fn) });
+      return next ? { next } : {};
+    } catch (error) {
+      console.error("[upsert_todo] could not create the next occurrence:", error);
+      return {};
+    }
+  };
+  const recordMove = async (taskId: string) => {
+    if (!prepared.lifecycle) return;
+    const comment = typeof fields.reason === "string" ? fields.reason : null;
+    await withOrgDb(orgId, (tx) => writeOutcome(tx, orgId, { type: "task", id: taskId }, actor, TASKS, prepared.lifecycle, comment)).catch((error) => {
+      console.error(`[upsert_todo] could not record the move of task ${taskId}:`, error);
+    });
+  };
 
   if (id) {
     const item = await taskWorkflowRequest<{ id: string; title: string; done: boolean }>(
@@ -81,7 +131,8 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
       `/api/v1/tasks/${encodeURIComponent(id)}`,
       { method: "PATCH", body },
     );
-    return { updated: true as const, todo: { id: item.id, title: item.title, done: item.done } };
+    await recordMove(item.id);
+    return { updated: true as const, todo: { id: item.id, title: item.title, done: item.done }, ...(prepared.warnings.length && ENFORCED ? { warnings: prepared.warnings } : {}), ...(await recur(item)) };
   }
 
   const item = await taskWorkflowRequest<{ id: string; title: string }>(
@@ -90,7 +141,21 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
     "/api/v1/tasks",
     { method: "POST", body },
   );
-  return { created: true as const, todo: { id: item.id, title: item.title } };
+  await recordMove(item.id);
+  return { created: true as const, todo: { id: item.id, title: item.title }, ...(prepared.warnings.length && ENFORCED ? { warnings: prepared.warnings } : {}) };
+}
+
+/** What the lifecycle's rules read besides the body: the caller's role, the stored task, who entered its state. */
+async function lifecycleInputs(orgId: string, actor: string, id: string | null) {
+  const role = ENFORCED || PERMS ? await roleOf(orgId, actor) : undefined;
+  if (!id) return { role };
+  const lc = TASKS.lifecycle!;
+  return withOrgDb(orgId, async (tx) => {
+    const before = await storedTask(tx, orgId, id);
+    const from = before ? TASKS.get(before, lc.field) : null;
+    const by = before && typeof from === "string" && needsEnteredBy(TASKS, from) ? await whoEntered(tx, orgId, { type: "task", id }, TASKS, before, from) : null;
+    return { role, before, enteredBy: by };
+  });
 }
 
 /** An own field as a tool parameter: its choices as an enum, its label and help as the description. */
@@ -158,7 +223,7 @@ export const upsertTodoTool = modelFacing("upsert_todo", !TASKS.redefined
 })
   : defineTool({
     description: fill(
-      `Create OR update ${/^[aeiou]/i.test(TASKS.noun) ? "an" : "a"} ${TASKS.noun} (the team's ${TASKS.nouns}; NOT a {account} ticket, use create_ticket for those). Omit \`id\` to create; pass \`id\` to update just the fields you provide.${OWN_STATES ? ` Move it by setting \`custom.${OWN_STATES.field}\` (its state); its status follows, never set it.` : ""} It can be filed under a {deployment} or an {implementation} (set container*), linked to a related object (set link*), assigned and given a due date.\n${TASK_CARD}`,
+      `Create OR update ${/^[aeiou]/i.test(TASKS.noun) ? "an" : "a"} ${TASKS.noun} (the team's ${TASKS.nouns}; NOT a {account} ticket, use create_ticket for those). Omit \`id\` to create; pass \`id\` to update just the fields you provide.${OWN_STATES ? ` Move it by setting \`custom.${OWN_STATES.field}\` (its state); its status follows, never set it.` : ""}${ENFORCED ? ` Moves follow the ${TASKS.noun}'s lifecycle (below): ${TASKS.lifecycle!.enforce === "strict" ? "a move it does not allow is refused, and the refusal names the moves you can make and what each needs" : "a move it does not allow still goes through, and is noted in the activity feed"}.${TAKES_COMMENT ? " A move that needs a comment takes it in `reason`." : ""}` : ""} It can be filed under a {deployment} or an {implementation} (set container*), linked to a related object (set link*), assigned and given a due date.\n${TASK_CARD}`,
     ),
     approval: once(),
     inputSchema: z.object({
@@ -183,6 +248,7 @@ export const upsertTodoTool = modelFacing("upsert_todo", !TASKS.redefined
       linkId: z.string().nullable().optional(),
       linkLabel: z.string().nullable().optional().describe("Human label for the link chip."),
       assignee: z.string().nullable().optional().describe(`${TASKS.label("assignee", "Assignee")}: an email${TASKS.field("assignee")?.default === "{me}" ? "; you when omitted on create" : "; null = the creator"}.`),
+      ...(TAKES_COMMENT ? { reason: z.string().max(2000).optional().describe("Why you are making this move: the comment a move may need (sent back, asked for more, set aside).") } : {}),
       ...(TASKS.ownFields.some((f) => !f.hidden && !f.computed)
         ? {
             custom: z
@@ -294,8 +360,14 @@ export const hideTodoTool = modelFacing("hide_todo", defineTool({
   approval: once(),
   inputSchema: z.object({ id: z.string().min(1).describe("The todo id from list_todos.") }),
   async execute({ id }, ctx) {
+    const orgId = await orgForSession(ctx);
+    // Hiding is the tasks' delete: who may (records.areas.tasks.permissions), against the stored task.
+    if (PERMS) {
+      const refusal = await withOrgDb(orgId, (tx) => taskDeleteRefusal(tx, orgId, { actor: callerEmail(ctx) }, id));
+      if (refusal) throw new Error(`Nothing was hidden. ${refusal}`);
+    }
     const item = await taskWorkflowRequest<{ id: string; title: string }>(
-      await orgForSession(ctx),
+      orgId,
       callerEmail(ctx),
       `/api/v1/tasks/${encodeURIComponent(id)}`,
       { method: "PATCH", body: { archived: true } },
@@ -411,6 +483,9 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
       if (endsAt !== undefined) fields.endsAt = endsAt ? new Date(endsAt) : null;
       if (id) {
         const org = await orgForSession(ctx);
+        // Who may change a period (records.areas.periods.permissions); nothing read when undeclared.
+        const refusal = await withOrgDb(org, (tx) => periodRefusal(tx, org, { actor: callerEmail(ctx) }, "update", { id, patch: fields }));
+        if (refusal) throw new Error(`Nothing was written. ${refusal}`);
         const [c] = await withOrgDb(org, (tx) =>
           tx.update(cycles).set({ ...fields, updatedAt: new Date() }).where(and(eq(cycles.id, id), eq(cycles.orgId, org))).returning(),
         );
@@ -418,6 +493,8 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
         return { updated: true as const, cycle: { id: c.id, name: c.name } };
       }
       const cycleOrg = await orgForSession(ctx);
+      const refusal = await withOrgDb(cycleOrg, (tx) => periodRefusal(tx, cycleOrg, { actor: callerEmail(ctx) }, "create", { patch: fields }));
+      if (refusal) throw new Error(`Nothing was written. ${refusal}`);
       const [c] = await withOrgDb(cycleOrg, async (tx) => {
         // The workspace's length (its admin's choice, else the profile's): a new cycle given no dates runs that long.
         const window = startsAt === undefined && endsAt === undefined ? await newPeriodWindow(tx, cycleOrg) : null;
@@ -462,6 +539,9 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
         }
         if (cycleId) {
           if (Object.keys(fields).length) {
+            // Who may change a period (records.areas.periods.permissions); nothing read when undeclared.
+            const refusal = await periodRefusal(tx, org, { actor }, "update", { id: cycleId, patch: fields });
+            if (refusal) throw new Error(`Nothing was written. ${refusal}`);
             [row] = await tx.update(cycles).set({ ...fields, updatedAt: new Date() }).where(and(eq(cycles.id, cycleId), eq(cycles.orgId, org))).returning();
           } else {
             [row] = await tx.select().from(cycles).where(and(eq(cycles.id, cycleId), eq(cycles.orgId, org)));
@@ -469,6 +549,8 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
           if (!row) throw new Error(`No cycle with id "${cycleId}".`);
         } else {
           // The workspace's length (its admin's choice, else the profile's): a new {period} given no dates runs that long.
+          const refusal = await periodRefusal(tx, org, { actor }, "create", { patch: fields });
+          if (refusal) throw new Error(`Nothing was written. ${refusal}`);
           const window = startsAt === undefined && endsAt === undefined ? await newPeriodWindow(tx, org) : null;
           if (!fields.name && !window) throw new Error("Creating a cycle needs a `name`.");
           [row] = await tx.insert(cycles).values({ ...(window ? { name: window.name, startsAt: window.startsAt, endsAt: window.endsAt } : {}), ...(fields as { name: string }), orgId: org, createdBy: actor }).returning();

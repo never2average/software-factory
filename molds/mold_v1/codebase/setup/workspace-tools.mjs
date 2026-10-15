@@ -761,7 +761,7 @@ const TOOLS = [
     name: "task_update",
     description:
       T
-        ? `Correct, move or close an existing ${T.noun}. ${ownState ? `Move it by setting custom.${ownState}; its status follows.` : "Set status to move or close it."} Rewrite title/notes when you learn the original was mistaken.`
+        ? `Correct, move or close an existing ${T.noun}. ${ownState ? `Move it by setting custom.${ownState}; its status follows.` : "Set status to move or close it."} Rewrite title/notes when you learn the original was mistaken.${T.moves ? `\n${T.moves}` : ""}`
         : "Correct or close an existing task. Without this the task list can only ACCUMULATE: every correction becomes a new task pointing at a stale one, and a task whose notes turned out to be wrong stays in the backlog asserting something false. Set status:'done' to close, or rewrite title/notes when you learn the original was mistaken.",
     inputSchema: {
       type: "object",
@@ -776,6 +776,9 @@ const TOOLS = [
         assignee: { type: "string" },
         dueAt: { type: "string", description: "ISO-8601" },
         ...periodParam(),
+        // The deployment's lifecycle is enforced and a move needs a comment: say why here. A refused move answers with
+        // the moves there are (the Ops API's 409).
+        ...(T?.takesComment ? { reason: { type: "string", description: "Why you are making this move: the comment a move may need." } } : {}),
       },
       required: ["id"],
     },

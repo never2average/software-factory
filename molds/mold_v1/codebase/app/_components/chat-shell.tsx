@@ -29,6 +29,9 @@ import {
   snapshotWriteNeeded,
 } from "@/lib/chat-snapshot";
 import { withFreshestToken } from "@/lib/chat-session-cursor";
+import { readReplay, type ReplayResult } from "@/lib/chat-replay-read";
+import { openRoute, replayMayReplace } from "@/lib/chat-open-route";
+import { parseServerTiming } from "@/lib/server-timing";
 import { createOpenGuard, type OpenTicket } from "@/lib/chat-open-guard";
 import {
   beginChatOpen,
@@ -42,7 +45,7 @@ import {
   type ChatOpenHandle,
   type SavedCopyWrite,
 } from "@/lib/chat-open-timing";
-import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker } from "@/lib/chat-turn-state";
+import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker, serverEventCount, type TurnEvent } from "@/lib/chat-turn-state";
 import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
 import { isTodoViewKey, type TodoViewKey } from "@/lib/work-periods-ui";
@@ -56,35 +59,6 @@ import { isTodoViewKey, type TodoViewKey } from "@/lib/work-periods-ui";
  */
 const Dataroom = lazyPanel(() => import("./dataroom").then((m) => m.Dataroom), { label: "The data room", overlay: true });
 const OpsCenter = lazyPanel(() => import("./ops-center").then((m) => m.OpsCenter), { label: "The Ops Center", overlay: true });
-
-/**
- * What a replay hands back.
- *
- * `events` are only the events AFTER the requested start index when one was
- * given — a TAIL, not the whole transcript — and `index` is where the stream now
- * is, absolutely. The two are deliberately independent: a cached transcript is
- * compacted, so it holds fewer lines than the stream position it represents.
- */
-interface ReplayResult {
-  events: unknown[];
-  continuationToken?: string;
-  index?: number;
-  /**
-   * WHY the read stopped — because a tail that read nothing is ambiguous
-   * without it. The stream saying "there is nothing after that index" is a fact
-   * about the conversation; a read that timed out is a fact about the network.
-   * They lead to opposite decisions about a cached transcript.
-   */
-  stop?: string;
-  /**
-   * The UPSTREAM closed the response (the server's marker said so, or a direct
-   * read reached a real end of body), as opposed to a read that stopped on
-   * silence. A tail read that ended with nothing in it is the one empty read
-   * that is evidence about a cached transcript (lib/chat-snapshot.ts
-   * `seamVerdict`).
-   */
-  ended?: boolean;
-}
 
 /**
  * A shared open paints only after its seam read returns, so a second seam read
@@ -108,6 +82,20 @@ function endsAtRest(events: readonly unknown[] | undefined): boolean {
     lastServer?.type === "session.completed" ||
     lastServer?.type === "session.failed"
   );
+}
+
+/**
+ * How far the longest copy of this session we hold reaches, as an absolute stream index: this browser's (its stored
+ * cursor, or its event count when that is larger: a mid-turn persist keeps the cursor of the last park) and the saved
+ * copy's (`knownSaved`, the index this page last read or wrote for it). Undefined when neither exists.
+ */
+function longestCopyIndex(s: StoredSession, sessionId: string, knownSaved: number | undefined): number | undefined {
+  let longest = knownSaved;
+  if (s.session?.sessionId === sessionId && s.events?.length) {
+    const local = Math.max(s.session.streamIndex ?? 0, serverEventCount(s.events as readonly TurnEvent[]));
+    longest = Math.max(longest ?? 0, local);
+  }
+  return longest;
 }
 
 /** A thread shared with the current user (from GET /api/ops/threads). Never
@@ -346,8 +334,20 @@ function bootFromCache(email: string | null) {
   const sessions = cached?.cleaned ?? [];
   const lastId = readStored(lastChatKey(email));
   const last = lastId ? sessions.find((s) => s.id === lastId) : undefined;
+  // Exactly what a click mounts with no request (lib/chat-open-route.ts `openRoute`): a parked chat with its
+  // transcript, or one whose turn was still running here a moment ago.
   const instant =
-    last?.session?.sessionId && last.session.continuationToken && last.events?.length ? last : undefined;
+    last?.session?.sessionId &&
+    last.events?.length &&
+    openRoute({
+      sessionId: last.session.sessionId,
+      token: Boolean(last.session.continuationToken),
+      events: last.events,
+      updatedAt: last.updatedAt,
+      now: Date.now(),
+    }) === "local"
+      ? last
+      : undefined;
   return { sessions, repair: cached?.changed ?? false, last, instant };
 }
 
@@ -1025,12 +1025,19 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const snapshotMarkersRef = useRef<Map<string, number>>(new Map());
 
   const fetchSnapshot = useCallback(
-    async (sessionId: string, signal?: AbortSignal): Promise<TranscriptSnapshot | null> => {
+    async (
+      sessionId: string,
+      signal?: AbortSignal,
+      /** The route's `Server-Timing` phases (lib/server-timing.ts), for the open's record. */
+      onTiming?: (phases: Record<string, number>) => void,
+    ): Promise<TranscriptSnapshot | null> => {
       try {
         const res = await fetch(`/api/ops/chat-snapshots?session=${encodeURIComponent(sessionId)}`, {
           headers: getAuthHeaders(),
           signal,
         });
+        const phases = parseServerTiming(res.headers.get("server-timing"));
+        if (Object.keys(phases).length) onTiming?.(phases);
         // 403 (not shared with me), 503 (store down), 404 (not deployed yet) —
         // every one of them means "open it the old way", which is always
         // correct and never wrong, only slow. Slow for a reason worth knowing,
@@ -1542,416 +1549,40 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     setSearchOpen(false);
   }, [supersedeOpen]);
 
-  // Re-read a session's stream from the server, newest-first, so a thread that
-  // was persisted MID-STREAM (its turn still generating, so no boundary event
-  // and no continuation token yet) can be resumed at the server's authoritative
-  // state — the full event list plus the freshest resume token. `advanceSession`
-  // in the eve client only mints a token at a turn boundary (`session.waiting`),
-  // so a tokenless stored session is exactly one persisted mid-generation; this
-  // is the only path that recovers it, since the client store never re-attaches
-  // to an in-flight turn on its own.
-  //
-  // Reads until the live turn PARKS: a boundary event (waiting/completed/failed)
-  // followed by a quiet gap. A boundary that is immediately followed by more
-  // events is a PRIOR turn's park inside the replayed history — the stream keeps
-  // going — so we must not stop on the first boundary (that would truncate a
-  // multi-turn thread); only silence after a boundary means the live turn parked.
-  //
-  // SILENCE IS THE ONLY END-OF-REPLAY SIGNAL. eve's session stream is a live tail
-  // over the durable workflow run: it replays the stored events and then, for any
-  // run that has not TERMINATED, holds the connection open forever with no
-  // heartbeat (eve's own ndjson-stream docs: "a parked `session.waiting` durable
-  // run keeps its event stream open indefinitely"). Only `session.completed` /
-  // `session.failed` end the body.
-  //
-  // So every stop condition here is a quiet window, and the window has to be
-  // armed even when NO boundary was seen — otherwise a session that never
-  // recorded one runs to the 15s hard timeout. That is not a rare shape: it is
-  // exactly the case this function exists to repair (a thread persisted
-  // mid-generation, whose run died before `emitTurnEpilogue` wrote its
-  // `turn.completed` + `session.waiting`), and it is permanent — no boundary is
-  // ever written, so EVERY subsequent open paid the full 15s. It also covers a
-  // thread opened while a turn is genuinely in flight, where waiting longer buys
-  // nothing: the eve store does not attach to the live stream on mount, so the
-  // transcript is a snapshot the moment we stop reading either way.
-  //
-  // Stopping early can only ever drop a SUFFIX, never reorder — the reducer
-  // projects a prefix, which is a consistent earlier state of the same thread.
+  /**
+   * Re-read a session's stream from the server (lib/chat-replay-read.ts `readReplay`, which holds every rule about
+   * when a read has read enough). This wrapper supplies the sign-in headers and keeps the read's record on the window
+   * — `window.__threadOpens` — so a slow open can be inspected after the fact rather than needing a repro while
+   * watching. Nothing leaves the page: the numbers are recorded in the tab that made the request.
+   */
   const replaySession = useCallback(
     async (
       sessionId: string,
-      // For a SHARED thread, read through the membership-checked proxy so revoke
-      // actually cuts access (the eve stream only domain-gates reads).
       viaThreadId?: string,
-      /**
-       * A TAIL read: start at this ABSOLUTE event index instead of at zero, and
-       * return only what comes after it.
-       *
-       * This is what makes a reopen cost the size of what is NEW. The transcript
-       * up to `startIndex` came from the cache (lib/chat-snapshot.ts) and is
-       * already on screen; everything here is the part the cache cannot know
-       * about. `parked` says the caller holds a live resume token, which lets
-       * the server use its SHORT drain window — a tail read of a parked session
-       * replays nothing, so the marker logic would otherwise wait out the long
-       * "the turn may still be thinking" window for a session that is by
-       * definition silent.
-       */
       tail?: { startIndex: number; parked?: boolean },
-      /**
-       * `signal`: the open this read belongs to. When a later click takes over
-       * (lib/chat-open-guard.ts) the read is cancelled, so an abandoned open
-       * stops costing bandwidth and its stop reads "cancelled", never
-       * "timeout".
-       */
-      opts?: { signal?: AbortSignal },
+      /** `timing`: the open this read belongs to, which keeps what the server said about each read's time. */
+      opts?: { signal?: AbortSignal; timing?: ChatOpenHandle },
     ): Promise<ReplayResult | null> => {
-      const base = Math.max(0, Math.floor(tail?.startIndex ?? 0));
-      const events: unknown[] = [];
-      let continuationToken: string | undefined;
-      let serverIndex: number | undefined;
-      /**
-       * Measure the open where the session already is.
-       *
-       * The alternative was asking someone to copy their bearer token out of
-       * localStorage and paste it into a terminal — which is the exact motion
-       * every "paste this in your console" attack depends on, and not a habit
-       * worth teaching to save a measurement. Nothing leaves the page: the
-       * numbers are recorded in the tab that made the request.
-       *
-       * `stopReason` is the value that matters. It separates "the stream was
-       * slow" from "the stream never ended and we sat through our own
-       * deadline", which cannot be read off the source because it depends on
-       * the thread's runtime state.
-       *
-       * `quietMs` is the second number that matters, and it was not being kept:
-       * it is the time spent waiting out a quiet window rather than reading
-       * bytes — latency this client CHOSE, not latency the server imposed. On
-       * the owned path it was 1,500ms per segment, which is why that path now
-       * asks the server where the replay ends instead (`/api/ops/chat-replay`).
-       */
-      const startedAt = performance.now();
-      let quietMs = 0;
-      let stopReason:
-        | "marker"
-        | "terminal"
-        | "park-quiet"
-        | "quiet"
-        | "eof"
-        | "timeout"
-        | "segment-cap"
-        // The request was refused or failed: the read learned nothing.
-        | "error"
-        // A later open took over (lib/chat-open-guard.ts).
-        | "cancelled" = "eof";
-      /** The upstream itself closed (see ReplayResult.ended). */
-      let upstreamEnded = false;
-
-      const bounded = Boolean(viaThreadId);
-      /**
-       * REPLAY IS SEGMENTED, because the stream is.
-       *
-       * This used to be a single open with a 15s cap. But a stream is severed
-       * on a hard ~120s boundary and simply ends — no terminal event, a clean
-       * EOF mid-turn. Live streaming survives that because eve's reader reopens
-       * at the advanced index; replay did not, so re-opening a long thread
-       * mounted a transcript that stopped in the middle of a turn. The stall
-       * detector then correctly reported "the reply stopped before it
-       * finished" about a turn that had completed perfectly well, and the reply
-       * itself was missing from the screen.
-       *
-       * So: keep reopening at the absolute index until the session is genuinely
-       * at rest (a terminal, a DRAINED end marker, or a park with nothing
-       * following), a segment yields nothing new, or the whole open runs out of
-       * budget. `cursor` is an absolute event count and `events` holds only real
-       * events — the `ops.replay.end` marker is never pushed — so `base +
-       * events.length` is exactly where to resume from when the server does not
-       * say.
-       */
-      const deadline = startedAt + (bounded ? 12_000 : 60_000);
-      const MAX_SEGMENTS = 12;
-      let finished = false; // a terminal session.completed/failed — mount NOW
-      // Tracked separately from stopReason: it is set inside a closure, and
-      // narrowing cannot see across one.
-      let sawMarker = false;
-      // True when the LAST event read was a turn/session park — not sticky, so a
-      // park buried in replayed history goes back to the long window as soon as
-      // the next event arrives, instead of leaving the rest of a multi-turn
-      // replay exposed to a 300ms cut.
-      let atBoundary = false;
-      /**
-       * Has the OWNED path's marker route answered at least once?
-       *
-       * `/api/ops/chat-replay` is newer than the deployments that read from it,
-       * and a browser tab lives for days. If it is not there (or the workspace
-       * lookup behind it is down) this falls back to reading eve directly — the
-       * exact code path that shipped before, quiet windows and all. A thread
-       * that opens slowly is a bad day; a thread that will not open is an
-       * outage.
-       */
-      let markerRouteOk = true;
-
-      /** One open. Returns how many real events it contributed. */
-      const readSegment = async (startIndex: number): Promise<number> => {
-        const outer = opts?.signal;
-        if (outer?.aborted) {
-          stopReason = "cancelled";
-          return 0;
-        }
-        const ctrl = new AbortController();
-        const hardTimer = setTimeout(() => ctrl.abort(), bounded ? 8_000 : 15_000);
-        const cancel = () => ctrl.abort();
-        outer?.addEventListener("abort", cancel);
-        let got = 0;
-        let sawAnyEvent = false;
-        /**
-         * ASK THE SERVER WHERE REPLAY ENDS instead of inferring it from silence.
-         *
-         * A proxy can watch the NDJSON go past and inject one `ops.replay.end`
-         * line the moment the backlog drains, with the absolute next event
-         * index. That turns "wait and hope nothing else arrives" into a definite
-         * answer, decided between two deployments in the same region rather than
-         * across this browser's network.
-         *
-         * Only a proxied path can do it. That used to mean SHARED threads only,
-         * so every thread you own — which is nearly all of them — paid a
-         * 1,500ms quiet window per segment instead. `/api/ops/chat-replay` is
-         * the same trick for the owned path, with the same access rule; the
-         * heuristics below remain for the fallback, and for a marker that says
-         * the stream was cut rather than drained.
-         */
-        const url = viaThreadId
-          ? `/api/ops/threads/${encodeURIComponent(viaThreadId)}/stream?replay=1&replayOnly=1${
-              // The proxy has always accepted and forwarded a startIndex; only
-              // this caller never had one to send. With the transcript cached, a
-              // shared open can read its tail too — and shared opens are the
-              // slowest kind, two hops and a membership check away.
-              startIndex > 0 ? `&startIndex=${startIndex}` : ""
-            }`
-          : markerRouteOk
-            ? `/api/ops/chat-replay?session=${encodeURIComponent(sessionId)}&startIndex=${startIndex}${
-                tail?.parked ? "&parked=1" : ""
-              }`
-            : `/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=${startIndex}`;
-        try {
-          let res = await fetch(url, { headers: getAuthHeaders(), signal: ctrl.signal });
-          if (!res.ok && !viaThreadId && markerRouteOk) {
-            // Not there, or not answering. Take the old road for the rest of
-            // this open rather than failing it.
-            markerRouteOk = false;
-            res = await fetch(
-              `/eve/v1/session/${encodeURIComponent(sessionId)}/stream?startIndex=${startIndex}`,
-              { headers: getAuthHeaders(), signal: ctrl.signal },
-            );
-          }
-          if (!res.ok || !res.body) {
-            stopReason = "error";
-            return 0;
-          }
-          /**
-           * Is this answer from a route that injects the end marker? Then the
-           * server decides when the backlog is drained, including how long to
-           * wait for the first byte (lib/chat-replay-stream.ts), and this
-           * client must not race it with a shorter window of its own: its
-           * 1,200 ms pre-first-byte window fired first on every seam read the
-           * server was still waiting on, and an empty seam read was what got
-           * a healthy saved copy deleted. The direct /eve fallback has no
-           * marker, so it keeps the window.
-           */
-          const markerRoute = Boolean(viaThreadId) || markerRouteOk;
-          const reader = res.body.getReader();
-          const dec = new TextDecoder();
-          let buf = "";
-          for (;;) {
-            if (finished) break; // finished sessions never emit more — no wait
-            const read = reader.read();
-            // At a park, a gap means the live turn has parked: stop soon (a
-            // lagging token may still arrive, but the open must not block on
-            // it). Mid-replay, a gap is more likely a slow server than the end,
-            // so wait much longer. Before the first byte, don't race at all:
-            // that is time-to-first-byte, and only the hard timeout bounds it.
-            // A TAIL read is EXPECTED to be empty — a parked thread that nobody
-            // has touched has nothing after its last event, and eve holds the
-            // connection open anyway. With no window before the first byte that
-            // read runs to the 15s hard timeout every time, which would make the
-            // fallback path (no end marker) worse than what it replaced. Here,
-            // silence IS the answer, so it only has to be long enough to outlast
-            // a slow first flush.
-            const quietWindow = atBoundary ? 300 : sawAnyEvent ? 1_500 : tail && !markerRoute ? 1_200 : 0;
-            const waitedFrom = performance.now();
-            // A read that REJECTS (the connection dropped) is marked, so it is never mistaken for the upstream
-            // closing the stream, which is evidence about a saved copy; a dropped connection is not.
-            const failedRead = { done: true as const, value: undefined, failed: true as const };
-            const r = quietWindow
-              ? await Promise.race([
-                  read.catch(() => failedRead),
-                  new Promise<{ done: true; value: undefined; quiet: true }>((resolve) =>
-                    setTimeout(() => resolve({ done: true, value: undefined, quiet: true }), quietWindow),
-                  ),
-                ])
-              : await read.catch(() => failedRead);
-            // Only a window that WON the race cost anything; the rest of the
-            // time the read came back first and the timer was free.
-            if ((r as { quiet?: true }).quiet) quietMs += performance.now() - waitedFrom;
-            if (r.done) {
-              // A real end of body (not our own quiet window, not an abort): the upstream closed.
-              if ((r as { failed?: true }).failed) {
-                if (!ctrl.signal.aborted) stopReason = "error";
-              } else if (!(r as { quiet?: true }).quiet && !ctrl.signal.aborted) {
-                upstreamEnded = true;
-              }
-              break;
-            }
-            buf += dec.decode(r.value, { stream: true });
-            const lines = buf.split("\n");
-            buf = lines.pop() ?? "";
-            for (const l of lines) {
-              if (!l.trim()) continue;
-              try {
-                const ev = JSON.parse(l) as {
-                  type?: string;
-                  data?: { continuationToken?: string; index?: number; drained?: boolean };
-                };
-                // The marker is bookkeeping, not conversation — it must never
-                // reach the reducer. `drained: false` means the marker was
-                // emitted because the UPSTREAM ENDED, not because the backlog
-                // ran dry: that is the ~120s severance, and treating it as the
-                // end of history is exactly how a long thread used to mount
-                // stopping mid-turn. Take the index and reopen there.
-                if (ev.type === "ops.replay.end") {
-                  serverIndex = typeof ev.data?.index === "number" ? ev.data.index : undefined;
-                  sawMarker = true;
-                  if (ev.data?.drained !== false) {
-                    stopReason = "marker";
-                    finished = true;
-                  } else {
-                    upstreamEnded = true;
-                  }
-                  continue;
-                }
-                events.push(ev);
-                got++;
-                sawAnyEvent = true;
-                if (
-                  ev.type === "session.waiting" &&
-                  typeof ev.data?.continuationToken === "string" &&
-                  ev.data.continuationToken
-                ) {
-                  continuationToken = ev.data.continuationToken;
-                }
-                if (ev.type === "session.completed" || ev.type === "session.failed") {
-                  finished = true; // no stragglers — break right after this chunk
-                } else {
-                  // `turn.completed`/`turn.failed` count as a park too: eve
-                  // writes them as a SEPARATE event just before
-                  // `session.waiting`, so a run that died between the two still
-                  // reads as at-rest here rather than falling through to the
-                  // long window.
-                  atBoundary =
-                    ev.type === "session.waiting" ||
-                    ev.type === "turn.completed" ||
-                    ev.type === "turn.failed";
-                }
-              } catch {
-                /* skip malformed line */
-              }
-            }
-          }
-        } catch {
-          /* fall back to whatever we collected */
-          if (!ctrl.signal.aborted) stopReason = "error";
-        } finally {
-          clearTimeout(hardTimer);
-          outer?.removeEventListener("abort", cancel);
-          if (ctrl.signal.aborted) stopReason = outer?.aborted ? "cancelled" : "timeout";
-          ctrl.abort();
-        }
-        return got;
-      };
-
-      let segments = 0;
-      let cursor = base;
-      for (;;) {
-        segments += 1;
-        const got = await readSegment(cursor);
-        if (opts?.signal?.aborted) {
-          stopReason = "cancelled";
-          break;
-        }
-        // Prefer the server's own count: it saw every line, including any this
-        // client could not parse.
-        cursor = serverIndex ?? base + events.length;
-        // At rest: a terminal, a drained marker, or a park with nothing after
-        // it. Done.
-        if (finished || atBoundary) {
-          // The marker is the strongest signal we have; never downgrade it.
-          stopReason = finished ? (sawMarker ? "marker" : "terminal") : "park-quiet";
-          break;
-        }
-        // Nothing new — there is no more history to read, so reopening again
-        // would just spin.
-        if (got === 0) break;
-        // The shared-thread proxy replays the whole backlog and injects its own
-        // end marker; it has no startIndex to resume from.
-        if (bounded) break;
-        if (performance.now() > deadline) {
-          stopReason = "timeout";
-          break;
-        }
-        if (segments >= MAX_SEGMENTS) {
-          stopReason = "segment-cap";
-          break;
-        }
-        // Fell out mid-turn — the 120s severance. Reopen where we stopped.
+      const { result, record } = await readReplay({
+        sessionId,
+        viaThreadId,
+        tail,
+        signal: opts?.signal,
+        headers: getAuthHeaders,
+        onServerTiming: opts?.timing
+          ? (t) => opts.timing?.serverTiming("replay", t.phases, { firstByte: t.firstByte, marker: t.marker })
+          : undefined,
+      });
+      const w = window as unknown as { __threadOpens?: unknown[] };
+      w.__threadOpens = [...(w.__threadOpens ?? []).slice(-49), record];
+      if (record.ms > 2_000 || record.stopReason === "timeout" || record.segments > 1) {
+        console.warn(
+          `[thread-open] ${record.ms}ms (${record.quietMs}ms quiet) · ${record.stopReason} · ${record.segments} segment(s) · ${
+            record.events
+          } events · ${record.shared ? "shared" : "owned"}${record.startIndex ? ` · tail from ${record.startIndex}` : ""}`,
+        );
       }
-
-      {
-        const ms = Math.round(performance.now() - startedAt);
-        const record = {
-          ms,
-          // What the open spent waiting for silence rather than reading. The
-          // number the fast path is trying to drive to zero, kept beside the
-          // total so a regression in either is visible.
-          quietMs: Math.round(quietMs),
-          stopReason,
-          segments,
-          events: events.length,
-          startIndex: base,
-          shared: bounded,
-          sessionId,
-          ended: upstreamEnded,
-          at: new Date().toISOString(),
-        };
-        // Kept on the window so a slow open can be inspected after the fact —
-        // `window.__threadOpens` — rather than needing a repro while watching.
-        const w = window as unknown as { __threadOpens?: unknown[] };
-        w.__threadOpens = [...(w.__threadOpens ?? []).slice(-49), record];
-        if (ms > 2_000 || stopReason === "timeout" || segments > 1) {
-          console.warn(
-            `[thread-open] ${ms}ms (${Math.round(quietMs)}ms quiet) · ${stopReason} · ${segments} segment(s) · ${
-              events.length
-            } events · ${bounded ? "shared" : "owned"}${base ? ` · tail from ${base}` : ""}`,
-          );
-        }
-      }
-
-      /**
-       * A TAIL that read nothing is a RESULT, not a failure.
-       *
-       * The full-replay contract is "null means we learned nothing", because an
-       * empty replay of a whole session means the read failed. A tail of a
-       * parked session legitimately returns zero events — that is the normal,
-       * happy answer, and the one this whole change exists to make cheap — so it
-       * must be distinguishable from a read that fell over. `index` carries the
-       * answer either way.
-       */
-      if (!events.length && !tail) return null;
-      return {
-        events,
-        continuationToken,
-        index: serverIndex ?? base + events.length,
-        stop: stopReason,
-        ended: upstreamEnded,
-      };
+      return result;
     },
     [getAuthHeaders],
   );
@@ -2061,6 +1692,24 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         mountCauseRef.current = "seam-replace";
         setAttachNonce((n) => n + 1);
       }
+      /**
+       * NEVER STORE A READ THAT STOPPED EARLY OVER A LONGER COPY (lib/chat-open-route.ts `replayMayReplace`).
+       *
+       * A replay that hit its deadline, its segment cap or an error is a prefix of the conversation. Written into
+       * this browser's list it replaced a longer transcript there, and posted as the saved copy it became what every
+       * other device mounted. A complete read (a drained marker, a terminal, a park) is always stored: a stream only
+       * grows, so a copy longer than a complete read is the wrong copy.
+       */
+      const longer = longestCopyIndex(s, sessionId, snapshotIndexRef.current.get(sessionId));
+      if (!replayMayReplace(fresh, longer)) {
+        console.warn(`[thread-open] replay stopped early (${fresh.stop}) at ${fresh.index} — not stored over the copy at ${longer}`);
+        reportSnapshotEvent("snapshot-skipped", {
+          sessionId,
+          reason: `truncated-replay stop=${fresh.stop ?? "-"} index=${fresh.index ?? "-"} copy=${longer ?? "-"}`,
+        });
+        timing.savedCopy("skipped");
+        return;
+      }
       // Cache the replayed transcript back so the NEXT open of this thread is
       // INSTANT (no server replay). The active thread is spared from the
       // localStorage quota prune, so this survives.
@@ -2069,6 +1718,12 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           x.id === s.id ? { ...x, events: merged as AgentEvents, session: freshSession } : x,
         ),
       );
+      // A read that stopped at the live edge of a running turn ("live", lib/chat-replay-read.ts) is mid-turn: there is
+      // no saved copy to write until the turn parks, and the live persist path writes it then.
+      if (fresh.stop === "live") {
+        timing.savedCopy("skipped");
+        return;
+      }
       // And durably, so this is the LAST time any device pays for the whole
       // conversation. localStorage caches it for this browser only, and only
       // until the quota prune reaches it.
@@ -2107,7 +1762,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const replaceBehindPaint = useCallback(
     async (s: StoredSession, sessionId: string, ticket: OpenTicket, timing: ChatOpenHandle): Promise<void> => {
       const startedAt = performance.now();
-      const fresh = await replaySession(sessionId, undefined, undefined, { signal: ticket.signal });
+      const fresh = await replaySession(sessionId, undefined, undefined, { signal: ticket.signal, timing });
       timing.replay(performance.now() - startedAt, fresh?.events.length ?? 0);
       if (!fresh) return;
       const swap = () => {
@@ -2168,11 +1823,22 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
       setActiveId(s.id);
       setActiveCustomers(sessionCustomers(s));
       setSearchOpen(false);
-      // Resync from the server when EITHER the stored session was persisted
-      // mid-stream (no resume token) OR its event stream was pruned to fit the
-      // localStorage quota (no events cached). Both mount a stale/empty snapshot
-      // otherwise — replaying restores the full transcript and a live token.
-      if (s.session?.sessionId && (!s.session.continuationToken || !s.events?.length)) {
+      /**
+       * Where this open reads from (lib/chat-open-route.ts `openRoute`). The server, when this browser's events were
+       * pruned to fit the localStorage quota (no events cached), or the stored session was persisted mid-stream (no
+       * resume token) and nothing says its turn is running now: replaying restores the full transcript and a live
+       * token. Everything else mounts what this browser holds, with no request, a RUNNING chat included: its events
+       * end inside a turn and were written in the last few minutes, so the chat's own live reader continues the turn
+       * from the absolute index those events end at, instead of the replay loop reading it until it falls silent.
+       */
+      const route = openRoute({
+        sessionId: s.session?.sessionId,
+        token: Boolean(s.session?.continuationToken),
+        events: s.events,
+        updatedAt: s.updatedAt,
+        now: Date.now(),
+      });
+      if (s.session?.sessionId && route === "network") {
         const sessionId = s.session.sessionId;
         setOpeningChat(true);
         /**
@@ -2206,7 +1872,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
          * conversation's worth of events beforehand.
          */
         const snapshotStartedAt = performance.now();
-        const cached = await fetchSnapshot(sessionId, ticket.signal);
+        const cached = await fetchSnapshot(sessionId, ticket.signal, (phases) => timing.serverTiming("snapshot", phases));
         timing.snapshot(performance.now() - snapshotStartedAt, Boolean(cached));
         // A later click took over while the saved copy was on its way: that open owns the pane, and the shimmer.
         if (!ticket.current()) return;
@@ -2256,7 +1922,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
               sessionId,
               undefined,
               { startIndex: cached.eventIndex - 1, parked: Boolean(s.session.continuationToken) },
-              { signal: ticket.signal },
+              { signal: ticket.signal, timing },
             );
             return { tail, ms: performance.now() - startedAt };
           };
@@ -2317,6 +1983,13 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
                 x.id === s.id ? { ...x, events: merged.events as AgentEvents, session: nextSession } : x,
               ),
             );
+            // A tail that stopped at the live edge of a running turn is mid-turn: the chat's live reader carries on
+            // from `merged.streamIndex`, and the copy is written when the turn parks.
+            if (tail?.stop === "live") {
+              timing.route("running");
+              timing.savedCopy("skipped");
+              return;
+            }
             storeSnapshot({
               sessionId,
               chatSessionId: s.id,
@@ -2346,7 +2019,7 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         let fresh: Awaited<ReturnType<typeof replaySession>> = null;
         const replayStartedAt = performance.now();
         try {
-          fresh = await replaySession(sessionId, undefined, undefined, { signal: ticket.signal });
+          fresh = await replaySession(sessionId, undefined, undefined, { signal: ticket.signal, timing });
         } finally {
           // Only the open that put the shimmer up may take it down: a later click owns it now.
           if (ticket.current()) setOpeningChat(false);
@@ -2354,9 +2027,21 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
         if (!ticket.current()) return;
         if (fresh) {
           timing.replay(performance.now() - replayStartedAt, fresh.events.length);
-          if (!endsAtRest(fresh.events)) timing.route("running");
-          mountReplayed(s, sessionId, fresh, timing, false);
-          return;
+          /**
+           * This browser holds a LONGER copy than a replay that stopped early (`replayMayReplace`): show that copy,
+           * as the local open below does, rather than a transcript cut short; nothing is stored over it.
+           */
+          if (s.events?.length && !replayMayReplace(fresh, longestCopyIndex(s, sessionId, snapshotIndexRef.current.get(sessionId)))) {
+            console.warn(`[thread-open] replay stopped early (${fresh.stop}) at ${fresh.index} — keeping this browser's longer copy`);
+            reportSnapshotEvent("snapshot-skipped", {
+              sessionId,
+              reason: `truncated-replay stop=${fresh.stop ?? "-"} index=${fresh.index ?? "-"} kept-local`,
+            });
+          } else {
+            if (!endsAtRest(fresh.events)) timing.route("running");
+            mountReplayed(s, sessionId, fresh, timing, false);
+            return;
+          }
         }
       }
       // A network open in flight may have put the shimmer up; this click cancelled it, so take it down.

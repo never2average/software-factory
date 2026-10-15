@@ -664,7 +664,8 @@ check(
 /* ---- 5. the client falls back, always ------------------------------------ */
 
 console.log("\nThe client treats it as a cache, not as the truth:");
-const shell = readFileSync("app/_components/chat-shell.tsx", "utf8");
+// The replay reader moved out of the shell into lib/chat-replay-read.ts (unchanged), so it is read with it.
+const shell = readFileSync("app/_components/chat-shell.tsx", "utf8") + readFileSync("lib/chat-replay-read.ts", "utf8");
 // The seam DECISION moved to lib/chat-snapshot.ts `seamVerdict` (scripts/test-chat-open-seam.mjs executes it): an
 // empty or unanswered seam read is no longer evidence against the copy, so it is retried, then kept unverified;
 // only a stream that positively disagrees discards it. These hold that the open still verifies and still discards.

@@ -1,7 +1,7 @@
 {
   "eve": "0.25.1",
   "patch": "patches/eve+0.25.1.patch",
-  "patchSha256": "6cc06514714317deb81cc53bc20253ca5609cb427ef2f9504767978bd3992d78",
+  "patchSha256": "f5db5b32d4f2695a6c1fffd71dad1a81bacf811f3ff196c260debfa565642f76",
   "files": {
     "dist/src/compiled/@workflow/world-local/index.js": "28056b4d06f00e34d9cd5d2a4b42c84148bc7ffb380a5e626d46af7e9941757c",
     "dist/src/compiler/manifest.js": "7e7ae60c6940cb9f0fbfd29f6205101622b3f5a9c6adf580df5a85569bf62dff",
@@ -36,6 +36,8 @@
     "dist/src/internal/authored-definition/core.js": "b9e2600d69968287275d44de2187ec0fd61c84e2e3a4bb0d0dac54788bda01af",
     "dist/src/public/channels/index.d.ts": "bccaa4e15fea0743bf7f328352d17a3cbe2c6b441da7006e88a8613c4603a5c9",
     "dist/src/public/channels/index.js": "0e0da8b00a7284967e2f3fc8fdb43088e1e06a3e99a1436210aee11bd1694355",
+    "dist/src/public/definitions/tool.d.ts": "72ae5663c574ea7084f2470d4d4524a250e585862a674a0013fcb342e4358338",
+    "dist/src/runtime/resolve-agent-graph.js": "a948455a26258f5cc6a686ba7c32a3e016b1879cc8fd07766d95e13326f7274b",
     "dist/src/runtime/resolve-agent.js": "0f30a988def24b67380ce38e9e5d51f04e1029987a10d81f85f0965509d2ae19",
     "dist/src/shared/agent-definition.d.ts": "a944b625df3fecd5b55c00a19bef1e57268fc5821597dd1cf8b029272a6e11a3"
   }

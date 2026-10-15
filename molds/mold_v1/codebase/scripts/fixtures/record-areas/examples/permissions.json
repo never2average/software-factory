@@ -1,0 +1,33 @@
+{
+  "$comment": "Who may write, and metrics, on top of compliance.json (filings), obligation.json (tasks) and programme.json (programmes): scripts/test-record-permissions.mjs and scripts/test-record-permissions-db.mjs. A programme is changed only by an owner or an admin, or by its own owner (own row), and only they set its risk; a task likewise, its reviewer by an owner or an admin only; a period is opened by an owner or an admin, changed by them or an engineer, deleted by an owner. Filings keep the live packs' rule: anyone writes, an owner or an admin deletes or sets the reviewer.",
+  "records": {
+    "areas": {
+      "implementations": {
+        "permissions": {
+          "read": "*",
+          "create": ["owner", "admin", "engineer"],
+          "update": ["owner", "admin"],
+          "delete": ["owner", "admin"],
+          "own": { "field": "implementationOwnerEmail", "may": ["update", "transition"] },
+          "fields": { "implementationRiskLevel": { "update": ["owner", "admin"] } }
+        },
+        "metrics": [
+          { "id": "at-risk", "label": "Programmes at risk", "count": { "where": { "implementationRiskLevel": "Red" } }, "attention": true },
+          { "id": "past-deadline", "label": "Past their deadline", "count": { "where": { "targetGoLiveDate": { "lt": "{today}" }, "implementationStage": { "category": ["open", "active", "blocked"] } } }, "attention": true },
+          { "id": "live-rate", "label": "Live", "ratio": { "num": { "implementationStage": { "category": "done" } }, "den": {} } },
+          { "id": "progress", "label": "Progress, added up", "sum": { "field": "implementationProgressPct", "where": {} } }
+        ]
+      },
+      "tasks": {
+        "permissions": {
+          "update": ["owner", "admin"],
+          "own": { "field": "assignee", "may": ["update", "transition"] },
+          "fields": { "reviewer": { "update": ["owner", "admin"] } }
+        }
+      },
+      "periods": {
+        "permissions": { "create": ["owner", "admin"], "update": ["owner", "admin", "engineer"], "delete": ["owner"] }
+      }
+    }
+  }
+}

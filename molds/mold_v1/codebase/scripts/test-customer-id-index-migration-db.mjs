@@ -153,8 +153,11 @@ try {
     check("after 0025 the drift dry run plans NOTHING to apply", !plan.error && plan.apply.length === 0, plan.error ? plan : plan.apply);
     check("…and nothing the deploy would refuse (no data loss, no index drop)", !plan.error && plan.refused.length === 0, plan.refused);
     check(`…and what it sets aside (${plan.aside?.length ?? "?"} statements) is only policy / row-level-security noise`, !plan.error && plan.aside.every((x) => !/INDEX|CONSTRAINT/i.test(x)), plan.aside);
+    // Compared with the database the whole journal left (taken just above the re-run), not with the state right after
+    // 0025: later entries legitimately add indexes on these tables (0043's GIN on deployments/implementation.custom).
+    const afterJournal = await indexes(db);
     await applyRange(db, entry(TAG).idx - 1, entry(TAG).idx);
-    check("0025 again: nothing changes", JSON.stringify(await indexes(db)) === JSON.stringify(after) && (await fingerprint(db)) === f0);
+    check("0025 again: nothing changes", JSON.stringify(await indexes(db)) === JSON.stringify(afterJournal) && (await fingerprint(db)) === f0);
     await checkKeyServes(db, "A");
     await db.end();
   }
