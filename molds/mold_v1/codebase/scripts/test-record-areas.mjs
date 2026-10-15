@@ -294,9 +294,12 @@ check("view model, an obligation: own state read from custom, its board, labels,
   assert.equal(v.inputFor("evidence"), "file");
   const card = describeArea("tasks", obligationAreas);
   assert.ok(card.startsWith("- An **obligation** (plural: obligations): Something the company must do"), card);
-  assert.ok(card.includes("`custom.state` moves through:"), card);
-  assert.ok(card.includes('"Complied" (owner/admin only)'), card);
-  assert.ok(card.includes('"Evidence submitted" (needs "Evidence")'), card);
+  // The lifecycle as its moves (agent/lib/record-areas.ts describeArea), never one line of states read as an order.
+  assert.ok(card.includes("Its state is `custom.state`: "), card);
+  assert.ok(!card.includes(" → "), "no arrow chain of states");
+  assert.ok(card.includes('- From "Under review" you can go to "Complied" (Mark complied; owner or admin only; not by its owner), "In progress" (Ask for more evidence; needs a comment saying why (`reason`)).'), card);
+  assert.ok(card.includes('"Evidence submitted" (Submit evidence; needs "Evidence" set)'), card);
+  assert.ok(card.includes('"Under review" (Take for review; not by its owner; sets "Reviewer" to you)'), card);
   assert.ok(card.split(/\s+/).length < 400, "a short card");
   assert.equal(describeField(v.field("frequency")), '`frequency` ("Frequency", one of "One-time" | "Monthly" | "Quarterly" | "Half-yearly" | "Annual" | "Event-based")');
 });
@@ -371,7 +374,7 @@ check("an obligation: a move derives the status from the category; a move outsid
   const self = ob("update", { custom: { state: "closed" } }, { before, role: "admin", actor: "ana@example.com" });
   assert.equal(self.ok, true, "warn: the move goes through");
   assert.equal(self.transition.allowed, false);
-  assert.match(self.warnings[0], /^Moving from "Under review" to "Complied" is not possible now: "Complied" \(Mark complied\): not by the owner\. From "Under review" you can move to: "Complied" \(Mark complied\), "In progress" \(Ask for more evidence\)\.$/);
+  assert.match(self.warnings[0], /^Moving from "Under review" to "Complied" is not possible now: "Complied" \(Mark complied\): not by the owner\. From "Under review" you can move to: "Complied" \(Mark complied; not by you: a second person must\), "In progress" \(Ask for more evidence; needs a comment\)\.$/, "each move names what it needs (record-lifecycle.ts)");
   const member = ob("update", { custom: { state: "closed" } }, { before, role: "member", actor: "boss@example.com" });
   assert.match(member.warnings[0], /only owner or admin may make it/);
   const needs = ob("update", { custom: { state: "evidence_submitted" } }, { before: { ...before, custom: { state: "in_progress" } } });

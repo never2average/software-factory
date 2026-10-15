@@ -65,7 +65,9 @@ const SORTABLE = new Set(["text", "integer", "number", "percent", "money", "date
 const OWN_KEY = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
 const TEMPLATE_DEFAULT = /^\{(today([+-][0-9]{1,3}d)?|me|account\.owner)\}$/;
 /** Not fields: the row's identity, its workspace, the own-field store, soft delete. */
-export const SYSTEM_KEYS = ["id", "orgId", "customerId", "displayName", "custom", "archivedAt"];
+// recursFrom: todos.recurs_from, generated from custom.recurs_from (the link a next occurrence carries back, drizzle/0042):
+// never a field, and no area's own field may be called recurs_from.
+export const SYSTEM_KEYS = ["id", "orgId", "customerId", "displayName", "custom", "archivedAt", "recursFrom"];
 /** Columns a write never sets: the database and the service stamp them. */
 export const READ_ONLY = { todos: ["doneAt", "createdBy", "createdAt", "updatedAt"], cycles: ["createdBy", "createdAt", "updatedAt"] };
 /** Pseudo-fields an area offers beside its own: the account a record hangs off. */
@@ -365,13 +367,16 @@ export function checkArea(id, area, ctx) {
       for (const s of t.from === "*" ? [] : t.from) if (!states.includes(s)) return bad(`${at}.from`, `${quote(s)} is not a state of ${lc.field} (${list(states)})`);
       if (!states.includes(t.to)) return bad(`${at}.to`, `${quote(t.to)} is not a state of ${lc.field} (${list(states)})`);
       for (const k of t.requires ?? []) if (!has(k)) return unknown(`${at}.requires`, k);
-      if (t.not_by !== undefined) {
+      // "{entered_by}": the person who moved the record into the state it leaves may not make the move (four eyes).
+      if (t.not_by !== undefined && t.not_by !== "{entered_by}") {
         if (!has(t.not_by)) return unknown(`${at}.not_by`, t.not_by);
         if (!PEOPLE.has(fields[t.not_by].type)) return bad(`${at}.not_by`, `${quote(t.not_by)} must be a person field (it names who may not make the move)`);
       }
       for (const [k, v] of Object.entries(t.set ?? {})) {
         if (!has(k)) return unknown(`${at}.set`, k);
         if (k === lc.field) return bad(`${at}.set.${k}`, `the move itself sets ${quote(k)}`);
+        // "{now}": the time of the move (agent/lib/record-lifecycle.ts resolveStamp), on a date or time field.
+        if (v === "{now}") { if (!DATES.has(fields[k].type)) return bad(`${at}.set.${k}`, `{now} is a time, and ${quote(k)} is ${fields[k].type}`); continue; }
         if (v === "{me}" ? !PEOPLE.has(fields[k].type) : (typeof v === "string" && v.startsWith("{")) ? !TEMPLATE_DEFAULT.test(v) : Boolean(valueProblem(fields[k], v))) return bad(`${at}.set.${k}`, v === "{me}" ? `{me} is a person, and ${quote(k)} is ${fields[k].type}` : valueProblem(fields[k], v) ?? `${quote(v)} is not a value for ${quote(k)}`);
       }
     }
@@ -452,6 +457,9 @@ export function checkArea(id, area, ctx) {
   const perm = area.permissions ?? {};
   if (perm.own?.field && (!has(perm.own.field) || !PEOPLE.has(fields[perm.own.field].type))) return bad("permissions.own.field", `${quote(perm.own.field)} must be a person field of this area`);
   for (const k of Object.keys(perm.fields ?? {})) if (!has(k)) return unknown(`permissions.fields.${k}`, k);
+  // Who may read is not enforced yet (agent/lib/record-permissions.ts): a list would show the row anyway, so a rule
+  // that looks like it hides one is refused rather than ignored.
+  if (perm.read !== undefined && perm.read !== "*") return bad("permissions.read", `who may read is not enforced yet, so it is "*" (everyone in the workspace); limit who may create, update or delete instead`);
 
   // --- reminders, recurrence, metrics, targets --------------------------------------------------------------------
   const ids = new Set();

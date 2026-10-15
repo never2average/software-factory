@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CUSTOM_KEY, CUSTOM_MAX_BYTES } from "./custom.ts";
+import type { TaskState } from "./stages.ts";
 
 const qualifiers = {
   department: z.string().trim().min(1).max(120).optional(),
@@ -25,6 +26,8 @@ export const migrateRuleSchema = z.discriminatedUnion("type", [
 export const workflowStageSchema = z.strictObject({
   id: z.string().trim().min(1).max(120),
   label: z.string().trim().min(1).max(120),
+  /** What the stage means, whatever it is called: the status it stores follows its category (lib/stages.ts statusForStage). */
+  category: z.enum(["backlog", "open", "active", "blocked", "done", "cancelled"]).optional(),
   description: z.string().max(2000).default(""),
   assign: assignRuleSchema,
   transitions: z.array(z.strictObject({ to: z.string().trim().min(1).max(120), migrate: migrateRuleSchema })),
@@ -141,6 +144,8 @@ export interface ServiceContext {
   role: "owner" | "admin" | "engineer" | "member";
   /** What the calling deployment calls a period (`x-period-label`); the activity feed names a period move by it. */
   periodLabel?: string;
+  /** The deployment's task states (`x-task-states`): how a pipeline stage maps to a status (lib/stages.ts). */
+  taskStates?: TaskState[];
 }
 
 export interface WorkflowDefinitionRow {

@@ -16,6 +16,9 @@ import { SNAPSHOT_VERSION, buildSnapshot } from "../lib/chat-snapshot";
  *   5. the chat being LEFT is unmounted while the next opens from the server, so its reads (the Control Panel's
  *      specialist streams among them) stop instead of competing under the shimmer;
  *   6. a long conversation lands at the bottom at once, not by scrolling through its history (/preview/scroll-open).
+ *   7. a chat whose first turn is still running, held by this browser (no resume token yet), opens from this browser
+ *      with no request for the saved copy or a replay, and its live reader resumes at the copy's absolute index.
+ *      (Before: the saved copy, then a replay that read the running turn until it fell silent.)
  */
 
 const EMAIL = "preview@example.test";
@@ -59,6 +62,8 @@ interface Chat {
   /** Held in this browser: a local open. Absent: the open goes to the server (the events were pruned for quota). */
   readonly local?: readonly unknown[];
   readonly streamIndex: number;
+  /** No resume token stored (a first turn persisted while it was still running). */
+  readonly noToken?: boolean;
 }
 
 /** Seed this browser's chat list before the page's own scripts run. */
@@ -67,7 +72,9 @@ async function seed(page: Page, chats: readonly Chat[], last?: string) {
     id: c.id,
     clientKey: c.id,
     title: c.title,
-    session: { sessionId: c.sessionId, continuationToken: `tok-${c.id}`, streamIndex: c.streamIndex },
+    session: c.noToken
+      ? { sessionId: c.sessionId, streamIndex: c.streamIndex }
+      : { sessionId: c.sessionId, continuationToken: `tok-${c.id}`, streamIndex: c.streamIndex },
     ...(c.local ? { events: c.local } : {}),
     updatedAt: Date.now() - i * 1000,
   }));
@@ -338,6 +345,53 @@ test.describe("reopening a chat", () => {
 
     await composer.fill("");
     await expect(page.getByText("Replayed answer 3.")).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("a running chat this browser holds opens from it, with no request, and resumes at its own index", async ({ page }) => {
+    // Alpha's FIRST turn is still running: no park yet, so no resume token; this browser persisted it a moment ago.
+    const turnId = "alpha-t1";
+    const RUNNING = [
+      ev("session.started"),
+      ev("turn.started", { turnId }),
+      ev("message.received", { turnId, message: "Alpha question 1" }),
+      ev("step.started", { turnId, stepIndex: 0 }),
+      ev("message.appended", { turnId, stepIndex: 0, messageDelta: "Alpha is still ", messageSoFar: "Alpha is still " }),
+      ev("message.appended", { turnId, stepIndex: 0, messageDelta: "writing.", messageSoFar: "Alpha is still writing." }),
+    ];
+    const BRAVO = conversation("Bravo");
+    await seed(
+      page,
+      [
+        { id: "chat-a", title: "Alpha chat", sessionId: "sess-a", streamIndex: 0, local: RUNNING, noToken: true },
+        { id: "chat-b", title: "Bravo chat", sessionId: "sess-b", streamIndex: BRAVO.length, local: BRAVO },
+      ],
+      "chat-b",
+    );
+    const calls = await serve(page, {
+      snapshot: () => null,
+      replay: (_s, start) => ({ body: ndjson([...RUNNING.slice(start), marker(RUNNING.length)]) }),
+    });
+    const liveReads: { session: string; start: number }[] = [];
+    page.on("request", (r) => {
+      const url = new URL(r.url());
+      const m = /^\/eve\/v1\/session\/([^/]+)\/stream$/.exec(url.pathname);
+      if (m) liveReads.push({ session: decodeURIComponent(m[1]), start: Number(url.searchParams.get("startIndex") ?? "-1") });
+    });
+
+    await page.goto("/preview/chat-open");
+    await expect(page.getByText("Bravo answer 2.")).toBeVisible({ timeout: 60_000 });
+    await page.getByRole("button", { name: /Alpha chat/ }).click();
+    await expect(page.getByText("Alpha is still writing.")).toBeVisible({ timeout: 10_000 });
+    await page.waitForTimeout(1_500);
+
+    expect(calls.snapshotGets, "asked the server for a saved copy").toEqual([]);
+    expect(calls.replayReads, "replayed the running turn from the server").toEqual([]);
+    const open = await lastOpen(page);
+    expect(open?.chatId).toBe("chat-a");
+    expect(open?.route).toBe("running");
+    // The chat's own live reader carries the turn on, from exactly where this browser's copy ends.
+    await expect.poll(() => liveReads.filter((r) => r.session === "sess-a").length, { timeout: 10_000 }).toBeGreaterThan(0);
+    expect(liveReads.filter((r) => r.session === "sess-a")[0].start).toBe(RUNNING.length);
   });
 
   test("a long conversation opens at the bottom, without scrolling through its history", async ({ page }) => {

@@ -7,7 +7,7 @@ import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.gener
 import { handleMcpRequest, type McpDeps } from "@/lib/mcp-server";
 import { toolChoices } from "@/lib/ops-domain-fields";
 import { verifyOpsAuth } from "@/lib/ops-auth";
-import { areaView } from "@/agent/lib/record-areas";
+import { areaView, describeMoves } from "@/agent/lib/record-areas";
 
 /** This deployment's definition of a task, for the task tools: only when its profile redefines one. */
 function taskTools(): McpDeps["tasks"] {
@@ -19,6 +19,10 @@ function taskTools(): McpDeps["tasks"] {
     stateField: v.lifecycle.field,
     states: v.lifecycle.states.filter((s) => !s.retired).map((s) => ({ value: s.value, label: s.label })),
     priorities: v.options("priority").map((o) => ({ value: o.value, label: o.label })),
+    // An enforced lifecycle (agent/lib/record-lifecycle.ts) with a move that needs a comment: task_update takes `reason`.
+    ...(v.lifecycle.enforce !== "off" && (v.area.lifecycle?.transitions ?? []).some((t) => t.requires_comment) ? { takesComment: true } : {}),
+    // The lifecycle as its moves (from each state, what it may go to and what each needs), for task_update's text.
+    ...((v.area.lifecycle?.transitions ?? []).length ? { moves: describeMoves("tasks").map((l) => l.trim()).join("\n") } : {}),
     ownFields: v.ownFields.filter((f) => !f.hidden && !f.computed).map((f) => ({ key: f.key, label: f.label ?? f.key, type: f.type, required: f.required, ...(f.help ? { help: f.help } : {}), ...(f.options ? { options: f.options.filter((o) => !o.retired).map((o) => ({ value: o.value, label: o.label ?? o.value })) } : {}), ...(f.many ? { many: true } : {}) })),
   };
 }

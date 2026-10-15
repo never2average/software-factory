@@ -1,0 +1,2712 @@
+{
+ "deployments": {
+  "enabled": true,
+  "kind": "record",
+  "storage": "deployments",
+  "columns": "listed",
+  "fields": {
+   "deploymentId": {
+    "order": 10010,
+    "type": "text",
+    "required": true,
+    "placeholder": "DEP-…",
+    "key": "deploymentId",
+    "column": true
+   },
+   "environment": {
+    "order": 10020,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "prod",
+      "label": "Production"
+     },
+     {
+      "value": "staging",
+      "label": "Staging"
+     },
+     {
+      "value": "uat",
+      "label": "UAT"
+     },
+     {
+      "value": "sandbox",
+      "label": "Sandbox"
+     },
+     {
+      "value": "dev",
+      "label": "Development"
+     }
+    ],
+    "label": "Environment",
+    "hidden": true,
+    "fixed": "prod",
+    "key": "environment",
+    "column": true
+   },
+   "region": {
+    "order": 10030,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "us-east-1"
+     },
+     {
+      "value": "us-west-2"
+     },
+     {
+      "value": "eu-west-1"
+     },
+     {
+      "value": "eu-central-1"
+     },
+     {
+      "value": "ap-southeast-1"
+     },
+     {
+      "value": "ap-south-1"
+     },
+     {
+      "value": "ca-central-1"
+     },
+     {
+      "value": "customer-vpc"
+     },
+     {
+      "value": "on-prem"
+     }
+    ],
+    "label": "Region",
+    "placeholder": "ap-south-1",
+    "hidden": true,
+    "fixed": "ap-south-1",
+    "key": "region",
+    "column": true
+   },
+   "cloudProvider": {
+    "order": 10040,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "aws"
+     },
+     {
+      "value": "gcp"
+     },
+     {
+      "value": "azure"
+     },
+     {
+      "value": "vercel"
+     },
+     {
+      "value": "customer_cloud"
+     },
+     {
+      "value": "on_prem"
+     }
+    ],
+    "key": "cloudProvider",
+    "column": true,
+    "hidden": true
+   },
+   "runtime": {
+    "order": 10,
+    "type": "pick_list",
+    "alias": "filing_type",
+    "label": "Filing type",
+    "short_label": "Type",
+    "required": true,
+    "index": "filter",
+    "options": [
+     {
+      "value": "Periodic return"
+     },
+     {
+      "value": "Event-based disclosure"
+     },
+     {
+      "value": "Board / committee report"
+     },
+     {
+      "value": "Response to regulator"
+     },
+     {
+      "value": "Certificate / attestation"
+     }
+    ],
+    "key": "runtime",
+    "column": true
+   },
+   "deploymentStrategy": {
+    "order": 10060,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "rolling"
+     },
+     {
+      "value": "blue_green"
+     },
+     {
+      "value": "canary"
+     },
+     {
+      "value": "preview"
+     },
+     {
+      "value": "manual"
+     }
+    ],
+    "key": "deploymentStrategy",
+    "column": true,
+    "hidden": true
+   },
+   "deployedVersion": {
+    "order": 20,
+    "type": "text",
+    "required": true,
+    "label": "Period",
+    "placeholder": "Q2 FY27",
+    "alias": "period",
+    "search": true,
+    "key": "deployedVersion",
+    "column": true
+   },
+   "releaseId": {
+    "order": 10080,
+    "type": "text",
+    "key": "releaseId",
+    "column": true,
+    "hidden": true
+   },
+   "releaseChannel": {
+    "order": 10090,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "stable"
+     },
+     {
+      "value": "rc"
+     },
+     {
+      "value": "beta"
+     },
+     {
+      "value": "hotfix"
+     },
+     {
+      "value": "preview"
+     }
+    ],
+    "key": "releaseChannel",
+    "column": true,
+    "hidden": true
+   },
+   "buildSha": {
+    "order": 10100,
+    "type": "text",
+    "key": "buildSha",
+    "column": true,
+    "hidden": true
+   },
+   "runtimeVersion": {
+    "order": 10110,
+    "type": "text",
+    "key": "runtimeVersion",
+    "column": true,
+    "hidden": true
+   },
+   "configVersion": {
+    "order": 10120,
+    "type": "text",
+    "key": "configVersion",
+    "column": true,
+    "hidden": true
+   },
+   "approvedByEmail": {
+    "order": 80,
+    "type": "person",
+    "alias": "signed_off_by",
+    "label": "Signed off by",
+    "key": "approvedByEmail",
+    "column": true
+   },
+   "approvedAt": {
+    "order": 10140,
+    "type": "text",
+    "key": "approvedAt",
+    "column": true,
+    "hidden": true
+   },
+   "modelRouteId": {
+    "order": 10150,
+    "type": "text",
+    "key": "modelRouteId",
+    "column": true,
+    "hidden": true
+   },
+   "modelRoutingMode": {
+    "order": 10160,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "primary_only"
+     },
+     {
+      "value": "fallback"
+     },
+     {
+      "value": "traffic_split"
+     },
+     {
+      "value": "shadow"
+     },
+     {
+      "value": "disabled"
+     }
+    ],
+    "key": "modelRoutingMode",
+    "column": true,
+    "hidden": true
+   },
+   "primaryModelRef": {
+    "order": 10170,
+    "type": "text",
+    "key": "primaryModelRef",
+    "column": true,
+    "hidden": true
+   },
+   "primaryModelVersion": {
+    "order": 10180,
+    "type": "text",
+    "key": "primaryModelVersion",
+    "column": true,
+    "hidden": true
+   },
+   "fallbackModelRef": {
+    "order": 10190,
+    "type": "text",
+    "key": "fallbackModelRef",
+    "column": true,
+    "hidden": true
+   },
+   "fallbackModelVersion": {
+    "order": 10200,
+    "type": "text",
+    "key": "fallbackModelVersion",
+    "column": true,
+    "hidden": true
+   },
+   "modelTrafficPrimaryPct": {
+    "order": 10210,
+    "type": "percent",
+    "key": "modelTrafficPrimaryPct",
+    "column": true,
+    "hidden": true
+   },
+   "lastDeployAt": {
+    "order": 50,
+    "type": "date",
+    "alias": "filed_on",
+    "label": "Filed on",
+    "key": "lastDeployAt",
+    "column": true
+   },
+   "releaseStatus": {
+    "order": 30,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "in-progress",
+      "label": "In preparation",
+      "tone": "amber"
+     },
+     {
+      "value": "pending-approval",
+      "label": "Awaiting sign-off",
+      "tone": "sky"
+     },
+     {
+      "value": "deployed",
+      "label": "Filed",
+      "tone": "green"
+     },
+     {
+      "value": "rolled-back",
+      "label": "Revised / refiled",
+      "tone": "slate"
+     },
+     {
+      "value": "failed",
+      "label": "Missed",
+      "tone": "red",
+      "attention": true
+     }
+    ],
+    "label": "Status",
+    "alias": "status",
+    "key": "releaseStatus",
+    "column": true
+   },
+   "rollbackVersion": {
+    "order": 10240,
+    "type": "text",
+    "key": "rollbackVersion",
+    "column": true,
+    "hidden": true
+   },
+   "rollbackStatus": {
+    "order": 10250,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "not_required"
+     },
+     {
+      "value": "ready"
+     },
+     {
+      "value": "in_progress"
+     },
+     {
+      "value": "completed"
+     },
+     {
+      "value": "failed"
+     },
+     {
+      "value": "blocked"
+     }
+    ],
+    "key": "rollbackStatus",
+    "column": true,
+    "hidden": true
+   },
+   "rollbackTestedAt": {
+    "order": 10260,
+    "type": "text",
+    "key": "rollbackTestedAt",
+    "column": true,
+    "hidden": true
+   },
+   "healthStatus": {
+    "order": 10270,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "healthy",
+      "label": "Healthy"
+     },
+     {
+      "value": "degraded",
+      "label": "Degraded"
+     },
+     {
+      "value": "down",
+      "label": "Down"
+     },
+     {
+      "value": "unknown"
+     }
+    ],
+    "label": "Health",
+    "hidden": true,
+    "fixed": "unknown",
+    "key": "healthStatus",
+    "column": true
+   },
+   "uptime30dPct": {
+    "order": 10280,
+    "type": "percent",
+    "key": "uptime30dPct",
+    "column": true,
+    "hidden": true
+   },
+   "errorRate30dPct": {
+    "order": 10290,
+    "type": "percent",
+    "key": "errorRate30dPct",
+    "column": true,
+    "hidden": true
+   },
+   "latencyP95Ms": {
+    "order": 10300,
+    "type": "number",
+    "key": "latencyP95Ms",
+    "column": true,
+    "hidden": true
+   },
+   "latencySloMs": {
+    "order": 10310,
+    "type": "number",
+    "key": "latencySloMs",
+    "column": true,
+    "hidden": true
+   },
+   "requestCount30d": {
+    "order": 10320,
+    "type": "number",
+    "key": "requestCount30d",
+    "column": true,
+    "hidden": true
+   },
+   "llmRequestCount30d": {
+    "order": 10330,
+    "type": "number",
+    "key": "llmRequestCount30d",
+    "column": true,
+    "hidden": true
+   },
+   "inputTokens30d": {
+    "order": 10340,
+    "type": "number",
+    "key": "inputTokens30d",
+    "column": true,
+    "hidden": true
+   },
+   "outputTokens30d": {
+    "order": 10350,
+    "type": "number",
+    "key": "outputTokens30d",
+    "column": true,
+    "hidden": true
+   },
+   "cacheHitRate30dPct": {
+    "order": 10360,
+    "type": "percent",
+    "key": "cacheHitRate30dPct",
+    "column": true,
+    "hidden": true
+   },
+   "guardrailBlockRate30dPct": {
+    "order": 10370,
+    "type": "percent",
+    "key": "guardrailBlockRate30dPct",
+    "column": true,
+    "hidden": true
+   },
+   "cost30dUsd": {
+    "order": 10380,
+    "type": "number",
+    "key": "cost30dUsd",
+    "column": true,
+    "hidden": true
+   },
+   "costBudget30dUsd": {
+    "order": 10390,
+    "type": "number",
+    "key": "costBudget30dUsd",
+    "column": true,
+    "hidden": true
+   },
+   "projectedCost30dUsd": {
+    "order": 10400,
+    "type": "number",
+    "key": "projectedCost30dUsd",
+    "column": true,
+    "hidden": true
+   },
+   "capacityLimitRpm": {
+    "order": 10410,
+    "type": "number",
+    "key": "capacityLimitRpm",
+    "column": true,
+    "hidden": true
+   },
+   "peakRpm30d": {
+    "order": 10420,
+    "type": "number",
+    "key": "peakRpm30d",
+    "column": true,
+    "hidden": true
+   },
+   "utilization30dPct": {
+    "order": 10430,
+    "type": "percent",
+    "key": "utilization30dPct",
+    "column": true,
+    "hidden": true
+   },
+   "liveUrl": {
+    "order": 90,
+    "type": "link",
+    "alias": "acknowledgement",
+    "label": "Acknowledgement / filing link",
+    "key": "liveUrl",
+    "column": true
+   },
+   "deployOwnerEmail": {
+    "order": 70,
+    "type": "person",
+    "label": "Preparer",
+    "placeholder": "name@company.com",
+    "alias": "preparer",
+    "default": "{me}",
+    "index": "filter",
+    "key": "deployOwnerEmail",
+    "column": true
+   },
+   "lastIncidentRef": {
+    "order": 10460,
+    "type": "text",
+    "key": "lastIncidentRef",
+    "column": true,
+    "hidden": true
+   },
+   "activeIncidentRefs": {
+    "order": 10470,
+    "type": "tags",
+    "key": "activeIncidentRefs",
+    "column": true,
+    "hidden": true
+   },
+   "incidentCount30d": {
+    "order": 10480,
+    "type": "number",
+    "key": "incidentCount30d",
+    "column": true,
+    "hidden": true
+   },
+   "dashboardUrl": {
+    "order": 10490,
+    "type": "text",
+    "key": "dashboardUrl",
+    "column": true,
+    "hidden": true
+   },
+   "runbookUrl": {
+    "order": 10500,
+    "type": "text",
+    "key": "runbookUrl",
+    "column": true,
+    "hidden": true
+   },
+   "lastTelemetryAt": {
+    "order": 10510,
+    "type": "text",
+    "key": "lastTelemetryAt",
+    "column": true,
+    "hidden": true
+   },
+   "notes": {
+    "order": 120,
+    "type": "long_text",
+    "alias": "remarks",
+    "label": "Remarks",
+    "key": "notes",
+    "column": true
+   },
+   "due_date": {
+    "order": 40,
+    "type": "date",
+    "label": "Due date",
+    "required": true,
+    "index": "sort",
+    "key": "due_date",
+    "column": false
+   },
+   "timeliness": {
+    "order": 60,
+    "type": "pick_list",
+    "label": "Timeliness",
+    "computed": {
+     "when": [
+      {
+       "if": {
+        "lastDeployAt": {
+         "set": false
+        },
+        "due_date": {
+         "lt": "{today}"
+        }
+       },
+       "then": "Overdue"
+      },
+      {
+       "if": {
+        "lastDeployAt": {
+         "lte": "{due_date}"
+        }
+       },
+       "then": "On time"
+      },
+      {
+       "if": {
+        "lastDeployAt": {
+         "set": true
+        }
+       },
+       "then": "Filed late"
+      }
+     ],
+     "else": "Not yet due"
+    },
+    "options": [
+     {
+      "value": "On time",
+      "tone": "green"
+     },
+     {
+      "value": "Filed late",
+      "tone": "amber"
+     },
+     {
+      "value": "Overdue",
+      "tone": "red",
+      "attention": true
+     },
+     {
+      "value": "Not yet due",
+      "tone": "slate"
+     }
+    ],
+    "key": "timeliness",
+    "column": false
+   },
+   "evidence": {
+    "order": 95,
+    "type": "file",
+    "many": true,
+    "label": "Filed copy and workings",
+    "folder": "{folder:deliveries}/{customer_id}/{id}/",
+    "key": "evidence",
+    "column": false
+   },
+   "source_requirement": {
+    "order": 100,
+    "type": "link",
+    "label": "Source requirement",
+    "help": "The obligation or circular clause that requires this filing.",
+    "key": "source_requirement",
+    "column": false
+   },
+   "penalty_exposure": {
+    "order": 110,
+    "type": "pick_list",
+    "label": "Penalty exposure",
+    "index": "filter",
+    "options": [
+     {
+      "value": "None",
+      "tone": "slate"
+     },
+     {
+      "value": "Late fee",
+      "tone": "amber"
+     },
+     {
+      "value": "Penalty",
+      "tone": "orange"
+     },
+     {
+      "value": "Enforcement risk",
+      "tone": "red",
+      "attention": true
+     }
+    ],
+    "key": "penalty_exposure",
+    "column": false
+   }
+  },
+  "label": {
+   "singular": "Regulatory filing",
+   "plural": "Regulatory filings"
+  },
+  "description": "One row per return, disclosure or report filed with a regulator: the period, who prepared and signed it off, and whether it went in on time.",
+  "id": {
+   "field": "deploymentId",
+   "label": "Filing id",
+   "placeholder": "Q2FY27-ALM-return",
+   "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$"
+  },
+  "relations": {
+   "account": {
+    "required": true
+   },
+   "tasks": true
+  },
+  "icon": "file-check",
+  "nav": {
+   "order": 20
+  },
+  "title": "{runtime} · {deployedVersion}",
+  "lifecycle": {
+   "field": "releaseStatus",
+   "initial": "in-progress",
+   "enforce": "warn",
+   "categories": {
+    "in-progress": "active",
+    "pending-approval": "active",
+    "deployed": "done",
+    "rolled-back": "done",
+    "failed": "cancelled"
+   },
+   "transitions": [
+    {
+     "from": [
+      "in-progress"
+     ],
+     "to": "pending-approval",
+     "label": "Send for sign-off",
+     "requires": [
+      "deployOwnerEmail",
+      "evidence"
+     ]
+    },
+    {
+     "from": [
+      "pending-approval"
+     ],
+     "to": "in-progress",
+     "label": "Send back",
+     "requires_comment": true
+    },
+    {
+     "from": [
+      "pending-approval"
+     ],
+     "to": "deployed",
+     "label": "Mark filed",
+     "roles": [
+      "owner",
+      "admin"
+     ],
+     "not_by": "deployOwnerEmail",
+     "requires": [
+      "lastDeployAt",
+      "liveUrl"
+     ],
+     "set": {
+      "approvedByEmail": "{me}"
+     }
+    },
+    {
+     "from": [
+      "in-progress",
+      "pending-approval"
+     ],
+     "to": "failed",
+     "label": "Mark missed",
+     "roles": [
+      "owner",
+      "admin"
+     ],
+     "requires_comment": true
+    },
+    {
+     "from": [
+      "deployed"
+     ],
+     "to": "rolled-back",
+     "label": "Refile"
+    },
+    {
+     "from": [
+      "rolled-back"
+     ],
+     "to": "pending-approval",
+     "label": "Send for sign-off"
+    }
+   ]
+  },
+  "views": {
+   "default": "table",
+   "available": [
+    "table",
+    "board",
+    "calendar"
+   ],
+   "table": {
+    "columns": [
+     "account",
+     "runtime",
+     "deployedVersion",
+     "due_date",
+     "releaseStatus",
+     "timeliness",
+     "penalty_exposure",
+     "deployOwnerEmail"
+    ]
+   },
+   "board": {
+    "by": "releaseStatus",
+    "card": {
+     "title": "title",
+     "meta": [
+      "due_date",
+      "deployOwnerEmail"
+     ],
+     "badge": "timeliness"
+    }
+   },
+   "calendar": {
+    "date": "due_date"
+   },
+   "filters": [
+    {
+     "field": "releaseStatus"
+    },
+    {
+     "field": "runtime"
+    },
+    {
+     "field": "penalty_exposure"
+    },
+    {
+     "field": "due_date",
+     "presets": [
+      "overdue",
+      "due_7d",
+      "due_30d"
+     ]
+    },
+    {
+     "scope": "people",
+     "field": "deployOwnerEmail"
+    }
+   ],
+   "sorts": [
+    {
+     "field": "due_date",
+     "dir": "asc",
+     "default": true
+    },
+    {
+     "field": "account"
+    },
+    {
+     "field": "releaseStatus"
+    }
+   ],
+   "group_by": [
+    "account",
+    "runtime"
+   ],
+   "detail": {
+    "sections": [
+     {
+      "label": "Filing",
+      "fields": [
+       "runtime",
+       "deployedVersion",
+       "due_date",
+       "releaseStatus",
+       "timeliness"
+      ]
+     },
+     {
+      "label": "Sign-off",
+      "fields": [
+       "deployOwnerEmail",
+       "approvedByEmail",
+       "lastDeployAt",
+       "liveUrl"
+      ]
+     },
+     {
+      "label": "Basis",
+      "fields": [
+       "source_requirement",
+       "penalty_exposure",
+       "notes"
+      ]
+     },
+     {
+      "related": "files"
+     },
+     {
+      "related": "tasks"
+     },
+     {
+      "related": "activity"
+     },
+     {
+      "related": "comments"
+     }
+    ]
+   },
+   "create": {
+    "fields": [
+     "account",
+     "deploymentId",
+     "runtime",
+     "deployedVersion",
+     "due_date",
+     "deployOwnerEmail",
+     "source_requirement"
+    ],
+    "submit_label": "Add filing"
+   }
+  },
+  "permissions": {
+   "read": "*",
+   "create": "*",
+   "update": "*",
+   "delete": [
+    "owner",
+    "admin"
+   ],
+   "fields": {
+    "approvedByEmail": {
+     "update": [
+      "owner",
+      "admin"
+     ]
+    }
+   }
+  },
+  "reminders": [
+   {
+    "id": "due-soon",
+    "date": "due_date",
+    "before_days": [
+     7,
+     2
+    ],
+    "unless": {
+     "releaseStatus": {
+      "category": [
+       "done",
+       "cancelled"
+      ]
+     }
+    },
+    "notify": [
+     "deployOwnerEmail"
+    ],
+    "channels": [
+     "inbox",
+     "push"
+    ]
+   },
+   {
+    "id": "overdue",
+    "date": "due_date",
+    "after_days": [
+     0,
+     3
+    ],
+    "unless": {
+     "releaseStatus": {
+      "category": [
+       "done",
+       "cancelled"
+      ]
+     }
+    },
+    "notify": [
+     "deployOwnerEmail",
+     "{manager_of:deployOwnerEmail}"
+    ],
+    "channels": [
+     "inbox",
+     "push"
+    ]
+   }
+  ],
+  "metrics": [
+   {
+    "id": "overdue",
+    "label": "Overdue filings",
+    "count": {
+     "where": {
+      "timeliness": "Overdue"
+     }
+    },
+    "attention": true
+   },
+   {
+    "id": "on-time-rate",
+    "label": "Filed on time",
+    "format": "percent",
+    "ratio": {
+     "num": {
+      "timeliness": "On time"
+     },
+     "den": {
+      "releaseStatus": {
+       "category": "done"
+      }
+     }
+    }
+   }
+  ],
+  "agent": {
+   "tools": {
+    "read": true,
+    "write": true,
+    "delete": false
+   },
+   "describe": "A filing is one submission to one regulator for one period. Always record the due date. A filing is marked filed only by an admin who did not prepare it, and only with the filed-on date and the acknowledgement link.",
+   "rules": [
+    "Never mark a filing filed without the acknowledgement link.",
+    "Timeliness is computed: never set it."
+   ]
+  },
+  "io": {
+   "export": {
+    "csv": true,
+    "workbook_sheet": true
+   },
+   "import": {
+    "csv": true,
+    "match_on": [
+     "account",
+     "deploymentId"
+    ]
+   }
+  },
+  "redefined": true,
+  "declared": true
+ },
+ "implementations": {
+  "enabled": true,
+  "kind": "record",
+  "storage": "implementation",
+  "columns": "all",
+  "fields": {
+   "rolloutId": {
+    "order": 10010,
+    "type": "text",
+    "key": "rolloutId",
+    "column": true
+   },
+   "launchScopeSolutionIds": {
+    "order": 10020,
+    "type": "tags",
+    "label": "Solution",
+    "key": "launchScopeSolutionIds",
+    "column": true
+   },
+   "implementationStage": {
+    "order": 10030,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "Kickoff",
+      "label": "Kickoff"
+     },
+     {
+      "value": "Discovery",
+      "label": "Discovery"
+     },
+     {
+      "value": "Configuration",
+      "label": "Configuration"
+     },
+     {
+      "value": "Integration",
+      "label": "Integration"
+     },
+     {
+      "value": "UAT",
+      "label": "UAT"
+     },
+     {
+      "value": "Pilot",
+      "label": "Pilot"
+     },
+     {
+      "value": "Go-Live",
+      "label": "Go-Live"
+     },
+     {
+      "value": "Stabilization",
+      "label": "Stabilization"
+     },
+     {
+      "value": "Steady State",
+      "label": "Steady State"
+     },
+     {
+      "value": "On Hold",
+      "label": "On Hold"
+     }
+    ],
+    "label": "Stage",
+    "key": "implementationStage",
+    "column": true
+   },
+   "implementationOwnerEmail": {
+    "order": 10040,
+    "type": "text",
+    "label": "Owner",
+    "placeholder": "name@company.com",
+    "key": "implementationOwnerEmail",
+    "column": true
+   },
+   "rolloutGovernanceStatus": {
+    "order": 10050,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Draft"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Changes Requested"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "rolloutGovernanceStatus",
+    "column": true
+   },
+   "customerLaunchApproverEmail": {
+    "order": 10060,
+    "type": "text",
+    "key": "customerLaunchApproverEmail",
+    "column": true
+   },
+   "providerLaunchApproverEmail": {
+    "order": 10070,
+    "type": "text",
+    "key": "providerLaunchApproverEmail",
+    "column": true
+   },
+   "launchDecision": {
+    "order": 10080,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Pending"
+     },
+     {
+      "value": "Go"
+     },
+     {
+      "value": "No-Go"
+     },
+     {
+      "value": "Deferred"
+     }
+    ],
+    "key": "launchDecision",
+    "column": true
+   },
+   "launchDecisionDate": {
+    "order": 10090,
+    "type": "text",
+    "key": "launchDecisionDate",
+    "column": true
+   },
+   "implementationProgressPct": {
+    "order": 10100,
+    "type": "percent",
+    "required": true,
+    "label": "Progress",
+    "key": "implementationProgressPct",
+    "column": true
+   },
+   "implementationRiskLevel": {
+    "order": 10110,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "Green"
+     },
+     {
+      "value": "Yellow"
+     },
+     {
+      "value": "Red"
+     }
+    ],
+    "label": "Risk",
+    "key": "implementationRiskLevel",
+    "column": true
+   },
+   "dataReadinessPct": {
+    "order": 10120,
+    "type": "percent",
+    "key": "dataReadinessPct",
+    "column": true
+   },
+   "integrationReadinessPct": {
+    "order": 10130,
+    "type": "percent",
+    "key": "integrationReadinessPct",
+    "column": true
+   },
+   "dataSourceInventoryStatus": {
+    "order": 10140,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Complete"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "dataSourceInventoryStatus",
+    "column": true
+   },
+   "dataAccessStatus": {
+    "order": 10150,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Requested"
+     },
+     {
+      "value": "Requested"
+     },
+     {
+      "value": "Granted"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Revoked"
+     }
+    ],
+    "key": "dataAccessStatus",
+    "column": true
+   },
+   "dataQualityStatus": {
+    "order": 10160,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Assessed"
+     },
+     {
+      "value": "Issues Found"
+     },
+     {
+      "value": "Passed"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "dataQualityStatus",
+    "column": true
+   },
+   "connectorProvisioningStatus": {
+    "order": 10170,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Connected"
+     },
+     {
+      "value": "Failing"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "connectorProvisioningStatus",
+    "column": true
+   },
+   "integrationTestStatus": {
+    "order": 10180,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Passed"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "integrationTestStatus",
+    "column": true
+   },
+   "securityReviewStatus": {
+    "order": 10190,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Rejected"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "securityReviewStatus",
+    "column": true
+   },
+   "privacyReviewStatus": {
+    "order": 10200,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Rejected"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "privacyReviewStatus",
+    "column": true
+   },
+   "evalAcceptanceStatus": {
+    "order": 10210,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Accepted"
+     },
+     {
+      "value": "Rejected"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "evalAcceptanceStatus",
+    "column": true
+   },
+   "acceptanceEvidenceLink": {
+    "order": 10220,
+    "type": "text",
+    "key": "acceptanceEvidenceLink",
+    "column": true
+   },
+   "uatStatus": {
+    "order": 10230,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Passed"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "uatStatus",
+    "column": true
+   },
+   "trainingStatus": {
+    "order": 10240,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Scheduled"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Complete"
+     }
+    ],
+    "key": "trainingStatus",
+    "column": true
+   },
+   "launchCriteria": {
+    "order": 10250,
+    "type": "text",
+    "key": "launchCriteria",
+    "column": true
+   },
+   "launchCriteriaStatus": {
+    "order": 10260,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Defined"
+     },
+     {
+      "value": "Defined"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Met"
+     },
+     {
+      "value": "Failed"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "launchCriteriaStatus",
+    "column": true
+   },
+   "goLiveConfidencePct": {
+    "order": 10270,
+    "type": "percent",
+    "key": "goLiveConfidencePct",
+    "column": true
+   },
+   "targetGoLiveDate": {
+    "order": 10280,
+    "type": "text",
+    "label": "Go-live",
+    "key": "targetGoLiveDate",
+    "column": true
+   },
+   "actualGoLiveDate": {
+    "order": 10290,
+    "type": "text",
+    "key": "actualGoLiveDate",
+    "column": true
+   },
+   "launchWindowStartAt": {
+    "order": 10300,
+    "type": "text",
+    "key": "launchWindowStartAt",
+    "column": true
+   },
+   "launchWindowEndAt": {
+    "order": 10310,
+    "type": "text",
+    "key": "launchWindowEndAt",
+    "column": true
+   },
+   "runbookStatus": {
+    "order": 10320,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Draft"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Approved"
+     },
+     {
+      "value": "Not Required"
+     }
+    ],
+    "key": "runbookStatus",
+    "column": true
+   },
+   "runbookLink": {
+    "order": 10330,
+    "type": "text",
+    "key": "runbookLink",
+    "column": true
+   },
+   "supportHandoffStatus": {
+    "order": 10340,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Scheduled"
+     },
+     {
+      "value": "In Progress"
+     },
+     {
+      "value": "Complete"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "supportHandoffStatus",
+    "column": true
+   },
+   "supportOwnerEmail": {
+    "order": 10350,
+    "type": "text",
+    "key": "supportOwnerEmail",
+    "column": true
+   },
+   "supportChannelRef": {
+    "order": 10360,
+    "type": "text",
+    "key": "supportChannelRef",
+    "column": true
+   },
+   "billingReadinessStatus": {
+    "order": 10370,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "In Review"
+     },
+     {
+      "value": "Ready"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "billingReadinessStatus",
+    "column": true
+   },
+   "entitlementProvisioningStatus": {
+    "order": 10380,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "Not Started"
+     },
+     {
+      "value": "Provisioned"
+     },
+     {
+      "value": "Validated"
+     },
+     {
+      "value": "Blocked"
+     },
+     {
+      "value": "Waived"
+     }
+    ],
+    "key": "entitlementProvisioningStatus",
+    "column": true
+   },
+   "billingStartDate": {
+    "order": 10390,
+    "type": "text",
+    "key": "billingStartDate",
+    "column": true
+   },
+   "currentMilestone": {
+    "order": 10400,
+    "type": "text",
+    "key": "currentMilestone",
+    "column": true
+   },
+   "currentMilestoneDueDate": {
+    "order": 10410,
+    "type": "text",
+    "key": "currentMilestoneDueDate",
+    "column": true
+   },
+   "blocker": {
+    "order": 10420,
+    "type": "text",
+    "key": "blocker",
+    "column": true
+   },
+   "blockerOwner": {
+    "order": 10430,
+    "type": "pick_list",
+    "required": true,
+    "options": [
+     {
+      "value": "Provider"
+     },
+     {
+      "value": "Customer"
+     },
+     {
+      "value": "Third-Party Vendor"
+     },
+     {
+      "value": "None"
+     }
+    ],
+    "key": "blockerOwner",
+    "column": true
+   },
+   "blockerSeverity": {
+    "order": 10440,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "None"
+     },
+     {
+      "value": "Low"
+     },
+     {
+      "value": "Medium"
+     },
+     {
+      "value": "High"
+     },
+     {
+      "value": "Critical"
+     }
+    ],
+    "key": "blockerSeverity",
+    "column": true
+   },
+   "blockedSinceDate": {
+    "order": 10450,
+    "type": "text",
+    "key": "blockedSinceDate",
+    "column": true
+   },
+   "riskMitigationPlan": {
+    "order": 10460,
+    "type": "text",
+    "key": "riskMitigationPlan",
+    "column": true
+   },
+   "criticalBlockerTicketIds": {
+    "order": 10470,
+    "type": "tags",
+    "key": "criticalBlockerTicketIds",
+    "column": true
+   },
+   "openBlockerCount": {
+    "order": 10480,
+    "type": "number",
+    "key": "openBlockerCount",
+    "column": true
+   },
+   "implementationNextStep": {
+    "order": 10490,
+    "type": "text",
+    "key": "implementationNextStep",
+    "column": true
+   },
+   "implementationLastUpdatedAt": {
+    "order": 10500,
+    "type": "text",
+    "key": "implementationLastUpdatedAt",
+    "column": true
+   }
+  },
+  "label": {
+   "singular": "Project",
+   "plural": "Projects"
+  },
+  "description": "Plans, filtered by owner.",
+  "id": {
+   "label": "Plan id"
+  },
+  "relations": {
+   "account": {
+    "required": true
+   },
+   "tasks": true,
+   "group": {
+    "field": null,
+    "label": {
+     "singular": "Plan",
+     "plural": "Plans"
+    }
+   }
+  },
+  "redefined": false
+ },
+ "tasks": {
+  "enabled": true,
+  "kind": "task",
+  "storage": "todos",
+  "columns": "all",
+  "fields": {
+   "cycleId": {
+    "order": 10010,
+    "type": "record",
+    "key": "cycleId",
+    "column": true
+   },
+   "parentId": {
+    "order": 10020,
+    "type": "record",
+    "key": "parentId",
+    "column": true
+   },
+   "title": {
+    "order": 10,
+    "type": "text",
+    "required": true,
+    "label": "Obligation",
+    "max_length": 300,
+    "placeholder": "Untitled task",
+    "key": "title",
+    "column": true
+   },
+   "notes": {
+    "order": 20,
+    "type": "long_text",
+    "label": "What is required",
+    "max_length": 4000,
+    "placeholder": "Any detail…",
+    "key": "notes",
+    "column": true
+   },
+   "done": {
+    "order": 10050,
+    "type": "boolean",
+    "key": "done",
+    "column": true
+   },
+   "doneAt": {
+    "order": 10060,
+    "type": "datetime",
+    "key": "doneAt",
+    "column": true
+   },
+   "status": {
+    "order": 30,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "backlog",
+      "label": "Backlog",
+      "tone": "muted"
+     },
+     {
+      "value": "open",
+      "label": "Open",
+      "tone": "sky"
+     },
+     {
+      "value": "in_progress",
+      "label": "In progress",
+      "tone": "amber"
+     },
+     {
+      "value": "blocked",
+      "label": "Blocked",
+      "tone": "red"
+     },
+     {
+      "value": "done",
+      "label": "Done",
+      "tone": "green"
+     },
+     {
+      "value": "cancelled",
+      "label": "Cancelled",
+      "tone": "muted"
+     }
+    ],
+    "label": "Status",
+    "key": "status",
+    "column": true,
+    "hidden": true
+   },
+   "priority": {
+    "order": 50,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "high",
+      "label": "Critical",
+      "tone": "red"
+     },
+     {
+      "value": "normal",
+      "label": "Standard",
+      "tone": "slate"
+     },
+     {
+      "value": "low",
+      "label": "Low",
+      "tone": "sky"
+     }
+    ],
+    "label": "Criticality",
+    "key": "priority",
+    "column": true
+   },
+   "dueAt": {
+    "order": 30,
+    "type": "date",
+    "label": "Due",
+    "required": true,
+    "index": "sort",
+    "key": "dueAt",
+    "column": true
+   },
+   "containerType": {
+    "order": 10100,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "deployment"
+     },
+     {
+      "value": "implementation"
+     }
+    ],
+    "key": "containerType",
+    "column": true
+   },
+   "containerId": {
+    "order": 10110,
+    "type": "text",
+    "key": "containerId",
+    "column": true
+   },
+   "containerLabel": {
+    "order": 10120,
+    "type": "text",
+    "key": "containerLabel",
+    "column": true
+   },
+   "linkType": {
+    "order": 10130,
+    "type": "pick_list",
+    "options": [
+     {
+      "value": "ticket"
+     },
+     {
+      "value": "customer"
+     },
+     {
+      "value": "app"
+     },
+     {
+      "value": "cron"
+     },
+     {
+      "value": "workflow"
+     },
+     {
+      "value": "chat"
+     }
+    ],
+    "key": "linkType",
+    "column": true
+   },
+   "linkId": {
+    "order": 10140,
+    "type": "text",
+    "key": "linkId",
+    "column": true
+   },
+   "linkLabel": {
+    "order": 10150,
+    "type": "text",
+    "key": "linkLabel",
+    "column": true
+   },
+   "createdBy": {
+    "order": 10160,
+    "type": "text",
+    "key": "createdBy",
+    "column": true
+   },
+   "assignee": {
+    "order": 40,
+    "type": "person",
+    "label": "Owner",
+    "help": "Blank = the creator.",
+    "placeholder": "name@company.com",
+    "required": true,
+    "default": "{me}",
+    "key": "assignee",
+    "column": true
+   },
+   "createdAt": {
+    "order": 10180,
+    "type": "datetime",
+    "key": "createdAt",
+    "column": true
+   },
+   "updatedAt": {
+    "order": 10190,
+    "type": "datetime",
+    "key": "updatedAt",
+    "column": true
+   },
+   "state": {
+    "order": 60,
+    "type": "pick_list",
+    "label": "Status",
+    "index": "filter",
+    "options": [
+     {
+      "value": "not_started",
+      "label": "Not started",
+      "tone": "slate"
+     },
+     {
+      "value": "in_progress",
+      "label": "In progress",
+      "tone": "amber"
+     },
+     {
+      "value": "evidence_submitted",
+      "label": "Evidence submitted",
+      "tone": "sky"
+     },
+     {
+      "value": "under_review",
+      "label": "Under review",
+      "tone": "violet"
+     },
+     {
+      "value": "closed",
+      "label": "Complied",
+      "tone": "green"
+     },
+     {
+      "value": "not_applicable",
+      "label": "Not applicable",
+      "tone": "muted"
+     }
+    ],
+    "key": "state",
+    "column": false
+   },
+   "frequency": {
+    "order": 70,
+    "type": "pick_list",
+    "label": "Frequency",
+    "options": [
+     {
+      "value": "One-time"
+     },
+     {
+      "value": "Monthly"
+     },
+     {
+      "value": "Quarterly"
+     },
+     {
+      "value": "Half-yearly"
+     },
+     {
+      "value": "Annual"
+     },
+     {
+      "value": "Event-based"
+     }
+    ],
+    "key": "frequency",
+    "column": false
+   },
+   "obligation_ref": {
+    "order": 80,
+    "type": "text",
+    "label": "Obligation id",
+    "pattern": "^OBL-[0-9]{4,}$",
+    "index": "filter",
+    "help": "The obligation's id in the obligations register.",
+    "key": "obligation_ref",
+    "column": false
+   },
+   "clause": {
+    "order": 90,
+    "type": "link",
+    "label": "Circular clause",
+    "key": "clause",
+    "column": false
+   },
+   "department": {
+    "order": 100,
+    "type": "pick_list",
+    "label": "Department",
+    "index": "filter",
+    "options": [
+     {
+      "value": "Compliance"
+     },
+     {
+      "value": "Finance"
+     },
+     {
+      "value": "Operations"
+     },
+     {
+      "value": "Risk"
+     },
+     {
+      "value": "Legal"
+     },
+     {
+      "value": "IT"
+     },
+     {
+      "value": "HR"
+     }
+    ],
+    "key": "department",
+    "column": false
+   },
+   "evidence": {
+    "order": 110,
+    "type": "file",
+    "many": true,
+    "label": "Evidence",
+    "folder": "{folder:platform}/obligations/evidence/{id}/",
+    "key": "evidence",
+    "column": false
+   },
+   "reviewer": {
+    "order": 120,
+    "type": "person",
+    "label": "Reviewer",
+    "key": "reviewer",
+    "column": false
+   }
+  },
+  "label": {
+   "singular": "obligation",
+   "plural": "obligations"
+  },
+  "description": "Something the company must do for a regulator by a date, with the evidence that it was done.",
+  "icon": "shield-check",
+  "lifecycle": {
+   "field": "state",
+   "initial": "not_started",
+   "enforce": "warn",
+   "categories": {
+    "not_started": "open",
+    "in_progress": "active",
+    "evidence_submitted": "active",
+    "under_review": "active",
+    "closed": "done",
+    "not_applicable": "cancelled"
+   },
+   "transitions": [
+    {
+     "from": [
+      "not_started"
+     ],
+     "to": "in_progress",
+     "label": "Start"
+    },
+    {
+     "from": [
+      "not_started",
+      "in_progress"
+     ],
+     "to": "evidence_submitted",
+     "label": "Submit evidence",
+     "requires": [
+      "evidence"
+     ]
+    },
+    {
+     "from": [
+      "evidence_submitted"
+     ],
+     "to": "under_review",
+     "label": "Take for review",
+     "set": {
+      "reviewer": "{me}"
+     },
+     "not_by": "assignee"
+    },
+    {
+     "from": [
+      "under_review"
+     ],
+     "to": "closed",
+     "label": "Mark complied",
+     "roles": [
+      "owner",
+      "admin"
+     ],
+     "not_by": "assignee"
+    },
+    {
+     "from": [
+      "under_review",
+      "evidence_submitted"
+     ],
+     "to": "in_progress",
+     "label": "Ask for more evidence",
+     "requires_comment": true
+    },
+    {
+     "from": [
+      "not_started",
+      "in_progress"
+     ],
+     "to": "not_applicable",
+     "label": "Not applicable",
+     "roles": [
+      "owner",
+      "admin"
+     ],
+     "requires_comment": true
+    }
+   ]
+  },
+  "relations": {
+   "containers": [
+    "implementations",
+    "deployments"
+   ],
+   "links": [
+    "customer",
+    "ticket"
+   ],
+   "periods": true,
+   "subtasks": true
+  },
+  "views": {
+   "default": "board",
+   "available": [
+    "board",
+    "table",
+    "calendar"
+   ],
+   "board": {
+    "by": "state",
+    "card": {
+     "title": "title",
+     "meta": [
+      "dueAt",
+      "assignee",
+      "department"
+     ],
+     "badge": "priority"
+    }
+   },
+   "table": {
+    "columns": [
+     "title",
+     "state",
+     "dueAt",
+     "frequency",
+     "department",
+     "assignee",
+     "obligation_ref"
+    ]
+   },
+   "timeline": {
+    "start": "createdAt",
+    "end": "dueAt"
+   },
+   "sorts": [
+    {
+     "field": "dueAt",
+     "dir": "asc",
+     "default": true
+    },
+    {
+     "field": "priority"
+    },
+    {
+     "field": "title"
+    }
+   ],
+   "create": {
+    "fields": [
+     "title",
+     "dueAt",
+     "assignee",
+     "frequency",
+     "department",
+     "obligation_ref",
+     "clause"
+    ],
+    "submit_label": "Add obligation"
+   },
+   "calendar": {
+    "date": "dueAt"
+   },
+   "filters": [
+    {
+     "field": "state"
+    },
+    {
+     "field": "department"
+    },
+    {
+     "field": "frequency"
+    },
+    {
+     "field": "dueAt",
+     "presets": [
+      "overdue",
+      "due_7d",
+      "this_period"
+     ]
+    },
+    {
+     "scope": "people",
+     "field": "assignee"
+    }
+   ],
+   "group_by": [
+    "department",
+    "containerId"
+   ]
+  },
+  "nav": {
+   "order": 10,
+   "label": "Obligations"
+  },
+  "recurrence": {
+   "field": "frequency",
+   "on": "done",
+   "anchor": "dueAt",
+   "every": {
+    "Monthly": "+1M",
+    "Quarterly": "+3M",
+    "Half-yearly": "+6M",
+    "Annual": "+1y"
+   },
+   "copy": [
+    "title",
+    "notes",
+    "assignee",
+    "priority",
+    "frequency",
+    "obligation_ref",
+    "clause",
+    "department",
+    "containerType",
+    "containerId",
+    "containerLabel",
+    "linkType",
+    "linkId",
+    "linkLabel"
+   ]
+  },
+  "reminders": [
+   {
+    "id": "due-soon",
+    "date": "dueAt",
+    "before_days": [
+     7,
+     1
+    ],
+    "unless": {
+     "state": {
+      "category": [
+       "done",
+       "cancelled"
+      ]
+     }
+    },
+    "notify": [
+     "assignee"
+    ],
+    "channels": [
+     "inbox",
+     "push"
+    ]
+   },
+   {
+    "id": "overdue",
+    "date": "dueAt",
+    "after_days": [
+     0,
+     3,
+     7
+    ],
+    "unless": {
+     "state": {
+      "category": [
+       "done",
+       "cancelled"
+      ]
+     }
+    },
+    "notify": [
+     "assignee",
+     "{manager_of:assignee}"
+    ],
+    "channels": [
+     "inbox",
+     "push"
+    ]
+   }
+  ],
+  "permissions": {
+   "read": "*",
+   "create": "*",
+   "update": "*",
+   "delete": [
+    "owner",
+    "admin"
+   ],
+   "own": {
+    "field": "assignee",
+    "may": [
+     "update",
+     "transition"
+    ]
+   }
+  },
+  "metrics": [
+   {
+    "id": "overdue",
+    "label": "Overdue obligations",
+    "count": {
+     "where": {
+      "dueAt": {
+       "lt": "{today}"
+      },
+      "state": {
+       "category": [
+        "open",
+        "active"
+       ]
+      }
+     }
+    },
+    "attention": true
+   },
+   {
+    "id": "awaiting-review",
+    "label": "Evidence awaiting review",
+    "count": {
+     "where": {
+      "state": "evidence_submitted"
+     }
+    }
+   }
+  ],
+  "agent": {
+   "tools": {
+    "read": true,
+    "write": true,
+    "delete": false
+   },
+   "describe": "An obligation is closed only on evidence. Draft obligations from a circular with the clause link and the obligation id; never mark one complied yourself.",
+   "rules": [
+    "Set the due date on every obligation.",
+    "Attach evidence by its data-room path, then move it to Evidence submitted."
+   ]
+  },
+  "redefined": true
+ },
+ "periods": {
+  "enabled": true,
+  "kind": "period",
+  "storage": "cycles",
+  "columns": "all",
+  "fields": {
+   "name": {
+    "order": 10010,
+    "type": "text",
+    "required": true,
+    "key": "name",
+    "column": true
+   },
+   "startsAt": {
+    "order": 10020,
+    "type": "datetime",
+    "key": "startsAt",
+    "column": true
+   },
+   "endsAt": {
+    "order": 10030,
+    "type": "datetime",
+    "key": "endsAt",
+    "column": true
+   },
+   "state": {
+    "order": 10040,
+    "type": "pick_list",
+    "label": "State",
+    "options": [
+     {
+      "value": "planning",
+      "label": "Planning",
+      "tone": "muted"
+     },
+     {
+      "value": "active",
+      "label": "Active",
+      "tone": "green"
+     },
+     {
+      "value": "closed",
+      "label": "Closed",
+      "tone": "muted"
+     }
+    ],
+    "key": "state",
+    "column": true
+   },
+   "goal": {
+    "order": 10050,
+    "type": "text",
+    "label": "Focus this week",
+    "key": "goal",
+    "column": true
+   },
+   "lead": {
+    "order": 10060,
+    "type": "text",
+    "key": "lead",
+    "column": true
+   },
+   "capacity": {
+    "order": 10070,
+    "type": "integer",
+    "key": "capacity",
+    "column": true
+   },
+   "createdBy": {
+    "order": 10080,
+    "type": "text",
+    "key": "createdBy",
+    "column": true
+   },
+   "createdAt": {
+    "order": 10090,
+    "type": "datetime",
+    "key": "createdAt",
+    "column": true
+   },
+   "updatedAt": {
+    "order": 10100,
+    "type": "datetime",
+    "key": "updatedAt",
+    "column": true
+   },
+   "focus_regulators": {
+    "type": "multi_pick",
+    "label": "Regulators in focus",
+    "options": [
+     {
+      "value": "RBI"
+     },
+     {
+      "value": "SEBI"
+     },
+     {
+      "value": "NHB"
+     },
+     {
+      "value": "MCA"
+     },
+     {
+      "value": "IRDAI"
+     }
+    ],
+    "order": 200010,
+    "key": "focus_regulators",
+    "column": false
+   },
+   "risk_note": {
+    "type": "long_text",
+    "label": "Risks to this week's targets",
+    "order": 200020,
+    "key": "risk_note",
+    "column": false
+   }
+  },
+  "label": {
+   "singular": "compliance week",
+   "plural": "compliance weeks"
+  },
+  "period": {
+   "mode": "individual",
+   "list_label": {
+    "singular": "week",
+    "plural": "weeks"
+   },
+   "item_label": {
+    "singular": "obligation",
+    "plural": "obligations"
+   },
+   "length_days": 7,
+   "auto_rollover": true,
+   "length_days_range": [
+    7,
+    7
+   ],
+   "workspace_can_set_length": false,
+   "starts_on": "monday",
+   "time_zone": "Asia/Kolkata",
+   "name": "Week of {start:d MMM yyyy}"
+  },
+  "lifecycle": {
+   "field": "state",
+   "initial": "planning",
+   "enforce": "off",
+   "categories": {
+    "planning": "open",
+    "active": "active",
+    "closed": "done"
+   },
+   "transitions": [
+    {
+     "from": [
+      "planning"
+     ],
+     "to": "active"
+    },
+    {
+     "from": [
+      "active"
+     ],
+     "to": "closed",
+     "roles": [
+      "owner",
+      "admin"
+     ]
+    }
+   ]
+  },
+  "description": "A Monday-to-Sunday week with the team's compliance targets and each person's own obligations for it.",
+  "icon": "target",
+  "targets": [
+   {
+    "key": "filings_on_time",
+    "label": "Filings due this week filed on time",
+    "per": "team",
+    "measure": {
+     "area": "deployments",
+     "date": "due_date",
+     "where": {
+      "timeliness": "On time"
+     }
+    },
+    "goal": {
+     "kind": "percent_of",
+     "of": {
+      "area": "deployments",
+      "date": "due_date"
+     },
+     "default": 100
+    }
+   },
+   {
+    "key": "obligations_closed",
+    "label": "Obligations complied",
+    "per": "person",
+    "measure": {
+     "area": "tasks",
+     "date": "doneAt",
+     "person": "assignee",
+     "where": {
+      "state": "closed"
+     }
+    },
+    "goal": {
+     "kind": "count"
+    }
+   },
+   {
+    "key": "evidence_reviewed",
+    "label": "Evidence reviews done",
+    "per": "person",
+    "measure": {
+     "area": "tasks",
+     "date": "updatedAt",
+     "person": "reviewer",
+     "where": {
+      "state": {
+       "in": [
+        "closed",
+        "in_progress"
+       ]
+      }
+     }
+    },
+    "goal": {
+     "kind": "count",
+     "default": 10
+    }
+   }
+  ],
+  "reminders": [
+   {
+    "id": "week-ending",
+    "date": "endsAt",
+    "before_days": [
+     1
+    ],
+    "notify": [
+     "{members_behind_target}"
+    ],
+    "channels": [
+     "inbox"
+    ]
+   }
+  ],
+  "agent": {
+   "tools": {
+    "read": true,
+    "write": true
+   },
+   "describe": "Each week has team targets (measured from filings and obligations, never typed in) and each person's own obligations for the week. Set a person's goal for a target only for yourself or someone who reports to you."
+  },
+  "redefined": true
+ }
+}

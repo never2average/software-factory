@@ -756,8 +756,67 @@ what they had: the period length and the task pipelines):
   before it whole. The tasks area's lifecycle is the `status` column (its six values are the contract with the
   task-workflow service, so each keeps its meaning) or an own `pick_list`; then the status follows the state's
   category on every write (open→`open`, active→`in_progress`, done→`done`, …) and nobody sets it directly.
-- **Relations, views, permissions, reminders, recurrence, metrics, agent, io, period, targets** are declared and
-  checked here at build; the surfaces that act on them (forms and boards per area, enforcement, reminders, metrics)
+- **Lifecycle rules, enforced** (`agent/lib/record-lifecycle.ts`, the one rule book every door applies through
+  `validateRecordWrite`: the ops API, the agent's upsert tools, MCP through the API). A move is allowed by a
+  transition whose `from` holds the stored state (`"*"`: any) and whose `to` is the new one, when the caller's role is
+  in its `roles`, every field in `requires` is set once the move (and its stamps) are applied, a comment is given when
+  `requires_comment` (a task's `reason`), and the caller is not `not_by`: a person field (its stored or new value), or
+  `"{entered_by}"`, whoever moved the record into the state it leaves, so a second person signs off. It is read from
+  the activity feed's move line; with none (a record moved before its lifecycle was enforced), it falls back, failing
+  closed, to the last person the feed shows changing the record, else to its creator. Only a record with neither (no
+  person in its feed, no creator's email) refuses nobody. `set` stamps values with the move:
+  `{me}`, `{today}`, `{today+Nd}`, `{now}` or a value. A record created in a state other than `initial` is a move from
+  nothing, allowed only by a `"*"` transition. With no transitions every move is allowed.
+  - `"off"` (the default): nothing is read, stamped or written; a write is what it was before lifecycles were enforced.
+  - `"warn"`: the move goes through with its stamps; the activity feed gets the move (`State moved "A" → "B" (label):
+    comment [field: a → b]`) and a line naming the broken rule (`Lifecycle rule not followed (roles): …`).
+  - `"strict"`: refused. The ops API answers **409** with `{ error, errors, code: "lifecycle_refused", field, from, to,
+    broken: [{ rule, message, transition }], allowed: [{ to, label, action, roles, requires, requires_comment }] }`;
+    the agent's tool throws the same sentence (`… From "Under review" you can move to: "Complied" (Mark complied),
+    "In progress" (Ask for more evidence; needs a comment).`), and MCP reads it from the 409. Allowed moves are noted
+    in the feed as under warn.
+  Definitions change only through the build. A workspace's task **stage pipelines** keep working under any lifecycle:
+  a stage stores the status of its CATEGORY (its own `category`, else the state its label names, else today's six
+  status names), and a move to a stage is checked as the move to that state. **Periods** keep the same rules on
+  `PATCH /api/ops/cycles/:id` (a comment as `reason`, only when the lifecycle is enforced); an enforced periods
+  lifecycle also starts a new period in its `initial` state and files it under the signed-in person (four eyes may
+  fall back to the creator). Other areas' routes call
+  `lib/record-lifecycle-server.ts` (`lifecycleContext`, `lifecycleConflictResponse`, `recordLifecycleOutcome`).
+  A task write's answer is `{ item, warnings?, next? }` (`WriteExtras` in `agent/lib/record-lifecycle.ts`): `warnings`
+  (`WriteWarning[]`: code `lifecycle_rule_broken`, the sentence as `message`, the rules and moves) only for a move that
+  broke a rule under `"warn"`, for the UI to show; `next` when the write created a next occurrence. The model reads the
+  lifecycle as its moves (`describeMoves`: from each state, where it may go and what each move needs), never as one
+  line of states.
+- **Recurrence** (tasks): a task whose definition has `recurrence` (`field`, `every` per value, `anchor`, `copy`;
+  `on: "done"`) that moves into a state of the done category gets its next occurrence, server-side in the write path
+  (the ops API and the agent's `upsert_todo`): the `copy` fields, the initial state, due one interval after the anchor
+  (a month end stays in its month), linked back by `custom.recurs_from`. Once per task, at the database: a unique
+  index on `(org_id, recurs_from)`, a column Postgres generates from `custom->>'recurs_from'` (`drizzle/0042`; no
+  area's own field may be called `recurs_from`), lets one in, so a repeated move or two completions at the same
+  moment make one; the loser's 409 is taken as done. A value with no interval does not recur. No email.
+- **Permissions** (every area; `agent/lib/record-permissions.ts`): `create`, `update`, `delete` are `"*"` (anyone in
+  the workspace) or a list of roles (`owner`, `admin`, `engineer`, `member`); `own: { field, may }` lets the person a
+  person field names also `update`, `delete` or `transition` (move the lifecycle's state alone; a task's `done` and
+  pipeline stage are moves) THAT record ("own row": a member changes only their own); `fields: { key: { update } }`
+  says who may set one field, on create as on change (a lifecycle move's own stamps are not the caller's change).
+  `read` is only `"*"` for now (the build refuses a list: nothing would hide the row). Enforced on every write and
+  delete path: the ops routes (deployments, implementations, todos, cycles and a cycle's rollover, which is an
+  update), `upsert_customer`'s nested rows (a `remove: true` is a delete), the agent's `upsert_<area>`, `upsert_todo`,
+  `hide_todo` (an archive is a delete) and `upsert_cycle`, and MCP through the routes. A refusal is a **403** with one
+  sentence as `error` (`Only an owner or an admin can delete a regulatory filing.`, `You can change a programme only
+  when you are its owner; an owner or an admin can change any.`) and changes nothing; the agent's tools throw it. A
+  role the caller has none of fails closed; `"*"` still allows. The screens offer only what the role may do (no
+  "Add", no delete in the "…" menu, read-only fields and disabled moves), reading the role from
+  `/api/ops/me/workspaces` only when the area declares permissions. An area that declares none (every default)
+  reads nothing more and answers byte for byte as before.
+- **Metrics** (deployments, implementations; `agent/lib/record-metrics.ts`): `count: { where }`, `ratio: { num, den }`
+  (the share of `den` that also meets `num`, as a percent) and `sum: { field, where }`, each condition the list
+  query's own (`?where=`: fields, operators, `category`, computed fields, `{today±Nd}`), counted in one SELECT in the
+  caller's workspace by `GET /api/ops/record-metrics?area=` and shown above the area's list with `attention`
+  flagged when not zero. A condition that cannot be counted shows a dash and says why. Tasks keep counting theirs on
+  the Tasks view.
+- **Relations, views, reminders, recurrence, agent, io, period, targets** are declared and
+  checked here at build; the surfaces that act on them (forms and boards per area, reminders)
   arrive one area at a time, and until then a declaration changes nothing at runtime. Email reminders are refused
   (off in this release).
 
@@ -768,7 +827,44 @@ what they had: the period length and the task pipelines):
 `relations.group`; `work_periods` → `label` + `period`. A profile may state an area in either form, **never both** (in
 one file or across files). An area written in the record-area form is raised back to the legacy form for every
 reader that still takes it, so `DEPLOYMENT_PROFILE.domains` and `.work_periods` stay complete; an own field of a type
-the legacy form lacks (file, multi_pick, …) is compiled but not yet on those readers, and the build says so.
+the legacy form lacks (file, multi_pick, …) is on the area's own screens, routes and tools (below) but not yet in the
+readers that take the legacy form (the workbook, the export), and the build says so.
+
+**Deployments and implementations drawn from their definition.** When a profile file states `deployments` or
+`implementations` in the record-area form, the compiled area carries `declared: true`, and that area's surfaces are
+drawn from it; any other profile (the default, a legacy `domains.<area>`) keeps today's screens, routes and model
+surface byte for byte (`npm run test:record-area-panels` holds the default's and both live packs' surfaces to
+upstream main's):
+
+- **The screen** (`app/_components/ops/record-area-panel.tsx`, from `lib/record-area-ui.ts`): the nav word, the
+  table's `views.table.columns` (`account`, `title` and any field key), the board on `views.board.by` (its choices in
+  order, with their tones) and its card (`title`, `meta`, `badge`), the timeline or calendar date, `views.available` /
+  `views.default`, the sorts, the filters (a choice field's choices; a date's `presets`; `scope: "people"` as mine /
+  unassigned), `views.group_by`, the detail's `sections`, the lifecycle's moves as buttons, and the create form
+  (`views.create.fields`, else every field a new record must carry), checked by the API's own validator before it is
+  sent. Own fields of every type are on the forms and the detail; a computed field is shown, never edited.
+- **The ops routes** (`lib/record-area-routes.ts`): every write is checked by the one validator
+  (`agent/lib/record-area-write.ts`; aliases and choice labels are taken, hidden `fixed` values, defaults, `{me}` (the
+  signed-in person) and the lifecycle's `initial` are filled; a refusal is a 400 with every sentence in `errors`), own
+  fields are merged per key in SQL, and each change goes to the activity feed in the definition's labels. A list row
+  carries `title` (the `title` template) and `values` (every visible field by key, computed ones evaluated).
+- **The list query**, on any profile: `GET /api/ops/<area>?where=<json>&sort=<field>|-<field>&q=<words>&limit=&cursor=`
+  is filtered, sorted and paged in the database (`agent/lib/record-query.ts`). `where` maps a field key (or `account`)
+  to a value or to `{ eq, ne, in, not_in, lt, lte, gt, gte, set, contains, category }`; only the definition's visible,
+  keys are taken, every value is bound; own fields are matched with `custom @> …` (a GIN index on each area's `custom`,
+  drizzle/0043) and compared as text or as numbers. A **computed** field is filtered and sorted too, compiled to one SQL
+  `CASE` that means what the screen shows: numbers compare as numbers, date fields by their day, `{today}` /
+  `{today±Nd}` is the day the query runs, `{field}` another field, `category` the lifecycle's states. One that reads a
+  list field (multi-pick, tags, several people or files) is refused in a sentence naming that field. Without any of
+  these parameters the list is today's.
+- **The agent** (`agent/lib/record-area-tools.ts`): `upsert_customer`'s nested rows go through the same validator (a
+  list own field takes a list) and, under an enforced lifecycle, read the writer's workspace role and who entered the
+  stored state and write each move to the activity feed, as the routes do (`agent/lib/record-area-store.ts`), and `agent.tools.read` / `agent.tools.write` turn on `list_<area>` / `upsert_<area>`,
+  named in the area's words at the vocabulary boundary (`list_coverage_reports`) and described from the definition.
+  Both are off unless the definition says so.
+
+A legacy route still puts every write it accepts through the same validator (`checkOnly`), with today's column types
+and today's sentences for own fields, so nothing it accepted before is refused.
 
 **Compiled** into `agent/lib/record-areas.generated.ts` (`RECORD_AREAS`, its own module: `DEPLOYMENT_PROFILE` is
 byte for byte what it was for any profile that does not use the record-area form). Each area carries
@@ -787,7 +883,7 @@ fields with one label; a hidden required field without `fixed`; a `fixed` or `de
 file folder that is not `{folder:<domain>}/…`; a computed field that reads itself; more than 60 own fields or 6
 indexed ones; a lifecycle on a field that is not a pick_list, a state without a category, no `done` state, an
 `initial` or transition state that does not exist, `requires`/`set`/`not_by` naming a field the area lacks or of the
-wrong type, a `"strict"` lifecycle with a state nothing reaches, the task status given another meaning; a view, sort,
+wrong type (`not_by` may also be `"{entered_by}"`), a `"strict"` lifecycle with a state nothing reaches, the task status given another meaning; a view, sort,
 filter, group, detail or create field that does not exist or is hidden; a sort on a type that cannot sort; a create
 form that leaves out a required field with no default; a container that cannot hold tasks; an email reminder;
 `agent.describe` over 1200 characters.

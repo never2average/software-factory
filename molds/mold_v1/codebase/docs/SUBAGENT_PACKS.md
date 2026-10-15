@@ -145,6 +145,12 @@ A pack that reaches outside the deployment in some other way (its own HTTP tool)
 that in its `docs/<PACK>.md` and gives it a flag a deployment can turn off; the flag is
 read at build time, like the others.
 
+The same `X ? tool : disableTool()` gate works for a tool of the pack's own (any name, not only one of eve's
+built-in tools such as `web_search`): with the flag off the tool is simply not registered, and the model never sees
+it. eve as published threw on that (`"read_image" is not a framework tool`) when the agent graph was resolved, so
+the agent could not start; patches/eve+0.25.1.patch makes it "omit this tool" (mold_v1-263, held by
+`npm run test:optional-tools`). The tool table in scripts/test-optional-tools.mjs lists the base app's gated files.
+
 ## A pack whose profile relabels the domains
 
 When the pack's profile gives the domains words of their own (customers are "companies", deployments are

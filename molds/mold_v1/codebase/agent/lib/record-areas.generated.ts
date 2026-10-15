@@ -104,6 +104,11 @@ export interface RecordArea {
   targets?: { key: string; label: string; per?: "team" | "person"; measure: { area: string; date?: string; where?: RecordWhere; person?: string }; goal?: { kind?: "count" | "percent_of"; of?: Record<string, unknown>; default?: number } }[];
   /** This deployment says something about the area that the default profile does not. */
   redefined: boolean;
+  /**
+   * deployments / implementations only: a profile file states the area in the record-area form (records.areas), so
+   * its screens, ops routes and agent tools are drawn from this definition. Absent for the legacy form and the default.
+   */
+  declared?: true;
 }
 
 /**

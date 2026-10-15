@@ -1,7 +1,7 @@
 import "server-only";
 import { getOpsDb, withOrgRls } from "./ops-db";
 import type { GateDecision, SessionOwnership, SessionRight } from "./chat-gate";
-import { gateSessionRequest, readTranscriptAccess, type GateDb } from "./session-gate";
+import { gateSessionRequest, readChildTranscriptAccess, readTranscriptAccess, type GateDb } from "./session-gate";
 import { workspacesOf } from "./org-context";
 
 /**
@@ -38,6 +38,22 @@ export async function accessForSession(
 ): Promise<{ read: boolean; write: boolean }> {
   if (!getOpsDb()) return { read: false, write: false };
   return readTranscriptAccess(webGateDb(), orgId, email, sessionId);
+}
+
+/**
+ * May this caller read (or replace) the saved copy of a SPECIALIST's feed (a delegated child session)? Owner only:
+ * lib/session-gate.ts `readChildTranscriptAccess`, in THIS workspace. `rootSessionId` is the chat the specialist
+ * belongs to, which the copy is filed under so deleting the chat deletes its specialists' copies.
+ *
+ * tenancy-ok: every tenant statement runs inside `withOrgRls(orgId, …)` (via the GateDb above).
+ */
+export async function accessForChildSession(
+  orgId: string,
+  email: string,
+  sessionId: string,
+): Promise<{ read: boolean; write: boolean; rootSessionId: string | null }> {
+  if (!getOpsDb()) return { read: false, write: false, rootSessionId: null };
+  return readChildTranscriptAccess(webGateDb(), orgId, email, sessionId);
 }
 
 /**

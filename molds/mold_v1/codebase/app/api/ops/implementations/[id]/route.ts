@@ -11,6 +11,13 @@ import { choiceSchema, customBodySchema, customFieldChanges, customForWrite, pro
 import { customDelta } from "@/agent/lib/custom-fields";
 import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { W } from "@/lib/ui-words";
+import { isDeclared } from "@/agent/lib/record-area-records";
+import { checkOnly } from "@/agent/lib/record-area-write";
+import { declaredPatch, deleteForbidden, refused } from "@/lib/record-area-routes";
+import { callerEmail } from "@/lib/work-periods-server";
+
+/** Drawn from its definition (records.areas.implementations): a change goes through lib/record-area-routes.ts. */
+const DECLARED = isDeclared("implementations");
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +65,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
+  if (DECLARED) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) return refused(["The body must be a JSON object."]);
+    const b = body as Record<string, unknown>;
+    const customerId = typeof b.customerId === "string" ? b.customerId : "";
+    if (!customerId) return refused([`Name the ${W.account} this belongs to.`]);
+    if (!(await customerInOrg(octx.orgId, customerId))) {
+      return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
+    }
+    try {
+      return await declaredPatch("implementations", octx, db, and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId))!, b, id, (await callerEmail(request)) ?? "");
+    } catch (e) {
+      return NextResponse.json({ error: errorText(e) }, { status: 500 });
+    }
+  }
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: zodMessage(parsed.error) }, { status: 400 });
   const { customerId, actor = "web", custom: customInput, ...set } = parsed.data as { customerId: string; actor?: string; custom?: unknown } & Record<string, unknown>;
@@ -70,6 +91,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const [before] = await withOrgRls(octx.orgId, (tx) =>
       tx.select().from(implementation).where(and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId))),
     );
+    // The one validator every write to the area goes through (agent/lib/record-area-write.ts): only its refusal is used here.
+    const refusal = checkOnly("implementations", "update", { ...set }, { actor, role: octx.role, before: (before as Record<string, unknown> | undefined) ?? null });
+    if (refusal.length) return refused(refusal);
     if (before && "custom" in set) {
       const checked = customForWrite("implementations", set.custom, before);
       if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
@@ -124,6 +148,9 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
     return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
   }
   try {
+    // Who may delete it (records.areas.implementations.permissions): a 403 with the sentence. Nothing is read when none are declared.
+    const forbidden = await deleteForbidden("implementations", octx, and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId))!, () => callerEmail(request));
+    if (forbidden) return forbidden;
     const [item] = await withOrgRls(octx.orgId, (tx) =>
       tx
         .delete(implementation)

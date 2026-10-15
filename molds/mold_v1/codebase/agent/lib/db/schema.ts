@@ -237,6 +237,8 @@ export const deployments = pgTable(
     // No index on customer_id alone: the key leads with (org_id, customer_id) and serves it (0025 dropped it).
     foreignKey({ name: "deployments_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
     index("deployments_health_status_idx").on(t.healthStatus),
+    // Own fields filtered by containment (agent/lib/record-query.ts: custom @> {"key": value}): drizzle/0043.
+    index("deployments_custom_idx").using("gin", t.custom.op("jsonb_path_ops")),
   ],
 );
 
@@ -398,6 +400,8 @@ export const implementation = pgTable("implementation", {
 }, (t) => [
   primaryKey({ name: "implementation_org_id_customer_id_pk", columns: [t.orgId, t.customerId] }),
   foreignKey({ name: "implementation_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
+  // Own fields filtered by containment (agent/lib/record-query.ts): drizzle/0043.
+  index("implementation_custom_idx").using("gin", t.custom.op("jsonb_path_ops")),
 ]);
 
 /* -------------------------------------------------------------------------- */
@@ -1026,6 +1030,10 @@ export const todos = pgTable(
     // (records.areas.tasks; agent/lib/record-validate.ts checks every write, the task-workflow service merges it
     // per key). drizzle/0041_todos_custom.sql.
     custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
+    // The task this one is the next occurrence of (agent/lib/task-recurrence.ts writes it as custom.recurs_from):
+    // derived by Postgres, never written. Its unique index below makes recurrence once at the database.
+    // drizzle/0042_todos_recurs_from_unique.sql.
+    recursFrom: text("recurs_from").generatedAlwaysAs(sql`(custom ->> 'recurs_from'::text)`),
   },
   (t) => [
     index("todos_done_idx").on(t.done),
@@ -1033,6 +1041,8 @@ export const todos = pgTable(
     index("todos_assignee_idx").on(t.assignee),
     index("todos_container_idx").on(t.containerType, t.containerId),
     index("todos_custom_idx").using("gin", t.custom.op("jsonb_path_ops")),
+    // A task has at most ONE next occurrence: two completions at once cannot both create one (drizzle/0042).
+    uniqueIndex("todos_recurs_from_uidx").on(t.orgId, t.recursFrom).where(sql`recurs_from IS NOT NULL`),
   ],
 );
 

@@ -1,0 +1,5916 @@
+{
+ "pipeline": [
+  {
+   "label": "create, initial",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "createdBy": "ana@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "createdBy": "ana@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, in progress",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, done",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress",
+     "actor": "ana@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress",
+     "actor": "ana@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start, no stored row",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "park",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "backlog"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "backlog"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "backlog"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off without a due date",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off with a due date",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off by who started it",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "done by the flag",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": true
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": true
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "reopen by the flag",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": false
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": false
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "by a stage",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "stageId": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "stageId": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not a move",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "same state",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "open"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "open"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "open"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a wrong status",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   }
+  },
+  {
+   "label": "create, initial",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "createdBy": "bo@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "createdBy": "bo@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, in progress",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, done",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress",
+     "actor": "bo@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress",
+     "actor": "bo@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start, no stored row",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "park",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "backlog"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "backlog"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "backlog"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off without a due date",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off with a due date",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off by who started it",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "done by the flag",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": true
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": true
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "reopen by the flag",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": false
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": false
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "by a stage",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "stageId": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "stageId": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not a move",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "same state",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "open"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "open"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "open"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a wrong status",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   }
+  },
+  {
+   "label": "create, initial",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "createdBy": "ana@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "createdBy": "ana@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, in progress",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, done",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress",
+     "actor": "ana@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress",
+     "actor": "ana@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start, no stored row",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "park",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "backlog"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "backlog"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "backlog"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off without a due date",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off with a due date",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off by who started it",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "done by the flag",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": true
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": true
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "reopen by the flag",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": false
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": false
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "by a stage",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "stageId": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "stageId": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not a move",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "same state",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "open"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "open"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "open"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a wrong status",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   }
+  },
+  {
+   "label": "create, initial",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "createdBy": "bo@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "createdBy": "bo@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, in progress",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, done",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress",
+     "actor": "bo@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress",
+     "actor": "bo@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start, no stored row",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "park",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "backlog"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "backlog"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "backlog"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off without a due date",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off with a due date",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off by who started it",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "done by the flag",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": true
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": true
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "reopen by the flag",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": false
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": false
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "by a stage",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "stageId": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "stageId": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not a move",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "same state",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "open"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "open"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "open"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a wrong status",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   }
+  },
+  {
+   "label": "create, initial",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "createdBy": "ana@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "createdBy": "ana@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, in progress",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, done",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress",
+     "actor": "ana@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress",
+     "actor": "ana@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start, no stored row",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "park",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "backlog"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "backlog"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "backlog"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off without a due date",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off with a due date",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off by who started it",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "done by the flag",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": true
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": true
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "reopen by the flag",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": false
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": false
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "by a stage",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "stageId": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "stageId": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not a move",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "same state",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "open"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "open"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "open"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a wrong status",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   }
+  },
+  {
+   "label": "create, initial",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "createdBy": "bo@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "createdBy": "bo@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, in progress",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "New task",
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, done",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Done already",
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress",
+     "actor": "bo@example.com"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress",
+     "actor": "bo@example.com"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start, no stored row",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "in_progress"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "in_progress"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "active"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "park",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "backlog"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "backlog"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "backlog"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "block with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "blocked",
+     "reason": "waiting on the bank"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "blocked"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off without a due date",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off with a due date",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done",
+     "dueAt": "2026-10-20T09:00:00.000Z"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "sign off by who started it",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "done by the flag",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": true
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": true
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "reopen by the flag",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "done": false
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "done": false
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "by a stage",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "stageId": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "stageId": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "done"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "done"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "done"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "cancel with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "cancelled",
+     "reason": "duplicate"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "cancelled"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not a move",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "Renamed",
+     "priority": "high"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "same state",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "status": "open"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "status": "open"
+    },
+    "customDelta": {},
+    "custom": {},
+    "derived": {
+     "category": "open"
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a wrong status",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "\"Status\" (status) must be one of: \"Backlog\" (\"backlog\"), \"Open\" (\"open\"), \"In progress\" (\"in_progress\"), \"Blocked\" (\"blocked\"), \"Done\" (\"done\"), \"Cancelled\" (\"cancelled\")."
+    ]
+   }
+  }
+ ],
+ "obligation": [
+  {
+   "label": "create",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "ana@example.com",
+     "custom": {
+      "frequency": "Quarterly",
+      "state": "not_started"
+     },
+     "status": "open",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "ana@example.com"
+    },
+    "customDelta": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "custom": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "derived": {
+     "category": "open",
+     "status": "open",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, under review",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "ana@example.com",
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "ana@example.com"
+    },
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit without evidence",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted"
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit with evidence",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted",
+      "evidence": [
+       "obligations/evidence/a.pdf"
+      ]
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "take for review",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review",
+     "evidence": [
+      "x/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "mark complied",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "the scan is unreadable",
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "the scan is unreadable"
+    },
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not applicable",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "not our licence",
+     "custom": {
+      "state": "not_applicable"
+     },
+     "status": "cancelled",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "not our licence"
+    },
+    "customDelta": {
+     "state": "not_applicable"
+    },
+    "custom": {
+     "state": "not_applicable",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "cancelled",
+     "status": "cancelled",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a direct status",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   }
+  },
+  {
+   "label": "own fields only",
+   "who": {
+    "actor": "ana@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "department": "IT"
+     }
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "department": "IT"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly",
+     "department": "IT"
+    },
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "bo@example.com",
+     "custom": {
+      "frequency": "Quarterly",
+      "state": "not_started"
+     },
+     "status": "open",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "bo@example.com"
+    },
+    "customDelta": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "custom": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "derived": {
+     "category": "open",
+     "status": "open",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, under review",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "bo@example.com",
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "bo@example.com"
+    },
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit without evidence",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted"
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit with evidence",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted",
+      "evidence": [
+       "obligations/evidence/a.pdf"
+      ]
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "take for review",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review",
+     "evidence": [
+      "x/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "mark complied",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "the scan is unreadable",
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "the scan is unreadable"
+    },
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not applicable",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "not our licence",
+     "custom": {
+      "state": "not_applicable"
+     },
+     "status": "cancelled",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "not our licence"
+    },
+    "customDelta": {
+     "state": "not_applicable"
+    },
+    "custom": {
+     "state": "not_applicable",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "cancelled",
+     "status": "cancelled",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a direct status",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   }
+  },
+  {
+   "label": "own fields only",
+   "who": {
+    "actor": "bo@example.com",
+    "role": null
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "department": "IT"
+     }
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "department": "IT"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly",
+     "department": "IT"
+    },
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "ana@example.com",
+     "custom": {
+      "frequency": "Quarterly",
+      "state": "not_started"
+     },
+     "status": "open",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "ana@example.com"
+    },
+    "customDelta": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "custom": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "derived": {
+     "category": "open",
+     "status": "open",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, under review",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "ana@example.com",
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "ana@example.com"
+    },
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit without evidence",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted"
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit with evidence",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted",
+      "evidence": [
+       "obligations/evidence/a.pdf"
+      ]
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "take for review",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review",
+     "evidence": [
+      "x/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "mark complied",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "the scan is unreadable",
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "the scan is unreadable"
+    },
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not applicable",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "not our licence",
+     "custom": {
+      "state": "not_applicable"
+     },
+     "status": "cancelled",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "not our licence"
+    },
+    "customDelta": {
+     "state": "not_applicable"
+    },
+    "custom": {
+     "state": "not_applicable",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "cancelled",
+     "status": "cancelled",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a direct status",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   }
+  },
+  {
+   "label": "own fields only",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "department": "IT"
+     }
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "department": "IT"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly",
+     "department": "IT"
+    },
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "bo@example.com",
+     "custom": {
+      "frequency": "Quarterly",
+      "state": "not_started"
+     },
+     "status": "open",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "bo@example.com"
+    },
+    "customDelta": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "custom": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "derived": {
+     "category": "open",
+     "status": "open",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, under review",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "bo@example.com",
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "bo@example.com"
+    },
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit without evidence",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted"
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit with evidence",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted",
+      "evidence": [
+       "obligations/evidence/a.pdf"
+      ]
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "take for review",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review",
+     "evidence": [
+      "x/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "mark complied",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "the scan is unreadable",
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "the scan is unreadable"
+    },
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not applicable",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "not our licence",
+     "custom": {
+      "state": "not_applicable"
+     },
+     "status": "cancelled",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "not our licence"
+    },
+    "customDelta": {
+     "state": "not_applicable"
+    },
+    "custom": {
+     "state": "not_applicable",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "cancelled",
+     "status": "cancelled",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a direct status",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   }
+  },
+  {
+   "label": "own fields only",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "member"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "department": "IT"
+     }
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "department": "IT"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly",
+     "department": "IT"
+    },
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "ana@example.com",
+     "custom": {
+      "frequency": "Quarterly",
+      "state": "not_started"
+     },
+     "status": "open",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "ana@example.com"
+    },
+    "customDelta": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "custom": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "derived": {
+     "category": "open",
+     "status": "open",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, under review",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "ana@example.com",
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "ana@example.com"
+    },
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit without evidence",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted"
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit with evidence",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted",
+      "evidence": [
+       "obligations/evidence/a.pdf"
+      ]
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "take for review",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review",
+     "evidence": [
+      "x/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "mark complied",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more without a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more with a comment",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "the scan is unreadable",
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "the scan is unreadable"
+    },
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not applicable",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "not our licence",
+     "custom": {
+      "state": "not_applicable"
+     },
+     "status": "cancelled",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "not our licence"
+    },
+    "customDelta": {
+     "state": "not_applicable"
+    },
+    "custom": {
+     "state": "not_applicable",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "cancelled",
+     "status": "cancelled",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a direct status",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   }
+  },
+  {
+   "label": "own fields only",
+   "who": {
+    "actor": "ana@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "department": "IT"
+     }
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "department": "IT"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly",
+     "department": "IT"
+    },
+    "derived": {},
+    "warnings": []
+   }
+  },
+  {
+   "label": "create",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "bo@example.com",
+     "custom": {
+      "frequency": "Quarterly",
+      "state": "not_started"
+     },
+     "status": "open",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "bo@example.com"
+    },
+    "customDelta": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "custom": {
+     "frequency": "Quarterly",
+     "state": "not_started"
+    },
+    "derived": {
+     "category": "open",
+     "status": "open",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "create, under review",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31T09:00:00.000Z",
+     "assignee": "bo@example.com",
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "title": "ALM return",
+     "dueAt": "2026-10-31",
+     "assignee": "bo@example.com"
+    },
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "start",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit without evidence",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted"
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "submit with evidence",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "evidence_submitted",
+      "evidence": [
+       "obligations/evidence/a.pdf"
+      ]
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "evidence_submitted",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "custom": {
+     "state": "evidence_submitted",
+     "frequency": "Quarterly",
+     "evidence": [
+      "obligations/evidence/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "take for review",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "under_review"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "under_review"
+    },
+    "custom": {
+     "state": "under_review",
+     "evidence": [
+      "x/a.pdf"
+     ]
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "mark complied",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more without a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "ask for more with a comment",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "the scan is unreadable",
+     "custom": {
+      "state": "in_progress"
+     },
+     "status": "in_progress",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "the scan is unreadable"
+    },
+    "customDelta": {
+     "state": "in_progress"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "active",
+     "status": "in_progress",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "not applicable",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "reason": "not our licence",
+     "custom": {
+      "state": "not_applicable"
+     },
+     "status": "cancelled",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {
+     "reason": "not our licence"
+    },
+    "customDelta": {
+     "state": "not_applicable"
+    },
+    "custom": {
+     "state": "not_applicable",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "cancelled",
+     "status": "cancelled",
+     "done": false
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "skip ahead",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "state": "closed"
+     },
+     "status": "done",
+     "statusFrom": "category"
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "state": "closed"
+    },
+    "custom": {
+     "state": "closed",
+     "frequency": "Quarterly"
+    },
+    "derived": {
+     "category": "done",
+     "status": "done",
+     "done": true
+    },
+    "warnings": []
+   }
+  },
+  {
+   "label": "a direct status",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   },
+   "validated": {
+    "ok": false,
+    "errors": [
+     "`status` follows `custom.state` here; set the state instead (\"not_started\", \"in_progress\", \"evidence_submitted\", \"under_review\", \"closed\", \"not_applicable\")."
+    ]
+   }
+  },
+  {
+   "label": "own fields only",
+   "who": {
+    "actor": "bo@example.com",
+    "role": "admin"
+   },
+   "prepared": {
+    "ok": true,
+    "body": {
+     "custom": {
+      "department": "IT"
+     }
+    },
+    "warnings": []
+   },
+   "validated": {
+    "ok": true,
+    "columns": {},
+    "customDelta": {
+     "department": "IT"
+    },
+    "custom": {
+     "state": "in_progress",
+     "frequency": "Quarterly",
+     "department": "IT"
+    },
+    "derived": {},
+    "warnings": []
+   }
+  }
+ ]
+}

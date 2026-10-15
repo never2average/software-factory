@@ -635,6 +635,30 @@ export const CHANGES = [
       "if(N?.message!==void 0&&!F.deferredMessage&&!F.consumedMessage){let e=await stageAttachmentsToSandbox(N.message);I.push({content:e,role:`user`})}" +
       "{let e=contextStorage.getStore();e!==void 0&&await deliverSteeringNotes({emissionState:x,emit:n,messages:I,parent:e.get(ParentSessionKey),sessionId:b.sessionId})}",
   },
+  /* ---- an optional authored tool that is switched off (mold_v1-263) ------------------------------------------- */
+  {
+    file: "runtime/resolve-agent-graph.js",
+    why:
+      "resolveRuntimeAgentNode: `disableTool()` exported from a tool file whose name is NOT one of eve's framework tools " +
+      "means \"omit this authored tool\" (it is already absent from the agent's tools: the compiler records the slug as " +
+      "disabled instead of compiling a tool), where eve threw `... is not a framework tool` and no agent could be resolved " +
+      "(every runtime start and sandbox prewarm of a build with such a tool off). A framework tool's disableTool() removes " +
+      "the framework default exactly as before",
+    find:
+      "for(let n of r.disabledFrameworkTools)if(!c.has(n))throw new ResolveRuntimeAgentGraphError(`agent/tools/${n}.ts exports disableTool() but \"${n}\" is not a framework tool. Rename the file to one of: ${[...c].sort().join(`, `)}.`,{nodeId:t,sourceId:e.sourceId});let u=new Set(r.disabledFrameworkTools),",
+    replace: "let u=new Set(r.disabledFrameworkTools.filter(e=>c.has(e))),",
+  },
+  {
+    file: "public/definitions/tool.d.ts",
+    why: "types: say what disableTool() does on a file that is not a framework tool's",
+    find:
+      "/**\n * Returns a sentinel that disables the framework tool whose name matches the\n * containing file's slug.\n */\nexport declare function disableTool(): DisabledToolSentinel;",
+    replace:
+      "/**\n * Returns a sentinel that disables the framework tool whose name matches the\n * containing file's slug.\n *\n" +
+      " * agent-workspace patch (mold_v1-263): when the slug is not a framework tool's,\n" +
+      " * the file's authored tool is omitted (registered nowhere, never shown to the\n" +
+      " * model): the way an optional tool is switched off for a deployment.\n */\nexport declare function disableTool(): DisabledToolSentinel;",
+  },
 ];
 
 /** Whole new files, copied from scripts/eve-patch/files/<path> to node_modules/eve/dist/src/<path>. */

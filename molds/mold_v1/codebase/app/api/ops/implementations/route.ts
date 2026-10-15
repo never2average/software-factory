@@ -12,6 +12,13 @@ import { asCustomValues, customDelta } from "@/agent/lib/custom-fields";
 import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { an, W } from "@/lib/ui-words";
+import { isDeclared } from "@/agent/lib/record-area-records";
+import { checkOnly } from "@/agent/lib/record-area-write";
+import { callerEmail } from "@/lib/work-periods-server";
+import { accountNames, declaredItem, declaredUpsert, listQueryOf, queryRows, refused } from "@/lib/record-area-routes";
+
+/** Drawn from its definition (records.areas.implementations): every write and the list go through lib/record-area-routes.ts. */
+const DECLARED = isDeclared("implementations");
 
 /**
  * A profile may GROUP rows by rolloutId (a portfolio, a programme): many rows then share one rolloutId, so it
@@ -48,6 +55,16 @@ export async function POST(request: NextRequest) {
   const db = getOpsDb();
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const body = await request.json().catch(() => null);
+  if (DECLARED) {
+    const customerId = body && typeof body === "object" && typeof (body as { customerId?: unknown }).customerId === "string" ? (body as { customerId: string }).customerId : "";
+    if (customerId && !(await customerInOrg(ctx.orgId, customerId))) return noAccount();
+    try {
+      return await declaredUpsert("implementations", ctx, body, (await callerEmail(request)) ?? "");
+    } catch (e) {
+      if (isForeignKeyViolation(e)) return noAccount();
+      return NextResponse.json({ error: errorText(e) }, { status: 500 });
+    }
+  }
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid" }, { status: 400 });
@@ -70,6 +87,12 @@ export async function POST(request: NextRequest) {
     const [existing] = await withOrgRls(ctx.orgId, (tx) =>
       tx.select({ custom: implementation.custom }).from(implementation).where(and(eq(implementation.orgId, ctx.orgId), eq(implementation.customerId, data.customerId))),
     );
+    // The one validator every write to the area goes through (agent/lib/record-area-write.ts): only its refusal is
+    // used here. An update is checked for what the caller sent; a create for the row as it will be written.
+    const refusal = existing
+      ? checkOnly("implementations", "update", Object.fromEntries(Object.entries(parsed.data).filter(([k]) => sent.has(k))), { actor: "web", role: ctx.role, before: { custom: existing.custom as Record<string, unknown> } })
+      : checkOnly("implementations", "create", { ...parsed.data, blockerOwner: CHOICE_MEANINGS.implementations.defaults.blockerOwner }, { actor: "web", role: ctx.role });
+    if (refusal.length) return refused(refusal);
     const checked = customForWrite("implementations", customInput, existing ?? null);
     if (checked.error) return NextResponse.json({ error: checked.error }, { status: 400 });
     const written = { ...data, ...(checked.custom ? { custom: checked.custom } : {}) };
@@ -141,6 +164,38 @@ export async function GET(request: NextRequest) {
   if (ctx instanceof Response) return ctx;
   const db = getOpsDb();
   if (!db) return NextResponse.json({ items: [] });
+  const asked = listQueryOf(new URL(request.url));
+  if (asked && "error" in asked) return refused([asked.error]);
+  if (DECLARED || asked) {
+    // Filtered, sorted and paged in the database (agent/lib/record-query.ts); a declared area's rows carry its fields.
+    try {
+      const found = await queryRows("implementations", ctx.orgId, asked ?? {});
+      if ("errors" in found) return refused(found.errors);
+      const customerName = await accountNames(ctx.orgId);
+      const items = found.rows.map((r) => {
+        const row = r as typeof implementation.$inferSelect;
+        const legacy = {
+          id: GROUPED_BY_ROLLOUT ? row.customerId : row.rolloutId ?? row.customerId,
+          label: row.displayName?.trim() || [row.customerId, row.implementationStage].filter(Boolean).join(" · ") || row.rolloutId || row.customerId,
+          displayName: row.displayName ?? null,
+          owner: row.implementationOwnerEmail ?? null,
+          stage: row.implementationStage,
+          risk: row.implementationRiskLevel,
+          progress: row.implementationProgressPct,
+          customer: row.customerId,
+          customerLabel: customerName(row.customerId),
+          solutionName: null,
+          goLiveDate: row.actualGoLiveDate ?? row.targetGoLiveDate ?? null,
+          fields: pickProfileFields("implementations", row),
+          custom: asCustomValues(row.custom),
+        };
+        return DECLARED ? { ...legacy, ...declaredItem("implementations", r, legacy.label, row.displayName) } : legacy;
+      });
+      return NextResponse.json({ items, ...(found.nextCursor ? { nextCursor: found.nextCursor } : {}) });
+    } catch (e) {
+      return NextResponse.json({ error: errorText(e) }, { status: 500 });
+    }
+  }
   try {
   // Workspace-scoped. These tables had no org_id until the tenancy migration,
   // so this route returned every workspace's rows to any signed-in caller.
@@ -206,4 +261,12 @@ export async function GET(request: NextRequest) {
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
+}
+
+/** The 409 for an account that is not this workspace's (absent and not-yours read the same). */
+function noAccount(): NextResponse {
+  return NextResponse.json(
+    { error: `No ${W.account} with that id exists yet, so this record has nothing to attach to. Create the ${W.account} first (POST /api/ops/customers, or customer_create from the CLI).` },
+    { status: 409 },
+  );
 }

@@ -330,7 +330,7 @@ for (const id of AREA_IDS) {
   else {
     const { domain, dropped } = raiseDomain(id, area, profile.domains[id], areaColumns[id]);
     profile.domains[id] = domain;
-    if (dropped.length) raisedNotes.push(`records.areas.${id}: ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} compiled into the area but not yet on its list, forms or API (they still read the legacy form, which has no such type)`);
+    if (dropped.length) raisedNotes.push(`records.areas.${id}: ${dropped.join(", ")} ${dropped.length === 1 ? "is" : "are"} on the area's screens, ops routes and agent tools (drawn from its definition), but not yet in what still reads the legacy form (the workbook, the export), which has no such type`);
   }
 }
 const validValue = (meta, v) => (meta.type === "enum" ? meta.values.includes(v) : meta.type === "number" ? typeof v === "number" && Number.isFinite(v) : meta.type === "text" ? typeof v === "string" && v.trim() !== "" : false);
@@ -456,6 +456,10 @@ for (const id of AREA_IDS) {
   const defaultAreas = compileAll(d, () => undefined, () => false);
   for (const id of AREA_IDS) RECORD_AREAS[id].redefined = JSON.stringify(RECORD_AREAS[id]) !== JSON.stringify(defaultAreas[id]);
 }
+// The two record areas a profile file states in the record-area form (records.areas.<id>), not the legacy domains.<id>:
+// their list, board, forms and ops routes are drawn from the definition (app/_components/ops/record-area-panel.tsx,
+// lib/record-area-write.ts). Emitted only when true, so a profile in the legacy form compiles to what it did.
+for (const id of ["deployments", "implementations"]) if (freshBy.has(id)) RECORD_AREAS[id].declared = true;
 for (const note of raisedNotes) console.warn(`gen-deployment-profile: note: ${note}`);
 
 // --- asr: dictation in the chat composer (speech to text, never spoken replies) ---------------------------------
@@ -654,6 +658,11 @@ export interface RecordArea {
   targets?: { key: string; label: string; per?: "team" | "person"; measure: { area: string; date?: string; where?: RecordWhere; person?: string }; goal?: { kind?: "count" | "percent_of"; of?: Record<string, unknown>; default?: number } }[];
   /** This deployment says something about the area that the default profile does not. */
   redefined: boolean;
+  /**
+   * deployments / implementations only: a profile file states the area in the record-area form (records.areas), so
+   * its screens, ops routes and agent tools are drawn from this definition. Absent for the legacy form and the default.
+   */
+  declared?: true;
 }`;
 const DOC = `/**
  * THE RECORD AREAS (profiles \`records.areas\`, docs/DEPLOYMENT_PROFILE.md "records"), compiled: the four built-in kinds of

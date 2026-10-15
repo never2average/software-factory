@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { ServiceContext } from "@/lib/types";
+import { parseTaskStates } from "@/lib/stages";
 
 function equalSecret(left: string, right: string): boolean {
   const a = Buffer.from(left);
@@ -22,7 +23,8 @@ export function authenticateServiceRequest(request: Request): ServiceContext | R
   const rawRole = request.headers.get("x-actor-role")?.trim();
   if (!orgId || !actor) return Response.json({ error: "Missing service context" }, { status: 400 });
   const role = rawRole === "owner" || rawRole === "admin" || rawRole === "engineer" ? rawRole : "member";
-  return { orgId, actor, role, ...periodLabelOf(request) };
+  const taskStates = parseTaskStates(request.headers.get("x-task-states"));
+  return { orgId, actor, role, ...periodLabelOf(request), ...(taskStates ? { taskStates } : {}) };
 }
 
 /**

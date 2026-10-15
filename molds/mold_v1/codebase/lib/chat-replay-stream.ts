@@ -183,6 +183,14 @@ export interface BoundedReplayOptions {
    * exactly how a healthy seam read came back empty.
    */
   readonly assumeParked?: boolean;
+  /**
+   * The request's own clock: when the route started handling it, and the clock to read. When given, the marker
+   * carries `timing: { firstByte, ms }`, the ms from the request's start to eve's first body chunk (null when none
+   * came) and to the marker itself. A response header cannot say either (both happen after the headers are sent), so
+   * the marker is where the browser's open record reads them (lib/chat-open-timing.ts). Additive: a reader that does
+   * not know the field ignores it.
+   */
+  readonly timing?: { readonly startedAt: number; readonly now?: () => number };
 }
 
 /**
@@ -202,6 +210,23 @@ export function boundedReplay(
 
   let partial = "";
   let seen = 0;
+  /**
+   * Is the stream AT A PARK right now: does the last complete line read say the run is suspended?
+   *
+   * It FOLLOWS THE LAST LINE; it used to stick. The first `session.waiting` in a replayed history set it for the
+   * rest of the read, so every later gap, after ordinary events deep in the history, was judged by the 400 ms
+   * parked window. One full replay measured live ended at event 603 of 3,963 that way: a 412 ms pause in eve's
+   * store read, a marker saying "drained", and a transcript cut short that the reader then mounted and saved.
+   *
+   * Now a park counts only while it is the newest line. The next event (a later turn in the history) puts the read
+   * back on the in-flight window, so a stall anywhere but right after the history's own last park waits 2.5 s, as a
+   * stall in a turn always did. Before any line has arrived it is the caller's `assumeParked`.
+   *
+   * Only `session.waiting` is a park here. The reader also counts `turn.completed` and `turn.failed` as at rest, but
+   * eve writes those just BEFORE the `session.waiting` that carries the resume token: ending the read on a pause
+   * between the two would deliver the history without its token. A history that really ends on one of them (a run
+   * that died between the two events) now drains after the in-flight window instead of the parked one.
+   */
   let parked = Boolean(options.assumeParked);
   let terminal = false;
   let markerSent = false;
@@ -224,6 +249,8 @@ export function boundedReplay(
    * after it as before.
    */
   let firstChunk = false;
+  const clock = options.timing ? (options.timing.now ?? (() => performance.now())) : null;
+  let firstByteMs: number | null = null;
   let pending: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
 
   /**
@@ -251,7 +278,15 @@ export function boundedReplay(
           type: "ops.replay.end",
           // Deliberately NOT the continuation token: for a shared thread the
           // token belongs to the relay and the row, never to a reader.
-          data: { index: startIndex + seen, parked, done: terminal, drained },
+          data: {
+            index: startIndex + seen,
+            parked,
+            done: terminal,
+            drained,
+            ...(clock && options.timing
+              ? { timing: { firstByte: firstByteMs, ms: Math.round(clock() - options.timing.startedAt) } }
+              : {}),
+          },
         })}\n`,
       ),
     );
@@ -267,11 +302,12 @@ export function boundedReplay(
       seen += 1;
       try {
         const event = JSON.parse(line) as { type?: string };
-        if (event.type === "session.waiting") parked = true;
-        else if (event.type && TERMINAL_EVENTS.has(event.type)) terminal = true;
+        parked = event.type === "session.waiting";
+        if (event.type && TERMINAL_EVENTS.has(event.type)) terminal = true;
       } catch {
         // A line we cannot parse still counts as an event for indexing — the
-        // reader saw it — but it tells us nothing about the replay boundary.
+        // reader saw it — but it is not a park, so the read is no longer at one.
+        parked = false;
       }
     }
   };
@@ -287,7 +323,9 @@ export function boundedReplay(
         : await Promise.race<ReadableStreamReadResult<Uint8Array> | "idle">([
             pending,
             new Promise((resolve) => {
-              timer = setTimeout(() => resolve("idle"), idleWindowMs({ parked, firstChunk }));
+              // Bytes of the NEXT line already here (`partial`) mean the history is not over, whatever the last
+              // complete line was: never the short window then.
+              timer = setTimeout(() => resolve("idle"), idleWindowMs({ parked: parked && partial === "", firstChunk }));
             }),
           ]);
       if (timer !== undefined) clearTimeout(timer);
@@ -304,7 +342,10 @@ export function boundedReplay(
       }
 
       pending = null;
-      if (!next.done) firstChunk = true;
+      if (!next.done) {
+        if (!firstChunk && clock && options.timing) firstByteMs = Math.round(clock() - options.timing.startedAt);
+        firstChunk = true;
+      }
       if (next.done) {
         // The upstream closed. That is the severance, not the end of history —
         // unless a terminal event already said the run is over.

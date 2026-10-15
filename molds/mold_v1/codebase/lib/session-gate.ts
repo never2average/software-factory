@@ -449,6 +449,39 @@ export async function readTranscriptAccess(
   return { read: decision.allow, write: decision.allow && decision.role === "owner" };
 }
 
+/**
+ * MAY THIS PERSON READ (or replace) THE SAVED COPY OF A SPECIALIST'S FEED, in workspace `orgId`? — the rule behind
+ * /api/ops/chat-snapshots with `kind=child` (lib/chat-session-access.ts `accessForChildSession`, lib/child-copy.ts).
+ *
+ * Narrower than {@link readTranscriptAccess} on purpose: OWNER ONLY, for both reading and writing. A copy is what the
+ * Control Panel of the owner's own chat folded from a delegated (child) session, so:
+ *
+ *   · the session must be a CHILD, recorded in this workspace with its lineage (agent_session_owners, written by the
+ *     agent from eve's own `subagent.called`, never by a client): `parent_session_id` set and a root session named.
+ *     A chat's own session, or one nobody recorded, is not a specialist and has no copy here;
+ *   · the caller must be the child's recorded owner AND the recorded owner of its root, in this same workspace;
+ *   · a member of a shared chat, a colleague on a workspace-visible step, a guest, a service: none of them. They
+ *     read the specialist's stream through the gate as before (no more than the gate gives them today).
+ *
+ * Every refusal is the same answer as "no such copy" at the route (404), so nobody learns a session exists.
+ */
+export async function readChildTranscriptAccess(
+  db: Pick<GateDb, "inOrg">,
+  orgId: string,
+  email: string,
+  sessionId: string,
+): Promise<{ read: boolean; write: boolean; rootSessionId: string | null }> {
+  const refused = { read: false, write: false, rootSessionId: null };
+  const me = norm(email);
+  if (!me || !orgId || !sessionId) return refused;
+  const child = await readOwnerRecordIn(db, orgId, sessionId);
+  if (!child || child.source !== "lineage" || !child.rootSessionId || child.rootSessionId === sessionId) return refused;
+  if (!child.ownerEmail || child.ownerEmail !== me) return refused;
+  const root = await readOwnerRecordIn(db, orgId, child.rootSessionId);
+  if (!root || root.ownerEmail !== me) return refused;
+  return { read: true, write: true, rootSessionId: child.rootSessionId };
+}
+
 /** The row the agent writes when it creates (or first resolves) a session. Never overwrites an existing owner. */
 export async function recordOwner(
   db: Pick<GateDb, "inOrg">,

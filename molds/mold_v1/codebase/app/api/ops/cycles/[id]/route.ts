@@ -7,13 +7,18 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordFieldChanges } from "@/lib/ops-activity";
 import { orgContextForRequest } from "@/lib/org-context";
 import { WORK_PERIODS } from "@/agent/lib/work-periods";
-import { periodsNotFound } from "@/lib/work-periods-server";
+import { callerEmail, periodsNotFound } from "@/lib/work-periods-server";
+import { validateRecordWrite } from "@/agent/lib/record-validate";
+import { areaView, type AreaRow } from "@/agent/lib/record-areas";
+import { warningOf, type MoveCheck } from "@/agent/lib/record-lifecycle";
+import { lifecycleConflictResponse, lifecycleContext, lifecycleEnforced, recordLifecycleOutcome } from "@/lib/record-lifecycle-server";
+import { periodForbidden } from "@/lib/record-permissions-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const patchSchema = z.strictObject({
+const patchShape = {
   name: z.string().min(1).optional(),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
@@ -22,7 +27,16 @@ const patchSchema = z.strictObject({
   capacity: z.number().int().nonnegative().nullable().optional(),
   lead: z.string().nullable().optional(),
   actor: z.string().min(1).optional(),
-});
+};
+/**
+ * The periods' lifecycle (records.areas.periods.lifecycle; agent/lib/record-lifecycle.ts). Enforced ("warn" or
+ * "strict"): a state change is checked against its transitions as the caller (role, four eyes, a comment as `reason`,
+ * stamps), refused with 409 under strict, noted (activity feed and the answer's `warnings`) under warn. Under "off" (the
+ * default) the route is exactly what it was: no `reason`, nothing more read.
+ */
+const PERIODS_ENFORCED = lifecycleEnforced("periods");
+const patchSchema = PERIODS_ENFORCED ? z.strictObject({ ...patchShape, reason: z.string().max(2000).optional() }) : z.strictObject(patchShape);
+const PERIODS = areaView("periods");
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const off = periodsNotFound();
@@ -47,14 +61,33 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   if (WORK_PERIODS.individual && (parsed.data.lead != null || parsed.data.capacity != null)) {
     return NextResponse.json({ error: "lead and capacity are not used here" }, { status: 400 });
   }
-  const { startsAt, endsAt, actor = "web", ...rest } = parsed.data;
+  const { startsAt, endsAt, actor = "web", reason, ...rest } = parsed.data as typeof parsed.data & { reason?: string };
   const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
   if (startsAt !== undefined) set.startsAt = startsAt ? new Date(startsAt) : null;
   if (endsAt !== undefined) set.endsAt = endsAt ? new Date(endsAt) : null;
   try {
+    // Who may change it (records.areas.periods.permissions): a 403 with the sentence; nothing read when undeclared.
+    const no = await periodForbidden(request, ctx, "update", { id, patch: parsed.data });
+    if (no) return no;
     const [before] = await withOrgRls(ctx.orgId, (tx) =>
       tx.select().from(cycles).where(and(eq(cycles.id, id), eq(cycles.orgId, ctx.orgId))),
     );
+    let check: MoveCheck | null = null;
+    let mover = actor;
+    if (PERIODS_ENFORCED && before && rest.state !== undefined) {
+      mover = (await callerEmail(request)) ?? actor;
+      const row = before as unknown as AreaRow;
+      const extra = await lifecycleContext(ctx.orgId, "periods", { type: "cycle", id }, row);
+      const r = validateRecordWrite("periods", { mode: "update", before: row, patch: { state: rest.state }, actor: mover, role: ctx.role, comment: reason ?? null, ...extra });
+      if (!r.ok) return r.conflict ? lifecycleConflictResponse(r.conflict) : NextResponse.json({ error: r.errors.join(" "), errors: r.errors }, { status: 400 });
+      // The move's stamps (`set`): a date or time field is stored as one.
+      for (const [k, x] of Object.entries(r.columns)) {
+        if (k === "state") continue;
+        const t = PERIODS.field(k)?.type;
+        set[k] = (t === "date" || t === "datetime") && typeof x === "string" ? new Date(x) : x;
+      }
+      check = r.lifecycle;
+    }
     const [item] = await withOrgRls(ctx.orgId, (tx) =>
       tx.update(cycles).set(set).where(and(eq(cycles.id, id), eq(cycles.orgId, ctx.orgId))).returning(),
     );
@@ -71,7 +104,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         ],
       );
     }
-    return NextResponse.json({ item });
+    if (check) await recordLifecycleOutcome(ctx.orgId, "periods", { type: "cycle", id }, mover, check, reason ?? null);
+    return NextResponse.json({ item, ...(check && check.enforce === "warn" && !check.allowed ? { warnings: [warningOf(check)] } : {}) });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
@@ -88,6 +122,8 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   const { id } = await context.params;
   if (!UUID.test(id)) return NextResponse.json({ error: "Invalid cycle id" }, { status: 400 });
   try {
+    const no = await periodForbidden(request, ctx, "delete", { id });
+    if (no) return no;
     // Hard delete — the period's row is removed. Its todos keep their (now
     // dangling) cycleId and simply fall out of any cycle grouping.
     const [item] = await withOrgRls(ctx.orgId, (tx) =>

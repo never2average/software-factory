@@ -244,7 +244,12 @@ console.log("\n5. The Control Panel's rail folds a specialist's own stream the s
   );
   check(
     "a re-opened feed continues from where its fold stopped (no replay onto a full transcript)",
-    /this\.o\.streamUrl\(e\.sid, e\.fold\.cursor\)/.test(childFeed) && !/startIndex=0/.test(childFeed),
+    // Since the saved copies (#174) the read starts at the fold's cursor, one earlier to check a restored copy's
+    // seam, or at the shadow's own cursor when a disagreeing copy is being replaced (a fresh fold, not the shown one).
+    /const target = e\.shadow \?\? e\.fold;/.test(childFeed) &&
+      /const start = seam \? target\.cursor - 1 : target\.cursor;/.test(childFeed) &&
+      /this\.o\.streamUrl\(e\.sid, start\)/.test(childFeed) &&
+      !/startIndex=0/.test(childFeed),
   );
   // The rail's fold, run: one ChildFold per feed, read after every line (a live rail flushes between events).
   const railFold = (events) => {

@@ -11,8 +11,11 @@
  *   - a computed field or one the system stamps is never written; a required one is given on create and never cleared;
  *   - hidden fixed values and defaults ({me}, {today}, {today+7d}) are filled on create;
  *   - the lifecycle: the state is one of the field's states, its category is derived (and, for a task whose states are
- *     its own, the stored status and done flag the task service keeps); the move is checked against the transitions
- *     and reported in `transition` (refusing a move is the caller's choice, by `enforce`, and off by default);
+ *     its own, the stored status and done flag the task service keeps); a move (and a create in a state) is checked
+ *     against the transitions by agent/lib/record-lifecycle.ts checkMove, the one rule book, and what happens to a
+ *     move that breaks them is the lifecycle's `enforce`: "off" (the default) nothing, exactly as before; "warn" the
+ *     move goes through with its stamps and `lifecycle` carries what to note; "strict" the write is refused with
+ *     `conflict` (the ops API's 409 body) and a sentence naming the moves there are;
  *   - the area's own fields go out as a DELTA (key -> value, or null to clear), merged per key where they are stored,
  *     so a key the profile no longer declares is carried through untouched.
  *
@@ -25,6 +28,7 @@
 import { RECORD_AREAS, type RecordAreaId, type RecordField, type RecordRole } from "./record-areas.generated.ts";
 import { areaView, CATEGORY_STATUS, type AreaRow, type RecordAreas } from "./record-areas.ts";
 import { coerceFieldValue, fieldName } from "./record-values.ts";
+import { checkMove, conflictBody, type LifecycleConflict, type MoveCheck } from "./record-lifecycle.ts";
 
 export { coerceFieldValue, LONG_TEXT_MAX, realDate, TEXT_MAX, type CoercedValue, type CoercibleField } from "./record-values.ts";
 const isBlank = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
@@ -57,8 +61,15 @@ export interface WriteInput {
   now?: Date;
   /** Keys that are not fields of the area but belong to the request (an id, an audit label): passed on untouched. */
   passThrough?: readonly string[];
-  /** Refuse a move the lifecycle's transitions do not allow, under enforce "strict" (off until the routes say so). */
+  /**
+   * Under enforce "strict", refuse a move the lifecycle's rules do not allow (the default). false: report it only
+   * (`lifecycle`), for a caller that checks a draft rather than writes.
+   */
   enforceTransitions?: boolean;
+  /** The comment the write carries (a task's `reason`): what a transition with `requires_comment` needs. */
+  comment?: string | null;
+  /** Who moved the record into its stored state (lib/record-lifecycle-server.ts), for `not_by: "{entered_by}"`. */
+  enteredBy?: string | null;
 }
 export interface TransitionCheck {
   field: string;
@@ -81,9 +92,15 @@ export type WriteResult =
       /** What the write implies: the lifecycle state's category; for a task with its own states, the status and done flag. */
       derived: { category?: string; status?: string; done?: boolean };
       transition: TransitionCheck | null;
+      /**
+       * The move this write makes, checked against the lifecycle's rules (agent/lib/record-lifecycle.ts), when the
+       * lifecycle is enforced ("warn" or "strict") and the write moves the state or creates a record in one; else null.
+       * The caller writes moveEvent (and, when not allowed, warnEvent) to the activity feed once the write landed.
+       */
+      lifecycle: MoveCheck | null;
       warnings: string[];
     }
-  | { ok: false; errors: string[] };
+  | { ok: false; errors: string[]; conflict?: LifecycleConflict };
 
 const today = (now: Date, days = 0) => new Date(now.getTime() + days * 86_400_000).toISOString().slice(0, 10);
 function resolveDefault(f: RecordField, actor: string, now: Date): unknown {
@@ -177,6 +194,7 @@ export function validateRecordWrite(areaId: RecordAreaId, input: WriteInput, are
   // The lifecycle: the state after the write, its category, the move.
   const derived: { category?: string; status?: string; done?: boolean } = {};
   let transition: TransitionCheck | null = null;
+  let lifecycle: MoveCheck | null = null;
   if (lc) {
     const own = ownLifecycle;
     const named = own ? lc.field in customDelta : lc.field in columns;
@@ -190,45 +208,43 @@ export function validateRecordWrite(areaId: RecordAreaId, input: WriteInput, are
         derived.done = category === "done";
       }
     }
-    // A move is checked only from a state the caller read (an update with the stored row); a new record starts where
-    // it is created.
-    if (named && input.mode === "update" && before && typeof after === "string" && after !== prev) {
-      transition = checkTransition(v, typeof prev === "string" ? prev : null, after, { ...before, ...columns, custom }, input);
-      if (!transition.allowed) {
-        const mode = v.lifecycle!.enforce;
-        const sentence = transition.reasons.join(" ");
-        if (mode === "strict" && input.enforceTransitions) return { ok: false, errors: [sentence] };
-        if (mode !== "off") warnings.push(sentence);
+    const mode = v.lifecycle!.enforce;
+    // A move is checked from a state the caller read (an update with the stored row); a create, from nothing, unless it
+    // starts where every record starts (its initial state: nothing to check, nothing to note).
+    const moves = named && typeof after === "string" && (input.mode === "update" ? Boolean(before) && after !== prev : after !== v.lifecycle!.initial);
+    if (moves) {
+      const from = input.mode === "update" && typeof prev === "string" ? prev : null;
+      const row: AreaRow = { ...(before ?? {}), ...columns, custom };
+      const check = checkMove(v, { from, to: after as string, row, before, actor: input.actor, role: input.role, comment: input.comment, enteredBy: input.enteredBy, now });
+      if (input.mode === "update") transition = { field: lc.field, from, to: after as string, allowed: check.allowed, reasons: check.allowed ? [] : [check.sentence] };
+      if (mode !== "off") {
+        if (!check.allowed && mode === "strict" && input.enforceTransitions !== false) return { ok: false, errors: [check.sentence], conflict: conflictBody(check) };
+        if (!check.allowed) warnings.push(check.sentence);
+        // The move's stamps (`set`): written with it, under warn as under strict. Never under "off".
+        for (const [k, x] of Object.entries(check.stamp)) {
+          const f = v.field(k);
+          if (!f) continue;
+          if (f.column) columns[f.key] = x;
+          else {
+            customDelta[f.key] = x;
+            custom[f.key] = x;
+          }
+        }
+        lifecycle = check;
       }
     }
   }
-  return { ok: true, columns, customDelta, custom, derived, transition, warnings };
+  return { ok: true, columns, customDelta, custom, derived, transition, lifecycle, warnings };
 }
 
-/** Is a move allowed by the transitions list, and what does it still need? Sentences name labels, never keys alone. */
+/** Is a move allowed by the transitions list, and what does it still need? (agent/lib/record-lifecycle.ts checkMove.) */
 export function checkTransition(
   v: ReturnType<typeof areaView>,
   from: string | null,
   to: string,
   row: AreaRow,
-  who: { actor: string; role?: RecordRole },
+  who: { actor: string; role?: RecordRole; comment?: string | null; enteredBy?: string | null },
 ): TransitionCheck {
-  const lc = v.lifecycle!;
-  const label = (s: string | null) => (s === null ? "nothing" : `"${v.display(lc.field, s)}"`);
-  const ts = v.area.lifecycle?.transitions ?? [];
-  if (!ts.length) return { field: lc.field, from, to, allowed: true, reasons: [] };
-  const candidates = ts.filter((t) => t.to === to && (t.from === "*" || (from !== null && t.from.includes(from))));
-  const reasons: string[] = [];
-  for (const t of candidates) {
-    const why: string[] = [];
-    if (t.roles && (!who.role || !t.roles.includes(who.role))) why.push(`only ${t.roles.join(" or ")} may make it`);
-    if (t.not_by && String(v.get(row, t.not_by) ?? "").toLowerCase() === who.actor.toLowerCase()) why.push(`not by the ${v.label(t.not_by).toLowerCase()}`);
-    const missing = (t.requires ?? []).filter((k) => isBlank(v.get(row, k)) || (Array.isArray(v.get(row, k)) && (v.get(row, k) as unknown[]).length === 0));
-    if (missing.length) why.push(`it needs ${missing.map((k) => `"${v.label(k)}"`).join(" and ")}`);
-    if (!why.length) return { field: lc.field, from, to, allowed: true, reasons: [] };
-    reasons.push(`${label(to)}${t.label ? ` (${t.label})` : ""}: ${why.join("; ")}.`);
-  }
-  const moves = lc.movesFrom(from, who.role).map((m) => `${label(m.to)}${m.transition?.label ? ` (${m.transition.label})` : ""}`);
-  const head = candidates.length ? `Moving from ${label(from)} to ${label(to)} is not possible now: ${reasons.join(" ")}` : `${label(from)} cannot move to ${label(to)}.`;
-  return { field: lc.field, from, to, allowed: false, reasons: [`${head} From ${label(from)} you can move to: ${moves.length ? moves.join(", ") : "nothing"}.`] };
+  const c = checkMove(v, { from, to, row, before: null, actor: who.actor, role: who.role, comment: who.comment, enteredBy: who.enteredBy });
+  return { field: c.field, from, to, allowed: c.allowed, reasons: c.allowed ? [] : [c.sentence] };
 }

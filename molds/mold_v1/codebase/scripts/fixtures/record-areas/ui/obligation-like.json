@@ -1,0 +1,33 @@
+{
+  "$comment": "An obligation-like task area as a pack declares it, laid over the compiled worked example (golden/obligation.areas.json) by /preview/record-tasks?profile=obligation-like (tests/task-area-definition.spec.ts). It declares only the board and the table (no timeline), due-date presets, metrics with an attention flag, an own field on the cards, its own placeholders; `&enforce=strict` turns its lifecycle strict. Objects merge, arrays replace, as profiles do. A test fixture; no deployment ships it.",
+  "tasks": {
+    "fields": {
+      "notes": { "placeholder": "What must be done, in its own terms…" }
+    },
+    "views": {
+      "default": "board",
+      "available": ["board", "table"],
+      "board": { "by": "state", "card": { "title": "title", "meta": ["dueAt", "assignee", "department"], "badge": "priority" } },
+      "filters": [
+        { "field": "dueAt", "presets": ["overdue", "due_7d", "due_30d"] },
+        { "field": "state" },
+        { "field": "department" },
+        { "scope": "people", "field": "assignee" }
+      ],
+      "empty": "No obligations yet. Add one, or ask the agent to draw them from a source."
+    },
+    "metrics": [
+      {
+        "id": "overdue",
+        "label": "Overdue obligations",
+        "count": { "where": { "dueAt": { "lt": "{today}" }, "state": { "category": ["open", "active", "blocked"] } } },
+        "attention": true
+      },
+      {
+        "id": "awaiting-review",
+        "label": "Evidence awaiting review",
+        "count": { "where": { "state": "evidence_submitted" } }
+      }
+    ]
+  }
+}

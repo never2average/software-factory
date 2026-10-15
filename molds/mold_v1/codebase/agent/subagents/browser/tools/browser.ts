@@ -19,7 +19,9 @@ import { BROWSER_ENABLED } from "#lib/feature-flags.js";
  * built-in tool slots (`agent`, `bash`, `web_search`, ...); on an authored tool
  * the Vercel-target build resolves the agent graph and refuses it —
  * `"browser_act" is not a framework tool` — so a deployment with the browser
- * off could not build at all. A dynamic resolver is what eve provides for a
+ * off could not build at all. (patches/eve+0.25.1.patch now makes disableTool()
+ * on an authored name mean "omit this tool", mold_v1-263; this file keeps the
+ * resolver, which works either way.) A dynamic resolver is what eve provides for a
  * tool set that exists conditionally: a map names each tool by its key, so the
  * model sees exactly the same `browser_*` names as before, and `null` means no
  * tools. With none resolved the subagent has nothing to call, and the

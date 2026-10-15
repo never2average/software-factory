@@ -1,4 +1,9 @@
 import { WORK_PERIODS, periodWordOf } from "./work-periods.ts";
+import { areaView } from "./record-areas.ts";
+import { taskStatesHeader } from "./record-lifecycle.ts";
+
+/** The deployment's task states, for the service to map a pipeline stage to a status by category. */
+const TASK_STATES_HEADER = taskStatesHeader(areaView("tasks"));
 
 interface ServiceResponse<T> {
   item?: T;
@@ -27,6 +32,7 @@ export async function taskWorkflowRequest<T>(
         "x-actor-role": "engineer",
         // The word the service's activity feed names a period by (the deployment profile's). Nothing under "off".
         ...(WORK_PERIODS.enabled ? { "x-period-label": encodeURIComponent(periodWordOf(WORK_PERIODS, "Period")) } : {}),
+        ...TASK_STATES_HEADER,
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });

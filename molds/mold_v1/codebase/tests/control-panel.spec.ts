@@ -17,6 +17,10 @@ import { specialistStream } from "../scripts/fixtures/child-feed/make-stream.mjs
  *   FIN_D, FIN_E  finished, small
  *   RUN    running; its first read fails (503), the next one works
  *   PARK   running and parked on a question (the parent shows it): its resume token is on its own stream
+ *
+ * The last test keeps SAVED COPIES (lib/child-copy.ts) in a store this spec plays for /api/ops/chat-snapshots
+ * (`kind=child`), across a page reload: the second load shows each specialist's details from its copy, timed in the
+ * page, and reads no specialist's stream from event 0.
  */
 
 const make = (o: Parameters<typeof specialistStream>[0]): string[] => specialistStream(o);
@@ -236,4 +240,104 @@ test("a remount, and leaving for another chat and coming back, read nothing agai
   await page.waitForTimeout(3_000);
   expect(finished(), "leaving and coming back makes no request for a finished specialist").toBe(settled);
   await expect(rowOf(page, "FIN_A")).toContainText("done · 3 calls");
+});
+
+test("a saved copy per specialist: on the second page load the details are there from the copy (goal 0.5 s, measured), and no stream is read from event 0", async ({ page }) => {
+  test.setTimeout(150_000);
+  const agent = await fakeAgent(page);
+  // The copy store, as the route keeps it (never backwards), across both page loads.
+  const copies = new Map<string, { cursor: number }>();
+  const copyReads: { sid: string; at: number }[] = [];
+  await page.route(/\/api\/ops\/chat-snapshots/, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const body = request.method() === "POST" ? (request.postDataJSON() as { kind?: string; sessionId: string; cursor: number }) : null;
+    const child = url.searchParams.get("kind") === "child" || body?.kind === "child";
+    if (!child) return route.fulfill({ status: 200, json: { snapshot: null } });
+    const sid = url.searchParams.get("session") ?? body?.sessionId ?? "";
+    if (request.method() === "GET") {
+      copyReads.push({ sid, at: Date.now() });
+      return route.fulfill({ status: 200, json: { copy: copies.get(sid) ?? null } });
+    }
+    if (request.method() === "DELETE") {
+      copies.delete(sid);
+      return route.fulfill({ status: 200, json: { ok: true } });
+    }
+    const prev = copies.get(sid);
+    if (body && prev && prev.cursor > body.cursor) return route.fulfill({ status: 409, json: { ok: false, reason: "older" } });
+    if (body) copies.set(sid, body);
+    return route.fulfill({ status: 200, json: { ok: true } });
+  });
+  // In the page, from the first moment: when the rail's seven rows appear, and when each row first shows its details.
+  const DETAILS: Partial<Record<Sid, string>> = { FIN_A: "done · 3 calls", FIN_C: "done · 2 calls", FIN_D: "done · 2 calls", FIN_E: "done · 2 calls" };
+  await page.addInitScript(
+    ({ order, details }) => {
+      const w = window as unknown as { __copyTimes: { rows: number | null; details: Record<string, number> } };
+      w.__copyTimes = { rows: null, details: {} };
+      const tick = () => {
+        const rail = document.querySelector('[data-testid="rail"]');
+        if (!rail) return;
+        const rows = [...rail.querySelectorAll("li")].filter((li) => li.querySelector("button"));
+        if (rows.length >= order.length && w.__copyTimes.rows === null) w.__copyTimes.rows = performance.now();
+        rows.forEach((li, i) => {
+          const want = details[order[i]];
+          if (want && w.__copyTimes.details[order[i]] === undefined && (li.textContent ?? "").includes(want)) {
+            w.__copyTimes.details[order[i]] = performance.now();
+          }
+        });
+      };
+      new MutationObserver(tick).observe(document, { subtree: true, childList: true, characterData: true });
+    },
+    { order: ORDER as string[], details: DETAILS as Record<string, string> },
+  );
+
+  // First load: today's harvest, which reads each finished specialist from 0 and stores its copy at its boundary.
+  await open(page);
+  await page.getByTestId("mark-ready").click();
+  for (const sid of Object.keys(DETAILS) as Sid[]) await expect(rowOf(page, sid)).toContainText(DETAILS[sid] as string, { timeout: 60_000 });
+  const copied: Sid[] = ["FIN_A", "FIN_C", "FIN_D", "FIN_E", "PARK"];
+  await expect.poll(() => copied.filter((sid) => copies.has(`wrun_${sid}`)).length, { timeout: 15_000 }).toBe(copied.length);
+  const firstLoad = agent.seen.length;
+  expect(agent.seen.filter((s) => copied.includes(s.sid) && s.startIndex === 0).length, "the first load read each from 0, once").toBe(copied.length);
+  console.log(`saved copies after the first load: ${copied.map((sid) => `${sid} ${JSON.stringify(copies.get(`wrun_${sid}`)).length} B (stream ${ndjson(STREAMS[sid]).length} B)`).join(", ")}`);
+
+  // Second load: a reload of the page.
+  await page.reload();
+  await expect(rail(page).locator("li")).toHaveCount(7);
+  for (const sid of Object.keys(DETAILS) as Sid[]) await expect(rowOf(page, sid)).toContainText(DETAILS[sid] as string, { timeout: 5_000 });
+  const times = await page.evaluate(() => (window as unknown as { __copyTimes: { rows: number; details: Record<string, number> } }).__copyTimes);
+  // The panel's own start: the moment its feeds were first asked for (its mount, once the page's script has
+  // hydrated the server-rendered rows; in `next dev` that hydration alone is about a second, and is not the panel's).
+  const asked = await page.evaluate(() =>
+    Math.min(...performance.getEntriesByType("resource").filter((r) => /\/api\/ops\/chat-snapshots\?kind=child/.test(r.name)).map((r) => r.startTime)),
+  );
+  const sinceMount = Object.fromEntries(Object.entries(times.details).map(([sid, t]) => [sid, Math.round(t - asked)]));
+  const sinceRows = Object.fromEntries(Object.entries(times.details).map(([sid, t]) => [sid, Math.round(t - times.rows)]));
+  console.log(`second load, each specialist's details (ms) after the panel mounted: ${JSON.stringify(sinceMount)}; after the server-rendered rows painted: ${JSON.stringify(sinceRows)}`);
+  expect(Number.isFinite(asked), "the panel asked for its saved copies").toBe(true);
+  // THE GOAL is 0.5 s from the panel's mount, and the line above prints the measured figure on every run (109-675 ms
+  // on a busy 8 GB machine running five checkouts). The ASSERTION is 2 s, deliberately: on a loaded CI runner `next
+  // dev` and the browser can stall for hundreds of ms on their own, and a timing bound set at the goal fails for the
+  // machine, not the code. What 2 s still separates is the thing that matters: without a copy the details come only
+  // from a full read, which never starts before the chat is ready (asserted below) and then takes 13.6 s to over
+  // 85 s live. The robust half of the claim is structural: zero reads from event 0, asserted below.
+  console.log(`goal 0.5 s from mount: ${Object.values(sinceMount).every((ms) => ms < 500) ? "met" : "missed"} on this run`);
+  for (const sid of Object.keys(DETAILS)) expect(sinceMount[sid], `${sid}: details within 2 s of the panel's mount (goal 0.5 s)`).toBeLessThan(2_000);
+  // …before the conversation is up (the harvest has not even started), and from the copy alone.
+  const second = agent.seen.slice(firstLoad);
+  // FIN_B (stalled, so never copied) is left out: the FIRST page's one retry of it lands 10 s after its first request,
+  // which on a fast run is after the snapshot above was taken.
+  expect(second.filter((s) => s.sid.startsWith("FIN_") && s.sid !== "FIN_B"), "no finished specialist's stream read before the chat is ready").toHaveLength(0);
+  expect(second.filter((s) => s.sid === "PARK").map((s) => s.startIndex), "the parked one reads from its stored index").toEqual([STREAMS.PARK.length - 1]);
+
+  await page.getByTestId("mark-ready").click();
+  await expect.poll(() => agent.seen.slice(firstLoad).filter((s) => s.sid.startsWith("FIN_") && s.sid !== "FIN_B").length, { timeout: 15_000 }).toBe(4);
+  await page.waitForTimeout(2_000);
+  const reads = agent.seen.slice(firstLoad).filter((s) => copied.includes(s.sid));
+  expect(reads.filter((s) => s.startIndex === 0), "ZERO reads from event 0 for a specialist with a copy").toHaveLength(0);
+  expect(reads.every((s) => s.startIndex === STREAMS[s.sid].length - 1), "each reads one event: the seam at its cursor - 1").toBe(true);
+  for (const sid of Object.keys(DETAILS) as Sid[]) await expect(rowOf(page, sid)).toContainText(DETAILS[sid] as string);
+  // The parked one can still be steered: its resume token came back from the seam read.
+  await rowOf(page, "PARK").locator("button").first().click();
+  await expect(rail(page).getByRole("textbox")).toBeVisible();
 });

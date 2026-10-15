@@ -7,6 +7,7 @@ import { orgContextForRequest } from "@/lib/org-context";
 import { WORK_PERIODS, mayActFor } from "@/agent/lib/work-periods";
 import { refusalFor, rollOver, rolloverSentence, rosterLines } from "@/agent/lib/work-period-store";
 import { callerEmail, periodsNotFound } from "@/lib/work-periods-server";
+import { periodForbidden } from "@/lib/record-permissions-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +51,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const { actor = "web", assignee } = parsed.data;
   const target = parsed.data.target !== undefined ? parsed.data.target : WORK_PERIODS.individual ? "next" : null;
   try {
+    // A rollover changes the period (records.areas.periods.permissions "update"): a 403 with the sentence.
+    const no = await periodForbidden(request, ctx, "rollover", { id });
+    if (no) return no;
     if (assignee && WORK_PERIODS.individual) {
       const me = await callerEmail(request);
       if (!me) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

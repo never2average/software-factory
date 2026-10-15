@@ -23,6 +23,7 @@ import { ConnectorsPanel } from "./ops/connectors-panel";
 import { CronsPanel } from "./ops/crons-panel";
 import { SECTION_META, type OpsSection } from "./ops/lib";
 import { WorkflowsPanel } from "./ops/workflows-panel";
+import { useRecordRole } from "./ops/record-access";
 import { SURFACE } from "./ops/tokens";
 import type { TodoViewKey } from "@/lib/work-periods-ui";
 
@@ -48,6 +49,8 @@ export function OpsCenter({
   readonly initialView?: TodoViewKey;
 }) {
   const meta = SECTION_META[section];
+  // The person's role in this workspace: the Tasks view greys out the lifecycle moves it may not make (the API decides).
+  const role = useRecordRole(open && section === "todos");
 
   // The deep-linked row is applied exactly once: the panel that consumes it
   // clears it here, so switching sections (or reopening the modal) afterwards
@@ -125,6 +128,7 @@ export function OpsCenter({
             initialSelectedId={pendingInitialId}
             initialView={initialView}
             onInitialConsumed={consumeInitial}
+            role={role}
           />
         ) : null}
       </DialogContent>
