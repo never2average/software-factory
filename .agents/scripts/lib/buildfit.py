@@ -716,7 +716,11 @@ def _run(step, argv, serving, label, wait_s, allow_swap, base, cwd, probe, runne
                 say(f"buildfit: {label} was killed for lack of memory again ({how}" + (f", at {at_mb} MB" if at_mb else "") + "), at its smallest settings. Nothing was changed.")
                 say(short_line(step, probe(), serving, killed=True, prof=p, at_mb=at_mb)); return CAPACITY_RC
             if how == "heap":     # V8's own ceiling was too low for this step: more heap, inside the budget
-                heap = min(max(HEAP_MAX_MB, p["heap_mb"]), max(pl["heap_mb"] + 512, (pl["heap_mb"] * 3) // 2)); heap_failed = True
+                # The ceiling is the step's whole budget (RAM + swap it may use) less 1 GB for native memory, not the
+                # step's recorded heap: a pack that grew past that heap (2026-10-15, compliance_os at 5080 MB) used to be
+                # retried at the very heap it had just run out of.
+                cap = max(HEAP_MAX_MB, p["heap_mb"], (pl.get("budget_mb") or 0) - 1024)
+                heap = min(cap, max(pl["heap_mb"] + 512, (pl["heap_mb"] * 3) // 2)); heap_failed = True
                 say(f"buildfit: {label} ran out of its {pl['heap_mb']} MB heap (exit {rc}); once more with {heap} MB")
             else:
                 tight = True
