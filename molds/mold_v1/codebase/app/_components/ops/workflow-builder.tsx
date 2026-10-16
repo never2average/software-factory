@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Spinner } from "@/components/ui/spinner";
+import { Loading, Skeleton, SkeletonLines } from "@/components/ui/skeleton";
 import {
   ASSIGN_LABELS,
   MIGRATE_LABELS,
@@ -47,6 +47,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { PaginatedTable, type Column } from "./paginated-table";
+import { SkeletonList } from "./primitives";
 import { errMessage, opsFetch } from "./lib";
 import { afterMenuClose } from "./after-menu-close";
 import { an, upperFirst, W } from "@/lib/ui-words";
@@ -322,7 +323,9 @@ function DagDialog({
               dangerouslySetInnerHTML={{ __html: svg }}
             />
           ) : (
-            <div className="grid h-full place-items-center"><Spinner /></div>
+            <Loading label="Drawing the diagram" className="h-full">
+              <Skeleton className="h-full w-full rounded-lg bg-muted/40" />
+            </Loading>
           )}
         </div>
       </DialogContent>
@@ -498,7 +501,7 @@ export function WorkflowBuilder() {
         : d,
     );
 
-  if (workflows === null) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>;
+  if (workflows === null) return <SkeletonList label="Loading workflows" className="flex-1" />;
 
   const columns: Column<WorkflowRow>[] = [
     {
@@ -668,7 +671,12 @@ export function WorkflowBuilder() {
         onCloseDetail={() => setSelectedId(null)}
         renderDetail={() =>
           !draft ? (
-            <div className="flex flex-1 items-center justify-center"><Spinner /></div>
+            // The row's name is in the list beside it; the editor shows its shape until the workflow arrives.
+            <Loading label="Loading the workflow" className="flex flex-1 flex-col gap-4 p-5 pt-4">
+              <Skeleton className="h-5 w-1/3" />
+              <SkeletonLines widths={[90, 75, 82, 60]} lineClassName="bg-muted/50" />
+              <Skeleton className="h-40 w-full rounded-lg bg-muted/40" />
+            </Loading>
           ) : (
             <div className="min-h-0 flex-1 overflow-auto p-5 pt-4">
               {/* One header row: the title reads as a title and edits in place,

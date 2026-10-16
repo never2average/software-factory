@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
+import { Loading, Skeleton, SkeletonLines } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { OrgMark, toLogoDataUrl } from "../org-mark";
 import {
@@ -252,6 +252,42 @@ const TABS: { key: WorkspaceTab; label: string }[] = [
   ...(PERIOD_UI.enabled && PERIOD_LENGTH.workspaceCanSet ? [{ key: "periods" as const, label: PERIOD_UI.navLabel }] : []),
   { key: "audit", label: "Audit trail" },
 ];
+
+/* ----------------------------- Loading shapes ----------------------------- */
+
+/**
+ * A tab whose content is still to come (mold_v1-269): the tab bar above stays, and the tab shows its shape, a heading
+ * and a table's rows, in place of a bare spinner.
+ */
+function SectionSkeleton({ label, className }: { label: string; className?: string }) {
+  return (
+    <Loading label={label} className={cn("flex flex-col gap-4", className)}>
+      <Skeleton className="h-4 w-1/4" />
+      <span className="flex flex-col gap-3 rounded-lg border border-border/60 p-3">
+        {[70, 55, 80, 45, 62].map((w, i) => (
+          <span key={w} className="flex items-center gap-3">
+            <Skeleton className="h-3 w-1/5 bg-muted/70" style={{ animationDelay: `${i * 60}ms` }} />
+            <Skeleton className="h-3 bg-muted/50" style={{ width: `${w}%`, animationDelay: `${i * 60 + 30}ms` }} />
+          </span>
+        ))}
+      </span>
+    </Loading>
+  );
+}
+
+/** A settings form still to come: a label and a field per row. */
+function FormSkeleton({ label, fields, className }: { label: string; fields: number; className?: string }) {
+  return (
+    <Loading label={label} className={cn("flex flex-col gap-6", className)}>
+      {Array.from({ length: fields }, (_, i) => (
+        <span key={i} className="flex flex-col gap-1.5">
+          <Skeleton className="h-2.5 w-28 bg-muted/70" />
+          <Skeleton className="h-9 w-full rounded-md bg-muted/40" />
+        </span>
+      ))}
+    </Loading>
+  );
+}
 
 /* ----------------------- Shared table cells / actions --------------------- */
 
@@ -541,7 +577,7 @@ export function WorkspacePanel({ authorEmail }: { authorEmail?: string }) {
       </div>
 
       {!orgId ? (
-        <div className="flex flex-1 items-center justify-center"><Spinner /></div>
+        <SectionSkeleton label="Loading the workspace" className="p-6" />
       ) : error ? (
         <div className="p-6">
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>
@@ -908,7 +944,7 @@ function AgentTab({ role }: { role: Role }) {
     }
   }
 
-  if (!draft) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (!draft) return <FormSkeleton label="Loading the agent's settings" fields={4} />;
   const set = (patch: Partial<AgentProfileFields>) => setDraft({ ...draft, ...patch });
   const label = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
   return (
@@ -1038,7 +1074,7 @@ function SettingsTab({ orgId, role }: { orgId: string; role: Role }) {
     }
   }
 
-  if (!org) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (!org) return <FormSkeleton label="Loading the workspace's settings" fields={3} className="max-w-lg" />;
   const canEdit = isAdmin(role);
   return (
     <div className="max-w-lg space-y-6">
@@ -1129,7 +1165,7 @@ function PeriodLengthTab({ orgId }: { orgId: string }) {
     }
   }
 
-  if (!state) return error ? <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div> : <div className="flex justify-center py-16"><Spinner /></div>;
+  if (!state) return error ? <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div> : <FormSkeleton label={`Loading ${PERIOD_UI.navLabel}`} fields={1} className="max-w-lg" />;
   const days = draft.trim() === "" ? null : Number(draft);
   const valid = days !== null && Number.isInteger(days) && days >= state.min && days <= state.max;
   const usesDefault = state.lengthDays === null;
@@ -1196,7 +1232,7 @@ function UsageTab({ orgId }: { orgId: string }) {
 
   const tokens = useMemo(() => (u ? u.inputTokens + u.outputTokens : 0), [u]);
   if (error) return <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>;
-  if (!u) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (!u) return <SectionSkeleton label="Loading usage" />;
   return (
     <div className="space-y-6">
       <div className="text-xs text-muted-foreground">Trailing 30 days · scope: {u.scope}</div>
@@ -1282,7 +1318,7 @@ function AuditTab({ orgId }: { orgId: string }) {
   }, [items, preset, from, to, actor]);
 
   if (error) return <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>;
-  if (!items) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (!items) return <SectionSkeleton label="Loading the audit trail" />;
   const columns: Column<AuditRow>[] = [
     { key: "type", header: "Type", icon: TagIcon, cell: (r) => <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{r.automationType}</span>, text: (r) => r.automationType },
     { key: "event", header: "Event", icon: ActivityIcon, cell: (r) => r.event, text: (r) => r.event },
@@ -1407,7 +1443,9 @@ function FilePreview({ path }: { path: string }) {
   return (
     <PanelField label={state.note ? `Preview · ${state.note}` : "Preview"}>
       {state.loading ? (
-        <div className="flex justify-center py-6"><Spinner /></div>
+        <Loading label="Loading the preview" className="rounded-lg bg-background/60 p-3">
+          <SkeletonLines widths={[70, 85, 55, 90, 40, 65]} className="gap-1.5" lineClassName="h-2.5 bg-muted/60" />
+        </Loading>
       ) : state.error ? (
         <span className="text-muted-foreground text-xs">{state.error}</span>
       ) : (
@@ -1573,9 +1611,9 @@ function ChangesetDiff({
   if (error) return <div className={cn("text-muted-foreground", TYPE.meta)}>{error}</div>;
   if (files === null)
     return (
-      <div className="flex justify-center py-8">
-        <Spinner />
-      </div>
+      <Loading label="Loading the changes" className="rounded-lg border border-border/60 p-3">
+        <SkeletonLines widths={[35, 80, 72, 60, 85, 50, 66]} className="gap-1.5" lineClassName="h-2.5 bg-muted/60" />
+      </Loading>
     );
   return <ChangesetDiffView files={files} onSummary={onSummary} />;
 }
@@ -1704,7 +1742,7 @@ function DataroomHistory({ canRevert }: { canRevert: boolean }) {
   }, [load]);
 
   if (error) return <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>;
-  if (!rows) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (!rows) return <SectionSkeleton label="Loading the history" />;
 
   const columns: Column<ChangesetRow>[] = [
     {
@@ -1996,7 +2034,7 @@ function DataroomTab({ role }: { role: Role }) {
       {error ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>
       ) : !rows ? (
-        <div className="flex justify-center py-16"><Spinner /></div>
+        <SectionSkeleton label="Loading files" />
       ) : (
       <PaginatedTable
         rows={rows}
@@ -2226,7 +2264,14 @@ function PersonContext({
 
       <PanelField label={`${ACCOUNTS_LABEL}${owned.length ? ` (${owned.length})` : ""}`}>
         {accounts === null ? (
-          <span className="text-muted-foreground text-xs">Loading…</span>
+          <Loading label={`Loading ${W.accounts}`} className="flex flex-col gap-1">
+            {[50, 35].map((w) => (
+              <span key={w} className={cn(SURFACE.inset, "flex items-center gap-2 px-2 py-1.5")}>
+                <Skeleton className="size-5 shrink-0 rounded-md" />
+                <Skeleton className="h-3 bg-muted/60" style={{ width: `${w}%` }} />
+              </span>
+            ))}
+          </Loading>
         ) : owned.length === 0 ? (
           <span className="text-muted-foreground text-xs">{NOT_AN_OWNER}</span>
         ) : (
@@ -2461,7 +2506,7 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
     }
   }
 
-  if (!rows) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (!rows) return <SectionSkeleton label="Loading people" />;
   const you = authorEmail?.toLowerCase();
   const columns: Column<PersonRow>[] = [
     {

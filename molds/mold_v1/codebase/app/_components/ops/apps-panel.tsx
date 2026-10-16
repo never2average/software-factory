@@ -56,6 +56,7 @@ import {
   SectionHeaderCard,
   SidePanel,
   TableCard,
+  SkeletonRows,
   Td,
   Th,
   WorkflowSelect,
@@ -384,6 +385,7 @@ export function AppsPanel({
       }
       table={
           <TableCard
+            fixed
             footer={
               <ListFooter
                 noun="app"
@@ -396,147 +398,139 @@ export function AppsPanel({
               />
             }
           >
-            <table className="w-full table-fixed">
-              <thead>
+            <thead>
+              <tr>
+                <Th icon={TagIcon} label="Name" />
+                {compact ? null : (
+                  <>
+                    <Th icon={TextIcon} label="Description" />
+                    <Th icon={AlarmClockIcon} label="Refresh" />
+                    <Th label="Last refreshed" />
+                  </>
+                )}
+                <Th label="Actions" align="right" />
+              </tr>
+            </thead>
+            <tbody>
+              {loading && !items ? (
+                // The table's header stays; its rows show their shape until the apps arrive.
+                <SkeletonRows span={columnCount} label="Loading apps" />
+              ) : filtered.length === 0 ? (
                 <tr>
-                  <Th icon={TagIcon} label="Name" />
-                  {compact ? null : (
-                    <>
-                      <Th icon={TextIcon} label="Description" />
-                      <Th icon={AlarmClockIcon} label="Refresh" />
-                      <Th label="Last refreshed" />
-                    </>
-                  )}
-                  <Th label="Actions" align="right" />
+                  <Td
+                    colSpan={columnCount}
+                    className="py-10 text-center text-muted-foreground/60 italic"
+                  >
+                    {q ? "No apps match." : "No apps yet — create one to get a living document."}
+                  </Td>
                 </tr>
-              </thead>
-              <tbody>
-                {loading && !items ? (
-                  <tr>
-                    <Td colSpan={columnCount} className="py-10 text-center text-muted-foreground">
-                      <span className="flex items-center justify-center gap-2">
-                        <Spinner className="size-3" />
-                        Loading apps…
+              ) : (
+                filtered.map((a) => (
+                  <tr
+                    key={a.id}
+                    className={cn(
+                      "border-border/60 border-t",
+                      selectedId === a.id && "bg-muted/50",
+                    )}
+                  >
+                    <Td>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <CustomerMark name={a.name} size="sm" />
+                        <SourceTooltip app={a}>
+                          <span
+                            className={cn(
+                              "grid size-4 shrink-0 cursor-default place-items-center rounded font-semibold text-[10px]",
+                              a.sourceKind === "workflow"
+                                ? "bg-indigo-500/15 text-indigo-800 dark:text-indigo-300"
+                                : "bg-muted text-muted-foreground",
+                            )}
+                          >
+                            {a.sourceKind === "workflow" ? "W" : "P"}
+                          </span>
+                        </SourceTooltip>
+                        <span className="min-w-0 truncate font-medium">{a.name}</span>
+                        {/* A starter app: it came with the workspace, nobody here made it. */}
+                        {a.starterKey ? (
+                          <span
+                            data-app-starter
+                            title="This app came with the workspace. Edit it or delete it like any other; a deleted one does not come back."
+                            className={cn("shrink-0 rounded border border-border px-1 text-muted-foreground", TYPE.micro)}
+                          >
+                            starter
+                          </span>
+                        ) : null}
+                        {/* Refreshing, failed, or cannot refresh as it is set: said on the row itself, at any width. */}
+                        {a.refreshingAt ? (
+                          <span
+                            data-app-refreshing
+                            title={`Refreshing, ${startedAgo(a.refreshingAt)}`}
+                            className={cn("flex shrink-0 items-center gap-1 text-muted-foreground", TYPE.micro)}
+                          >
+                            <Spinner className="size-2.5" />
+                            refreshing
+                          </span>
+                        ) : a.lastError || a.source?.ok === false ? (
+                          <span
+                            data-app-problem
+                            title={a.source?.ok === false ? `${a.source.reason} ${a.source.fix}` : `The last refresh failed: ${a.lastError}`}
+                            className={cn("shrink-0 text-red-400", TYPE.micro)}
+                          >
+                            {a.source?.ok === false ? "cannot refresh" : "failed"}
+                          </span>
+                        ) : null}
+                        {a.enabled ? null : (
+                          <span className={cn("shrink-0 text-muted-foreground/60", TYPE.micro)}>
+                            paused
+                          </span>
+                        )}
+                      </span>
+                    </Td>
+                    {compact ? null : (
+                      <>
+                        <Td className="text-muted-foreground">
+                          <span className="block truncate">{a.description || "—"}</span>
+                        </Td>
+                        <Td className="truncate text-muted-foreground">
+                          {a.refreshCron ? (
+                            <CronChip cron={a.refreshCron} cadence={describeCron(a.refreshCron)} />
+                          ) : (
+                            "manual only"
+                          )}
+                        </Td>
+                        <Td className="truncate text-muted-foreground">
+                          <span className="flex items-center gap-1.5">
+                            {a.refreshingAt ? (
+                              <RunStatusDot status="running" />
+                            ) : a.lastError ? (
+                              <RunStatusDot status="failed" />
+                            ) : a.contentUpdatedAt ? (
+                              <RunStatusDot status="success" />
+                            ) : null}
+                            {fmtTime(a.lastRefreshAt) ?? (awaitsFirstDocument(a) ? (refreshUnderWay(a) ? "being written" : "written when first opened") : "never")}
+                          </span>
+                        </Td>
+                      </>
+                    )}
+                    {/* The row itself is inert — Review opens the document. */}
+                    <Td className="text-right">
+                      <span className="flex items-center justify-end">
+                        <RowMenu
+                          enabled={a.enabled}
+                          pending={busyId === a.id || Boolean(a.refreshingAt)}
+                          onReview={() => {
+                            setCreating(false);
+                            setSelectedId(a.id);
+                          }}
+                          onRefresh={() => refreshNow(a.id)}
+                          onToggleEnabled={() => patch(a.id, { enabled: !a.enabled })}
+                          onDelete={() => remove(a.id)}
+                        />
                       </span>
                     </Td>
                   </tr>
-                ) : filtered.length === 0 ? (
-                  <tr>
-                    <Td
-                      colSpan={columnCount}
-                      className="py-10 text-center text-muted-foreground/60 italic"
-                    >
-                      {q ? "No apps match." : "No apps yet — create one to get a living document."}
-                    </Td>
-                  </tr>
-                ) : (
-                  filtered.map((a) => (
-                    <tr
-                      key={a.id}
-                      className={cn(
-                        "border-border/60 border-t",
-                        selectedId === a.id && "bg-muted/50",
-                      )}
-                    >
-                      <Td>
-                        <span className="flex min-w-0 items-center gap-2">
-                          <CustomerMark name={a.name} size="sm" />
-                          <SourceTooltip app={a}>
-                            <span
-                              className={cn(
-                                "grid size-4 shrink-0 cursor-default place-items-center rounded font-semibold text-[10px]",
-                                a.sourceKind === "workflow"
-                                  ? "bg-indigo-500/15 text-indigo-800 dark:text-indigo-300"
-                                  : "bg-muted text-muted-foreground",
-                              )}
-                            >
-                              {a.sourceKind === "workflow" ? "W" : "P"}
-                            </span>
-                          </SourceTooltip>
-                          <span className="min-w-0 truncate font-medium">{a.name}</span>
-                          {/* A starter app: it came with the workspace, nobody here made it. */}
-                          {a.starterKey ? (
-                            <span
-                              data-app-starter
-                              title="This app came with the workspace. Edit it or delete it like any other; a deleted one does not come back."
-                              className={cn("shrink-0 rounded border border-border px-1 text-muted-foreground", TYPE.micro)}
-                            >
-                              starter
-                            </span>
-                          ) : null}
-                          {/* Refreshing, failed, or cannot refresh as it is set: said on the row itself, at any width. */}
-                          {a.refreshingAt ? (
-                            <span
-                              data-app-refreshing
-                              title={`Refreshing, ${startedAgo(a.refreshingAt)}`}
-                              className={cn("flex shrink-0 items-center gap-1 text-muted-foreground", TYPE.micro)}
-                            >
-                              <Spinner className="size-2.5" />
-                              refreshing
-                            </span>
-                          ) : a.lastError || a.source?.ok === false ? (
-                            <span
-                              data-app-problem
-                              title={a.source?.ok === false ? `${a.source.reason} ${a.source.fix}` : `The last refresh failed: ${a.lastError}`}
-                              className={cn("shrink-0 text-red-400", TYPE.micro)}
-                            >
-                              {a.source?.ok === false ? "cannot refresh" : "failed"}
-                            </span>
-                          ) : null}
-                          {a.enabled ? null : (
-                            <span className={cn("shrink-0 text-muted-foreground/60", TYPE.micro)}>
-                              paused
-                            </span>
-                          )}
-                        </span>
-                      </Td>
-                      {compact ? null : (
-                        <>
-                          <Td className="text-muted-foreground">
-                            <span className="block truncate">{a.description || "—"}</span>
-                          </Td>
-                          <Td className="truncate text-muted-foreground">
-                            {a.refreshCron ? (
-                              <CronChip cron={a.refreshCron} cadence={describeCron(a.refreshCron)} />
-                            ) : (
-                              "manual only"
-                            )}
-                          </Td>
-                          <Td className="truncate text-muted-foreground">
-                            <span className="flex items-center gap-1.5">
-                              {a.refreshingAt ? (
-                                <RunStatusDot status="running" />
-                              ) : a.lastError ? (
-                                <RunStatusDot status="failed" />
-                              ) : a.contentUpdatedAt ? (
-                                <RunStatusDot status="success" />
-                              ) : null}
-                              {fmtTime(a.lastRefreshAt) ?? (awaitsFirstDocument(a) ? (refreshUnderWay(a) ? "being written" : "written when first opened") : "never")}
-                            </span>
-                          </Td>
-                        </>
-                      )}
-                      {/* The row itself is inert — Review opens the document. */}
-                      <Td className="text-right">
-                        <span className="flex items-center justify-end">
-                          <RowMenu
-                            enabled={a.enabled}
-                            pending={busyId === a.id || Boolean(a.refreshingAt)}
-                            onReview={() => {
-                              setCreating(false);
-                              setSelectedId(a.id);
-                            }}
-                            onRefresh={() => refreshNow(a.id)}
-                            onToggleEnabled={() => patch(a.id, { enabled: !a.enabled })}
-                            onDelete={() => remove(a.id)}
-                          />
-                        </span>
-                      </Td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                ))
+              )}
+            </tbody>
           </TableCard>
       }
     />

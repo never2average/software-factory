@@ -81,3 +81,13 @@ for (const colorScheme of ["light", "dark"] as const) {
     });
   });
 }
+
+test("a delegation whose brief is still streaming keeps the specialist's name and status; only the summary shimmers (mold_v1-269)", async ({ page }) => {
+  await page.goto("/preview/user-message");
+  const card = bubble(page, "a-delegating");
+  await expect(card.getByText("Research subagent")).toBeVisible();
+  await expect(card.getByText("Running", { exact: true })).toBeVisible();
+  const brief = card.getByRole("status", { name: "Loading the brief" });
+  await expect(brief).toBeVisible();
+  await expect(brief.locator("[data-skeleton]")).toHaveCount(1);
+});

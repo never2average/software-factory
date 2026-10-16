@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, ChevronDownIcon, Share2Icon, UserPlus2Icon, XIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Loading, Skeleton } from "@/components/ui/skeleton";
 import { opsFetch } from "./ops/lib";
 import { CustomerMark } from "./customer-mark";
 import { cn } from "@/lib/utils";
@@ -316,14 +317,14 @@ function ShareDialog({
             People with access
           </p>
           {!ready ? (
-            <div className="flex flex-col gap-2 px-3 py-2">
+            <Loading label="Loading people with access" className="flex flex-col gap-2 px-3 py-2">
               {[0, 1].map((i) => (
-                <div key={i} className="flex items-center gap-2.5">
-                  <span className="size-7 animate-pulse rounded-md bg-muted" />
-                  <span className="h-3 w-32 animate-pulse rounded bg-muted" />
-                </div>
+                <span key={i} className="flex items-center gap-2.5">
+                  <Skeleton className="size-7 rounded-md" />
+                  <Skeleton className="h-3 w-32" />
+                </span>
               ))}
-            </div>
+            </Loading>
           ) : (
             <ul className="flex flex-col">
               {/* Owner row */}

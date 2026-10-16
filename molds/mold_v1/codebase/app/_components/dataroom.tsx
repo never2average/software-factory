@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { Loading, Skeleton, SkeletonLines } from "@/components/ui/skeleton";
 import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { FOLDER, domainIdOf, type DataroomDomainId } from "@/agent/lib/dataroom-folders";
@@ -2228,7 +2229,12 @@ export function Dataroom({
   /** What an empty sheet says. Never a sample record: loading, a failed read, or the workspace's own emptiness. */
   const emptySheet: React.ReactNode =
     workbook.status === "loading" ? (
-      <span data-testid="dataroom-loading">Loading {W.account} records…</span>
+      // The sheet's tabs and the file's name are known; its rows show their shape until they arrive.
+      <Loading as="span" label={`Loading ${W.account} records`} data-testid="dataroom-loading" className="flex flex-col gap-3 text-left">
+        {[85, 70, 92, 64, 78].map((w, i) => (
+          <Skeleton key={w} className="h-3.5 bg-muted/50" style={{ width: `${w}%`, animationDelay: `${i * 70}ms` }} />
+        ))}
+      </Loading>
     ) : workbook.status === "error" ? (
       <span data-testid="dataroom-error" className="flex flex-col items-center gap-2">
         <span>The {W.account} records could not be loaded ({workbook.message}).</span>
@@ -2751,6 +2757,15 @@ function FileStateCard({
   );
 }
 
+/** A file's body still to come: its card keeps the file's name and kind, and the body shows as lines (mold_v1-269). */
+function FileBodySkeleton() {
+  return (
+    <Loading label="Loading from the data room" className="w-64">
+      <SkeletonLines widths={[100, 85, 60]} className="items-center" lineClassName="h-2.5 bg-muted/60" />
+    </Loading>
+  );
+}
+
 /** Renders a Blob-backed file's fetched content by extension; a PDF is drawn by
  *  the in-app viewer, audio still keeps the placeholder card. */
 function FilePreview({
@@ -2779,8 +2794,8 @@ function FilePreview({
    * No second renderer, and no signed blob url in this page.
    *
    * The three states are the SAME three the text kinds show, for the same
-   * reasons: nothing yet from the store → the "Loading from the data room…"
-   * card; a tree slot the store has no object for → the "Not created yet" card;
+   * reasons: nothing yet from the store → the file's card with its body's
+   * shape; a tree slot the store has no object for → the "Not created yet" card;
    * the object is there → render it. Everything past that — a file too large to
    * draw, an expired sign-in, a password-protected document — is the viewer's
    * own error card, which names the file and says what happened.
@@ -2807,14 +2822,14 @@ function FilePreview({
     }
     return (
       <FileStateCard file={file}>
-        <p className="animate-pulse text-muted-foreground text-xs">Loading from the data room…</p>
+        <FileBodySkeleton />
       </FileStateCard>
     );
   }
   if (!body || body.status === "loading" || body.status === "binary") {
     return (
       <FileStateCard file={file}>
-        <p className="animate-pulse text-muted-foreground text-xs">Loading from the data room…</p>
+        <FileBodySkeleton />
       </FileStateCard>
     );
   }

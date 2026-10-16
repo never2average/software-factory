@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Loading, Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
@@ -264,12 +265,14 @@ export function RecipientsPicker({
 
       <div className="max-h-44 overflow-y-auto rounded-md border border-border">
         {people === null && !error ? (
-          <span
-            className={cn("flex items-center gap-1.5 px-2 py-2 text-muted-foreground", TYPE.micro)}
-          >
-            <Spinner className="size-3" />
-            Loading people…
-          </span>
+          <Loading label="Loading people" className="flex flex-col gap-2.5 px-2 py-2">
+            {[55, 70, 45].map((w) => (
+              <span key={w} className="flex items-center gap-2">
+                <Skeleton className="size-4 shrink-0 rounded-full" />
+                <Skeleton className="h-2.5 bg-muted/60" style={{ width: `${w}%` }} />
+              </span>
+            ))}
+          </Loading>
         ) : results.length === 0 ? (
           <span className={cn("block px-2 py-2 text-muted-foreground/60", TYPE.micro)}>
             {q ? "No match — press ⏎ to add it as an address." : "No people found."}
@@ -1177,7 +1180,73 @@ export function MenuCell({ children }: { readonly children: React.ReactNode }) {
   );
 }
 
-/** Full-width loading / empty row. */
+/**
+ * A table's rows while it loads (mold_v1-269): the header above stays, and each column shows a line the shape of
+ * its cell, row by row, at the height a real row has, so the rows that arrive take their place without a jump. The
+ * first cell carries the status a screen reader hears (`label`, "Loading apps").
+ */
+export function SkeletonRows({
+  span,
+  label,
+  rows = 4,
+}: {
+  readonly span: number;
+  readonly label: string;
+  readonly rows?: number;
+}) {
+  // Fixed widths per column, never random: a random width per render makes the rows twitch.
+  const widths = [62, 78, 45, 54, 38, 70];
+  return (
+    <>
+      {Array.from({ length: rows }, (_, r) => (
+        <tr key={r} data-skeleton-row>
+          {Array.from({ length: span }, (_, c) => {
+            const line = (
+              <Skeleton
+                className="h-3 bg-muted/60"
+                style={{ width: `${widths[(r + c) % widths.length]}%`, animationDelay: `${(r * span + c) * 50}ms` }}
+              />
+            );
+            return (
+              <td key={c} className={SPACE.cell}>
+                {r === 0 && c === 0 ? (
+                  <Loading as="span" label={label} className="block">
+                    {line}
+                  </Loading>
+                ) : (
+                  line
+                )}
+              </td>
+            );
+          })}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+/**
+ * A list or board's items while it loads: rows the shape of an item (a mark, a title, a line of meta), so the items
+ * that arrive take their place without a jump. `label` is what a screen reader hears ("Loading tasks").
+ */
+export function SkeletonList({ label, rows = 4, className }: { readonly label: string; readonly rows?: number; readonly className?: string }) {
+  const widths = [58, 72, 46, 64, 52];
+  return (
+    <Loading label={label} className={cn("flex flex-col gap-2 p-3", className)}>
+      {Array.from({ length: rows }, (_, i) => (
+        <span key={i} className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5">
+          <Skeleton className="size-5 shrink-0 rounded-md" style={{ animationDelay: `${i * 70}ms` }} />
+          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3 bg-muted/70" style={{ width: `${widths[i % widths.length]}%`, animationDelay: `${i * 70}ms` }} />
+            <Skeleton className="h-2.5 w-1/4 bg-muted/40" style={{ animationDelay: `${i * 70 + 35}ms` }} />
+          </span>
+        </span>
+      ))}
+    </Loading>
+  );
+}
+
+/** Full-width empty / error row. A table that is loading shows SkeletonRows. */
 export function StateRow({
   span,
   italic,
@@ -1379,9 +1448,13 @@ export function TableCard({
   children,
   footer,
   flush = false,
+  fixed = false,
 }: {
+  /** The table's rows and header (`thead`/`tbody`): TableCard draws the `<table>` itself, so never pass one. */
   readonly children: React.ReactNode;
   readonly footer: React.ReactNode;
+  /** Fixed column layout (`table-fixed`): widths come from the header, not from the longest cell. */
+  readonly fixed?: boolean;
   /**
    * Drop the card's own frame.
    *
@@ -1404,7 +1477,7 @@ export function TableCard({
       <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded-t-[inherit]">
         {/* No min-width: the columns compress (and truncate) when the panel
             squeezes the table to 30% rather than forcing a horizontal scroll. */}
-        <table className={cn("w-full text-left", TYPE.body)}>{children}</table>
+        <table className={cn("w-full text-left", fixed && "table-fixed", TYPE.body)}>{children}</table>
       </div>
       {footer}
     </div>

@@ -86,6 +86,7 @@ import {
   SearchBox,
   SectionHeaderCard,
   SidePanel,
+  SkeletonRows,
   StateRow,
   StatusDot,
   TableCard,
@@ -1607,7 +1608,7 @@ export function WorkflowsPanel({
               </thead>
               <tbody className="divide-y divide-border/60">
                 {loading ? (
-                  <StateRow span={cols}>Loading…</StateRow>
+                  <SkeletonRows span={cols} label="Loading workflows" />
                 ) : pager.total === 0 ? (
                   <StateRow span={cols} italic>
                     {all.length === 0

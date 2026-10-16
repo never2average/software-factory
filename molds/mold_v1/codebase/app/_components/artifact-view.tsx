@@ -1,7 +1,7 @@
 "use client";
 
 import { lazyPanel } from "@/components/lazy-panel";
-import { Spinner } from "@/components/ui/spinner";
+import { Loading, Skeleton, SkeletonLines } from "@/components/ui/skeleton";
 import { useEffect, useRef, useState } from "react";
 import { DownloadIcon, ExternalLinkIcon, FileIcon, Maximize2Icon, PackageIcon, XIcon } from "lucide-react";
 import {
@@ -33,10 +33,11 @@ function loadXlsx(): Promise<typeof import("xlsx")> {
 // The pdf viewer (and pdf.js under it) is fetched when a preview first opens.
 const PdfView = lazyPanel(() => import("./pdf-view").then((m) => m.PdfView), {
   label: "The preview",
+  // A page still to come, at the size the viewer will take.
   placeholder: () => (
-    <div role="status" aria-label="Loading preview" className="flex h-full min-h-40 items-center justify-center">
-      <Spinner />
-    </div>
+    <Loading label="Loading preview" className="flex h-full min-h-40 flex-col p-4">
+      <Skeleton className="h-full min-h-36 w-full rounded-md bg-muted/40" />
+    </Loading>
   ),
 });
 
@@ -458,7 +459,7 @@ export function ArtifactBody({
  *  framing the blob host, and the published link may have expired). */
 function FrameView({ content, url }: { readonly content: string; readonly url?: string }) {
   const live = useLiveArtifactUrl(content ? undefined : url);
-  if (!content && !live.ready) return <Loading />;
+  if (!content && !live.ready) return <PreviewLoading />;
   return (
     <iframe
       title="Artifact preview"
@@ -505,7 +506,7 @@ function TextFileView({
     };
   }, [live.ready, live.src]);
 
-  if (state.status === "loading") return <Loading />;
+  if (state.status === "loading") return <PreviewLoading />;
   if (state.status === "error" || state.text === undefined) {
     return <OfficeFallback url={url} label="Couldn't load the file inline." />;
   }
@@ -578,7 +579,7 @@ function XlsxView({ url }: { readonly url?: string }) {
     };
   }, [live.ready, live.src]);
 
-  if (state.status === "loading") return <Loading />;
+  if (state.status === "loading") return <PreviewLoading />;
   if (state.status === "error" || !state.sheets?.length) {
     return <OfficeFallback url={url} label="Couldn't render the spreadsheet inline." />;
   }
@@ -666,7 +667,7 @@ function DocxView({ url }: { readonly url?: string }) {
   if (status === "error") return <OfficeFallback url={url} label="Couldn't render the document inline." />;
   return (
     <div className="h-full overflow-auto bg-white">
-      {status === "loading" ? <Loading /> : null}
+      {status === "loading" ? <PreviewLoading /> : null}
       <div ref={ref} className={status === "ready" ? "p-4" : "hidden"} />
     </div>
   );
@@ -739,10 +740,12 @@ function OfficeFallback({
   );
 }
 
-function Loading() {
+/** A document still to come: the panel's header keeps its name; the body shows as a title and lines of text. */
+function PreviewLoading() {
   return (
-    <div className="grid h-full place-items-center p-8 text-muted-foreground text-sm">
-      Loading preview…
-    </div>
+    <Loading label="Loading preview" className="flex h-full flex-col gap-4 p-6">
+      <Skeleton className="h-4 w-2/5" />
+      <SkeletonLines widths={[92, 85, 70, 88, 60, 78, 45]} lineClassName="bg-muted/50" />
+    </Loading>
   );
 }

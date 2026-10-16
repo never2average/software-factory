@@ -13,6 +13,7 @@
 
 import { createContext, useContext, useState } from "react";
 import { lazyPanel } from "@/components/lazy-panel";
+import { Loading, Skeleton } from "@/components/ui/skeleton";
 import { ChevronLeftIcon, ChevronRightIcon, ArrowUpRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { extractLeadingJsonObject } from "@/lib/json-object";
@@ -383,12 +384,9 @@ const LazyChart = lazyPanel(() => import("./dashboard-charts").then((m) => m.Cha
   label: "This chart",
   placeholder: ({ block }: { readonly block: ChartBlock }) => (
     <WidgetCard title={block.title}>
-      <div
-        aria-busy="true"
-        data-testid="chart-loading"
-        style={{ height: CHART_HEIGHT }}
-        className="w-full animate-pulse rounded-md bg-muted/40"
-      />
+      <Loading label={`Loading ${block.title ?? "the chart"}`} data-testid="chart-loading" style={{ height: CHART_HEIGHT }}>
+        <Skeleton className="h-full w-full rounded-md bg-muted/40" />
+      </Loading>
     </WidgetCard>
   ),
 });

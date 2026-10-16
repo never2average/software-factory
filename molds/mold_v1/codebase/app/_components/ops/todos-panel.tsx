@@ -74,6 +74,7 @@ import {
   OpsTextarea,
   SearchBox,
   SidePanel,
+  SkeletonList,
 } from "./primitives";
 import { SURFACE, TYPE } from "./tokens";
 import { CustomFieldControl, customFieldError } from "./custom-fields";
@@ -725,7 +726,7 @@ export function TodosPanel({
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {loading && !items ? (
-            <p className={cn("py-10 text-center text-muted-foreground", TYPE.meta)}>{TU.loading}</p>
+            <SkeletonList label={TU.loading.replace(/…$/, "")} />
           ) : (items?.length ?? 0) === 0 ? (
             <p className={cn("py-16 text-center text-muted-foreground/60 italic", TYPE.meta)}>{TU.empty}</p>
           ) : (
@@ -1453,7 +1454,7 @@ function MineList<T extends { id: string; owner: string | null }>({
       <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {loading && !items ? (
-            <p className={cn("py-10 text-center text-muted-foreground", TYPE.meta)}>Loading {nouns}…</p>
+            <SkeletonList label={`Loading ${nouns}`} />
           ) : filtered.length === 0 ? (
             <p className={cn("py-16 text-center text-muted-foreground/60 italic", TYPE.meta)}>
               {(items?.length ?? 0) === 0 ? `No ${nouns}.` : `No ${nouns} in this scope.`}

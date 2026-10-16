@@ -61,6 +61,20 @@ const assistant = (id: string, text: string, streaming = false): EveMessage =>
     parts: [{ type: "step-start" }, { type: "text", text, state: streaming ? "streaming" : "done", stepIndex: 0 }],
   }) as EveMessage;
 
+/**
+ * A delegation whose brief is still streaming in (mold_v1-269): its card keeps the specialist's name and status, and
+ * the brief's summary shimmers until it arrives. Checked by tests/user-message.spec.ts.
+ */
+const delegating = (id: string): EveMessage =>
+  ({
+    id,
+    role: "assistant",
+    parts: [
+      { type: "step-start" },
+      { type: "dynamic-tool", toolCallId: "call_brief", toolName: "eve:subagent:research", state: "input-streaming", input: {} },
+    ],
+  }) as unknown as EveMessage;
+
 function DictationComposer() {
   const [sent, setSent] = useState<string[]>([]);
   return (
@@ -110,6 +124,7 @@ export default function UserMessagePreview() {
   const messages: EveMessage[] = [
     user("short", "What changed in the March LODR amendment?"),
     assistant("a-long", FILING),
+    delegating("a-delegating"),
     user("long", `Summarise this filing:\n\n${FILING}`),
     user("table", TABLE),
     user("chips", `[file: Q4-results.pdf]\n[file: investor-deck.pptx]\n\nRead both, then check them against this:\n\n${FILING}`),

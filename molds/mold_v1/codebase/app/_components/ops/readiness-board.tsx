@@ -4,6 +4,7 @@ import { CircleAlertIcon, RocketIcon, UsersIcon } from "lucide-react";
 import { errMessage, opsFetch } from "./lib";
 import { useRoomPresence, type PresentPerson } from "./use-room-presence";
 import { W } from "@/lib/ui-words";
+import { SkeletonList } from "./primitives";
 
 /**
  * V1 go-live readiness board — watch the team get each customer's data room
@@ -233,7 +234,7 @@ export function ReadinessBoard() {
   }, [impls]);
 
   if (error) return <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>;
-  if (!impls) return <div className="py-16 text-center text-sm text-muted-foreground">Loading readiness…</div>;
+  if (!impls) return <SkeletonList label="Loading readiness" className="p-0" />;
   if (impls.length === 0) return <div className="py-16 text-center text-sm text-muted-foreground">No {W.implementations} yet.</div>;
 
   return (

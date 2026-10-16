@@ -3,6 +3,7 @@
 import { noteRender, renderCensus } from "@/lib/render-census";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lazyPanel } from "@/components/lazy-panel";
+import { Loading, SkeletonLines } from "@/components/ui/skeleton";
 import { WorkspaceSummary } from "./workspace-summary";
 import type { UserContent } from "ai";
 import { resolveTextToResponses } from "eve/client";
@@ -388,11 +389,9 @@ function CockpitPlaceholder() {
       <div className="flex h-12 shrink-0 items-center border-border border-b px-3">
         <span className="font-medium text-sm">Control Panel</span>
       </div>
-      <div className="flex flex-col gap-2 p-3">
-        {[80, 64, 72].map((w) => (
-          <div key={w} className="h-3.5 animate-pulse rounded bg-muted/50" style={{ width: `${w}%` }} />
-        ))}
-      </div>
+      <Loading label="Loading the control panel" className="p-3">
+        <SkeletonLines widths={[80, 64, 72]} lineClassName="bg-muted/50" />
+      </Loading>
     </div>
   );
 }

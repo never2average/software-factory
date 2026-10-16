@@ -204,6 +204,29 @@ test("a stalled specialist is shown unavailable after the deadline, with Retry, 
   await expect(rowOf(page, "FIN_B")).toContainText("done · 2 calls", { timeout: 10_000 });
 });
 
+test("a specialist whose transcript is still loading keeps its name and status, and the transcript's place shimmers (mold_v1-269)", async ({ page }) => {
+  test.setTimeout(60_000);
+  await fakeAgent(page);
+  await open(page);
+  // FIN_B's stream never answers (until Retry), so its transcript stays loading for as long as this test looks.
+  await rowOf(page, "FIN_B").locator("button").first().click();
+  const loading = rail(page).getByRole("status", { name: "Loading transcript" });
+  await expect(loading).toBeVisible();
+  // What is known stays: the specialist's name in the header, beside its status, and the brief it was given.
+  await expect(rail(page).getByTitle("Back to the Control Panel").first()).toContainText("Research/");
+  await expect(rail(page).getByText("Done", { exact: true })).toBeVisible();
+  await expect(rail(page)).toContainText("BRIEF for call_fin_b");
+  // What is not: transcript-shaped blocks, never the raw result text, and no bare "Loading…" sentence.
+  expect(await loading.locator("[data-skeleton]").count()).toBeGreaterThanOrEqual(6);
+  await expect(rail(page)).not.toContainText("B done");
+  await expect(rail(page)).not.toContainText("Loading transcript…");
+  const animation = () => loading.locator("[data-skeleton]").first().evaluate((el) => getComputedStyle(el).animationName);
+  expect(await animation()).toBe("shimmer-sweep");
+  // Under reduced motion the shimmer stands still: a muted block.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(await animation()).toBe("none");
+});
+
 test("a running specialist whose read fails is retried, never shown as ended", async ({ page }) => {
   test.setTimeout(60_000);
   const agent = await fakeAgent(page);
