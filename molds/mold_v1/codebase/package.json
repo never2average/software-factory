@@ -160,6 +160,7 @@
     "test:deployment-profile": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-profile.mjs",
     "test:custom-fields": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-custom-fields.mjs",
     "test:record-areas": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-areas.mjs",
+    "test:record-hub": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-hub.mjs",
     "test:record-structure": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-structure.mjs",
     "test:period-area": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-period-area.mjs",
     "test:period-area-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-period-area-db.mjs",

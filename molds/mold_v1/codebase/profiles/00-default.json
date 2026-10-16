@@ -139,6 +139,11 @@
   },
   "records": {
     "$comment": "RECORD AREAS: the one model behind the four kinds of record (docs/DEPLOYMENT_PROFILE.md, \"records\"). Each area is bound to the table it already has: deployments, implementations, tasks, periods. A profile may REDEFINE these four (brand-new kinds of record are not supported) and only here, at build time; a workspace's own settings keep only what they had (the period length, the task pipelines). An area's fields are a map keyed by field key (a column of its table, or the area's own field, stored in the table's `custom` column), each with a type, a label, choices with tones; a lifecycle maps every state to one of six categories (backlog, open, active, blocked, done, cancelled), which is all base code branches on. `enforce` says what a move outside the transitions does: off (default), warn, strict. deployments and implementations are also stated by `domains`, and periods by `work_periods` (the LEGACY forms): the build lowers them into these areas, so a profile may use either form for an area, never both. Checked by scripts/schemas/record-area.schema.json and scripts/lib/record-areas.mjs; compiled into RECORD_AREAS in lib/deployment-profile.generated.ts.",
+    "hub": {
+      "$comment": "THE RECORD HUB: the one screen that holds the record areas (the Ops Center's `todos` section: tasks, periods, and the two account areas' views). label: its name as a person reads it, on the nav, the screen's title and the Control Panel's section (one line, at most 40 characters), separate from the tasks area's own word. icon: one of circle-check, list-todo, list-checks, clipboard-list, clipboard-check, scale, shield-check, landmark, book-open, folder-kanban, calendar-check, file-check; null keeps today's glyphs. The deep link (`/?ops=todos`) and every identifier stay. Checked and compiled by agent/lib/record-hub.ts into RECORD_HUB (lib/deployment-profile.generated.ts).",
+      "label": "TODOs",
+      "icon": null
+    },
     "areas": {
       "deployments": { "$comment": "Lowered from domains.deployments at build: its words, fields, choices and own fields." },
       "implementations": { "$comment": "Lowered from domains.implementations at build, with the group (domains.implementations.group_by)." },

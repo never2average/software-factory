@@ -14,11 +14,13 @@ import {
   PlugIcon,
   WorkflowIcon,
 } from "lucide-react";
-import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { DEPLOYMENT_PROFILE, RECORD_HUB } from "@/lib/deployment-profile.generated";
 import { STORAGE_KEYS, readActiveOrg, readStored, removeStored, writeActiveOrg, writeStored } from "@/lib/browser-storage";
 import { an, W } from "@/lib/ui-words";
 import { isStartupRead, sharedGet } from "@/lib/startup-fetch";
 import { isWorkspaceRefusalBody, noteWorkspaceRefused } from "@/lib/workspace-refusal";
+// Types only: the hub's glyphs (./record-hub.tsx) load with what shows them, not with everything that imports this.
+import type { RecordHubUi } from "./record-hub";
 
 /** What a TODO is filed under, as a person reads it — only the containers whose data-room domain this deployment
  *  shows, in the profile's words ("deployment/implementation" by default). */
@@ -44,8 +46,15 @@ export const OPS_SECTIONS: {
   { key: "workflows", label: "Workflows", icon: WorkflowIcon },
   { key: "crons", label: "Crons", icon: AlarmClockIcon },
   { key: "apps", label: "Apps", icon: LayoutDashboardIcon },
-  { key: "todos", label: "TODOs", icon: CircleCheckIcon },
+  // The record hub (profiles records.hub): its name here; its glyph, and a hub other than this build's, through
+  // opsSectionsFor(useRecordHub()), which is what the sidebar lists.
+  { key: "todos", label: RECORD_HUB.label, icon: CircleCheckIcon },
 ];
+
+/** The sections under a record hub (./record-hub.tsx useRecordHub): its name and glyph. */
+export function opsSectionsFor(hub: RecordHubUi): typeof OPS_SECTIONS {
+  return OPS_SECTIONS.map((s) => (s.key === "todos" ? { ...s, label: hub.label, icon: hub.navIcon } : s));
+}
 
 export const SECTION_META: Record<
   OpsSection,
@@ -56,9 +65,11 @@ export const SECTION_META: Record<
     title: "Apps",
     blurb: "Living documents the agent regenerates on a cadence — rendered read-only as Markdown.",
   },
+  // The record hub (profiles records.hub): its name here; its glyph, and a hub other than this build's, through
+  // sectionMetaFor(section, useRecordHub()).
   todos: {
     icon: CircleCheckIcon,
-    title: "TODOs",
+    title: RECORD_HUB.label,
     blurb:
       TODO_CONTAINERS.length > 0
         ? `The team's internal action list — filed under ${an(TODO_CONTAINERS[0])} ${TODO_CONTAINERS.join("/")}, linked to work.`
@@ -86,6 +97,12 @@ export const SECTION_META: Record<
     blurb: "Scheduled jobs that run the agent on a cadence (Vercel Cron, evaluated in UTC).",
   },
 };
+
+/** A section's title and glyph under a record hub (./record-hub.tsx useRecordHub): the hub's for `todos`. */
+export function sectionMetaFor(section: OpsSection, hub: RecordHubUi): (typeof SECTION_META)[OpsSection] {
+  const meta = SECTION_META[section];
+  return section === "todos" ? { ...meta, icon: hub.navIcon, title: hub.label } : meta;
+}
 
 /* --------------------------- API types + helpers -------------------------- */
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { errorMessage } from "@/lib/ops-errors";
 import { an, upperFirst, W } from "@/lib/ui-words";
 import { speak } from "@/agent/lib/agent-vocabulary";
+// The record hub's entries as a count names them (profiles records.hub): "TODOs" by default.
+import { RECORD_HUB } from "@/lib/deployment-profile.generated";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText } from "ai";
 import { and, eq } from "drizzle-orm";
@@ -123,7 +125,7 @@ function buildPrompt(email: string, c: z.infer<typeof contextSchema>): string {
     `${ACCOUNT}: ${c.account}`,
     `THEIR ROLE ON THIS ${ACCOUNT}: ${c.role ?? "unknown"}${c.title ? ` (${c.title})` : ""}`,
     `LAST CONTACT: ${c.lastContact ?? "unknown"}`,
-    `TOTALS ON THIS ${ACCOUNT}: ${counts.tickets ?? 0} tickets, ${counts.deployments ?? 0} ${W.deployments}, ${counts.implementations ?? 0} ${W.implementations}, ${counts.todos ?? 0} TODOs`,
+    `TOTALS ON THIS ${ACCOUNT}: ${counts.tickets ?? 0} tickets, ${counts.deployments ?? 0} ${W.deployments}, ${counts.implementations ?? 0} ${W.implementations}, ${counts.todos ?? 0} ${RECORD_HUB.item.plural}`,
     "",
     `WHAT THEY OWN ON THIS ${ACCOUNT}:`,
     c.workText?.trim() || `(nothing recorded against them on this ${W.account})`,

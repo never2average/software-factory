@@ -293,6 +293,14 @@ jobs:
         if: always()
         run: npm run test:record-areas
 
+      # THE RECORD HUB (profiles `records.hub`): the screen that holds the record areas has its own name and glyph. The
+      # default compiles to today's ("TODOs") and its briefing and tool words are unchanged; a named hub and a redefined
+      # tasks area each keep their own word; every bad hub fails the build with its file and path. Its screens are held
+      # by tests/record-hub.spec.ts (in test:cards).
+      - name: Record hub (its name and glyph, compiled; the default unchanged; the model's words)
+        if: always()
+        run: npm run test:record-hub
+
       # WHAT EACH RECORD AREA IS (docs/DEPLOYMENT_PROFILE.md "Choosing the area for a domain concept"): the structure the
       # mold declares (a unit, a container, a change, a programme) is compiled; a period may contain tasks and is measured
       # by them; the build prints each area's role beside the pack's label and warns where a definition contradicts it;

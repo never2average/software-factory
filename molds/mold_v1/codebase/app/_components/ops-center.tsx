@@ -21,7 +21,8 @@ import { InboxPanel } from "./ops/inbox-panel";
 import { TodosPanel } from "./ops/todos-panel";
 import { ConnectorsPanel } from "./ops/connectors-panel";
 import { CronsPanel } from "./ops/crons-panel";
-import { SECTION_META, type OpsSection } from "./ops/lib";
+import { sectionMetaFor, type OpsSection } from "./ops/lib";
+import { useRecordHub } from "./ops/record-hub";
 import { WorkflowsPanel } from "./ops/workflows-panel";
 import { useRecordRole } from "./ops/record-access";
 import { SURFACE } from "./ops/tokens";
@@ -45,10 +46,11 @@ export function OpsCenter({
   // Deep-link (`/?ops=<section>&id=<id>`): the row to select and open when
   // the modal first shows. For crons this may be a system cron NAME.
   readonly initialSelectedId?: string;
-  // Deep-link (`&view=<tab>`) for the TODOs workspace's tab.
+  // Deep-link (`&view=<tab>`) for the record hub's tab (the `todos` section).
   readonly initialView?: TodoViewKey;
 }) {
-  const meta = SECTION_META[section];
+  // The record hub's title is the profile's (records.hub.label); every other section's is its own.
+  const meta = sectionMetaFor(section, useRecordHub());
   // The person's role in this workspace: the Tasks view greys out the lifecycle moves it may not make (the API decides).
   const role = useRecordRole(open && section === "todos");
 
@@ -80,7 +82,7 @@ export function OpsCenter({
         }}
         className={cn(
           "flex flex-col gap-0 overflow-hidden p-0",
-          // TODOs is a full workspace (its own side-nav) → 98% of the screen.
+          // The record hub is a full workspace (its own side-nav) → 98% of the screen.
           section === "todos"
             ? "h-[98vh] max-h-[98vh] w-[98vw] max-w-[98vw] sm:max-w-[98vw]"
             : "h-[88vh] max-h-[88vh] w-[97vw] max-w-[min(97vw,1500px)] sm:max-w-[min(97vw,1500px)]",

@@ -12,11 +12,13 @@ import { assertSupported } from "./lib/json-schema.mjs";
 import { AREA_IDS, checkArea, compileArea, formsIn, raiseDomain, raisePeriods, READ_ONLY, schemaProblem, STRUCTURE, structureNote, SYSTEM_KEYS as AREA_SYSTEM_KEYS } from "./lib/record-areas.mjs";
 // Plain data with no imports but the price table; Node 24 reads the .ts as it is (type stripping).
 import { speechModelProblem } from "../lib/dictation-models.ts";
+// The record hub's checks and compiled form (no imports: plain data and functions).
+import { compileHub, HUB_ICONS, hubProblem } from "../agent/lib/record-hub.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 // PROFILES_DIR + --check let a test validate another set of profiles without touching the generated files.
 const DIR = process.env.PROFILES_DIR ? process.env.PROFILES_DIR : join(ROOT, "profiles");
-const CHECK_ONLY = process.argv.includes("--check") || process.argv.includes("--print") || process.argv.includes("--print-areas");
+const CHECK_ONLY = process.argv.includes("--check") || process.argv.includes("--print") || process.argv.includes("--print-areas") || process.argv.includes("--print-hub");
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function merge(base, over, path, shape) {
   const out = { ...base };
@@ -463,6 +465,18 @@ for (const id of AREA_IDS) {
 // agent/lib/period-area.ts). Emitted only when true, so a profile in the legacy form compiles to what it did.
 for (const id of ["deployments", "implementations", "periods"]) if (freshBy.has(id)) RECORD_AREAS[id].declared = true;
 for (const note of raisedNotes) console.warn(`gen-deployment-profile: note: ${note}`);
+// --- records.hub: the screen that holds the record areas (agent/lib/record-hub.ts) -----------------------------------
+// Its name is its own, apart from the tasks area's word; a count of its entries keeps today's "TODO" while neither the
+// hub nor the tasks area is renamed, and takes the tasks area's word otherwise. Emitted beside DEPLOYMENT_PROFILE (which keeps no `records`).
+let RECORD_HUB;
+{
+  const hubFiles = files.filter((f) => f !== "00-default.json" && isObj(JSON.parse(readFileSync(join(DIR, f), "utf8")).records?.hub));
+  current = hubFiles.at(-1) ?? "00-default.json";
+  const problem = hubProblem(profile.records?.hub);
+  if (problem) fail(problem);
+  RECORD_HUB = compileHub(profile.records.hub, RECORD_AREAS.tasks);
+  current = files.at(-1);
+}
 // Each area's structural role beside what this deployment calls it, so a concept mapped onto the wrong area shows at
 // build (docs/DEPLOYMENT_PROFILE.md "Choosing the area for a domain concept"). Said only when some area is redefined:
 // the default build says what it always said.
@@ -877,6 +891,16 @@ export const DEFAULT_DOMAINS: DeploymentProfile["domains"] = ${JSON.stringify(de
 /** Every field of the two areas, from the zod schemas and the drizzle tables. */
 export const DOMAIN_FIELDS: Record<DomainArea, Record<string, DomainFieldMeta>> = ${JSON.stringify(domainFields)};
 
+/** A glyph the record hub may carry (profiles \`records.hub.icon\`; agent/lib/record-hub.ts HUB_ICONS). */
+export type RecordHubIcon = ${HUB_ICONS.map((i) => JSON.stringify(i)).join(" | ")};
+/**
+ * THE RECORD HUB (profiles \`records.hub\`; agent/lib/record-hub.ts): the screen that holds the record areas, as people
+ * read it. \`label\` names it (the nav, the screen's title, the Control Panel's section); \`icon\` null keeps today's
+ * glyphs; \`item\` is one entry as a count names it; \`relabelled\` when the label is not the default's.
+ */
+export interface RecordHub { label: string; icon: RecordHubIcon | null; item: { singular: string; plural: string }; relabelled: boolean }
+export const RECORD_HUB: RecordHub = ${JSON.stringify(RECORD_HUB)};
+
 /** The product's display name. One place, so a rebrand is a profile, not a search-and-replace. */
 export const PRODUCT_NAME: string = DEPLOYMENT_PROFILE.product.name;
 
@@ -949,6 +973,7 @@ if (!CHECK_ONLY) {
   }
 }
 // --print: the merged, validated profile as JSON on stdout (scripts/test-deployment-profile.mjs reads an example this way).
+if (process.argv.includes("--print-hub")) { console.log(JSON.stringify(RECORD_HUB)); process.exit(0); }
 if (process.argv.includes("--print-areas")) { console.log(JSON.stringify(RECORD_AREAS)); process.exit(0); }
 if (process.argv.includes("--print")) { console.log(JSON.stringify(profileOut)); process.exit(0); }
 console.log(`deployment profile: ${files.join(" + ")} -> product "${profile.product.name}", ${profile.vocabulary.account.plural}, ${Object.values(profile.dataroom.domains).filter((d) => d.visible).length}/${DOMAINS.length} data-room domains visible${["deployments", "implementations"].filter((a) => JSON.stringify(profile.domains[a]) !== JSON.stringify(defaults.domains[a])).map((a) => `, ${a} shown as "${profile.domains[a].group_by ? profile.domains[a].group_label.plural : profile.domains[a].label.plural}"`).join("")}${RECORD_AREAS.tasks.redefined ? `, tasks shown as "${RECORD_AREAS.tasks.label.plural}"` : ""}`);

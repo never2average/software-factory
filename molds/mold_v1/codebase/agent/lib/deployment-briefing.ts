@@ -20,7 +20,7 @@
  * and nothing else would tell the model they are the same thing. A profile whose words ARE the identifiers'
  * needs no such line, and gets none.
  */
-import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type CustomFieldSpec, type DeploymentProfile, type DomainArea } from "./deployment-profile.generated.ts";
+import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, RECORD_HUB, type CustomFieldSpec, type DeploymentProfile, type DomainArea, type RecordHub } from "./deployment-profile.generated.ts";
 import { createVocabulary, LEGACY_RECORDS, speakCodeWith, speakWith, verbatimWith, VOCABULARY, type Vocabulary, type VocabularyProfile } from "./agent-vocabulary.ts";
 import { DATAROOM_DOMAIN_IDS, type DataroomDomainId, type DataroomFolderId } from "./dataroom-folders.ts";
 import { RECORD_AREAS } from "./record-areas.generated.ts";
@@ -46,6 +46,17 @@ function renderTaskArea(areas: RecordAreas, account?: string, own?: (t: string) 
     lines.push(`- ${describeStructure(id, areas, account, own)}`);
   }
   return lines;
+}
+
+/**
+ * The record hub under its own name (profiles records.hub), when the profile renames it: a person asking for "the
+ * Obligations Register" means the Ops Center's `todos` screen, whose entries the todo tools read and write. Nothing
+ * under the default name, so the default briefing is unchanged.
+ */
+function renderHub(hub: RecordHub, own?: (t: string) => string): string[] {
+  if (!hub.relabelled) return [];
+  const name = (own ?? ((t: string) => t))(hub.label);
+  return [`- People call the screen that holds the team's checklist **${name}** (the Ops Center's \`todos\` section; a link to it is \`/?ops=todos\`). What they keep there is what list_todos reads and upsert_todo writes.`];
 }
 
 /** The account as the identifiers spell it: a profile whose word is this one needs no line saying so. */
@@ -184,9 +195,9 @@ export function renderDomainBriefing(area: DomainArea, domains: DeploymentProfil
   return lines;
 }
 
-export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE, areas: RecordAreas = RECORD_AREAS): string | null {
+export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE, areas: RecordAreas = RECORD_AREAS, hub: RecordHub = RECORD_HUB): string | null {
   const v = profile === DEPLOYMENT_PROFILE ? VOCABULARY : createVocabulary(profile as VocabularyProfile);
-  if (v.relabelled) return renderRelabelledBriefing(profile, v, areas);
+  if (v.relabelled) return renderRelabelledBriefing(profile, v, areas, hub);
   const { vocabulary: voc, dataroom, agent } = profile;
   const lines: string[] = [];
   if (voc.account.singular !== DEFAULT_ACCOUNT) {
@@ -208,6 +219,7 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE, areas: Re
   for (const area of ["deployments", "implementations"] as const) lines.push(...renderAreaIdentifiers(area, profile.domains, v.stored));
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, undefined, voc.account.singular, v.stored));
   lines.push(...renderTaskArea(areas, voc.account.singular));
+  lines.push(...renderHub(hub));
   const body = [lines.join("\n"), agent.briefing?.trim() ?? ""].filter(Boolean).join("\n\n");
   return body ? `## This workspace\n\n${body}` : null;
 }
@@ -216,7 +228,7 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE, areas: Re
  * The block for a profile that renames things: the deployment's words only. Composed with the base identifiers
  * and spoken as a whole (speakWith), so each name is the one the model's tools, results and folders use.
  */
-function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary, areas: RecordAreas): string {
+function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary, areas: RecordAreas, hub: RecordHub): string {
   const { vocabulary: voc, dataroom, agent } = profile;
   const own = (t: string) => verbatimWith(v, t);
   const lines: string[] = [];
@@ -242,6 +254,8 @@ function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary, are
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, v));
   // The task card is the profile's own words (its labels and states): verbatim; a structure line marks its own words.
   lines.push(...renderTaskArea(areas, voc.account.singular, own));
+  // The hub's name is the profile's own: verbatim.
+  lines.push(...renderHub(hub, own));
   // agent.briefing is the profile's own text, in its own words: passed verbatim.
   const body = [lines.join("\n"), agent.briefing?.trim() ? own(agent.briefing.trim()) : ""].filter(Boolean).join("\n\n");
   return speakWith(v, `## This workspace\n\n${body}`);

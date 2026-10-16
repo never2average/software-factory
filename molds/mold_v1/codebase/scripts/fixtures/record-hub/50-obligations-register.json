@@ -1,0 +1,4 @@
+{
+  "$comment": "A profile that calls the record hub (the Ops Center's todos screen) its Obligations Register, with the scale glyph. Rendered by ?hub=obligations-register on app/preview/ops-center and app/preview/control-panel (tests/record-hub.spec.ts) and compiled by scripts/test-record-hub.mjs.",
+  "records": { "hub": { "label": "Obligations Register", "icon": "scale" } }
+}
