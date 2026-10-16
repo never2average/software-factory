@@ -189,13 +189,14 @@ export function currentPeriod<T extends PeriodWindow>(periods: readonly T[], now
 
 /**
  * The period that follows `from`: the earliest one that starts at or after `from` ends (after it starts, when it has
- * no end), not closed and not archived. Undefined when there is none yet.
+ * no end), not closed and not archived. Undefined when there is none yet. `closed`: whether a state is finished
+ * (today "closed"; a declared periods area's done or cancelled states, agent/lib/period-area.ts periodStates).
  */
-export function nextPeriod<T extends PeriodWindow>(periods: readonly T[], from: PeriodWindow): T | undefined {
+export function nextPeriod<T extends PeriodWindow>(periods: readonly T[], from: PeriodWindow, closed: (state: unknown) => boolean = (s) => s === "closed"): T | undefined {
   const edge = ms(from.endsAt) ?? ms(from.startsAt);
   if (edge === null) return undefined;
   return periods
-    .filter((c) => c.id !== from.id && !c.archivedAt && c.state !== "closed" && (ms(c.startsAt) ?? -Infinity) >= edge - 1)
+    .filter((c) => c.id !== from.id && !c.archivedAt && !closed(c.state) && (ms(c.startsAt) ?? -Infinity) >= edge - 1)
     .sort((a, b) => (ms(a.startsAt) ?? 0) - (ms(b.startsAt) ?? 0))[0];
 }
 

@@ -17,6 +17,7 @@ import { isEmptyStore } from "@/lib/pg-error";
 import { sampleCustomerStore, samplePeople } from "@/agent/lib/sample-data";
 import { W } from "@/lib/ui-words";
 import { withOwnerKeys } from "@/agent/lib/db/owner-columns";
+import { manyPerAccount } from "@/agent/lib/implementation-ids";
 import {
   TRUNCATED_MARK,
   WORKBOOK_ORDER,
@@ -62,6 +63,9 @@ export const dynamic = "force-dynamic";
  * DEMO_SAMPLE_DATA=1 (agent/lib/sample-data.ts). Never cached: it is one workspace's data (Cache-Control: private,
  * no-store).
  */
+
+/** An account may hold several implementations, each with its own id (agent/lib/implementation-ids.ts). */
+const MANY_IMPLEMENTATIONS = manyPerAccount();
 
 type Row = Record<string, unknown>;
 const NO_STORE = { "Cache-Control": "private, no-store" };
@@ -134,7 +138,9 @@ export async function GET(request: NextRequest) {
     const demo = (sampleCustomerStore().customers as Row[]).map((c) => ({
       ...clean(c, new Set([...hidden.account, ...hidden.tables]), listed.account, ["orgId"]),
       deployments: ((c.deployments as Row[]) ?? []).map((d) => clean(d, hidden.deployments, listed.deployments)),
-      implementation: c.implementation ? clean(c.implementation as Row, hidden.implementation, listed.implementation) : undefined,
+      ...(MANY_IMPLEMENTATIONS
+        ? { implementations: ((c.implementations as Row[]) ?? []).map((r) => clean(r, hidden.implementation, listed.implementation)) }
+        : { implementation: c.implementation ? clean(c.implementation as Row, hidden.implementation, listed.implementation) : undefined }),
     }));
     return NextResponse.json({ customers: demo, people, tables: {}, unavailable: [] }, { headers: NO_STORE });
   }
@@ -159,7 +165,7 @@ export async function GET(request: NextRequest) {
       tx.select().from(solutions).where(eq(solutions.orgId, org))
         .orderBy(newest(`"solutions"."last_reviewed_date"`), asc(solutions.solutionId)).limit(cap)),
     implementation: readTable(org, "implementation", (tx) =>
-      tx.select().from(implementation).where(eq(implementation.orgId, org)).orderBy(asc(implementation.customerId)).limit(cap)),
+      tx.select().from(implementation).where(eq(implementation.orgId, org)).orderBy(asc(implementation.customerId), asc(implementation.implementationId)).limit(cap)),
     tickets: hidden.tables.has("tickets") ? skip() : readTable(org, "tickets", (tx) =>
       tx.select().from(tickets).where(eq(tickets.orgId, org)).orderBy(newest(`"tickets"."last_activity_date"`), asc(tickets.ticketId)).limit(cap)),
     interactions: readTable(org, "interactions", (tx) =>
@@ -200,7 +206,9 @@ export async function GET(request: NextRequest) {
     return by;
   };
   const platformBy = byCustomer("platform", NONE, NONE);
-  const implBy = byCustomer("implementation", hidden.implementation, listed.implementation);
+  // One per account: its row as it always was (its own id is the account's, so it is not sent). Several: each row with
+  // its own id, in `implementations` (agent/lib/implementation-ids.ts).
+  const implBy = byCustomer("implementation", MANY_IMPLEMENTATIONS ? hidden.implementation : new Set([...hidden.implementation, "implementationId"]), listed.implementation);
   const depsBy = byCustomer("deployments", hidden.deployments, listed.deployments);
   const solsBy = byCustomer("solutions", NONE, NONE);
   const tixBy = byCustomer("tickets", NONE, NONE);
@@ -215,7 +223,7 @@ export async function GET(request: NextRequest) {
       name: customerName ?? id,
       ...clean(rest, hidden.account, listed.account),
       ...(hidden.tables.has("platform") ? {} : { platform: platformBy.get(id)?.[0] }),
-      implementation: implBy.get(id)?.[0],
+      ...(MANY_IMPLEMENTATIONS ? { implementations: implBy.get(id) ?? [] } : { implementation: implBy.get(id)?.[0] }),
       deployments: depsBy.get(id) ?? [],
       ...(hidden.tables.has("solutions") ? {} : { solutions: solsBy.get(id) ?? [] }),
       ...(hidden.tables.has("tickets") ? {} : { tickets: tixBy.get(id) ?? [] }),

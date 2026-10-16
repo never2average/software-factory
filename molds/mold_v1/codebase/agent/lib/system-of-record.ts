@@ -28,6 +28,7 @@ import {
   customerReadSchema,
   deploymentSchema,
   implementationSchema,
+  implementationRowSchema,
   platformSchema,
   solutionSchema,
   customerSchema,
@@ -58,6 +59,7 @@ import { getDataroomStore } from "./dataroom-store.ts";
 import { FOLDER } from "./dataroom-folders.ts";
 import { DEFAULT_ORG } from "./org-context.ts";
 import { isDeclared } from "./record-area-records.ts";
+import { manyPerAccount } from "./implementation-ids.ts";
 import { checkOnly, prepareRecordWrite } from "./record-area-write.ts";
 import { enforced, enteredByOf, memberRole, recordEntityId } from "./record-area-store.ts";
 import { deleteRefusal, permissionsDeclared } from "./record-permissions.ts";
@@ -106,6 +108,23 @@ type CompanyKeyed = { orgId: PgColumn; customerId: PgColumn };
 const underCompany = (t: CompanyKeyed, orgId: string, customerId: string) => and(eq(t.orgId, orgId), eq(t.customerId, customerId));
 /** A map key for a company across workspaces: the same id in two workspaces is two companies. */
 const companyKey = (orgId: string, customerId: string) => `${orgId}\u0000${customerId}`;
+
+/**
+ * Does this deployment keep several implementation records per account (records.areas.implementations
+ * `per_account: "many"`; agent/lib/implementation-ids.ts)? Then an account's are `implementations[]`, each by its
+ * `implementationId`; else its one is `implementation`, as it always was. Never both.
+ */
+const MANY_IMPLEMENTATIONS = manyPerAccount();
+
+/** A record or patch naming the implementation the other way than this deployment keeps it: refused in a sentence. */
+function checkImplementationShape(record: { implementation?: unknown; implementations?: unknown }): void {
+  if (MANY_IMPLEMENTATIONS && record.implementation !== undefined) {
+    throw new Error(`Nothing was written. ${fill("An {account} here may hold several {implementations}")}: send them as \`implementations\`, each row by its implementationId (a new one with a new id), not as \`implementation\`.`);
+  }
+  if (!MANY_IMPLEMENTATIONS && record.implementations !== undefined) {
+    throw new Error(`Nothing was written. ${fill("An {account} here holds one {implementation}")}: send it as \`implementation\`, not as \`implementations\`.`);
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* Fallback store — in memory, empty unless DEMO_SAMPLE_DATA asks for samples */
@@ -181,6 +200,8 @@ export function customerToDbRows(customer: Customer): {
   deployments: Array<typeof deploymentsTable.$inferInsert>;
   solutions: Array<typeof solutionsTable.$inferInsert>;
   implementation: (typeof implementationTable.$inferInsert) | null;
+  /** Several per account (`implementations[]`), each by its own id; empty when the account holds one. */
+  implementations: Array<typeof implementationTable.$inferInsert>;
   tickets: Array<typeof ticketsTable.$inferInsert>;
   interactions: Array<typeof interactionsTable.$inferInsert>;
 } {
@@ -191,6 +212,7 @@ export function customerToDbRows(customer: Customer): {
     deployments,
     solutions,
     implementation,
+    implementations,
     tickets,
     interactions,
     custom,
@@ -206,9 +228,11 @@ export function customerToDbRows(customer: Customer): {
     // `custom` is NOT NULL, so an absent one is {} rather than fullRow's null.
     deployments: (deployments ?? []).map((d) => fullRow(deploymentsTable, { customerId: id, ...d, custom: asCustomValues(d.custom) })),
     solutions: (solutions ?? []).map((s) => fullRow(solutionsTable, { customerId: id, ...s })),
+    // One per account: its own id is the account's (agent/lib/implementation-ids.ts), so the key finds it by the account.
     implementation: implementation
-      ? fullRow(implementationTable, { customerId: id, ...implementation, custom: asCustomValues(implementation.custom) })
+      ? fullRow(implementationTable, { customerId: id, ...implementation, implementationId: id, custom: asCustomValues(implementation.custom) })
       : null,
+    implementations: (implementations ?? []).map((r) => fullRow(implementationTable, { customerId: id, ...r, custom: asCustomValues(r.custom) })),
     tickets: (tickets ?? []).map((t) => fullRow(ticketsTable, { customerId: id, ...t })),
     interactions: (interactions ?? []).map((i) =>
       fullRow(interactionsTable, { customerId: id, ...i }),
@@ -259,7 +283,17 @@ async function dbGetCustomer(db: Db, id: string, orgId: string | null | undefine
   const accountCustom = asCustomValues(custom);
   if (Object.keys(accountCustom).length) candidate.custom = accountCustom;
   if (platformRows[0]) candidate.platform = rowToEntity(platformRows[0]);
-  if (implementationRows[0]) candidate.implementation = rowToEntity(implementationRows[0]);
+  if (MANY_IMPLEMENTATIONS) {
+    // Several per account, each with its own id, in id order.
+    if (implementationRows.length > 0) candidate.implementations = implementationRows.map(rowToEntity).sort((a, b) => String(a.implementationId).localeCompare(String(b.implementationId)));
+  } else {
+    // One per account: the row keyed by the account (its id is the account's), its id not part of the record.
+    const one = implementationRows.find((r) => r.implementationId === id) ?? implementationRows[0];
+    if (one) {
+      const { implementationId: _own, ...rest } = rowToEntity(one);
+      candidate.implementation = rest;
+    }
+  }
   if (deploymentRows.length > 0) candidate.deployments = deploymentRows.map(rowToEntity);
   if (solutionRows.length > 0) candidate.solutions = solutionRows.map(rowToEntity);
   if (ticketRows.length > 0) candidate.tickets = ticketRows.map(rowToEntity);
@@ -301,11 +335,12 @@ export async function writeCustomerToPostgres(
   opts: { accountCustom?: CustomDelta } = {},
 ): Promise<void> {
   const valid = customerSchema.parse(customer);
+  checkImplementationShape(valid);
   const org = scopeFor(valid.id, orgId);
   const rows = customerToDbRows(valid);
   // The workspace goes on EVERY row, not only the customer's: it is half of every key here, and the nested tables'
   // foreign key names it, so a row can only hang off this workspace's company.
-  const nested = [rows.customer, rows.platform, rows.implementation, ...rows.deployments, ...rows.solutions, ...rows.tickets, ...rows.interactions];
+  const nested = [rows.customer, rows.platform, rows.implementation, ...rows.implementations, ...rows.deployments, ...rows.solutions, ...rows.tickets, ...rows.interactions];
   for (const row of nested) if (row && "orgId" in row) (row as Record<string, unknown>).orgId = org;
   await db.transaction(async (tx) => {
     /**
@@ -348,6 +383,7 @@ export async function writeCustomerToPostgres(
     if (rows.deployments.length > 0) await tx.insert(deploymentsTable).values(rows.deployments);
     if (rows.solutions.length > 0) await tx.insert(solutionsTable).values(rows.solutions);
     if (rows.implementation) await tx.insert(implementationTable).values(rows.implementation);
+    if (rows.implementations.length > 0) await tx.insert(implementationTable).values(rows.implementations);
     if (rows.tickets.length > 0) await tx.insert(ticketsTable).values(rows.tickets);
     if (rows.interactions.length > 0) await tx.insert(interactionsTable).values(rows.interactions);
   });
@@ -503,7 +539,7 @@ export function applyCustomFields(
  */
 export interface NestedLifecycleContext {
   role?: RecordRole;
-  /** By `deployments:<deploymentId>` and `implementations:implementation`. */
+  /** By `deployments:<deploymentId>` and `implementations:implementation` (`implementations:<implementationId>` when an account holds several). */
   enteredBy?: Map<string, string | null | undefined>;
 }
 /** A nested row's checked lifecycle move, written to the activity feed once the patch landed. */
@@ -523,10 +559,11 @@ export async function nestedLifecycleContext(org: string, patch: CustomerPatch, 
   const imp = areaView("implementations");
   const deps = isDeclared("deployments") && enforced(dep) ? (patch.deployments ?? []).filter((d) => !d.remove) : [];
   const withImp = isDeclared("implementations") && enforced(imp) && patch.implementation && !patch.implementation.remove;
+  const imps = isDeclared("implementations") && enforced(imp) ? (patch.implementations ?? []).filter((r) => !r.remove) : [];
   // Who may write the rows (records.areas.<area>.permissions) reads the writer's role too, removes included.
   const permitted = (isDeclared("deployments") && permissionsDeclared("deployments") && (patch.deployments?.length ?? 0) > 0)
-    || (isDeclared("implementations") && permissionsDeclared("implementations") && Boolean(patch.implementation));
-  if (!deps.length && !withImp) return permitted ? { role: await withOrgDb(org, (tx) => memberRole(tx, org, actor)) } : {};
+    || (isDeclared("implementations") && permissionsDeclared("implementations") && (Boolean(patch.implementation) || (patch.implementations?.length ?? 0) > 0));
+  if (!deps.length && !withImp && !imps.length) return permitted ? { role: await withOrgDb(org, (tx) => memberRole(tx, org, actor)) } : {};
   return withOrgDb(org, async (tx) => {
     const enteredBy = new Map<string, string | null | undefined>();
     for (const d of deps) {
@@ -535,6 +572,10 @@ export async function nestedLifecycleContext(org: string, patch: CustomerPatch, 
     }
     const beforeImp = existing?.implementation as AreaRow | undefined;
     if (withImp && beforeImp) enteredBy.set("implementations:implementation", await enteredByOf(tx, org, imp, { type: "implementation", id: recordEntityId("implementations", { customerId: patch.id, ...beforeImp }) }, beforeImp));
+    for (const r of imps) {
+      const before = existing?.implementations?.find((p) => p.implementationId === r.implementationId) as AreaRow | undefined;
+      if (before) enteredBy.set(`implementations:${r.implementationId}`, await enteredByOf(tx, org, imp, { type: "implementation", id: recordEntityId("implementations", { customerId: patch.id, ...before }) }, before));
+    }
     return { role: await memberRole(tx, org, actor), enteredBy };
   });
 }
@@ -543,6 +584,8 @@ export async function nestedLifecycleContext(org: string, patch: CustomerPatch, 
 export interface RowCustomDeltas {
   deployments: Map<string, CustomDelta>;
   implementation?: CustomDelta;
+  /** By implementationId, when an account holds several (`implementations[]`). */
+  implementations?: Map<string, CustomDelta>;
 }
 
 /**
@@ -583,7 +626,7 @@ export function applyCustomFieldsWithDelta(
       areaErrors.push(...refusal.map((e) => `${what}: ${e}`));
       return undefined;
     }
-    const entityKey = area === "deployments" ? String(row[keyName!]) : "implementation";
+    const entityKey = keyName ? String(row[keyName]) : "implementation";
     const r = prepareRecordWrite(area, prev ? "update" : "create", keyName ? { ...body, [keyName]: row[keyName] } : body, { actor, role: lifecycleCx.role, before: prev ?? null, enteredBy: lifecycleCx.enteredBy?.get(`${area}:${entityKey}`) });
     if (!r.ok) {
       areaErrors.push(...r.errors.map((e) => `${what}: ${e}`));
@@ -594,13 +637,15 @@ export function applyCustomFieldsWithDelta(
     const delta = r.customDelta ? ({ set: r.customDelta.set, clear: r.customDelta.clear, append: {} } as unknown as CustomDelta) : undefined;
     if (area === "deployments") {
       if (delta) rowDeltas.deployments.set(String(row[keyName!]), delta);
+    } else if (keyName) {
+      if (delta) rowDeltas.implementations!.set(String(row[keyName]), delta);
     } else rowDeltas.implementation = delta;
     const out: Record<string, unknown> = { ...(keyName ? { [keyName]: row[keyName] } : {}), ...r.columns };
     if (r.customDelta || !prev) out.custom = r.customAfter;
     return out;
   };
   let accountDelta: CustomDelta | undefined;
-  const rowDeltas: RowCustomDeltas = { deployments: new Map() };
+  const rowDeltas: RowCustomDeltas = { deployments: new Map(), implementations: new Map() };
   const check = (area: CustomFieldArea, what: string, custom: unknown, prev: { custom?: unknown } | undefined, append?: unknown, onDelta?: (d: CustomDelta | undefined) => void) => {
     const fields = declared[area] ?? [];
     // Nothing declared and nothing sent: the record is written exactly as it was before custom fields existed.
@@ -662,6 +707,19 @@ export function applyCustomFieldsWithDelta(
     const refusal = deleteRefusal("implementations", (existing?.implementation as AreaRow | undefined) ?? null, { role: lifecycleCx.role, actor });
     if (refusal) areaErrors.push(`${String(existing?.implementation?.rolloutId ?? patch.id)}: ${refusal}`);
   }
+  if (patch.implementations) {
+    // Several per account: each row by its implementationId, as deployments[] by deploymentId.
+    out.implementations = patch.implementations.map((r) => {
+      const prevRow = existing?.implementations?.find((p) => p.implementationId === r.implementationId) as Record<string, unknown> | undefined;
+      if (r.remove) {
+        const refusal = isDeclared("implementations") ? deleteRefusal("implementations", (prevRow as AreaRow | undefined) ?? null, { role: lifecycleCx.role, actor }) : null;
+        if (refusal) areaErrors.push(`${r.implementationId}: ${refusal}`);
+        return r;
+      }
+      const viaArea = throughArea("implementations", r.implementationId, r as Record<string, unknown>, prevRow, "implementationId");
+      return (viaArea ?? r) as typeof r;
+    });
+  }
   if (implVia) out.implementation = implVia as typeof patch.implementation;
   else if (patch.implementation && !patch.implementation.remove) {
     const custom = check("implementations", patch.implementation.rolloutId ?? existing?.implementation?.rolloutId ?? patch.id, patch.implementation.custom, existing?.implementation, undefined, (delta) => {
@@ -688,7 +746,7 @@ function withoutEmptyCustom(customer: Customer): Customer {
  * writes, not "merged" for two and "replaced" for four). A list is matched row by row on its id, a single record by
  * the account. `custom` is merged by delta on the two areas that carry it.
  */
-type NestedKey = "platform" | "deployments" | "solutions" | "implementation" | "tickets" | "interactions";
+type NestedKey = "platform" | "deployments" | "solutions" | "implementation" | "implementations" | "tickets" | "interactions";
 interface NestedPart {
   key: NestedKey;
   /** The row's id field in the entity (and its column property in the table); null for the one-per-account records. */
@@ -702,11 +760,16 @@ const NESTED: NestedPart[] = [
   { key: "platform", id: null, table: platformTable, schema: platformSchema, noun: "platform record" },
   { key: "deployments", id: "deploymentId", table: deploymentsTable, schema: deploymentSchema, noun: fill("{deployments} row") },
   { key: "solutions", id: "solutionId", table: solutionsTable, schema: solutionSchema, noun: "solutions row" },
-  { key: "implementation", id: null, table: implementationTable, schema: implementationSchema, noun: fill("{implementation} record") },
+  // One per account (`implementation`, keyed by the account), or several (`implementations[]`, each by its own id):
+  // as this deployment keeps them (MANY_IMPLEMENTATIONS). The other key is refused (checkImplementationShape).
+  MANY_IMPLEMENTATIONS
+    ? { key: "implementations", id: "implementationId", table: implementationTable, schema: implementationRowSchema, noun: fill("{implementations} row") }
+    : { key: "implementation", id: null, table: implementationTable, schema: implementationSchema, noun: fill("{implementation} record") },
   { key: "tickets", id: "ticketId", table: ticketsTable, schema: ticketSchema, noun: "tickets row" },
   { key: "interactions", id: "interactionId", table: interactionsTable, schema: interactionSchema, noun: "interactions row" },
 ];
-const NESTED_KEYS = new Set<string>([...NESTED.map((p) => p.key), "custom", "custom_append"]);
+// Both implementation keys are nested parts, whichever this deployment uses: neither is ever an account column.
+const NESTED_KEYS = new Set<string>([...NESTED.map((p) => p.key), "implementation", "implementations", "custom", "custom_append"]);
 
 type Row = Record<string, unknown>;
 /** A part's rows in a patch (a single record is a list of one). */
@@ -837,6 +900,7 @@ export async function writeCustomerPatchToPostgres(
   deltas: { accountCustom?: CustomDelta; rows?: RowCustomDeltas } = {},
 ): Promise<void> {
   const id = patch.id;
+  checkImplementationShape(patch);
   const org = scopeFor(id, orgId);
   const created = existing ? null : applyPatchToRecord(null, patch);
   if (existing) checkRowPatch(patch, existing);
@@ -892,7 +956,9 @@ export async function writeCustomerPatchToPostgres(
           continue;
         }
         const set: Row = namedFields(row, part.id);
-        const delta = part.key === "deployments" ? deltas.rows?.deployments.get(String(row.deploymentId)) : part.key === "implementation" ? deltas.rows?.implementation : undefined;
+        const delta = part.key === "deployments" ? deltas.rows?.deployments.get(String(row.deploymentId))
+          : part.key === "implementation" ? deltas.rows?.implementation
+          : part.key === "implementations" ? deltas.rows?.implementations?.get(String(row.implementationId)) : undefined;
         if (delta) set.custom = customMergeSql(t.custom, delta, { empty: "object" });
         if (stored.some(sameRow(part)(row))) {
           if (!Object.keys(set).length) continue;
@@ -901,14 +967,24 @@ export async function writeCustomerPatchToPostgres(
         } else {
           const full = part.schema.parse(mergeRow(undefined, row, part.id)) as Row;
           // An area drawn from its definition keeps its own values as the validator wrote them (a list stays a list).
-          const declaredPart = (part.key === "deployments" && isDeclared("deployments")) || (part.key === "implementation" && isDeclared("implementations"));
-          const values = "custom" in full || part.key === "deployments" || part.key === "implementation" ? { ...full, custom: declaredPart ? (full.custom ?? {}) : asCustomValues(full.custom) } : full;
-          const insertRow = stamp(fullRow(part.table, { customerId: id, ...values }) as Row);
-          // The row's whole key: (org_id, customer_id[, its id]).
-          const target = part.id ? [t.orgId, t.customerId, t[part.id]] : [t.orgId, t.customerId];
-          // Written by someone else since the read: the named fields are applied onto it, as for a stored row.
+          const implementationPart = part.key === "implementation" || part.key === "implementations";
+          const declaredPart = (part.key === "deployments" && isDeclared("deployments")) || (implementationPart && isDeclared("implementations"));
+          const values = "custom" in full || part.key === "deployments" || implementationPart ? { ...full, custom: declaredPart ? (full.custom ?? {}) : asCustomValues(full.custom) } : full;
+          // One implementation per account: its own id is the account's (agent/lib/implementation-ids.ts).
+          const insertRow = stamp(fullRow(part.table, { customerId: id, ...values, ...(part.key === "implementation" ? { implementationId: id } : {}) }) as Row);
+          if (part.key === "implementations") {
+            // An id is the workspace's: one another account's row holds is not taken, nor that row changed.
+            const [held] = await tx.select({ customerId: t.customerId }).from(t).where(and(eq(t.orgId, org), eq(t.implementationId, row.implementationId as string))).limit(1);
+            if (held && held.customerId !== id) throw new Error(`Nothing was written. ${name}: that id is another ${wordFor("account")}'s ${part.noun}; give this one another id.`);
+          }
+          // The row's whole key: (org_id, customer_id[, its id]); an implementation's is (org_id, implementation_id).
+          const target = implementationPart ? [t.orgId, t.implementationId] : part.id ? [t.orgId, t.customerId, t[part.id]] : [t.orgId, t.customerId];
+          // Written by someone else since the read: the named fields are applied onto it, as for a stored row (and,
+          // for an implementation, only when that row is this account's).
           const insert = tx.insert(t).values(insertRow as never);
-          await (Object.keys(set).length ? insert.onConflictDoUpdate({ target, set }) : insert.onConflictDoNothing({ target }));
+          await (Object.keys(set).length
+            ? insert.onConflictDoUpdate({ target, set, ...(implementationPart ? { setWhere: eq(t.customerId, id) } : {}) })
+            : insert.onConflictDoNothing({ target }));
         }
       }
     }
@@ -942,6 +1018,7 @@ export async function upsertCustomer(
   opts: { declared?: Partial<Record<CustomFieldArea, CustomFieldSpec[]>>; actor?: string } = {},
 ): Promise<Customer> {
   const parsedPatch = parsePatch(patch);
+  checkImplementationShape(parsedPatch);
   const db = getDb();
   if (db) {
     // The record being patched is read in the CALLER's workspace. Read across all of them, another workspace's

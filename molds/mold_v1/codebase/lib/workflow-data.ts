@@ -22,6 +22,9 @@ import { isStorageConfigError } from "@/lib/storage/types";
 import { withOrgRls } from "@/lib/ops-db";
 import { accountOwnerSql } from "@/agent/lib/db/owner-columns";
 import type { WorkflowData } from "@/lib/workflow-runtime";
+import { manyPerAccount } from "@/agent/lib/implementation-ids";
+
+const MANY_IMPLEMENTATIONS = manyPerAccount();
 
 /**
  * The data a workflow script may read for itself, bound to ONE workspace.
@@ -139,6 +142,9 @@ export function workflowDataFor(orgId: string): WorkflowData {
         tx
           .select({
             customerId: implementation.customerId,
+            // Its own id when an account holds several (agent/lib/implementation-ids.ts); one per account, the row is
+            // the account's and the answer is what it always was.
+            ...(MANY_IMPLEMENTATIONS ? { implementationId: implementation.implementationId } : {}),
             stage: implementation.implementationStage,
             risk: implementation.implementationRiskLevel,
             progressPct: implementation.implementationProgressPct,

@@ -325,6 +325,15 @@ export const implementationSchema = z.object({
   custom: areaCustomValuesSchema("implementations").optional(),
 });
 
+/**
+ * An implementation row with its own id: the record as a deployment that keeps several per account
+ * (records.areas.implementations `per_account: "many"`; agent/lib/implementation-ids.ts) reads and writes it, in the
+ * account's `implementations[]`. A deployment that keeps one reads and writes `implementation`, as it always did.
+ */
+export const implementationRowSchema = implementationSchema.extend({
+  implementationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/, "letters, digits, \".\", \"_\", \":\" or \"-\", starting with a letter or digit, at most 100 characters"),
+});
+
 export const ticketSchema = z.object({
   ticketId: z.string().min(1),
   summary: z.string().min(1),
@@ -511,6 +520,8 @@ export const customerSchema = z.object({
   deployments: z.array(deploymentSchema).optional(),
   solutions: z.array(solutionSchema).optional(),
   implementation: implementationSchema.optional(),
+  // Several per account (per_account "many"), each by its implementationId; never both on one deployment.
+  implementations: z.array(implementationRowSchema).optional(),
   tickets: z.array(ticketSchema).optional(),
   interactions: z.array(interactionSchema).optional(),
   // The profile's own fields on the account record itself (`account_fields.custom_fields`), in customers.custom.
@@ -628,6 +639,8 @@ type RowPatch<Row, Key extends keyof Row | never> = { [K in Key]: Row[K] } & {
 export const deploymentPatchSchema = rowPatchSchema(deploymentSchema, "deploymentId", "row") as unknown as z.ZodType<RowPatch<z.infer<typeof deploymentSchema>, "deploymentId">>;
 /** The `implementation` in a patch: only what changes. */
 export const implementationPatchSchema = rowPatchSchema(implementationSchema, null, "record") as unknown as z.ZodType<RowPatch<z.infer<typeof implementationSchema>, never>>;
+/** An `implementations[]` entry in a patch (several per account): `implementationId`, then only what changes. */
+export const implementationRowPatchSchema = rowPatchSchema(implementationRowSchema, "implementationId", "row") as unknown as z.ZodType<RowPatch<z.infer<typeof implementationRowSchema>, "implementationId">>;
 /** `platform`, `solutions[]`, `tickets[]`, `interactions[]` in a patch: the same rule as the two record areas (review
  *  of #70: a model that learned "left out = kept" there must not silently delete tickets or interactions here). */
 export const platformPatchSchema = rowPatchSchema(platformSchema, null, "record") as unknown as z.ZodType<RowPatch<z.infer<typeof platformSchema>, never>>;
@@ -645,6 +658,7 @@ export const customerPatchSchema = customerSchema.partial().extend({
   deployments: z.array(deploymentPatchSchema).optional().describe(listRule("deploymentId")),
   solutions: z.array(solutionPatchSchema).optional().describe(listRule("solutionId")),
   implementation: implementationPatchSchema.optional().describe(recordRule("implementation")),
+  implementations: z.array(implementationRowPatchSchema).optional().describe(listRule("implementationId")),
   tickets: z.array(ticketPatchSchema).optional().describe(listRule("ticketId")),
   interactions: z.array(interactionPatchSchema).optional().describe(listRule("interactionId")),
   // Write-only: text ADDED to the end of the account's long-text own fields (account_fields.custom_fields), so a
@@ -689,6 +703,7 @@ export type ImplementationPatch = z.infer<typeof implementationPatchSchema>;
 export type CustomerStore = z.infer<typeof customerStoreSchema>;
 export type Deployment = z.infer<typeof deploymentSchema>;
 export type Implementation = z.infer<typeof implementationSchema>;
+export type ImplementationRow = z.infer<typeof implementationRowSchema>;
 export type Interaction = z.infer<typeof interactionSchema>;
 export type Platform = z.infer<typeof platformSchema>;
 export type Solution = z.infer<typeof solutionSchema>;

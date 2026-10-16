@@ -337,12 +337,17 @@ export const solutions = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
-/* Implementation — one row per customer rollout plan                         */
+/* Implementation — a customer rollout plan, framework or programme           */
 /* -------------------------------------------------------------------------- */
 
 export const implementation = pgTable("implementation", {
     orgId: text("org_id").notNull(),
   customerId: text("customer_id").notNull(),
+  // The row's own id (drizzle/0044). A profile that keeps one per account (the default) writes the account id here, so
+  // (org_id, implementation_id) still holds one row per account; one that declares `per_account: "many"`
+  // (records.areas.implementations) gives each row its own (agent/lib/implementation-ids.ts). Rows that existed before
+  // 0044 were given their account id.
+  implementationId: text("implementation_id").notNull(),
   rolloutId: text("rollout_id"),
   // Optional human title; blank falls back to the composed "customer · stage".
   displayName: text("display_name"),
@@ -398,7 +403,9 @@ export const implementation = pgTable("implementation", {
   // The deployment profile's own fields (`domains.implementations.custom_fields`); see deployments.custom.
   custom: jsonb("custom").$type<Record<string, string | number>>().notNull().default({}),
 }, (t) => [
-  primaryKey({ name: "implementation_org_id_customer_id_pk", columns: [t.orgId, t.customerId] }),
+  primaryKey({ name: "implementation_org_id_implementation_id_pk", columns: [t.orgId, t.implementationId] }),
+  // The account's rows (a list, a nested read, the foreign key's cascade): the key no longer leads with customer_id.
+  index("implementation_org_id_customer_id_idx").on(t.orgId, t.customerId),
   foreignKey({ name: "implementation_customer_fk", columns: [t.orgId, t.customerId], foreignColumns: [customers.orgId, customers.customerId] }).onDelete("cascade"),
   // Own fields filtered by containment (agent/lib/record-query.ts): drizzle/0043.
   index("implementation_custom_idx").using("gin", t.custom.op("jsonb_path_ops")),
@@ -926,7 +933,8 @@ export const cycles = pgTable("cycles", {
   name: text("name").notNull(),
   startsAt: timestamp("starts_at", { withTimezone: true }),
   endsAt: timestamp("ends_at", { withTimezone: true }),
-  // Lifecycle: "planning" | "active" | "closed".
+  // Lifecycle: "planning" | "active" | "closed" (the default profile's); a profile that declares the periods area
+  // (records.areas.periods) names its own states, each with a category (agent/lib/period-area.ts).
   state: text("state").notNull().default("planning"),
   // The period's goal / theme (mode team; a person's own goal is in cycle_member_goals).
   goal: text("goal"),
@@ -939,7 +947,14 @@ export const cycles = pgTable("cycles", {
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  // A period's OWN fields (the deployment profile's records.areas.periods, stated in the record-area form), keyed by
+  // the field's key; agent/lib/period-area.ts checks every write against the definition and merges it per key.
+  // drizzle/0045_cycles_custom.sql.
+  custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
+}, (t) => [
+  // Own fields filtered by containment (custom @> {"key": value}), as todos.custom (0041) and the account areas (0043).
+  index("cycles_custom_idx").using("gin", t.custom.op("jsonb_path_ops")),
+]);
 
 /**
  * One person's own goal for one period, under the deployment profile's `work_periods.mode: "individual"`

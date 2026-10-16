@@ -1075,11 +1075,12 @@ export function pruneRecordSchemaWith(h: HiddenFields, schema: unknown): unknown
   dropProperties(out, h.account);
   for (const root of objectVariants(out)) {
     const props = root.properties as Record<string, unknown>;
-    // `deployments` is an array; an optional one may arrive wrapped in anyOf/oneOf branches.
-    const dep = props.deployments;
-    const arrays = isRecord(dep) ? [dep, ...(["anyOf", "oneOf"] as const).flatMap((k) => (Array.isArray(dep[k]) ? (dep[k] as unknown[]) : []))] : [];
-    for (const a of arrays) if (isRecord(a)) dropProperties(a.items, h.deployments);
+    // `deployments` is an array; an optional one may arrive wrapped in anyOf/oneOf branches. So is `implementations`,
+    // an account's several implementation rows when it may hold several (agent/lib/implementation-ids.ts).
+    const arraysOf = (node: unknown) => (isRecord(node) ? [node, ...(["anyOf", "oneOf"] as const).flatMap((k) => (Array.isArray(node[k]) ? (node[k] as unknown[]) : []))] : []);
+    for (const a of arraysOf(props.deployments)) if (isRecord(a)) dropProperties(a.items, h.deployments);
     dropProperties(props.implementation, h.implementation);
+    for (const a of arraysOf(props.implementations)) if (isRecord(a)) dropProperties(a.items, h.implementation);
   }
   return out;
 }
@@ -1095,13 +1096,16 @@ export function pruneRecordWith(h: HiddenFields, record: unknown): unknown {
   if (isRecord(out.implementation) && h.implementation.size) {
     out.implementation = Object.fromEntries(Object.entries(out.implementation).filter(([k]) => !h.implementation.has(k)));
   }
+  if (Array.isArray(out.implementations) && h.implementation.size) {
+    out.implementations = (out.implementations as unknown[]).map((r) => (isRecord(r) ? Object.fromEntries(Object.entries(r).filter(([k]) => !h.implementation.has(k))) : r));
+  }
   return out;
 }
 
 /** Does this (base-words) patch rewrite a nested row whose hidden values the model could not send back? */
 export function patchTouchesHiddenWith(h: HiddenFields, patch: unknown): boolean {
   if (!isRecord(patch)) return false;
-  return (h.deployments.size > 0 && Array.isArray(patch.deployments)) || (h.implementation.size > 0 && isRecord(patch.implementation));
+  return (h.deployments.size > 0 && Array.isArray(patch.deployments)) || (h.implementation.size > 0 && (isRecord(patch.implementation) || Array.isArray(patch.implementations)));
 }
 
 /**
@@ -1130,5 +1134,12 @@ export function restoreHiddenWith(h: HiddenFields, patch: unknown, existing: unk
     );
   }
   if (isRecord(out.implementation) && h.implementation.size) out.implementation = fill(out.implementation, existing.implementation, h.implementation);
+  if (Array.isArray(out.implementations) && h.implementation.size) {
+    // Several per account: each row matched by its implementationId.
+    const before = Array.isArray(existing.implementations) ? (existing.implementations as unknown[]).filter(isRecord) : [];
+    out.implementations = (out.implementations as unknown[]).map((r) =>
+      isRecord(r) ? fill(r, before.find((p) => p.implementationId !== undefined && p.implementationId === r.implementationId), h.implementation) : r,
+    );
+  }
   return out;
 }

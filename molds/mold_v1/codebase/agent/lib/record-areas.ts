@@ -14,9 +14,9 @@
  * Pure: no React, no database, no fetch. `areas` is a parameter so a preview page or a test can pass another
  * profile's compiled definitions. It lives under agent/lib so both the agent and the web app can import it.
  */
-import { RECORD_AREAS, type RecordArea, type RecordAreaId, type RecordCategory, type RecordField, type RecordOption, type RecordRole, type RecordTone, type RecordTransition } from "./record-areas.generated.ts";
+import { RECORD_AREA_STRUCTURE, RECORD_AREAS, type RecordArea, type RecordAreaStructure, type RecordAreaId, type RecordCategory, type RecordField, type RecordOption, type RecordRole, type RecordTone, type RecordTransition } from "./record-areas.generated.ts";
 
-export type { RecordArea, RecordAreaId, RecordCategory, RecordField, RecordOption, RecordRole, RecordTone, RecordTransition };
+export type { RecordArea, RecordAreaId, RecordAreaStructure, RecordCategory, RecordField, RecordOption, RecordRole, RecordTone, RecordTransition };
 export type RecordAreas = Record<RecordAreaId, RecordArea>;
 
 export const CATEGORIES: readonly RecordCategory[] = ["backlog", "open", "active", "blocked", "done", "cancelled"];
@@ -209,12 +209,14 @@ export type AreaView = ReturnType<typeof areaView>;
  * its own fields with their types and which are required, the states in order with what moving into each needs, and
  * the rules. Only for an area the deployment redefines; null otherwise, so the default model surface is unchanged.
  */
-export function describeArea(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS): string | null {
+export function describeArea(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS, account?: string): string | null {
   const v = areaView(id, areas);
   if (!v.redefined || !v.enabled) return null;
   const a = v.area;
   const lines: string[] = [];
   lines.push(`- ${/^[aeiou]/i.test(v.noun) ? "An" : "A"} **${v.noun}** (plural: ${v.nouns})${a.description ? `: ${a.description}` : "."}`);
+  const structure = describeStructure(id, areas, account);
+  if (structure) lines.push(`  ${structure}`);
   const own = v.ownFields.filter((f) => !f.hidden);
   if (own.length) lines.push(`  Its own fields (in \`custom\`): ${own.map((f) => describeField(f)).join("; ")}.`);
   lines.push(...describeMoves(id, areas));
@@ -223,6 +225,99 @@ export function describeArea(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS
   if (a.agent?.describe) lines.push(`  ${a.agent.describe}`);
   for (const r of a.agent?.rules ?? []) lines.push(`  - ${r}`);
   return lines.join("\n");
+}
+
+/**
+ * Is the area's structure said to the model? Only where the deployment's own definition is what the model reads: a
+ * task area it redefines, a period that declares what it contains, a deployments / implementations area stated in the
+ * record-area form (`declared`). Anything else (the default, a legacy form) reads byte for byte what it did.
+ */
+export function structureShown(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS): boolean {
+  const a = areas[id];
+  if (!a.enabled) return false;
+  if (id === "tasks") return a.redefined;
+  if (id === "periods") return Boolean(a.relations?.contains) && a.period?.mode !== "off";
+  return Boolean(a.declared);
+}
+
+/**
+ * What a record of the area IS, in the deployment's words (RECORD_AREA_STRUCTURE; docs/DEPLOYMENT_PROFILE.md "Choosing
+ * the area for a domain concept"): "Regulatory filings: each groups obligations due together in one window …". One
+ * sentence for the briefing's card, the agent's tools and MCP's; null where structureShown() is false. `account`:
+ * what this deployment calls an account (the default profile's word when not given).
+ */
+export function describeStructure(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS, account = "account", word: (t: string) => string = (t) => t): string | null {
+  if (!structureShown(id, areas)) return null;
+  const v = areaView(id, areas);
+  const s: RecordAreaStructure = RECORD_AREA_STRUCTURE[id];
+  // `word` marks the deployment's own words (labels, nouns, the account word): a relabelled briefing keeps them as
+  // written while the identifiers around them are spoken in its vocabulary.
+  const an = (w: string) => `${/^[aeiou]/i.test(w) ? "an" : "a"} ${word(w)}`;
+  const shown = (role: keyof RecordAreaStructure["columns"]) => {
+    const key = s.columns[role];
+    const f = key ? v.field(key) : undefined;
+    return f && !f.hidden ? `"${word(v.label(f.key))}", \`${f.key}\`` : null;
+  };
+  const on = (x: RecordAreaId) => areas[x].enabled && !(x === "periods" && areas.periods.period?.mode === "off");
+  const tasks = areaView("tasks", areas);
+  const periods = areaView("periods", areas);
+  const contains = areas.periods.relations?.contains;
+  const parts: string[] = [];
+  if (id === "tasks") {
+    const owner = shown("owner");
+    const due = shown("due");
+    parts.push(`${word(v.plural)}: each is one unit of work${owner ? ` that someone owns (${owner})` : ""}${due ? `, falling due on a day (${due})` : ""}, moved through its states until it is done.`);
+    if (on("periods") && contains?.area === "tasks") parts.push(`${word(upperFirst(v.nouns))} due together are grouped into ${an(periods.noun)} (\`cycleId\`)${contains.completion === false ? "" : `, which is complete when they are done`}.`);
+    const under = (v.area.relations?.containers ?? []).filter((c): c is "deployments" | "implementations" => (c === "deployments" || c === "implementations") && on(c)).map((c) => an(areaView(c, areas).noun));
+    if (under.length) parts.push(`One may be filed under ${under.join(" or ")} (containerType + containerId).`);
+  } else if (id === "periods") {
+    const window = [shown("start"), shown("due")].filter(Boolean);
+    parts.push(`${word(v.plural)}: each groups ${word(tasks.nouns)} due together in one window${window.length ? ` (${window.join(" to ")})` : ""}${contains?.completion === false ? "" : ` and is complete when they are all done`}; ${an(tasks.noun)} is in one when filed with its id (\`cycleId\`).`);
+  } else {
+    const state = shown("state");
+    const health = shown("health");
+    const says = [state ? `its ${id === "implementations" ? "stage" : "release state"} (${state})` : "", health ? `its ${id === "implementations" ? "risk" : "health"} (${health})` : ""].filter(Boolean);
+    parts.push(
+      id === "deployments"
+        ? `${word(v.plural)}: each is a change rolled out to one ${word(account)} (its target)${says.length ? `, with ${says.join(" and ")}` : ""}.`
+        : `${word(v.plural)}: each is a long-running programme run for one ${word(account)}, moving through stages${says.length ? `, with ${says.join(" and ")}` : ""}.`,
+    );
+    if (tasks.enabled && (tasks.area.relations?.containers ?? []).includes(id)) parts.push(`${word(upperFirst(tasks.nouns))} may be filed under one.`);
+  }
+  return parts.join(" ");
+}
+
+/**
+ * What a period contains and is measured by (records.areas.periods.relations.contains), when it declares it and periods
+ * are on: the contained area and whether its records complete the period. Null otherwise (the default).
+ */
+export function periodContains(areas: RecordAreas = RECORD_AREAS): { area: RecordAreaId; completion: boolean } | null {
+  const c = areas.periods.relations?.contains;
+  if (!c || !areas.periods.enabled || areas.periods.period?.mode === "off" || !areas[c.area]?.enabled) return null;
+  return { area: c.area, completion: c.completion !== false };
+}
+
+/**
+ * A period's completion from the records filed into it (each carries the period's id as `cycleId`): by period id, how
+ * many there are (a cancelled one does not count) and how many are done (their state's category is done). Read
+ * through the area's own lifecycle, so a pack's states count by their category, never by their names.
+ */
+export function periodCompletion(rows: AreaRow[], areas: RecordAreas = RECORD_AREAS): Map<string, { total: number; done: number }> {
+  const out = new Map<string, { total: number; done: number }>();
+  const c = periodContains(areas);
+  if (!c) return out;
+  const v = areaView(c.area, areas);
+  for (const row of rows) {
+    const period = row.cycleId;
+    if (typeof period !== "string" || !period || row.archivedAt) continue;
+    const category = v.categoryOfRow(row);
+    if (category === "cancelled") continue;
+    const n = out.get(period) ?? { total: 0, done: 0 };
+    n.total += 1;
+    if (category === "done") n.done += 1;
+    out.set(period, n);
+  }
+  return out;
 }
 
 /** `key` ("Label", type, required?, choices): how a tool description and the briefing name a field. */

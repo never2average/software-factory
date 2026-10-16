@@ -72,6 +72,13 @@ export interface McpDeps {
     /** The lifecycle as its moves (agent/lib/record-areas.ts describeMoves), when it lists transitions. */
     moves?: string;
   };
+  /**
+   * What a record of each area IS here, in this deployment's words (agent/lib/record-areas.ts describeStructure), only
+   * for an area the profile defines in the record-area form: appended to that area's tools. Absent = today's text.
+   */
+  structure?: Partial<Record<"tasks" | "periods" | "deployments" | "implementations", string>>;
+  /** An account may hold several implementation records, each with its own id (agent/lib/implementation-ids.ts). Absent = one each, today's tools. */
+  manyImplementations?: boolean;
   /** Injected for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
   /** Extra addresses this deployment answers on (WEB_ORIGIN), for the Origin check and links. */
@@ -238,6 +245,8 @@ export async function handleMcpRequest(request: Request, deps: McpDeps): Promise
     workPeriods: deps.workPeriods,
     choices: deps.choices,
     tasks: deps.tasks,
+    structure: deps.structure,
+    manyImplementations: deps.manyImplementations,
     // No direct blob access: the data room is reached through the Ops API, as the caller, org-scoped and audited.
     blobStore: () => null,
     parseClaudeTranscript,

@@ -1,0 +1,70 @@
+{
+  "$comment": "Compliance frameworks, several per regulator (records.areas.implementations with per_account \"many\"): a regulator (the account) runs several frameworks at once, each its own record with its own id. Two own fields were renamed after rows were written under their old keys (`control_count` was `controls`, `review_cycle` was `cycle`): the server's filters, sorts, search, computed fields and metrics read the new key, else the old one. A test fixture for scripts/test-implementation-ids-db.mjs; no deployment ships it.",
+  "records": {
+    "areas": {
+      "implementations": {
+        "per_account": "many",
+        "label": {
+          "singular": "Compliance framework",
+          "plural": "Compliance frameworks"
+        },
+        "description": "A framework a regulated entity adopts and runs for months: its stage, its owner, its controls and how often it is reviewed.",
+        "columns": "listed",
+        "title": "{framework_code} · {implementationStage}",
+        "fields": {
+          "implementationStage": {
+            "order": 10,
+            "label": "Stage",
+            "options": [
+              { "value": "Kickoff", "label": "Adopting" },
+              { "value": "Discovery", "label": "Mapping" },
+              { "value": "Go-Live", "label": "In force" }
+            ]
+          },
+          "implementationRiskLevel": { "order": 20, "label": "Risk", "default": "Green" },
+          "implementationOwnerEmail": { "order": 30, "type": "person", "label": "Framework owner", "default": "{me}" },
+          "framework_code": { "order": 40, "type": "text", "label": "Framework", "required": true },
+          "control_count": { "order": 50, "type": "integer", "label": "Controls", "min": 0, "renamed_from": "controls", "index": "sort" },
+          "review_cycle": {
+            "order": 60,
+            "type": "pick_list",
+            "label": "Review cycle",
+            "renamed_from": "cycle",
+            "options": [{ "value": "Monthly" }, { "value": "Quarterly" }, { "value": "Annual" }]
+          },
+          "scale": {
+            "order": 70,
+            "type": "pick_list",
+            "label": "Scale",
+            "computed": {
+              "when": [
+                { "if": { "control_count": { "gte": 100 } }, "then": "Large" },
+                { "if": { "control_count": { "set": true } }, "then": "Small" }
+              ],
+              "else": "Unsized"
+            },
+            "options": [{ "value": "Large" }, { "value": "Small" }, { "value": "Unsized" }]
+          },
+          "implementationProgressPct": { "order": 80, "label": "Progress" },
+          "blockerOwner": { "hidden": true, "fixed": "None" }
+        },
+        "lifecycle": {
+          "field": "implementationStage",
+          "initial": "Kickoff",
+          "categories": { "Kickoff": "open", "Discovery": "active", "Go-Live": "done" }
+        },
+        "views": {
+          "table": { "columns": ["account", "framework_code", "implementationStage", "control_count", "review_cycle", "scale"] }
+        },
+        "metrics": [
+          { "id": "quarterly", "label": "Reviewed quarterly", "count": { "where": { "review_cycle": "Quarterly" } } },
+          { "id": "controls", "label": "Controls", "sum": { "field": "control_count" } },
+          { "id": "large", "label": "Large frameworks", "count": { "where": { "scale": "Large" } } }
+        ],
+        "agent": {
+          "tools": { "read": true, "write": true }
+        }
+      }
+    }
+  }
+}

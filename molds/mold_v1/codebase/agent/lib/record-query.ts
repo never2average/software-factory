@@ -181,6 +181,27 @@ export type AreaTable = Record<string, unknown> & { custom: AnyColumn; customerI
 /** What compiling a computed field needs: the area, and the moment `{today}` is read at. */
 interface Cx { v: AreaView; now: Date }
 
+/**
+ * An own field's stored JSON value, as agent/lib/record-areas.ts `get` reads it: under its key, else (a field declared
+ * with `renamed_from`) under the key rows written before the rename carry it. Only a renamed field reads two keys, so
+ * every other own field's SQL is what it always was.
+ */
+function ownJson(t: AreaTable, field: RecordField): SQL {
+  return field.renamed_from
+    ? sql`coalesce(${t.custom} -> ${field.key}::text, ${t.custom} -> ${field.renamed_from}::text)`
+    : sql`(${t.custom} -> ${field.key}::text)`;
+}
+
+/**
+ * Containment of `{key: value}` in `custom` (which the GIN index on `custom` serves); for a renamed field, also a row
+ * that carries no value under the new key and has it under the old one.
+ */
+function ownContains(t: AreaTable, field: RecordField, value: unknown): SQL {
+  const now = sql`${t.custom} @> ${JSON.stringify({ [field.key]: value })}::jsonb`;
+  if (!field.renamed_from) return now;
+  return sql`(${now} or (not jsonb_exists(${t.custom}, ${field.key}::text) and ${t.custom} @> ${JSON.stringify({ [field.renamed_from]: value })}::jsonb))`;
+}
+
 /** A field as SQL text (an own field read out of `custom`), or a number for a number field; a computed one as its CASE. */
 function expr(t: AreaTable, key: string, field: RecordField | null, cx?: Cx): SQL {
   if (field === null) return sql`${t.customerId}`;
@@ -192,6 +213,11 @@ function expr(t: AreaTable, key: string, field: RecordField | null, cx?: Cx): SQ
     const col = t[field.key] as AnyColumn | undefined;
     if (!col) throw new Error(`${field.key} is not a column of this table`);
     return sql`${col}`;
+  }
+  if (field.renamed_from) {
+    const j = ownJson(t, field);
+    if (NUMERIC.has(field.type)) return sql`(case when jsonb_typeof(${j}) = 'number' then (${j} #>> '{}')::numeric end)`;
+    return sql`(${j} #>> '{}')`;
   }
   if (NUMERIC.has(field.type)) return sql`(case when jsonb_typeof(${t.custom} -> ${key}::text) = 'number' then (${t.custom} ->> ${key}::text)::numeric end)`;
   return sql`(${t.custom} ->> ${key}::text)`;
@@ -205,7 +231,7 @@ function condition(t: AreaTable, c: Condition, cx: Cx): SQL {
   const own = f !== null && !f.column && !f.computed;
   const eqOne = (value: unknown): SQL => {
     if (f?.computed) return sql`${e} = ${String(value)}::text`;
-    if (own && !NUMERIC.has(f!.type)) return sql`${t.custom} @> ${JSON.stringify({ [c.key]: value })}::jsonb`;
+    if (own && !NUMERIC.has(f!.type)) return ownContains(t, f!, value);
     // An email is the same address in any case (a person field is stored lower case, an older column as typed).
     if (f && (f.type === "person" || f.type === "email")) return sql`lower(${e}) = lower(${String(value)})`;
     return sql`${e} = ${bound(f, value)}`;
@@ -220,10 +246,11 @@ function condition(t: AreaTable, c: Condition, cx: Cx): SQL {
     case "gt": return sql`${e} > ${bound(f, c.value)}`;
     case "gte": return sql`${e} >= ${bound(f, c.value)}`;
     case "contains":
-      return f!.column ? sql`${t[f!.key] as AnyColumn} @> ${JSON.stringify([c.value])}::jsonb` : sql`${t.custom} @> ${JSON.stringify({ [c.key]: [c.value] })}::jsonb`;
+      return f!.column ? sql`${t[f!.key] as AnyColumn} @> ${JSON.stringify([c.value])}::jsonb` : ownContains(t, f!, [c.value]);
     case "set": {
       if (f?.computed) return c.value ? sql`(${e} is not null and ${e} <> '')` : sql`(${e} is null or ${e} = '')`;
-      const has = own ? sql`(jsonb_exists(${t.custom}, ${c.key}::text) and jsonb_typeof(${t.custom} -> ${c.key}::text) <> 'null' and coalesce(${t.custom} ->> ${c.key}::text, '') <> '' and ${t.custom} -> ${c.key}::text <> '[]'::jsonb)` : sql`(${e} is not null and ${e}::text <> '' and ${e}::text <> '[]')`;
+      const j = own && f!.renamed_from ? ownJson(t, f!) : null;
+      const has = j ? sql`(${j} is not null and jsonb_typeof(${j}) <> 'null' and coalesce(${j} #>> '{}', '') <> '' and ${j} <> '[]'::jsonb)` : own ? sql`(jsonb_exists(${t.custom}, ${c.key}::text) and jsonb_typeof(${t.custom} -> ${c.key}::text) <> 'null' and coalesce(${t.custom} ->> ${c.key}::text, '') <> '' and ${t.custom} -> ${c.key}::text <> '[]'::jsonb)` : sql`(${e} is not null and ${e}::text <> '' and ${e}::text <> '[]')`;
       return c.value ? has : sql`not ${has}`;
     }
     default: return sql`false`;

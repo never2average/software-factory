@@ -2707,6 +2707,7 @@
    },
    "describe": "Each week has team targets (measured from filings and obligations, never typed in) and each person's own obligations for the week. Set a person's goal for a target only for yourself or someone who reports to you."
   },
-  "redefined": true
+  "redefined": true,
+  "declared": true
  }
 }

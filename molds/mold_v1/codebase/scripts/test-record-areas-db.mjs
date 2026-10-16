@@ -102,8 +102,8 @@ try {
   await admin`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, notes, custom)
               values (${ORG}, ${CO}, 'R1', 'prod', 'ap-south-1', 'Q2 FY26', 'deployed', 'healthy', 'n0', ${admin.json({ summary: LONG, rating: "Hold" })}),
                      (${ORG}, ${CO}, 'R2', 'prod', 'ap-south-1', 'Q1 FY26', 'deployed', 'healthy', null, '{}'::jsonb)`;
-  await admin`insert into implementation (org_id, customer_id, rollout_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, blocker, custom)
-              values (${ORG}, ${CO}, 'large-caps', 'Discovery', 10, 'Green', 'None', 'b0', ${admin.json({ crew: 2 })})`;
+  await admin`insert into implementation (org_id, customer_id, implementation_id, rollout_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, blocker, custom)
+              values (${ORG}, ${CO}, ${CO}, 'large-caps', 'Discovery', 10, 'Green', 'None', 'b0', ${admin.json({ crew: 2 })})`;
   check("the record has both rows and the implementation", (await depRow("R1")) && (await depRow("R2")) && (await implRow()));
 
   console.log("\n1. A field written by someone else while upsert_customer changes another is never put back");

@@ -17,6 +17,10 @@ import { storageMisconfigured } from "@/lib/storage-http";
 import { W } from "@/lib/ui-words";
 import { FOLDER } from "@/agent/lib/dataroom-folders";
 import { WORK_PERIODS } from "@/agent/lib/work-periods";
+import { implementationKey, manyPerAccount } from "@/agent/lib/implementation-ids";
+
+/** An account may hold several implementations, each addressed by its own id (agent/lib/implementation-ids.ts). */
+const MANY_IMPLEMENTATIONS = manyPerAccount();
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -188,7 +192,7 @@ export async function GET(request: NextRequest) {
       } else if (row.containerType === "implementation" && row.containerId) {
         const containerId = row.containerId;
         const [impl] = await withOrgRls(ctx.orgId, (tx) =>
-          tx.select().from(implementation).where(and(eq(implementation.orgId, ctx.orgId), eq(implementation.customerId, containerId))).limit(1),
+          tx.select().from(implementation).where(and(eq(implementation.orgId, ctx.orgId), MANY_IMPLEMENTATIONS ? eq(implementation.implementationId, containerId) : eq(implementation.customerId, containerId))).limit(1),
         );
         if (impl) {
           bundle.resolved.implementation = impl;
@@ -234,8 +238,35 @@ export async function GET(request: NextRequest) {
       const dr = await readCustomerContext(ctx.orgId, customerId);
       bundle.dataroom.context = dr.context;
       bundle.dataroom.files = dr.files;
+    } else if (MANY_IMPLEMENTATIONS) {
+      // implementation, when an account holds several: `id` is the row's own id (the named account must be its).
+      const [rec] = await withOrgRls(ctx.orgId, (tx) =>
+        tx.select().from(implementation).where(and(eq(implementation.orgId, ctx.orgId), eq(implementation.implementationId, id), ...(customerIdParam ? [eq(implementation.customerId, customerIdParam)] : []))).limit(1),
+      );
+      if (!rec) return NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 });
+      bundle.record = rec as Record<string, unknown>;
+      const cid = rec.customerId;
+      const key = implementationKey(rec);
+      const [cust] = await withOrgRls(ctx.orgId, (tx) =>
+        tx.select().from(customers).where(and(eq(customers.orgId, ctx.orgId), eq(customers.customerId, cid))).limit(1),
+      );
+      if (cust) bundle.resolved.customer = { id: cust.customerId, name: cust.customerName };
+      const related = await withOrgRls(ctx.orgId, (tx) =>
+        tx
+          .select()
+          .from(todos)
+          .where(and(eq(todos.orgId, ctx.orgId), eq(todos.containerType, "implementation"), eq(todos.containerId, key)))
+          .orderBy(asc(todos.createdAt)),
+      );
+      bundle.resolved.relatedTasks = related.map((t) => ({ id: t.id, title: t.title, done: t.done, status: t.status }));
+      bundle.resolved.comments = await commentsFor(db, ctx.orgId, "implementation", key);
+      bundle.resolved.activity = await activityFor(db, ctx.orgId, "implementation", key);
+      bundle.dataroom.customerId = cid;
+      const dr = await readCustomerContext(ctx.orgId, cid);
+      bundle.dataroom.context = dr.context;
+      bundle.dataroom.files = dr.files;
     } else {
-      // implementation — keyed by (customerId, workspace) (its PK); `id` is rolloutId ?? customerId.
+      // implementation — one per account, keyed by (customerId, workspace); `id` is rolloutId ?? customerId.
       const customerId = customerIdParam ?? id;
       const [byCustomer] = await withOrgRls(ctx.orgId, (tx) =>
         tx

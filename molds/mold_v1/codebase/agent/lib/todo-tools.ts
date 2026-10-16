@@ -8,16 +8,16 @@
 import { defineTool } from "eve/tools";
 import { once } from "eve/tools/approval";
 import { z } from "zod";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { orgMembers, todos } from "./db/schema.ts";
 import { orgForSession } from "./org-context.ts";
 import { taskWorkflowRequest } from "./task-workflow-service.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
-import { fill } from "./agent-vocabulary.ts";
+import { fill, VOCABULARY } from "./agent-vocabulary.ts";
 import { WORK_PERIODS, currentPeriod, progressByPerson } from "./work-periods.ts";
 import { ensureCurrentPeriod, goalsFor, newPeriodWindow, rollOverEnded, setMemberGoal, taskWriteRefusal } from "./work-period-store.ts";
-import { areaView, describeArea, describeField, type AreaRow, type RecordField } from "./record-areas.ts";
+import { areaView, describeArea, describeField, describeStructure, periodCompletion, periodContains, type AreaRow, type RecordField } from "./record-areas.ts";
 import { prepareTaskWrite, taskCustom, taskLifecycleEnforced } from "./task-area.ts";
 import { permissionsDeclared } from "./record-permissions.ts";
 import { periodRefusal, taskDeleteRefusal } from "./record-permissions-store.ts";
@@ -26,6 +26,9 @@ import { recursOnDone } from "./task-recurrence.ts";
 import { recurAfterWrite } from "./task-recurrence-run.ts";
 import { storedTask, whoEntered, writeOutcome } from "./record-lifecycle-store.ts";
 import type { RecordRole } from "./record-areas.generated.ts";
+import { periodDeclared, periodOut, writablePeriodFields } from "./period-area.ts";
+import { writeDeclaredPeriod } from "./period-area-store.ts";
+import { memberRole } from "./record-area-store.ts";
 
 function callerEmail(ctx: {
   session: {
@@ -171,7 +174,7 @@ function ownFieldParam(f: RecordField) {
   return base.nullable().optional().describe(`${said}${f.help ? ` ${f.help}` : ""}`);
 }
 /** What a task carries in this deployment, for a tool's description: the area's card. */
-const TASK_CARD = describeArea("tasks") ?? "";
+const TASK_CARD = describeArea("tasks", undefined, VOCABULARY.records.account.singular) ?? "";
 
 export const upsertTodoTool = modelFacing("upsert_todo", !TASKS.redefined
   ? defineTool({
@@ -379,6 +382,86 @@ export const hideTodoTool = modelFacing("hide_todo", defineTool({
 import { cycles } from "./db/schema.ts";
 
 /**
+ * A period that CONTAINS the tasks filed into it (records.areas.periods.relations.contains; agent/lib/record-areas.ts):
+ * list_cycles says what a period is in this deployment's words and returns, per period, how many it holds and how many
+ * are done. Empty under the default, so the tool is today's to the byte.
+ */
+const CONTAINS = periodContains();
+const CONTAINS_TEXT = CONTAINS
+  ? ` ${describeStructure("periods", undefined, VOCABULARY.records.account.singular) ?? ""} Each also returns \`contains\`: how many ${TASKS.nouns} are filed into it (cancelled ones aside) and how many of them are done${CONTAINS.completion ? "; it is complete when the two are equal" : ""}.`
+  : "";
+
+/**
+ * A PERIOD STATED IN THE RECORD-AREA FORM (records.areas.periods with `declared`; agent/lib/period-area.ts): the two
+ * period tools take and return its fields as the definition says them (its labels, help and choices; its own fields
+ * under `custom`) and its declared states, and every write goes through the one validator, who-may and the lifecycle
+ * (agent/lib/period-area-store.ts writeDeclaredPeriod), as the ops routes do. Nothing of it exists otherwise, so the
+ * tools below are today's to the byte.
+ */
+const PERIODS_DECLARED = periodDeclared();
+const PERIODS = areaView("periods");
+const PERIOD_STATE = PERIODS_DECLARED ? PERIODS.lifecycle : null;
+/**
+ * The period's fields a write may set beside its name and window: its other columns (goal, lead, capacity; under mode
+ * individual none of them, a person's goal being their own), its own ones under `custom`.
+ */
+const PERIOD_FIELDS = PERIODS_DECLARED ? writablePeriodFields(PERIODS).filter((f) => !["name", "startsAt", "endsAt", "state"].includes(f.key) && !(WORK_PERIODS.individual && ["lead", "capacity", "goal"].includes(f.key))) : [];
+const PERIOD_COLUMNS = PERIOD_FIELDS.filter((f) => f.column);
+const PERIOD_OWN = PERIOD_FIELDS.filter((f) => !f.column);
+/** Some move of a period needs a comment, under an enforced lifecycle: the write tool takes one (`reason`). */
+const PERIOD_TAKES_COMMENT = Boolean(PERIOD_STATE && PERIOD_STATE.enforce !== "off" && (PERIODS.area.lifecycle?.transitions ?? []).some((t) => t.requires_comment));
+/** What a period is here, for the tools' descriptions: the area's card (its states and moves, its own fields, its rules). */
+const PERIOD_CARD = PERIODS_DECLARED ? describeArea("periods", undefined, VOCABULARY.records.account.singular) ?? "" : "";
+/** The words a declared period's tools say about its window and its name. */
+const periodWord = (key: string, fallback: string) => PERIODS.label(key, fallback);
+/** A declared period's parameters beside id and its name and window (agent/lib/period-area.ts). Empty otherwise. */
+const declaredPeriodParams = PERIODS_DECLARED
+  ? {
+      ...(PERIOD_STATE
+        ? {
+            state: z
+              .enum(PERIOD_STATE.states.filter((st) => !st.retired).map((st) => st.value) as [string, ...string[]])
+              .optional()
+              .describe(`${periodWord("state", "State")}: ${PERIOD_STATE.states.filter((st) => !st.retired).map((st) => `${st.value} ("${st.label}")`).join(" | ")}. A new one starts in "${PERIODS.display("state", PERIOD_STATE.initial)}".${PERIOD_STATE.enforce !== "off" ? " Moves follow its lifecycle (below)." : ""}`),
+          }
+        : {}),
+      ...Object.fromEntries(PERIOD_COLUMNS.map((f) => [f.key, ownFieldParam(f)])),
+      ...(PERIOD_OWN.length
+        ? {
+            custom: z
+              .object(Object.fromEntries(PERIOD_OWN.map((f) => [f.key, ownFieldParam(f)])))
+              .partial()
+              .optional()
+              .describe(`The ${PERIODS.noun}'s own fields, by key: only the ones you are changing; null clears one.`),
+          }
+        : {}),
+      ...(PERIOD_TAKES_COMMENT ? { reason: z.string().max(2000).optional().describe("Why you are making this move: the comment a move may need.") } : {}),
+    }
+  : {};
+/** A declared period as the tools answer it: its window, its state, its fields by key, its own ones under `custom`. */
+function declaredPeriodOut(c: typeof cycles.$inferSelect) {
+  const row = periodOut(c as unknown as Record<string, unknown>) as Record<string, unknown>;
+  return {
+    id: c.id,
+    name: c.name,
+    startsAt: c.startsAt?.toISOString() ?? null,
+    endsAt: c.endsAt?.toISOString() ?? null,
+    state: c.state,
+    ...Object.fromEntries(PERIOD_COLUMNS.map((f) => [f.key, row[f.key] ?? null])),
+    custom: row.custom as Record<string, unknown>,
+  };
+}
+/** One upsert_cycle write of a declared period, as the ops routes make it; a refusal throws its sentences. */
+async function writePeriodTool(org: string, actor: string, id: string | null, body: Record<string, unknown>, tx?: Parameters<typeof writeDeclaredPeriod>[0]) {
+  const run = async (t: Parameters<typeof writeDeclaredPeriod>[0]) => {
+    const r = await writeDeclaredPeriod(t, org, { id, body, actor, role: await memberRole(t, org, actor) });
+    if (!r.ok) throw new Error(r.status === 404 ? `No cycle with id "${id}".` : `Nothing was written. ${r.errors.join(" ")}`);
+    return r;
+  };
+  return tx ? run(tx) : withOrgDb(org, run);
+}
+
+/**
  * The two period tools. Which of them the model is given, and what they say, follows the deployment profile's
  * `work_periods` (agent/lib/work-periods.ts):
  *   mode "team"         the base product's tools, to the byte (the description fills the profile's word);
@@ -389,10 +472,39 @@ import { cycles } from "./db/schema.ts";
  * Each mode's definition is written INSIDE its modelFacing(...) call, like every other tool here: the source scans
  * that tell a read-only tool from an approval-gated one read a tool from its modelFacing( to the next.
  */
-export const listCyclesTool = modelFacing("list_cycles", !WORK_PERIODS.individual
+export const listCyclesTool = modelFacing("list_cycles", !WORK_PERIODS.individual && PERIODS_DECLARED
+  ? defineTool({
+    description: fill(
+      `List the ${PERIODS.nouns} (cycles), newest first: each one's id, name, window (startsAt, endsAt), state, and its fields by key (its own under \`custom\`). For filing ${TASKS.nouns} into with upsert_todo (cycleId).${CONTAINS_TEXT}${PERIOD_STATE ? " Pass `state` for only those in one state." : ""}\n${PERIOD_CARD}`,
+    ),
+    inputSchema: z.object({
+      ...(PERIOD_STATE
+        ? { state: z.enum(PERIOD_STATE.states.map((st) => st.value) as [string, ...string[]]).optional().describe(`Only those in this state: ${PERIOD_STATE.states.map((st) => `${st.value} ("${st.label}")`).join(" | ")}.`) }
+        : {}),
+    }),
+    async execute(input, ctx) {
+      requireDb();
+      const { state } = input as { state?: string };
+      const orgId = await orgForSession(ctx);
+      const rows = await withOrgDb(orgId, async (tx) => {
+        await rollOverEnded(tx, orgId);
+        return tx
+          .select()
+          .from(cycles)
+          .where(and(eq(cycles.orgId, orgId), isNull(cycles.archivedAt)))
+          .orderBy(desc(cycles.createdAt));
+      });
+      const shown = state ? rows.filter((c) => PERIODS.canonical("state", c.state) === state) : rows;
+      const held = CONTAINS && shown.length
+        ? periodCompletion(await withOrgDb(orgId, (tx) => tx.select().from(todos).where(and(eq(todos.orgId, orgId), inArray(todos.cycleId, shown.map((c) => c.id)), isNull(todos.archivedAt)))) as AreaRow[])
+        : null;
+      return { cycles: shown.map((c) => ({ ...declaredPeriodOut(c), ...(held ? { contains: held.get(c.id) ?? { total: 0, done: 0 } } : {}) })) };
+    },
+  })
+  : !WORK_PERIODS.individual
   ? defineTool({
     description:
-      "List the team's cycles ({periods}) — for filing todos into with upsert_todo. Returns id, name, and window.",
+      "List the team's cycles ({periods}) — for filing todos into with upsert_todo. Returns id, name, and window." + CONTAINS_TEXT,
     inputSchema: z.object({}),
     async execute(_input, ctx) {
       const db = requireDb();
@@ -407,12 +519,18 @@ export const listCyclesTool = modelFacing("list_cycles", !WORK_PERIODS.individua
           .where(and(eq(cycles.orgId, orgId), isNull(cycles.archivedAt)))
           .orderBy(desc(cycles.createdAt));
       });
+      // A period that contains the tasks filed into it (records.areas.periods.relations.contains): each says how many
+      // it holds and how many of them are done. Nothing more is read otherwise.
+      const held = CONTAINS && rows.length
+        ? periodCompletion(await withOrgDb(orgId, (tx) => tx.select().from(todos).where(and(eq(todos.orgId, orgId), inArray(todos.cycleId, rows.map((c) => c.id)), isNull(todos.archivedAt)))) as AreaRow[])
+        : null;
       return {
         cycles: rows.map((c) => ({
           id: c.id,
           name: c.name,
           startsAt: c.startsAt?.toISOString() ?? null,
           endsAt: c.endsAt?.toISOString() ?? null,
+          ...(held ? { contains: held.get(c.id) ?? { total: 0, done: 0 } } : {}),
         })),
       };
     },
@@ -444,6 +562,7 @@ export const listCyclesTool = modelFacing("list_cycles", !WORK_PERIODS.individua
           endsAt: c.endsAt?.toISOString() ?? null,
           state: c.state,
           current: c.id === currentPeriod(rows)?.id,
+          ...(PERIODS_DECLARED ? { custom: declaredPeriodOut(c).custom } : {}),
         }));
         if (!period) return { cycles: listed, person: who, cycle: null, items: [] };
         const tasks = await tx
@@ -464,7 +583,28 @@ export const listCyclesTool = modelFacing("list_cycles", !WORK_PERIODS.individua
     },
   }) as never));
 
-export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individual
+export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individual && PERIODS_DECLARED
+  ? defineTool({
+    description: fill(
+      `Create OR update ${/^[aeiou]/i.test(PERIODS.noun) ? "an" : "a"} ${PERIODS.noun} (a cycle). Omit \`id\` to create; pass \`id\` to update just the fields you give. Set its state with \`state\` and its own fields under \`custom\`; every write is checked against what ${/^[aeiou]/i.test(PERIODS.noun) ? "an" : "a"} ${PERIODS.noun} is here, and a refusal says why. Then file ${TASKS.nouns} into it with upsert_todo (cycleId).${PERIOD_TAKES_COMMENT ? " A move that needs a comment takes it in `reason`." : ""}\n${PERIOD_CARD}`,
+    ),
+    approval: once(),
+    inputSchema: z.object({
+      id: z.string().optional().describe(`The ${PERIODS.noun}'s id (from list_cycles) to update; omit to create.`),
+      name: z.string().min(1).max(PERIODS.field("name")?.max_length ?? 200).optional().describe(`${periodWord("name", "Name")}${PERIODS.field("name")?.help ? `: ${PERIODS.field("name")!.help}` : ""}. Required when creating${WORK_PERIODS.lengthDays ? " unless the dates are left to the workspace's length" : ""}.`),
+      startsAt: z.string().nullable().optional().describe(`${periodWord("startsAt", "Starts")}: a date (yyyy-mm-dd) or an ISO-8601 date-time; null clears it.`),
+      endsAt: z.string().nullable().optional().describe(`${periodWord("endsAt", "Ends")}: a date (yyyy-mm-dd) or an ISO-8601 date-time; null clears it.`),
+      ...declaredPeriodParams,
+    }),
+    async execute(input, ctx) {
+      requireDb();
+      const { id, ...body } = input as Record<string, unknown> & { id?: string };
+      const org = await orgForSession(ctx);
+      const r = await writePeriodTool(org, callerEmail(ctx), id ?? null, body);
+      return { ...(id ? { updated: true as const } : { created: true as const }), cycle: declaredPeriodOut(r.row), ...(r.warnings.length ? { warnings: r.warnings.map((w) => w.message) } : {}) };
+    },
+  })
+  : !WORK_PERIODS.individual
   ? defineTool({
     description:
       "Create OR update a cycle ({period}) — a time-boxed window that groups todos. Omit `id` to create; pass `id` to update. Then file todos into it with upsert_todo (cycleId).",
@@ -519,11 +659,18 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
       person: z.string().email().optional().describe("Whose goal to set, by email. Omit for the signed-in person."),
       goal: z.string().max(2000).nullable().optional().describe(fill("What the person means to get done in this {period}; null clears it.")),
       planned: z.number().int().min(0).max(1000).nullable().optional().describe(fill("How many {period_items} the person planned for this {period}; null clears it.")),
+      // A declared period's state and own fields (agent/lib/period-area.ts); none otherwise.
+      ...declaredPeriodParams,
     }),
-    async execute({ id, name, startsAt, endsAt, person, goal, planned }, ctx) {
+    async execute(input, ctx) {
+      const { id, name, startsAt, endsAt, person, goal, planned } = input as { id?: string; name?: string; startsAt?: string | null; endsAt?: string | null; person?: string; goal?: string | null; planned?: number | null };
       const db = requireDb();
       const org = await orgForSession(ctx);
       const actor = callerEmail(ctx).toLowerCase();
+      // A declared period's own fields and state go through its one write path, beside the person's goal below.
+      const declared: Record<string, unknown> = PERIODS_DECLARED
+        ? Object.fromEntries(Object.entries(input as Record<string, unknown>).filter(([k, x]) => x !== undefined && (k === "state" || k === "custom" || k === "reason" || PERIOD_COLUMNS.some((f) => f.key === k))))
+        : {};
       const fields: Record<string, unknown> = {};
       if (name !== undefined) fields.name = name;
       if (startsAt !== undefined) fields.startsAt = startsAt ? new Date(startsAt) : null;
@@ -537,7 +684,11 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
           if (!period) throw new Error(`There is no current ${WORK_PERIODS.label.singular}. Create one first (omit \`id\`, give a \`name\`).`);
           cycleId = period.id;
         }
-        if (cycleId) {
+        if (PERIODS_DECLARED && (!cycleId || Object.keys(fields).length || Object.keys(declared).length)) {
+          // A declared period: one write through the validator (who may, the definition, the lifecycle).
+          const body = { ...(name !== undefined ? { name } : {}), ...(startsAt !== undefined ? { startsAt } : {}), ...(endsAt !== undefined ? { endsAt } : {}), ...declared };
+          row = (await writePeriodTool(org, actor, cycleId ?? null, body, tx)).row;
+        } else if (cycleId) {
           if (Object.keys(fields).length) {
             // Who may change a period (records.areas.periods.permissions); nothing read when undeclared.
             const refusal = await periodRefusal(tx, org, { actor }, "update", { id: cycleId, patch: fields });

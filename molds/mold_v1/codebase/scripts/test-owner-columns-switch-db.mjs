@@ -111,6 +111,16 @@ const applyRange = async (db, fromIdx, toIdx) => {
   for (const e of journal.entries.filter((x) => x.idx > fromIdx && x.idx <= toIdx)) await db.begin(async (tx) => { for (const s of statementsOf(e.tag)) await tx.unsafe(s); });
 };
 
+/**
+ * Today's app stands in for the release of that time below, and it also reads what LATER journal entries independent
+ * of this change add (0044's implementation.implementation_id): those are applied before its paths run. Each is safe
+ * to apply twice, so the rest of the journal applies them again harmlessly.
+ */
+const APP_NEEDS = [/^\d{4}_implementation_own_id$/];
+const applyAppNeeds = async (db) => {
+  for (const e of journal.entries.filter((x) => APP_NEEDS.some((re) => re.test(x.tag)))) await applyRange(db, e.idx - 1, e.idx);
+};
+
 const scratch = [];
 async function freshDb(label) {
   const name = `ownswitch_${label}_${process.pid}`;
@@ -374,6 +384,7 @@ try {
     check("0037 again: nothing changes (rows, columns, indexes)", JSON.stringify({ c: await rowsOf(db, "customers"), s: await rowsOf(db, "solutions"), t: await rowsOf(db, "tickets"), m: await rowsOf(db, "memories"), cols: await columns(db), idx: await indexes(db) }) === snapshot);
     await failClosed(db);
     await checkRls(db, urlOf(name, "app_rw"), "A (fail-closed)");
+    await applyAppNeeds(db);
     await checkNewRelease(db, urlOf(name, "app_rw"), "A (the new release, fail-closed)");
     // The rest of the journal (0038, the contract: scripts/test-owner-columns-contract-db.mjs) and the deploy's drift step.
     await applyRange(db, IDX, Number.MAX_SAFE_INTEGER);

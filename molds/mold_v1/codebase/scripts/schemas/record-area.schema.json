@@ -26,6 +26,10 @@
         "cycles"
       ]
     },
+    "structure": {
+      "$comment": "What the area IS (scripts/lib/record-areas.mjs STRUCTURE: its role, what one record is, its time behaviour, its relations, which columns carry which role) is fixed by the table it is stored in. It is compiled into RECORD_AREA_STRUCTURE (agent/lib/record-areas.generated.ts), never stated: a profile that states it is refused with the decision table to read (docs/DEPLOYMENT_PROFILE.md \"Choosing the area for a domain concept\").",
+      "type": "object"
+    },
     "label": {
       "$ref": "#/$defs/pair"
     },
@@ -88,6 +92,13 @@
           "pattern": "^(seq|slug):"
         }
       }
+    },
+    "per_account": {
+      "$comment": "implementations only: \"one\" (the default) keeps one record per account, keyed by it; \"many\" gives each record its own implementationId (drizzle/0044), so an account may hold several. scripts/lib/record-areas.mjs refuses it on any other area.",
+      "enum": [
+        "one",
+        "many"
+      ]
     },
     "title": {
       "type": "string",
@@ -570,6 +581,22 @@
             },
             "label": {
               "$ref": "#/$defs/pair"
+            }
+          }
+        },
+        "contains": {
+          "$comment": "periods only: the period CONTAINS the records of another area filed into it (a task's cycleId) and is measured by them, as a regulatory filing is the set of obligations due in it. `completion` (default true): the period is complete when every one of them is done, and a target measuring that area with no date counts them (measure.scope \"contained\").",
+          "type": "object",
+          "required": [
+            "area"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "area": {
+              "type": "string"
+            },
+            "completion": {
+              "type": "boolean"
             }
           }
         }
@@ -1191,6 +1218,13 @@
             },
             "person": {
               "type": "string"
+            },
+            "scope": {
+              "$comment": "\"contained\": the records filed into the period (needs relations.contains on that area); \"window\": the records whose `date` falls inside the period. Compiled from the rest when left out and the period declares relations.contains.",
+              "enum": [
+                "contained",
+                "window"
+              ]
             }
           }
         },

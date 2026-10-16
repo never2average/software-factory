@@ -28,7 +28,7 @@ import { deleteRefusal, permissionsDeclared } from "@/agent/lib/record-permissio
 import { compileRecordQuery, encodeCursor, parseRecordQuery, defaultSort, type AreaTable, type RecordQueryInput } from "@/agent/lib/record-query";
 import type { OrgContext } from "@/lib/org-context";
 import { lifecycleConflictResponse, lifecycleContext, recordLifecycleOutcome } from "@/lib/record-lifecycle-server";
-import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { implementationKey, manyPerAccount, namedImplementationId, newImplementationId } from "@/agent/lib/implementation-ids";
 import { an, W } from "@/lib/ui-words";
 
 const TABLE = { deployments, implementations: implementation } as const;
@@ -81,12 +81,27 @@ export const refused = (errors: string[], status = 400) => NextResponse.json({ e
 
 const customSql = (id: AccountAreaId, delta: { set: Record<string, unknown>; clear: string[] }) => customMergeSql(tableOf(id).custom, { set: delta.set, clear: delta.clear, append: {} } as unknown as CustomDelta, { empty: "object" });
 
-/** The row a write names: deployments by (account, id), implementations by the account (one each). */
+/**
+ * The row a write names: deployments by (account, id); implementations by their own id when an account holds several
+ * (agent/lib/implementation-ids.ts), else by the account (one each).
+ */
 function rowWhere(id: AccountAreaId, orgId: string, customerId: string, recordId?: string): SQL {
   const t = tableOf(id);
-  return id === "deployments"
-    ? and(eq(t.orgId, orgId), eq(t.customerId, customerId), eq(deployments.deploymentId, recordId ?? ""))!
-    : and(eq(t.orgId, orgId), eq(t.customerId, customerId))!;
+  if (id === "deployments") return and(eq(t.orgId, orgId), eq(t.customerId, customerId), eq(deployments.deploymentId, recordId ?? ""))!;
+  if (manyPerAccount()) return and(eq(t.orgId, orgId), eq(implementation.implementationId, recordId ?? ""))!;
+  return and(eq(t.orgId, orgId), eq(t.customerId, customerId))!;
+}
+
+/**
+ * The implementation row a request names by its id, in the caller's workspace, when an account holds several: the row,
+ * or the answer (404 when there is none, 409 when it is another account's: a row is never moved between accounts).
+ */
+export async function implementationById(orgId: string, implementationId: string, customerId: string | null): Promise<{ row: AreaRow; where: SQL } | { refusal: NextResponse }> {
+  const where = and(eq(implementation.orgId, orgId), eq(implementation.implementationId, implementationId))!;
+  const [row] = await withOrgRls(orgId, (tx) => tx.select().from(implementation).where(where));
+  if (!row) return { refusal: NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 }) };
+  if (customerId && row.customerId !== customerId) return { refusal: refused([`That ${W.implementation} belongs to another ${W.account}.`], 409) };
+  return { row: row as AreaRow, where };
 }
 
 /** The activity feed's lines for what a write changed, in the definition's labels and words. */
@@ -108,7 +123,12 @@ export async function declaredUpsert(id: AccountAreaId, ctx: OrgContext, body: u
   const b = body as Record<string, unknown>;
   const customerId = typeof b.customerId === "string" ? b.customerId.trim() : "";
   if (!customerId) return refused([`Pick ${an(W.account)} ${W.account}.`]);
-  const recordId = id === "deployments" ? (typeof b.deploymentId === "string" ? b.deploymentId.trim() : "") : undefined;
+  // An implementation's own id, when an account holds several: the one named (to change it, or to create it under that
+  // id), else a new one. One per account: the account is the id, as it always was.
+  const many = id === "implementations" && manyPerAccount();
+  const named = many ? namedImplementationId(b.implementationId) : { id: null };
+  if ("error" in named) return refused([named.error]);
+  const recordId = id === "deployments" ? (typeof b.deploymentId === "string" ? b.deploymentId.trim() : "") : many ? named.id ?? newImplementationId() : undefined;
   if (id === "deployments" && !recordId) {
     const v = areaView(id);
     return refused([`"${v.area.id?.label ?? `${W.Deployment} id`}" is required.`]);
@@ -116,6 +136,8 @@ export async function declaredUpsert(id: AccountAreaId, ctx: OrgContext, body: u
   const t = tableOf(id);
   const where = rowWhere(id, ctx.orgId, customerId, recordId);
   const [before] = await withOrgRls(ctx.orgId, (tx) => tx.select().from(t).where(where));
+  // A row of another account under this id is not this account's to change, nor its id to take.
+  if (many && before && (before as AreaRow).customerId !== customerId) return refused([`That ${W.implementation} belongs to another ${W.account}.`], 409);
   const mode = before ? "update" : "create";
   const { customerId: _c, ...rest } = b;
   const entity = { type: ENTITY[id], id: before ? itemId(id, before as AreaRow) : recordId ?? customerId };
@@ -136,7 +158,7 @@ export async function declaredUpsert(id: AccountAreaId, ctx: OrgContext, body: u
   }
   const values: Record<string, unknown> = {
     ...prepared.columns,
-    ...(id === "deployments" ? { deploymentId: recordId } : {}),
+    ...(id === "deployments" ? { deploymentId: recordId } : { implementationId: recordId ?? customerId }),
     customerId,
     custom: prepared.custom,
     // The tenant: a NULL org_id matches no workspace under org_isolation, so the row would be invisible.
@@ -149,13 +171,13 @@ export async function declaredUpsert(id: AccountAreaId, ctx: OrgContext, body: u
   return NextResponse.json({ item: { id: itemId(id, row as AreaRow) }, created: true, ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}) }, { status: 201 });
 }
 
-/** A row's id as the lists and the activity feed key it (today's rule for each table). */
+/** A row's id as the lists and the activity feed key it (today's rule for each table; agent/lib/implementation-ids.ts). */
 export function itemId(id: AccountAreaId, row: AreaRow): string {
   if (id === "deployments") return String(row.deploymentId);
-  // As the implementations list has always keyed it: by account when rows are grouped by rolloutId, else its rolloutId.
-  return String(GROUPED_BY_ROLLOUT ? row.customerId : row.rolloutId ?? row.customerId);
+  // Its own id when an account holds several; else as the list has always keyed it: by account when rows are grouped
+  // by rolloutId, else its rolloutId.
+  return implementationKey(row);
 }
-const GROUPED_BY_ROLLOUT = DEPLOYMENT_PROFILE.domains.implementations.group_by === "rolloutId";
 
 /**
  * PATCH /api/ops/<area>/:id for a declared area: change the fields the body names. `before` is the stored row.

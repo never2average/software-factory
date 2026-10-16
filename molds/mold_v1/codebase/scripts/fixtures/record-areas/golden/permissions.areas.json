@@ -3114,6 +3114,7 @@
     "owner"
    ]
   },
-  "redefined": true
+  "redefined": true,
+  "declared": true
  }
 }

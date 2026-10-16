@@ -103,8 +103,8 @@ const deployment = (cust, id, health) =>
   admin`INSERT INTO deployments (customer_id, deployment_id, org_id, environment, region, deployed_version, health_status, release_status)
         VALUES (${cust}, ${id}, ${ORG}, ${ENVIRONMENT[0]}, ${REGION[0]}, '1.0.0', ${health}, ${RELEASE[0]})`;
 const project = (cust, risk, blocker = null) =>
-  admin`INSERT INTO implementation (customer_id, org_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, blocker)
-        VALUES (${cust}, ${ORG}, ${STAGE[1]}, 40, ${risk}, ${OWNER.at(-1)}, ${blocker})`;
+  admin`INSERT INTO implementation (customer_id, implementation_id, org_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, blocker)
+        VALUES (${cust}, ${cust}, ${ORG}, ${STAGE[1]}, 40, ${risk}, ${OWNER.at(-1)}, ${blocker})`;
 const customer = (cust) => admin`INSERT INTO customers (customer_id, org_id, customer_name) VALUES (${cust}, ${ORG}, ${cust})`;
 
 try {

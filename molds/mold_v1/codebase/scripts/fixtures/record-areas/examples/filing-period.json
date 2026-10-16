@@ -1,0 +1,96 @@
+{
+  "$comment": "A test fixture: a period that is a bounded container of obligations due together, the record-areas plan's PR 6 (periods as a record area), modelled on a compliance pack's 'Regulatory filing' and what it had to keep elsewhere until a period could hold it: its own fields (regulator, filed-on date, acknowledgement, penalty exposure) and its detailed status (the three stored states kept as they are, three more added, each with a category). Mode team, no fixed length. No deployment ships it.",
+  "records": {
+    "areas": {
+      "periods": {
+        "label": { "singular": "Regulatory filing", "plural": "Regulatory filings" },
+        "description": "One return, disclosure or report due to one regulator for one period: the obligations that must be done for it, its window and its due date.",
+        "icon": "file-check",
+        "period": {
+          "mode": "team",
+          "list_label": { "singular": "Regulatory filing", "plural": "Regulatory filings" },
+          "item_label": { "singular": "obligation", "plural": "obligations" },
+          "length_days": null,
+          "auto_rollover": false,
+          "workspace_can_set_length": false
+        },
+        "fields": {
+          "name": { "order": 10, "label": "Filing", "placeholder": "RBI · ALM return · Q2 FY27", "max_length": 200 },
+          "regulator": {
+            "order": 15,
+            "type": "pick_list",
+            "label": "Regulator",
+            "options": [{ "value": "RBI", "tone": "blue" }, { "value": "SEBI", "tone": "violet" }, { "value": "NHB", "tone": "sky" }, { "value": "MCA", "tone": "slate" }]
+          },
+          "startsAt": { "order": 20, "type": "date", "label": "Preparation opens" },
+          "endsAt": { "order": 30, "type": "date", "label": "Due date" },
+          "state": {
+            "order": 40,
+            "label": "Filing status",
+            "options": [
+              { "value": "planning", "label": "Draft", "tone": "slate" },
+              { "value": "active", "label": "In preparation", "tone": "amber" },
+              { "value": "review", "label": "Awaiting sign-off", "tone": "sky" },
+              { "value": "closed", "label": "Filed", "tone": "green" },
+              { "value": "rejected", "label": "Returned by regulator", "tone": "orange", "attention": true },
+              { "value": "missed", "label": "Missed", "tone": "red", "attention": true }
+            ]
+          },
+          "lead": { "order": 50, "type": "person", "label": "Preparer" },
+          "filed_on": { "order": 60, "type": "date", "label": "Filed on" },
+          "acknowledgement": { "order": 70, "type": "text", "label": "Acknowledgement number", "max_length": 120 },
+          "penalty_exposure": { "order": 80, "type": "money", "currency": "INR", "label": "Penalty exposure", "min": 0 },
+          "goal": { "order": 90, "type": "long_text", "label": "Basis and remarks", "max_length": 2000 },
+          "capacity": { "order": 100, "type": "integer", "label": "Obligations planned", "min": 0 }
+        },
+        "lifecycle": {
+          "field": "state",
+          "initial": "planning",
+          "enforce": "warn",
+          "categories": { "planning": "open", "active": "active", "review": "active", "closed": "done", "rejected": "blocked", "missed": "cancelled" },
+          "transitions": [
+            { "from": ["planning"], "to": "active", "label": "Start preparing", "requires": ["lead", "endsAt"] },
+            { "from": ["active"], "to": "review", "label": "Send for sign-off" },
+            { "from": ["review"], "to": "active", "label": "Send back", "requires_comment": true },
+            { "from": ["review"], "to": "closed", "label": "Mark filed", "requires": ["filed_on", "acknowledgement"], "not_by": "{entered_by}" },
+            { "from": ["closed"], "to": "rejected", "label": "Returned by regulator", "requires_comment": true },
+            { "from": ["rejected"], "to": "active", "label": "Rework" },
+            { "from": ["planning", "active"], "to": "missed", "label": "Close as missed", "roles": ["owner", "admin"], "requires_comment": true }
+          ]
+        },
+        "views": {
+          "default": "table",
+          "available": ["table", "board", "calendar", "timeline"],
+          "table": { "columns": ["name", "regulator", "state", "endsAt", "lead", "penalty_exposure"] },
+          "board": { "by": "state", "card": { "meta": ["regulator", "endsAt", "lead"] } },
+          "calendar": { "date": "endsAt" },
+          "filters": [{ "field": "state" }, { "field": "regulator" }, { "field": "endsAt", "presets": ["overdue", "due_7d", "due_30d"] }, { "scope": "people", "field": "lead" }],
+          "sorts": [{ "field": "endsAt", "dir": "asc", "default": true, "label": "Due date" }, { "field": "name", "label": "Filing" }, { "field": "penalty_exposure", "dir": "desc", "label": "Penalty exposure" }],
+          "detail": {
+            "sections": [
+              { "label": "Filing", "fields": ["regulator", "state", "startsAt", "endsAt"] },
+              { "label": "Preparation", "fields": ["lead", "capacity", "goal"] },
+              { "label": "Submission", "fields": ["filed_on", "acknowledgement", "penalty_exposure"] },
+              { "label": "Obligations", "related": "tasks" },
+              { "related": "activity" },
+              { "related": "comments" }
+            ]
+          },
+          "create": { "fields": ["name", "regulator", "startsAt", "endsAt", "lead"], "submit_label": "Add filing", "title": "New regulatory filing" },
+          "empty": "No filings yet. Add one, or ask the agent to raise this period's filings."
+        },
+        "relations": { "contains": { "area": "tasks" } },
+        "metrics": [
+          { "id": "open", "label": "Open filings", "count": { "where": { "state": { "category": ["open", "active", "blocked"] } } } },
+          { "id": "overdue", "label": "Overdue", "count": { "where": { "endsAt": { "lt": "{today}" }, "state": { "category": ["open", "active", "blocked"] } } }, "attention": true },
+          { "id": "exposure", "label": "Penalty exposure", "sum": { "field": "penalty_exposure" }, "format": "money" }
+        ],
+        "agent": {
+          "tools": { "read": true, "write": true, "delete": false },
+          "describe": "A Regulatory filing is one return, disclosure or report due to one regulator for one period, and the obligations that must be done for it. Its obligations are the to-dos filed into it (upsert_todo with its cycleId).",
+          "rules": ["One filing per regulator, return and period covered: look for it with list_cycles before creating one."]
+        }
+      }
+    }
+  }
+}

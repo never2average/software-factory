@@ -24,16 +24,28 @@ import { DEFAULT_DOMAINS, DEPLOYMENT_PROFILE, type CustomFieldSpec, type Deploym
 import { createVocabulary, LEGACY_RECORDS, speakCodeWith, speakWith, verbatimWith, VOCABULARY, type Vocabulary, type VocabularyProfile } from "./agent-vocabulary.ts";
 import { DATAROOM_DOMAIN_IDS, type DataroomDomainId, type DataroomFolderId } from "./dataroom-folders.ts";
 import { RECORD_AREAS } from "./record-areas.generated.ts";
-import { describeArea, type RecordAreas } from "./record-areas.ts";
+import { describeArea, describeStructure, structureShown, type RecordAreas } from "./record-areas.ts";
 
 /**
- * A task as this deployment defines it (records.areas.tasks), when it redefines one: what a task is, its own fields,
- * its states in order and what moving into each needs (agent/lib/record-areas.ts describeArea). Nothing under the
- * default definition, so the default block is unchanged.
+ * A task as this deployment defines it (records.areas.tasks), when it redefines one: what a task is, what it is
+ * structurally and how it relates to the other areas, its own fields, its states in order and what moving into each
+ * needs (agent/lib/record-areas.ts describeArea). Then a period that declares what it contains (relations.contains):
+ * what it groups and that they complete it. Then each account area stated in the record-area form: what it is
+ * structurally. Nothing under the default definition or a legacy form, so those blocks are unchanged.
  */
-function renderTaskArea(areas: RecordAreas): string[] {
-  const card = describeArea("tasks", areas);
-  return card ? [`${card}\n  Written with upsert_todo, read with list_todos.`] : [];
+function renderTaskArea(areas: RecordAreas, account?: string, own?: (t: string) => string): string[] {
+  const lines: string[] = [];
+  const card = describeArea("tasks", areas, account);
+  // The task card is the profile's own words (its labels and states): verbatim under a relabel.
+  if (card) lines.push((own ?? ((t: string) => t))(`${card}\n  Written with upsert_todo, read with list_todos.`));
+  // A structure line marks only the profile's words: the identifiers in it are spoken like every other base one.
+  const periods = describeStructure("periods", areas, account, own);
+  if (periods) lines.push(`- ${periods} Listed with list_cycles${areas.periods.period?.mode === "individual" ? "" : " (with how many each holds and how many are done)"}, written with upsert_cycle; file one in with upsert_todo (cycleId).`);
+  for (const id of ["deployments", "implementations"] as const) {
+    if (!structureShown(id, areas)) continue;
+    lines.push(`- ${describeStructure(id, areas, account, own)}`);
+  }
+  return lines;
 }
 
 /** The account as the identifiers spell it: a profile whose word is this one needs no line saying so. */
@@ -195,7 +207,7 @@ export function renderDeploymentBriefing(profile = DEPLOYMENT_PROFILE, areas: Re
   lines.push(...renderAccountFieldsBriefing(profile));
   for (const area of ["deployments", "implementations"] as const) lines.push(...renderAreaIdentifiers(area, profile.domains, v.stored));
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, undefined, voc.account.singular, v.stored));
-  lines.push(...renderTaskArea(areas));
+  lines.push(...renderTaskArea(areas, voc.account.singular));
   const body = [lines.join("\n"), agent.briefing?.trim() ?? ""].filter(Boolean).join("\n\n");
   return body ? `## This workspace\n\n${body}` : null;
 }
@@ -228,8 +240,8 @@ function renderRelabelledBriefing(profile: DeploymentProfile, v: Vocabulary, are
   }
   lines.push(...renderAccountFieldsBriefing(profile, v));
   for (const area of ["implementations", "deployments"] as const) lines.push(...renderDomainBriefing(area, profile.domains, v));
-  // The task card is the profile's own words (its labels and states): verbatim.
-  lines.push(...renderTaskArea(areas).map(own));
+  // The task card is the profile's own words (its labels and states): verbatim; a structure line marks its own words.
+  lines.push(...renderTaskArea(areas, voc.account.singular, own));
   // agent.briefing is the profile's own text, in its own words: passed verbatim.
   const body = [lines.join("\n"), agent.briefing?.trim() ? own(agent.briefing.trim()) : ""].filter(Boolean).join("\n\n");
   return speakWith(v, `## This workspace\n\n${body}`);

@@ -14,6 +14,7 @@ import {
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { DEPLOYMENT_PROFILE, DEFAULT_DOMAINS } from "@/lib/deployment-profile.generated";
+import { implementationKey } from "@/agent/lib/implementation-ids";
 
 /** "deployment" stays "deployment" until the profile renames the area; then it is the area's singular, lower-cased. */
 function containerNoun(type: string): string {
@@ -183,7 +184,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ email: 
     const ownedImplementations = impls
       .filter((r) => is(r.implementationOwnerEmail))
       .map((r) => ({
-        id: r.rolloutId ?? r.customerId,
+        id: implementationKey(r),
         customer: r.customerId,
         customerLabel: customerName(r.customerId),
         stage: r.implementationStage,
@@ -197,7 +198,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ email: 
         return deps.find((d) => d.deploymentId === t.containerId)?.customerId ?? null;
       }
       if (t.containerType === "implementation" && t.containerId) {
-        return impls.find((r) => (r.rolloutId ?? r.customerId) === t.containerId)?.customerId ?? null;
+        return impls.find((r) => implementationKey(r) === t.containerId)?.customerId ?? null;
       }
       return null;
     };

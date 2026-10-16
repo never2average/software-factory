@@ -39,6 +39,7 @@ import { customFieldsOf } from "./custom-fields.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
 import { DOMAIN_FOLDERS, FOLDER, domainIdOf } from "./dataroom-folders.ts";
 import { samplePeople } from "./sample-data.ts";
+import { manyPerAccount } from "./implementation-ids.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Public types                                                               */
@@ -506,6 +507,15 @@ function normalizeCell(value: unknown): CellValue {
  * to the parent customer id and `customer_name` to the parent customer name;
  * every other column snake->camel-maps directly onto a `source` field.
  */
+/**
+ * An account's implementation rows as the sheet lists them: its one (`implementation`), or, when an account may hold
+ * several (agent/lib/implementation-ids.ts), each of `implementations[]`, headed by its own id.
+ */
+const MANY_IMPLEMENTATIONS = manyPerAccount();
+const implementationRowsOf = (customer: Customer): Record<string, unknown>[] =>
+  MANY_IMPLEMENTATIONS ? ((customer.implementations ?? []) as Record<string, unknown>[]) : customer.implementation ? [customer.implementation as Record<string, unknown>] : [];
+const implementationColumns = (): string[] => (MANY_IMPLEMENTATIONS ? ["customer_id", "implementation_id", ...IMPLEMENTATION_COLUMNS.filter((c) => c !== "customer_id")] : [...IMPLEMENTATION_COLUMNS]);
+
 function mapRow(
   columns: readonly string[],
   source: Record<string, unknown>,
@@ -615,7 +625,7 @@ function domainSheets(customer: Customer, domain: WorkbookDomain, declared?: Dec
       : sheet.name === FOLDER.deliveries
         ? withOwnFields(sheet, ownFieldsOf(declared, "deployments"), customer.deployments ?? [])
         : sheet.name === FOLDER.projects
-          ? withOwnFields(sheet, ownFieldsOf(declared, "implementations"), customer.implementation ? [customer.implementation] : [])
+          ? withOwnFields(sheet, ownFieldsOf(declared, "implementations"), implementationRowsOf(customer))
           : sheet,
   );
 }
@@ -666,17 +676,8 @@ function baseDomainSheets(customer: Customer, domain: WorkbookDomain): SheetSpec
       return [
         {
           name: FOLDER.projects,
-          columns: [...IMPLEMENTATION_COLUMNS],
-          rows: customer.implementation
-            ? [
-                mapRow(
-                  IMPLEMENTATION_COLUMNS,
-                  customer.implementation as Record<string, unknown>,
-                  cid,
-                  cname,
-                ),
-              ]
-            : [],
+          columns: implementationColumns(),
+          rows: implementationRowsOf(customer).map((r) => mapRow(implementationColumns(), r, cid, cname)),
         },
       ];
     case "tickets": {

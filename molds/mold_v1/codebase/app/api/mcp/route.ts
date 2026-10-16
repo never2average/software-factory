@@ -7,7 +7,8 @@ import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.gener
 import { handleMcpRequest, type McpDeps } from "@/lib/mcp-server";
 import { toolChoices } from "@/lib/ops-domain-fields";
 import { verifyOpsAuth } from "@/lib/ops-auth";
-import { areaView, describeMoves } from "@/agent/lib/record-areas";
+import { areaView, describeMoves, describeStructure, type RecordAreaId } from "@/agent/lib/record-areas";
+import { manyPerAccount } from "@/agent/lib/implementation-ids";
 
 /** This deployment's definition of a task, for the task tools: only when its profile redefines one. */
 function taskTools(): McpDeps["tasks"] {
@@ -25,6 +26,16 @@ function taskTools(): McpDeps["tasks"] {
     ...((v.area.lifecycle?.transitions ?? []).length ? { moves: describeMoves("tasks").map((l) => l.trim()).join("\n") } : {}),
     ownFields: v.ownFields.filter((f) => !f.hidden && !f.computed).map((f) => ({ key: f.key, label: f.label ?? f.key, type: f.type, required: f.required, ...(f.help ? { help: f.help } : {}), ...(f.options ? { options: f.options.filter((o) => !o.retired).map((o) => ({ value: o.value, label: o.label ?? o.value })) } : {}), ...(f.many ? { many: true } : {}) })),
   };
+}
+
+/** What a record of each area IS here (records.areas in the record-area form), for that area's tools. Undefined by default. */
+function areaStructure(): McpDeps["structure"] {
+  const ids: RecordAreaId[] = ["tasks", "periods", "deployments", "implementations"];
+  const said = Object.fromEntries(ids.flatMap((id) => {
+    const line = describeStructure(id, undefined, DEPLOYMENT_PROFILE.vocabulary.account.singular);
+    return line ? [[id, line]] : [];
+  }));
+  return Object.keys(said).length ? said : undefined;
 }
 
 export const runtime = "nodejs";
@@ -63,6 +74,11 @@ const deps: McpDeps = {
   choices: toolChoices(),
   // What a task is here, when the profile redefines it (records.areas.tasks): the task tools' states, priorities, own fields.
   tasks: taskTools(),
+  // What each area IS here, when the profile defines it in the record-area form: appended to that area's tools.
+  structure: areaStructure(),
+  // An account may hold several implementation records (records.areas.implementations per_account "many"): the
+  // implementation tools name each by its own id.
+  ...(manyPerAccount() ? { manyImplementations: true } : {}),
   webOrigin: process.env.WEB_ORIGIN?.trim() || null,
   internalOrigin: process.env.MCP_INTERNAL_ORIGIN?.trim() || null,
 };

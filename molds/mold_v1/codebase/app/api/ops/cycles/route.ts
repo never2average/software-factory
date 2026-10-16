@@ -11,9 +11,19 @@ import { orgContextForRequest } from "@/lib/org-context";
 import { newPeriodWindow, rollOverEnded, workspacePeriodLength } from "@/agent/lib/work-period-store";
 import { periodsNotFound } from "@/lib/work-periods-server";
 import { periodForbidden } from "@/lib/record-permissions-server";
+import type { RecordRole } from "@/agent/lib/record-areas.generated";
+import { periodDeclared, periodOut } from "@/agent/lib/period-area";
+import { writeDeclaredPeriod } from "@/agent/lib/period-area-store";
+import { warningOf } from "@/agent/lib/record-lifecycle";
 
 /** The periods' lifecycle is enforced ("warn" or "strict"; agent/lib/record-lifecycle.ts). */
 const PERIODS_ENFORCED = lifecycleEnforced("periods");
+/**
+ * The profile states the periods area in the record-area form (agent/lib/period-area.ts): a period carries its own
+ * fields (`custom`) and its declared states, and a create is checked by the one validator. Otherwise the route is
+ * byte for byte what it was (no `custom` on the wire).
+ */
+const DECLARED = periodDeclared();
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +58,7 @@ export async function GET(request: NextRequest) {
       await rollOverEnded(tx, ctx.orgId);
       return tx.select().from(cycles).where(and(eq(cycles.orgId, ctx.orgId), isNull(cycles.archivedAt))).orderBy(asc(cycles.startsAt));
     });
-    return NextResponse.json({ items });
+    return NextResponse.json({ items: items.map((c) => periodOut(c)) });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
@@ -68,6 +78,7 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
+  if (DECLARED) return createDeclared(request, ctx, body);
   try {
     const length = await withOrgRls(ctx.orgId, (tx) => workspacePeriodLength(tx, ctx.orgId));
     const parsed = createSchemaFor(length).safeParse(body);
@@ -97,7 +108,26 @@ export async function POST(request: NextRequest) {
         .values({ ...rest, name: rest.name ?? "", orgId: ctx.orgId, startsAt: startsAt ? new Date(startsAt) : null, endsAt: endsAt ? new Date(endsAt) : null })
         .returning();
     });
-    return NextResponse.json({ item }, { status: 201 });
+    return NextResponse.json({ item: periodOut(item) }, { status: 201 });
+  } catch (e) {
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
+  }
+}
+
+/**
+ * A create under a declared periods area: any of its fields (columns by key, own fields under `custom`), checked by the
+ * one validator (types, choices, required fields, who may, the lifecycle's initial state), filed under the signed-in
+ * person; a body with no dates gets the workspace's next window as before. 400 / 403 / 409 with the sentences.
+ */
+async function createDeclared(request: NextRequest, ctx: { orgId: string; role?: RecordRole }, body: unknown) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  try {
+    const raw = body as Record<string, unknown>;
+    const me = await callerEmail(request);
+    const actor = me ?? (typeof raw.createdBy === "string" && raw.createdBy ? raw.createdBy : "web");
+    const r = await withOrgRls(ctx.orgId, (tx) => writeDeclaredPeriod(tx, ctx.orgId, { id: null, body: raw, actor, role: ctx.role }));
+    if (!r.ok) return NextResponse.json(r.conflict ?? { error: r.errors.join(" "), errors: r.errors }, { status: r.status });
+    return NextResponse.json({ item: periodOut(r.row), ...(r.check && r.check.enforce === "warn" && !r.check.allowed ? { warnings: [warningOf(r.check)] } : {}) }, { status: 201 });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }

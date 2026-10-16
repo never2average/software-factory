@@ -722,6 +722,9 @@ what they had: the period length and the task pipelines):
 | `tasks` | `todos` (stored by the task-workflow service) | none: `00-default.json`'s `records.areas.tasks` is today's |
 | `periods` | `cycles` | `work_periods` |
 
+Which area a domain concept belongs in is decided by the area's structure, not its id: see "Choosing the area for a
+domain concept" below.
+
 ```jsonc
 "records": { "areas": { "tasks": {
   "label": { "singular": "obligation", "plural": "obligations" },
@@ -746,6 +749,25 @@ what they had: the period length and the task pipelines):
   tags. A field may carry `required` (`true` or `"on_create"`), `default` (a value, `{today}`, `{today+7d}`, `{me}`),
   `min`/`max`, `max_length`, `pattern`, `hidden` with `fixed`, `computed`, `legacy_values`, `renamed_from`, `index`.
   `columns: "listed"` hides every column the area does not name (a hidden required column still needs `fixed`).
+- **A renamed own field** (`renamed_from: "<old key>"`) is read under its key, else under the old key rows written
+  before the rename carry it (`agent/lib/record-areas.ts` `get`), and the server reads it the same way: a list's
+  filters (equality as containment under either key, the GIN index still serving it), sorts, `set`, search, computed
+  fields and metrics read `coalesce(custom -> new, custom -> old)` (`agent/lib/record-query.ts`), so a row stored under
+  the old key is neither skipped nor counted twice. A write stores the new key; clearing the field clears both keys,
+  so the old value does not come back. Only a renamed field reads two keys; every other own field's SQL is unchanged.
+- **How many implementations an account holds** (`records.areas.implementations.per_account`, the implementations
+  area only): `"one"` (the default, and what a profile that says nothing gets) keeps one record per account, keyed by
+  it, as it always was. `"many"` (a regulator's several compliance frameworks) gives each record its own
+  `implementationId` (`implementation.implementation_id`, the table's key with the workspace since `drizzle/0044`;
+  `agent/lib/implementation-ids.ts`): the screens, `POST`/`PATCH`/`DELETE /api/ops/implementations[/:id]` (a `POST`
+  naming an `implementationId` changes that record, one without creates a new one with a generated id; an id another
+  account's record holds is a 409), `upsert_customer`'s `implementations[]` (each row by its `implementationId`, as
+  `deployments[]`; `implementation` is refused), `upsert_implementation` / `list_implementations`, the MCP
+  `implementation_upsert` / `implementation_list`, the metrics, the workbook (an `implementations` list, a sheet row
+  per record headed `implementation_id`) and the tasks filed under one all address a record by its id. Under `"one"`
+  every record's id is its account id, so nothing a person or the model reads changes and `implementations[]` is
+  refused. Existing rows were given their account id by `drizzle/0044`, so a deployment that switches to `"many"`
+  keeps them and adds more.
 - **Choices** are ordered `{ value, label?, tone?, attention?, retired? }`: the value is what is stored, the label what
   a person reads, the tone its colour (slate, sky, blue, green, amber, orange, red, violet, muted).
 - **A lifecycle** names a `pick_list` field whose choices are the states, and maps every state to one of six
@@ -866,6 +888,41 @@ upstream main's):
 A legacy route still puts every write it accepts through the same validator (`checkOnly`), with today's column types
 and today's sentences for own fields, so nothing it accepted before is refused.
 
+**Periods drawn from their definition** (`agent/lib/period-area.ts`). When a profile file states `periods` in the
+record-area form (`records.areas.periods`, never beside `work_periods`), the compiled area carries `declared: true` and
+a period becomes a full record area, for a bounded container such as a "Regulatory filing" (the obligations due
+together for one regulator and one period). Any other profile (the default, a legacy `work_periods`, both live packs'
+fixtures) keeps today's periods byte for byte (`npm run test:period-area`):
+
+- **Own fields**, stored in `cycles.custom` (jsonb, `drizzle/0045_cycles_custom.sql`, a GIN index over the column as
+  0043's), checked by the one validator and merged per key in SQL at write time, so a key someone else wrote in
+  between, or the profile no longer declares, is kept.
+- **Its own states.** The lifecycle is on the `state` column (the build refuses another field); its choices replace
+  today's three and each has a category. Stored values are never rewritten: keep `planning`, `active`, `closed` for
+  the rows you have and add your own. What the system does is read by **category**: a new period starts in the
+  `initial` state; auto rollover closes an ended period (one whose state is not done or cancelled) in the done state
+  a declared transition out of its state leads to, else the first done one; the period that has begun moves from a
+  not-started (open, backlog) state into the first active one; under an enforced lifecycle the system's moves are lines
+  in the feed by `system`.
+- **The routes** (`app/api/ops/cycles`): `POST` and `PATCH` take any of the period's fields (columns by key, own fields
+  under `custom`) and a move to any declared state, through `agent/lib/period-area-store.ts` (`writeDeclaredPeriod`):
+  who may (permissions), types and choices, required fields, the lifecycle (warn / strict, four eyes, a comment as
+  `reason` when the lifecycle is enforced), 400 / 403 / 404 / 409 with the sentences, every changed field a line in
+  the feed by its label. Items carry `custom`; under any other profile they carry none, as before.
+- **The model's tools.** `upsert_cycle` takes `state` (the declared states), the period's other columns (`goal`,
+  `lead`, `capacity`, by their labels) and its own fields under `custom` (their choices as enums), and `reason` when a
+  move needs a comment; `list_cycles` returns each period's state, fields and `custom` (with `contains` when the
+  period contains tasks) and filters by `state`. Their descriptions carry the area's card (its states and moves, its own
+  fields, its `agent.describe` and rules) in the profile's words. Mode `individual` keeps its tools and gains `state`,
+  `custom` and `reason`.
+- **The screen** (`app/_components/ops/period-area-panel.tsx`, from `app/_components/ops/period-area-model.ts`; mode
+  team): the nav word, `views.available` (table, board on `views.board.by`, timeline, and a month **calendar** on
+  `views.calendar.date`), the table's columns, the board's columns and tones, the card, sorts, filters (a choice's
+  choices, a date's presets, `scope: "people"` as mine / unassigned), the metrics, the detail's `sections` (fields, and
+  `related: "tasks" | "activity" | "comments"`), the lifecycle's moves as buttons (a comment asked for where a
+  transition needs one), and the create form checked by the API's own validator first. The tasks a period contains
+  (`relations.contains`) are listed under it with how many are done, by their own states' categories.
+
 **Compiled** into `agent/lib/record-areas.generated.ts` (`RECORD_AREAS`, its own module: `DEPLOYMENT_PROFILE` is
 byte for byte what it was for any profile that does not use the record-area form). Each area carries
 `redefined`: whether this deployment says anything about it the default does not. Read it through
@@ -885,8 +942,94 @@ indexed ones; a lifecycle on a field that is not a pick_list, a state without a 
 `initial` or transition state that does not exist, `requires`/`set`/`not_by` naming a field the area lacks or of the
 wrong type (`not_by` may also be `"{entered_by}"`), a `"strict"` lifecycle with a state nothing reaches, the task status given another meaning; a view, sort,
 filter, group, detail or create field that does not exist or is hidden; a sort on a type that cannot sort; a create
-form that leaves out a required field with no default; a container that cannot hold tasks; an email reminder;
-`agent.describe` over 1200 characters.
+form that leaves out a required field with no default; a container that cannot hold tasks; `relations.contains` on
+an area other than periods or naming an area a period cannot contain; a target `scope` its period cannot count; a
+`structure` (fixed by the table); an email reminder; `agent.describe` over 1200 characters.
+
+### Choosing the area for a domain concept
+
+The four area ids are the base product's software words. What decides where a domain concept goes is the area's
+**structure**: what one record of it is, what it holds or points at, how it behaves in time, and which built-in
+columns carry which role. The structure is fixed by the table (`STRUCTURE` in `scripts/lib/record-areas.mjs`, compiled
+into `RECORD_AREA_STRUCTURE` in `agent/lib/record-areas.generated.ts`); a profile names the area and declares the
+relations it uses, and a profile that states `structure` is refused.
+
+| Area | Role | One record is | Holds / points at | Time | Columns by role |
+|---|---|---|---|---|---|
+| `tasks` | unit | a unit of work: one thing a person owns, does and finishes | sits in a period (`cycleId`), may be filed under a deployment or an implementation (`containerType` + `containerId`) | instant: falls due on a day | state `status` (or an own pick list), owner `assignee`, due `dueAt` |
+| `periods` | container | a bounded container: a window holding units of work due together, measured by them | **contains** tasks (`relations.contains`) | window: starts and ends | state `state`, owner `lead`, start `startsAt`, due `endsAt`, `goal`, `capacity` |
+| `deployments` | change | a change rolled out to a target (an account, or a place within it), with a release state and health | **targets** an account; groups the tasks filed under it | instant: rolled out at a moment, then watched | target the account, state `releaseStatus`, health `healthStatus`, owner `deployOwnerEmail`, when `lastDeployAt` |
+| `implementations` | programme | a long-running programme or framework run for one account | **targets** an account; **groups** tasks filed under it | ongoing: moves through stages for months | target the account, state `implementationStage`, owner `implementationOwnerEmail`, due `targetGoLiveDate`, health `implementationRiskLevel`, `implementationProgressPct` |
+
+Ask, in this order, of the concept:
+
+1. **Is it one piece of work someone owns and closes, with its own due date?** It is a task.
+2. **Is it a set of such pieces that fall due together, complete when they are?** It is a period that contains them
+   (`relations.contains: { "area": "tasks" }`), even when people call it a document: a regulatory filing is the set of
+   obligations due in it.
+3. **Is it a change put into effect for one account, whose release and health are watched afterwards?** It is a
+   deployment.
+4. **Is it a standing programme or framework one account adopts and works through in stages, for months, with work
+   filed under it?** It is an implementation.
+
+A record that **falls due** is never a deployment: a deployment happens, it is not due. A concept with no owner of its
+own and no states, only a name the others share, is usually a field (a pick list) and not an area at all.
+
+**Worked mappings.**
+
+| Domain | `tasks` | `periods` | `deployments` | `implementations` |
+|---|---|---|---|---|
+| Compliance (ComplianceOS) | obligation | regulatory filing (contains its obligations) | change-management initiative | compliance framework |
+| Equity research | research task (a model update, a channel check) | results season (contains the updates due in it) | report published on a company | coverage of a company (grouped into portfolios) |
+| Software delivery | ticket | iteration (contains the tickets planned into it) | release to a customer environment | customer implementation |
+| Sales | follow-up (a call, a proposal to send) | quarter (contains the commitments due in it) | order put into effect for an account | account plan |
+
+ComplianceOS in full is [`scripts/fixtures/record-areas/examples/compliance-os.json`](../scripts/fixtures/record-areas/examples/compliance-os.json).
+Its period, the part a mapping most often gets wrong:
+
+```jsonc
+"periods": {
+  "label": { "singular": "regulatory filing", "plural": "regulatory filings" },
+  "fields": { "name": { "label": "Filing" }, "endsAt": { "label": "Filing due" }, "lead": { "label": "Signatory" } },
+  "relations": { "contains": { "area": "tasks" } },              // a filing IS its obligations, and they complete it
+  "targets": [ { "key": "obligations_closed", "label": "Obligations closed",
+                 "measure": { "area": "tasks", "where": { "state": { "category": "done" } } } } ]   // scope "contained"
+}
+```
+
+**`relations.contains`** (periods only): `area` is `tasks` (the records that carry a period's id), `completion`
+(default `true`) says the period is complete when every one of them (cancelled ones aside) is done. A target that
+measures the contained area with no `date` counts the records filed into the period (`measure.scope: "contained"`,
+compiled); one with a `date` counts those dated inside the window (`"window"`). Refused: `contains` on another area,
+an area other than tasks, tasks switched off or never filed into a period (`relations.periods: false`), periods off,
+`scope: "contained"` on an area the period does not contain, `scope: "window"` without a `date`.
+
+**What each reader sees.**
+
+- **The build** prints, whenever a profile redefines any area, each area's role beside the label the profile gives it,
+  so a wrong mapping is visible before anything ships:
+
+  ```
+  gen-deployment-profile: note: the record areas, by what each IS:
+    deployments [change], shown as "Change-management initiatives": a change rolled out to a target (…)
+    implementations [programme], shown as "Compliance frameworks": a long-running programme or framework (…)
+    tasks [unit], shown as "obligations": a unit of work: one thing a person owns, does and finishes, (…)
+    periods [container], shown as "regulatory filings": a bounded container: (…); contains "obligations", measured by them
+  ```
+
+  and warns, conservatively, only where the definition's own shape contradicts the area: a deployments area with an
+  own date it falls due on (a key or label saying "due"), or one that hides both its release state and its health.
+  A warning never fails the build.
+- **The model** reads one sentence per area, in the profile's words, on the area's card in its briefing and in its
+  tools' descriptions (`describeStructure` in `agent/lib/record-areas.ts`): "Regulatory filings: each groups
+  obligations due together in one window ("Period from", `startsAt` to "Filing due", `endsAt`) and is complete when they
+  are all done; …". `list_cycles` then returns, per period, `contains: { total, done }`.
+- **A coding agent** over MCP reads the same sentence on that area's tools (`task_list`, `task_create`, `sprint_list`,
+  `sprint_create`, `deployment_*`, `implementation_*`), passed by `app/api/mcp/route.ts` as `structure`.
+
+Only an area the profile defines in the record-area form says it: a redefined task, a period that declares
+`contains`, a deployments or implementations area stated under `records.areas`. The default profile and a legacy
+form read byte for byte what they did (`npm run test:record-structure`).
 
 ## Merge rules
 

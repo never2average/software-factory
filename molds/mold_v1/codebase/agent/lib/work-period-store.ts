@@ -26,6 +26,10 @@ import {
   type RosterLine,
   type WorkPeriods,
 } from "./work-periods.ts";
+import { RECORD_AREAS } from "./record-areas.generated.ts";
+import { areaView, type RecordAreas } from "./record-areas.ts";
+import { checkMove, moveEvent } from "./record-lifecycle.ts";
+import { periodDeclared, periodRow, periodStates, systemTarget } from "./period-area.ts";
 
 /** A workspace-scoped transaction (or the database handle inside one). */
 export type PeriodTx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert" | "update" | "delete">;
@@ -145,8 +149,11 @@ export async function taskWriteRefusal(
   return null;
 }
 
-/** The period that contains now; when there is none and the workspace has a length, it is opened, that long. */
-export async function ensureCurrentPeriod(tx: PeriodTx, orgId: string, actor: string, wp: WorkPeriods = WORK_PERIODS): Promise<CycleRow | null> {
+/**
+ * The period that contains now; when there is none and the workspace has a length, it is opened, that long, in the
+ * state a period that has begun is in (today "active"; a declared area's first "active"-category state).
+ */
+export async function ensureCurrentPeriod(tx: PeriodTx, orgId: string, actor: string, wp: WorkPeriods = WORK_PERIODS, areas: RecordAreas = RECORD_AREAS): Promise<CycleRow | null> {
   const all = await listPeriods(tx, orgId);
   const now = currentPeriod(all);
   if (now) return now;
@@ -154,18 +161,23 @@ export async function ensureCurrentPeriod(tx: PeriodTx, orgId: string, actor: st
   if (length === null) return null;
   const last = [...all].filter((c) => c.endsAt && c.endsAt.getTime() <= Date.now()).sort((a, b) => b.endsAt!.getTime() - a.endsAt!.getTime())[0] ?? null;
   const window = followingWindow(last, length, wp);
-  const [created] = await tx.insert(cycles).values({ orgId, ...window, state: "active", createdBy: actor }).returning();
+  const states = periodStates(areas);
+  const [created] = await tx.insert(cycles).values({ orgId, ...window, state: states.active ?? states.initial, createdBy: actor }).returning();
   return created;
 }
 
-/** The period after `from`; opened (the workspace's length long) when there is none and the workspace has a length. */
-export async function ensureNextPeriod(tx: PeriodTx, orgId: string, from: CycleRow, actor: string, wp: WorkPeriods = WORK_PERIODS): Promise<{ period: CycleRow | null; created: boolean }> {
-  const found = nextPeriod(await listPeriods(tx, orgId), from);
+/**
+ * The period after `from`; opened (the workspace's length long, in the initial state: today "planning") when there is
+ * none and the workspace has a length.
+ */
+export async function ensureNextPeriod(tx: PeriodTx, orgId: string, from: CycleRow, actor: string, wp: WorkPeriods = WORK_PERIODS, areas: RecordAreas = RECORD_AREAS): Promise<{ period: CycleRow | null; created: boolean }> {
+  const states = periodStates(areas);
+  const found = nextPeriod(await listPeriods(tx, orgId), from, states.isClosed);
   if (found) return { period: found, created: false };
   const length = await workspacePeriodLength(tx, orgId, wp);
   if (length === null) return { period: null, created: false };
   const window = followingWindow(from, length, wp);
-  const [created] = await tx.insert(cycles).values({ orgId, ...window, state: "planning", createdBy: actor }).returning();
+  const [created] = await tx.insert(cycles).values({ orgId, ...window, state: states.initial, createdBy: actor }).returning();
   return { period: created, created: true };
 }
 
@@ -194,12 +206,13 @@ export async function rollOver(
   fromId: string,
   opts: { target: string | null | "next"; assignee?: string | null; actor: string },
   wp: WorkPeriods = WORK_PERIODS,
+  areas: RecordAreas = RECORD_AREAS,
 ): Promise<RolloverResult | { notFound: "source" | "target" }> {
   const [from] = await tx.select().from(cycles).where(and(eq(cycles.id, fromId), eq(cycles.orgId, orgId)));
   if (!from) return { notFound: "source" };
   let targetId: string | null = null; let targetName: string | null = null; let created = false;
   if (opts.target === "next") {
-    const next = await ensureNextPeriod(tx, orgId, from, opts.actor, wp);
+    const next = await ensureNextPeriod(tx, orgId, from, opts.actor, wp, areas);
     targetId = next.period?.id ?? null; targetName = next.period?.name ?? null; created = next.created;
   } else if (opts.target) {
     const [c] = await tx.select({ id: cycles.id, name: cycles.name }).from(cycles).where(and(eq(cycles.id, opts.target), eq(cycles.orgId, orgId)));
@@ -233,18 +246,26 @@ export function rolloverSentence(r: RolloverResult, wp: WorkPeriods = WORK_PERIO
  * unfinished tasks are carried into the period that follows (opened when there is none). Runs inside the caller's
  * workspace transaction when the periods are read (the list route, the model's list tool), so it needs no timer and
  * no path that crosses workspaces; running it again finds nothing to do. Returns what it did, earliest first.
+ *
+ * "Closed" and "active" are today's two states, or, when the profile declares the periods area, its states by
+ * CATEGORY (agent/lib/period-area.ts): an ended period is finished when its state's category is done or cancelled, is
+ * closed into the "done" state a declared transition out of its state leads to (else the first "done" one), and the
+ * period that has begun moves from a not-started state into an "active" one. Under an enforced lifecycle each of the
+ * system's moves is written to the activity feed as a move (by "system"), so four eyes and the feed read it.
  */
-export async function rollOverEnded(tx: PeriodTx, orgId: string, wp: WorkPeriods = WORK_PERIODS, now: number = Date.now()): Promise<{ from: CycleRow; result: RolloverResult }[]> {
+export async function rollOverEnded(tx: PeriodTx, orgId: string, wp: WorkPeriods = WORK_PERIODS, now: number = Date.now(), areas: RecordAreas = RECORD_AREAS): Promise<{ from: CycleRow; result: RolloverResult }[]> {
   if (!wp.autoRollover || (await workspacePeriodLength(tx, orgId, wp)) === null) return [];
+  const states = periodStates(areas);
   const out: { from: CycleRow; result: RolloverResult }[] = [];
   // Each pass may open a period; a long gap is crossed in one step (followingWindow), so this ends quickly.
   for (let pass = 0; pass < 12; pass++) {
-    const ended = (await listPeriods(tx, orgId)).filter((c) => c.state !== "closed" && c.endsAt && c.endsAt.getTime() <= now);
+    const ended = (await listPeriods(tx, orgId)).filter((c) => !states.isClosed(c.state) && c.endsAt && c.endsAt.getTime() <= now);
     if (!ended.length) break;
     for (const from of ended) {
-      const result = await rollOver(tx, orgId, from.id, { target: "next", actor: "system" }, wp);
+      const result = await rollOver(tx, orgId, from.id, { target: "next", actor: "system" }, wp, areas);
       if ("notFound" in result) continue;
-      await tx.update(cycles).set({ state: "closed", updatedAt: new Date() }).where(and(eq(cycles.id, from.id), eq(cycles.orgId, orgId)));
+      const closed = systemTarget(from.state, "done", areas) ?? states.done;
+      await tx.update(cycles).set({ state: closed, updatedAt: new Date() }).where(and(eq(cycles.id, from.id), eq(cycles.orgId, orgId)));
       await tx.insert(entityActivity).values({
         orgId,
         entityType: "cycle",
@@ -252,11 +273,32 @@ export async function rollOverEnded(tx: PeriodTx, orgId: string, wp: WorkPeriods
         actor: "system",
         event: rolloverSentence(result, wp),
       });
+      await systemMove(tx, orgId, from, closed, areas);
       out.push({ from, result });
     }
   }
   // The period that has just begun is the active one.
   const current = currentPeriod(await listPeriods(tx, orgId), now);
-  if (current && current.state === "planning") await tx.update(cycles).set({ state: "active", updatedAt: new Date() }).where(and(eq(cycles.id, current.id), eq(cycles.orgId, orgId)));
+  if (current && states.notStarted(current.state)) {
+    const active = systemTarget(current.state, "active", areas);
+    if (active) {
+      await tx.update(cycles).set({ state: active, updatedAt: new Date() }).where(and(eq(cycles.id, current.id), eq(cycles.orgId, orgId)));
+      await systemMove(tx, orgId, current, active, areas);
+    }
+  }
   return out;
+}
+
+/**
+ * A move the system made (rollover), as the activity feed's move line, when the profile declares the periods area and
+ * enforces its lifecycle: the line every other move leaves, by "system". Nothing otherwise, so a default deployment's
+ * feed reads what it always did.
+ */
+async function systemMove(tx: PeriodTx, orgId: string, from: CycleRow, to: string, areas: RecordAreas): Promise<void> {
+  if (!periodDeclared(areas) || from.state === to) return;
+  const v = areaView("periods", areas);
+  if (!v.lifecycle || v.lifecycle.enforce === "off") return;
+  const before = periodRow(from as unknown as Record<string, unknown>);
+  const check = checkMove(v, { from: from.state, to, row: { ...before, state: to }, before, actor: "system", role: "owner" });
+  await tx.insert(entityActivity).values({ orgId, entityType: "cycle", entityId: from.id, actor: "system", event: moveEvent(v, check) });
 }

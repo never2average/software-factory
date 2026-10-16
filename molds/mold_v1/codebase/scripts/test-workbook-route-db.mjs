@@ -103,8 +103,8 @@ async function seed() {
   await admin`insert into deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, deployment_strategy, custom)
               values (${W1}, ${C1}, ${`d1-${process.pid}`}, 'prod', 'ap-south-1', 'Q2 FY26', 'deployed', 'healthy', 'rolling',
                       ${admin.json({ rating: "Buy", target_price: 1234, kpi_completeness: 80, aum_cr: 5000 })})`;
-  await admin`insert into implementation (org_id, customer_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, security_review_status, custom)
-              values (${W1}, ${C1}, 'UAT', 10, 'Green', 'None', 'Approved', ${admin.json({ coverage_priority: "Core", next_review: "2026-10-01" })})`;
+  await admin`insert into implementation (org_id, customer_id, implementation_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner, security_review_status, custom)
+              values (${W1}, ${C1}, ${C1}, 'UAT', 10, 'Green', 'None', 'Approved', ${admin.json({ coverage_priority: "Core", next_review: "2026-10-01" })})`;
   // 5,010 interactions a minute apart; the NEWEST (i = 5010) carries a 5,000-character note.
   await admin`insert into interactions (org_id, customer_id, interaction_id, interaction_at, interaction_type, source_system, note)
               select ${W1}, ${C1}, 'wbi-' || ${String(process.pid)} || '-' || i,
