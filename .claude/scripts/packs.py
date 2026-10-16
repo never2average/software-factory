@@ -189,7 +189,23 @@ def verify(app_id):
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1"); bad = 0
     for cmd in (["node", "scripts/sync-subagent-shared.mjs", "--check"], [sys.executable, "scripts/check-subagents.py"]):
         r = subprocess.run(cmd, cwd=build, env=env); bad += 1 if r.returncode else 0
+    bad += model_surface(build, env)
     return 1 if bad else 0
+
+def model_surface(build, env, run=subprocess.run):
+    """Render what the agent's model reads in this build copy (the mold's scripts/lib/model-surface.mjs, ~10 s), so
+    a profile whose words collide (two labels turning into one tool parameter name, 2026-10-16 compliance_os) fails
+    HERE, before a deploy, instead of inside the deploy's eve build. 0 when it renders or the mold has no renderer."""
+    script = os.path.join(build, "scripts", "lib", "model-surface.mjs")
+    if not os.path.exists(script): return 0
+    r = run(["node", "--experimental-strip-types", "--disable-warning=ExperimentalWarning", script, "--no-results"],
+            cwd=build, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if r.returncode == 0: print("model surface: renders (no word collision in what the agent reads)"); return 0
+    err = r.stderr or ""
+    clash = re.findall(r'agent vocabulary: "[^"$]+" would read "[^"$]+", which is already a parameter here', err)
+    print("FAIL model surface: " + (clash[0] + ". Two labels in the profile map to one tool parameter name: rename one "
+          "of them (or drop a redundant grouping)." if clash else "it did not render: " + (err.strip().splitlines() or ["(no output)"])[-1][:300]))
+    return 1
 
 def self_test():
     m = {"pack_id": "demo-pack", "name": "Demo", "description": "d", "subagents": ["alpha"]}
@@ -202,7 +218,17 @@ def self_test():
     assert any("does not name" in e for e in check_pack("demo-pack", ok + ["agent/subagents/beta/agent.ts"], m))
     assert any("is not there" in e for e in check_pack("demo-pack", ok, dict(m, subagents=["alpha", "gamma"])))
     assert check_pack("Bad_Id", ok, m) and check_pack("demo-pack", [], m)
-    print("packs: 8 checks passed"); return 0
+    import tempfile, types, io, contextlib
+    with tempfile.TemporaryDirectory() as d:
+        assert model_surface(d, {}) == 0  # a mold without the renderer is not checked
+        os.makedirs(os.path.join(d, "scripts", "lib")); open(os.path.join(d, "scripts", "lib", "model-surface.mjs"), "w").close()
+        clash = 'Error: agent vocabulary: "implementationId" would read "complianceFrameworkId", which is already a parameter here\n'
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert model_surface(d, {}, run=lambda *x, **k: types.SimpleNamespace(returncode=1, stderr=clash)) == 1
+            assert model_surface(d, {}, run=lambda *x, **k: types.SimpleNamespace(returncode=0, stderr="")) == 0
+        assert '"implementationId" would read "complianceFrameworkId"' in out.getvalue(), out.getvalue()
+    print("packs: 10 checks passed"); return 0
 
 def main(a):
     if "--self-test" in a: return self_test()
