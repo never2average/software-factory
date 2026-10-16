@@ -75,6 +75,7 @@ import {
   SearchBox,
   SectionHeaderCard,
   SidePanel,
+  SkeletonRows,
   StateRow,
   StatusDot,
   TableCard,
@@ -1073,7 +1074,7 @@ export function CronsPanel({
                   </tr>
                 ))}
                 {loading ? (
-                  <StateRow span={cols}>Loading…</StateRow>
+                  <SkeletonRows span={cols} label="Loading schedules" />
                 ) : pager.total === 0 ? (
                   // No "add one" placeholder when there are simply no custom
                   // schedules: the system crons are pinned above, so the table is

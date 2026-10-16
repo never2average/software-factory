@@ -43,10 +43,14 @@ test("workspace cards render and select", async ({ page }) => {
     await expect(page.getByTestId("impl-customer").filter({ hasText: c })).toBeVisible();
   }
 
-  // Selection: clicking a card toggles its selected styling (border-foreground/30).
+  // Selection: clicking a card toggles its selected styling (border-foreground/30). Under load `next dev` can paint
+  // the page before React has attached its handlers, and a click that lands then is lost (lane run 2026-10-16,
+  // mold_v1-270; passes alone). Click again until the selection shows; a card that never selects still fails.
   const secondTask = page.getByTestId("t-0-1");
-  await secondTask.click();
-  await expect(secondTask).toHaveClass(/border-foreground\/30/);
+  await expect(async () => {
+    await secondTask.click();
+    await expect(secondTask).toHaveClass(/border-foreground\/30/, { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
 
   // Each implementation card renders a burndown chart (recharts <svg>).
   const charts = page.getByTestId("impl-board").locator("svg.recharts-surface");

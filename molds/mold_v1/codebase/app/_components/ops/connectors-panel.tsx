@@ -51,6 +51,7 @@ import {
   type PanelState,
 } from "./lib";
 import { Spinner } from "@/components/ui/spinner";
+import { Loading, Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Banners,
@@ -74,6 +75,7 @@ import {
   SearchBox,
   SectionHeaderCard,
   SidePanel,
+  SkeletonRows,
   StateRow,
   StatusDot,
   TableCard,
@@ -472,10 +474,15 @@ function SecretsSection({
     <div className="flex min-w-0 flex-col gap-1.5">
       <DetailLabel icon={KeyRoundIcon}>Secrets</DetailLabel>
       {loading ? (
-        <p className={cn("flex items-center gap-1.5 text-muted-foreground", TYPE.meta)}>
-          <Spinner className="size-3" />
-          Loading secrets…
-        </p>
+        // The section's label above is known; its rows are still to come.
+        <Loading label="Loading secrets" className="flex flex-col gap-2 py-1">
+          {[45, 60].map((w) => (
+            <span key={w} className="flex items-center gap-2">
+              <Skeleton className="h-3 bg-muted/60" style={{ width: `${w}%` }} />
+              <Skeleton className="ml-auto h-3 w-12 bg-muted/40" />
+            </span>
+          ))}
+        </Loading>
       ) : error ? (
         <ErrorBanner message={error} />
       ) : connector.health === "unimplemented" ? (
@@ -1355,7 +1362,7 @@ export function ConnectorsPanel({
               </thead>
               <tbody className="divide-y divide-border/60">
                 {loading ? (
-                  <StateRow span={cols}>Loading…</StateRow>
+                  <SkeletonRows span={cols} label="Loading connectors" />
                 ) : pager.total === 0 ? (
                   <StateRow span={cols} italic>
                     {emptyText}

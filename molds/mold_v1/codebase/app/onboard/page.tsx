@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DEPLOYMENT_PROFILE, PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import {
   ArrowLeftIcon,
@@ -1123,10 +1124,10 @@ function ChecksScreen({ orgId, onInviteAgents }: { orgId: string; onInviteAgents
         <ol className="space-y-2" aria-busy="true">
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <li key={i} className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
-              <span className="size-6 shrink-0 animate-pulse rounded-full bg-muted" />
+              <Skeleton className="size-6 shrink-0 rounded-full" />
               <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="h-3.5 w-2/5 animate-pulse rounded bg-muted" />
-                <div className="h-3 w-1/5 animate-pulse rounded bg-muted/60" />
+                <Skeleton className="w-2/5" />
+                <Skeleton className="h-3 w-1/5 bg-muted/60" />
               </div>
             </li>
           ))}

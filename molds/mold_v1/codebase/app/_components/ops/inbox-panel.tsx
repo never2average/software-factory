@@ -17,10 +17,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import { PRODUCT_NAME } from "@/lib/deployment-profile.generated";
 import { errMessage, opsFetch } from "./lib";
 import { PaginatedTable, type Column } from "./paginated-table";
+import { SkeletonList } from "./primitives";
 import { W } from "@/lib/ui-words";
 
 /**
@@ -203,11 +203,7 @@ export function InboxPanel({ authorEmail }: { authorEmail?: string }) {
     );
   }
   if (threads === null) {
-    return (
-      <div className="flex justify-center py-16">
-        <Spinner />
-      </div>
-    );
+    return <SkeletonList label="Loading the inbox" />;
   }
 
   // Filtering happens here, not server-side: the list is already bounded and

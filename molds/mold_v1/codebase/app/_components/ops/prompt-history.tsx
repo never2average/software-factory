@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { HistoryIcon, RotateCcwIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Loading, Skeleton } from "@/components/ui/skeleton";
 import { opsFetch } from "./lib";
 import { SURFACE, TYPE } from "./tokens";
 import { ChangesetDiffView } from "./diff-view";
@@ -142,7 +143,14 @@ function PromptHistoryDialog({
           {/* Versions, newest first. */}
           <div className="w-64 shrink-0 overflow-auto border-border/70 border-r py-1">
             {items === null ? (
-              <p className={cn("px-4 py-3 text-muted-foreground", TYPE.meta)}>Loading…</p>
+              <Loading label="Loading versions" className="flex flex-col gap-3 px-4 py-3">
+                {[0, 1, 2].map((i) => (
+                  <span key={i} className="flex flex-col gap-1.5">
+                    <Skeleton className="h-3 w-3/4 bg-muted/70" />
+                    <Skeleton className="h-2.5 w-2/5 bg-muted/40" />
+                  </span>
+                ))}
+              </Loading>
             ) : items.length === 0 ? (
               <p className={cn("px-4 py-3 text-muted-foreground", TYPE.meta)}>
                 No prompt has been set for this agent yet.

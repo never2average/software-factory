@@ -48,6 +48,7 @@ import {
 import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker, serverEventCount, type TurnEvent } from "@/lib/chat-turn-state";
 import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import { isTodoViewKey, type TodoViewKey } from "@/lib/work-periods-ui";
 
 /**
@@ -438,11 +439,11 @@ function ChatShimmer() {
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-7 overflow-hidden px-6 pt-12">
         {lines.map((widths, i) => (
           <div key={i} className={cn("flex flex-col gap-2", i % 2 === 1 && "items-end")}>
-            <div className="h-3 w-24 animate-pulse rounded bg-muted/70" />
+            <Skeleton className="h-3 w-24 bg-muted/70" />
             {widths.map((w, j) => (
-              <div
+              <Skeleton
                 key={j}
-                className="h-3.5 animate-pulse rounded bg-muted/50"
+                className="bg-muted/50"
                 style={{ width: w, animationDelay: `${(i * 3 + j) * 70}ms` }}
               />
             ))}
@@ -450,7 +451,7 @@ function ChatShimmer() {
         ))}
       </div>
       <div className="mx-auto w-full max-w-3xl px-6 pb-8">
-        <div className="h-24 w-full animate-pulse rounded-2xl border border-border/60 bg-muted/30" />
+        <Skeleton className="h-24 w-full rounded-2xl border border-border/60 bg-muted/30" />
       </div>
       <span className="sr-only">Loading conversation…</span>
     </div>

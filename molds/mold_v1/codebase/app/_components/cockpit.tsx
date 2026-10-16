@@ -45,6 +45,7 @@ import { AgentMessage } from "./agent-message";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ChatComposer } from "./composer";
 import { Spinner } from "@/components/ui/spinner";
+import { Loading, Skeleton, SkeletonLines } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -1906,10 +1907,15 @@ function PersonModal({
 
             <div className="min-h-0 flex-1 overflow-y-auto p-5">
               {loading && !d ? (
-                <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
-                  <Spinner className="size-3" />
-                  Loading dossier…
-                </span>
+                // The header keeps the person's name, title and email; the sections below show their shape.
+                <Loading label="Loading dossier" className="flex flex-col gap-5">
+                  {[[40, 85, 70], [30, 90, 60, 75]].map((widths, i) => (
+                    <span key={i} className="flex flex-col gap-2">
+                      <Skeleton className="h-2.5 w-28 bg-muted/80" />
+                      <SkeletonLines widths={widths.slice(1)} lineClassName="bg-muted/50" />
+                    </span>
+                  ))}
+                </Loading>
               ) : (
                 <div className="flex flex-col gap-5">
                   {/* Reporting & escalation — editable links + the derived chain */}
@@ -2207,10 +2213,15 @@ function TaskDetail({
       </div>
 
       {loading && !t ? (
-        <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
-          <Spinner className="size-3" />
-          Loading ticket…
-        </span>
+        // The id and summary above are known; the field grid below shows its shape.
+        <Loading label="Loading ticket" className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border/60 bg-muted/15 p-3">
+          {[60, 75, 50, 70, 55, 65, 45, 60].map((w, i) => (
+            <span key={i} className="flex flex-col gap-1">
+              <Skeleton className="h-2 w-12 bg-muted/80" />
+              <Skeleton className="h-3 bg-muted/50" style={{ width: `${w}%` }} />
+            </span>
+          ))}
+        </Loading>
       ) : !t ? (
         <p className="text-2xs text-muted-foreground italic">
           {task.sub ? task.sub : "This ticket isn't in the system-of-record snapshot."}
@@ -2540,10 +2551,10 @@ function ArtifactDetail({ artifact }: { readonly artifact: CockpitArtifact }) {
           );
         })()
       ) : loading ? (
-        <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
-          <Spinner className="size-3" />
-          Loading script…
-        </span>
+        // The script's frame, with lines of code still to come.
+        <Loading label="Loading script" className="min-h-0 flex-1 rounded-md border border-border bg-muted/30 p-3">
+          <SkeletonLines widths={[45, 70, 62, 80, 30, 55, 74, 40]} className="gap-1.5" lineClassName="h-2.5 bg-muted/60" />
+        </Loading>
       ) : edited ? (
         <ScriptDiff before={before} after={after} />
       ) : (
@@ -2981,12 +2992,11 @@ function SubagentDetail({
           </div>
         ) : run.childSessionId && feedStatus === "idle" ? (
           // Reopening a finished run: its stream is re-attaching and replaying
-          // history. Show a loader — NOT the raw run.output (that flashed as
-          // unrendered markdown for a few seconds before the transcript arrived).
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            <Spinner className="size-4" />
-            Loading transcript…
-          </div>
+          // history. The header above keeps the specialist's name and status;
+          // the transcript's place shows its shape until it arrives — NOT the
+          // raw run.output (that flashed as unrendered markdown for a few
+          // seconds before the transcript arrived).
+          <TranscriptSkeleton />
         ) : run.output ? (
           // Genuinely old run (no live stream) — render the result as markdown,
           // never raw text.
@@ -3182,10 +3192,47 @@ function AppRunList({
   );
 }
 
+/** A transcript still to come: a few message blocks, alternating sides like the chat it will be. */
+function TranscriptSkeleton() {
+  return (
+    <Loading label="Loading transcript" data-testid="transcript-loading" className="flex flex-col gap-6">
+      {[
+        [78, 92, 54],
+        [88, 63],
+        [70, 95, 84, 41],
+      ].map((widths, i) => (
+        <span key={i} className={cn("flex flex-col gap-2", i % 2 === 1 && "items-end")}>
+          <Skeleton className="h-3 w-24 bg-muted/70" />
+          <SkeletonLines widths={widths} className="w-full" lineClassName="bg-muted/50" />
+        </span>
+      ))}
+    </Loading>
+  );
+}
+
+/** A dashboard still to come: its title, a row of figures and a chart's frame. */
+function DashboardSkeleton() {
+  return (
+    <Loading label="Generating the dashboard" className="flex flex-col gap-4 p-4">
+      <Skeleton className="h-4 w-2/5" />
+      <span className="grid grid-cols-3 gap-3">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
+            <Skeleton className="h-2.5 w-3/5 bg-muted/70" />
+            <Skeleton className="h-5 w-2/5" />
+          </span>
+        ))}
+      </span>
+      <Skeleton className="h-40 w-full rounded-lg bg-muted/50" />
+      <SkeletonLines widths={[90, 75, 60]} lineClassName="bg-muted/50" />
+    </Loading>
+  );
+}
+
 /** The rail expanded into an app's rendered document — a dashboard spec renders
  *  as widgets, anything else falls back to Markdown. Mirrors the Apps workspace
  *  panel so the two surfaces read identically. The row is live (polled), so a
- *  refresh in flight shows a spinner and swaps to content when it lands. */
+ *  refresh in flight shows the dashboard's shape and swaps to content when it lands. */
 function AppRunDetail({
   app,
   onOpenOps,
@@ -3203,10 +3250,8 @@ function AppRunDetail({
         </p>
       ) : null}
       {refreshing && !app.contentMd ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
-          <Spinner className="size-4" />
-          <span className="text-xs">Generating the dashboard…</span>
-        </div>
+        // The header keeps the app's name and "refreshing…"; the dashboard's place shows its shape.
+        <DashboardSkeleton />
       ) : spec ? (
         <div className="min-h-0 flex-1 p-4">
           <Dashboard

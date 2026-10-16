@@ -15,7 +15,8 @@ export interface TextShimmerProps {
 /**
  * A sweep of light across the text ("Thinking..."). This was a `motion` component, which put the whole of motion
  * (~40 KB brotli) into the first load of every chat page to animate one background-position; a CSS keyframe
- * (`shimmer-sweep`, app/globals.css) draws the same thing: 100% → 0%, linear, forever.
+ * (`shimmer-sweep`, app/globals.css) draws the same thing: 100% → 0%, linear, forever; still under
+ * prefers-reduced-motion (`[data-text-shimmer]`, same file). Content still to come is components/ui/skeleton.tsx.
  */
 const ShimmerComponent = ({
   children,
@@ -28,6 +29,7 @@ const ShimmerComponent = ({
 
   return (
     <Component
+      data-text-shimmer
       className={cn(
         "relative inline-block bg-[length:250%_100%,auto] bg-clip-text text-transparent",
         "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",

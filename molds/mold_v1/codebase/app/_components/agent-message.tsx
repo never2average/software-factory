@@ -2,7 +2,7 @@
 
 import { noteRender } from "@/lib/render-census";
 import { lazyPanel } from "@/components/lazy-panel";
-import { Spinner } from "@/components/ui/spinner";
+import { Loading, Skeleton, SkeletonLines } from "@/components/ui/skeleton";
 import type {
   EveAuthorizationPart,
   EveDynamicToolPart,
@@ -62,19 +62,38 @@ import { cn } from "@/lib/utils";
 
 // The pdf viewer (and pdf.js under it) is fetched when a preview first opens.
 // A specialist's question and the notes sent to it (mold_v1-234/235) render only in a chat that delegated: loaded on
-// first use, never in the first load.
+// first use, never in the first load. Until their code arrives, each keeps the specialist's name in its place and
+// shows the rest as its shape (mold_v1-269).
 const SpecialistThread = lazyPanel(() => import("./specialist-question").then((m) => m.SpecialistThread), {
   label: "Specialist reply",
+  placeholder: (props: { name: string; className?: string }) => (
+    <Loading label={`Loading ${props.name}'s question`} className={cn("not-prose w-full space-y-2 text-sm", props.className)}>
+      <span className="flex items-center gap-1.5">
+        <span className="font-medium text-foreground">{props.name}</span>
+        <Skeleton className="h-3 w-2/5 bg-muted/60" />
+      </span>
+      <span className="ml-2 block border-primary/40 border-l-2 pl-3 sm:ml-5">
+        <SkeletonLines widths={[25, 70]} lineClassName="h-3 bg-muted/50" />
+      </span>
+    </Loading>
+  ),
 });
 const SteeringNoteLine = lazyPanel(() => import("./specialist-question").then((m) => m.SteeringNoteLine), {
   label: "Note to a specialist",
+  placeholder: (props: { name: string }) => (
+    <Loading label={`Loading the note to ${props.name}`} className="ml-2 border-primary/40 border-l-2 pl-3 sm:ml-5">
+      <span className="block text-2xs text-muted-foreground">{props.name}</span>
+      <SkeletonLines widths={[65, 30]} className="mt-1" lineClassName="h-3 bg-muted/50" />
+    </Loading>
+  ),
 });
 const PdfView = lazyPanel(() => import("./pdf-view").then((m) => m.PdfView), {
   label: "The preview",
+  // A page still to come, at the size the viewer will take.
   placeholder: () => (
-    <div role="status" aria-label="Loading preview" className="flex h-full min-h-40 items-center justify-center">
-      <Spinner />
-    </div>
+    <Loading label="Loading preview" className="flex h-full min-h-40 flex-col p-4">
+      <Skeleton className="h-full min-h-36 w-full rounded-md bg-muted/40" />
+    </Loading>
   ),
 });
 
@@ -746,6 +765,11 @@ function AgentMessagePart({
                 <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
                   {summary}
                 </span>
+              ) : part.state === "input-streaming" ? (
+                // The brief is still streaming in: the name and status are known, the summary's place shimmers.
+                <Loading as="span" label="Loading the brief" data-delegation-brief-loading className="min-w-0 flex-1">
+                  <Skeleton className="h-3 w-3/5 max-w-64 bg-muted/60" />
+                </Loading>
               ) : (
                 <span className="flex-1" />
               )}

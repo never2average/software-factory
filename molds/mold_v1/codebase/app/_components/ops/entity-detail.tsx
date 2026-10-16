@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Loading, Skeleton } from "@/components/ui/skeleton";
 import { CustomerMark } from "../customer-mark";
 import { errMessage, opsFetch, type OpsSection } from "./lib";
 import { OpsButton, OpsTextarea } from "./primitives";
@@ -44,7 +45,14 @@ export function ActivityFeed({ entity, id, refreshKey }: { readonly entity: Enti
     <div className="flex flex-col gap-2">
       <span className={cn("font-medium text-muted-foreground/60 uppercase tracking-wide", TYPE.micro)}>Activity</span>
       {rows === null ? (
-        <p className={cn("text-muted-foreground/50", TYPE.micro)}>Loading…</p>
+        <Loading label="Loading activity" className="flex flex-col gap-1.5">
+          {[70, 55].map((w) => (
+            <span key={w} className="flex items-center gap-2">
+              <Skeleton className="size-1.5 shrink-0 rounded-full" />
+              <Skeleton className="h-2.5 bg-muted/50" style={{ width: `${w}%` }} />
+            </span>
+          ))}
+        </Loading>
       ) : rows.length === 0 ? (
         <p className={cn("text-muted-foreground/50 italic", TYPE.micro)}>No activity yet.</p>
       ) : (
