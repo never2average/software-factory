@@ -41,6 +41,7 @@ import { UNASSIGNED_OWNER_EMAIL as UNASSIGNED_TRIAGE_OWNER } from "./unassigned.
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { HIDDEN_FIELDS, fill } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
+import { manyPerAccount } from "./implementation-ids.ts";
 import { isMemberKind } from "./member-kind.ts";
 
 /**
@@ -163,8 +164,16 @@ const shownParts = (parts: [key: string, words: string][]) => {
   const kept = parts.filter(([key]) => !HIDDEN_FIELDS.account.has(key)).map(([, words]) => words);
   return kept.length > 1 ? `${kept.slice(0, -1).join(", ")}, and ${kept.at(-1)}` : kept.join("");
 };
-const RECORD_PARTS = ["platform", "deployments", "solutions", "implementation", "tickets", "interactions"];
+/**
+ * An account's implementation part as this deployment keeps it: `implementation` (one per account, the default) or
+ * `implementations[]` (several, each by its implementationId: records.areas.implementations per_account "many",
+ * agent/lib/implementation-ids.ts). The model is offered only that one; the description says it only when it differs.
+ */
+const MANY_IMPLEMENTATIONS = manyPerAccount();
+const IMPLEMENTATION_PART = MANY_IMPLEMENTATIONS ? "implementations" : "implementation";
+const RECORD_PARTS = ["platform", "deployments", "solutions", IMPLEMENTATION_PART, "tickets", "interactions"];
 const hidesParts = RECORD_PARTS.some((k) => HIDDEN_FIELDS.account.has(k));
+const describesParts = hidesParts || MANY_IMPLEMENTATIONS;
 
 export const listCustomersTool = modelFacing("list_customers", defineTool({
   description:
@@ -188,8 +197,8 @@ export const getCustomerTool = modelFacing("get_customer", defineTool({
   },
 }), {
   recordOutput: ["customer"],
-  modelDescription: hidesParts
-    ? `Get the full record for one {account}: ${shownParts([["platform", "platform config"], ["deployments", "{deployments}"], ["solutions", "solutions"], ["implementation", "its {implementation}"], ["tickets", "tickets"], ["interactions", "recent interactions"]])}.`
+  modelDescription: describesParts
+    ? `Get the full record for one {account}: ${shownParts([["platform", "platform config"], ["deployments", "{deployments}"], ["solutions", "solutions"], MANY_IMPLEMENTATIONS ? ["implementations", "its {implementations} (each by its implementationId)"] : ["implementation", "its {implementation}"], ["tickets", "tickets"], ["interactions", "recent interactions"]])}.`
     : undefined,
 });
 
@@ -201,13 +210,15 @@ export const getCustomerTool = modelFacing("get_customer", defineTool({
  */
 const accountFields = customFieldsOf("account");
 // `custom_append` (add to a long note without resending it) likewise only when a long-text account field exists.
+// The implementation part this deployment does not use is never offered (IMPLEMENTATION_PART).
+const patchInput = (MANY_IMPLEMENTATIONS ? customerPatchSchema.omit({ implementation: true }) : customerPatchSchema.omit({ implementations: true })) as unknown as typeof customerPatchSchema;
 const upsertCustomerInput = (
   accountFields.some((f) => f.type === "long_text")
-    ? customerPatchSchema
+    ? patchInput
     : accountFields.length > 0
-      ? customerPatchSchema.omit({ custom_append: true })
-      : customerPatchSchema.omit({ custom: true, custom_append: true })
-) as typeof customerPatchSchema;
+      ? patchInput.omit({ custom_append: true })
+      : patchInput.omit({ custom: true, custom_append: true })
+) as unknown as typeof customerPatchSchema;
 
 export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   description:
@@ -229,7 +240,7 @@ export const upsertCustomerTool = modelFacing("upsert_customer", defineTool({
   // A profile's hidden fields are not offered to the model, and a stored hidden value survives its rewrite.
   recordInput: {},
   recordOutput: ["customer"],
-  modelDescription: hidesParts
+  modelDescription: describesParts
     ? `Create or update a {account} record in the system of record (Postgres when configured, bundled-JSON fallback otherwise). Only the fields you send change. Nested records (${RECORD_PARTS.filter((k) => !HIDDEN_FIELDS.account.has(k)).map((k) => `\`${k}\``).join(", ")}) follow one rule: each row is matched on its id, only the fields you send change, a row you leave out is kept, and a row is deleted only by remove: true. Gated on approval since this mutates the team's source of truth.`
     : undefined,
 });

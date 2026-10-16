@@ -10,7 +10,7 @@ import { choiceSchema, customBodySchema, customForWrite, pickProfileFields, prof
 import { CHOICE_MEANINGS } from "@/agent/lib/customer-schema";
 import { asCustomValues, customDelta } from "@/agent/lib/custom-fields";
 import { customMergeSql } from "@/agent/lib/custom-merge-sql";
-import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
+import { implementationKey, manyPerAccount } from "@/agent/lib/implementation-ids";
 import { an, W } from "@/lib/ui-words";
 import { isDeclared } from "@/agent/lib/record-area-records";
 import { checkOnly } from "@/agent/lib/record-area-write";
@@ -21,17 +21,19 @@ import { accountNames, declaredItem, declaredUpsert, listQueryOf, queryRows, ref
 const DECLARED = isDeclared("implementations");
 
 /**
- * A profile may GROUP rows by rolloutId (a portfolio, a programme): many rows then share one rolloutId, so it
- * stops identifying a row and the row's id is the customer id, the table's primary key. Ungrouped: as before.
+ * A row's id in the list (agent/lib/implementation-ids.ts implementationKey): its own id when an account holds several
+ * (`per_account: "many"`, a declared area only); else, when a profile GROUPS rows by rolloutId (a portfolio, a
+ * programme), many rows share one rolloutId, so it stops identifying a row and the id is the account; ungrouped, as
+ * before (its rolloutId, else the account).
  */
-const GROUPED_BY_ROLLOUT = DEPLOYMENT_PROFILE.domains.implementations.group_by === "rolloutId";
+const MANY = manyPerAccount();
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** POST /api/ops/implementations — hand-create a rollout. (customerId, the workspace) is the
- *  primary key (one implementation per company), so a second create for the
- *  same company updates it. Stage/risk/progress default to a
+/** POST /api/ops/implementations — hand-create a rollout. One implementation per company here (a profile that keeps
+ *  several per account is a declared one, written by lib/record-area-routes.ts): its id is the company's id, so a
+ *  second create for the same company updates it. Stage/risk/progress default to a
  *  fresh rollout the operator refines in the detail panel. */
 const createSchema = z.object({
   customerId: z.string().min(1, `Pick ${an(W.account)} ${W.account}.`),
@@ -99,6 +101,8 @@ export async function POST(request: NextRequest) {
     const delta = checked.custom === undefined ? undefined : customDelta(customInput, checked.custom);
     const values = {
       ...written,
+      // One per company: the row's own id is the company's (agent/lib/implementation-ids.ts), so the key below finds it.
+      implementationId: data.customerId,
       // Stamp the tenant — a NULL org_id matches no workspace under the
       // org_isolation policy, so the row would be written yet invisible.
       orgId: ctx.orgId,
@@ -122,8 +126,9 @@ export async function POST(request: NextRequest) {
         .insert(implementation)
         .values(values)
         .onConflictDoUpdate({
-          // The record's whole key (org_id, customer_id): one per company, and a company is per workspace.
-          target: [implementation.orgId, implementation.customerId],
+          // The record's whole key (org_id, implementation_id), its id the company's: one per company, and a company
+          // is per workspace.
+          target: [implementation.orgId, implementation.implementationId],
           // Never blank a field the caller didn't mention; blockerOwner in
           // particular is ours, not theirs, and would wipe a real owner.
           // `custom` only by the keys the body names, merged in SQL onto what is stored at write time.
@@ -131,7 +136,7 @@ export async function POST(request: NextRequest) {
         })
         .returning(),
     );
-    return NextResponse.json({ item: { id: GROUPED_BY_ROLLOUT ? row.customerId : row.rolloutId ?? row.customerId } }, { status: 201 });
+    return NextResponse.json({ item: { id: implementationKey(row) } }, { status: 201 });
   } catch (e) {
     const msg = String(e);
     // A raw driver dump reached the caller here: the whole 52-column INSERT,
@@ -175,7 +180,9 @@ export async function GET(request: NextRequest) {
       const items = found.rows.map((r) => {
         const row = r as typeof implementation.$inferSelect;
         const legacy = {
-          id: GROUPED_BY_ROLLOUT ? row.customerId : row.rolloutId ?? row.customerId,
+          id: implementationKey(row),
+          // Its own id, the one every write names, when an account holds several.
+          ...(MANY ? { implementationId: row.implementationId } : {}),
           label: row.displayName?.trim() || [row.customerId, row.implementationStage].filter(Boolean).join(" · ") || row.rolloutId || row.customerId,
           displayName: row.displayName ?? null,
           owner: row.implementationOwnerEmail ?? null,
@@ -221,7 +228,7 @@ export async function GET(request: NextRequest) {
       return `${names[0]} +${names.length - 1} more`;
     };
     const items = rows.map((r) => ({
-      id: GROUPED_BY_ROLLOUT ? r.customerId : r.rolloutId ?? r.customerId,
+      id: implementationKey(r),
       label:
         r.displayName?.trim() ||
         [r.customerId, r.implementationStage].filter(Boolean).join(" · ") ||

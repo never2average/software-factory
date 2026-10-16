@@ -32,6 +32,58 @@ export const BUILT_IN = {
   tasks: { kind: "task", storage: "todos" },
   periods: { kind: "period", storage: "cycles" },
 };
+/**
+ * THE STRUCTURE of each built-in area: what it IS, independent of what any deployment calls it. The area ids are the
+ * base product's software words; this is the shape behind each, so a pack author (and the model, and a coding agent)
+ * can map a domain concept onto the right area. Fixed by the table each is stored in; a profile cannot change it
+ * (it says what the area is CALLED and which relations it uses). docs/DEPLOYMENT_PROFILE.md "Choosing the area for a
+ * domain concept" is the decision table drawn from this.
+ *
+ *   role       one word: unit | container | change | programme
+ *   is         what one record is, in neutral words
+ *   time       instant (falls due or happens on one day) | window (starts and ends) | ongoing (runs on, moves through stages)
+ *   relations  contains: the area whose records a record holds AND is measured by; groups: the area whose records may
+ *              be filed under it (not measured by them); targets: what it is rolled out to or run for; in: where a record
+ *              of this area may sit
+ *   columns    which built-in column carries which role: state, owner, due, target, health, and the area's own extras
+ *   choose     when a domain concept belongs in this area
+ */
+export const STRUCTURE = {
+  tasks: {
+    role: "unit",
+    is: "a unit of work: one thing a person owns, does and finishes, falling due on a day",
+    time: "instant",
+    relations: { in: ["periods", "deployments", "implementations"] },
+    columns: { state: "status", owner: "assignee", due: "dueAt", container: "containerId", period: "cycleId", parent: "parentId" },
+    choose: "the concept is one piece of work someone owns and closes, with its own due date and states",
+  },
+  periods: {
+    role: "container",
+    is: "a bounded container: a window that holds units of work due together and is measured by them",
+    time: "window",
+    relations: { contains: "tasks" },
+    columns: { state: "state", owner: "lead", start: "startsAt", due: "endsAt", goal: "goal", capacity: "capacity" },
+    choose: "the concept is a set of units that fall due together and is complete when they are done",
+  },
+  deployments: {
+    role: "change",
+    is: "a change rolled out to a target (an account, or a place within it), with a release state and health",
+    time: "instant",
+    relations: { targets: "account", groups: "tasks" },
+    columns: { target: "account", state: "releaseStatus", health: "healthStatus", owner: "deployOwnerEmail", when: "lastDeployAt", version: "deployedVersion" },
+    choose: "the concept is a change put into effect for one account, whose release and health are then watched",
+  },
+  implementations: {
+    role: "programme",
+    is: "a long-running programme or framework run for one account: it groups work and moves through stages",
+    time: "ongoing",
+    relations: { targets: "account", groups: "tasks" },
+    columns: { target: "account", state: "implementationStage", owner: "implementationOwnerEmail", due: "targetGoLiveDate", health: "implementationRiskLevel", progress: "implementationProgressPct", group: "rolloutId" },
+    choose: "the concept is a standing programme an account adopts and works through in stages, for months",
+  },
+};
+/** The areas a period may contain (the area whose rows carry the period's id: todos.cycleId). */
+export const PERIOD_CONTAINS = ["tasks"];
 /** What base code branches on: never a pack's state, always its category. */
 export const CATEGORIES = ["backlog", "open", "active", "blocked", "done", "cancelled"];
 /** The stored task status (the contract with the task-workflow service) each category writes. */
@@ -67,7 +119,7 @@ const TEMPLATE_DEFAULT = /^\{(today([+-][0-9]{1,3}d)?|me|account\.owner)\}$/;
 /** Not fields: the row's identity, its workspace, the own-field store, soft delete. */
 // recursFrom: todos.recurs_from, generated from custom.recurs_from (the link a next occurrence carries back, drizzle/0042):
 // never a field, and no area's own field may be called recurs_from.
-export const SYSTEM_KEYS = ["id", "orgId", "customerId", "displayName", "custom", "archivedAt", "recursFrom"];
+export const SYSTEM_KEYS = ["id", "orgId", "customerId", "implementationId", "displayName", "custom", "archivedAt", "recursFrom"];
 /** Columns a write never sets: the database and the service stamp them. */
 export const READ_ONLY = { todos: ["doneAt", "createdBy", "createdAt", "updatedAt"], cycles: ["createdBy", "createdAt", "updatedAt"] };
 /** Pseudo-fields an area offers beside its own: the account a record hangs off. */
@@ -77,6 +129,7 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const snake = (k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const quote = (s) => JSON.stringify(s);
 const list = (a) => a.map(quote).join(", ");
+const an = (w) => (/^[aeiou]/i.test(w) ? "an" : "a");
 
 /** Objects merge deeply, arrays and scalars replace; "$comment" is documentation. The profile merge rule. */
 export function deepMerge(base, over) {
@@ -173,6 +226,17 @@ export function compileArea(id, { cols, legacy, declared }) {
   }
   // A task whose states are its own (an own pick_list field): the stored status follows them, so nobody sets it.
   if (id === "tasks" && area.lifecycle?.field && area.lifecycle.field !== "status" && area.fields.status) area.fields.status.hidden = true;
+  // A period that CONTAINS an area's records: a target measuring that area with no date of its own counts the records
+  // filed into the period ("contained"); one with a date counts those dated inside the window ("window"). Stated only
+  // when the period declares what it contains, so a profile that does not compiles to what it did.
+  if (id === "periods" && isObj(area.relations?.contains)) {
+    area.relations.contains = { completion: true, ...area.relations.contains };
+    for (const t of area.targets ?? []) {
+      if (!isObj(t?.measure) || t.measure.scope) continue;
+      if (t.measure.area === area.relations.contains.area && !t.measure.date) t.measure.scope = "contained";
+      else if (t.measure.date) t.measure.scope = "window";
+    }
+  }
   return area;
 }
 
@@ -198,6 +262,11 @@ export function checkArea(id, area, ctx) {
   const recordArea = kind === "record";
   const isFieldRef = (k) => has(k) || (recordArea && k === ACCOUNT_FIELD);
   const readOnly = new Set(READ_ONLY[storage] ?? []);
+  // How many records an account holds: the implementations' to say (each then has its own id, drizzle/0044). A
+  // deployment is already keyed by its own id under the account; a task or a period hangs off no account.
+  if ("per_account" in area && id !== "implementations") {
+    return bad("per_account", id === "deployments" ? `a deployment is identified by its own id (${quote(area.id?.field ?? "deploymentId")}), so an account already holds as many as it needs; per_account is the implementations area's` : `the ${id} area belongs to no account; per_account is the implementations area's`);
+  }
 
   // --- fields -----------------------------------------------------------------------------------------------------
   const own = Object.values(fields).filter((f) => !f.column);
@@ -361,6 +430,9 @@ export function checkArea(id, area, ctx) {
       for (const s of states) if (CATEGORY_STATUS[cats[s]] !== s) return bad(`lifecycle.categories.${s}`, `the status ${quote(s)} is the category ${quote(Object.keys(CATEGORY_STATUS).find((c) => CATEGORY_STATUS[c] === s))}; to give a task other states, put the lifecycle on an own pick_list field`);
     }
     if (kind === "task" && lc.field !== "status" && f.column) return bad("lifecycle.field", `a task's lifecycle is the "status" column or an own pick_list field, not ${quote(lc.field)}`);
+    // A period's state is the cycles.state column: the system's rollover opens, starts and closes periods by its
+    // states' categories (agent/lib/period-area.ts), so the states are the column's, whatever they are called.
+    if (kind === "period" && lc.field !== "state") return bad("lifecycle.field", `a period's lifecycle is its "state" column (its choices are the states, each with a category), not ${quote(lc.field)}`);
     if (lc.initial !== undefined && !states.includes(lc.initial)) return bad("lifecycle.initial", `${quote(lc.initial)} is not a state of ${lc.field} (${list(states)})`);
     for (const [i, t] of (lc.transitions ?? []).entries()) {
       const at = `lifecycle.transitions[${i}]`;
@@ -400,6 +472,16 @@ export function checkArea(id, area, ctx) {
   }
   for (const l of rel.links ?? []) if (!TASK_LINKS.includes(l)) return bad("relations.links", `${quote(l)} is not a link type (${list(TASK_LINKS)})`);
   if ((rel.containers || rel.links || "subtasks" in rel || "periods" in rel) && kind !== "task") return bad("relations", `containers, links, subtasks and periods describe a task; this is a ${kind} area`);
+  if ("contains" in rel) {
+    // A period holds the records filed into it (todos.cycleId) and is measured by them: "a filing is a set of obligations".
+    if (kind !== "period") return bad("relations.contains", `only a period contains another area's records (a bounded container measured by them); the ${id} area is ${an(STRUCTURE[id].role)} ${STRUCTURE[id].role}: ${STRUCTURE[id].is}`);
+    const c = rel.contains.area;
+    if (!PERIOD_CONTAINS.includes(c)) return bad("relations.contains.area", `a period can contain ${list(PERIOD_CONTAINS)} (the records that carry a period's id), not ${quote(c)}`);
+    if (ctx.areas[c]?.enabled === false) return bad("relations.contains.area", `${quote(c)} is not enabled in this deployment`);
+    if (ctx.areas[c]?.relations?.periods === false) return bad("relations.contains.area", `the ${c} area says its records are never filed into a period (relations.periods: false)`);
+    if (area.enabled === false || area.period?.mode === "off") return bad("relations.contains", `periods are off in this deployment, so they contain nothing`);
+  }
+  if ("structure" in (ctx.declared ?? {})) return bad("structure", `what the ${id} area IS (${STRUCTURE[id].is}) is fixed by the table it is stored in; a profile names it (label) and declares its relations. To hold another kind of thing, choose the area whose structure fits (docs/DEPLOYMENT_PROFILE.md "Choosing the area for a domain concept")`);
   if (rel.group?.field != null) {
     if (!has(rel.group.field)) return unknown("relations.group.field", rel.group.field);
   }
@@ -504,6 +586,8 @@ export function checkArea(id, area, ctx) {
     if (t.measure.date && (!other.fields[t.measure.date] || !DATES.has(other.fields[t.measure.date].type))) return bad(`${at}.measure.date`, `${quote(t.measure.date)} must be a date field of ${t.measure.area}`);
     if (t.measure.person && (!other.fields[t.measure.person] || !PEOPLE.has(other.fields[t.measure.person].type))) return bad(`${at}.measure.person`, `${quote(t.measure.person)} must be a person field of ${t.measure.area}`);
     if (t.measure.where) { const p = whereProblem([t.measure.where], other, `${at}.measure.where`); if (p) return p; }
+    if (t.measure.scope === "contained" && rel.contains?.area !== t.measure.area) return bad(`${at}.measure.scope`, `"contained" counts the ${t.measure.area} records filed into a period, and this period does not contain ${t.measure.area} (relations.contains)`);
+    if (t.measure.scope === "window" && !t.measure.date) return bad(`${at}.measure.scope`, `"window" counts the records dated inside the period; name the date field that places them (measure.date)`);
   }
   return null;
 }
@@ -619,4 +703,34 @@ export function formsIn(doc) {
   if ("work_periods" in doc) legacy.add("periods");
   if (isObj(doc.records?.areas)) for (const id of Object.keys(doc.records.areas)) fresh.add(id);
   return { legacy, fresh };
+}
+
+/**
+ * What the build says about the mapping: each area's structural role (STRUCTURE) next to what this deployment calls
+ * it, so a concept put in the wrong area is visible when the profile is built, and a few warnings. The warnings are
+ * deliberately conservative: they read the definition's SHAPE (a column that carries the area's role, a date a record
+ * falls due on), never guess at a label's meaning, and never fail the build. `areas`: every compiled area, by id.
+ */
+export function structureNote(areas) {
+  const word = (id) => areas[id]?.label?.plural ?? id;
+  const lines = [];
+  for (const id of AREA_IDS) {
+    const a = areas[id];
+    const s = STRUCTURE[id];
+    const contains = id === "periods" && a.relations?.contains ? `; contains ${quote(word(a.relations.contains.area))}${a.relations.contains.completion === false ? "" : ", measured by them"}` : "";
+    lines.push(`${id} [${s.role}], shown as ${quote(word(id))}${a.enabled === false || a.period?.mode === "off" ? " (off)" : ""}: ${s.is}${contains}`);
+  }
+  const warnings = [];
+  const d = areas.deployments;
+  if (d && d.enabled !== false && d.redefined !== false) {
+    const due = Object.values(d.fields).find((f) => !f.column && !f.hidden && DATES.has(f.type) && (/(^|_)due($|_)/.test(f.key) || /\bdue\b/i.test(f.label ?? "")));
+    if (due) {
+      warnings.push(`the deployments area ("${word("deployments")}") has a date it falls due on (${quote(due.key)}), and a deployment is ${STRUCTURE.deployments.is}: it has no due date. A record that falls due is a unit of work (tasks), or, when it is a set of units due together, a period that contains them (periods, relations.contains: { "area": "tasks" }). See docs/DEPLOYMENT_PROFILE.md "Choosing the area for a domain concept"`);
+    }
+    const role = ["state", "health"].map((r) => STRUCTURE.deployments.columns[r]);
+    if (role.every((k) => d.fields[k]?.hidden)) {
+      warnings.push(`the deployments area ("${word("deployments")}") hides both columns that carry what a deployment is (${role.map(quote).join(", ")}: its release state and its health). If these records are not changes rolled out to an account, another area fits them better: see docs/DEPLOYMENT_PROFILE.md "Choosing the area for a domain concept"`);
+    }
+  }
+  return { lines, warnings };
 }

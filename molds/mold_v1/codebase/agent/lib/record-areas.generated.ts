@@ -66,6 +66,12 @@ export interface RecordArea {
   icon?: string;
   nav?: { order?: number; label?: string };
   id?: { field?: string; label?: string; placeholder?: string; pattern?: string; generate?: string };
+  /**
+   * implementations only: how many records an account holds. "one" (the default, and what absent means): a record per
+   * account, keyed by it. "many": each record has its own `implementationId` (drizzle/0044), and an account may hold
+   * several (a regulator's several compliance frameworks).
+   */
+  per_account?: "one" | "many";
   title?: string;
   fields: Record<string, RecordField>;
   lifecycle?: RecordLifecycle;
@@ -77,6 +83,8 @@ export interface RecordArea {
     periods?: boolean;
     subtasks?: boolean;
     group?: { field?: string | null; label?: { singular: string; plural: string } };
+    /** periods only: the area whose records are filed into a period and measure it (`completion`: it is done when they are). */
+    contains?: { area: RecordAreaId; completion?: boolean };
   };
   views?: {
     default?: "table" | "board" | "timeline" | "calendar";
@@ -101,14 +109,27 @@ export interface RecordArea {
   agent?: { tools?: { read?: boolean; write?: boolean; delete?: boolean }; describe?: string; rules?: string[]; examples?: unknown[] };
   io?: { export?: { csv?: boolean; workbook_sheet?: boolean }; import?: { csv?: boolean; match_on?: string[] } };
   period?: { mode?: WorkPeriodMode; list_label?: { singular: string; plural: string }; item_label?: { singular: string; plural: string }; length_days?: number | null; auto_rollover?: boolean; length_days_range?: number[]; workspace_can_set_length?: boolean | null; starts_on?: "any" | "monday" | "sunday" | "first_of_month"; time_zone?: string | null; name?: string };
-  targets?: { key: string; label: string; per?: "team" | "person"; measure: { area: string; date?: string; where?: RecordWhere; person?: string }; goal?: { kind?: "count" | "percent_of"; of?: Record<string, unknown>; default?: number } }[];
+  targets?: { key: string; label: string; per?: "team" | "person"; measure: { area: string; date?: string; where?: RecordWhere; person?: string; scope?: "contained" | "window" }; goal?: { kind?: "count" | "percent_of"; of?: Record<string, unknown>; default?: number } }[];
   /** This deployment says something about the area that the default profile does not. */
   redefined: boolean;
   /**
-   * deployments / implementations only: a profile file states the area in the record-area form (records.areas), so
-   * its screens, ops routes and agent tools are drawn from this definition. Absent for the legacy form and the default.
+   * deployments, implementations and periods: a profile file states the area in the record-area form (records.areas),
+   * so its screens, ops routes and agent tools are drawn from this definition (a period's own fields and its declared
+   * states included). Absent for the legacy form (domains.<area>, work_periods) and the default.
    */
   declared?: true;
+}
+/**
+ * What an area IS, whatever a deployment calls it (scripts/lib/record-areas.mjs STRUCTURE): its role, what one record
+ * is, its time behaviour, its relations, and which built-in column carries which role.
+ */
+export interface RecordAreaStructure {
+  role: "unit" | "container" | "change" | "programme";
+  is: string;
+  time: "instant" | "window" | "ongoing";
+  relations: { in?: RecordAreaId[]; contains?: RecordAreaId; groups?: RecordAreaId; targets?: "account" };
+  columns: Partial<Record<"state" | "owner" | "due" | "target" | "health" | "start" | "goal" | "capacity" | "container" | "period" | "parent" | "when" | "version" | "progress" | "group", string>>;
+  choose: string;
 }
 
 /**
@@ -1795,5 +1816,87 @@ export const RECORD_AREAS: Record<RecordAreaId, RecordArea> = {
       }
     },
     "redefined": false
+  }
+};
+
+/**
+ * THE STRUCTURE of each area, the same in every deployment (scripts/lib/record-areas.mjs STRUCTURE; docs/DEPLOYMENT_PROFILE.md
+ * "Choosing the area for a domain concept"): what a record of it is, beneath the words a profile gives it.
+ */
+export const RECORD_AREA_STRUCTURE: Record<RecordAreaId, RecordAreaStructure> = {
+  "tasks": {
+    "role": "unit",
+    "is": "a unit of work: one thing a person owns, does and finishes, falling due on a day",
+    "time": "instant",
+    "relations": {
+      "in": [
+        "periods",
+        "deployments",
+        "implementations"
+      ]
+    },
+    "columns": {
+      "state": "status",
+      "owner": "assignee",
+      "due": "dueAt",
+      "container": "containerId",
+      "period": "cycleId",
+      "parent": "parentId"
+    },
+    "choose": "the concept is one piece of work someone owns and closes, with its own due date and states"
+  },
+  "periods": {
+    "role": "container",
+    "is": "a bounded container: a window that holds units of work due together and is measured by them",
+    "time": "window",
+    "relations": {
+      "contains": "tasks"
+    },
+    "columns": {
+      "state": "state",
+      "owner": "lead",
+      "start": "startsAt",
+      "due": "endsAt",
+      "goal": "goal",
+      "capacity": "capacity"
+    },
+    "choose": "the concept is a set of units that fall due together and is complete when they are done"
+  },
+  "deployments": {
+    "role": "change",
+    "is": "a change rolled out to a target (an account, or a place within it), with a release state and health",
+    "time": "instant",
+    "relations": {
+      "targets": "account",
+      "groups": "tasks"
+    },
+    "columns": {
+      "target": "account",
+      "state": "releaseStatus",
+      "health": "healthStatus",
+      "owner": "deployOwnerEmail",
+      "when": "lastDeployAt",
+      "version": "deployedVersion"
+    },
+    "choose": "the concept is a change put into effect for one account, whose release and health are then watched"
+  },
+  "implementations": {
+    "role": "programme",
+    "is": "a long-running programme or framework run for one account: it groups work and moves through stages",
+    "time": "ongoing",
+    "relations": {
+      "targets": "account",
+      "groups": "tasks"
+    },
+    "columns": {
+      "target": "account",
+      "state": "implementationStage",
+      "owner": "implementationOwnerEmail",
+      "due": "targetGoLiveDate",
+      "health": "implementationRiskLevel",
+      "progress": "implementationProgressPct",
+      "group": "rolloutId"
+    },
+    "choose": "the concept is a standing programme an account adopts and works through in stages, for months"
   }
 };

@@ -69,7 +69,9 @@ const W2 = "org-mig-two";
 const WANT_PK = {
   customers: ["customers_org_id_customer_id_pk", "org_id,customer_id"],
   platform: ["platform_org_id_customer_id_pk", "org_id,customer_id"],
-  implementation: ["implementation_org_id_customer_id_pk", "org_id,customer_id"],
+  // Its own id since drizzle/0044 (the account's id for every row this test plants), which rides along after 0024:
+  // the account's rows are still found by (org_id, customer_id), through an index and the foreign key below.
+  implementation: ["implementation_org_id_implementation_id_pk", "org_id,implementation_id"],
   deployments: ["deployments_org_id_customer_id_deployment_id_pk", "org_id,customer_id,deployment_id"],
   solutions: ["solutions_org_id_customer_id_solution_id_pk", "org_id,customer_id,solution_id"],
   tickets: ["tickets_org_id_customer_id_ticket_id_pk", "org_id,customer_id,ticket_id"],
@@ -165,10 +167,11 @@ const count = async (db, t) => (await db.unsafe(`select count(*)::int as n from 
 const counts = async (db) => Object.fromEntries(await Promise.all([...KEYED, ...LOOSE].map(async (t) => [t, await count(db, t)])));
 /**
  * Every row of every table this touches, hashed by its values (not its column order): a changed or lost value shows.
- * The columns a LATER journal entry adds (0028's and 0029's neutral owner columns and 0032's apps.starter_key, which ride along in apply0024) are left out:
- * they are new, not changed, and test-owner-columns-migration-db.mjs proves what they hold.
+ * The columns a LATER journal entry adds (0028's and 0029's neutral owner columns, 0032's apps.starter_key and 0044's
+ * implementation.implementation_id, which ride along in apply0024) are left out: they are new, not changed, and
+ * test-owner-columns-migration-db.mjs and test-implementation-ids-db.mjs prove what they hold.
  */
-const LATER_COLUMNS = "- 'secondary_owner' - 'starter_key'";
+const LATER_COLUMNS = "- 'secondary_owner' - 'starter_key' - 'implementation_id'";
 /**
  * The owner as ONE value, whichever column holds it: the original before 0028, both 0028 to 0037, the neutral one
  * after 0038 (later entries ride along). Moving it is not a change; losing or altering it is.
@@ -208,7 +211,7 @@ const checkShape = async (db, label) => {
     if (fks.length !== 1 || fks[0].conname !== `${t}_customer_fk` || fks[0].cols !== "org_id,customer_id" || fks[0].fcols !== "org_id,customer_id" || fks[0].ftbl !== "customers" || fks[0].cascades !== true) bad.push({ t, fks });
   }
   const single = rows.filter((r) => r.contype === "f" && r.ftbl === "customers" && r.fcols === "customer_id");
-  check(`${label}: every key starts (org_id, customer_id) and every foreign key names both columns, under schema.ts's names`, bad.length === 0 && single.length === 0, { bad, single });
+  check(`${label}: every key starts (org_id, …) as schema.ts states it and every foreign key names both columns, under schema.ts's names`, bad.length === 0 && single.length === 0, { bad, single });
   const nullable = await db`select table_name from information_schema.columns where table_schema = 'public' and column_name = 'org_id' and is_nullable = 'YES' and table_name = any(${KEYED})`;
   check(`${label}: org_id is NOT NULL on all ${KEYED.length} tables`, nullable.length === 0, nullable);
   const [order] = await db`select (select attnum from pg_attribute where attrelid = 'public.customers'::regclass and attname = 'org_id') < (select attnum from pg_attribute where attrelid = 'public.customers'::regclass and attname = 'customer_id') as ok`;

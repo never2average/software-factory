@@ -15,6 +15,7 @@ import { needsEnteredBy } from "./record-lifecycle.ts";
 import { whoEntered, type ActivityEntityType } from "./record-lifecycle-store.ts";
 import { DEPLOYMENT_PROFILE } from "./deployment-profile.generated.ts";
 import type { AccountAreaId } from "./record-area-records.ts";
+import { implementationKey } from "./implementation-ids.ts";
 
 type Tx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert">;
 
@@ -39,9 +40,10 @@ export async function enteredByOf(tx: Tx, orgId: string, v: AreaView, entity: { 
 
 /**
  * A record's id as the lists, the activity feed and the tasks filed under it key it: a deployment by its id; an
- * implementation by its account when rows are grouped by rolloutId, else by its rolloutId (the account when none).
+ * implementation by its own id when an account holds several, else by its account when rows are grouped by rolloutId,
+ * else by its rolloutId (the account when none) (agent/lib/implementation-ids.ts).
  */
 export function recordEntityId(id: AccountAreaId, row: AreaRow, groupedByRollout = DEPLOYMENT_PROFILE.domains.implementations.group_by === "rolloutId"): string {
   if (id === "deployments") return String(row.deploymentId);
-  return String(groupedByRollout ? row.customerId : row.rolloutId ?? row.customerId);
+  return implementationKey(row, { grouped: groupedByRollout });
 }

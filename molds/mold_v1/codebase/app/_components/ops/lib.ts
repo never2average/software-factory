@@ -272,7 +272,7 @@ export interface ApiCycle {
   name: string;
   startsAt: string | null;
   endsAt: string | null;
-  /** "planning" | "active" | "closed". */
+  /** "planning" | "active" | "closed", or a declared periods area's own states. */
   state: string;
   goal: string | null;
   capacity: number | null;
@@ -282,6 +282,8 @@ export interface ApiCycle {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Its own fields, by key: only where the profile declares the periods area (agent/lib/period-area.ts). */
+  custom?: Record<string, unknown>;
 }
 
 /** A living Markdown document the agent regenerates on a cadence. */

@@ -21,10 +21,10 @@ import type { AccountAreaId } from "./record-area-records.ts";
 import { createRefusal, updateRefusal } from "./record-permissions.ts";
 
 /**
- * Request keys that are not fields of the area: the account, who writes, the activity feed's id, the edited title,
- * and `reason` (the comment a lifecycle move may need, as a task's).
+ * Request keys that are not fields of the area: the account, an implementation row's own id (agent/lib/implementation-ids.ts),
+ * who writes, the activity feed's id, the edited title, and `reason` (the comment a lifecycle move may need, as a task's).
  */
-export const RECORD_PASS_THROUGH: readonly string[] = ["customerId", "actor", "entityId", "displayName", "reason"];
+export const RECORD_PASS_THROUGH: readonly string[] = ["customerId", "implementationId", "actor", "entityId", "displayName", "reason"];
 
 /**
  * The values a new row gets when neither the caller nor the definition names one (a default, a fixed value, the
@@ -131,8 +131,13 @@ export function prepareRecordWrite(
   const set: Record<string, unknown> = {};
   const clear: string[] = [];
   for (const [k, x] of Object.entries(r.customDelta)) {
-    if (x === null) clear.push(k);
-    else set[k] = x;
+    if (x === null) {
+      clear.push(k);
+      // A field declared with `renamed_from` reads the old key when the new one is absent: clearing it clears both,
+      // or the value written before the rename would show (and be filtered on) again.
+      const old = v.field(k)?.renamed_from;
+      if (old && !clear.includes(old)) clear.push(old);
+    } else set[k] = x;
   }
   const custom: Record<string, unknown> = { ...set };
   const lifecycle = r.lifecycle ?? null;

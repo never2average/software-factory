@@ -13,11 +13,17 @@ import { customMergeSql } from "@/agent/lib/custom-merge-sql";
 import { W } from "@/lib/ui-words";
 import { isDeclared } from "@/agent/lib/record-area-records";
 import { checkOnly } from "@/agent/lib/record-area-write";
-import { declaredPatch, deleteForbidden, refused } from "@/lib/record-area-routes";
+import { declaredPatch, deleteForbidden, implementationById, refused } from "@/lib/record-area-routes";
+import { manyPerAccount } from "@/agent/lib/implementation-ids";
 import { callerEmail } from "@/lib/work-periods-server";
 
 /** Drawn from its definition (records.areas.implementations): a change goes through lib/record-area-routes.ts. */
 const DECLARED = isDeclared("implementations");
+/**
+ * An account holds several (`per_account: "many"`, a declared area only): `:id` is the row's own id
+ * (agent/lib/implementation-ids.ts), and the account the body or query names must be the row's.
+ */
+const MANY = manyPerAccount();
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +80,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
     }
     try {
+      if (MANY) {
+        const found = await implementationById(octx.orgId, id, customerId);
+        if ("refusal" in found) return found.refusal;
+        return await declaredPatch("implementations", octx, db, found.where, b, id, (await callerEmail(request)) ?? "");
+      }
       return await declaredPatch("implementations", octx, db, and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId))!, b, id, (await callerEmail(request)) ?? "");
     } catch (e) {
       return NextResponse.json({ error: errorText(e) }, { status: 500 });
@@ -142,7 +153,9 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   if (!db) return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   const url = new URL(request.url);
   const { id } = await ctx.params;
-  // customerId (with the workspace) is the PK; fall back to the route id (which is rolloutId ?? customerId).
+  if (MANY) return deleteById(request, octx, id, url.searchParams.get("customerId"));
+  // One per company: the company id (with the workspace) names the row; fall back to the route id (which is
+  // rolloutId ?? customerId).
   const customerId = url.searchParams.get("customerId") ?? id;
   if (!(await customerInOrg(octx.orgId, customerId))) {
     return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
@@ -157,6 +170,24 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
         .where(and(eq(implementation.orgId, octx.orgId), eq(implementation.customerId, customerId)))
         .returning(),
     );
+    if (!item) return NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ error: errorText(e) }, { status: 500 });
+  }
+}
+
+/** DELETE when an account holds several: the row by its own id, in the caller's workspace (the account, when named, must be its). */
+async function deleteById(request: NextRequest, octx: Exclude<Awaited<ReturnType<typeof orgContextForRequest>>, null | Response>, id: string, customerId: string | null) {
+  if (customerId && !(await customerInOrg(octx.orgId, customerId))) {
+    return NextResponse.json({ error: `Not your workspace's ${W.account}.` }, { status: 403 });
+  }
+  try {
+    const found = await implementationById(octx.orgId, id, customerId);
+    if ("refusal" in found) return found.refusal;
+    const forbidden = await deleteForbidden("implementations", octx, found.where, () => callerEmail(request));
+    if (forbidden) return forbidden;
+    const [item] = await withOrgRls(octx.orgId, (tx) => tx.delete(implementation).where(found.where).returning());
     if (!item) return NextResponse.json({ error: `${W.Implementation} not found` }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {

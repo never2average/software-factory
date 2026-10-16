@@ -293,6 +293,22 @@ jobs:
         if: always()
         run: npm run test:record-areas
 
+      # WHAT EACH RECORD AREA IS (docs/DEPLOYMENT_PROFILE.md "Choosing the area for a domain concept"): the structure the
+      # mold declares (a unit, a container, a change, a programme) is compiled; a period may contain tasks and is measured
+      # by them; the build prints each area's role beside the pack's label and warns where a definition contradicts it;
+      # the model and a coding agent read each area's structure in the pack's words; the default surface is unchanged.
+      - name: Record area structure (declared roles, a period containing tasks, the build's note, the model's and MCP's words)
+        if: always()
+        run: npm run test:record-structure
+
+      # PERIODS AS A RECORD AREA (records.areas.periods in the record-area form, `declared`): an undeclared profile
+      # (the default, both live packs' fixtures, every work-period mode) keeps today's periods byte for byte; a declared
+      # one has its own fields, its own states by category (the system's rollover reads categories), every write through
+      # the one validator, the screen from the definition (calendar included) and the period tools in its words.
+      - name: Periods as a record area (own fields, declared states, writes, screen model, the model's tools; undeclared unchanged)
+        if: always()
+        run: npm run test:period-area
+
       # TASKS FROM THE PROFILE'S DEFINITION (records.areas.tasks). With no profile redefining tasks, the root prompt,
       # its briefing and the todo tools are byte for byte the recorded surface, and the coding agent's task tools are
       # upstream main's; under the obligation example (a copy) the todo tools and the briefing are built from the
@@ -1579,6 +1595,18 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-area-db
 
+      # AN IMPLEMENTATION ROW HAS ITS OWN ID (drizzle/0044), AND A RENAMED OWN FIELD IS READ UNDER BOTH KEYS: the migration
+      # on rows in two workspaces (each keeps every value, gets its account id, the drift plan is empty after it); the
+      # default keeps one per account on every write path; `per_account: "many"` addresses each row by its id through
+      # the routes, upsert_customer's implementations[], the tools, MCP, the metrics and the workbook; rows stored under a
+      # renamed field's old key are filtered, sorted, computed and counted; workspace B reaches none of A's rows.
+      - name: Implementation rows by their own id, renamed own fields in the server query (routes, nested rows, tools, MCP, metrics, workbook), two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:implementation-ids-db
+
       # WHO MAY WRITE A RECORD, against the real routes, upsert_customer, the agent's tools, MCP and the task engine:
       # the default as before (a member does everything); under the permissions example every role rule on every path
       # is a 403 with the sentence that changes nothing, "own row" lets a member change only their own, and the metrics
@@ -1589,6 +1617,17 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-permissions-db
+
+      # PERIODS AS A RECORD AREA, against the real cycles routes and period tools: drizzle/0045 (cycles.custom and its
+      # GIN index, additive, the drift plan empty after it); the default answers as before; a declared period's own
+      # fields merged per key at write time, its declared states and moves, every refusal storing nothing; the system's
+      # rollover by category; workspace B reaches none of A's periods through the routes, the tools or RLS.
+      - name: Periods as a record area (migration, routes, tools, rollover), two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:period-area-db
 
       # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
       # (the eve session id) while ownership was checked only on eveSessionId,

@@ -41,6 +41,16 @@
  *                             period is called is the deployment's, so no period word is written in this file; under
  *                             "off" the two period tools are not offered and no task tool takes or names a period.
  *                             A host that does not say gets the shared-period tools in a neutral word
+ *   structure                 optional { tasks?, periods?, deployments?, implementations? }: one sentence per area
+ *                             saying what a record of it IS in this deployment's words ("Regulatory filings: each
+ *                             groups obligations due together …"; agent/lib/record-areas.ts describeStructure), given
+ *                             only for an area the profile defines in the record-area form. Appended to that area's
+ *                             tools; without it every description is today's, to the byte
+ *   manyImplementations       optional true: an account may hold several implementation records, each with its own
+ *                             `implementationId` (the profile's records.areas.implementations per_account "many").
+ *                             implementation_upsert then takes that id (to change one; left out, a new one is
+ *                             created) and implementation_list returns it. Without it the two tools are today's, to
+ *                             the byte
  *   blobStore()               optional direct blob store (package, inside the repo)
  *   parseClaudeTranscript /   optional transcript redactor; the session tools are
  *   sessionToSyncItem         withheld without it rather than advertised and failing
@@ -130,6 +140,10 @@ export function createTools(ctx) {
    * a wrong one with the list. Null without ctx.tasks: the tools below are then today's.
    */
   const T = ctx.tasks && Array.isArray(ctx.tasks.states) ? ctx.tasks : null;
+  // What a record of an area IS here (ctx.structure), appended to that area's tools; "" for a host that does not say.
+  const said = (area) => (typeof ctx.structure?.[area] === "string" && ctx.structure[area].trim() ? ` ${ctx.structure[area].trim()}` : "");
+  // Several implementation records per account, each by its own id (ctx.manyImplementations).
+  const MANY_IMPL = ctx.manyImplementations === true;
   const ownState = T && T.stateField !== "status" ? T.stateField : null;
   const shownChoice = (c) => (c.label && c.label.toLowerCase() !== c.value.toLowerCase() ? `${c.value} ("${c.label}")` : c.value);
   const taskInputs = () => {
@@ -695,14 +709,14 @@ const TOOLS = [
   {
     name: "sprint_list",
     requires: "periods",
-    description: `${capFirst(WP.label.plural)} (cycles): name, window, and state.${WP.individual ? ` Each person holds their own ${WP.itemLabel.plural} in a ${WP.label.singular}: a ${WP.itemLabel.singular} is a task filed into it for its assignee (task_create with cycleId and assignee).` : ""}`,
+    description: `${capFirst(WP.label.plural)} (cycles): name, window, and state.${WP.individual ? ` Each person holds their own ${WP.itemLabel.plural} in a ${WP.label.singular}: a ${WP.itemLabel.singular} is a task filed into it for its assignee (task_create with cycleId and assignee).` : ""}${said("periods")}`,
     inputSchema: { type: "object", properties: {} },
     handler: async () => json((await api("GET", "/api/ops/cycles")).items),
   },
   {
     name: "sprint_create",
     requires: "periods",
-    description: `Create a ${WP.label.singular} (cycle) with a name and an ISO start/end window.`,
+    description: `Create a ${WP.label.singular} (cycle) with a name and an ISO start/end window.${said("periods")}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -718,11 +732,15 @@ const TOOLS = [
   {
     name: "implementation_upsert",
     description:
-      "Create or update a customer rollout: stage, risk, progress and owner. Keyed on customerId, and genuinely an upsert — call it again to move the stage.\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`): this record holds a foreign key to it. If you are thinking in terms of 'rollout' this is the tool you reach for first, and it will fail until the customer row is there.",
+      (MANY_IMPL
+        ? "Create or update a customer rollout: stage, risk, progress and owner. A customer may hold several, each keyed on its implementationId: send it (from implementation_list) to change that one, and leave it out to create a new one (its id comes back as `item.id`)."
+        : "Create or update a customer rollout: stage, risk, progress and owner. Keyed on customerId, and genuinely an upsert — call it again to move the stage.") +
+      "\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`): this record holds a foreign key to it. If you are thinking in terms of 'rollout' this is the tool you reach for first, and it will fail until the customer row is there." + said("implementations"),
     inputSchema: {
       type: "object",
       properties: {
         customerId: { type: "string" },
+        ...(MANY_IMPL ? { implementationId: { type: "string", description: "The record's id from implementation_list, to change it. Leave it out to create a new one." } } : {}),
         implementationStage: choiceInput("implementations", "implementationStage", "The stage"),
         implementationRiskLevel: choiceInput("implementations", "implementationRiskLevel", "The risk"),
         implementationProgressPct: { type: "number" },
@@ -737,7 +755,7 @@ const TOOLS = [
   {
     name: "deployment_upsert",
     description:
-      "Create or update a deployment record, keyed on customerId + deploymentId. A new record needs environment, region and deployedVersion (release and health status take a default when left out). Calling it again for the same deploymentId UPDATES that record: only the fields you pass change, everything else is kept; send \"\" to clear an optional field, and in `custom` only the keys you are changing (null clears one).\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`).",
+      "Create or update a deployment record, keyed on customerId + deploymentId. A new record needs environment, region and deployedVersion (release and health status take a default when left out). Calling it again for the same deploymentId UPDATES that record: only the fields you pass change, everything else is kept; send \"\" to clear an optional field, and in `custom` only the keys you are changing (null clears one).\nREQUIRES THE CUSTOMER TO EXIST FIRST (`customer_create`)." + said("deployments"),
     inputSchema: {
       type: "object",
       properties: {
@@ -797,19 +815,19 @@ const TOOLS = [
   },
   {
     name: "implementation_list",
-    description: "Every customer rollout with its stage, risk, progress and owner, plus `custom`: the values of this deployment's own fields, by key. The read path for implementation_upsert — use it to confirm a write landed, and to see a customer's rollout state before changing it. The customer id comes back as `customer`.",
+    description: "Every customer rollout with its stage, risk, progress and owner, plus `custom`: the values of this deployment's own fields, by key. The read path for implementation_upsert — use it to confirm a write landed, and to see a customer's rollout state before changing it. The customer id comes back as `customer`." + said("implementations"),
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
       const { items = [] } = await api("GET", "/api/ops/implementations");
       // This route names the customer id `customer`; the write tool calls it
       // `customerId`. Echo BOTH so a caller can round-trip a row straight back
-      // into implementation_upsert without noticing the seam.
-      return json(items.map((r) => ({ customerId: r.customer, ...r })));
+      // into implementation_upsert without noticing the seam (with its implementationId when a customer holds several).
+      return json(items.map((r) => ({ customerId: r.customer, ...(MANY_IMPL ? { implementationId: r.implementationId ?? r.id } : {}), ...r })));
     },
   },
   {
     name: "deployment_list",
-    description: "Every deployment record with its environment, version, release and health status, plus `custom`: the values of this deployment's own fields, by key. The read path for deployment_upsert.",
+    description: "Every deployment record with its environment, version, release and health status, plus `custom`: the values of this deployment's own fields, by key. The read path for deployment_upsert." + said("deployments"),
     inputSchema: { type: "object", properties: {} },
     handler: async () => json((await api("GET", "/api/ops/deployments")).items),
   },
@@ -822,7 +840,7 @@ const TOOLS = [
   {
     name: "task_list",
     description: T
-      ? `The team's ${T.nouns}: state, assignee, ${WP.enabled ? `${WP.label.singular}, ` : ""}container, any linked object and their own fields (custom).`
+      ? `The team's ${T.nouns}: state, assignee, ${WP.enabled ? `${WP.label.singular}, ` : ""}container, any linked object and their own fields (custom).${said("tasks")}`
       : `The team's TODOs: status, assignee, ${WP.enabled ? `${WP.label.singular}, ` : ""}container and any linked object.`,
     inputSchema: {
       type: "object",
@@ -835,7 +853,7 @@ const TOOLS = [
   {
     name: "task_create",
     description:
-      `Create ${T ? `${/^[aeiou]/i.test(T.noun) ? "an" : "a"} ${T.noun}` : "a task"}, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under ${WP.enabled ? `a ${WP.label.singular} (cycleId) or ` : ""}a deployment/implementation (containerType + containerId).${T && (T.ownFields ?? []).some((f) => f.required === true) ? ` Required: ${(T.ownFields ?? []).filter((f) => f.required === true).map((f) => `custom.${f.key}`).join(", ")}.` : ""}`,
+      `Create ${T ? `${/^[aeiou]/i.test(T.noun) ? "an" : "a"} ${T.noun}` : "a task"}, optionally LINKED to the ticket it came from (linkType:'ticket', linkId: the ticket id from ticket_list) and filed under ${WP.enabled ? `a ${WP.label.singular} (cycleId) or ` : ""}a deployment/implementation (containerType + containerId).${T && (T.ownFields ?? []).some((f) => f.required === true) ? ` Required: ${(T.ownFields ?? []).filter((f) => f.required === true).map((f) => `custom.${f.key}`).join(", ")}.` : ""}${said("tasks")}`,
     inputSchema: {
       type: "object",
       properties: {

@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateSource } from "./lib/profile-library.mjs";
 import { assertSupported } from "./lib/json-schema.mjs";
-import { AREA_IDS, checkArea, compileArea, formsIn, raiseDomain, raisePeriods, READ_ONLY, schemaProblem, SYSTEM_KEYS as AREA_SYSTEM_KEYS } from "./lib/record-areas.mjs";
+import { AREA_IDS, checkArea, compileArea, formsIn, raiseDomain, raisePeriods, READ_ONLY, schemaProblem, STRUCTURE, structureNote, SYSTEM_KEYS as AREA_SYSTEM_KEYS } from "./lib/record-areas.mjs";
 // Plain data with no imports but the price table; Node 24 reads the .ts as it is (type stripping).
 import { speechModelProblem } from "../lib/dictation-models.ts";
 
@@ -205,7 +205,8 @@ function dbColumns(name) {
 }
 const AREAS = { deployments: ["deploymentSchema", "deployments"], implementations: ["implementationSchema", "implementation"] };
 // `custom` is the jsonb column that holds the profile's OWN fields (custom_fields below): not a field to relabel.
-const SYSTEM_KEYS = ["orgId", "customerId", "displayName", "custom"];
+// `implementationId` is the implementation row's own id (drizzle/0044): the record's identity, never a field to relabel or write.
+const SYSTEM_KEYS = ["orgId", "customerId", "implementationId", "displayName", "custom"];
 const CUSTOM_FIELD_KEYS = ["key", "label", "type", "required", "options", "help", "show_in_list"];
 const CUSTOM_FIELD_TYPES = ["text", "long_text", "number", "percent", "date", "email", "link", "pick_list"];
 const snake = (k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
@@ -456,11 +457,20 @@ for (const id of AREA_IDS) {
   const defaultAreas = compileAll(d, () => undefined, () => false);
   for (const id of AREA_IDS) RECORD_AREAS[id].redefined = JSON.stringify(RECORD_AREAS[id]) !== JSON.stringify(defaultAreas[id]);
 }
-// The two record areas a profile file states in the record-area form (records.areas.<id>), not the legacy domains.<id>:
-// their list, board, forms and ops routes are drawn from the definition (app/_components/ops/record-area-panel.tsx,
-// lib/record-area-write.ts). Emitted only when true, so a profile in the legacy form compiles to what it did.
-for (const id of ["deployments", "implementations"]) if (freshBy.has(id)) RECORD_AREAS[id].declared = true;
+// The record areas a profile file states in the record-area form (records.areas.<id>), not the legacy domains.<id> or
+// work_periods: their list, board, forms, ops routes and agent tools are drawn from the definition (the account areas:
+// app/_components/ops/record-area-panel.tsx, lib/record-area-write.ts; the periods: app/_components/ops/period-area-panel.tsx,
+// agent/lib/period-area.ts). Emitted only when true, so a profile in the legacy form compiles to what it did.
+for (const id of ["deployments", "implementations", "periods"]) if (freshBy.has(id)) RECORD_AREAS[id].declared = true;
 for (const note of raisedNotes) console.warn(`gen-deployment-profile: note: ${note}`);
+// Each area's structural role beside what this deployment calls it, so a concept mapped onto the wrong area shows at
+// build (docs/DEPLOYMENT_PROFILE.md "Choosing the area for a domain concept"). Said only when some area is redefined:
+// the default build says what it always said.
+if (AREA_IDS.some((id) => RECORD_AREAS[id].redefined)) {
+  const { lines, warnings } = structureNote(RECORD_AREAS);
+  console.warn(`gen-deployment-profile: note: the record areas, by what each IS:\n${lines.map((l) => `  ${l}`).join("\n")}`);
+  for (const w of warnings) console.warn(`gen-deployment-profile: warning: ${w}`);
+}
 
 // --- asr: dictation in the chat composer (speech to text, never spoken replies) ---------------------------------
 {
@@ -620,6 +630,12 @@ export interface RecordArea {
   icon?: string;
   nav?: { order?: number; label?: string };
   id?: { field?: string; label?: string; placeholder?: string; pattern?: string; generate?: string };
+  /**
+   * implementations only: how many records an account holds. "one" (the default, and what absent means): a record per
+   * account, keyed by it. "many": each record has its own \`implementationId\` (drizzle/0044), and an account may hold
+   * several (a regulator's several compliance frameworks).
+   */
+  per_account?: "one" | "many";
   title?: string;
   fields: Record<string, RecordField>;
   lifecycle?: RecordLifecycle;
@@ -631,6 +647,8 @@ export interface RecordArea {
     periods?: boolean;
     subtasks?: boolean;
     group?: { field?: string | null; label?: { singular: string; plural: string } };
+    /** periods only: the area whose records are filed into a period and measure it (\`completion\`: it is done when they are). */
+    contains?: { area: RecordAreaId; completion?: boolean };
   };
   views?: {
     default?: "table" | "board" | "timeline" | "calendar";
@@ -655,14 +673,27 @@ export interface RecordArea {
   agent?: { tools?: { read?: boolean; write?: boolean; delete?: boolean }; describe?: string; rules?: string[]; examples?: unknown[] };
   io?: { export?: { csv?: boolean; workbook_sheet?: boolean }; import?: { csv?: boolean; match_on?: string[] } };
   period?: { mode?: WorkPeriodMode; list_label?: { singular: string; plural: string }; item_label?: { singular: string; plural: string }; length_days?: number | null; auto_rollover?: boolean; length_days_range?: number[]; workspace_can_set_length?: boolean | null; starts_on?: "any" | "monday" | "sunday" | "first_of_month"; time_zone?: string | null; name?: string };
-  targets?: { key: string; label: string; per?: "team" | "person"; measure: { area: string; date?: string; where?: RecordWhere; person?: string }; goal?: { kind?: "count" | "percent_of"; of?: Record<string, unknown>; default?: number } }[];
+  targets?: { key: string; label: string; per?: "team" | "person"; measure: { area: string; date?: string; where?: RecordWhere; person?: string; scope?: "contained" | "window" }; goal?: { kind?: "count" | "percent_of"; of?: Record<string, unknown>; default?: number } }[];
   /** This deployment says something about the area that the default profile does not. */
   redefined: boolean;
   /**
-   * deployments / implementations only: a profile file states the area in the record-area form (records.areas), so
-   * its screens, ops routes and agent tools are drawn from this definition. Absent for the legacy form and the default.
+   * deployments, implementations and periods: a profile file states the area in the record-area form (records.areas),
+   * so its screens, ops routes and agent tools are drawn from this definition (a period's own fields and its declared
+   * states included). Absent for the legacy form (domains.<area>, work_periods) and the default.
    */
   declared?: true;
+}
+/**
+ * What an area IS, whatever a deployment calls it (scripts/lib/record-areas.mjs STRUCTURE): its role, what one record
+ * is, its time behaviour, its relations, and which built-in column carries which role.
+ */
+export interface RecordAreaStructure {
+  role: "unit" | "container" | "change" | "programme";
+  is: string;
+  time: "instant" | "window" | "ongoing";
+  relations: { in?: RecordAreaId[]; contains?: RecordAreaId; groups?: RecordAreaId; targets?: "account" };
+  columns: Partial<Record<"state" | "owner" | "due" | "target" | "health" | "start" | "goal" | "capacity" | "container" | "period" | "parent" | "when" | "version" | "progress" | "group", string>>;
+  choose: string;
 }`;
 const DOC = `/**
  * THE RECORD AREAS (profiles \`records.areas\`, docs/DEPLOYMENT_PROFILE.md "records"), compiled: the four built-in kinds of
@@ -867,6 +898,12 @@ import type { WorkPeriodMode } from "./deployment-profile.generated.ts";
 ${TYPES}
 
 ${DOC}export const RECORD_AREAS: Record<RecordAreaId, RecordArea> = ${JSON.stringify(RECORD_AREAS, null, 2)};
+
+/**
+ * THE STRUCTURE of each area, the same in every deployment (scripts/lib/record-areas.mjs STRUCTURE; docs/DEPLOYMENT_PROFILE.md
+ * "Choosing the area for a domain concept"): what a record of it is, beneath the words a profile gives it.
+ */
+export const RECORD_AREA_STRUCTURE: Record<RecordAreaId, RecordAreaStructure> = ${JSON.stringify(STRUCTURE, null, 2)};
 `,
   );
 }

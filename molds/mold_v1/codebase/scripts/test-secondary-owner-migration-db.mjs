@@ -97,6 +97,16 @@ const applyRange = async (db, fromIdx, toIdx) => {
   for (const e of journal.entries.filter((x) => x.idx > fromIdx && x.idx <= toIdx)) await db.begin(async (tx) => { for (const s of statementsOf(e.tag)) await tx.unsafe(s); });
 };
 
+/**
+ * Today's app stands in for the release of that time below, and it also reads what LATER journal entries independent
+ * of this change add (0044's implementation.implementation_id): those are applied before its paths run. Each is safe
+ * to apply twice, so the rest of the journal applies them again harmlessly.
+ */
+const APP_NEEDS = [/^\d{4}_implementation_own_id$/];
+const applyAppNeeds = async (db) => {
+  for (const e of journal.entries.filter((x) => APP_NEEDS.some((re) => re.test(x.tag)))) await applyRange(db, e.idx - 1, e.idx);
+};
+
 const scratch = [];
 async function freshDb(label) {
   const name = `secmig_${label}_${process.pid}`;
@@ -398,6 +408,7 @@ try {
     await checkPairs(db, "A");
     await failClosed(db);
     await checkRls(urlOf(name, "app_rw"), "A (fail-closed)");
+    await applyAppNeeds(db);
     await checkAppPaths(urlOf(name, "app_rw"), "A (app paths, fail-closed)");
     check("after the writes no row holds two different values in either pair", (await mismatched(db)).length === 0, await mismatched(db));
     // The rest (0038 drops the original owner columns and their trigger): the second-owner pair and its trigger stay.

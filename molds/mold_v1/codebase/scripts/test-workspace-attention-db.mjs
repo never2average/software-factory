@@ -94,9 +94,9 @@ async function seed(org, k) {
     await admin`INSERT INTO deployments (customer_id, deployment_id, org_id, environment, region, deployed_version,
                   health_status, release_status)
                 VALUES (${cust}, ${`D-${i}`}, ${org}, ${ENV}, ${REGION}, '1.0', ${DEGRADED}, ${RELEASE})`;
-    await admin`INSERT INTO implementation (customer_id, org_id, implementation_stage, implementation_progress_pct,
+    await admin`INSERT INTO implementation (customer_id, implementation_id, org_id, implementation_stage, implementation_progress_pct,
                   implementation_risk_level, blocker_owner)
-                VALUES (${cust}, ${org}, ${STAGE[0]}, 50, ${RED}, ${OWNER.at(-1)})`;
+                VALUES (${cust}, ${cust}, ${org}, ${STAGE[0]}, 50, ${RED}, ${OWNER.at(-1)})`;
     await admin`INSERT INTO workflow_runs (org_id, run_id, workflow_name, status, updated_at)
                 VALUES (${org}, ${`wfr_attention_${org}_${i}`}, 'probe', 'failed', now())`;
   }
@@ -111,14 +111,14 @@ async function seed(org, k) {
   await admin`INSERT INTO deployments (customer_id, deployment_id, org_id, environment, region, deployed_version,
                 health_status, release_status)
               VALUES (${calm}, 'D-calm', ${org}, ${ENV}, ${REGION}, '1.0', ${HEALTHY}, ${RELEASE})`;
-  await admin`INSERT INTO implementation (customer_id, org_id, implementation_stage, implementation_progress_pct,
+  await admin`INSERT INTO implementation (customer_id, implementation_id, org_id, implementation_stage, implementation_progress_pct,
                 implementation_risk_level, blocker_owner)
-              VALUES (${calm}, ${org}, ${STAGE[0]}, 10, ${RISK[0]}, ${OWNER.at(-1)})`;
+              VALUES (${calm}, ${calm}, ${org}, ${STAGE[0]}, 10, ${RISK[0]}, ${OWNER.at(-1)})`;
   for (const [j, risk] of RISK.slice(1, -1).entries()) {
     await admin`INSERT INTO customers (customer_id, org_id, customer_name) VALUES (${`${calm}-${j}`}, ${org}, 'Calm too')`;
-    await admin`INSERT INTO implementation (customer_id, org_id, implementation_stage, implementation_progress_pct,
+    await admin`INSERT INTO implementation (customer_id, implementation_id, org_id, implementation_stage, implementation_progress_pct,
                   implementation_risk_level, blocker_owner)
-                VALUES (${`${calm}-${j}`}, ${org}, ${STAGE[0]}, 10, ${risk}, ${OWNER.at(-1)})`;
+                VALUES (${`${calm}-${j}`}, ${`${calm}-${j}`}, ${org}, ${STAGE[0]}, 10, ${risk}, ${OWNER.at(-1)})`;
   }
   await admin`INSERT INTO workflow_runs (org_id, run_id, workflow_name, status, updated_at)
               VALUES (${org}, ${`wfr_attention_${org}_old`}, 'probe', 'failed', ${new Date(Date.now() - 72 * hour)})`;

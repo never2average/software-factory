@@ -154,8 +154,8 @@ try {
   } else console.log("  --   (this build's profile declares no optional own field to change)");
 
   console.log("3c. implementation_upsert on an existing rollout keeps what it does not name");
-  await admin`insert into implementation (org_id, customer_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner)
-              values (${W1}, ${C1}, 'UAT', 60, 'Red', 'None')`;
+  await admin`insert into implementation (org_id, customer_id, implementation_id, implementation_stage, implementation_progress_pct, implementation_risk_level, blocker_owner)
+              values (${W1}, ${C1}, ${C1}, 'UAT', 60, 'Red', 'None')`;
   const impl = await fetch(`${base}/api/ops/implementations`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ customerId: C1, implementationOwnerEmail: "owner@example.com", ...(REQUIRED_IMPL_OWN ? { custom: REQUIRED_IMPL_OWN } : {}) }) });
   const [ir] = await admin`select implementation_stage, implementation_progress_pct, implementation_risk_level, implementation_owner_email from implementation where customer_id = ${C1}`;
   check("its stage, progress and risk are not reset to the create defaults", impl.status < 300 && ir.implementation_stage === "UAT" && ir.implementation_progress_pct === 60 && ir.implementation_risk_level === "Red" && ir.implementation_owner_email === "owner@example.com", { status: impl.status, ir });

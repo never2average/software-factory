@@ -102,6 +102,16 @@ const applyRange = async (db, fromIdx, toIdx) => {
   for (const e of journal.entries.filter((x) => x.idx > fromIdx && x.idx <= toIdx)) await db.begin(async (tx) => { for (const s of statementsOf(e.tag)) await tx.unsafe(s); });
 };
 
+/**
+ * Today's app stands in for the release of that time below, and it also reads what LATER journal entries independent
+ * of this change add (0044's implementation.implementation_id): those are applied before its paths run. Each is safe
+ * to apply twice, so the rest of the journal applies them again harmlessly.
+ */
+const APP_NEEDS = [/^\d{4}_implementation_own_id$/];
+const applyAppNeeds = async (db) => {
+  for (const e of journal.entries.filter((x) => APP_NEEDS.some((re) => re.test(x.tag)))) await applyRange(db, e.idx - 1, e.idx);
+};
+
 const scratch = [];
 async function freshDb(label) {
   const name = `ownmig_${label}_${process.pid}`;
@@ -383,6 +393,7 @@ try {
     check("the journal entries after 0028, to 0037, leave every owner pair equal", afterLater.customers.length === 0 && afterLater.solutions.length === 0, afterLater);
     await failClosed(db);
     await checkRls(urlOf(name, "app_rw"), "A at 0037 (fail-closed)");
+    await applyAppNeeds(db);
     await checkAppPaths(urlOf(name, "app_rw"), "A at 0037 (app paths, fail-closed)");
     // Then the rest (0038 drops the originals): every owner 0028 paired is in the neutral column, nothing lost.
     const pairedOwners = await db`select org_id, customer_id, ${OWN} as v from customers order by 1, 2`;

@@ -95,6 +95,9 @@ import { isDeclared } from "@/agent/lib/record-area-records";
 import { recordAreaUi } from "@/lib/record-area-ui";
 import { useRecordAccess } from "./record-access";
 import type { AreaRow } from "@/agent/lib/record-areas";
+import { periodDeclared } from "@/agent/lib/period-area";
+import { PeriodAreaPanel } from "./period-area-panel";
+import { periodAreaUi } from "./period-area-model";
 
 /**
  * The two record areas as THIS deployment names them (docs/DEPLOYMENT_PROFILE.md, `domains`). Every label below
@@ -460,11 +463,19 @@ export function TodosPanel({
   // A record area the profile states in the record-area form is drawn from its definition (./record-area-panel.tsx);
   // any other is today's list below.
   const declared = useMemo(() => ({ deployments: isDeclared("deployments", areas), implementations: isDeclared("implementations", areas) }), [areas]);
+  // The periods, when the profile states them in the record-area form and they are shared by the team: drawn from their
+  // definition (./period-area-panel.tsx). Mode individual keeps its per-person view; any other profile today's.
+  const periodsDeclared = useMemo(() => periodDeclared(areas) && areas.periods.period?.mode !== "individual", [areas]);
   const nav = useMemo(
     () =>
       NAV.map((n) =>
         n.key === "tasks" && TU.redefined
           ? { ...n, label: TU.navLabel, blurb: TU.navBlurb }
+          : n.key === PERIOD_VIEW && periodsDeclared
+            ? (() => {
+                const pu = periodAreaUi(areas);
+                return { ...n, label: pu.navLabel, blurb: pu.blurb || n.blurb };
+              })()
           : (n.key === "deployments" || n.key === "implementations") && declared[n.key]
             ? (() => {
                 const ui = recordAreaUi(n.key, areas, ACCOUNT_LABEL);
@@ -472,7 +483,7 @@ export function TodosPanel({
               })()
             : n,
       ),
-    [TU, declared, areas],
+    [TU, declared, areas, periodsDeclared],
   );
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<TodoView>(resolveTodoView(initialView));
@@ -854,6 +865,33 @@ export function TodosPanel({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {view === "tasks" ? (
           list
+        ) : view === PERIOD_VIEW && PERIOD_UI.enabled && periodsDeclared ? (
+          <PeriodAreaPanel
+            areas={areas}
+            cycles={cycles}
+            todos={todos}
+            authorEmail={authorEmail}
+            role={role}
+            chrome={RECORD_CHROME}
+            onChanged={() => {
+              void cyclesQ.refetch();
+              void refetch();
+            }}
+            onClose={onClose}
+            onOpenTodo={openTodo}
+            onAddTask={(cycleId, title) => opsFetch("/api/ops/todos", { method: "POST", body: JSON.stringify({ title, cycleId, createdBy: authorEmail ?? "web" }) })}
+            onToggleTask={(id, done) => opsFetch(`/api/ops/todos/${id}`, { method: "PATCH", body: JSON.stringify({ ...moveTo(TU, done ? TU.doneState : TU.initialState), actor: authorEmail }) })}
+            renderActions={(c, done, can) => (
+              <PanelActionsMenu
+                shareView={PERIOD_VIEW}
+                shareId={c.id}
+                deleteLabel={`Delete ${periodAreaUi(areas).noun}`}
+                onDelete={!can.delete ? undefined : () => {
+                  void opsFetch(`/api/ops/cycles/${c.id}`, { method: "DELETE" }).then(done).catch(() => {});
+                }}
+              />
+            )}
+          />
         ) : view === PERIOD_VIEW && PERIOD_UI.enabled ? (
           <CyclesManager
             cycles={cycles}

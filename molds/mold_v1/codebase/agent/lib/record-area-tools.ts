@@ -24,6 +24,7 @@ import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { customMergeSql } from "./custom-merge-sql.ts";
 import type { CustomDelta } from "./custom-fields.ts";
 import { RECORD_AREAS } from "./record-areas.generated.ts";
+import { VOCABULARY } from "./agent-vocabulary.ts";
 import { areaView, describeArea, describeField, type AreaRow, type RecordAreas, type RecordField } from "./record-areas.ts";
 import { ACCOUNT_FIELD, recordTitle, recordValues, writableFields, type AccountAreaId } from "./record-area-records.ts";
 import { prepareRecordWrite } from "./record-area-write.ts";
@@ -31,6 +32,7 @@ import { writeOutcome } from "./record-lifecycle-store.ts";
 import { enforced, enteredByOf, memberRole } from "./record-area-store.ts";
 import { permissionsDeclared } from "./record-permissions.ts";
 import { compileRecordQuery, defaultSort, encodeCursor, parseRecordQuery, type AreaTable } from "./record-query.ts";
+import { IMPLEMENTATION_ID, manyPerAccount, namedImplementationId, newImplementationId } from "./implementation-ids.ts";
 
 const TABLE = { deployments, implementations: implementation } as const;
 const tableOf = (id: AccountAreaId) => TABLE[id] as unknown as AreaTable & typeof deployments;
@@ -66,7 +68,9 @@ export function fieldParam(f: RecordField) {
 /** The words a tool says about an area: its noun, what one is, its fields. Built from the definition only. */
 export function areaToolWords(id: AccountAreaId, areas: RecordAreas = RECORD_AREAS) {
   const v = areaView(id, areas);
-  const keyed = id === "deployments" ? ` Each is identified by its account and its \`deploymentId\` ("${v.area.id?.label ?? "id"}").` : " An account has at most one.";
+  const keyed = id === "deployments"
+    ? ` Each is identified by its account and its \`deploymentId\` ("${v.area.id?.label ?? "id"}").`
+    : manyPerAccount(areas) ? ` An account may have several; each is identified by its \`${IMPLEMENTATION_ID}\`.` : " An account has at most one.";
   const fields = writableFields(v);
   const lc = v.lifecycle;
   const states = lc ? ` Its \`${lc.field}\` moves through: ${lc.states.filter((s) => !s.retired).map((s) => `"${s.label}"`).join(" → ")}.` : "";
@@ -77,11 +81,11 @@ export function areaToolWords(id: AccountAreaId, areas: RecordAreas = RECORD_ARE
     ` Sort with \`sort\` ("field" or "-field" for descending). A page holds \`limit\` rows (default 25); pass \`cursor\` from the answer for the next.` +
     ` The fields: ${[`\`${ACCOUNT_FIELD}\``, ...v.visibleFields.map((f) => `\`${f.key}\` ("${f.label ?? f.key}")`)].join(", ")}.${states}${computed.length ? ` Computed, read-only: ${computed.join(", ")}.` : ""}`;
   const upsert =
-    `Create OR update one ${v.noun} (${v.nouns}${v.description ? `: ${v.description.replace(/\.$/, "")}` : ""}).${keyed} Send \`customerId\`${id === "deployments" ? " and `deploymentId`" : ""}, then in \`values\` only the fields that change (null clears one); a new one needs every required field.` +
+    `Create OR update one ${v.noun} (${v.nouns}${v.description ? `: ${v.description.replace(/\.$/, "")}` : ""}).${keyed} Send \`customerId\`${id === "deployments" ? " and `deploymentId`" : manyPerAccount(areas) ? ` and, to change one, its \`${IMPLEMENTATION_ID}\` (leave it out to create a new one)` : ""}, then in \`values\` only the fields that change (null clears one); a new one needs every required field.` +
     ` Checked against this workspace's definition before anything is written; a refusal says what to fix.${states}` +
     (computed.length ? ` Never set ${computed.join(", ")}: computed.` : "") +
     ` Gated on approval since this changes the team's records.` +
-    `\n\n${describeArea(id, areas) ?? ""}`.trimEnd();
+    `\n\n${describeArea(id, areas, VOCABULARY.records.account.singular) ?? ""}`.trimEnd();
   return { v, fields, list, upsert };
 }
 
@@ -90,7 +94,7 @@ function rowForModel(id: AccountAreaId, row: AreaRow, areas: RecordAreas) {
   const v = areaView(id, areas);
   return {
     [ACCOUNT_FIELD]: row.customerId,
-    ...(id === "deployments" ? { deploymentId: row.deploymentId } : {}),
+    ...(id === "deployments" ? { deploymentId: row.deploymentId } : manyPerAccount(areas) ? { [IMPLEMENTATION_ID]: row.implementationId } : {}),
     title: recordTitle(v, row, String(row.displayName ?? row.deploymentId ?? row.customerId)),
     ...(row.displayName ? { displayName: row.displayName } : {}),
     values: recordValues(v, row),
@@ -129,6 +133,9 @@ export function listAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AREA
 /** upsert_<area>, as the definition says it. */
 export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AREAS) {
   const { fields, upsert, v } = areaToolWords(id, areas);
+  // An account holds several implementations (`per_account: "many"`): each is named by its own id
+  // (agent/lib/implementation-ids.ts); without one, a new one is created.
+  const many = id === "implementations" && manyPerAccount(areas);
   const values = z.object(Object.fromEntries(fields.filter((f) => f.key !== "deploymentId").map((f) => [f.key, fieldParam(f)]))).describe(`The ${v.noun}'s fields to set, by key; null clears one.`);
   return defineTool({
     description: upsert,
@@ -136,6 +143,7 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
     inputSchema: z.object({
       customerId: z.string().min(1).describe("The account id."),
       ...(id === "deployments" ? { deploymentId: z.string().min(1).describe(`"${v.area.id?.label ?? "Id"}"${v.area.id?.placeholder ? `, for example ${v.area.id.placeholder}` : ""}.`) } : {}),
+      ...(many ? { [IMPLEMENTATION_ID]: z.string().min(1).optional().describe(`The ${v.noun}'s id, from \`list_implementations\`, to change it. Leave it out to create a new one.`) } : {}),
       values,
     }),
     async execute(input, ctx) {
@@ -143,17 +151,22 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
       const orgId = await orgForSession(ctx);
       const actor = callerEmail(ctx);
       const { customerId, values: given } = input as { customerId: string; deploymentId?: string; values: Record<string, unknown> };
-      const recordId = (input as { deploymentId?: string }).deploymentId;
+      const named = many ? namedImplementationId((input as Record<string, unknown>)[IMPLEMENTATION_ID]) : { id: null };
+      if ("error" in named) throw new Error(`Nothing was written. ${named.error}`);
+      const recordId = id === "deployments" ? (input as { deploymentId?: string }).deploymentId : many ? named.id ?? newImplementationId() : undefined;
       const t = tableOf(id);
-      const where = id === "deployments" ? and(eq(t.orgId, orgId), eq(t.customerId, customerId), eq(deployments.deploymentId, recordId ?? ""))! : and(eq(t.orgId, orgId), eq(t.customerId, customerId))!;
+      const where = id === "deployments"
+        ? and(eq(t.orgId, orgId), eq(t.customerId, customerId), eq(deployments.deploymentId, recordId ?? ""))!
+        : many ? and(eq(t.orgId, orgId), eq(implementation.implementationId, recordId ?? ""))! : and(eq(t.orgId, orgId), eq(t.customerId, customerId))!;
       return withOrgDb(orgId, async (tx) => {
         const [before] = await tx.select().from(t).where(where);
+        if (many && before && (before as AreaRow).customerId !== customerId) throw new Error(`Nothing was written. ${IMPLEMENTATION_ID} ${recordId} is another ${VOCABULARY.records.account.singular}'s ${areaView(id, areas).noun}, not ${customerId}'s.`);
         const body = Object.fromEntries(Object.entries(given ?? {}).filter(([, x]) => x !== undefined));
         if (id === "deployments" && !before) body.deploymentId = recordId;
         // The lifecycle (agent/lib/record-lifecycle.ts), as the routes keep it: who entered the stored state, for four
         // eyes; a refused move throws the rule book's sentence; the move goes to the activity feed with the write.
         const v = areaView(id, areas);
-        const entity = { type: id === "deployments" ? ("deployment" as const) : ("implementation" as const), id: id === "deployments" ? String(recordId) : customerId };
+        const entity = { type: id === "deployments" ? ("deployment" as const) : ("implementation" as const), id: id === "deployments" || many ? String(recordId) : customerId };
         // The caller's role in the workspace, for a transition's `roles` and the area's permissions (read only when the
         // lifecycle is enforced or the area says who may write it).
         const role = enforced(v) || permissionsDeclared(id, areas) ? await memberRole(tx, orgId, actor) : undefined;
@@ -172,7 +185,7 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
           // The account must be this workspace's: the foreign key names (org_id, customer_id), so another workspace's
           // account id is refused, never attached to.
           try {
-            [row] = await tx.insert(t).values({ ...prepared.columns, ...(id === "deployments" ? { deploymentId: recordId } : {}), customerId, custom: prepared.custom, orgId } as never).returning();
+            [row] = await tx.insert(t).values({ ...prepared.columns, ...(id === "deployments" ? { deploymentId: recordId } : { implementationId: recordId ?? customerId }), customerId, custom: prepared.custom, orgId } as never).returning();
           } catch (e) {
             // 23503: the foreign key to the account (org_id, customer_id), however the driver wraps it.
             for (let c: unknown = e; c && typeof c === "object"; c = (c as { cause?: unknown }).cause) {

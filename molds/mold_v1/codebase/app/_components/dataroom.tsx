@@ -395,6 +395,8 @@ interface Customer {
   deployments?: Deployment[];
   solutions?: Solution[];
   implementation?: Implementation;
+  /** Several per account (records.areas.implementations per_account "many"), each with its own id. */
+  implementations?: (Implementation & { implementationId?: string })[];
   tickets?: Ticket[];
   interactions?: Interaction[];
 }
@@ -600,6 +602,20 @@ const SECTION_SHEET: Record<DataroomTab, string> = {
 };
 
 /** One workbook, one sheet per canonical schema in fixed data-model order, from the workspace's own records. */
+/**
+ * An account may hold several implementations (agent/lib/implementation-ids.ts): the workbook answer then carries
+ * `implementations` on every account (GET /api/ops/workbook), and never `implementation`. Read from the answer, so the
+ * data room needs no part of the record definitions in its bundle.
+ */
+const holdsSeveral = (customers: Customer[]) => customers.some((c) => Array.isArray(c.implementations));
+/**
+ * The projects sheet's rows: one per account (its one implementation, or none), as it always was; or, when an account
+ * may hold several, one per implementation, headed by its own id.
+ */
+function implementationRows(customers: Customer[]): { c: Customer; i: (Implementation & { implementationId?: string }) | undefined }[] {
+  return holdsSeveral(customers) ? customers.flatMap((c) => (c.implementations ?? []).map((i) => ({ c, i }))) : customers.map((c) => ({ c, i: c.implementation }));
+}
+
 function buildWorkbook(data: WorkbookData): Sheet[] {
   const customers = data.customers;
   const peopleSeed = data.people;
@@ -1048,6 +1064,7 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
       name: FOLDER.projects,
       head: [
         "customer_id",
+        ...(holdsSeveral(customers) ? ["implementation_id"] : []),
         "rollout_id",
         "launch_scope_solution_ids",
         "implementation_stage",
@@ -1099,60 +1116,61 @@ function buildWorkbook(data: WorkbookData): Sheet[] {
         "implementation_next_step",
         "implementation_last_updated_at",
       ],
-      rows: customers.map((c) => [
+      rows: implementationRows(customers).map(({ c, i }) => [
         c.id,
-        c.implementation?.rolloutId,
-        joinList(c.implementation?.launchScopeSolutionIds),
-        c.implementation?.implementationStage,
-        c.implementation?.implementationOwnerEmail,
-        c.implementation?.rolloutGovernanceStatus,
-        c.implementation?.customerLaunchApproverEmail,
-        c.implementation?.providerLaunchApproverEmail,
-        c.implementation?.launchDecision,
-        c.implementation?.launchDecisionDate,
-        c.implementation?.implementationProgressPct != null
-          ? `${c.implementation.implementationProgressPct}%`
+        ...(holdsSeveral(customers) ? [i?.implementationId] : []),
+        i?.rolloutId,
+        joinList(i?.launchScopeSolutionIds),
+        i?.implementationStage,
+        i?.implementationOwnerEmail,
+        i?.rolloutGovernanceStatus,
+        i?.customerLaunchApproverEmail,
+        i?.providerLaunchApproverEmail,
+        i?.launchDecision,
+        i?.launchDecisionDate,
+        i?.implementationProgressPct != null
+          ? `${i.implementationProgressPct}%`
           : undefined,
-        c.implementation?.implementationRiskLevel,
-        formatPercent(c.implementation?.dataReadinessPct),
-        formatPercent(c.implementation?.integrationReadinessPct),
-        c.implementation?.dataSourceInventoryStatus,
-        c.implementation?.dataAccessStatus,
-        c.implementation?.dataQualityStatus,
-        c.implementation?.connectorProvisioningStatus,
-        c.implementation?.integrationTestStatus,
-        c.implementation?.securityReviewStatus,
-        c.implementation?.privacyReviewStatus,
-        c.implementation?.evalAcceptanceStatus,
-        c.implementation?.acceptanceEvidenceLink,
-        c.implementation?.uatStatus,
-        c.implementation?.trainingStatus,
-        c.implementation?.launchCriteria,
-        c.implementation?.launchCriteriaStatus,
-        formatPercent(c.implementation?.goLiveConfidencePct),
-        c.implementation?.targetGoLiveDate,
-        c.implementation?.actualGoLiveDate,
-        c.implementation?.launchWindowStartAt,
-        c.implementation?.launchWindowEndAt,
-        c.implementation?.runbookStatus,
-        c.implementation?.runbookLink,
-        c.implementation?.supportHandoffStatus,
-        c.implementation?.supportOwnerEmail,
-        c.implementation?.supportChannelRef,
-        c.implementation?.billingReadinessStatus,
-        c.implementation?.entitlementProvisioningStatus,
-        c.implementation?.billingStartDate,
-        c.implementation?.currentMilestone,
-        c.implementation?.currentMilestoneDueDate,
-        c.implementation?.blocker,
-        c.implementation?.blockerOwner,
-        c.implementation?.blockerSeverity,
-        c.implementation?.blockedSinceDate,
-        c.implementation?.riskMitigationPlan,
-        joinList(c.implementation?.criticalBlockerTicketIds),
-        c.implementation?.openBlockerCount != null ? String(c.implementation.openBlockerCount) : undefined,
-        c.implementation?.implementationNextStep,
-        c.implementation?.implementationLastUpdatedAt,
+        i?.implementationRiskLevel,
+        formatPercent(i?.dataReadinessPct),
+        formatPercent(i?.integrationReadinessPct),
+        i?.dataSourceInventoryStatus,
+        i?.dataAccessStatus,
+        i?.dataQualityStatus,
+        i?.connectorProvisioningStatus,
+        i?.integrationTestStatus,
+        i?.securityReviewStatus,
+        i?.privacyReviewStatus,
+        i?.evalAcceptanceStatus,
+        i?.acceptanceEvidenceLink,
+        i?.uatStatus,
+        i?.trainingStatus,
+        i?.launchCriteria,
+        i?.launchCriteriaStatus,
+        formatPercent(i?.goLiveConfidencePct),
+        i?.targetGoLiveDate,
+        i?.actualGoLiveDate,
+        i?.launchWindowStartAt,
+        i?.launchWindowEndAt,
+        i?.runbookStatus,
+        i?.runbookLink,
+        i?.supportHandoffStatus,
+        i?.supportOwnerEmail,
+        i?.supportChannelRef,
+        i?.billingReadinessStatus,
+        i?.entitlementProvisioningStatus,
+        i?.billingStartDate,
+        i?.currentMilestone,
+        i?.currentMilestoneDueDate,
+        i?.blocker,
+        i?.blockerOwner,
+        i?.blockerSeverity,
+        i?.blockedSinceDate,
+        i?.riskMitigationPlan,
+        joinList(i?.criticalBlockerTicketIds),
+        i?.openBlockerCount != null ? String(i.openBlockerCount) : undefined,
+        i?.implementationNextStep,
+        i?.implementationLastUpdatedAt,
       ]),
     },
     {
@@ -1538,7 +1556,7 @@ function sheetsByName(data: WorkbookData): Record<string, Sheet> {
         : s.name === FOLDER.deliveries
           ? withOwnColumns(s, listedOwnFields("deployments"), c.flatMap((x) => x.deployments ?? []))
           : s.name === FOLDER.projects
-            ? withOwnColumns(s, listedOwnFields("implementations"), c.map((x) => x.implementation))
+            ? withOwnColumns(s, listedOwnFields("implementations"), implementationRows(c).map((x) => x.i))
             : s,
     );
   return Object.fromEntries(shaped.map((s) => [s.name, s]));

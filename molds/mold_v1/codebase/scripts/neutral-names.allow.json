@@ -43,7 +43,7 @@
         }
       },
       "ui": {
-        "why": "The web app, its API messages and the libraries behind them (app/, components/, lib/): PR 7b of mold_v1-103 owns these and lowers each ceiling as it takes the word from lib/ui-words.ts (W.account, W.deployments, …) or fills a placeholder. Counted at the commit PR 7a branched from.",
+        "why": "The web app, its API messages and the libraries behind them (app/, components/, lib/): PR 7b of mold_v1-103 owns these and lowers each ceiling as it takes the word from lib/ui-words.ts (W.account, W.deployments, \u2026) or fills a placeholder. Counted at the commit PR 7a branched from.",
         "files": {
           "lib/workflow-runtime.ts": 3
         }
@@ -174,7 +174,8 @@
           "docs/DEPLOYMENT_PROFILE.md",
           "scripts/lib/work-period-probe.mjs",
           "scripts/test-work-periods.mjs",
-          "scripts/test-work-periods-db.mjs"
+          "scripts/test-work-periods-db.mjs",
+          "scripts/test-record-structure.mjs"
         ],
         "why": "The coding agent's two period tools, by their wire names: a saved MCP configuration and a published package call them. Their descriptions take the profile's word; a rename would be an additive alias (setup/workspace-tools.mjs `aliases`), never a replacement."
       },
@@ -185,9 +186,11 @@
           "scripts/lib/rendered-text.mjs",
           "tests/cards.spec.ts",
           "scripts/test-work-periods.mjs",
-          "docs/DEPLOYMENT_PROFILE.md"
+          "docs/DEPLOYMENT_PROFILE.md",
+          "app/preview/record-areas/page.tsx",
+          "tests/period-area.spec.ts"
         ],
-        "why": "The period view's key in a Todos deep link (/?ops=todos&view=…): links people already shared carry it. It is a key, defined once (PERIOD_VIEW in lib/work-periods-ui.ts), never a label."
+        "why": "The period view's key in a Todos deep link (/?ops=todos&view=\u2026): links people already shared carry it. It is a key, defined once (PERIOD_VIEW in lib/work-periods-ui.ts), never a label."
       },
       {
         "pattern": "go-live-sprint",
