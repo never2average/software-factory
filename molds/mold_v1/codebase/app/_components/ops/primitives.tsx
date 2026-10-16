@@ -47,13 +47,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
-  SECTION_META,
   errMessage,
+  sectionMetaFor,
   opsFetch,
   useOpsList,
   type OpsPerson,
   type OpsSection,
 } from "./lib";
+import { useRecordHub } from "./record-hub";
 import {
   BUTTON_INTENT,
   BUTTON_SIZE,
@@ -940,7 +941,7 @@ export function SectionHeaderCard({
     readonly icon?: LucideIcon;
   };
 }) {
-  const meta = SECTION_META[section];
+  const meta = sectionMetaFor(section, useRecordHub());
   const Icon = meta.icon;
   return (
     <div className={cn("flex shrink-0 items-center gap-3 px-4 py-3", SURFACE.card)}>

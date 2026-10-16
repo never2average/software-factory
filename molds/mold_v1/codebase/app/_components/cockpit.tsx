@@ -61,6 +61,7 @@ import { deriveInsights, mergeInsights } from "./insights";
 import { RunStatusDot } from "./ops/detail";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { type ApiWorkflowVersion, activeOrg, authToken, opsFetch, type OpsSection, unkebab } from "./ops/lib";
+import { useRecordHub } from "./ops/record-hub";
 import { pickSubagentName } from "@/lib/subagent-names";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
@@ -1417,7 +1418,7 @@ function Pill({ children }: { readonly children: React.ReactNode }) {
   );
 }
 
-/** One ownership section (Tickets / Deployments / Implementations / TODOs).
+/** One ownership section (Tickets / Deployments / Implementations / the record hub's entries).
  *  A plain section header + rows — no enclosing card. */
 function OwnPanel({
   icon: Icon,
@@ -1737,6 +1738,8 @@ function PersonModal({
   readonly onClose: () => void;
   readonly onOpenOps?: (section: OpsSection, id?: string) => void;
 }) {
+  // The record hub's name and glyph (profiles records.hub): its section here, and a count of its entries.
+  const hub = useRecordHub();
   const [d, setD] = useState<PersonDossier | null>(null);
   const [loading, setLoading] = useState(false);
   const [reload, setReload] = useState(0);
@@ -1790,7 +1793,7 @@ function PersonModal({
       ...tk.map((t) => `- Ticket ${t.id}: ${t.summary} (${t.status}, ${t.priority} priority)`),
       ...dp.map((x) => `- ${DEP.singular} ${x.id}: ${DEP.hidden("environment") ? "" : `${x.env} `}${x.version}, ${DEP.label("healthStatus", "health").toLowerCase()} ${DEP.display("healthStatus", x.health)}, ${DEP.display("releaseStatus", x.status)}`),
       ...im.map((x) => `- ${IMP.singular} ${x.id}: ${IMP.label("implementationStage", "stage").toLowerCase()} ${IMP.display("implementationStage", x.stage)}, ${IMP.label("implementationRiskLevel", "risk").toLowerCase()} ${x.risk}${x.progress != null ? `, ${Math.round(x.progress)}% complete` : ""}`),
-      ...td.map((t) => `- TODO: ${t.title}${t.done ? " (done)" : ""}${t.dueAt ? `, due ${new Date(t.dueAt).toLocaleDateString()}` : ""}`),
+      ...td.map((t) => `- ${hub.Item}: ${t.title}${t.done ? " (done)" : ""}${t.dueAt ? `, due ${new Date(t.dueAt).toLocaleDateString()}` : ""}`),
     ]
       .slice(0, 60)
       .join("\n");
@@ -1862,7 +1865,7 @@ function PersonModal({
   const filteredDeps = SHOW_DEPLOYMENTS ? (d?.deployments ?? []).filter((x) => inAcct(x.customer)) : [];
   const fImpls = SHOW_IMPLEMENTATIONS ? (d?.implementations ?? []).filter((x) => inAcct(x.customer)) : [];
   const fTodos = (d?.todos ?? []).filter((t) => inAcct(t.customer));
-  // Open the task in the Ops Center TODOs (same window), deep-linked to its
+  // Open the task in the Ops Center's record hub (same window), deep-linked to its
   // detail — closing the person modal so the workspace comes forward.
   const openTask = (tid: string) => {
     onOpenOps?.("todos", tid);
@@ -1980,7 +1983,7 @@ function PersonModal({
                                     SHOW_TICKETS ? `${fTickets.length} ticket${fTickets.length === 1 ? "" : "s"}` : null,
                                     SHOW_DEPLOYMENTS ? countOf(filteredDeps.length, DEP) : null,
                                     SHOW_IMPLEMENTATIONS ? countOf(fImpls.length, IMP) : null,
-                                    `${fTodos.length} TODO${fTodos.length === 1 ? "" : "s"}`,
+                                    hub.count(fTodos.length),
                                   ].filter((x): x is string => x !== null),
                                 )}{" "}
                                 on this {W.account}.
@@ -2055,7 +2058,7 @@ function PersonModal({
                       ))}
                     </OwnPanel>
                     ) : null}
-                    <OwnPanel icon={ListTodoIcon} title="TODOs" count={fTodos.length}>
+                    <OwnPanel icon={hub.sectionIcon} title={hub.label} count={fTodos.length}>
                       {fTodos.map((t) => (
                         <OwnRow
                           key={t.id}
@@ -2148,6 +2151,8 @@ function TaskDetail({
   readonly task: CtxItem;
   readonly onOpenOps?: (section: OpsSection, id?: string) => void;
 }) {
+  // The record hub's entries as prose names them ("todos" by default; profiles records.hub).
+  const hubItems = useRecordHub().items;
   const [ticket, setTicket] = useState<TaskTicket | null>(null);
   const [related, setRelated] = useState<TaskRelated[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2262,10 +2267,10 @@ function TaskDetail({
           {/* Related work */}
           <div className="flex flex-col gap-2">
             <span className="font-medium text-2xs text-muted-foreground/60 uppercase tracking-wide">
-              Related todos · {related.length}
+              Related {hubItems} · {related.length}
             </span>
             {related.length === 0 ? (
-              <p className="text-2xs text-muted-foreground/50 italic">No todos linked to this ticket.</p>
+              <p className="text-2xs text-muted-foreground/50 italic">No {hubItems} linked to this ticket.</p>
             ) : (
               <ul className="flex flex-col gap-1">
                 {related.map((r) => (

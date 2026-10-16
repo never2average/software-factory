@@ -946,6 +946,37 @@ form that leaves out a required field with no default; a container that cannot h
 an area other than periods or naming an area a period cannot contain; a target `scope` its period cannot count; a
 `structure` (fixed by the table); an email reminder; `agent.describe` over 1200 characters.
 
+### `records.hub`
+
+**The record hub**: the one screen that holds the record areas (the Ops Center's `todos` section, with its tasks,
+periods and the two account areas' views). Its name is its own, separate from the tasks area's word: the default
+calls the screen "TODOs" and a task "task"; a compliance deployment may call the screen "Obligations Register" and a
+task "obligation".
+
+```jsonc
+"records": { "hub": { "label": "Obligations Register", "icon": "scale" } }
+```
+
+| Key | What it is |
+|---|---|
+| `label` | The screen's name as a person reads it: the sidebar's Ops Center item, the screen's title (the dialog's name), the Control Panel's ownership section in a person's dossier. One line, at most 40 characters, no `{` `}` `<` `>`. Default `"TODOs"`. |
+| `icon` | One of `circle-check`, `list-todo`, `list-checks`, `clipboard-list`, `clipboard-check`, `scale`, `shield-check`, `landmark`, `book-open`, `folder-kanban`, `calendar-check`, `file-check`: the nav item's and the Control Panel section's glyph. `null` (the default) keeps today's: a circle-check on the nav, a list on the section. |
+
+- **Counts of its entries** ("Owns 2 TODOs on this account", the dossier's summary line, a ticket's "Related todos",
+  the account briefing's totals) keep today's "TODO" while neither the hub nor the tasks area is renamed, and take the
+  tasks area's word otherwise ("2 tasks", "2 obligations").
+- **What stays**: the deep-link key (`/?ops=todos`, `&view=<tab>`), the section key `todos`, every route, tool and
+  stored name. They are contracts.
+- **The model**: under a renamed hub the per-turn briefing says what people call the screen and that its entries are
+  what `list_todos` reads and `upsert_todo` writes (verbatim under a relabelling profile); the roster tools'
+  descriptions name its scope filters by the hub's name. Under the default nothing the model reads changes.
+- **Build-time checks** (`agent/lib/record-hub.ts`), each failing the build with `profiles/<file>: records.hub.<key>:
+  <reason>`: an unknown key, an empty, multi-line, padded or over-long name, a name holding `{ } < >`, a glyph outside
+  the list.
+- Compiled into `RECORD_HUB` in `lib/deployment-profile.generated.ts` (`DEPLOYMENT_PROFILE` itself is unchanged);
+  the UI reads it through `useRecordHub()` (`app/_components/ops/record-hub.tsx`). Held by `npm run test:record-hub`
+  and `tests/record-hub.spec.ts`.
+
 ### Choosing the area for a domain concept
 
 The four area ids are the base product's software words. What decides where a domain concept goes is the area's
@@ -1503,6 +1534,8 @@ npm run check:vocabulary           # its static half, in seconds (no build)
 npm run test:ui-vocabulary         # keys in JSON and exports, ops API errors, library rows, unlabelled enum values, the generator during a build; the record words (labels, kinds, the README, the seeders) under the default, the relabelled and a neutral-records profile; the record-word audit
 npm run test:agent-vocabulary      # what the model writes in the profile's words lands in unchanged storage; specialists.exclude moves and restores
 npm run test:custom-fields         # the custom-field validator, the agent's write path, the MCP inputs, the migration; offline
+npm run test:record-hub            # records.hub: the default compiles to today's hub and the model's words are unchanged; a named hub and a redefined tasks area each keep their own word; every bad hub fails with its path; offline
+npx playwright test tests/record-hub.spec.ts     # the nav, the screen's title and the Control Panel's section under "Obligations Register", and the default unchanged
 npm run test:record-areas          # records.areas: an old profile emits exactly what it did (goldens from before record areas), the legacy forms lowered, the worked examples compile, every bad-profile class fails with its path, the view model and the write validator; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run test:work-periods          # work_periods: the generator's rules, each mode's views, words, tools and routes (three builds rendered), the default to the letter; offline

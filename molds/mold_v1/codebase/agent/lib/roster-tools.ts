@@ -12,6 +12,9 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import { getDb, withOrgDb } from "./db/index.ts";
 import { peopleRoster } from "./db/schema.ts";
 import { orgForSession } from "./org-context.ts";
+// The record hub's name (profiles records.hub): the screen whose scope filters the roster serves.
+import { RECORD_HUB } from "./deployment-profile.generated.ts";
+import { hubAttributive } from "./record-hub.ts";
 import { modelFacing } from "./model-facing/tools/model-facing.ts";
 
 function requireDb() {
@@ -22,7 +25,7 @@ function requireDb() {
 
 export const listRosterTool = modelFacing("list_roster", defineTool({
   description:
-    "List the {member} roster — email, name, team, and manager for each {member}. This is the org graph the TODO scope filters ('my reportees' / 'my team') resolve against.",
+    `List the {member} roster — email, name, team, and manager for each {member}. This is the org graph the ${hubAttributive(RECORD_HUB)} scope filters ('my reportees' / 'my team') resolve against.`,
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     const db = requireDb();
@@ -47,7 +50,7 @@ export const listRosterTool = modelFacing("list_roster", defineTool({
 
 export const upsertRosterMemberTool = modelFacing("upsert_roster_member", defineTool({
   description:
-    "Add or update a {member} roster entry — set a person's team and/or who they report to (manager). Keyed by email; only the fields you pass are changed. Use this to build the org graph so the TODOs 'my reportees' and 'my team' scopes work. e.g. 'put alice@example.com on team platform-india reporting to lead@example.com'.",
+    `Add or update a {member} roster entry — set a person's team and/or who they report to (manager). Keyed by email; only the fields you pass are changed. Use this to build the org graph so the ${RECORD_HUB.label} 'my reportees' and 'my team' scopes work. e.g. 'put alice@example.com on team platform-india reporting to lead@example.com'.`,
   approval: once(),
   inputSchema: z.object({
     email: z.string().email().describe("The person's email (the roster key)."),

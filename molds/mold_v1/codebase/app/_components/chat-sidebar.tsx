@@ -28,7 +28,8 @@ import {
   sessionCustomers,
 } from "./chat-shell";
 import type { DataroomTab } from "./dataroom";
-import { OPS_SECTIONS, type OpsSection } from "./ops/lib";
+import { opsSectionsFor, type OpsSection } from "./ops/lib";
+import { useRecordHub } from "./ops/record-hub";
 import { activeOrg, opsFetch } from "./ops/lib";
 import { ThemeToggle } from "./theme-toggle";
 import { NotificationsBell } from "./notifications-bell";
@@ -154,18 +155,7 @@ export function ChatSidebar({
           </li>
 
           {/* Connectors · Workflows · Crons */}
-          {OPS_SECTIONS.map(({ key, label, icon: Icon }) => (
-            <li key={key}>
-              <button
-                type="button"
-                onClick={() => onOpenOps(key)}
-                className="flex w-full items-center gap-2 rounded-md py-1 pr-2 pl-0 font-medium text-foreground/90 text-xs leading-5 transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <Icon className="size-3.5 shrink-0" />
-                {label}
-              </button>
-            </li>
-          ))}
+          <OpsSectionLinks onOpenOps={onOpenOps} />
         </ul>
       </div>
 
@@ -390,5 +380,29 @@ function Avatar({
     <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground text-xs">
       {initials !== "?" ? initials : <UserIcon className="size-4" />}
     </span>
+  );
+}
+
+/**
+ * The Ops Center's sections as the sidebar lists them. The record hub's item (`todos`) carries the profile's name
+ * and glyph (profiles records.hub; ./ops/record-hub.tsx).
+ */
+function OpsSectionLinks({ onOpenOps }: { readonly onOpenOps: (section: OpsSection) => void }) {
+  const sections = opsSectionsFor(useRecordHub());
+  return (
+    <>
+      {sections.map(({ key, label, icon: Icon }) => (
+        <li key={key}>
+          <button
+            type="button"
+            onClick={() => onOpenOps(key)}
+            className="flex w-full items-center gap-2 rounded-md py-1 pr-2 pl-0 font-medium text-foreground/90 text-xs leading-5 transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Icon className="size-3.5 shrink-0" />
+            {label}
+          </button>
+        </li>
+      ))}
+    </>
   );
 }
