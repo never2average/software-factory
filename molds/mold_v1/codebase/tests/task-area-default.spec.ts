@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { redefinedAreas } from "./build-definitions";
 
 /**
  * THE DEFAULT TASKS VIEW DOES NOT MOVE: the REAL TodosPanel through /preview/record-tasks under this build's own
@@ -65,7 +66,14 @@ async function menu(page: Page): Promise<string> {
   return (await el.evaluate((m) => m.outerHTML)).replace(/«[^»]*»|:r[0-9a-z]+:|_r_[0-9a-z]+_|radix-[^\s"]+/g, "ID").replace(/></g, ">\n<");
 }
 
+// The golden is the default Tasks view as <main> draws it under this build's own definitions: the task area's states,
+// words, views and detail, and the side nav beside it, which names every record area in the profile's words. It can
+// only be graded on a build whose record areas ARE the default's; a build that redefines any of them (a pack's profile)
+// draws other words or another Tasks view by design, graded by tests/task-area.spec.ts, and skips here with the reason.
+const REDEFINED = redefinedAreas(["tasks", "deployments", "implementations", "periods"]);
+
 test("the default definition: the Tasks view is the golden one (board, table, menus, detail)", async ({ page }) => {
+  test.skip(REDEFINED.length > 0, `this build's profile redefines ${REDEFINED.join(", ")}; the default Tasks view's golden is graded on a build whose record areas are the default's`);
   await page.clock.setFixedTime(new Date(NOW));
   await mockApi(page);
   await page.goto("/preview/record-tasks");

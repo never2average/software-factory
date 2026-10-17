@@ -27,13 +27,16 @@ import { TONE_CLASS, type AreaRow, type RecordAreas, type RecordField } from "@/
 import { RECORD_AREAS } from "@/agent/lib/record-areas.generated";
 import { ACCOUNT_FIELD, type AccountAreaId } from "@/agent/lib/record-area-records";
 import { prepareRecordWrite } from "@/agent/lib/record-area-write";
-import { listQuery, recordAreaUi, whereOf, type DatePreset, type RecordAreaUi } from "@/lib/record-area-ui";
+import { listChoice, listQuery, listRowOf, listValue, recordAreaUi, whereOf, type DatePreset, type RecordAreaUi } from "@/lib/record-area-ui";
 import type { RecordAccess } from "@/agent/lib/record-permissions";
 import type { RecordMetric } from "@/agent/lib/record-metrics";
 import { useRecordAccess } from "./record-access";
 import { RecordMetricStrip } from "./record-metrics-strip";
 
-/** A list row as GET /api/ops/<area> returns it for a declared area. */
+/**
+ * A list row as GET /api/ops/<area> returns it for a declared area, once read through listRowOf
+ * (lib/record-area-ui.ts): `values` and `custom` are objects even when the answer carried neither.
+ */
 export type RecordAreaRow = {
   id: string;
   /** deployments: the real id when two accounts share one (the list keys the row on account + id). */
@@ -91,7 +94,7 @@ function writeValueOf(f: RecordField, x: FormValue): unknown {
 /** The body that changes one field: a column by key, an own field under `custom`. */
 const fieldBody = (f: RecordField, value: unknown): Record<string, unknown> => (f.column ? { [f.key]: value } : { custom: { [f.key]: value } });
 /** A list row as the rule book reads a record: its columns by key, its own fields under `custom`. */
-const rowOf = (r: RecordAreaRow): AreaRow => ({ ...r.values, displayName: r.displayName, custom: r.custom });
+const rowOf = (r: RecordAreaRow): AreaRow => ({ ...r.values, displayName: r.displayName, custom: r.custom ?? {} });
 
 function hostOf(url: string): string {
   try {
@@ -107,7 +110,7 @@ function FieldValue({ ui, row, keyName }: { readonly ui: RecordAreaUi; readonly 
   if (keyName === ACCOUNT_FIELD) return <>{row.customerLabel ?? row.customer ?? "—"}</>;
   if (keyName === "title") return <>{row.label}</>;
   const f = v.field(keyName);
-  const raw = row.values[keyName];
+  const raw = listValue(row, keyName);
   const text = v.display(keyName, raw);
   if (!f || !text) return <span className="text-muted-foreground/50">—</span>;
   const tone = f.type === "pick_list" ? v.tone(keyName, raw) : undefined;
@@ -225,7 +228,9 @@ export function RecordAreaPanel({
     async (cursor?: string) => {
       try {
         const res = await opsFetch<{ items: RecordAreaRow[]; nextCursor?: string }>(`${endpoint}?${query}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
-        setRows((prev) => uniqueIds(cursor && prev ? [...prev.map((r) => (r.recordId ? { ...r, id: r.recordId } : r)), ...res.items] : res.items));
+        // Every row read the one way: a row with no values (or no own values) shows empty, never breaks the screen.
+        const items = (Array.isArray(res.items) ? res.items : []).map((r) => listRowOf(ui.view, r));
+        setRows((prev) => uniqueIds(cursor && prev ? [...prev.map((r) => (r.recordId ? { ...r, id: r.recordId } : r)), ...items] : items));
         setNext(res.nextCursor ?? null);
         setError(null);
       } catch (e) {
@@ -233,7 +238,7 @@ export function RecordAreaPanel({
       }
       if (!cursor) void loadMetrics();
     },
-    [endpoint, query, loadMetrics],
+    [endpoint, query, loadMetrics, ui],
   );
   useEffect(() => {
     void load();
@@ -269,7 +274,7 @@ export function RecordAreaPanel({
     if (!groupKey || !rows) return null;
     const out = new Map<string, RecordAreaRow[]>();
     for (const r of rows) {
-      const k = groupKey === ACCOUNT_FIELD ? r.customerLabel ?? r.customer ?? "" : v.display(groupKey, r.values[groupKey]);
+      const k = groupKey === ACCOUNT_FIELD ? r.customerLabel ?? r.customer ?? "" : v.display(groupKey, listValue(r, groupKey));
       out.set(k, [...(out.get(k) ?? []), r]);
     }
     return [...out.entries()].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
@@ -298,7 +303,7 @@ export function RecordAreaPanel({
     ),
     kanban: {
       columns: board?.columns ?? [],
-      columnOf: (r: RecordAreaRow) => String(r.values[board?.by ?? ""] ?? ""),
+      columnOf: (r: RecordAreaRow) => (board ? listChoice(v, r, board.by) : ""),
       onMove: (r: RecordAreaRow, col: string) => {
         if (!byField) return;
         // A move this person may not make is not sent (the API would refuse it with the same rule).
@@ -319,10 +324,10 @@ export function RecordAreaPanel({
       ),
     })),
     timeline: {
-      rangeOf: (r: RecordAreaRow) => ({ start: (r.values[ui.timeline.start ?? ""] as string | undefined) ?? null, end: (r.values[ui.timeline.end ?? ""] as string | undefined) ?? null }),
+      rangeOf: (r: RecordAreaRow) => ({ start: (listValue(r, ui.timeline.start ?? "") as string | undefined) ?? null, end: (listValue(r, ui.timeline.end ?? "") as string | undefined) ?? null }),
       labelOf: (r: RecordAreaRow) => r.label,
       toneOf: (r: RecordAreaRow) => {
-        const t = board ? v.tone(board.by, r.values[board.by]) : undefined;
+        const t = board ? v.tone(board.by, listValue(r, board.by)) : undefined;
         return t ? `${TONE_CLASS[t]}/70` : "bg-indigo-500/70";
       },
     },
@@ -453,7 +458,7 @@ function RecordDetail({
   const [picked, setPicked] = useState<Record<string, FormValue>>({});
   useEffect(() => setPicked({}), [row]);
   const { PanelHeader, PanelSection } = chrome;
-  const state = lc ? (row.values[lc.field] as string | undefined) ?? null : null;
+  const state = lc ? listChoice(v, row, lc.field) || null : null;
   const moves = lc && (v.area.lifecycle?.transitions?.length ?? 0) > 0 ? lc.movesFrom(state) : [];
   const lcField = lc ? v.field(lc.field) : undefined;
   const record = rowOf(row);
@@ -501,9 +506,9 @@ function RecordDetail({
                   </Field>
                 ) : (
                   <RecordFieldControl
-                    key={`${f.key}:${JSON.stringify(row.values[f.key] ?? null)}`}
+                    key={`${f.key}:${JSON.stringify(listValue(row, f.key) ?? null)}`}
                     field={f}
-                    value={picked[f.key] ?? formValueOf(f, row.values[f.key])}
+                    value={picked[f.key] ?? formValueOf(f, listValue(row, f.key))}
                     error={errors[f.key]}
                     disabled={busy || !access.field(f.key, record)}
                     onCommit={(x) => {

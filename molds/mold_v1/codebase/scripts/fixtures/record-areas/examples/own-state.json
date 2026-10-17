@@ -1,0 +1,224 @@
+{
+  "$comment": "A test fixture, never shipped: the first account record area declared with its lifecycle on an OWN field (`stage`, stored under `custom`, renamed from `old_stage` with legacy spellings), the board, a group, a filter, a sort, a timeline and a metric all reading it. tests/record-area-panels.spec.ts draws it (/preview/record-areas?profile=own-state) with rows that hold no own values at all: they must show empty, group under the empty bucket and sit in no board column.",
+  "records": {
+    "areas": {
+      "deployments": {
+        "label": {
+          "singular": "Work item",
+          "plural": "Work items"
+        },
+        "description": "One row per piece of work for an account: what it is, where it stands and when it started.",
+        "icon": "file-text",
+        "columns": "listed",
+        "id": {
+          "field": "deploymentId",
+          "label": "Item id",
+          "placeholder": "item-001"
+        },
+        "title": "{deployedVersion}",
+        "fields": {
+          "deployedVersion": {
+            "order": 10,
+            "type": "text",
+            "alias": "name",
+            "label": "Name",
+            "required": true,
+            "search": true
+          },
+          "stage": {
+            "order": 20,
+            "type": "pick_list",
+            "renamed_from": "old_stage",
+            "label": "Stage",
+            "index": "filter",
+            "options": [
+              {
+                "value": "queued",
+                "label": "Queued",
+                "tone": "slate"
+              },
+              {
+                "value": "working",
+                "label": "Working",
+                "tone": "amber"
+              },
+              {
+                "value": "finished",
+                "label": "Finished",
+                "tone": "green"
+              }
+            ],
+            "legacy_values": {
+              "todo": "queued"
+            }
+          },
+          "started_on": {
+            "order": 30,
+            "type": "date",
+            "label": "Started on"
+          },
+          "size": {
+            "order": 40,
+            "type": "number",
+            "label": "Size"
+          },
+          "deployOwnerEmail": {
+            "order": 50,
+            "type": "person",
+            "alias": "owner",
+            "label": "Owner",
+            "default": "{me}"
+          },
+          "releaseStatus": {
+            "hidden": true,
+            "fixed": "in-progress"
+          },
+          "region": {
+            "hidden": true,
+            "fixed": "on-prem"
+          },
+          "environment": {
+            "hidden": true,
+            "fixed": "prod"
+          },
+          "healthStatus": {
+            "order": 60,
+            "type": "pick_list",
+            "label": "Health",
+            "default": "unknown"
+          }
+        },
+        "lifecycle": {
+          "field": "stage",
+          "initial": "queued",
+          "enforce": "warn",
+          "categories": {
+            "queued": "open",
+            "working": "active",
+            "finished": "done"
+          },
+          "transitions": [
+            {
+              "from": [
+                "queued"
+              ],
+              "to": "working",
+              "label": "Start"
+            },
+            {
+              "from": [
+                "working"
+              ],
+              "to": "finished",
+              "label": "Finish"
+            }
+          ]
+        },
+        "relations": {
+          "account": {
+            "required": true
+          },
+          "tasks": true
+        },
+        "views": {
+          "default": "board",
+          "available": [
+            "board",
+            "table",
+            "calendar"
+          ],
+          "table": {
+            "columns": [
+              "account",
+              "deployedVersion",
+              "stage",
+              "started_on",
+              "size",
+              "deployOwnerEmail"
+            ]
+          },
+          "board": {
+            "by": "stage",
+            "card": {
+              "title": "title",
+              "meta": [
+                "started_on",
+                "size"
+              ],
+              "badge": "stage"
+            }
+          },
+          "calendar": {
+            "date": "started_on"
+          },
+          "filters": [
+            {
+              "field": "stage"
+            }
+          ],
+          "sorts": [
+            {
+              "field": "started_on",
+              "dir": "asc",
+              "default": true
+            },
+            {
+              "field": "stage"
+            }
+          ],
+          "group_by": [
+            "account",
+            "stage"
+          ],
+          "detail": {
+            "sections": [
+              {
+                "label": "Item",
+                "fields": [
+                  "deployedVersion",
+                  "stage",
+                  "started_on",
+                  "size",
+                  "deployOwnerEmail"
+                ]
+              }
+            ]
+          },
+          "create": {
+            "fields": [
+              "deploymentId",
+              "deployedVersion",
+              "started_on"
+            ]
+          }
+        },
+        "metrics": [
+          {
+            "id": "working",
+            "label": "Working",
+            "count": {
+              "where": {
+                "stage": "working"
+              }
+            }
+          },
+          {
+            "id": "size",
+            "label": "Total size",
+            "sum": {
+              "field": "size",
+              "where": {
+                "stage": {
+                  "in": [
+                    "queued",
+                    "working"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

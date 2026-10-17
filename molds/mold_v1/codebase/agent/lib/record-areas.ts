@@ -108,7 +108,8 @@ export function areaView(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS) {
       const f = field(key);
       if (!f) return row[key];
       if (f.column) return row[f.key];
-      const custom = row.custom ?? {};
+      // A row with no own values (`custom` absent, null, or not an object) holds none of them: nothing, never a throw.
+      const custom: Record<string, unknown> = row.custom !== null && typeof row.custom === "object" && !Array.isArray(row.custom) ? row.custom : {};
       if (f.key in custom) return custom[f.key];
       return f.renamed_from ? custom[f.renamed_from] : undefined;
     },
