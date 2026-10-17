@@ -221,7 +221,7 @@
       "product_id": "compliance_os",
       "mold_id": "mold_v1",
       "name": "ComplianceOS",
-      "stage": "stamped",
+      "stage": "deployed",
       "target_model": "GLM 5.3",
       "gates": {
         "stamped": [
