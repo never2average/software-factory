@@ -53,7 +53,7 @@ const root = (p) => pathToFileURL(`${process.cwd()}/${p}`).href;
 const { RECORD_AREAS } = await import(root("agent/lib/record-areas.generated.ts"));
 const IMP = RECORD_AREAS.implementations;
 const MANY = IMP.declared === true && IMP.per_account === "many";
-const RENAMED = IMP.declared === true && IMP.fields.control_count?.renamed_from === "controls";
+const RENAMED = IMP.declared === true && [].concat(IMP.fields.control_count?.renamed_from ?? [])[0] === "controls";
 const LABEL = MANY ? "many" : RENAMED ? "renamed" : "one";
 const ssl = /localhost|127\.0\.0\.1/.test(adminUrl) ? false : "require";
 const admin = postgres(adminUrl, { ssl, prepare: false, max: 1, onnotice: () => {} });
@@ -153,15 +153,18 @@ try {
 
   if (RENAMED) {
     // ---------------------------------------------- renamed own fields: rows under the old keys, read by the server
-    // Four rows across two accounts (several on one when an account may hold them; else one each of four accounts).
-    const accounts = MANY ? [CO, CO, CO2, CO2] : [CO, CO2, "regulator-three", "regulator-four"];
+    // Five rows across two accounts (several on one when an account may hold them; else one each of five accounts).
+    const accounts = MANY ? [CO, CO, CO2, CO2, CO2] : [CO, CO2, "regulator-three", "regulator-four", "regulator-five"];
     for (const co of new Set(accounts)) await admin`INSERT INTO customers (customer_id, org_id, customer_name) VALUES (${co}, ${A}, ${co}) ON CONFLICT DO NOTHING`;
     const seeds = [
-      { code: "OLD-Q-150", custom: { framework_code: "OLD-Q-150", controls: 150, cycle: "Quarterly" } },
+      // The newer earlier key is read before the oldest: this row's stale `frequency` is not what it holds.
+      { code: "OLD-Q-150", custom: { framework_code: "OLD-Q-150", controls: 150, cycle: "Quarterly", frequency: "Monthly" } },
       { code: "NEW-A-40", custom: { framework_code: "NEW-A-40", control_count: 40, review_cycle: "Annual" } },
       { code: "OLD-M-5", custom: { framework_code: "OLD-M-5", controls: 5, cycle: "Monthly" } },
       // Both keys: the new one is what it holds (it was written after the rename).
       { code: "BOTH-Q-200", custom: { framework_code: "BOTH-Q-200", controls: 1, cycle: "Monthly", control_count: 200, review_cycle: "Quarterly" } },
+      // Only the oldest keys (written before both renames).
+      { code: "OLDEST-Q-60", custom: { framework_code: "OLDEST-Q-60", control_total: 60, frequency: "Quarterly" } },
     ];
     for (const [i, s] of seeds.entries()) {
       if (HAS_ID) {
@@ -174,27 +177,27 @@ try {
     }
     const codes = (r) => sorted((r.body?.items ?? []).map((i) => i.values?.framework_code));
     const all = await list(ANA);
-    check("the list shows each row's renamed fields under the new keys (old rows included)", all.status === 200 && all.body.items.length === 4 && all.body.items.find((i) => i.values.framework_code === "OLD-Q-150")?.values?.control_count === 150 && all.body.items.find((i) => i.values.framework_code === "BOTH-Q-200")?.values?.review_cycle === "Quarterly", all.body?.items?.map((i) => i.values));
+    check("the list shows each row's renamed fields under the new keys (old rows included)", all.status === 200 && all.body.items.length === 5 && all.body.items.find((i) => i.values.framework_code === "OLD-Q-150")?.values?.control_count === 150 && all.body.items.find((i) => i.values.framework_code === "OLD-Q-150")?.values?.review_cycle === "Quarterly" && all.body.items.find((i) => i.values.framework_code === "OLDEST-Q-60")?.values?.control_count === 60 && all.body.items.find((i) => i.values.framework_code === "OLDEST-Q-60")?.values?.review_cycle === "Quarterly" && all.body.items.find((i) => i.values.framework_code === "BOTH-Q-200")?.values?.review_cycle === "Quarterly", all.body?.items?.map((i) => i.values));
     const quarterly = await list(ANA, where({ review_cycle: "Quarterly" }));
-    check("filtered on a renamed choice: the row stored under the old key is found, a stale old key under a new one is not", codes(quarterly) === "BOTH-Q-200,OLD-Q-150", quarterly.body);
+    check("filtered on a renamed choice: the rows stored under an earlier key (the oldest too) are found, a stale earlier key under a newer one is not", codes(quarterly) === "BOTH-Q-200,OLD-Q-150,OLDEST-Q-60", quarterly.body);
     const monthly = await list(ANA, where({ review_cycle: { in: ["Monthly"] } }));
     check("…`in` likewise (only the old-key row; the row whose new key says otherwise is not)", codes(monthly) === "OLD-M-5", monthly.body);
     const notAnnual = await list(ANA, where({ review_cycle: { ne: "Annual" } }));
-    check("…`ne` likewise", codes(notAnnual) === "BOTH-Q-200,OLD-M-5,OLD-Q-150", notAnnual.body);
+    check("…`ne` likewise", codes(notAnnual) === "BOTH-Q-200,OLD-M-5,OLD-Q-150,OLDEST-Q-60", notAnnual.body);
     const big = await list(ANA, where({ control_count: { gte: 100 } }));
     check("filtered on a renamed number: the old-key row compared as a number", codes(big) === "BOTH-Q-200,OLD-Q-150", big.body);
     const bySort = await list(ANA, "sort=-control_count");
-    check("sorted on a renamed number in the database: old and new keys in one order", (bySort.body?.items ?? []).map((i) => i.values.framework_code).join() === "BOTH-Q-200,OLD-Q-150,NEW-A-40,OLD-M-5", bySort.body?.items?.map((i) => i.values));
+    check("sorted on a renamed number in the database: old and new keys in one order", (bySort.body?.items ?? []).map((i) => i.values.framework_code).join() === "BOTH-Q-200,OLD-Q-150,OLDEST-Q-60,NEW-A-40,OLD-M-5", bySort.body?.items?.map((i) => i.values));
     const unset = await list(ANA, where({ control_count: { set: true } }));
-    check("`set` reads the old key too", unset.body?.items?.length === 4, unset.body);
+    check("`set` reads the earlier keys too", unset.body?.items?.length === 5, unset.body);
     const searched = await list(ANA, "q=Quarterly");
-    check("searched in the database: the renamed choice's old value is found", codes(searched) === "BOTH-Q-200,OLD-Q-150", searched.body);
+    check("searched in the database: the renamed choice's value under an earlier key is found", codes(searched) === "BOTH-Q-200,OLD-Q-150,OLDEST-Q-60", searched.body);
     const large = await list(ANA, where({ scale: "Large" }));
     const js = (all.body?.items ?? []).filter((i) => i.values.scale === "Large").map((i) => i.values.framework_code);
     check("a computed field over a renamed field, filtered in the database, means what the definition evaluates", codes(large) === "BOTH-Q-200,OLD-Q-150" && sorted(js) === codes(large), { sql: codes(large), js });
     const metrics = await call(ANA, "GET", "record-metrics", { query: "area=implementations" });
     const m = Object.fromEntries((metrics.body?.metrics ?? []).map((x) => [x.id, x.value]));
-    check("the metrics count and add up the old-key rows (2 quarterly, 395 controls, 2 large)", metrics.status === 200 && m.quarterly === 2 && m.controls === 395 && m.large === 2, metrics.body);
+    check("the metrics count and add up the earlier-key rows (3 quarterly, 455 controls, 2 large)", metrics.status === 200 && m.quarterly === 3 && m.controls === 455 && m.large === 2, metrics.body);
     // Clearing a renamed field clears the old key too, so the old value does not come back.
     const old = all.body.items.find((i) => i.values.framework_code === "OLD-M-5");
     const cleared = await call(ANA, "PATCH", "implementations", { id: old.id, body: { customerId: old.customer, review_cycle: null } });
@@ -202,6 +205,13 @@ try {
     check("clearing a renamed field removes both keys: the old value does not come back", cleared.status === 200 && !("review_cycle" in after.custom) && !("cycle" in after.custom) && after.custom.controls === 5, { cleared, custom: after?.custom });
     const monthlyAfter = await list(ANA, where({ review_cycle: "Monthly" }));
     check("…and the list no longer finds it by that value", monthlyAfter.body?.items?.length === 0, monthlyAfter.body);
+    // A row under the oldest keys: clearing clears them too.
+    const oldest = all.body.items.find((i) => i.values.framework_code === "OLDEST-Q-60");
+    const clearedOldest = await call(ANA, "PATCH", "implementations", { id: oldest.id, body: { customerId: oldest.customer, review_cycle: null } });
+    const afterOldest = MANY ? await byId(A, "OLDEST-Q-60") : (await rows(A, oldest.customer))[0];
+    check("clearing a field renamed twice removes every earlier key (the oldest too)", clearedOldest.status === 200 && !("frequency" in afterOldest.custom) && !("cycle" in afterOldest.custom) && afterOldest.custom.control_total === 60, { clearedOldest, custom: afterOldest?.custom });
+    const quarterlyAfter = await list(ANA, where({ review_cycle: "Quarterly" }));
+    check("…and it is no longer counted by that value", codes(quarterlyAfter) === "BOTH-Q-200,OLD-Q-150", quarterlyAfter.body);
     // Workspace B: none of it.
     const theirs = await list(BEN, where({ review_cycle: "Quarterly" }));
     const theirMetrics = await call(BEN, "GET", "record-metrics", { query: "area=implementations" });

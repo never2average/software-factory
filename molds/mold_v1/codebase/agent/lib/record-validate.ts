@@ -28,6 +28,7 @@
 import { RECORD_AREAS, type RecordAreaId, type RecordField, type RecordRole } from "./record-areas.generated.ts";
 import { areaView, CATEGORY_STATUS, type AreaRow, type RecordAreas } from "./record-areas.ts";
 import { coerceFieldValue, fieldName } from "./record-values.ts";
+import { earlierKeys, ownValue } from "./own-keys.ts";
 import { checkMove, conflictBody, type LifecycleConflict, type MoveCheck } from "./record-lifecycle.ts";
 
 export { coerceFieldValue, LONG_TEXT_MAX, realDate, TEXT_MAX, type CoercedValue, type CoercibleField } from "./record-values.ts";
@@ -185,10 +186,15 @@ export function validateRecordWrite(areaId: RecordAreaId, input: WriteInput, are
   }
   if (errors.length) return { ok: false, errors };
 
+  // What will be stored: clearing an own field clears every earlier key it is read under too (record-area-write does),
+  // so a value written before a rename is not judged as if it were still there.
   const custom: Record<string, unknown> = { ...storedCustom };
   for (const [k, x] of Object.entries(customDelta)) {
-    if (x === null) delete custom[k];
-    else custom[k] = x;
+    if (x === null) {
+      delete custom[k];
+      const f = v.field(k);
+      for (const old of f && !f.column ? earlierKeys(f) : []) delete custom[old];
+    } else custom[k] = x;
   }
 
   // The lifecycle: the state after the write, its category, the move.
@@ -198,8 +204,12 @@ export function validateRecordWrite(areaId: RecordAreaId, input: WriteInput, are
   if (lc) {
     const own = ownLifecycle;
     const named = own ? lc.field in customDelta : lc.field in columns;
-    const after = own ? custom[lc.field] : named ? columns[lc.field] : before ? before[lc.field] : undefined;
-    const prev = before ? (own ? storedCustom[lc.field] : before[lc.field]) : null;
+    // An own state is read as every reader reads it: its key, else an earlier key (`renamed_from`), and a stored legacy
+    // spelling as the state it stands for (`legacy_values`), so a row written before a rename moves from where it is.
+    const lcField = v.field(lc.field)!;
+    const after = own ? ownValue(custom, lcField) : named ? columns[lc.field] : before ? before[lc.field] : undefined;
+    const stored = before ? (own ? ownValue(storedCustom, lcField) : before[lc.field]) : null;
+    const prev = typeof stored === "string" ? v.canonical(lc.field, stored) : stored;
     const category = v.lifecycle!.categoryOf(after);
     if (category && (named || input.mode === "create")) {
       derived.category = category;

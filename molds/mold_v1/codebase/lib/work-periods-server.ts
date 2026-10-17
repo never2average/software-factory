@@ -20,7 +20,7 @@ import { prepareTaskWrite, taskLifecycleEnforced } from "@/agent/lib/task-area";
 import { permissionsDeclared } from "@/agent/lib/record-permissions";
 import { areaView, type AreaRow } from "@/agent/lib/record-areas";
 import type { RecordRole } from "@/agent/lib/record-areas.generated";
-import { needsEnteredBy } from "@/agent/lib/record-lifecycle";
+import { needsEnteredBy, storedStateOf } from "@/agent/lib/record-lifecycle";
 import { recursOnDone } from "@/agent/lib/task-recurrence";
 import { stageStateOf, storedTask, whoEntered } from "@/agent/lib/record-lifecycle-store";
 import { lifecycleConflictResponse, type TaskLifecycleOutcome } from "@/lib/record-lifecycle-server";
@@ -112,8 +112,8 @@ async function taskLifecycleInputs(orgId: string, taskId: string | null, body: R
     const before = await storedTask(tx, orgId, taskId);
     if (!before) return {};
     const stageState = !lc.own && typeof body.stageId === "string" ? await stageStateOf(tx, orgId, v, taskId, body.stageId) : null;
-    const from = v.get(before, lc.field);
-    const by = typeof from === "string" && needsEnteredBy(v, from) ? await whoEntered(tx, orgId, { type: "task", id: taskId }, v, before, from) : null;
+    const from = storedStateOf(v, before);
+    const by = from !== null && needsEnteredBy(v, from) ? await whoEntered(tx, orgId, { type: "task", id: taskId }, v, before, from) : null;
     return { before, stageState, enteredBy: by };
   });
 }

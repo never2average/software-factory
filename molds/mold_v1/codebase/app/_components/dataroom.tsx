@@ -35,6 +35,7 @@ import { Loading, Skeleton, SkeletonLines } from "@/components/ui/skeleton";
 import { PdfView } from "./pdf-view";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { FOLDER, domainIdOf, type DataroomDomainId } from "@/agent/lib/dataroom-folders";
+import { ownValue } from "@/agent/lib/own-keys";
 import { jsonForPeople } from "@/lib/ui-keys";
 import { W, an, storedValueLabel } from "@/lib/ui-words";
 import { listedOwnFields, orderPhrase, sameKey, sheetColumnKey, workbookHidden, type WorkbookTable, type WorkbookTableInfo } from "@/lib/workbook-fields";
@@ -1603,7 +1604,7 @@ function withOwnColumns(sheet: Sheet, specs: CustomFieldSpec[], owners: ({ custo
   return {
     ...sheet,
     own: specs.map((f) => f.label),
-    rows: sheet.rows.map((r, i) => [...r, ...specs.map((f) => ownCell(owners[i]?.custom?.[f.key], f))]),
+    rows: sheet.rows.map((r, i) => [...r, ...specs.map((f) => ownCell(ownValue(owners[i]?.custom, f), f))]),
   };
 }
 

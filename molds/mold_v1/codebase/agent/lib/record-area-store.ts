@@ -11,7 +11,7 @@ import { orgMembers } from "./db/schema.ts";
 import type * as schema from "./db/schema.ts";
 import type { RecordRole } from "./record-areas.generated.ts";
 import type { AreaRow, AreaView } from "./record-areas.ts";
-import { needsEnteredBy } from "./record-lifecycle.ts";
+import { needsEnteredBy, storedStateOf } from "./record-lifecycle.ts";
 import { whoEntered, type ActivityEntityType } from "./record-lifecycle-store.ts";
 import { DEPLOYMENT_PROFILE } from "./deployment-profile.generated.ts";
 import type { AccountAreaId } from "./record-area-records.ts";
@@ -33,8 +33,8 @@ export async function memberRole(tx: Tx, orgId: string, email: string): Promise<
 /** Who moved a stored record into its state, when a move out of it is four eyes; undefined when nothing needs it. */
 export async function enteredByOf(tx: Tx, orgId: string, v: AreaView, entity: { type: ActivityEntityType; id: string }, before: AreaRow | null | undefined): Promise<string | null | undefined> {
   if (!before || !enforced(v)) return undefined;
-  const from = v.get(before, v.lifecycle!.field);
-  if (typeof from !== "string" || !needsEnteredBy(v, from)) return undefined;
+  const from = storedStateOf(v, before);
+  if (from === null || !needsEnteredBy(v, from)) return undefined;
   return whoEntered(tx, orgId, entity, v, before, from);
 }
 

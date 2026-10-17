@@ -373,6 +373,21 @@ async function phaseStamped() {
   // The roster tool was renamed to list_members (TOOL_ALIASES); a relabelling deployment keeps the name it had.
   const roster = await resolve(tools.listMembersTool);
   await check("list_members is offered as list_analysts only, the name this deployment already called it by", () => assert.deepEqual(Object.keys(roster), ["list_analysts"]));
+  {
+    // A roster entry written before MEMBER_KIND, with the kind it carried then: listed as a member, and the model reads
+    // the current kind, never the stored one (under a profile that keeps the base member word nothing would translate it).
+    const { MEMBER_KIND, LEGACY_MEMBER_KINDS } = await imp("agent/lib/member-kind.ts");
+    const rosterStore = (await imp("agent/lib/dataroom-store.ts")).getDataroomStore((await imp("agent/lib/org-context.ts")).DEFAULT_ORG);
+    const legacyPath = `${S.people}/old-entry-example-com/identity.json`;
+    await rosterStore.write(legacyPath, JSON.stringify({ kind: LEGACY_MEMBER_KINDS[0], email: "old-entry@example.com", name: "Old Entry" }));
+    const listed = await roster.list_analysts.execute({}, ctx);
+    const entry = (listed.roster ?? []).find((r) => r.email === "old-entry@example.com");
+    await check("a roster entry stored with the earlier kind is listed, as kind MEMBER_KIND; its file keeps the stored kind", async () => {
+      assert.ok(entry, JSON.stringify(listed));
+      assert.equal(entry.kind, MEMBER_KIND, JSON.stringify(entry));
+      assert.equal(JSON.parse(await rosterStore.read(legacyPath)).kind, LEGACY_MEMBER_KINDS[0]);
+    });
+  }
   await upsert.upsert_company.execute({
     id: "stamp-co", name: "Stamp Co", accountOwner: "a@example.com",
     portfolioEntry: { portfolioId: "large-caps", portfolioEntryStage: "Kickoff", portfolioEntryProgressPct: 5, portfolioEntryRiskLevel: "Green", blockerOwner: "Company" },

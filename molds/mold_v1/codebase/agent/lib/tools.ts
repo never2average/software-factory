@@ -42,7 +42,7 @@ import { modelFacing } from "./model-facing/tools/model-facing.ts";
 import { HIDDEN_FIELDS, fill } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
 import { manyPerAccount } from "./implementation-ids.ts";
-import { isMemberKind } from "./member-kind.ts";
+import { isMemberKind, MEMBER_KIND } from "./member-kind.ts";
 
 /**
  * The verified caller's email from the session auth, never from the model.
@@ -426,7 +426,9 @@ export const listMembersTool = modelFacing("list_members", defineTool({
           if (!content) return;
           const id = JSON.parse(content) as Record<string, unknown>;
           if (!isMemberKind(id.kind)) return;
-          members.push({ ...id, slug: p.split("/")[1] });
+          // An entry written before MEMBER_KIND keeps its stored kind on disk; the roster lists it as what it is, a
+          // team member, so the model never reads the earlier value (a word the profile may not speak).
+          members.push({ ...id, kind: MEMBER_KIND, slug: p.split("/")[1] });
         } catch {
           /* skip unreadable */
         }

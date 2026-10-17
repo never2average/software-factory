@@ -749,12 +749,17 @@ domain concept" below.
   tags. A field may carry `required` (`true` or `"on_create"`), `default` (a value, `{today}`, `{today+7d}`, `{me}`),
   `min`/`max`, `max_length`, `pattern`, `hidden` with `fixed`, `computed`, `legacy_values`, `renamed_from`, `index`.
   `columns: "listed"` hides every column the area does not name (a hidden required column still needs `fixed`).
-- **A renamed own field** (`renamed_from: "<old key>"`) is read under its key, else under the old key rows written
-  before the rename carry it (`agent/lib/record-areas.ts` `get`), and the server reads it the same way: a list's
-  filters (equality as containment under either key, the GIN index still serving it), sorts, `set`, search, computed
-  fields and metrics read `coalesce(custom -> new, custom -> old)` (`agent/lib/record-query.ts`), so a row stored under
-  the old key is neither skipped nor counted twice. A write stores the new key; clearing the field clears both keys,
-  so the old value does not come back. Only a renamed field reads two keys; every other own field's SQL is unchanged.
+- **A renamed own field** (`renamed_from: "<old key>"`, or a list `["<previous key>", "<the one before>"]`, newest
+  first, for a field renamed more than once) is read under its key, else under each earlier key in order, the first
+  key a row holds winning (`agent/lib/own-keys.ts`, used by `agent/lib/record-areas.ts` `get` and so by every screen,
+  the tools, the lifecycle and the workbook). The server reads it the same way: a list's filters (equality as
+  containment under a key only when no newer key is held, the GIN index still serving it), sorts, `set`, search,
+  computed fields and metrics read `coalesce(custom -> new, custom -> previous, …)` (`agent/lib/record-query.ts`), so a
+  row stored under any earlier key is neither skipped nor counted twice. A move starts from the state the row holds
+  under whichever key (and a stored legacy spelling is read as its state, `legacy_values`, in filters and counts too).
+  A write stores the new key; clearing the field clears every earlier key, so an older value does not come back.
+  Rows are never migrated. An earlier key may not be the field's own key, listed twice, a field of the area or an
+  earlier key of another field. Only a renamed field reads more than one key; every other own field's SQL is unchanged.
 - **How many implementations an account holds** (`records.areas.implementations.per_account`, the implementations
   area only): `"one"` (the default, and what a profile that says nothing gets) keeps one record per account, keyed by
   it, as it always was. `"many"` (a regulator's several compliance frameworks) gives each record its own
@@ -786,7 +791,10 @@ domain concept" below.
   `"{entered_by}"`, whoever moved the record into the state it leaves, so a second person signs off. It is read from
   the activity feed's move line; with none (a record moved before its lifecycle was enforced), it falls back, failing
   closed, to the last person the feed shows changing the record, else to its creator. Only a record with neither (no
-  person in its feed, no creator's email) refuses nobody. `set` stamps values with the move:
+  person in its feed, no creator's email) refuses nobody. The state asked about is the one the move starts from: the
+  stored state under whichever key the record holds it (`renamed_from`), a legacy spelling read as the state it stands
+  for (`legacy_values`), and a move line naming either spelling counts. A stored record whose entrant was never looked
+  up is refused, never let through. `set` stamps values with the move:
   `{me}`, `{today}`, `{today+Nd}`, `{now}` or a value. A record created in a state other than `initial` is a move from
   nothing, allowed only by a `"*"` transition. With no transitions every move is allowed.
   - `"off"` (the default): nothing is read, stamped or written; a write is what it was before lifecycles were enforced.

@@ -14,6 +14,7 @@
  * Pure: no React, no database, no fetch. `areas` is a parameter so a preview page or a test can pass another
  * profile's compiled definitions. It lives under agent/lib so both the agent and the web app can import it.
  */
+import { ownValue } from "./own-keys.ts";
 import { RECORD_AREA_STRUCTURE, RECORD_AREAS, type RecordArea, type RecordAreaStructure, type RecordAreaId, type RecordCategory, type RecordField, type RecordOption, type RecordRole, type RecordTone, type RecordTransition } from "./record-areas.generated.ts";
 
 export type { RecordArea, RecordAreaId, RecordAreaStructure, RecordCategory, RecordField, RecordOption, RecordRole, RecordTone, RecordTransition };
@@ -103,15 +104,14 @@ export function areaView(id: RecordAreaId, areas: RecordAreas = RECORD_AREAS) {
       const f = field(key);
       return (variant === "short" ? f?.short_label ?? f?.label : f?.label) ?? fallback ?? key;
     },
-    /** A field's value on a row: a column by key, an own field under `custom` (or the key older rows carry it under). */
+    /** A field's value on a row: a column by key, an own field under `custom` (or the keys older rows carry it under). */
     get: (row: AreaRow, key: string): unknown => {
       const f = field(key);
       if (!f) return row[key];
       if (f.column) return row[f.key];
       // A row with no own values (`custom` absent, null, or not an object) holds none of them: nothing, never a throw.
-      const custom: Record<string, unknown> = row.custom !== null && typeof row.custom === "object" && !Array.isArray(row.custom) ? row.custom : {};
-      if (f.key in custom) return custom[f.key];
-      return f.renamed_from ? custom[f.renamed_from] : undefined;
+      // Its own key first, then each earlier key (`renamed_from`, agent/lib/own-keys.ts).
+      return ownValue(row.custom, f);
     },
     /** A choice field's choices that may still be picked (retired ones are shown, never offered). */
     options: (key: string): { value: string; label: string; tone?: RecordTone; attention?: boolean }[] =>

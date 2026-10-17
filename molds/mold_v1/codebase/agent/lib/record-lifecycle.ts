@@ -94,10 +94,33 @@ export function enforceOf(v: AreaView): EnforceMode {
   return v.lifecycle?.enforce ?? "off";
 }
 
+/**
+ * The state a stored record is in, as the rules read it: its lifecycle field under whichever key the row holds it
+ * (`renamed_from`), and a stored legacy spelling as the state it stands for (`legacy_values`). The validator moves a
+ * record from this state, so everything that asks about the move (who entered the state, for four eyes) asks about
+ * this one too. null when the record holds no state.
+ */
+export function storedStateOf(v: AreaView, row: AreaRow | null | undefined): string | null {
+  const lc = v.lifecycle;
+  if (!lc || !row) return null;
+  const stored = v.get(row, lc.field);
+  return typeof stored === "string" ? v.canonical(lc.field, stored) : null;
+}
+
+/** A state and every stored spelling the definition reads as it (`legacy_values`): how the feed may have recorded it. */
+export function spellingsOf(v: AreaView, state: string): string[] {
+  const lc = v.lifecycle;
+  const legacy = lc ? v.field(lc.field)?.legacy_values ?? {} : {};
+  const canonical = lc ? v.canonical(lc.field, state) : state;
+  return [canonical, ...Object.keys(legacy).filter((k) => legacy[k] === canonical && k !== canonical)];
+}
+
 /** Does any move out of `from` need to know who entered it (`not_by: "{entered_by}"`)? Only then is it looked up. */
 export function needsEnteredBy(v: AreaView, from: string | null, to?: string): boolean {
   if (from === null) return false;
-  return (v.area.lifecycle?.transitions ?? []).some((t) => t.not_by === ENTERED_BY && (to === undefined || t.to === to) && (t.from === "*" || t.from.includes(from)));
+  // A legacy spelling is the state it stands for, as the validator reads it (storedStateOf).
+  const state = v.lifecycle ? v.canonical(v.lifecycle.field, from) : from;
+  return (v.area.lifecycle?.transitions ?? []).some((t) => t.not_by === ENTERED_BY && (to === undefined || t.to === to) && (t.from === "*" || t.from.includes(state)));
 }
 
 /** A `set` value, resolved: {me} is the actor, {today}/{today+Nd} a day (a column's datetime is that day's morning), {now} the time. */
@@ -169,7 +192,13 @@ export function checkMove(v: AreaView, input: MoveInput): MoveCheck {
 
 /** Is the caller the person `not_by` names: who entered the state, or the person field's stored or new value? */
 function notByHits(v: AreaView, notBy: string, input: MoveInput): boolean {
-  if (notBy === ENTERED_BY) return Boolean(input.enteredBy && same(input.enteredBy, input.actor));
+  if (notBy === ENTERED_BY) {
+    // Never looked up (undefined) for a stored record: who entered its state is unknown, so the move is refused rather
+    // than let through. `null` is the documented answer of a lookup that found nobody (no person in the feed, no
+    // creator's email), and bars nobody.
+    if (input.enteredBy === undefined) return Boolean(input.before);
+    return Boolean(input.enteredBy && same(input.enteredBy, input.actor));
+  }
   const people = [input.before ? v.get(input.before, notBy) : undefined, v.get(input.row, notBy)].flatMap((x) => (Array.isArray(x) ? x : [x]));
   return people.some((p) => same(p, input.actor));
 }

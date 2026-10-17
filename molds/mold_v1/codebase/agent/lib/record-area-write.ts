@@ -14,6 +14,7 @@
 import { RECORD_AREAS, type RecordRole } from "./record-areas.generated.ts";
 import { areaView, type AreaRow, type RecordAreas } from "./record-areas.ts";
 import { validateRecordWrite, type TransitionCheck } from "./record-validate.ts";
+import { earlierKeys } from "./own-keys.ts";
 import { warningOf, type LifecycleConflict, type MoveCheck, type WriteWarning } from "./record-lifecycle.ts";
 import { CHOICE_MEANINGS } from "./customer-schema.ts";
 import { DOMAIN_FIELDS } from "./deployment-profile.generated.ts";
@@ -133,10 +134,10 @@ export function prepareRecordWrite(
   for (const [k, x] of Object.entries(r.customDelta)) {
     if (x === null) {
       clear.push(k);
-      // A field declared with `renamed_from` reads the old key when the new one is absent: clearing it clears both,
-      // or the value written before the rename would show (and be filtered on) again.
-      const old = v.field(k)?.renamed_from;
-      if (old && !clear.includes(old)) clear.push(old);
+      // A field declared with `renamed_from` reads an earlier key when its own is absent: clearing it clears every
+      // earlier key too, or a value written before a rename would show (and be filtered on) again.
+      const f = v.field(k);
+      for (const old of f ? earlierKeys(f) : []) if (!clear.includes(old)) clear.push(old);
     } else set[k] = x;
   }
   const custom: Record<string, unknown> = { ...set };
