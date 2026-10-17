@@ -153,6 +153,8 @@ export interface CustomFieldSpec {
   help?: string;
   /** Also a column / a chip on the area's list, not only on the form and the detail card. */
   show_in_list?: boolean;
+  /** Raised from a record area's own field renamed after rows were written: the earlier key(s), newest first. */
+  renamed_from?: string | string[];
 }
 export type DomainArea = "deployments" | "implementations";
 /** A record that can carry custom fields: the two redefinable areas and the account record itself. */

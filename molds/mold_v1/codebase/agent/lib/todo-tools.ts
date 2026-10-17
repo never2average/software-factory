@@ -21,7 +21,7 @@ import { areaView, describeArea, describeField, describeStructure, periodComplet
 import { prepareTaskWrite, taskCustom, taskLifecycleEnforced } from "./task-area.ts";
 import { permissionsDeclared } from "./record-permissions.ts";
 import { periodRefusal, taskDeleteRefusal } from "./record-permissions-store.ts";
-import { needsEnteredBy, type NextOccurrence } from "./record-lifecycle.ts";
+import { needsEnteredBy, storedStateOf, type NextOccurrence } from "./record-lifecycle.ts";
 import { recursOnDone } from "./task-recurrence.ts";
 import { recurAfterWrite } from "./task-recurrence-run.ts";
 import { storedTask, whoEntered, writeOutcome } from "./record-lifecycle-store.ts";
@@ -155,8 +155,8 @@ async function lifecycleInputs(orgId: string, actor: string, id: string | null) 
   const lc = TASKS.lifecycle!;
   return withOrgDb(orgId, async (tx) => {
     const before = await storedTask(tx, orgId, id);
-    const from = before ? TASKS.get(before, lc.field) : null;
-    const by = before && typeof from === "string" && needsEnteredBy(TASKS, from) ? await whoEntered(tx, orgId, { type: "task", id }, TASKS, before, from) : null;
+    const from = storedStateOf(TASKS, before);
+    const by = before && from !== null && needsEnteredBy(TASKS, from) ? await whoEntered(tx, orgId, { type: "task", id }, TASKS, before, from) : null;
     return { role, before, enteredBy: by };
   });
 }

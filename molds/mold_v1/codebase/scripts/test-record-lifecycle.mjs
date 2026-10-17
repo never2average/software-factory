@@ -116,13 +116,15 @@ const RULES = [
   ["roles: an admin may cancel", pipe, "update", { status: "cancelled", reason: "duplicate" }, { actor: BO, role: "admin", before: task("open") }, null],
   ["roles: no role known is no role", pipe, "update", { status: "cancelled", reason: "duplicate" }, { actor: BO, before: task("open") }, "roles"],
   ["requires: signing off needs a due date", pipe, "update", { status: "done" }, { actor: BO, role: "member", before: task("in_progress", { dueAt: null }) }, "requires"],
-  ["requires: …given in the same write, it may", pipe, "update", { status: "done", dueAt: "2026-10-30T09:00:00.000Z" }, { actor: BO, role: "member", before: task("in_progress", { dueAt: null }) }, null],
+  // Sign off is also four eyes: a real caller has looked up who entered the state (here someone else), as every door does.
+  ["requires: …given in the same write, it may", pipe, "update", { status: "done", dueAt: "2026-10-30T09:00:00.000Z" }, { actor: BO, role: "member", before: task("in_progress", { dueAt: null }), enteredBy: ANA }, null],
   ["requires_comment: blocking needs a comment", pipe, "update", { status: "blocked" }, { actor: BO, role: "member", before: task("in_progress") }, "requires_comment"],
   ["requires_comment: a blank one is none", pipe, "update", { status: "blocked", reason: "  " }, { actor: BO, role: "member", before: task("in_progress") }, "requires_comment"],
   ["requires_comment: with a reason, it may", pipe, "update", { status: "blocked", reason: "waiting on the bank" }, { actor: BO, role: "member", before: task("in_progress") }, null],
   ["not_by {entered_by}: who started it may not sign it off", pipe, "update", { status: "done" }, { actor: ANA, role: "admin", before: task("in_progress"), enteredBy: "Ana@Example.com" }, "not_by"],
   ["not_by {entered_by}: a second person may", pipe, "update", { status: "done" }, { actor: BO, role: "member", before: task("in_progress"), enteredBy: ANA }, null],
   ["not_by {entered_by}: nobody known to have entered it bars nobody", pipe, "update", { status: "done" }, { actor: ANA, role: "member", before: task("in_progress"), enteredBy: null }, null],
+  ["not_by {entered_by}: never looked up for a stored record is not known, so refused (never let through)", pipe, "update", { status: "done" }, { actor: ANA, role: "member", before: task("in_progress") }, "not_by"],
   ["not_by a person field: the owner may not mark it complied", obl, "update", { custom: { state: "closed" } }, { actor: ANA, role: "admin", before: ob("under_review") }, "not_by"],
   ["not_by a person field: …nor by handing it to someone else in the same write", obl, "update", { custom: { state: "closed" }, assignee: BO }, { actor: ANA, role: "admin", before: ob("under_review") }, "not_by"],
   ["not_by a person field: an admin who is not the owner may", obl, "update", { custom: { state: "closed" } }, { actor: BO, role: "admin", before: ob("under_review") }, null],
@@ -390,6 +392,54 @@ await check("a period's move: roles, four eyes, a comment, the {now} stamp; stri
   assert.equal(off.ok, true);
   assert.equal(off.lifecycle, null);
   assert.deepEqual(off.columns, { state: "closed" }, "off: no stamp");
+});
+
+/* ------------------------------------------------------------------------------------------------ 8. a legacy spelling */
+console.log("8. Four eyes on a record that stores its state in a legacy spelling (legacy_values), in every area");
+// The validator reads a stored legacy spelling as the state it stands for; whoever asks who entered that state must ask
+// about the same state, or the four-eyes lookup is skipped and the person who entered it signs it off (PR #192 review).
+const legacyTasks = compile([PIPELINE, enforce("strict"), ["53-legacy.json", { records: { areas: { tasks: { fields: { status: { legacy_values: { doing: "in_progress" } } } } } } }]]);
+const legacyPeriods = compile([PERIODS_FIX, ["53-legacy.json", { records: { areas: { periods: { fields: { state: { legacy_values: { running: "active" } } } } } } }]]);
+const legacyItems = compile([["50-own-state.json", join(EX, "own-state.json")], ["53-four-eyes.json", { records: { areas: { deployments: { fields: { stage: { renamed_from: ["old_stage", "first_stage"] } }, lifecycle: { enforce: "strict", transitions: [{ from: ["queued"], to: "working", label: "Start", not_by: "{entered_by}" }, { from: ["working"], to: "finished", label: "Finish" }] } } } } }]]);
+await check("the three fixtures compile (a legacy spelling on each lifecycle field; the work item's state renamed twice)", () => {
+  for (const r of [legacyTasks, legacyPeriods, legacyItems]) assert.equal(r.rc, 0, r.err);
+});
+const { prepareRecordWrite } = await import("../agent/lib/record-area-write.ts");
+const { preparePeriodWrite } = await import("../agent/lib/period-area.ts");
+const PATHS = [
+  // [area, view, the stored row in a legacy spelling, the state it stands for, the legacy spelling, the move, write(who)]
+  ["tasks", areaView("tasks", legacyTasks.areas ?? undefined), task("doing"), "in_progress", "doing",
+    (who) => prepareTaskWrite("update", { status: "done" }, { now: NOW, role: "member", before: task("doing"), ...who }, legacyTasks.areas)],
+  ["periods", areaView("periods", legacyPeriods.areas ?? undefined), { name: "Week 42", state: "running", createdBy: ANA, startsAt: null }, "active", "running",
+    (who) => preparePeriodWrite("update", { state: "closed" }, { now: NOW, role: "member", before: { name: "Week 42", state: "running", createdBy: ANA, startsAt: null }, ...who }, legacyPeriods.areas)],
+  ["deployments", areaView("deployments", legacyItems.areas ?? undefined), { customerId: "acme", deploymentId: "item-1", deployedVersion: "First", releaseStatus: "in-progress", region: "on-prem", environment: "prod", healthStatus: "unknown", custom: { first_stage: "todo" } }, "queued", "todo",
+    (who) => prepareRecordWrite("deployments", "update", { deploymentId: "item-1", custom: { stage: "working" } }, { now: NOW, role: "member", before: { customerId: "acme", deploymentId: "item-1", deployedVersion: "First", releaseStatus: "in-progress", region: "on-prem", environment: "prod", healthStatus: "unknown", custom: { first_stage: "todo" } }, ...who }, legacyItems.areas)],
+];
+const refusedBy = (r) => (r.ok ? null : r.conflict?.broken?.map((b) => b.rule).join(",") ?? r.errors?.join(" "));
+for (const [area, v, row, state, spelling, move] of PATHS) {
+  await check(`${area}: the stored "${spelling}" is the state "${state}" for four eyes: looked up, and found in the feed under either spelling`, () => {
+    assert.equal(L.storedStateOf(v, row), state);
+    assert.equal(L.needsEnteredBy(v, L.storedStateOf(v, row)), true, "the lookup is not skipped");
+    assert.equal(L.needsEnteredBy(v, spelling), true, "nor when asked with the stored spelling");
+    assert.deepEqual(L.spellingsOf(v, state), [state, spelling], "the feed's move line may name either");
+    assert.deepEqual(L.spellingsOf(v, spelling), [state, spelling]);
+  });
+  await check(`${area}: who entered "${spelling}" cannot sign it off; someone else can; not known (never looked up) is refused`, () => {
+    assert.equal(refusedBy(move({ actor: ANA, enteredBy: ANA })), "not_by");
+    assert.equal(refusedBy(move({ actor: ANA, enteredBy: "Ana@Example.com" })), "not_by", "the same person in another case");
+    assert.equal(refusedBy(move({ actor: BO, enteredBy: ANA })), null);
+    assert.equal(refusedBy(move({ actor: ANA })), "not_by");
+    assert.equal(refusedBy(move({ actor: ANA, enteredBy: null })), null, "a lookup that found nobody bars nobody (docs/DEPLOYMENT_PROFILE.md)");
+  });
+}
+await check("clearing a renamed lifecycle field judges what will be stored: no earlier key stands in for it", () => {
+  const v = areaView("deployments", legacyItems.areas);
+  const before = { customerId: "acme", deploymentId: "item-1", deployedVersion: "First", releaseStatus: "in-progress", region: "on-prem", environment: "prod", healthStatus: "unknown", custom: { old_stage: "working", first_stage: "todo" } };
+  const r = validateRecordWrite("deployments", { mode: "update", before, patch: { custom: { stage: null } }, actor: BO, role: "member", now: NOW }, legacyItems.areas);
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.equal("old_stage" in r.custom || "first_stage" in r.custom, false, JSON.stringify(r.custom));
+  assert.equal(v.get({ custom: r.custom }, "stage"), undefined, "the record holds no state once cleared");
+  assert.equal(r.derived.category, undefined, "no category is derived from a stale earlier key");
 });
 
 console.log(process.exitCode ? `test-record-lifecycle: FAILED (${passed} passed)` : `test-record-lifecycle: all ${passed} checks passed`);

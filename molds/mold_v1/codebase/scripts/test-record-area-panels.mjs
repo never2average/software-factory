@@ -384,6 +384,88 @@ await check("the search: every word over the searchable fields, the caller's tex
   assert.ok(!r.where.sql.includes("q2") && !r.where.sql.includes("off"), r.where.sql);
 });
 
+// --- 6b. a field renamed twice ---------------------------------------------------------------------------------------
+// `renamed_from` as a list, newest first: the own-state example's `stage` was `old_stage`, and before that `first_stage`.
+// A row that still holds only the oldest key reads, groups, filters, counts and moves like a row written today.
+console.log("6b. A field renamed twice: rows under the oldest key still read, filter, group, count and move");
+const TWICE_DIR = mkdtempSync(join(tmpdir(), "record-area-twice-"));
+const twiceProfile = (mutate) => {
+  const doc = read(join(EX, "own-state.json"));
+  mutate(doc.records.areas.deployments.fields);
+  const file = join(TWICE_DIR, `p-${Math.random().toString(36).slice(2)}.json`);
+  writeFileSync(file, JSON.stringify(doc));
+  return file;
+};
+/** The generator's refusal for a profile, or null when it compiles. */
+const genRefusal = (file) => {
+  const dir = mkdtempSync(join(tmpdir(), "record-area-panels-"));
+  try {
+    cpSync(join(ROOT, "profiles/00-default.json"), join(dir, "00-default.json"));
+    cpSync(file, join(dir, "50-a.json"));
+    const r = spawnSync(process.execPath, [...NODE, join(ROOT, "scripts/gen-deployment-profile.mjs"), "--print-areas"], { cwd: ROOT, encoding: "utf8", env: { ...process.env, PROFILES_DIR: dir, NODE_NO_WARNINGS: "1" }, maxBuffer: 64 * 1024 * 1024 });
+    return r.status === 0 ? null : r.stderr;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+let TWICE = null;
+await check("a list of earlier keys compiles, kept in order", () => {
+  TWICE = areasOf([["50-a.json", twiceProfile((f) => { f.stage.renamed_from = ["old_stage", "first_stage"]; })]]);
+  assert.deepEqual(TWICE.deployments.fields.stage.renamed_from, ["old_stage", "first_stage"]);
+});
+await check("a list the validator refuses: the field's own key, a key listed twice, a key still a field, a key another field reads", () => {
+  for (const [mutate, why] of [
+    [(f) => { f.stage.renamed_from = ["old_stage", "stage"]; }, /"stage" is this field's own key/],
+    [(f) => { f.stage.renamed_from = ["old_stage", "old_stage"]; }, /"old_stage" is listed twice/],
+    [(f) => { f.stage.renamed_from = ["old_stage", "size"]; }, /"size" is still a field of this area/],
+    [(f) => { f.stage.renamed_from = ["old_stage", "first_stage"]; f.started_on.renamed_from = "first_stage"; }, /"first_stage" is also an earlier key of "(stage|started_on)"/],
+    [(f) => { f.stage.renamed_from = []; }, /renamed_from/],
+  ]) {
+    const refusal = genRefusal(twiceProfile(mutate));
+    assert.ok(refusal && why.test(refusal), `${why}: ${refusal}`);
+  }
+});
+await check("a row holding only the oldest key reads as the field, its legacy spelling as its state, in the right column and group", () => {
+  const v = areaView("deployments", TWICE);
+  const oldest = { customerId: "acme", deploymentId: "item-1", deployedVersion: "First", custom: { first_stage: "todo" } };
+  assert.equal(v.get(oldest, "stage"), "todo");
+  assert.equal(v.categoryOfRow(oldest), "open", "its state's category");
+  assert.equal(recordValues(v, oldest).stage, "todo");
+  const r = listRowOf(v, { id: "x", custom: { first_stage: "todo" } });
+  assert.equal(listValue(r, "stage"), "todo");
+  assert.equal(listChoice(v, r, "stage"), "queued", "the board column of the state it stands for");
+  assert.equal(v.display("stage", listValue(r, "stage")), "Queued", "grouped under that state's label");
+  // In order: the field's own key, then the newer earlier key, then the oldest; a key held with null holds "cleared".
+  assert.equal(v.get({ custom: { old_stage: "working", first_stage: "todo" } }, "stage"), "working");
+  assert.equal(v.get({ custom: { stage: "finished", old_stage: "working", first_stage: "todo" } }, "stage"), "finished");
+  assert.equal(v.get({ custom: { stage: null, first_stage: "todo" } }, "stage"), null);
+  assert.equal(v.get({ custom: { size: 3 } }, "stage"), undefined);
+  // Counted where the screen counts: open work.
+  const rows = [oldest, { custom: { old_stage: "finished" } }, { custom: { stage: "working" } }, { custom: {} }];
+  assert.deepEqual(rows.map((x) => v.categoryOfRow(x)), ["open", "done", "active", null]);
+});
+await check("the server query reads the keys in order: filters, sorts and counts see the oldest key; a newer key stops it", () => {
+  const { where, order } = render("deployments", { where: { stage: "queued" }, sort: "stage" }, TWICE, deployments);
+  // Equality: the own key, else the newer earlier key with no own key, else the oldest with neither newer key.
+  assert.match(where.sql, /"deployments"\."custom" @> \$\d+::jsonb or \(not jsonb_exists\("deployments"\."custom", \$\d+::text\) and "deployments"\."custom" @> \$\d+::jsonb\) or \(not jsonb_exists\("deployments"\."custom", \$\d+::text\) and not jsonb_exists\("deployments"\."custom", \$\d+::text\) and "deployments"\."custom" @> \$\d+::jsonb\)/, where.sql);
+  for (const k of ["stage", "old_stage", "first_stage"]) assert.ok(where.params.includes(JSON.stringify({ [k]: "queued" })), `${k}: ${JSON.stringify(where.params)}`);
+  assert.match(order[0], /coalesce\("deployments"\."custom" -> \$1::text, "deployments"\."custom" -> \$2::text, "deployments"\."custom" -> \$3::text\)/, order[0]);
+  const cat = render("deployments", { where: { stage: { category: "open" } } }, TWICE, deployments);
+  assert.ok(cat.where.params.includes(JSON.stringify({ first_stage: "queued" })) && cat.where.params.includes(JSON.stringify({ first_stage: "todo" })), `a legacy spelling under the oldest key counts: ${JSON.stringify(cat.where.params)}`);
+});
+await check("a move from a state stored under the oldest key starts where the row is; clearing clears every key", () => {
+  const before = { customerId: "acme", deploymentId: "item-1", deployedVersion: "First", releaseStatus: "in-progress", region: "on-prem", environment: "prod", healthStatus: "unknown", custom: { first_stage: "todo" } };
+  const moved = prepareRecordWrite("deployments", "update", { deploymentId: "item-1", custom: { stage: "working" } }, { actor: "a@b.co", before }, TWICE);
+  assert.ok(moved.ok, JSON.stringify(moved));
+  assert.equal(moved.transition?.from, "queued", "from the oldest key's legacy spelling, read as its state");
+  assert.equal(moved.transition?.allowed, true, "Start is a listed move from Queued");
+  assert.deepEqual(moved.customDelta?.set, { stage: "working" }, "a write stores the field's own key");
+  const cleared = prepareRecordWrite("deployments", "update", { deploymentId: "item-1", custom: { stage: null } }, { actor: "a@b.co", before }, TWICE);
+  assert.ok(cleared.ok, JSON.stringify(cleared));
+  assert.deepEqual([...cleared.customDelta.clear].sort(), ["first_stage", "old_stage", "stage"]);
+});
+rmSync(TWICE_DIR, { recursive: true, force: true });
+
 // --- 7. the per-area tools -------------------------------------------------------------------------------------------
 console.log("7. The per-area tools, named and described from the definition");
 await check("under the coverage example: list_coverage_reports and upsert_coverage_report, in the definition's words; nothing else moved", () => {

@@ -261,8 +261,22 @@
           }
         },
         "renamed_from": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,39}$"
+          "$comment": "Own fields: the key rows written before a rename carry the value under, or a list of them, newest first (a field renamed twice lists both). Read after the field's own key, in order.",
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,39}$"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,39}$"
+              },
+              "minItems": 1,
+              "maxItems": 10
+            }
+          ]
         },
         "min": {
           "type": "number"

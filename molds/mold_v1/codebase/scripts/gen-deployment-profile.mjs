@@ -218,14 +218,15 @@ const FIELD_SPEC_KEYS = ["label", "short_label", "help", "placeholder", "hidden"
  * `account_fields.custom_fields`). The same rules wherever a list is declared; `builtIn` is every key the record
  * already has, in any spelling, so an own field can never shadow a real one.
  */
-function checkCustomFields(at, list, builtInKeys, table, relabelAt) {
+function checkCustomFields(at, list, builtInKeys, table, relabelAt, raised = false) {
   if (!Array.isArray(list)) fail(`${at}.custom_fields must be a list of fields (an empty list when the record has none)`);
   const builtIn = new Set([...builtInKeys].flatMap((k) => [k, snake(k), k.toLowerCase()]));
   const seenKeys = new Set(); const seenLabels = new Map();
   list.forEach((f, i) => {
     const here = `${at}.custom_fields[${i}]`;
     if (!isObj(f)) fail(`${here} must be an object with a key, a label and a type`);
-    for (const k of Object.keys(f)) if (!CUSTOM_FIELD_KEYS.includes(k)) fail(`${here}.${k}: unknown key (a custom field takes ${CUSTOM_FIELD_KEYS.join(", ")})`);
+    // `renamed_from` is carried only by a list raised from a record area (checked there, scripts/lib/record-areas.mjs).
+    for (const k of Object.keys(f)) if (!CUSTOM_FIELD_KEYS.includes(k) && !(raised && k === "renamed_from")) fail(`${here}.${k}: unknown key (a custom field takes ${CUSTOM_FIELD_KEYS.join(", ")})`);
     if (typeof f.key !== "string" || !/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(f.key) || f.key.length > 40) fail(`${here}.key must be snake_case: lowercase letters, digits and single underscores, starting with a letter, at most 40 characters (for example "target_price")`);
     if (builtIn.has(f.key)) fail(`${here}.key: "${f.key}" is already a built-in field of the ${table} table. ${relabelAt ? `Relabel that one under ${relabelAt}, or pick another key` : "Pick another key"}`);
     if (seenKeys.has(f.key)) fail(`${here}.key: "${f.key}" is declared twice in ${at}.custom_fields; a key names one field`);
@@ -383,7 +384,7 @@ for (const area of Object.keys(AREAS)) {
   } else if (d.kinds.length) fail(`${at}.kind_field must name the field that carries the kinds`);
   // custom_fields: the deployment's OWN fields on the area, stored by key in the table's `custom` column and
   // validated on every write by agent/lib/custom-fields.ts. No built-in column is involved, so none may be shadowed.
-  checkCustomFields(at, d.custom_fields, new Set([...Object.keys(known), ...SYSTEM_KEYS]), AREAS[area][1], `${at}.fields`);
+  checkCustomFields(at, d.custom_fields, new Set([...Object.keys(known), ...SYSTEM_KEYS]), AREAS[area][1], `${at}.fields`, freshBy.has(area));
   if (area === "implementations") {
     if (d.group_by !== null && (!known[d.group_by]?.column || known[d.group_by].type !== "text")) fail(`${at}.group_by: "${d.group_by}" must be a free-text column of the implementation table`);
     if (d.group_by !== null && d.fields[d.group_by]?.hidden) fail(`${at}.group_by: "${d.group_by}" is hidden`);
@@ -606,8 +607,8 @@ export interface RecordField {
   options?: RecordOption[];
   /** A stored spelling -> the option value it is read as. */
   legacy_values?: Record<string, string>;
-  /** Own fields: the key older rows carry the value under. */
-  renamed_from?: string;
+  /** Own fields: the key older rows carry the value under, or a list of them, newest first (agent/lib/own-keys.ts). */
+  renamed_from?: string | string[];
   min?: number;
   max?: number;
   max_length?: number;
@@ -876,6 +877,8 @@ export interface CustomFieldSpec {
   help?: string;
   /** Also a column / a chip on the area's list, not only on the form and the detail card. */
   show_in_list?: boolean;
+  /** Raised from a record area's own field renamed after rows were written: the earlier key(s), newest first. */
+  renamed_from?: string | string[];
 }
 export type DomainArea = "deployments" | "implementations";
 /** A record that can carry custom fields: the two redefinable areas and the account record itself. */

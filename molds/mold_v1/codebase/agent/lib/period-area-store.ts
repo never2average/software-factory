@@ -24,7 +24,7 @@ import { RECORD_AREAS, type RecordRole } from "./record-areas.generated.ts";
 import { areaView, type AreaRow, type RecordAreas } from "./record-areas.ts";
 import { customMergeSql } from "./custom-merge-sql.ts";
 import type { CustomDelta } from "./custom-fields.ts";
-import { needsEnteredBy, type LifecycleConflict, type MoveCheck, type WriteWarning } from "./record-lifecycle.ts";
+import { needsEnteredBy, storedStateOf, type LifecycleConflict, type MoveCheck, type WriteWarning } from "./record-lifecycle.ts";
 import { whoEntered, writeOutcome } from "./record-lifecycle-store.ts";
 import { memberRole } from "./record-area-store.ts";
 import { periodRow, preparePeriodWrite } from "./period-area.ts";
@@ -76,8 +76,8 @@ export async function writeDeclaredPeriod(
   const stored = before ? periodRow(before as unknown as Record<string, unknown>) : null;
   let enteredBy: string | null | undefined;
   if (enforced && lc && stored && input.id && typeof body[lc.field] === "string") {
-    const from = v.get(stored, lc.field);
-    if (typeof from === "string" && from !== body[lc.field] && needsEnteredBy(v, from, body[lc.field] as string)) {
+    const from = storedStateOf(v, stored);
+    if (from !== null && from !== body[lc.field] && needsEnteredBy(v, from, body[lc.field] as string)) {
       enteredBy = await whoEntered(tx, orgId, { type: "cycle", id: input.id }, v, stored, from);
     }
   }

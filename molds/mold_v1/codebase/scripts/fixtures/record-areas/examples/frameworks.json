@@ -1,5 +1,5 @@
 {
-  "$comment": "Compliance frameworks, several per regulator (records.areas.implementations with per_account \"many\"): a regulator (the account) runs several frameworks at once, each its own record with its own id. Two own fields were renamed after rows were written under their old keys (`control_count` was `controls`, `review_cycle` was `cycle`): the server's filters, sorts, search, computed fields and metrics read the new key, else the old one. A test fixture for scripts/test-implementation-ids-db.mjs; no deployment ships it.",
+  "$comment": "Compliance frameworks, several per regulator (records.areas.implementations with per_account \"many\"): a regulator (the account) runs several frameworks at once, each its own record with its own id. Two own fields were renamed twice after rows were written under their old keys (`control_count` was `controls`, and `control_total` before that; `review_cycle` was `cycle`, and `frequency` before that): the server's filters, sorts, search, computed fields and metrics read the new key, else each earlier key in order. A test fixture for scripts/test-implementation-ids-db.mjs; no deployment ships it.",
   "records": {
     "areas": {
       "implementations": {
@@ -24,12 +24,12 @@
           "implementationRiskLevel": { "order": 20, "label": "Risk", "default": "Green" },
           "implementationOwnerEmail": { "order": 30, "type": "person", "label": "Framework owner", "default": "{me}" },
           "framework_code": { "order": 40, "type": "text", "label": "Framework", "required": true },
-          "control_count": { "order": 50, "type": "integer", "label": "Controls", "min": 0, "renamed_from": "controls", "index": "sort" },
+          "control_count": { "order": 50, "type": "integer", "label": "Controls", "min": 0, "renamed_from": ["controls", "control_total"], "index": "sort" },
           "review_cycle": {
             "order": 60,
             "type": "pick_list",
             "label": "Review cycle",
-            "renamed_from": "cycle",
+            "renamed_from": ["cycle", "frequency"],
             "options": [{ "value": "Monthly" }, { "value": "Quarterly" }, { "value": "Annual" }]
           },
           "scale": {

@@ -19,7 +19,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { RECORD_AREAS, type RecordAreaId } from "@/agent/lib/record-areas.generated";
 import { areaView, type AreaRow, type RecordAreas } from "@/agent/lib/record-areas";
-import { needsEnteredBy, warningOf, type LifecycleConflict, type MoveCheck, type NextOccurrence, type WriteExtras } from "@/agent/lib/record-lifecycle";
+import { needsEnteredBy, storedStateOf, warningOf, type LifecycleConflict, type MoveCheck, type NextOccurrence, type WriteExtras } from "@/agent/lib/record-lifecycle";
 import { recurAfterWrite } from "@/agent/lib/task-recurrence-run";
 import { whoEntered, writeOutcome, type ActivityEntityType } from "@/agent/lib/record-lifecycle-store";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
@@ -44,8 +44,8 @@ export async function lifecycleContext(
   const v = areaView(areaId, areas);
   const lc = v.lifecycle;
   if (!lc || lc.enforce === "off" || !before || !getOpsDb()) return {};
-  const from = v.get(before, lc.field);
-  if (typeof from !== "string" || !needsEnteredBy(v, from)) return {};
+  const from = storedStateOf(v, before);
+  if (from === null || !needsEnteredBy(v, from)) return {};
   return { enteredBy: await withOrgRls(orgId, (tx) => whoEntered(tx, orgId, entity, v, before, from)) };
 }
 

@@ -22,14 +22,17 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "./db/schema.ts";
 import { entityActivity, projectWorkflowVersions, taskWorkflowInstances, todos } from "./db/schema.ts";
 import type { AreaRow, AreaView } from "./record-areas.ts";
-import { enteredSuffix, moveEvent, stateForStage, warnEvent, type MoveCheck } from "./record-lifecycle.ts";
+import { enteredSuffix, moveEvent, spellingsOf, stateForStage, warnEvent, type MoveCheck } from "./record-lifecycle.ts";
 
 export type LifecycleTx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert">;
 export type ActivityEntityType = "task" | "cycle" | "deployment" | "implementation";
 
-/** Who moved the record into `state` most recently, by the activity feed's move lines; null when none says. */
-export async function enteredBy(tx: LifecycleTx, orgId: string, entity: { type: ActivityEntityType; id: string }, field: string, state: string): Promise<string | null> {
-  const suffix = enteredSuffix(state);
+/**
+ * Who moved the record into `state` most recently, by the activity feed's move lines; null when none says. `state` may
+ * be several spellings of one state (the state and the legacy spellings read as it): a line naming any of them counts.
+ */
+export async function enteredBy(tx: LifecycleTx, orgId: string, entity: { type: ActivityEntityType; id: string }, field: string, state: string | readonly string[]): Promise<string | null> {
+  const suffixes = (typeof state === "string" ? [state] : [...state]).map(enteredSuffix);
   const [row] = await tx
     .select({ actor: entityActivity.actor })
     .from(entityActivity)
@@ -38,7 +41,7 @@ export async function enteredBy(tx: LifecycleTx, orgId: string, entity: { type: 
       eq(entityActivity.entityType, entity.type),
       eq(entityActivity.entityId, entity.id),
       sql`strpos(${entityActivity.event}, ${`[${field}: `}) > 0`,
-      sql`right(${entityActivity.event}, ${suffix.length}) = ${suffix}`,
+      sql`(${sql.join(suffixes.map((s) => sql`right(${entityActivity.event}, ${s.length}) = ${s}`), sql` or `)})`,
     ))
     .orderBy(desc(entityActivity.createdAt))
     .limit(1);
@@ -52,7 +55,8 @@ export async function enteredBy(tx: LifecycleTx, orgId: string, entity: { type: 
  */
 export async function whoEntered(tx: LifecycleTx, orgId: string, entity: { type: ActivityEntityType; id: string }, v: AreaView, before: AreaRow, from: string): Promise<string | null> {
   const lc = v.lifecycle!;
-  const by = await enteredBy(tx, orgId, entity, lc.field, from);
+  // The state as the rules read it, found in the feed under it or any legacy spelling that stands for it.
+  const by = await enteredBy(tx, orgId, entity, lc.field, spellingsOf(v, from));
   if (by) return by;
   const last = await lastChangedBy(tx, orgId, entity);
   if (last) return last;

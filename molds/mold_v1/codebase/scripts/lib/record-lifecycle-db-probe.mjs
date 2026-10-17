@@ -59,7 +59,8 @@ const { RECORD_AREAS } = await import(root("agent/lib/record-areas.generated.ts"
 const LC = RECORD_AREAS.tasks.lifecycle;
 const RECURRENCE = process.env.LIFECYCLE_PROBE_SET === "recurrence";
 const PERIODS = process.env.LIFECYCLE_PROBE_SET === "periods";
-const MODE = RECURRENCE ? "recurrence" : PERIODS ? `periods-${RECORD_AREAS.periods.lifecycle?.enforce ?? "off"}` : !RECORD_AREAS.tasks.redefined ? "default" : LC.enforce;
+const LEGACY = process.env.LIFECYCLE_PROBE_SET === "legacy";
+const MODE = LEGACY ? "legacy" : RECURRENCE ? "recurrence" : PERIODS ? `periods-${RECORD_AREAS.periods.lifecycle?.enforce ?? "off"}` : !RECORD_AREAS.tasks.redefined ? "default" : LC.enforce;
 const ssl = /localhost|127\.0\.0\.1/.test(adminUrl) ? false : "require";
 const admin = postgres(adminUrl, { ssl, prepare: false, max: 1, onnotice: () => {} });
 
@@ -84,7 +85,7 @@ const CAT = `cat-${TAG}@lc-a.test`;
 const BEN = `ben-${TAG}@lc-b.test`;
 
 async function cleanup() {
-  for (const t of ["task_workflow_transition_events", "task_workflow_instances", "project_workflow_versions", "workflow_definitions", "entity_activity", "todos", "cycles", "org_members"]) {
+  for (const t of ["task_workflow_transition_events", "task_workflow_instances", "project_workflow_versions", "workflow_definitions", "entity_activity", "todos", "cycles", "deployments", "customers", "org_members"]) {
     await admin.unsafe(`DELETE FROM ${t} WHERE org_id IN ($1, $2)`, [A, B]).catch(() => undefined);
   }
   await admin`DELETE FROM orgs WHERE org_id IN (${A}, ${B})`.catch(() => undefined);
@@ -257,6 +258,60 @@ try {
   };
   if (PERIODS) {
     await periodsScenario();
+  } else if (LEGACY) {
+    // ------------------------------------------------- four eyes on a state stored in a legacy spelling (PR #192 review)
+    // Each record stores its state in a spelling the definition reads as another (legacy_values). The person whose move
+    // line entered it (written in that spelling) may not sign it off; a later, unrelated line by someone else must not
+    // stand in for them (it would, if the move line were not found under the legacy spelling), so that person may.
+    const line = (type, id, actor, event) => admin`INSERT INTO entity_activity (org_id, entity_type, entity_id, actor, event, created_at) VALUES (${A}, ${type}, ${id}, ${actor}, ${event}, now() - interval '1 minute' * ${event.startsWith("Note") ? 1 : 2})`;
+    const notBy = (r) => r.status === 409 && r.body?.broken?.some((b) => b.rule === "not_by");
+    // Tasks: the routes and the agent's upsert_todo (records.areas.tasks, status "doing" read as "in_progress").
+    const [t] = await admin`INSERT INTO todos (org_id, title, status, assignee, created_by, due_at) VALUES (${A}, 'Legacy task', 'doing', ${ANA}, ${BO}, '2026-11-02T09:00:00Z') RETURNING id`;
+    await line("task", t.id, ANA, 'Status moved "Open" → "Doing" (Start) [status: open → doing]');
+    await line("task", t.id, CAT, "Note: due date confirmed");
+    const selfRoute = await patch(ANA, t.id, { status: "done" });
+    check("tasks: who entered the legacy-spelled state may not sign it off through the routes (409 not_by)", notBy(selfRoute), selfRoute.body);
+    const selfTool = await tool(todoTools.upsertTodoTool, { id: t.id, status: "done" }, ANA);
+    check("tasks: …nor through the agent's upsert_todo", typeof selfTool.error === "string" && /not by the person who moved it/.test(selfTool.error) && (await row(t.id)).status === "doing", selfTool);
+    const other = await patch(CAT, t.id, { status: "done" });
+    check("tasks: someone else may (the move line is found under the legacy spelling, so the later note's author is not taken for who entered it)", !notBy(other) && other.status === 200 && (await row(t.id)).status === "done", other.body);
+    // Periods: app/api/ops/cycles (records.areas.periods, state "running" read as "active").
+    const cyc = async (who, id, body) => {
+      const handlers = await import(root("app/api/ops/cycles/[id]/route.ts"));
+      const request = new NextRequest(`${H}/api/ops/cycles/${id}`, { method: "PATCH", headers: { authorization: bearers[who], "x-ops-org": orgOf[who], "content-type": "application/json" }, body: JSON.stringify(body) });
+      const res = await handlers.PATCH(request, { params: Promise.resolve({ id }) });
+      const text = await res.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch { /* not json */ }
+      return { status: res.status, body: json };
+    };
+    const [c] = await admin`INSERT INTO cycles (org_id, name, state, created_by) VALUES (${A}, 'Week 39', 'running', ${BO}) RETURNING id`;
+    await line("cycle", c.id, CAT, 'State moved "Planning" → "Running" (Start) [state: planning → running]');
+    await line("cycle", c.id, BO, "Note: scope agreed");
+    const selfCycle = await cyc(CAT, c.id, { state: "closed" });
+    check("periods: who entered the legacy-spelled state may not close it (409 not_by)", notBy(selfCycle), selfCycle.body);
+    const otherCycle = await cyc(BO, c.id, { state: "closed" });
+    check("periods: someone else may (the creator and last changer: the move line names who entered it)", otherCycle.status === 200 && (await admin`SELECT state FROM cycles WHERE id = ${c.id}`)[0].state === "closed", otherCycle.body);
+    // Record areas: app/api/ops/deployments (records.areas.deployments, its state renamed twice and stored as "todo" under
+    // the oldest key, read as "queued").
+    await admin`INSERT INTO customers (customer_id, org_id, customer_name) VALUES ('acme', ${A}, 'Acme')`;
+    await admin`INSERT INTO deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, custom) VALUES (${A}, 'acme', 'item-1', 'prod', 'on-prem', 'First', 'in-progress', 'unknown', ${admin.json({ first_stage: "todo" })})`;
+    await line("deployment", "item-1", ANA, 'Stage moved "Draft" → "Todo" [stage: draft → todo]');
+    await line("deployment", "item-1", BO, "Note: owner confirmed");
+    const itemPatch = async (who, body) => {
+      const handlers = await import(root("app/api/ops/deployments/[id]/route.ts"));
+      const request = new NextRequest(`${H}/api/ops/deployments/item-1`, { method: "PATCH", headers: { authorization: bearers[who], "x-ops-org": orgOf[who], "content-type": "application/json" }, body: JSON.stringify(body) });
+      const res = await handlers.PATCH(request, { params: Promise.resolve({ id: "item-1" }) });
+      const text = await res.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch { /* not json */ }
+      return { status: res.status, body: json };
+    };
+    const itemSelf = await itemPatch(ANA, { customerId: "acme", custom: { stage: "working" } });
+    check("record areas: who entered the legacy-spelled state (stored under the oldest key) may not start it (409 not_by)", notBy(itemSelf), itemSelf.body);
+    const itemOther = await itemPatch(BO, { customerId: "acme", custom: { stage: "working" } });
+    const itemRow = (await admin`SELECT custom FROM deployments WHERE org_id = ${A} AND deployment_id = 'item-1'`)[0];
+    check("record areas: someone else may; the new state is stored under the field's own key", itemOther.status === 200 && itemRow?.custom?.stage === "working", { itemOther: itemOther.body, itemRow });
   } else if (RECURRENCE) {
     // ------------------------------------------------- recurrence (the obligation example: quarterly, monthly, one-time)
     const count = async (prevId) => Number((await admin`SELECT count(*)::int AS n FROM todos WHERE org_id = ${A} AND custom @> ${JSON.stringify({ recurs_from: prevId })}::text::jsonb`)[0].n);

@@ -414,7 +414,7 @@ export function TaskOwnFields({
           </Field>
         ) : (
           <RecordFieldControl
-            key={`${f.key}:${JSON.stringify(custom[f.key] ?? null)}`}
+            key={`${f.key}:${JSON.stringify(view.get({ custom }, f.key) ?? null)}`}
             field={f}
             value={formValueOf(f, view.get({ custom }, f.key))}
             error={errors[f.key]}

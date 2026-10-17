@@ -152,6 +152,25 @@ try {
       copy.remove();
     }
   }
+  console.log("\nFour eyes on a state stored in a legacy spelling: tasks, periods and a record area (PR #192 review)");
+  {
+    const copy = copyWithProfiles(ROOT, [
+      ["50-pipeline.json", join(ROOT, "scripts/fixtures/record-lifecycle/pipeline.json")],
+      ["51-periods.json", join(ROOT, "scripts/fixtures/record-lifecycle/periods.json")],
+      ["52-own-state.json", join(ROOT, "scripts/fixtures/record-areas/examples/own-state.json")],
+      ["53-legacy.json", { records: { areas: {
+        tasks: { fields: { status: { legacy_values: { doing: "in_progress" } } }, lifecycle: { enforce: "strict" } },
+        periods: { fields: { state: { legacy_values: { running: "active" } } }, lifecycle: { enforce: "strict" } },
+        deployments: { fields: { stage: { renamed_from: ["old_stage", "first_stage"] } }, lifecycle: { enforce: "strict", transitions: [{ from: ["queued"], to: "working", label: "Start", not_by: "{entered_by}" }, { from: ["working"], to: "finished", label: "Finish" }] } },
+      } } }],
+    ]);
+    try {
+      const r = spawnSync(process.execPath, PROBE, { cwd: copy.dir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: { ...process.env, NODE_NO_WARNINGS: "1", LIFECYCLE_PROBE_SET: "legacy", TASK_AREA_SERVICE_ROOT: join(ROOT, "services/task-workflow") } });
+      report("legacy", r, 7);
+    } finally {
+      copy.remove();
+    }
+  }
   console.log("\nThe default profile (this checkout)");
   report("default", runProbe(ROOT), 12);
 } catch (e) {

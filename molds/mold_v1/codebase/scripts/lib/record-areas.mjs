@@ -365,8 +365,17 @@ export function checkArea(id, area, ctx) {
       }
     }
     if ("renamed_from" in f) {
+      // One earlier key, or a list of them, newest first: the keys rows written before each rename carry it under.
       if (f.column) return bad(`${at}.renamed_from`, `a column cannot be renamed; give it another label`);
-      if (has(f.renamed_from)) return bad(`${at}.renamed_from`, `${quote(f.renamed_from)} is still a field of this area`);
+      const earlier = typeof f.renamed_from === "string" ? [f.renamed_from] : f.renamed_from;
+      if (!Array.isArray(earlier) || !earlier.length) return bad(`${at}.renamed_from`, `is one earlier key or a list of them, newest first`);
+      for (const [i, k] of earlier.entries()) {
+        if (k === f.key) return bad(`${at}.renamed_from`, `${quote(k)} is this field's own key`);
+        if (earlier.indexOf(k) !== i) return bad(`${at}.renamed_from`, `${quote(k)} is listed twice`);
+        if (has(k)) return bad(`${at}.renamed_from`, `${quote(k)} is still a field of this area`);
+        const other = Object.values(fields).find((o) => o !== f && o && "renamed_from" in o && [].concat(o.renamed_from).includes(k));
+        if (other) return bad(`${at}.renamed_from`, `${quote(k)} is also an earlier key of ${quote(other.key ?? Object.keys(fields).find((x) => fields[x] === other))}; a stored key is read as one field`);
+      }
     }
     if (f.index && f.index !== "none") {
       if (f.index === "sort" && !SORTABLE.has(f.type)) return bad(`${at}.index`, `a ${f.type} field cannot be sorted`);
@@ -672,6 +681,8 @@ export function raiseDomain(id, area, legacy, cols) {
       ...(type === "pick_list" ? { options: f.options.map((o) => o.value) } : {}),
       ...(f.help ? { help: f.help } : {}),
       ...(listed ? { show_in_list: true } : {}),
+      // The keys older rows carry it under, so the readers that take this form (the workbook, the export) read them too.
+      ...("renamed_from" in f ? { renamed_from: f.renamed_from } : {}),
     });
   }
   const formable = (k) => cols[k] && cols[k].kind !== "list" && !area.fields[k]?.hidden;

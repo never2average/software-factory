@@ -18,6 +18,7 @@ import { and, asc, eq, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { RECORD_AREAS, type RecordCategory, type RecordField } from "./record-areas.generated.ts";
 import { areaView, CATEGORIES, type AreaView, type RecordAreas } from "./record-areas.ts";
 import { coerceFieldValue } from "./record-values.ts";
+import { earlierKeys, isRenamed, ownKeys } from "./own-keys.ts";
 import { ACCOUNT_FIELD, type AccountAreaId } from "./record-area-records.ts";
 
 /** Today's page size for the lists (the 300-row cap the routes always had). */
@@ -182,24 +183,30 @@ export type AreaTable = Record<string, unknown> & { custom: AnyColumn; customerI
 interface Cx { v: AreaView; now: Date }
 
 /**
- * An own field's stored JSON value, as agent/lib/record-areas.ts `get` reads it: under its key, else (a field declared
- * with `renamed_from`) under the key rows written before the rename carry it. Only a renamed field reads two keys, so
- * every other own field's SQL is what it always was.
+ * An own field's stored JSON value, as agent/lib/record-areas.ts `get` reads it (agent/lib/own-keys.ts): under its key,
+ * else (a field declared with `renamed_from`) under each key rows written before a rename carry it, in order. A key the
+ * row holds with JSON null stops the search, as `in` does there. Only a renamed field reads more than one key, so every
+ * other own field's SQL is what it always was.
  */
 function ownJson(t: AreaTable, field: RecordField): SQL {
-  return field.renamed_from
-    ? sql`coalesce(${t.custom} -> ${field.key}::text, ${t.custom} -> ${field.renamed_from}::text)`
-    : sql`(${t.custom} -> ${field.key}::text)`;
+  if (!isRenamed(field)) return sql`(${t.custom} -> ${field.key}::text)`;
+  return sql`coalesce(${sql.join(ownKeys(field).map((k) => sql`${t.custom} -> ${k}::text`), sql`, `)})`;
 }
 
 /**
  * Containment of `{key: value}` in `custom` (which the GIN index on `custom` serves); for a renamed field, also a row
- * that carries no value under the new key and has it under the old one.
+ * that holds none of the newer keys and has it under an earlier one (each earlier key in order, as ownJson reads).
  */
 function ownContains(t: AreaTable, field: RecordField, value: unknown): SQL {
-  const now = sql`${t.custom} @> ${JSON.stringify({ [field.key]: value })}::jsonb`;
-  if (!field.renamed_from) return now;
-  return sql`(${now} or (not jsonb_exists(${t.custom}, ${field.key}::text) and ${t.custom} @> ${JSON.stringify({ [field.renamed_from]: value })}::jsonb))`;
+  const has = (k: string) => sql`${t.custom} @> ${JSON.stringify({ [k]: value })}::jsonb`;
+  const now = has(field.key);
+  if (!isRenamed(field)) return now;
+  const keys = ownKeys(field);
+  const older = earlierKeys(field).map((k) => {
+    const newer = keys.slice(0, keys.indexOf(k));
+    return sql`(${sql.join(newer.map((n) => sql`not jsonb_exists(${t.custom}, ${n}::text)`), sql` and `)} and ${has(k)})`;
+  });
+  return sql`(${sql.join([now, ...older], sql` or `)})`;
 }
 
 /** A field as SQL text (an own field read out of `custom`), or a number for a number field; a computed one as its CASE. */
@@ -214,7 +221,7 @@ function expr(t: AreaTable, key: string, field: RecordField | null, cx?: Cx): SQ
     if (!col) throw new Error(`${field.key} is not a column of this table`);
     return sql`${col}`;
   }
-  if (field.renamed_from) {
+  if (isRenamed(field)) {
     const j = ownJson(t, field);
     if (NUMERIC.has(field.type)) return sql`(case when jsonb_typeof(${j}) = 'number' then (${j} #>> '{}')::numeric end)`;
     return sql`(${j} #>> '{}')`;
@@ -229,7 +236,15 @@ function condition(t: AreaTable, c: Condition, cx: Cx): SQL {
   const f = c.field;
   const e = expr(t, c.key, f, cx);
   const own = f !== null && !f.column && !f.computed;
+  // A choice is also found under each stored spelling the definition reads as it (`legacy_values`), as the screen
+  // shows it: a row that still holds an earlier spelling is filtered and counted with its state.
+  const spellings = (value: unknown): unknown[] => (f && !f.computed && typeof value === "string" && f.legacy_values ? [value, ...Object.keys(f.legacy_values).filter((k) => f.legacy_values![k] === value && k !== value)] : [value]);
   const eqOne = (value: unknown): SQL => {
+    const all = spellings(value);
+    if (all.length > 1) return or(...all.map(eqSpelling)) ?? sql`false`;
+    return eqSpelling(value);
+  };
+  const eqSpelling = (value: unknown): SQL => {
     if (f?.computed) return sql`${e} = ${String(value)}::text`;
     if (own && !NUMERIC.has(f!.type)) return ownContains(t, f!, value);
     // An email is the same address in any case (a person field is stored lower case, an older column as typed).
@@ -249,7 +264,7 @@ function condition(t: AreaTable, c: Condition, cx: Cx): SQL {
       return f!.column ? sql`${t[f!.key] as AnyColumn} @> ${JSON.stringify([c.value])}::jsonb` : ownContains(t, f!, [c.value]);
     case "set": {
       if (f?.computed) return c.value ? sql`(${e} is not null and ${e} <> '')` : sql`(${e} is null or ${e} = '')`;
-      const j = own && f!.renamed_from ? ownJson(t, f!) : null;
+      const j = own && isRenamed(f!) ? ownJson(t, f!) : null;
       const has = j ? sql`(${j} is not null and jsonb_typeof(${j}) <> 'null' and coalesce(${j} #>> '{}', '') <> '' and ${j} <> '[]'::jsonb)` : own ? sql`(jsonb_exists(${t.custom}, ${c.key}::text) and jsonb_typeof(${t.custom} -> ${c.key}::text) <> 'null' and coalesce(${t.custom} ->> ${c.key}::text, '') <> '' and ${t.custom} -> ${c.key}::text <> '[]'::jsonb)` : sql`(${e} is not null and ${e}::text <> '' and ${e}::text <> '[]')`;
       return c.value ? has : sql`not ${has}`;
     }

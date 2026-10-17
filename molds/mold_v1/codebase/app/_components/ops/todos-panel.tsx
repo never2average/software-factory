@@ -79,6 +79,7 @@ import {
 import { SURFACE, TYPE } from "./tokens";
 import { CustomFieldControl, customFieldError } from "./custom-fields";
 import { displayCustom, validateCustom } from "@/agent/lib/custom-fields";
+import { ownValue } from "@/agent/lib/own-keys";
 import type { CustomFieldSpec, DomainArea } from "@/lib/deployment-profile.generated";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { bundleToMarkdown, exportJson, type ExportBundle } from "@/lib/record-export";
@@ -1188,7 +1189,7 @@ function customColumns<T extends { custom?: Record<string, string | number> }>(v
     key: `custom.${f.key}`,
     label: f.label,
     render: (row: T) => {
-      const shown = displayCustom(f, row.custom?.[f.key]);
+      const shown = displayCustom(f, ownValue(row.custom, f));
       if (!shown) return "—";
       return f.type === "link" ? (
         <a href={shown} target="_blank" rel="noreferrer noopener" className="underline underline-offset-2" onClick={(e) => e.stopPropagation()}>
@@ -1213,7 +1214,7 @@ function hostOf(url: string): string {
 
 /** What the list's search matches of a row's custom values. */
 function customText(view: DomainView, custom: Record<string, string | number> | undefined): string {
-  return view.listCustomFields.map((f) => displayCustom(f, custom?.[f.key])).join(" ");
+  return view.listCustomFields.map((f) => displayCustom(f, ownValue(custom, f))).join(" ");
 }
 
 function implTitle(r: ApiRefImplementation): string {
@@ -1836,7 +1837,7 @@ function ReferenceDetail({
   const [customErrors, setCustomErrors] = useState<Record<string, string>>({});
   // Saved on blur / on pick like the fields above it; a value the API would refuse is answered here, under the field.
   const commitCustom = (f: CustomFieldSpec, typed: string) => {
-    const stored = custom?.[f.key];
+    const stored = ownValue(custom, f);
     if (typed === (stored == null ? "" : String(stored))) return;
     const error = area ? customFieldError(area, f, typed, "update") : null;
     setCustomErrors(({ [f.key]: _old, ...rest }) => (error ? { ...rest, [f.key]: error } : rest));
@@ -1898,7 +1899,7 @@ function ReferenceDetail({
               <CustomFieldControl
                 key={f.key}
                 field={f}
-                value={custom?.[f.key] == null ? "" : String(custom[f.key])}
+                value={ownValue(custom, f) == null ? "" : String(ownValue(custom, f))}
                 error={customErrors[f.key]}
                 disabled={busy}
                 onCommit={(v) => commitCustom(f, v)}

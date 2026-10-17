@@ -36,6 +36,7 @@ import {
 import { readFileSync } from "node:fs";
 import { wordFor } from "./agent-vocabulary.ts";
 import { customFieldsOf } from "./custom-fields.ts";
+import { ownValue } from "./own-keys.ts";
 import type { CustomFieldArea, CustomFieldSpec } from "./deployment-profile.generated.ts";
 import { DOMAIN_FOLDERS, FOLDER, domainIdOf } from "./dataroom-folders.ts";
 import { samplePeople } from "./sample-data.ts";
@@ -609,8 +610,8 @@ function withOwnFields(sheet: SheetSpec, fields: CustomFieldSpec[], owners: Arra
     ...sheet,
     columns: [...sheet.columns, ...own.map((f) => f.key)],
     rows: sheet.rows.map((row, i) => {
-      const custom = (owners[i]?.custom ?? {}) as Record<string, unknown>;
-      return [...row, ...own.map((f) => normalizeCell(custom[f.key]))];
+      // Under its key, else a key older rows carry it under (a field raised from a renamed own field).
+      return [...row, ...own.map((f) => normalizeCell(ownValue(owners[i]?.custom, f)))];
     }),
   };
 }

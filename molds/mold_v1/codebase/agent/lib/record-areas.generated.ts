@@ -28,8 +28,8 @@ export interface RecordField {
   options?: RecordOption[];
   /** A stored spelling -> the option value it is read as. */
   legacy_values?: Record<string, string>;
-  /** Own fields: the key older rows carry the value under. */
-  renamed_from?: string;
+  /** Own fields: the key older rows carry the value under, or a list of them, newest first (agent/lib/own-keys.ts). */
+  renamed_from?: string | string[];
   min?: number;
   max?: number;
   max_length?: number;
