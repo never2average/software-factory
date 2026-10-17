@@ -540,7 +540,42 @@
               },
               "set": {
                 "type": "object"
+              },
+              "step": {
+                "$comment": "Making this move changes this step of the lifecycle's workflow (lifecycle.workflow): the step's id in that workflow and the engine step state it moves to (open, completed, rejected, escalated). Checked by scripts/lib/record-workflows.mjs.",
+                "type": "object",
+                "required": [
+                  "id",
+                  "state"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "state": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
               }
+            }
+          }
+        },
+        "workflow": {
+          "$comment": "The workflow this lifecycle runs: an id of the profile's records.workflows (a document in the vendored engine's DSL). Checked at build; nothing at runtime runs it yet.",
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_states": {
+          "$comment": "For records already mid-lifecycle: each record state (a state of the lifecycle's field, never a legacy spelling) mapped to the state of each step of the workflow, so a workflow instance can be attached lazily. Checked by scripts/lib/record-workflows.mjs.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }
