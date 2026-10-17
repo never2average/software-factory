@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { isDefaultArea } from "./build-definitions";
 
 /**
  * The Tasks view as the deployment defines a task (profiles records.areas.tasks): the REAL TodosPanel through
@@ -124,7 +125,11 @@ test("a redefined task's create form: its fields, its defaults, the validator's 
   await expect(column(page, "not_started")).toContainText("Half-yearly ALM return");
 });
 
+// "Today's Tasks view" is the DEFAULT definition of a task, drawn from this build's own (no `?profile=`): it can only be
+// graded on a build whose task area IS the default's. A build that redefines it (a pack's profile) draws its own states,
+// words and form by design, graded by the redefined-task tests above; there this one skips with the reason.
 test("the default definition: today's Tasks view, six status columns, New task, a move writes the status", async ({ page }) => {
+  test.skip(!isDefaultArea("tasks"), "this build's profile redefines the tasks area; today's Tasks view is graded on a build whose task definition is the default's");
   const items = [task("t1", "Chase the invoice", { status: "in_progress", priority: "high" })];
   const seen = await mockApi(page, items);
   await page.goto("/preview/record-tasks");

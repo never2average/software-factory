@@ -1,4 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { RECORD_AREAS } from "../agent/lib/record-areas.generated";
+import { periodDeclared } from "../agent/lib/period-area";
+import { periodAreaUi } from "../app/_components/ops/period-area-model";
 
 /**
  * The periods drawn from their definition (profiles records.areas.periods in the record-area form; the record-areas
@@ -11,7 +14,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
  *   - the detail: the lifecycle's moves (a comment asked for where a transition needs one), the sections, own fields
  *     saved under `custom`, the contained tasks listed with how many are done;
  *   - the create form: the definition's fields, the validator's sentence under the field, the stored values sent;
- *   - the DEFAULT definitions: the period view is today's (no declared panel; the three states on the board).
+ *   - THIS BUILD's own definitions: the period view is today's (no declared panel; the three states on the board), or,
+ *     on a build that declares the periods (a pack's profile), the declared panel with its own words and states.
  */
 const ME = "reviewer@example.com";
 type Seen = { posts: Record<string, unknown>[]; patches: { id: string; body: Record<string, unknown> }[]; todoPatches: { id: string; body: Record<string, unknown> }[] };
@@ -183,14 +187,35 @@ test("a regulatory filing's create form: the definition's fields, the validator'
   expect(seen.posts[0]).toEqual({ name: "NHB · Return · Q2", endsAt: "2026-10-31", lead: ME, custom: { regulator: "NHB" }, createdBy: ME });
 });
 
-test("the default definitions: the period view is today's (no declared panel, the three states on the board)", async ({ page }) => {
+// This build's OWN periods (no `?profile=`): drawn from the definition when the build declares the area for a team, as
+// todos-panel.tsx decides (periodsDeclared); else today's view, its three stored states on the board.
+const BUILD_DECLARES_PERIODS = periodDeclared(RECORD_AREAS) && RECORD_AREAS.periods.period?.mode !== "individual";
+
+test("this build's own definitions: the period view is the one they define (today's three states, or the declared panel)", async ({ page }) => {
+  const build = BUILD_DECLARES_PERIODS ? periodAreaUi(RECORD_AREAS) : null;
+  // The row starts in the definition's own first state (today's view: "active", as it always did).
+  const initial = build ? build.lifecycle?.initial ?? build.board?.columns[0]?.key ?? "active" : "active";
   await page.route(/\/(api|eve)\//, (route) => {
     const path = new URL(route.request().url()).pathname;
-    return route.fulfill({ json: { items: path === "/api/ops/cycles" ? [{ ...ITEMS[0], custom: undefined }] : [] } });
+    return route.fulfill({ json: { items: path === "/api/ops/cycles" ? [{ ...ITEMS[0], state: initial, custom: undefined }] : [] } });
   });
   await page.goto("/preview/record-areas?view=sprints");
-  await expect(page.getByTestId("period-area")).toHaveCount(0);
-  await expect(page.getByText("RBI · ALM return · Q2").first()).toBeVisible();
-  const labels = await page.locator("[data-board-column] > div:first-child > span.font-medium").allInnerTexts();
-  expect(labels).toEqual(["Planning", "Active", "Closed"]);
+  const boardLabels = () => page.locator("[data-board-column] > div:first-child > span.font-medium").allInnerTexts();
+  if (!build) {
+    await expect(page.getByTestId("period-area")).toHaveCount(0);
+    await expect(page.getByText("RBI · ALM return · Q2").first()).toBeVisible();
+    expect(await boardLabels()).toEqual(["Planning", "Active", "Closed"]);
+    return;
+  }
+  // The declared panel, under the build's own word on the nav, its row shown.
+  const panel = page.getByTestId("period-area");
+  await expect(panel).toBeVisible();
+  await expect(page.getByRole("navigation").getByRole("button", { name: build.navLabel }).first()).toBeVisible();
+  await expect(panel.getByText("RBI · ALM return · Q2").first()).toBeVisible();
+  // Its board's columns are the definition's states in order, the row in its own state's column.
+  if (build.board && build.modes.includes("kanban")) {
+    await panel.getByTestId("period-modes").getByRole("button", { name: "Board" }).click();
+    await expect.poll(boardLabels).toEqual(build.board.columns.map((c) => c.label));
+    await expect(panel.locator(`[data-board-column="${initial}"]`)).toContainText("RBI · ALM return · Q2");
+  }
 });

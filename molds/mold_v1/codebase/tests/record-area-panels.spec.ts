@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { redefinedAreas } from "./build-definitions";
 
 /**
  * The two account record areas drawn from their definition (profiles records.areas.deployments / .implementations in
@@ -58,7 +59,8 @@ test("a regulatory filing: the table, its words and tones, the computed timeline
   const seen = await mockApi(page, "deployments", items);
   await page.goto("/preview/record-areas?profile=filing&view=deployments");
   const panel = page.getByTestId("record-area-deployments");
-  await expect(page.getByRole("button", { name: "Regulatory filings" })).toBeVisible();
+  // The nav names the area in the example's word (the build's own areas are listed beside it, and may share it).
+  await expect(page.getByRole("button", { name: "Regulatory filings" }).first()).toBeVisible();
   await expect(panel.getByRole("button", { name: "Add filing" })).toBeVisible();
   await expect(panel.locator("table")).toBeVisible();
   const account = (await headers(page))[0];
@@ -194,6 +196,56 @@ test("a compliance programme: own fields the legacy form lacks (multi-pick, file
   expect(seen.posts[0]).toEqual({ customerId: "beta", implementationStage: "Kickoff", custom: { regulators: ["NHB"], budget: "50000" }, actor: ME });
 });
 
+/* ------------------------------------------------- an own lifecycle field on rows that hold no own values */
+
+test("an own lifecycle field on rows with no own values: empty everywhere, in no board column, grouped under the empty bucket, the screen never breaks", async ({ page }) => {
+  const broke: string[] = [];
+  page.on("pageerror", (e) => broke.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error" && /unhandled render error|Cannot read properties/.test(m.text())) broke.push(m.text());
+  });
+  const row = (id: string, extra: Record<string, unknown>) => ({ id, label: id, title: id, displayName: null, owner: null, customer: "acme", customerLabel: "Acme Finance", ...extra });
+  const items = [
+    // No `values` at all and `custom` null: an answer in the shape of a build that declares no area.
+    row("item-1", { custom: null }),
+    // Its values without the stage, and no `custom`: a record written before the profile declared its own fields.
+    row("item-2", { values: { deployedVersion: "Second" } }),
+    // One with its stage, as the API answers a declared area.
+    row("item-3", { values: { deployedVersion: "Third", stage: "working", size: 2 }, custom: { stage: "working", size: 2 } }),
+  ];
+  await mockApi(page, "deployments", items);
+  await page.goto("/preview/record-areas?profile=own-state&view=deployments");
+  const panel = page.getByTestId("record-area-deployments");
+
+  // The board (the definition's default view): its columns are the stage's choices, and only the row with one is on it.
+  const labels = panel.locator("[data-board-column] > div:first-child > span.font-medium");
+  await expect(labels).toHaveText(["Queued", "Working", "Finished"]);
+  await expect(panel.locator('[data-board-column="working"]')).toContainText("item-3");
+  await expect(panel.getByTestId("record-card")).toHaveCount(1);
+
+  // The table: a row that holds no stage shows it empty.
+  await panel.getByTestId("record-modes").getByRole("button", { name: "Table" }).click();
+  const rows = panel.locator("tbody tr");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0).locator('[data-col="stage"]')).toHaveText("—");
+  await expect(rows.nth(1).locator('[data-col="stage"]')).toHaveText("—");
+  await expect(rows.nth(2).locator('[data-col="stage"]')).toHaveText("Working");
+  await expect(rows.nth(2).locator('[data-col="stage"] [data-tone]')).toHaveAttribute("data-tone", "amber");
+
+  // Grouped by the stage: the two with none under the empty bucket, last.
+  await panel.getByRole("button", { name: /^Filter/ }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Stage", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(panel.getByTestId("group-header")).toHaveText([/^Working\s*1$/, /^—\s*2$/]);
+
+  // The detail of a row with no stage: the control empty, no move offered from a state it is not in.
+  await panel.getByTestId("group-section").nth(1).locator('[data-col="account"]').first().click();
+  const detail = page.getByTestId("record-detail");
+  await expect(detail.locator('[data-record-field="stage"] select')).toHaveValue("");
+  await expect(detail.getByTestId("lifecycle-moves")).toHaveCount(0);
+  expect(broke).toEqual([]);
+});
+
 /* ----------------------------------------------------------------------------- the default definitions */
 
 const LEGACY_DOM = fileURLToPath(new URL("./fixtures/record-area-legacy-dom.json", import.meta.url));
@@ -210,7 +262,14 @@ const legacyRows = {
 // The side nav is left out: it lists the other tabs (the period's among them, a word only the profile spells).
 const normalised = (html: string) => html.replace(/<nav\b[\s\S]*?<\/nav>/, "<nav/>").replace(/(id|for|aria-controls|aria-labelledby|aria-describedby)="[^"]*:r[0-9a-z]+:[^"]*"/g, '$1="<id>"').replace(/:r[0-9a-z]+:/g, "<id>");
 
+// "Today's two lists" can only be graded on a build whose own definitions of the two areas ARE the default's: the page
+// draws them from this build's profile (no `?profile=`), so on a build that redefines or declares either area (a pack's
+// profile) its own screen is drawn by design, not the recorded one. The base app's CI runs it; such a build skips it
+// with the reason, and its declared screen is graded by the tests above (rows with no own values included).
+const REDEFINED_ACCOUNT_AREAS = redefinedAreas(["deployments", "implementations"]);
+
 test("the default definitions: today's two lists, their markup byte for byte the one upstream main rendered", async ({ page }) => {
+  test.skip(REDEFINED_ACCOUNT_AREAS.length > 0, `this build's profile redefines ${REDEFINED_ACCOUNT_AREAS.join(", ")}; today's lists are graded on a build whose definitions of them are the default's`);
   const recorded: Record<string, string> = process.env.RECORD_LEGACY_DOM === "1" ? {} : JSON.parse(readFileSync(LEGACY_DOM, "utf8"));
   const now: Record<string, string> = {};
   // Today's cards count days to a date: the clock is fixed so the markup is the same on any day.

@@ -1,4 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { RECORD_HUB } from "../lib/deployment-profile.generated";
+import { RECORD_AREAS } from "../agent/lib/record-areas.generated";
 
 /**
  * THE RECORD HUB UNDER ITS OWN NAME (profiles `records.hub`; app/_components/ops/record-hub.tsx), through two
@@ -13,10 +15,22 @@ import { expect, test, type Page, type Route } from "@playwright/test";
  *      with the scale glyph): the nav item, the screen's title and the Control Panel's section all read it, none of
  *      them reads "TODOs", the summary counts "2 tasks" (the tasks area's word), and the section the nav opens is still
  *      `todos`;
- *   2. the default profile (`hub=default`): each of them reads exactly what it did ("TODOs", the nav's circle-check,
- *      the section's list glyph, "2 TODOs" in the summary).
+ *   2. this build's own hub (`hub=default`): under the default profile each of them reads exactly what it did ("TODOs",
+ *      the nav's circle-check, the section's list glyph, "2 TODOs" in the summary); under a profile that names the hub,
+ *      the name, glyph and entries' word the build compiled.
  */
 const ME = "ana@example.com";
+/** The tasks area's plural as this build's profile writes it: what a relabelled hub counts its entries in. */
+const TASKS_WORD = RECORD_AREAS.tasks.label?.plural ?? "tasks";
+const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * THIS build's own hub (`hub=default`: the page passes the build's RECORD_HUB_UI): under the default profile exactly
+ * today's words and glyphs; under a profile that names the hub (records.hub) or redefines the tasks area, the name, the
+ * glyph (today's when it names none) and the entries' word the build compiled (lib/deployment-profile.generated.ts).
+ */
+const OWN_HUB = RECORD_HUB.relabelled || RECORD_AREAS.tasks.redefined
+  ? { name: RECORD_HUB.label, nav: RECORD_HUB.icon ?? "circle-check", section: RECORD_HUB.icon ?? "list-todo", count: `2 ${RECORD_HUB.item.plural}` }
+  : { name: "TODOs", nav: "circle-check", section: "list-todo", count: "2 TODOs" };
 const DOSSIER = {
   found: true,
   identity: { name: "Ana Rao", email: ME, title: "Lead", org: null, role: null, kind: "internal", lastContact: null },
@@ -89,18 +103,18 @@ test("a profile's hub name reads on the nav, the screen's title and the Control 
   await expect(owned.getByText("2", { exact: true })).toBeVisible();
   // Its summary counts the entries in the tasks area's word, never "TODOs".
   await dialog(page).getByRole("button", { name: "Acme Housing" }).click();
-  await expect(dialog(page).getByText(/\b2 tasks on this\b/)).toBeVisible();
+  await expect(dialog(page).getByText(new RegExp(`\\b2 ${escaped(TASKS_WORD)} on this\\b`))).toBeVisible();
   await expect(dialog(page).getByText(/TODO/)).toHaveCount(0);
 });
 
-test("the default profile's hub reads exactly what it did", async ({ page }) => {
-  await navAndTitle(page, "default", "TODOs", "circle-check");
+test("this build's own hub reads its own name everywhere (the default profile's: exactly what it did)", async ({ page }) => {
+  await navAndTitle(page, "default", OWN_HUB.name, OWN_HUB.nav);
 
   await dossier(page, "default");
-  const owned = section(page, "TODOs");
+  const owned = section(page, OWN_HUB.name);
   await expect(owned).toBeVisible();
-  await expect(owned.locator("svg.lucide-list-todo")).toHaveCount(1);
+  await expect(owned.locator(`svg.lucide-${OWN_HUB.section}`)).toHaveCount(1);
   await expect(owned.getByText("2", { exact: true })).toBeVisible();
   await dialog(page).getByRole("button", { name: "Acme Housing" }).click();
-  await expect(dialog(page).getByText(/\b2 TODOs on this\b/)).toBeVisible();
+  await expect(dialog(page).getByText(new RegExp(`\\b${escaped(OWN_HUB.count)} on this\\b`))).toBeVisible();
 });

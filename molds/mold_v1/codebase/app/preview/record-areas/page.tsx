@@ -12,6 +12,8 @@
  *   coverage   worked example (b): a research desk's "Coverage report" (deployments)
  *   programme  a "Compliance programme" (implementations) with a multi-pick, files, money and a yes/no
  *   permissions the three above with who may write them (examples/permissions.json): tests/record-permissions.spec.ts
+ *   own-state  a "Work item" whose lifecycle is an OWN field (examples/own-state.json): rows that hold no own values
+ *              (tests/record-area-panels.spec.ts)
  *   period     a "Regulatory filing" period (examples/filing-period.json): own fields, declared states, a board, a
  *              calendar, metrics, contained tasks (tests/period-area.spec.ts)
  * Without it, this build's own definitions (the default's: today's lists). `&view=deployments|implementations|tasks|<the period view key, PERIOD_VIEW in lib/work-periods-ui.ts>`.
@@ -24,6 +26,7 @@ import coverage from "@/scripts/fixtures/record-areas/golden/coverage.areas.json
 import programme from "@/scripts/fixtures/record-areas/golden/programme.areas.json";
 import permissions from "@/scripts/fixtures/record-areas/golden/permissions.areas.json";
 import period from "@/scripts/fixtures/record-areas/golden/filing-period.areas.json";
+import ownState from "@/scripts/fixtures/record-areas/golden/own-state.areas.json";
 import type { RecordAreas } from "@/agent/lib/record-areas";
 import { TodosPanel } from "@/app/_components/ops/todos-panel";
 
@@ -33,6 +36,7 @@ const PROFILES: Record<string, RecordAreas> = {
   programme: programme as unknown as RecordAreas,
   permissions: permissions as unknown as RecordAreas,
   period: period as unknown as RecordAreas,
+  "own-state": ownState as unknown as RecordAreas,
 };
 
 function Preview() {

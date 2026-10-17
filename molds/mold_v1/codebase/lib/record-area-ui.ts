@@ -143,3 +143,40 @@ export function listQuery(where: RecordWhere, sort: string, q: string): string {
   if (q.trim()) p.set("q", q.trim());
   return p.toString();
 }
+
+const isObj = (x: unknown): x is Record<string, unknown> => x !== null && typeof x === "object" && !Array.isArray(x);
+
+/**
+ * A list row as the screen reads it, whatever the answer carried: `values` and `custom` are always objects. A row that
+ * came without `values` (an answer in the shape of a build that declares no area) reads the area's own fields from
+ * its `custom`; a row with neither (or with `null` for either, a record written before the profile declared its own
+ * fields) reads nothing. A field with no value shows empty, groups under the empty bucket, sits in no board column and
+ * is counted nowhere, the way the server's `recordValues` leaves out a field the row does not hold.
+ */
+export function listRowOf<T extends object>(v: AreaView, raw: T): T & { values: Record<string, unknown>; custom: Record<string, unknown> } {
+  const r = raw as T & { values?: unknown; custom?: unknown };
+  const custom = isObj(r.custom) ? r.custom : {};
+  if (isObj(r.values)) return { ...raw, values: r.values, custom };
+  const values: Record<string, unknown> = {};
+  for (const f of v.ownFields) {
+    if (f.hidden || f.computed) continue;
+    const x = v.get({ custom }, f.key);
+    if (x !== undefined && x !== null) values[f.key] = x;
+  }
+  return { ...raw, values, custom };
+}
+
+/** One field's value on a list row; undefined when the row carries none (or no `values` at all). */
+export function listValue(row: { readonly values?: unknown }, key: string): unknown {
+  return isObj(row.values) ? row.values[key] : undefined;
+}
+
+/**
+ * A choice field's value on a list row as the option it is read as (a legacy spelling mapped, as `display` maps it):
+ * the board column a row sits in, the lifecycle state its moves start from. "" when the row holds none.
+ */
+export function listChoice(v: AreaView, row: { readonly values?: unknown }, key: string): string {
+  const x = listValue(row, key);
+  if (x === null || x === undefined) return "";
+  return typeof x === "string" ? v.canonical(key, x) : String(x);
+}

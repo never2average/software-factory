@@ -8,7 +8,7 @@
  *      fixture every section of the surface hashes as it did at upstream main fc2ea3e
  *      (fixtures/record-areas/legacy-surface-hashes.json). With LIVE_PACK_PROFILES=<dir>[:<dir>] the same holds for
  *      those profile directories (no area declared).
- *   2. THE WORKED EXAMPLES COMPILE as the preview page reads them (golden/{filing,coverage,programme}.areas.json).
+ *   2. THE WORKED EXAMPLES COMPILE as the preview page reads them (golden/{filing,coverage,programme,own-state}.areas.json).
  *   3. THE SCREEN FROM THE DEFINITION (lib/record-area-ui.ts): words, table columns, board columns and tones, card,
  *      sorts, filters and presets, groups, detail sections, create fields (own fields of every type included).
  *   4. A RECORD READ (agent/lib/record-area-records.ts): the title template, a computed field, the values by key.
@@ -65,6 +65,8 @@ const EXAMPLES = {
   filing: [["50-a.json", join(EX, "compliance.json")], ["51-b.json", join(EX, "obligation.json")]],
   coverage: [["50-a.json", join(EX, "research.json")]],
   programme: [["50-a.json", join(EX, "programme.json")]],
+  // The lifecycle on an OWN field (under `custom`), read by the board, a group, a filter, a sort and a metric.
+  "own-state": [["50-a.json", join(EX, "own-state.json")]],
 };
 const LEGACY = {
   default: [],
@@ -137,7 +139,7 @@ await check("declared exactly where a profile file states the area in the record
 
 // --- 3. the screen from the definition -------------------------------------------------------------------------------
 console.log("3. The screen, from the definition");
-const { recordAreaUi, whereOf, listQuery } = await import("../lib/record-area-ui.ts");
+const { recordAreaUi, whereOf, listQuery, listRowOf, listValue, listChoice } = await import("../lib/record-area-ui.ts");
 await check("Regulatory filing: words, the table's columns, the board (states in order, tones), card, views", () => {
   const ui = recordAreaUi("deployments", A.filing, "Company");
   assert.equal(ui.navLabel, "Regulatory filings");
@@ -214,6 +216,39 @@ await check("the title template, the parts that are empty dropped; a computed fi
   assert.equal(values.due_date, "2026-10-01");
   assert.equal("environment" in values, false, "a hidden field is not shown");
   assert.equal(valueOf(v, row, "account"), "acme");
+});
+
+await check("a row with no own values (custom absent, null or not an object; a list row with no values) reads empty and never throws", () => {
+  const v = areaView("deployments", A["own-state"]);
+  assert.equal(v.lifecycle?.field, "stage");
+  assert.equal(v.lifecycle?.own, true, "the lifecycle is on an own field");
+  for (const custom of [undefined, null, "stage", ["stage"], 7, {}]) {
+    const row = { customerId: "acme", deploymentId: "item-1", deployedVersion: "First", ...(custom === undefined ? {} : { custom }) };
+    const what = JSON.stringify(custom ?? "absent");
+    assert.equal(v.get(row, "stage"), undefined, what);
+    assert.equal(v.categoryOfRow(row), null, what);
+    assert.equal(v.closed(row), false, what);
+    const values = recordValues(v, row);
+    assert.equal("stage" in values, false, `${what}: a field the row does not hold is not in its values`);
+    assert.equal(values.deployedVersion, "First", what);
+    assert.equal(recordTitle(v, row, "legacy"), "First", what);
+  }
+  // The screen: whatever the answer carried, `values` and `custom` are objects and an unheld field is empty.
+  for (const raw of [{ id: "a" }, { id: "a", values: null, custom: null }, { id: "a", values: "x", custom: [] }, { id: "a", values: {}, custom: {} }]) {
+    const r = listRowOf(v, raw);
+    assert.deepEqual([r.values, r.custom], [{}, {}], JSON.stringify(raw));
+    assert.equal(listValue(r, "stage"), undefined);
+    assert.equal(listChoice(v, r, "stage"), "", "in no board column");
+    assert.equal(v.display("stage", listValue(r, "stage")), "", "grouped under the empty bucket");
+  }
+  assert.equal(listValue({}, "stage"), undefined, "a row never read through listRowOf does not throw either");
+  assert.equal(listChoice(v, { values: undefined }, "stage"), "");
+  // A row in another shape that carries its own values under `custom` (the old key, a legacy spelling) still reads them.
+  const old = listRowOf(v, { id: "b", custom: { old_stage: "todo", size: 3 } });
+  assert.deepEqual(old.values, { stage: "todo", size: 3 });
+  assert.equal(listChoice(v, old, "stage"), "queued", "a legacy spelling sits in its option's column");
+  // A row the API sent with its values is read as sent.
+  assert.deepEqual(listRowOf(v, { id: "c", values: { stage: "working" }, custom: { stage: "working" } }).values, { stage: "working" });
 });
 
 // --- 5. every write through the one validator ------------------------------------------------------------------------
