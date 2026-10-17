@@ -1,0 +1,374 @@
+{
+  "_notes": [
+    "Several people hold one step and any of them may act: three checkers of the record's department collect, two leads review, one administrator closes. A send-back reopens the earlier step for its whole group and clears its completion date."
+  ],
+  "user_attributes": [
+    {
+      "key": "duty",
+      "options": [
+        "maker",
+        "checker"
+      ]
+    }
+  ],
+  "init": {
+    "start_id": "collect",
+    "transitions": {
+      "open": [
+        "completed",
+        "rejected",
+        "escalated"
+      ],
+      "completed": [
+        "open"
+      ],
+      "rejected": [
+        "open"
+      ],
+      "escalated": [
+        "completed",
+        "rejected",
+        "open"
+      ]
+    },
+    "terminal_when": {
+      "selector": {
+        "id": "close"
+      },
+      "all": {
+        "state": "completed"
+      }
+    },
+    "steps": [
+      {
+        "id": "collect",
+        "title": "1. Collect (any of three)",
+        "evidence_required": {
+          "default": true,
+          "required_on": [
+            "completed"
+          ]
+        },
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "checker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          },
+          "limit": 3
+        }
+      },
+      {
+        "id": "review",
+        "title": "2. Review (either lead)",
+        "status": {
+          "default": false
+        },
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed",
+            "rejected"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "lead"
+              }
+            }
+          },
+          "limit": 2,
+          "strategy": "least_loaded"
+        }
+      },
+      {
+        "id": "close",
+        "title": "3. Close",
+        "status": {
+          "default": false
+        },
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed",
+            "rejected"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "admin"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 0,
+      "applicability": "all",
+      "selector": {
+        "rule": "forAll"
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "completed_at": {
+              "value": {
+                "$delta": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 0.5,
+      "applicability": "all",
+      "selector": {
+        "rule": "forAll"
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "completed",
+            "after": ""
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "completed_at": {
+              "value": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "collect"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "review"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 2,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "close"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 10,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "collect"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            },
+            "completed_at": {
+              "value": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 11,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "status": {
+              "value": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 20,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "close"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "review"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            },
+            "completed_at": {
+              "value": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 21,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "close"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "status": {
+              "value": false
+            }
+          }
+        }
+      }
+    }
+  ]
+}

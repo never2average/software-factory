@@ -1,0 +1,175 @@
+{
+  "_notes": [
+    "A gateway: once intake is complete, a record of 1000 or more goes to the lead's review, anything less to a checker's. The branch is decided by the record's own data (applicability_query), never by a prompt."
+  ],
+  "user_attributes": [
+    {
+      "key": "duty",
+      "options": [
+        "maker",
+        "checker"
+      ]
+    }
+  ],
+  "init": {
+    "start_id": "intake",
+    "steps": [
+      {
+        "id": "intake",
+        "title": "Intake",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "lead_review",
+        "title": "Lead review",
+        "status": {
+          "default": false
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "lead",
+                "department": "alpha"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "standard_review",
+        "title": "Standard review",
+        "status": {
+          "default": false
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "checker"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 1,
+      "applicability": "query",
+      "applicability_query": {
+        "$condn": {
+          "amount": {
+            "$gte": 1000
+          }
+        }
+      },
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "intake"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "lead_review"
+          },
+          "set": {
+            "status": {
+              "value": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 2,
+      "applicability": "query",
+      "applicability_query": {
+        "$condn": {
+          "amount": {
+            "$lt": 1000
+          }
+        }
+      },
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "intake"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "standard_review"
+          },
+          "set": {
+            "status": {
+              "value": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 3,
+      "applicability": "query",
+      "applicability_query": {
+        "prompt": "Does this record need a second opinion?"
+      },
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "intake"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "external": {
+          "agent": [
+            {
+              "_id": "second-opinion",
+              "name": "second-opinion",
+              "prompt": "Give a second opinion on this record."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

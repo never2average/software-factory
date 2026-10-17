@@ -1,0 +1,142 @@
+{
+  "_notes": [
+    "Three reviewers decide in parallel; the decision step opens once any two have approved (a quorum), and its notice is sent once however many approve after."
+  ],
+  "init": {
+    "start_id": "review_1",
+    "terminal_when": {
+      "selector": {
+        "id": "decide"
+      },
+      "all": {
+        "state": "completed"
+      }
+    },
+    "steps": [
+      {
+        "id": "review_1",
+        "title": "Review (first)",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "id": "p-r1"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "review_2",
+        "title": "Review (second)",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "id": "p-r2"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "review_3",
+        "title": "Review (third)",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "id": "p-r3"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "decide",
+        "title": "Decide",
+        "status": {
+          "default": false
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "id": "p-lead"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "group",
+        "group_selector": {
+          "id": {
+            "$in": [
+              "review_1",
+              "review_2",
+              "review_3"
+            ]
+          }
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "decide"
+          },
+          "set": {
+            "status": {
+              "value": true
+            }
+          }
+        },
+        "external": {
+          "email": {
+            "recipients": {
+              "$or": {
+                "query": {
+                  "id": "p-lead"
+                }
+              }
+            },
+            "subject": {
+              "value": "Two reviewers approved"
+            }
+          }
+        }
+      },
+      "guard": {
+        "selector": {
+          "id": {
+            "$in": [
+              "review_1",
+              "review_2",
+              "review_3"
+            ]
+          }
+        },
+        "all": {
+          "state": "completed"
+        },
+        "min_matching": 2
+      },
+      "once": true
+    }
+  ]
+}

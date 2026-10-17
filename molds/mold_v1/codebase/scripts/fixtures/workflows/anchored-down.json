@@ -1,0 +1,87 @@
+{
+  "_notes": [
+    "Routing one level below an org position: the delegate is a direct report of the lead of the record's own department (from_query with an $object token, direction down), resolved when the step is entered. A record without a department resolves to nobody on that branch and falls back to the administrator."
+  ],
+  "init": {
+    "start_id": "start",
+    "steps": [
+      {
+        "id": "start",
+        "title": "Start",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "admin"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "delegate",
+        "title": "Delegate",
+        "status": {
+          "default": false
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "admin"
+              }
+            }
+          },
+          "relative": {
+            "from_query": {
+              "role": "lead",
+              "department": {
+                "$object": "department"
+              }
+            },
+            "direction": "down"
+          },
+          "reresolve_on": [
+            "open"
+          ]
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "start"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "delegate"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

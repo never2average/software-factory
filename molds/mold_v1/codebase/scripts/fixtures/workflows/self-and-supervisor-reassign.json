@@ -1,0 +1,105 @@
+{
+  "_notes": [
+    "Who may change a step's holder: a supervisor (an administrator, or a role that edits the record across its department or unit) may hand a step to anyone its rule picks; nobody else may. The approve step re-resolves when it is reopened, unless a person placed its holder by hand."
+  ],
+  "user_attributes": [
+    {
+      "key": "duty",
+      "options": [
+        "maker",
+        "checker"
+      ]
+    }
+  ],
+  "init": {
+    "start_id": "prepare",
+    "transitions": {
+      "open": [
+        "completed",
+        "rejected",
+        "escalated"
+      ],
+      "completed": [
+        "open"
+      ],
+      "rejected": [
+        "open"
+      ],
+      "escalated": [
+        "completed",
+        "rejected",
+        "open"
+      ]
+    },
+    "steps": [
+      {
+        "id": "prepare",
+        "title": "Prepare",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "approve",
+        "title": "Approve",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "checker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          },
+          "reresolve_on": [
+            "open"
+          ]
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "approve"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "prepare"
+          },
+          "set": {
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

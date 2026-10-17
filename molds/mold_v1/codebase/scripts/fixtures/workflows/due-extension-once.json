@@ -1,0 +1,80 @@
+{
+  "_notes": [
+    "A bounded, one-shot due-date extension: the holder may move the date once, only within the last 3 days, by at most 15 days. 'later' declares the extension with the defaults; 'free' declares none and stays freely reschedulable."
+  ],
+  "user_attributes": [
+    {
+      "key": "duty",
+      "options": [
+        "maker",
+        "checker"
+      ]
+    }
+  ],
+  "init": {
+    "start_id": "review",
+    "steps": [
+      {
+        "id": "review",
+        "title": "Review",
+        "due_on": {
+          "$delta": {
+            "days": 2
+          }
+        },
+        "due_on_extension": {
+          "max_days": 15,
+          "window_days": 3,
+          "once": true
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "later",
+        "title": "Later review",
+        "due_on": {
+          "$delta": {
+            "days": 30
+          }
+        },
+        "due_on_extension": {},
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "free",
+        "title": "Free step",
+        "due_on": {
+          "$delta": {
+            "days": 2
+          }
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": []
+}

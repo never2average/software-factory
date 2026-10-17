@@ -1,0 +1,301 @@
+{
+  "_notes": [
+    "One person prepares, a second reviews. The preparer must say what was done and attach evidence to submit; the reviewer must give a reason to approve or send back. A send-back reopens the first step for the same preparer and puts the review back to sleep. An escalation queues one email to the department's leads, once."
+  ],
+  "user_attributes": [
+    {
+      "key": "duty",
+      "options": [
+        "maker",
+        "checker"
+      ]
+    }
+  ],
+  "init": {
+    "start_id": "prepare",
+    "transitions": {
+      "open": [
+        "completed",
+        "rejected",
+        "escalated"
+      ],
+      "completed": [
+        "open"
+      ],
+      "rejected": [
+        "open"
+      ],
+      "escalated": [
+        "completed",
+        "rejected",
+        "open"
+      ]
+    },
+    "terminal_when": {
+      "selector": {
+        "id": "review"
+      },
+      "all": {
+        "state": "completed"
+      }
+    },
+    "steps": [
+      {
+        "id": "prepare",
+        "title": "Prepare",
+        "due_on": {
+          "$delta": {
+            "days": 3
+          }
+        },
+        "comments_required": {
+          "default": true,
+          "evaluation_criterion": "What was done.",
+          "required_on": [
+            "completed"
+          ]
+        },
+        "evidence_required": {
+          "default": true,
+          "evaluation_criterion": "The material that shows it.",
+          "required_on": [
+            "completed"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "review",
+        "title": "Review",
+        "status": {
+          "default": false
+        },
+        "due_on": {
+          "$delta": {
+            "days": 5
+          }
+        },
+        "comments_required": {
+          "default": true,
+          "evaluation_criterion": "Why it is approved, or what is missing.",
+          "required_on": [
+            "completed",
+            "rejected"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "checker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 0,
+      "applicability": "all",
+      "selector": {
+        "rule": "forAll"
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "completed_at": {
+              "value": {
+                "$delta": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 0.5,
+      "applicability": "all",
+      "selector": {
+        "rule": "forAll"
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "completed",
+            "after": ""
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "completed_at": {
+              "value": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "prepare"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "review"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 2,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "prepare"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            },
+            "completed_at": {
+              "value": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 3,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "status": {
+              "value": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 4,
+      "applicability": "all",
+      "selector": {
+        "rule": "forAll"
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "escalated"
+          }
+        }
+      },
+      "action": {
+        "external": {
+          "email": {
+            "recipients": {
+              "$or": {
+                "query": {
+                  "role": "lead",
+                  "department": "alpha"
+                }
+              }
+            },
+            "subject": {
+              "value": "A step was escalated"
+            },
+            "body": {
+              "value": "A step on this record was escalated."
+            }
+          }
+        }
+      },
+      "once": true
+    }
+  ]
+}

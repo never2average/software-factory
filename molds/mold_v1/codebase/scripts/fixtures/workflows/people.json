@@ -1,0 +1,25 @@
+{
+  "$comment": "The neutral directory every workflow fixture runs against (scripts/test-workflow-engine.mjs). Order matters: a plain assignee query takes people in this order. p-gone has left (employment_status_active false) and sits first among the checkers on purpose. reporting_managers are the reporting matrix (p-maker and p-checker report to p-lead, p-lead to p-head; p-other to p-lead-beta). Roles are RBAC role boundaries: lead supervises its department and acts on what it holds; unit-lead supervises its business unit but acts on nothing; reviewer acts on what it holds; viewer reads its department.",
+  "users": [
+    { "id": "p-admin", "email": "admin@example.test", "role": "admin", "department": "alpha" },
+    { "id": "p-head", "email": "head@example.test", "role": "lead", "department": "executive" },
+    { "id": "p-lead", "email": "lead@example.test", "role": "lead", "department": "alpha", "business_unit": "unit-1", "reporting_managers": ["p-head"] },
+    { "id": "p-lead-beta", "email": "lead-beta@example.test", "role": "lead", "department": "beta" },
+    { "id": "p-unit-lead", "email": "unit-lead@example.test", "role": "unit-lead", "department": "gamma", "business_unit": "unit-1" },
+    { "id": "p-gone", "email": "gone@example.test", "role": "reviewer", "department": "alpha", "duty": "checker", "employment_status_active": false },
+    { "id": "p-checker", "email": "checker@example.test", "role": "reviewer", "department": "alpha", "duty": "checker", "reporting_managers": ["p-lead"] },
+    { "id": "p-r1", "email": "r1@example.test", "role": "reviewer", "department": "alpha", "duty": "checker" },
+    { "id": "p-r2", "email": "r2@example.test", "role": "reviewer", "department": "alpha", "duty": "checker" },
+    { "id": "p-r3", "email": "r3@example.test", "role": "reviewer", "department": "alpha", "duty": "checker" },
+    { "id": "p-maker", "email": "maker@example.test", "role": "reviewer", "department": "alpha", "duty": "maker", "reporting_managers": ["p-lead"] },
+    { "id": "p-other", "email": "other@example.test", "role": "reviewer", "department": "beta", "duty": "maker", "reporting_managers": ["p-lead-beta"] },
+    { "id": "p-viewer", "email": "viewer@example.test", "role": "viewer", "department": "alpha" }
+  ],
+  "roles": [
+    { "name": "admin", "permissions": [{ "permission": "All" }] },
+    { "name": "lead", "permissions": [{ "object_name": "Actionable", "permission": "DepartmentAssignedReadUpdateAll" }, { "object_name": "Actionable", "permission": "AssignedReadUpdateAll" }] },
+    { "name": "unit-lead", "permissions": [{ "object_name": "Actionable", "permission": "BusinessUnitAssignedReadUpdateAll" }] },
+    { "name": "reviewer", "permissions": [{ "object_name": "Actionable", "permission": "AssignedReadUpdateAll" }] },
+    { "name": "viewer", "permissions": [{ "object_name": "Actionable", "permission": "DepartmentAssignedReadAll" }] }
+  ]
+}
