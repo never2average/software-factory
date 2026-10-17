@@ -1,0 +1,702 @@
+{
+  "_notes": [
+    "Five steps in a line: the maker scopes, collects and submits; a checker reviews; the department's lead signs off. Step 3 may send back to step 1; steps 4 and 5 send back to step 2, after which 3 and 4 run again. Every holder comes from the record's department."
+  ],
+  "user_attributes": [
+    {
+      "key": "duty",
+      "options": [
+        "maker",
+        "checker"
+      ]
+    }
+  ],
+  "init": {
+    "start_id": "s1_scope",
+    "flatten_order": [
+      "s1_scope",
+      "s2_collect",
+      "s3_submit",
+      "s4_review",
+      "s5_signoff"
+    ],
+    "transitions": {
+      "open": [
+        "completed",
+        "rejected",
+        "escalated"
+      ],
+      "completed": [
+        "open"
+      ],
+      "rejected": [
+        "open"
+      ],
+      "escalated": [
+        "completed",
+        "rejected",
+        "open"
+      ]
+    },
+    "terminal_when": {
+      "selector": {
+        "id": "s5_signoff"
+      },
+      "all": {
+        "state": "completed"
+      }
+    },
+    "steps": [
+      {
+        "id": "s1_scope",
+        "title": "1. Scope",
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "s2_collect",
+        "title": "2. Collect",
+        "status": {
+          "default": false
+        },
+        "evidence_required": {
+          "default": true,
+          "required_on": [
+            "completed"
+          ]
+        },
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "s3_submit",
+        "title": "3. Submit",
+        "status": {
+          "default": false
+        },
+        "evidence_required": {
+          "default": true,
+          "required_on": [
+            "completed"
+          ]
+        },
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed",
+            "rejected"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "s4_review",
+        "title": "4. Review",
+        "status": {
+          "default": false
+        },
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed",
+            "rejected"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "checker",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          },
+          "strategy": "least_loaded"
+        }
+      },
+      {
+        "id": "s5_signoff",
+        "title": "5. Sign off",
+        "status": {
+          "default": false
+        },
+        "comments_required": {
+          "default": true,
+          "required_on": [
+            "completed",
+            "rejected"
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "lead",
+                "department": {
+                  "$object": "department"
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 0,
+      "applicability": "all",
+      "selector": {
+        "rule": "forAll"
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "completed_at": {
+              "value": {
+                "$delta": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 0.5,
+      "applicability": "all",
+      "selector": {
+        "rule": "forAll"
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "completed",
+            "after": ""
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "completed_at": {
+              "value": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s1_scope"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s2_collect"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 2,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s2_collect"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s3_submit"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 3,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s3_submit"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s4_review"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 4,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s4_review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "completed"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s5_signoff"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 10,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s3_submit"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s1_scope"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 11,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s3_submit"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s2_collect"
+          },
+          "set": {
+            "status": {
+              "value": false
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 12,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s3_submit"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "status": {
+              "value": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 20,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s4_review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s2_collect"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 21,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s4_review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s3_submit"
+          },
+          "set": {
+            "status": {
+              "value": false
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 22,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s4_review"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "status": {
+              "value": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 30,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s5_signoff"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s2_collect"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 31,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s5_signoff"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s3_submit"
+          },
+          "set": {
+            "status": {
+              "value": false
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 32,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s5_signoff"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "s4_review"
+          },
+          "set": {
+            "status": {
+              "value": false
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    },
+    {
+      "priority": 33,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "s5_signoff"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "",
+            "after": "rejected"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "status": {
+              "value": false
+            }
+          }
+        }
+      }
+    }
+  ]
+}

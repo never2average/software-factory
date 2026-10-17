@@ -1,0 +1,92 @@
+{
+  "_notes": [
+    "Escalation goes to the reporting manager of whoever holds the work, one level up, resolved when the escalation step is entered (not at attach). When the chain runs out it falls back to the administrator."
+  ],
+  "user_attributes": [
+    {
+      "key": "duty",
+      "options": [
+        "maker",
+        "checker"
+      ]
+    }
+  ],
+  "init": {
+    "start_id": "work",
+    "steps": [
+      {
+        "id": "work",
+        "title": "Work",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "duty": "maker"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "escalation",
+        "title": "Escalation",
+        "status": {
+          "default": false
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "admin"
+              }
+            }
+          },
+          "relative": {
+            "from_step": "work",
+            "direction": "up",
+            "levels": 1
+          },
+          "reresolve_on": [
+            "open"
+          ]
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "work"
+        }
+      },
+      "condition": {
+        "step$state": {
+          "$delta": {
+            "before": "open",
+            "after": "escalated"
+          }
+        }
+      },
+      "action": {
+        "internal": {
+          "scope": "other",
+          "other_selector": {
+            "id": "escalation"
+          },
+          "set": {
+            "status": {
+              "value": true
+            },
+            "state": {
+              "value": "open"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

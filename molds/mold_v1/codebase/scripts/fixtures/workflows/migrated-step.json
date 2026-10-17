@@ -1,0 +1,57 @@
+{
+  "_notes": [
+    "A record brought over from another system: its first step starts completed, carrying the date it was completed on and the evidence it had (duplicates once), credited to its holder."
+  ],
+  "init": {
+    "start_id": "earlier",
+    "steps": [
+      {
+        "id": "earlier",
+        "title": "Done elsewhere",
+        "state": {
+          "default": "completed"
+        },
+        "completed_at": {
+          "default": "2026-10-01T10:00:00+00:00"
+        },
+        "evidence": {
+          "default": [
+            {
+              "ref": "doc://archive/1"
+            },
+            {
+              "ref": "doc://archive/1"
+            },
+            {
+              "ref": "doc://archive/2",
+              "at": "2026-09-30T09:00:00Z"
+            }
+          ]
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "id": "p-maker"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "next",
+        "title": "Next",
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "id": "p-checker"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": []
+}

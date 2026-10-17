@@ -1,0 +1,68 @@
+{
+  "_notes": [
+    "A record that waits on others: its close step opens only when every two-person-review instance in the same batch (task.batch_id) has its review completed. Re-evaluated whenever a member changes; never across organizations."
+  ],
+  "init": {
+    "start_id": "close",
+    "steps": [
+      {
+        "id": "close",
+        "title": "Close the batch",
+        "status": {
+          "default": false
+        },
+        "assignee": {
+          "condition": {
+            "$or": {
+              "query": {
+                "role": "admin"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "diff": [
+    {
+      "priority": 1,
+      "applicability": "all",
+      "selector": {
+        "rule": "single",
+        "group_selector": {
+          "id": "close"
+        }
+      },
+      "condition": {
+        "step$status": {
+          "$condn": {
+            "$eq": false
+          }
+        }
+      },
+      "cohort_guard": {
+        "join_on": "batch_id",
+        "instances": {
+          "workflow_id": "two-person-review"
+        },
+        "steps": {
+          "id": "review"
+        },
+        "all": {
+          "state": "completed"
+        }
+      },
+      "once": true,
+      "action": {
+        "internal": {
+          "scope": "self",
+          "set": {
+            "status": {
+              "value": true
+            }
+          }
+        }
+      }
+    }
+  ]
+}

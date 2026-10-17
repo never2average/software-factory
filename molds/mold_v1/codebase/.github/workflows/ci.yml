@@ -353,6 +353,24 @@ jobs:
         if: always()
         run: npm run test:record-lifecycle
 
+      # THE WORKFLOW ENGINE IS VENDORED, NEVER EDITED (lib/workflow-engine/; docs/WORKFLOW_ENGINE.md). Every file is
+      # its recorded vendored sha256 with its header, the recorded local patches (a `.ts` on an import, a parameter property
+      # made erasable, a comment line made neutral) are exactly the ones scripts/sync-workflow-engine.mjs declares, and
+      # UPSTREAM.json is byte for byte what the sync writes; no client, company or line-of-business word is in the tree.
+      # Offline: the upstream checkout lives on the operator's machine, and re-deriving from it is the sync's job there.
+      - name: Vendored workflow engine is exactly the sync of its pinned commit (no hand edits, no domain words)
+        if: always()
+        run: npm run check:workflow-engine
+
+      # The engine's behaviour, ported from upstream's own tests to neutral fixtures (scripts/fixtures/workflows/):
+      # validation (spec.json through Ajv, and the semantic validator), the matcher, init, the rules, guards and quorums,
+      # balancing, relative and anchored assignment, reassignment, the due-date extension, cohorts, RBAC, the store, and the
+      # step rules rebuilt from upstream's route (lib/workflow-step-rules.ts). Nothing in the app imports the engine
+      # yet, and this fails if anything does.
+      - name: Workflow engine (validation, rules, assignment, step rules; nothing imports it yet)
+        if: always()
+        run: npm run test:workflow-engine
+
       # A choice column's values live in one place, the zod enums in agent/lib/customer-schema.ts. The meanings base
       # code gives a value (defaults, what counts as attention), the Ops API's check and the MCP tools' text are all
       # read from it; a hand-made copy of each had drifted (mold_v1-251). The routes against a database are below.
