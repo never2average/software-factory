@@ -17,14 +17,15 @@ reporting matrix (`core/rbac.ts`), draw the process (`core/diagram.ts`).
 The engine is the upstream workflow engine, vendored. The mold's record lifecycles become engine-configurable on top of
 it, over the mold's own Postgres records: no separate service, no other database.
 
-**This is phase 1 of 8, and it changes no runtime behaviour.** Nothing in the app imports the engine yet;
-`npm run test:workflow-engine` fails if anything outside its own glue (the step rules, the test, the sync) does. What
-follows, each its own change:
+**Phases 1 and 2 of 8 change no runtime behaviour.** Nothing in the app imports the engine yet; only the build does,
+to check a profile's workflows (phase 2: `scripts/lib/record-workflows.mjs`, the DSL's validator and `spec.json`).
+`npm run test:workflow-engine` fails if anything outside its own glue (the step rules, the test, the sync, the build's
+check) names it. What follows, each its own change:
 
 | Phase | What |
 |---|---|
 | 1 | the engine core as a library, its step rules, tests, the sync (this) |
-| 2 | the deployment profile's schema for workflows |
+| 2 | the deployment profile's schema for workflows: `records.workflows`, a lifecycle's `workflow`, each move's `step`, `workflow_states`, checked at build (docs/DEPLOYMENT_PROFILE.md "records.workflows"); email and agent actions and prompt branches refused until a later phase |
 | 3 | Postgres tables for definitions and instances, with row-level security |
 | 4 | people data: the directory, roles and reporting lines from the mold's own records |
 | 5 | runtime wiring: attaching a workflow to a record, a person's change through the step rules |
@@ -64,8 +65,9 @@ who may change a step's holder, the bounded due-date extension, pinning a hand-p
 and status codes, so phase 5 can keep the same contract. Where upstream hard-codes a role name, the caller decides.
 
 Runtime dependencies: none beyond Node's own (`node:crypto`). `dsl/validate.ts` needs no schema library. Validating a
-document against `spec.json` needs Ajv, which the mold carries as a **devDependency** used by the test only; a later
-phase that validates workflows at build time uses it there, never in the client bundle.
+document against `spec.json` needs Ajv, which the mold carries as a **devDependency**, used by the test and, from phase 2,
+by the profile build (`scripts/lib/record-workflows.mjs` loads it only when a profile declares a workflow), never in the
+client bundle.
 
 ## The local patches
 

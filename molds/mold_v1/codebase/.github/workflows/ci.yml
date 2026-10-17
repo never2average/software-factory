@@ -293,6 +293,15 @@ jobs:
         if: always()
         run: npm run test:record-areas
 
+      # RECORD WORKFLOWS (profiles `records.workflows`; docs/WORKFLOW_ENGINE.md, phase 2): a profile's workflow documents
+      # are checked at build against the vendored engine's spec.json and validator, and an area's lifecycle binding (its
+      # workflow, each move's step, the states of records already mid-lifecycle) against them. A profile without one builds
+      # exactly as before; a neutral example compiles; every refusal, email and agent actions and prompt branches (a later
+      # phase) included, has its exact sentence. Nothing at runtime reads a workflow yet.
+      - name: Record workflows (build-time schema and checks; email, agent and prompt refused until a later phase)
+        if: always()
+        run: npm run test:record-areas-workflows
+
       # THE RECORD HUB (profiles `records.hub`): the screen that holds the record areas has its own name and glyph. The
       # default compiles to today's ("TODOs") and its briefing and tool words are unchanged; a named hub and a redefined
       # tasks area each keep their own word; every bad hub fails the build with its file and path. Its screens are held

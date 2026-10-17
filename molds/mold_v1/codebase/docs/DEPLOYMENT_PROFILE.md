@@ -782,7 +782,8 @@ domain concept" below.
   `"strict"` (refused). A pack's first lifecycle should be `"warn"`. A lifecycle on another field replaces the one
   before it whole. The tasks area's lifecycle is the `status` column (its six values are the contract with the
   task-workflow service, so each keeps its meaning) or an own `pick_list`; then the status follows the state's
-  category on every write (open→`open`, active→`in_progress`, done→`done`, …) and nobody sets it directly.
+  category on every write (open→`open`, active→`in_progress`, done→`done`, …) and nobody sets it directly. A lifecycle
+  may name a workflow it runs (`workflow`, each move's `step`, `workflow_states`): see `records.workflows` below.
 - **Lifecycle rules, enforced** (`agent/lib/record-lifecycle.ts`, the one rule book every door applies through
   `validateRecordWrite`: the ops API, the agent's upsert tools, MCP through the API). A move is allowed by a
   transition whose `from` holds the stored state (`"*"`: any) and whose `to` is the new one, when the caller's role is
@@ -952,7 +953,80 @@ wrong type (`not_by` may also be `"{entered_by}"`), a `"strict"` lifecycle with 
 filter, group, detail or create field that does not exist or is hidden; a sort on a type that cannot sort; a create
 form that leaves out a required field with no default; a container that cannot hold tasks; `relations.contains` on
 an area other than periods or naming an area a period cannot contain; a target `scope` its period cannot count; a
-`structure` (fixed by the table); an email reminder; `agent.describe` over 1200 characters.
+`structure` (fixed by the table); an email reminder; `agent.describe` over 1200 characters; a lifecycle's `workflow`,
+`step` or `workflow_states` that does not fit the workflow it names (`records.workflows` below).
+
+### `records.workflows`
+
+**Workflows** (phase 2 of the workflow engine, `docs/WORKFLOW_ENGINE.md`): a profile or a pack supplies workflow
+documents in the vendored engine's DSL (its `init` + `diff` shape, `lib/workflow-engine/dsl/spec.json`) and binds a
+record area's lifecycle to one. **This phase is the schema and the build's checks only**: nothing at runtime reads a
+workflow yet, the documents are not emitted, and a profile that declares none builds byte for byte as before. Storing
+the definitions and instances (phase 3), the people they route to (phase 4) and running them on a record's moves
+(phase 5) come next.
+
+```jsonc
+"records": {
+  "workflows": {
+    "two-person-review": { "init": { "start_id": "prepare", "steps": [ { "id": "prepare", … }, { "id": "review", … } ], … },
+                           "diff": [ … ] }                        // the engine's DSL, as scripts/fixtures/workflows/ holds it
+  },
+  "areas": { "deployments": {
+    "fields": { "review_state": { "type": "pick_list", "label": "Review state",
+                                  "options": [ { "value": "drafting" }, { "value": "in_review" }, { "value": "approved" }, { "value": "sent_back" } ] } },
+    "lifecycle": {
+      "field": "review_state", "initial": "drafting", "enforce": "warn",
+      "categories": { "drafting": "open", "in_review": "active", "approved": "done", "sent_back": "open" },
+      "workflow": "two-person-review",                                       // the workflow this lifecycle runs
+      "transitions": [
+        { "from": ["drafting", "sent_back"], "to": "in_review", "step": { "id": "prepare", "state": "completed" } },
+        { "from": ["in_review"], "to": "approved", "not_by": "{entered_by}", "step": { "id": "review", "state": "completed" } },
+        { "from": ["in_review"], "to": "sent_back", "requires_comment": true, "step": { "id": "review", "state": "rejected" } }
+      ],
+      "workflow_states": {                                                   // where a record already mid-lifecycle stands
+        "drafting":  { "prepare": "open" },
+        "in_review": { "prepare": "completed", "review": "open" },
+        "approved":  { "prepare": "completed", "review": "completed" },
+        "sent_back": { "prepare": "open", "review": "rejected" }
+      }
+    }
+  } }
+}
+```
+
+| Key | What it is |
+|---|---|
+| `records.workflows.<id>` | A workflow document. The id is lowercase letters and digits, words joined by `-` or `_`, starting with a letter, at most 64 characters. A later file's document with the same id replaces the earlier one **whole** (a workflow is one document; its steps and rules never merge). A workflow no area runs is still checked. |
+| `lifecycle.workflow` | The id of the workflow this area's lifecycle runs. |
+| `lifecycle.transitions[i].step` | `{ "id": "<step id>", "state": "<step state>" }`: making this move changes that step of the workflow to that state (one of the engine's step states: `open`, `completed`, `rejected`, `escalated`). A move without `step` changes no step. |
+| `lifecycle.workflow_states` | `{ "<record state>": { "<step id>": "<step state>" } }`: for a record that is already mid-lifecycle when its workflow is attached (lazily, the first time it moves), the state of each step for each record state. Keyed by the lifecycle's states as the field's choices spell them, never by a stored legacy spelling (`legacy_values`). A state or step left out is not set. |
+
+**Build-time checks** (`scripts/lib/record-workflows.mjs`, called by `scripts/gen-deployment-profile.mjs` before any
+area is checked), each failing the build with `profiles/<file>: records.workflows.<id>.<path>: <reason>` (the file that
+last states the workflow) or `profiles/<file>: records.areas.<area>.lifecycle….: <reason>`:
+
+- the id, and a document that is not an object;
+- **the engine's `spec.json`** (Draft 2020-12, through Ajv, a devDependency loaded only when a profile declares a
+  workflow): `records.workflows.w.init.steps[0]: must have required property 'title'`;
+- **the engine's validator** (`validateWorkflow`, `dsl/validate.ts`): cross-step references, rule priorities, supported
+  query operators, guards (`records.workflows.w.init.start_id: start_id "nope" is not a step id`);
+- **what this phase cannot run**, each refused with the sentence that it comes in a later phase:
+  an `external` action (an email or an agent: `….diff[5].action.external: email and agent actions are not run yet;
+  they come in a later phase, as notifications and assistant tasks. Use internal actions only for now`) and a `prompt`
+  branch (`$or.prompt` choosing a holder or deciding whether evidence or a comment is needed, a rule's
+  `applicability_query.prompt`, an `internal.set.<property>.prompt`: `….prompt: a "prompt" branch is resolved by a
+  model, which comes in a later phase; give the deterministic branch instead ("query", or "value")`), even beside a
+  `query` the engine would prefer;
+- **the binding**: `lifecycle.workflow` naming a workflow the profile does not declare (the declared ones are listed);
+  a transition's `step` or `workflow_states` on a lifecycle with no `workflow`; a step id that is not one of the
+  workflow's steps (they are listed); a step state that is not one of the engine's; a `workflow_states` key that is not
+  a state of the lifecycle's field, or is a legacy spelling of one (`"draft" is a stored legacy spelling of
+  "drafting"; key workflow_states by the state itself, "drafting"`). A step's `id` and `state` are both required
+  (the schema, `scripts/schemas/record-area.schema.json`).
+
+The compiled area carries the binding as written (`RecordLifecycle.workflow`, `.workflow_states`,
+`RecordTransition.step` in `agent/lib/record-areas.generated.ts`); nothing reads it yet. Held by
+`npm run test:record-areas-workflows`.
 
 ### `records.hub`
 
@@ -1099,6 +1173,8 @@ form read byte for byte what they did (`npm run test:record-structure`).
 9. **`records.areas` takes the four built-in areas only**, each in one form (record-area or legacy) across every
    file. Inside an area, what may be said is the record-area schema's (not the default's keys): `fields` is a map,
    so a later file adds or changes one field; a `lifecycle` naming another `field` replaces the one before it whole.
+10. **`records.workflows` is a map of workflow ids**, each a whole document: a later file's workflow with the same id
+   replaces the earlier one, never merged into it.
 
 A bad profile **fails the build, never the page**: the generator exits non-zero with
 `profiles/<file>: <path>: <what is wrong>`.
@@ -1545,6 +1621,7 @@ npm run test:custom-fields         # the custom-field validator, the agent's wri
 npm run test:record-hub            # records.hub: the default compiles to today's hub and the model's words are unchanged; a named hub and a redefined tasks area each keep their own word; every bad hub fails with its path; offline
 npx playwright test tests/record-hub.spec.ts     # the nav, the screen's title and the Control Panel's section under "Obligations Register", and the default unchanged
 npm run test:record-areas          # records.areas: an old profile emits exactly what it did (goldens from before record areas), the legacy forms lowered, the worked examples compile, every bad-profile class fails with its path, the view model and the write validator; offline
+npm run test:record-areas-workflows # records.workflows: no binding without one, the phase-1 fixtures this phase runs compile, a bound lifecycle compiles, every refusal (spec.json, the engine's validator, email/agent actions and prompt branches, the binding) with its exact sentence; offline
 npx playwright test tests/domain-forms.spec.ts   # the real "New …" forms, default and example, with the API mocked
 npm run test:work-periods          # work_periods: the generator's rules, each mode's views, words, tools and routes (three builds rendered), the default to the letter; offline
 npm run test:work-periods-db       # the same three modes against a real Postgres: two workspaces, the routes and the model's tools, rollover, whose an item is

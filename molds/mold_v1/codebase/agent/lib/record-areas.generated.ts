@@ -46,7 +46,11 @@ export interface RecordField {
   show_in_list?: boolean;
   pii?: boolean;
 }
-export interface RecordTransition { from: "*" | string[]; to: string; label?: string; roles?: RecordRole[]; requires?: string[]; requires_comment?: boolean; not_by?: string; set?: Record<string, unknown> }
+/** A step state of the workflow engine (records.workflows; docs/WORKFLOW_ENGINE.md). */
+export type RecordWorkflowStepState = "open" | "completed" | "rejected" | "escalated";
+/** A step of the lifecycle's workflow and the state a move puts it in. */
+export interface RecordWorkflowStep { id: string; state: RecordWorkflowStepState }
+export interface RecordTransition { from: "*" | string[]; to: string; label?: string; roles?: RecordRole[]; requires?: string[]; requires_comment?: boolean; not_by?: string; set?: Record<string, unknown>; /** Making this move changes this step of the lifecycle's workflow. */ step?: RecordWorkflowStep }
 export interface RecordLifecycle {
   field: string;
   initial?: string;
@@ -54,6 +58,10 @@ export interface RecordLifecycle {
   /** What a move outside `transitions` does: "off" (allowed, the default), "warn" (allowed and noted), "strict" (refused). */
   enforce?: "off" | "warn" | "strict";
   transitions?: RecordTransition[];
+  /** The workflow this lifecycle runs: an id of the profile's `records.workflows` (checked at build; not run yet). */
+  workflow?: string;
+  /** Record state -> each step's state: where a record already mid-lifecycle stands, for its workflow to be attached lazily. */
+  workflow_states?: Record<string, Record<string, RecordWorkflowStepState>>;
 }
 export type RecordRoles = "*" | RecordRole[];
 export interface RecordArea {

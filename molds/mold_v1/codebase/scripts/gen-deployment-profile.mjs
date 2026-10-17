@@ -10,6 +10,8 @@ import { join } from "node:path";
 import { validateSource } from "./lib/profile-library.mjs";
 import { assertSupported } from "./lib/json-schema.mjs";
 import { AREA_IDS, checkArea, compileArea, formsIn, raiseDomain, raisePeriods, READ_ONLY, schemaProblem, STRUCTURE, structureNote, SYSTEM_KEYS as AREA_SYSTEM_KEYS } from "./lib/record-areas.mjs";
+// records.workflows and an area's binding to one, checked against the vendored engine's DSL (no runtime use yet).
+import { bindingProblem, STEP_STATES, workflowProblem } from "./lib/record-workflows.mjs";
 // Plain data with no imports but the price table; Node 24 reads the .ts as it is (type stripping).
 import { speechModelProblem } from "../lib/dictation-models.ts";
 // The record hub's checks and compiled form (no imports: plain data and functions).
@@ -33,7 +35,9 @@ function merge(base, over, path, shape) {
     // A lifecycle on another field is another lifecycle: it replaces the one before it whole (its states, categories
     // and transitions are that field's), instead of merging into it.
     const relifed = k === "lifecycle" && RECORD_AREA.test(here) && isObj(v) && isObj(base[k]) && "field" in v && v.field !== base[k].field;
-    out[k] = isObj(v) && isObj(base[k]) && !relifed ? merge(base[k], v, here, shape?.[k]) : v;
+    // A workflow is one document: a later file's records.workflows.<id> replaces the one before it whole.
+    const whole = path === "records.workflows";
+    out[k] = isObj(v) && isObj(base[k]) && !relifed && !whole ? merge(base[k], v, here, shape?.[k]) : v;
   }
   return out;
 }
@@ -41,7 +45,8 @@ function merge(base, over, path, shape) {
 const uncomment = (v) => (Array.isArray(v) ? v.map(uncomment) : isObj(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== "$comment").map(([k, x]) => [k, uncomment(x)])) : v);
 // library.sources is a map of the deployment's own source ids (scripts/lib/profile-library.mjs validates each);
 // agent.compaction.specialists a map of specialist directory names (checked against the subagents present, below).
-const FREE = ["dataroom.domains", "library.sources", "agent.compaction.specialists"];
+// records.workflows a map of workflow ids (each a workflow document, checked by scripts/lib/record-workflows.mjs).
+const FREE = ["dataroom.domains", "library.sources", "agent.compaction.specialists", "records.workflows"];
 // domains.<area>.fields is a map keyed by real field keys; its entries are validated against the schemas below.
 const FIELD_MAP = /^domains\.(deployments|implementations)\.fields(\.|$)/;
 // records.areas.<area>: the area's own shape (scripts/schemas/record-area.schema.json), not the default's keys.
@@ -84,6 +89,8 @@ function readDomains(doc, file) {
 let profile = {}; let shape = null; let defaults = null;
 /** Record areas by the form each profile file states them in: legacy (domains.*, work_periods) or records.areas. */
 const legacyBy = new Map(); const freshBy = new Map();
+/** records.workflows.<id> -> the last profile file that states it (the one a problem with it is reported against). */
+const workflowFile = new Map();
 for (const f of files) {
   current = f;
   let doc;
@@ -97,6 +104,7 @@ for (const f of files) {
     for (const id of fresh) if (legacy.has(id)) fail(`records.areas.${id} and ${legacyAt(id)} both describe the ${id} area. Keep one form: records.areas.${id} (the record-area form) or ${legacyAt(id)} (the legacy form)`);
     for (const id of legacy) legacyBy.set(id, [...(legacyBy.get(id) ?? []), f]);
     for (const id of fresh) freshBy.set(id, [...(freshBy.get(id) ?? []), f]);
+    if (isObj(doc.records?.workflows)) for (const id of Object.keys(doc.records.workflows)) workflowFile.set(id, f);
   }
   profile = shape ? merge(profile, doc, "", shape) : merge({}, doc, "", null);
   if (!shape) { shape = profile; defaults = structuredClone(profile); }
@@ -311,6 +319,21 @@ for (const id of AREA_IDS) {
     fail(`records.areas.${id}: ${legacyBy.get(id).join(", ")} ${legacyBy.get(id).length === 1 ? "states" : "state"} this area in the legacy form (${id === "periods" ? "work_periods" : `domains.${id}`}) and ${freshBy.get(id).join(", ")} in the record-area form. Use one form for an area across every profile file`);
   }
 }
+// --- records.workflows: workflow documents in the vendored engine's DSL (scripts/lib/record-workflows.mjs) -----------
+// Checked before any area, since an area's lifecycle may run one: the engine's spec.json, its validator, then what this
+// phase refuses (email and agent actions, prompt branches). Not emitted: nothing at runtime reads them yet.
+const WORKFLOWS = isObj(profile.records?.workflows) ? profile.records.workflows : {};
+if (profile.records && "workflows" in profile.records && !isObj(profile.records.workflows)) {
+  current = files.at(-1);
+  fail("records.workflows must be an object keyed by workflow id");
+}
+for (const [id, doc] of Object.entries(WORKFLOWS)) {
+  current = workflowFile.get(id) ?? files.at(-1);
+  let p;
+  try { p = workflowProblem(id, doc); } catch (e) { fail(`records.workflows.${id}: ${e.message}`); }
+  if (p) fail(`records.workflows.${id}${p.path ? `.${p.path}` : ""}: ${p.message}`);
+}
+current = files.at(-1);
 const DOMAIN_IDS_FOR_FOLDERS = DOMAINS;
 function areaFail(id, p) {
   current = freshBy.get(id)?.at(-1) ?? legacyBy.get(id)?.at(-1) ?? "00-default.json";
@@ -327,7 +350,7 @@ const raisedNotes = [];
 const prelim = freshBy.size ? compileAll(profile, (id) => legacyOf(defaults, id), (id) => freshBy.has(id)) : null;
 for (const id of AREA_IDS) {
   if (!freshBy.has(id) || id === "tasks") continue;
-  const problem = schemaProblem(RECORD_SCHEMA, declaredAreas[id]) ?? checkArea(id, prelim[id], { cols: areaColumns[id], areas: prelim, folders: DOMAINS, declared: declaredAreas[id] });
+  const problem = schemaProblem(RECORD_SCHEMA, declaredAreas[id]) ?? checkArea(id, prelim[id], { cols: areaColumns[id], areas: prelim, folders: DOMAINS, declared: declaredAreas[id] }) ?? bindingProblem(prelim[id], WORKFLOWS);
   if (problem) areaFail(id, problem);
   const area = prelim[id];
   if (id === "periods") profile.work_periods = raisePeriods(area, profile.work_periods);
@@ -450,7 +473,7 @@ for (const area of Object.keys(AREAS)) {
 // then the compiled area against the rules a schema cannot say (field bindings, choices, the lifecycle, the views).
 const RECORD_AREAS = compileAll(profile, (id) => legacyOf(defaults, id), (id) => freshBy.has(id) && id !== "periods");
 for (const id of AREA_IDS) {
-  const problem = schemaProblem(RECORD_SCHEMA, declaredAreas[id]) ?? checkArea(id, RECORD_AREAS[id], { cols: areaColumns[id], areas: RECORD_AREAS, folders: DOMAIN_IDS_FOR_FOLDERS, declared: declaredAreas[id] });
+  const problem = schemaProblem(RECORD_SCHEMA, declaredAreas[id]) ?? checkArea(id, RECORD_AREAS[id], { cols: areaColumns[id], areas: RECORD_AREAS, folders: DOMAIN_IDS_FOR_FOLDERS, declared: declaredAreas[id] }) ?? bindingProblem(RECORD_AREAS[id], WORKFLOWS);
   if (problem) areaFail(id, problem);
 }
 // What the default profile alone compiles to: an area that differs from it is REDEFINED by this deployment.
@@ -625,7 +648,11 @@ export interface RecordField {
   show_in_list?: boolean;
   pii?: boolean;
 }
-export interface RecordTransition { from: "*" | string[]; to: string; label?: string; roles?: RecordRole[]; requires?: string[]; requires_comment?: boolean; not_by?: string; set?: Record<string, unknown> }
+/** A step state of the workflow engine (records.workflows; docs/WORKFLOW_ENGINE.md). */
+export type RecordWorkflowStepState = ${STEP_STATES.map((s) => JSON.stringify(s)).join(" | ")};
+/** A step of the lifecycle's workflow and the state a move puts it in. */
+export interface RecordWorkflowStep { id: string; state: RecordWorkflowStepState }
+export interface RecordTransition { from: "*" | string[]; to: string; label?: string; roles?: RecordRole[]; requires?: string[]; requires_comment?: boolean; not_by?: string; set?: Record<string, unknown>; /** Making this move changes this step of the lifecycle's workflow. */ step?: RecordWorkflowStep }
 export interface RecordLifecycle {
   field: string;
   initial?: string;
@@ -633,6 +660,10 @@ export interface RecordLifecycle {
   /** What a move outside \`transitions\` does: "off" (allowed, the default), "warn" (allowed and noted), "strict" (refused). */
   enforce?: "off" | "warn" | "strict";
   transitions?: RecordTransition[];
+  /** The workflow this lifecycle runs: an id of the profile's \`records.workflows\` (checked at build; not run yet). */
+  workflow?: string;
+  /** Record state -> each step's state: where a record already mid-lifecycle stands, for its workflow to be attached lazily. */
+  workflow_states?: Record<string, Record<string, RecordWorkflowStepState>>;
 }
 export type RecordRoles = "*" | RecordRole[];
 export interface RecordArea {

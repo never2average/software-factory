@@ -144,6 +144,9 @@
       "label": "TODOs",
       "icon": null
     },
+    "workflows": {
+      "$comment": "WORKFLOWS (docs/DEPLOYMENT_PROFILE.md \"records.workflows\"; docs/WORKFLOW_ENGINE.md): workflow documents in the vendored engine's DSL (its `init` + `diff` shape), keyed by a workflow id (lowercase words joined by - or _), supplied by a profile or a pack; a later file's document replaces an earlier one with the same id whole. An area's lifecycle runs one with `lifecycle.workflow`; a transition's `step: { id, state }` says which step that move changes; `lifecycle.workflow_states` maps each record state to its steps' states, for records already mid-lifecycle. Checked at build (the engine's spec.json and validator; email and agent actions and prompt branches are refused until a later phase), and nothing at runtime reads them yet. The default declares none."
+    },
     "areas": {
       "deployments": { "$comment": "Lowered from domains.deployments at build: its words, fields, choices and own fields." },
       "implementations": { "$comment": "Lowered from domains.implementations at build, with the group (domains.implementations.group_by)." },
