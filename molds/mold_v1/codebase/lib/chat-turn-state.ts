@@ -1324,14 +1324,65 @@ export function pendingInputRequestParts(input: {
   readonly dismissed: ReadonlySet<string>;
   readonly responded: ReadonlySet<string>;
   readonly expired: ReadonlySet<string>;
+  /**
+   * When each request ARRIVED (`requestArrival`). Given, the list is in arrival order, newest last (mold_v1-289).
+   * Without it the order is the transcript's — and that was the bug: a specialist's request is attached by eve's
+   * reducer to an EARLIER assistant message (its stale turn id, above), so walking the messages put it ABOVE requests
+   * that came before it, and a new approval appeared at the top of the stack instead of at the bottom.
+   */
+  readonly arrival?: ReadonlyMap<string, number>;
+  /** Also collect a request asked on a delegation card itself (its buttons then live with the others, at the bottom). */
+  readonly delegations?: boolean;
+}): InputRequestPart[] {
+  const collected = collectPendingInputParts(input);
+  return input.arrival ? inArrivalOrder(collected, input.arrival) : collected;
+}
+
+/**
+ * When each input request ARRIVED: the stream index of the first `input.requested` that names it. Read by
+ * `pendingInputRequestParts` to stack open requests in the order they were asked, newest last.
+ */
+export function requestArrival(events: readonly TurnEvent[]): ReadonlyMap<string, number> {
+  const at = new Map<string, number>();
+  events.forEach((raw, i) => {
+    if (raw?.type !== "input.requested") return;
+    for (const req of (raw as { data?: RequestEventData }).data?.requests ?? []) {
+      const id = typeof req?.requestId === "string" ? req.requestId : undefined;
+      if (id && !at.has(id)) at.set(id, i);
+    }
+  });
+  return at;
+}
+
+/** Stable sort by arrival; a part with no known arrival keeps its place after the one before it. */
+function inArrivalOrder(parts: InputRequestPart[], arrival: ReadonlyMap<string, number>): InputRequestPart[] {
+  let last = -1;
+  const keyed = parts.map((part, i) => {
+    const rid = (part.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined)?.requestId;
+    const known = rid === undefined ? undefined : arrival.get(rid);
+    const key = known ?? last + 0.5;
+    if (known !== undefined) last = known;
+    return { part, i, key };
+  });
+  keyed.sort((a, b) => a.key - b.key || a.i - b.i);
+  return keyed.map((k) => k.part);
+}
+
+function collectPendingInputParts(input: {
+  readonly messages: readonly { readonly parts?: readonly unknown[] }[];
+  readonly dismissed: ReadonlySet<string>;
+  readonly responded: ReadonlySet<string>;
+  readonly expired: ReadonlySet<string>;
+  readonly delegations?: boolean;
 }): InputRequestPart[] {
   const out: InputRequestPart[] = [];
   for (const m of input.messages) {
     for (const p of m.parts ?? []) {
       const part = p as InputRequestPart;
       if (part.type !== "dynamic-tool") continue;
-      // The DELEGATION card itself is not a request — it is the running child.
-      if (part.toolName?.startsWith("eve:subagent:")) continue;
+      // The DELEGATION card itself is not a request — it is the running child. (Unless asked for: a request asked ON
+      // the card is collected with the others for display, never for the send gate.)
+      if (part.toolName?.startsWith("eve:subagent:") && !input.delegations) continue;
       // A tool that has already RUN (terminal) is never awaiting approval —
       // even when its inputRequest metadata lingers and no inputResponse was
       // recorded on the part (a write approved via the parent proxy). Without

@@ -48,6 +48,9 @@ import {
 import { MARKERS_MAX_BYTES_CLIENT, capMarkers, isPersistedMarker, serverEventCount, type TurnEvent } from "@/lib/chat-turn-state";
 import { createPersistWriter } from "@/lib/chat-persist";
 import { cn } from "@/lib/utils";
+import { readTailEvents } from "@/lib/chat-attach";
+import { EMPTY_WATCH, WATCH_TAIL_EVENTS, afterTail, seen, startWatch, type BackgroundWatch } from "@/lib/completion-cue";
+import { CompletionAnnouncer, markTabDone } from "./completion-cue";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isTodoViewKey, type TodoViewKey } from "@/lib/work-periods-ui";
 
@@ -103,6 +106,8 @@ function longestCopyIndex(s: StoredSession, sessionId: string, knownSaved: numbe
  *  carries the continuation token — a shared thread is opened read-only. */
 export interface SharedThread {
   id: string;
+  /** The owner's own key for the chat (their list's id): how the owner's copy finds its thread. */
+  clientKey?: string | null;
   eveSessionId: string;
   title: string;
   preview?: string | null;
@@ -641,6 +646,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
   const [sharedReopen, setSharedReopen] = useState<SharedThread | null>(null);
   // Threads shared WITH me (role !== owner), for the sidebar "Shared with you".
   const [sharedThreads, setSharedThreads] = useState<SharedThread[]>([]);
+  // Threads I shared (role owner): my own copy of such a chat shows who else is in it and who is typing (mold_v1-288).
+  const [ownedThreads, setOwnedThreads] = useState<SharedThread[]>([]);
   const newCount = useRef(0);
   /**
    * Has the durable thread list been merged in yet?
@@ -2262,7 +2269,10 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     const tick = async () => {
       try {
         const d = await opsFetch<{ items: SharedThread[] }>("/api/ops/threads");
-        if (alive) setSharedThreads((d.items ?? []).filter((t) => t.role !== "owner"));
+        if (alive) {
+          setSharedThreads((d.items ?? []).filter((t) => t.role !== "owner"));
+          setOwnedThreads((d.items ?? []).filter((t) => t.role === "owner"));
+        }
       } catch {
         /* not signed in yet / offline — leave the list as-is */
       }
@@ -2347,6 +2357,74 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
     },
     [replayFromCache, supersedeOpen],
   );
+
+  /**
+   * A CHAT THAT FINISHED WHILE THE PERSON WAS ELSEWHERE (mold_v1-287). The chat on screen tells the shell when its turn
+   * runs and stops (`onTurnActivity`). When the person leaves a chat while its turn runs, that chat is watched — its
+   * tail read every few seconds (lib/completion-cue.ts: a handful at once, half an hour at most) — and once it comes
+   * to rest it carries how it ended in the chat list — done, needs you, or failed — and, for an answer only, the tab
+   * title a mark if the page is hidden, until it is opened again.
+   */
+  const [background, setBackground] = useState<BackgroundWatch>(EMPTY_WATCH);
+  const turnActivity = useRef(new Map<string, { sessionId: string | null; running: boolean }>());
+  const lastActivity = useRef<{ sessionId: string | null; running: boolean } | null>(null);
+  const onTurnActivity = useCallback((a: { readonly sessionId: string | null; readonly running: boolean }) => {
+    lastActivity.current = { sessionId: a.sessionId, running: a.running };
+    const chatId = activeIdRef.current;
+    if (chatId) turnActivity.current.set(chatId, lastActivity.current);
+  }, []);
+  const leftChat = useRef<string | null>(activeId);
+  useEffect(() => {
+    const prev = leftChat.current;
+    leftChat.current = activeId;
+    // A new chat gets its id once it is first saved, mid-turn: what it reported until then is its own.
+    if (prev === null && activeId && lastActivity.current && !turnActivity.current.has(activeId)) {
+      turnActivity.current.set(activeId, lastActivity.current);
+    }
+    // Read now: the updater runs later, after the entry below is gone.
+    const was = prev ? turnActivity.current.get(prev) : undefined;
+    const watch = prev && prev !== activeId && !prev.startsWith("shared:") && was?.running && was.sessionId ? was.sessionId : null;
+    setBackground((w) => {
+      const next = activeId ? seen(w, activeId) : w;
+      return prev && watch ? startWatch(next, prev, watch, Date.now()) : next;
+    });
+    if (prev && prev !== activeId) turnActivity.current.delete(prev);
+  }, [activeId]);
+  const watchingKey = [...background.watching.keys()].join("|");
+  useEffect(() => {
+    if (!watchingKey) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      const entries = [...background.watching.entries()];
+      for (const [chatId, { sessionId }] of entries) {
+        const tail = await readTailEvents({ sessionId, headers: getAuthHeaders, count: WATCH_TAIL_EVENTS });
+        if (!alive) return;
+        setBackground((w) => {
+          const next = afterTail(w, chatId, tail, Date.now());
+          // The tab's ✓ means an answer is ready — never for a chat that stopped on a question or failed.
+          if (next.ended.get(chatId) === "done" && !w.ended.has(chatId)) markTabDone();
+          return next;
+        });
+      }
+      if (alive) timer = setTimeout(() => void tick(), document.visibilityState === "hidden" ? 10_000 : 4_000);
+    };
+    timer = setTimeout(() => void tick(), 1_500);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchingKey, getAuthHeaders]);
+  /** My own chat's thread when I have shared it: its presence and typing line, nothing else (mold_v1-288). */
+  const activeOwnSession = activeId && !activeId.startsWith("shared:") ? sessions.find((x) => x.id === activeId) : undefined;
+  const presenceThreadId = activeOwnSession
+    ? ownedThreads.find(
+        (t) =>
+          (activeOwnSession.clientKey && t.clientKey === activeOwnSession.clientKey) ||
+          (activeOwnSession.session?.sessionId && t.eveSessionId === activeOwnSession.session.sessionId),
+      )?.id
+    : undefined;
 
   // "Auto-triggered" badge shown at the top of a chat opened from a cron
   // invocation (a workflow run a cron fired). { ts, via } → a pill.
@@ -2589,10 +2667,14 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           onCollapse={() => setCollapsed(true)}
           onSignOut={onSignOut}
           getAuthHeaders={getAuthHeaders}
+          endedChats={background.ended}
         />
           </div>
         </>
       )}
+      {/* The one polite live region that says something finished (mold_v1-287): here, so a chat remounting does not
+          take the announcement with it. */}
+      <CompletionAnnouncer />
 
       <div
         ref={chatPaneRef}
@@ -2630,6 +2712,8 @@ export function ChatShell({ getAuthHeaders, email, name, picture, onSignOut }: C
           if (sharedReopen) void openSharedThread(sharedReopen);
         }}
         sharedThreadId={sharedReopen?.id}
+        presenceThreadId={sharedReopen ? undefined : presenceThreadId}
+        onTurnActivity={onTurnActivity}
         // No identity yet: nothing is kept (never under an "anon" scope another
         // person could later read).
         storageScope={email ? `${email}:${activeOrg() ?? "default"}` : undefined}

@@ -59,6 +59,9 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { CHAT_CUES } from "@/lib/ui-words";
+import { approvalClock, approvalOutcome, approvalRequestId, isApproval } from "@/lib/approval-record";
+import { announceCompletion, markTabDone, settledWash, useJustSettled } from "./completion-cue";
 
 // The pdf viewer (and pdf.js under it) is fetched when a preview first opens.
 // A specialist's question and the notes sent to it (mold_v1-234/235) render only in a chat that delegated: loaded on
@@ -253,6 +256,8 @@ export function AgentMessage({
   onInputResponses,
   onRetry,
   turnActive,
+  approvalRecord,
+  requestsBelow,
 }: {
   readonly canRespond: boolean;
   /** Render pending approval/question cards elsewhere (the conversation tail)
@@ -285,6 +290,10 @@ export function AgentMessage({
    * the end-of-answer row under a reply whose tool call had not come back yet.
    */
   readonly turnActive: boolean;
+  /** Who answered an approval and when, by request id: the one-line record it collapses to (mold_v1-289). */
+  readonly approvalRecord?: ApprovalRecordOf;
+  /** The open requests the stack beside the composer shows (mold_v1-289): a card points there only for these. */
+  readonly requestsBelow?: ReadonlySet<string>;
 }) {
   noteRender("AgentMessage");
   const lastTextIndex = message.parts.reduce(
@@ -329,7 +338,7 @@ export function AgentMessage({
               // streaming turn appends a tool call, remounting the cluster and
               // wiping each row's pinned expand state).
               <ErrorBoundary key={segment.parts[0].toolCallId} label="Tools" compact>
-                <ToolCluster onFocusSubagent={onFocusSubagent} parts={segment.parts} />
+                <ToolCluster onFocusSubagent={onFocusSubagent} parts={segment.parts} approvalRecord={approvalRecord} />
               </ErrorBoundary>
             ) : (
               // Contain a bad part (e.g. a malformed tool/artifact output) so it
@@ -337,6 +346,8 @@ export function AgentMessage({
               <ErrorBoundary key={partKey(segment.part, segment.index)} label="Message" compact>
                 <AgentMessagePart
                   canRespond={canRespond}
+                  approvalRecord={approvalRecord}
+                  requestsBelow={requestsBelow}
                   hoistPendingInput={hoistPendingInput}
                   isProxiedApproval={isProxiedApproval}
                   messageStreaming={isStreaming}
@@ -583,6 +594,8 @@ function useSmoothText(target: string, enabled: boolean): string {
 
 function AgentMessagePart({
   canRespond,
+  approvalRecord,
+  requestsBelow,
   hoistPendingInput,
   isProxiedApproval,
   messageStreaming,
@@ -596,6 +609,8 @@ function AgentMessagePart({
   role,
 }: {
   readonly canRespond: boolean;
+  readonly approvalRecord?: ApprovalRecordOf;
+  readonly requestsBelow?: ReadonlySet<string>;
   readonly hoistPendingInput?: boolean;
   readonly isProxiedApproval?: (part: EveMessagePart) => boolean;
   readonly messageStreaming: boolean;
@@ -618,6 +633,18 @@ function AgentMessagePart({
   const isAssistantText = part.type === "text" && role === "assistant";
   const rawText = isAssistantText ? ((part as { text?: string }).text ?? "") : "";
   const smoothText = useSmoothText(rawText, isAssistantText && messageStreaming);
+  // A delegation that finished WHILE ON SCREEN settles with a brief wash and is announced (mold_v1-287). A card that
+  // mounts finished is history: no wash, no announcement. A "reports later" stand-in is not a finish.
+  const delegationDone =
+    part.type === "dynamic-tool" &&
+    part.toolName.startsWith("eve:subagent:") &&
+    part.state === "output-available" &&
+    !isDetachedOutput(part.output);
+  const justSettled = useJustSettled(delegationDone, () => {
+    if (part.type !== "dynamic-tool") return;
+    announceCompletion(CHAT_CUES.specialistCompleted(toolDisplayName(part.toolName)));
+    markTabDone();
+  });
   // A subagent-proxied approval never renders in the main thread — pending or
   // answered, it belongs to that subagent's rail (the parent-stream copy is
   // mis-positioned by the child's forwarded turn id).
@@ -644,6 +671,12 @@ function AgentMessagePart({
       ) : null;
     }
     const said = answeredText(part);
+    // An APPROVAL is not something the person said: once allowed or denied it is a one-line record (mold_v1-289),
+    // not a "Your answer: Approve" bubble in the middle of the conversation. A typed answer to a question stays.
+    if (said && part.type === "dynamic-tool" && isApproval(part)) {
+      const rid = approvalRequestId(part);
+      return <AnsweredApprovalRow part={part} {...(rid ? approvalRecord?.(rid) : undefined)} />;
+    }
     return said ? <YourAnswer text={said} /> : null;
   }
   switch (part.type) {
@@ -748,7 +781,11 @@ function AgentMessagePart({
         const delegationRunning =
           reportsLater || (stoppedAs === undefined && part.state !== "output-available" && part.state !== "output-error");
         return (
-          <div data-delegation={part.toolCallId} className="not-prose mb-4 w-full overflow-hidden rounded-md border">
+          <div
+            data-delegation={part.toolCallId}
+            data-just-completed={justSettled ? "" : undefined}
+            className={cn("not-prose mb-4 w-full overflow-hidden rounded-md border", settledWash(justSettled))}
+          >
             <button
               type="button"
               onClick={onFocusSubagent ? () => onFocusSubagent(part.toolCallId) : undefined}
@@ -781,8 +818,10 @@ function AgentMessagePart({
               >
                 {delegationRunning ? (
                   <span className="size-1.5 animate-pulse rounded-full bg-current" />
+                ) : delegationStatus.label === "Completed" ? (
+                  <CheckIcon aria-hidden="true" className="size-3" />
                 ) : null}
-                {delegationStatus.label}
+                {delegationStatus.label === "Completed" ? CHAT_CUES.completed : delegationStatus.label}
               </span>
             </button>
             {stoppedAs !== undefined && delegationStatus.label === "Stopped" ? (
@@ -795,7 +834,24 @@ function AgentMessagePart({
                 {reportsLater ? DETACHED_NOTE : "Working in the Control Panel — the main agent continues once it hands back."}
               </p>
             ) : null}
-            {hasInputRequest ? (
+            {hasInputRequest && part.toolMetadata?.eve?.inputResponse && isApproval(part) ? (
+              // Answered: one line that opens on click, not the yellow "Responded" box for the rest of the chat.
+              <div className="border-border/60 border-t px-3 py-2">
+                <AnsweredApprovalRow
+                  part={part}
+                  {...(approvalRequestId(part) ? approvalRecord?.(approvalRequestId(part) as string) : undefined)}
+                />
+              </div>
+            ) : hasInputRequest && hoistPendingInput && awaitsUserDecision(part) ? (
+              // Open: its buttons are with every other open request, at the bottom beside the composer, always on
+              // screen (agent-chat's approvals stack) — said here only when the stack really shows it (not to a
+              // view-only member, not for a request whose run has gone).
+              approvalRequestId(part) && requestsBelow?.has(approvalRequestId(part) as string) ? (
+                <p data-approval-below className="border-border/60 border-t px-3 py-1.5 text-2xs text-amber-800 dark:text-amber-400">
+                  {CHAT_CUES.approvalBelow}
+                </p>
+              ) : null
+            ) : hasInputRequest ? (
               <div className="border-border/60 border-t px-3 py-3">
                 <InputRequestActions
                   // eve accepts a response to a PENDING request even mid-turn —
@@ -904,9 +960,11 @@ function AgentMessagePart({
 function ToolCluster({
   onFocusSubagent,
   parts,
+  approvalRecord,
 }: {
   readonly onFocusSubagent?: (toolCallId: string) => void;
   readonly parts: readonly EveDynamicToolPart[];
+  readonly approvalRecord?: ApprovalRecordOf;
 }) {
   noteRender("ToolCluster");
   const failed = parts.filter((p) => p.state === "output-error").length;
@@ -925,7 +983,7 @@ function ToolCluster({
           // Rows are keyed by toolCallId — never by index — so a row keeps its
           // identity (and expand state) as the cluster regroups while streaming.
           <ErrorBoundary key={part.toolCallId} label="Tool" compact>
-            <ToolClusterRow onFocusSubagent={onFocusSubagent} part={part} />
+            <ToolClusterRow onFocusSubagent={onFocusSubagent} part={part} approvalRecord={approvalRecord} />
           </ErrorBoundary>
         ))}
       </div>
@@ -940,9 +998,11 @@ function ToolCluster({
 function ToolClusterRow({
   onFocusSubagent,
   part,
+  approvalRecord,
 }: {
   readonly onFocusSubagent?: (toolCallId: string) => void;
   readonly part: EveDynamicToolPart;
+  readonly approvalRecord?: ApprovalRecordOf;
 }) {
   noteRender("ToolClusterRow");
   // Collapsed by DEFAULT for every row, errors included — a click pins it open.
@@ -952,8 +1012,12 @@ function ToolClusterRow({
   const open = pinned ?? false;
   const toggle = () => setPinned(!open);
   const summary = toolCallSummary(part.toolName, part.input);
+  // An answered approval is a row like any other step, with who answered it, the outcome and the time (mold_v1-289).
+  const outcome = part.toolMetadata?.eve?.inputRequest && isApproval(part) ? approvalOutcome(part) : null;
+  const rid = outcome ? approvalRequestId(part) : undefined;
+  const record = rid ? approvalRecord?.(rid) : undefined;
   return (
-    <div>
+    <div data-answered-approval={outcome ?? undefined}>
       <div className="flex items-center gap-2 px-3 py-2">
         <span className="shrink-0">
           <ToolStatusIcon className="size-3.5" state={part.state} />
@@ -973,6 +1037,7 @@ function ToolClusterRow({
           {summary ? (
             <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">{summary}</span>
           ) : null}
+          {outcome ? <ApprovalOutcomeChip outcome={outcome} by={record?.by} at={record?.at} /> : null}
         </button>
         <button
           type="button"
@@ -1086,6 +1151,84 @@ function formatAuthorizationOutcome(outcome: NonNullable<EveAuthorizationPart["o
     case "timed-out":
       return "timed out";
   }
+}
+
+/** Who answered an approval and when, by its request id. */
+export type ApprovalRecordOf = (requestId: string) => { readonly by?: string; readonly at?: number } | undefined;
+
+/** "You · Allowed · 14:05": who, the outcome, the time. */
+function ApprovalOutcomeChip({
+  outcome,
+  by,
+  at,
+}: {
+  readonly outcome: NonNullable<ReturnType<typeof approvalOutcome>>;
+  readonly by?: string;
+  readonly at?: number;
+}) {
+  const clock = approvalClock(at);
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
+      {by ? <span className="font-medium text-foreground">{by}</span> : null}
+      <span
+        className={cn(
+          "font-medium",
+          outcome === "denied" ? "text-red-700 dark:text-red-400" : outcome === "allowed" ? "text-emerald-700 dark:text-emerald-400" : "",
+        )}
+      >
+        {outcome === "allowed" ? CHAT_CUES.approvalAllowed : outcome === "denied" ? CHAT_CUES.approvalDenied : CHAT_CUES.approvalAnswered}
+      </span>
+      {clock ? <time className="tabular-nums">{clock}</time> : null}
+    </span>
+  );
+}
+
+/**
+ * AN ANSWERED APPROVAL, AS ONE LINE (mold_v1-289): who, what it was for, the outcome and the time. A click opens what
+ * was asked and the call's parameters. Used wherever an approval used to stay at full size once answered: a
+ * specialist's (proxied) approval in the main thread, and one asked on a delegation card. lib/approval-record.ts has
+ * the rules.
+ */
+export function AnsweredApprovalRow({
+  part,
+  by,
+  at,
+}: {
+  readonly part: EveDynamicToolPart;
+  readonly by?: string;
+  readonly at?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const outcome = approvalOutcome(part) ?? "answered";
+  const request = part.toolMetadata?.eve?.inputRequest as
+    | { prompt?: string; action?: { toolName?: string; input?: unknown } | null }
+    | undefined;
+  const what = toolDisplayName(request?.action?.toolName ?? part.toolName);
+  return (
+    <div data-answered-approval={outcome} className="not-prose mb-2 w-full overflow-hidden rounded-md border border-border/60">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-muted/40"
+      >
+        {outcome === "denied" ? (
+          <XIcon aria-hidden="true" className="size-3.5 shrink-0 text-red-600 dark:text-red-400" />
+        ) : (
+          <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" />
+        )}
+        <span className="min-w-0 flex-1 truncate font-medium">{what}</span>
+        <ApprovalOutcomeChip outcome={outcome} by={by} at={at} />
+        <ChevronDownIcon aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none", open && "rotate-180")} />
+      </button>
+      {open ? (
+        <div data-answered-approval-detail className="space-y-2 border-border/60 border-t bg-muted/20 px-3 py-2">
+          {request?.prompt ? <p className="text-muted-foreground text-xs">{request.prompt}</p> : null}
+          <ToolInput input={(request?.action?.input as EveDynamicToolPart["input"]) ?? part.input} />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** A pending approval/question card rendered at the conversation tail.

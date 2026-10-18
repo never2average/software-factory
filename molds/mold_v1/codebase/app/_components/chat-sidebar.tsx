@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { displayTitle } from "@/lib/chat-attachments";
 import { cn } from "@/lib/utils";
+import { CHAT_CUES } from "@/lib/ui-words";
+import type { BackgroundEnd } from "@/lib/completion-cue";
 import { CustomerMark } from "./customer-mark";
 import { OrgMark } from "./org-mark";
 import {
@@ -65,6 +67,8 @@ interface ChatSidebarProps {
   readonly onSignOut: () => void;
   /** For the notifications bell (this browser's subscription). Absent: no bell. */
   readonly getAuthHeaders?: () => Record<string, string>;
+  /** Chats that came to rest while the person was in another one, not opened since, and how (mold_v1-287). */
+  readonly endedChats?: ReadonlyMap<string, BackgroundEnd>;
 }
 
 /** Infer a chat's customer(s) from its raw event log when none were manually
@@ -92,6 +96,7 @@ export function ChatSidebar({
   onCollapse,
   onSignOut,
   getAuthHeaders,
+  endedChats,
 }: ChatSidebarProps) {
   const idSet = useMemo(() => new Set(customers.map((c) => c.id.toLowerCase())), [customers]);
   const nameOf = useMemo(() => {
@@ -207,8 +212,12 @@ export function ChatSidebar({
                 >
                   {/* The title owns the full row; only on hover does it yield the
                       trailing space the archive/delete buttons overlay. */}
-                  <span className="block w-full truncate pr-0 font-medium text-xs leading-tight transition-[padding] group-hover:pr-12 group-focus-within:pr-12">
-                    {displayTitle(s.title, "New chat")}
+                  <span className="flex w-full min-w-0 items-center gap-1.5 pr-0 transition-[padding] group-hover:pr-12 group-focus-within:pr-12">
+                    <span className="block min-w-0 flex-1 truncate font-medium text-xs leading-tight">
+                      {displayTitle(s.title, "New chat")}
+                    </span>
+                    {/* Came to rest while the person was in another chat: how, quietly, until it is opened. */}
+                    {endedChats?.has(s.id) && !isActive ? <EndedMarker end={endedChats.get(s.id) as BackgroundEnd} /> : null}
                   </span>
                   <span className="flex min-w-0 w-full items-center gap-2 text-3xs text-muted-foreground">
                     {customers.length > 0 ? (
@@ -404,5 +413,21 @@ function OpsSectionLinks({ onOpenOps }: { readonly onOpenOps: (section: OpsSecti
         </li>
       ))}
     </>
+  );
+}
+
+/** The chat list's marker for a chat that came to rest while the person was elsewhere: done, needs you, or failed. */
+function EndedMarker({ end }: { readonly end: BackgroundEnd }) {
+  const look =
+    end === "done"
+      ? { word: CHAT_CUES.chatDone, title: CHAT_CUES.chatDoneTitle, tone: "text-emerald-700 dark:text-emerald-400", dot: "bg-emerald-500" }
+      : end === "needs-you"
+        ? { word: CHAT_CUES.chatNeedsYou, title: CHAT_CUES.chatNeedsYouTitle, tone: "text-amber-700 dark:text-amber-400", dot: "bg-amber-500" }
+        : { word: CHAT_CUES.chatFailed, title: CHAT_CUES.chatFailedTitle, tone: "text-red-700 dark:text-red-400", dot: "bg-red-500" };
+  return (
+    <span data-chat-ended={end} title={look.title} className={cn("flex shrink-0 items-center gap-1 font-medium text-3xs", look.tone)}>
+      <span aria-hidden="true" className={cn("size-1.5 rounded-full", look.dot)} />
+      {look.word}
+    </span>
   );
 }

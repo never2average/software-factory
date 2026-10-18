@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlarmClockIcon,
   ArrowUpRightIcon,
+  CheckIcon,
   Bot,
   ExternalLinkIcon,
   GitCompareIcon,
@@ -27,6 +28,8 @@ import {
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CHAT_CUES } from "@/lib/ui-words";
+import { settledWash, useJustSettled } from "./completion-cue";
 import { PromptInputButton } from "@/components/ai-elements/prompt-input";
 import {
   Dialog,
@@ -1197,17 +1200,16 @@ function SubagentList({
               : `done · ${toolRows.length || r.activity.length || "—"} calls`;
         return (
           <li key={r.callId} className="flex items-center gap-1" data-feed-status={feed?.status ?? "idle"}>
-            <button
-              type="button"
-              onClick={() => onSelect(r.callId)}
-              className="flex w-full items-center gap-2 rounded-lg border border-border/60 px-2.5 py-2 text-left transition-colors hover:bg-muted"
-            >
+            <SubagentRowButton done={r.status === "done"} onClick={() => onSelect(r.callId)}>
               <CustomerMark name={name} size="md" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-sm">{name}</span>
                 <span className="block truncate text-2xs text-muted-foreground">{`${type} · ${status}`}</span>
               </span>
-            </button>
+              {r.status === "done" ? (
+                <CheckIcon aria-label={CHAT_CUES.completed} className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" />
+              ) : null}
+            </SubagentRowButton>
             {unavailable && r.childSessionId && onRetry ? (
               <button
                 type="button"
@@ -1221,6 +1223,35 @@ function SubagentList({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * A run's row in the rail. When the run finishes while the rail is open it settles with the same brief wash its
+ * delegation card gets (mold_v1-287); the card announces it, so the row does not say it twice.
+ */
+function SubagentRowButton({
+  done,
+  onClick,
+  children,
+}: {
+  readonly done: boolean;
+  readonly onClick: () => void;
+  readonly children: React.ReactNode;
+}) {
+  const lit = useJustSettled(done);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-just-completed={lit ? "" : undefined}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-lg border border-border/60 px-2.5 py-2 text-left transition-colors hover:bg-muted",
+        settledWash(lit),
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

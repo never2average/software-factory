@@ -32,7 +32,14 @@ import {
   WORKSPACE_STEP_GRANT_KIND,
   WORKSPACE_STEP_GRANT_TTL_SECONDS,
 } from "./session-token-kinds.ts";
-import { QUEUE_DELIVERY_AUDIENCE, QUEUE_DELIVERY_KIND, QUEUE_DELIVERY_TTL_SECONDS, type DeliveryScope } from "./queue-delivery-token.ts";
+import {
+  DELIVERY_QUEUE_CLAIM,
+  DELIVERY_THREAD_CLAIM,
+  QUEUE_DELIVERY_AUDIENCE,
+  QUEUE_DELIVERY_KIND,
+  QUEUE_DELIVERY_TTL_SECONDS,
+  type DeliveryScope,
+} from "./queue-delivery-token.ts";
 
 /** Both sides of every verification must agree on these two strings. */
 export const SESSION_ISSUER = "delivered";
@@ -160,6 +167,8 @@ export async function mintQueueDeliveryToken(
     sid: input.sessionId,
     act: scope.act,
     ...(scope.act === "post" ? { item: scope.item, claim: scope.claim, seq: scope.seq } : {}),
+    ...(scope.queue === "thread" ? { [DELIVERY_QUEUE_CLAIM]: "thread" } : {}),
+    ...(scope.act === "post" && scope.queue === "thread" && scope.thread ? { [DELIVERY_THREAD_CLAIM]: scope.thread } : {}),
   })
     .setProtectedHeader({ alg: ALG })
     .setSubject(email.toLowerCase())

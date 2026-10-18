@@ -53,6 +53,13 @@ export interface GateCaller {
    * stream, or "post" (a write). Anything else — or none — is read-only.
    */
   readonly boundAct?: string | null;
+  /**
+   * Which queue a session-bound POST token sends from (`q`, lib/queue-delivery-token.ts): "thread" is a SHARED chat's
+   * queued message, sent as its author — who may be a participant of the thread as well as its owner (mold_v1-290).
+   */
+  readonly boundQueue?: string | null;
+  /** The thread a "thread" queue token is bound to (`thread`): the author must be a participant of THAT thread. */
+  readonly boundThread?: string | null;
 }
 
 /** Who owns the session, as the agent recorded it (or as the legacy rows say, for sessions older than the record). */
@@ -132,8 +139,21 @@ export function sessionGateDecision(input: GateInput): GateDecision {
   if (caller.kind === "session-bound") {
     if (!caller.boundSessionId || caller.boundSessionId !== input.sessionId) return { allow: false, reason: "wrong-session" };
     if (!ownership) return { allow: false, reason: "unknown" };
-    // Bound AND minted for the session's owner — a bound token for someone else's session proves nothing.
-    if (!norm(caller.email) || norm(caller.email) !== norm(ownership.ownerEmail)) return { allow: false, reason: "not-yours" };
+    // Bound AND minted for the session's owner — a bound token for someone else's session proves nothing. The one
+    // exception is a shared chat's queued message (mold_v1-290): minted for its AUTHOR, who may be a live PARTICIPANT
+    // of the thread on this session (the membership read for this very request: not revoked, thread not archived,
+    // shared by this session's owner) — never a viewer, never a guest. It still only posts its one claimed item.
+    const owner = Boolean(norm(caller.email)) && norm(caller.email) === norm(ownership.ownerEmail);
+    // The membership is the one read for the token's OWN thread (lib/session-gate.ts readCallerFacts): a token that
+    // names no thread has none, so it is refused — being a participant of another thread on the session counts for
+    // nothing.
+    const participant =
+      caller.boundQueue === "thread" &&
+      caller.boundAct === "post" &&
+      Boolean(caller.boundThread) &&
+      Boolean(norm(caller.email)) &&
+      input.membership?.role === "participant";
+    if (!owner && !participant) return { allow: false, reason: "not-yours" };
     // The token's act decides the right, here as well as at its door (agent/lib/queue-delivery-auth.ts): only a
     // POST token writes (sends, answers, cancels) — a READ token, or one naming no act, never does, whatever door
     // let it in; and a POST token never reads.

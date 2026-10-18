@@ -774,6 +774,12 @@ jobs:
         if: always()
         run: npm run test:chat-turn-state
 
+      # The chat's cues (mold_v1-287..290): how a turn ended, a chat left running, the typing line, the order open
+      # approvals stack in (newest last) and the record an answered one folds to.
+      - name: Chat cues (behavioural)
+        if: always()
+        run: npm run test:chat-cues
+
       # The reattach: a turn nobody is listening to is the defect the operator
       # reported as "streaming has many many problems". This drives the real
       # decision, the real merge (against eve's own reducer, at every point a
@@ -1855,6 +1861,16 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:chat-queue-db
+
+      # A SHARED CHAT'S QUEUE (mold_v1-290): a participant who is not the chat's author used to be refused (409)
+      # while another turn ran. Two participants both queue, nothing runs while a turn holds the token, and six
+      # racing pumps send every message exactly once, in order, one at a time; workspace-scoped and fail-closed.
+      - name: Shared chat queue (two participants, in order, exactly once), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:thread-queue-db
 
       # deployment_upsert (MCP) posts to POST /api/ops/deployments, which was insert-only: a record could be created
       # and never corrected. Reuses the relabelling build of the workbook route step.

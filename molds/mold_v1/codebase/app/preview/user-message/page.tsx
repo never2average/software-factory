@@ -26,10 +26,17 @@
  * form would send is counted, never sent anywhere: dictation must put words in the box and send nothing. Not the
  * ChatComposer itself: importing it here made it a module two pages share, and the bundler moved it out of the chat's
  * first-load chunk into one more file (scripts/check-bundle-budget.mjs).
+ *
+ * And the chat's cues (mold_v1-287/289), checked by tests/chat-cues.spec.ts, from the REAL AgentMessage and the
+ * module the chat uses (app/_components/completion-cue.tsx): a delegation card that finishes when "finish" is clicked
+ * (it settles with the completed mark and a brief wash, and the live region says so), the tab title's mark while the
+ * page is hidden, and a specialist's answered approval (allowed, and denied), which folds to one line that opens on
+ * click.
  */
 import { useEffect, useState } from "react";
 import type { EveMessage } from "eve/react";
 import { AgentMessage } from "@/app/_components/agent-message";
+import { CompletionAnnouncer, markTabDone } from "@/app/_components/completion-cue";
 import { DictationSlot } from "@/app/_components/dictation-slot";
 import { SandboxWaitLine, useSandboxWait } from "@/app/_components/sandbox-wait-line";
 
@@ -74,6 +81,95 @@ const delegating = (id: string): EveMessage =>
       { type: "dynamic-tool", toolCallId: "call_brief", toolName: "eve:subagent:research", state: "input-streaming", input: {} },
     ],
   }) as unknown as EveMessage;
+
+/** A delegation card, running until "finish" is clicked. */
+const delegation = (done: boolean): EveMessage =>
+  ({
+    id: "a-cue-delegation",
+    role: "assistant",
+    parts: [
+      { type: "step-start" },
+      {
+        type: "dynamic-tool",
+        toolCallId: "call_cue",
+        toolName: "eve:subagent:research",
+        state: done ? "output-available" : "input-available",
+        input: { task: "Read the filings" },
+        ...(done ? { output: "Read them." } : {}),
+      },
+    ],
+  }) as unknown as EveMessage;
+
+/**
+ * A specialist's approval the person answered (`optionId`): asked on its delegation card ("approve": the card folds it
+ * to one line), and as the parent stream carries a proxied one ("deny": a step row with its outcome).
+ */
+const answeredApproval = (id: string, optionId: "approve" | "deny"): EveMessage =>
+  ({
+    id,
+    role: "assistant",
+    parts: [
+      {
+        type: "dynamic-tool",
+        toolCallId: `call_${id}`,
+        toolName: optionId === "approve" ? "eve:subagent:research" : "write_file",
+        state: optionId === "deny" ? "output-denied" : "input-available",
+        input: { path: "notes/summary.md" },
+        toolMetadata: {
+          eve: {
+            inputRequest: {
+              requestId: `req_${id}`,
+              prompt: "Write notes/summary.md?",
+              display: "confirmation",
+              options: [
+                { id: "approve", label: "Yes" },
+                { id: "deny", label: "No" },
+              ],
+              action: { kind: "tool-call", callId: `call_${id}_child`, toolName: "write_file", input: { path: "notes/summary.md" } },
+            },
+            inputResponse: { requestId: `req_${id}`, optionId },
+          },
+        },
+      },
+    ],
+  }) as unknown as EveMessage;
+
+const CUE_AT = Date.parse("2026-10-18T09:41:00Z");
+
+function Cues() {
+  const [done, setDone] = useState(false);
+  return (
+    <section data-testid="cues" className="flex flex-col gap-3">
+      <CompletionAnnouncer />
+      <div data-testid="cue-delegation">
+        <AgentMessage canRespond={false} isLast={false} isStreaming={false} message={delegation(done)} onInputResponses={() => {}} turnActive />
+      </div>
+      <div className="flex gap-2">
+        <button type="button" data-testid="cue-finish" onClick={() => setDone(true)} className="w-fit rounded border border-border px-2 py-1 text-xs">
+          finish
+        </button>
+        <button type="button" data-testid="cue-tab" onClick={() => markTabDone()} className="w-fit rounded border border-border px-2 py-1 text-xs">
+          mark tab
+        </button>
+      </div>
+      {(["approve", "deny"] as const).map((o) => (
+        <div key={o} data-testid={`cue-approval-${o}`}>
+          <AgentMessage
+            canRespond
+            hoistPendingInput
+            isProxiedApproval={() => true}
+            approvalRecord={() => ({ by: "You", at: CUE_AT })}
+            isLast={false}
+            isStreaming={false}
+            message={answeredApproval(`ap-${o}`, o)}
+            onInputResponses={() => {}}
+            turnActive={false}
+          />
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function DictationComposer() {
   const [sent, setSent] = useState<string[]>([]);
@@ -151,6 +247,7 @@ export default function UserMessagePreview() {
       <SandboxChat id="capped" enabled active={turnActive} />
       <SandboxChat id="uncapped" enabled={false} active={turnActive} />
       <DictationComposer />
+      <Cues />
     </main>
   );
 }

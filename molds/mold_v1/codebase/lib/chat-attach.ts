@@ -521,3 +521,41 @@ export async function readTailEvent(input: {
     ctrl.abort();
   }
 }
+
+/**
+ * The session's last `count` events (`startIndex=-count`). A tail-relative read of a waiting session is a LIVE tail
+ * that does not end on its own, so it is cut once the backlog has arrived: `count` events, `quietMs` without a new one
+ * after the first, or `timeoutMs` at worst. Null when nothing could be read.
+ */
+export async function readTailEvents(input: {
+  readonly sessionId: string;
+  readonly headers: () => Record<string, string>;
+  readonly count: number;
+  readonly quietMs?: number;
+  readonly timeoutMs?: number;
+}): Promise<TurnEvent[] | null> {
+  const ctrl = new AbortController();
+  const hard = setTimeout(() => ctrl.abort(), input.timeoutMs ?? 5_000);
+  let quiet: ReturnType<typeof setTimeout> | undefined;
+  const out: TurnEvent[] = [];
+  try {
+    const res = await fetch(`/eve/v1/session/${encodeURIComponent(input.sessionId)}/stream?startIndex=-${input.count}`, {
+      headers: input.headers(),
+      signal: ctrl.signal,
+    });
+    if (!res.ok || !res.body) return null;
+    for await (const event of readNdjson(res.body, ctrl.signal)) {
+      out.push(event);
+      if (out.length >= input.count) break;
+      if (quiet) clearTimeout(quiet);
+      quiet = setTimeout(() => ctrl.abort(), input.quietMs ?? 600);
+    }
+    return out;
+  } catch {
+    return out.length ? out : null;
+  } finally {
+    clearTimeout(hard);
+    if (quiet) clearTimeout(quiet);
+    ctrl.abort();
+  }
+}
