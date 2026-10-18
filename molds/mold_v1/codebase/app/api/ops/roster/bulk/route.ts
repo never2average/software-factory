@@ -7,6 +7,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isOrgAdmin, orgContextForRequest } from "@/lib/org-context";
 import { recordOpsAudit } from "@/lib/ops-audit";
+import { checkReporting } from "@/agent/lib/people-data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,12 @@ export const dynamic = "force-dynamic";
  *
  * Writes are admin/owner only, and the response always reports the pre-image of
  * every row it touched so the caller can offer a real undo.
+ *
+ * Who each person reports to must be someone of this workspace (on its roster,
+ * one of its signed-in people, or a person this import adds), and the lines it
+ * sets must close no loop with the ones the workspace already has
+ * (agent/lib/people-data.ts). Every row is written in ONE transaction, checked
+ * under the workspace's reporting lock, so an import is applied whole or not at all.
  */
 
 const emailLower = z
@@ -107,7 +114,16 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    // The reporting lines this import sets, against the workspace's own (a dry run is told too).
+    const lines = new Map(
+      people.filter((p) => p.managerEmail !== undefined && p.managerEmail !== null).map((p) => [p.email, p.managerEmail || null]),
+    );
+    const linesProblem = async (tx: Parameters<Parameters<typeof withOrgRls>[1]>[0]) =>
+      lines.size ? checkReporting(tx, ctx.orgId, lines, emails) : null;
+
     if (dryRun) {
+      const problem = await withOrgRls(ctx.orgId, linesProblem);
+      if (problem) return NextResponse.json({ error: problem }, { status: 400 });
       return NextResponse.json({
         dryRun: true,
         wouldUpdate: people.filter((p) => before.has(p.email)).length,
@@ -118,30 +134,32 @@ export async function POST(request: NextRequest) {
 
     let created = 0;
     let updated = 0;
-    for (const p of people) {
-      // Only fields actually supplied are written — a blank cell in the
-      // template must not wipe a value the sheet simply did not carry.
-      const set: Record<string, unknown> = { updatedAt: new Date() };
-      if (p.name !== undefined && p.name !== null) set.name = p.name || null;
-      if (p.team !== undefined && p.team !== null) set.team = p.team || null;
-      if (p.managerEmail !== undefined && p.managerEmail !== null) set.managerEmail = p.managerEmail || null;
-      if (p.escalations !== undefined) set.escalations = p.escalations;
+    const problem = await withOrgRls(ctx.orgId, async (tx) => {
+      const refused = await linesProblem(tx);
+      if (refused) return refused;
+      for (const p of people) {
+        // Only fields actually supplied are written — a blank cell in the
+        // template must not wipe a value the sheet simply did not carry.
+        const set: Record<string, unknown> = { updatedAt: new Date() };
+        if (p.name !== undefined && p.name !== null) set.name = p.name || null;
+        if (p.team !== undefined && p.team !== null) set.team = p.team || null;
+        if (p.managerEmail !== undefined && p.managerEmail !== null) set.managerEmail = p.managerEmail || null;
+        if (p.escalations !== undefined) set.escalations = p.escalations;
 
-      if (before.has(p.email)) {
-        await withOrgRls(ctx.orgId, (tx) =>
-          tx
+        if (before.has(p.email)) {
+          await tx
             .update(peopleRoster)
             .set(set)
-            .where(and(eq(peopleRoster.email, p.email), eq(peopleRoster.orgId, ctx.orgId))),
-        );
-        updated++;
-      } else {
-        await withOrgRls(ctx.orgId, (tx) =>
-          tx.insert(peopleRoster).values({ email: p.email, orgId: ctx.orgId, ...set }),
-        );
-        created++;
+            .where(and(eq(peopleRoster.email, p.email), eq(peopleRoster.orgId, ctx.orgId)));
+          updated++;
+        } else {
+          await tx.insert(peopleRoster).values({ email: p.email, orgId: ctx.orgId, ...set });
+          created++;
+        }
       }
-    }
+      return null;
+    });
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 });
 
     void recordOpsAudit(db, {
       automationType: "org",

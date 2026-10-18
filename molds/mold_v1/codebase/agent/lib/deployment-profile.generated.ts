@@ -107,6 +107,22 @@ export interface DeploymentProfile {
     workspace_can_set_length: boolean;
   };
 }
+/**
+ * Who is who in a workspace, set by its owner or an admin (agent/lib/people-data.ts): the departments a person may be
+ * in and the typed attributes recorded about them, both declared by the deployment (stored by key in
+ * people_roster.departments / .attributes, drizzle/0046), and the words for the department and the reporting line
+ * (people_roster.manager_email). Attribute types are the workflow engine's four. The profile's `people` section,
+ * emitted as PEOPLE_PROFILE beside DEPLOYMENT_PROFILE (which keeps no `people`, as it keeps no `records`).
+ */
+export interface PeopleProfile {
+  department_label: { singular: string; plural: string };
+  supervisor_label: string;
+  multiple_departments: boolean;
+  departments: { key: string; label: string }[];
+  attributes: PersonAttributeSpec[];
+}
+export type PersonAttributeType = "choice" | "multi_choice" | "boolean" | "text";
+export interface PersonAttributeSpec { key: string; label: string; type: PersonAttributeType; options?: { value: string; label: string }[]; help?: string }
 export type WorkPeriodMode = "off" | "team" | "individual";
 
 /** The data-room domains, by the id code and profiles call them. Their stored folder names are the profile's. */
@@ -455,6 +471,18 @@ export type RecordHubIcon = "circle-check" | "list-todo" | "list-checks" | "clip
  */
 export interface RecordHub { label: string; icon: RecordHubIcon | null; item: { singular: string; plural: string }; relabelled: boolean }
 export const RECORD_HUB: RecordHub = {"label":"TODOs","icon":null,"item":{"singular":"TODO","plural":"TODOs"},"relabelled":false};
+
+/** The profile's people catalogue and its words (scripts/lib/people-profile.mjs checks it; agent/lib/people-catalogue.ts reads it). */
+export const PEOPLE_PROFILE: PeopleProfile = {
+  "department_label": {
+    "singular": "department",
+    "plural": "departments"
+  },
+  "supervisor_label": "Reports to",
+  "multiple_departments": false,
+  "departments": [],
+  "attributes": []
+};
 
 /** The product's display name. One place, so a rebrand is a profile, not a search-and-replace. */
 export const PRODUCT_NAME: string = DEPLOYMENT_PROFILE.product.name;

@@ -5687,7 +5687,7 @@ Create OR update a cycle (sprint) — a time-boxed window that groups todos. Omi
 
 === root :: tool :: upsert_roster_member
 upsert_roster_member
-Add or update a member roster entry — set a person's team and/or who they report to (manager). Keyed by email; only the fields you pass are changed. Use this to build the org graph so the TODOs 'my reportees' and 'my team' scopes work. e.g. 'put alice@example.com on team platform-india reporting to lead@example.com'.
+Add or update a member roster entry — set a person's name or team. Keyed by email; only the fields you pass are changed. Use this to build the org graph so the TODOs 'my reportees' and 'my team' scopes work. e.g. 'put alice@example.com on team platform-india'. Who someone reports to (managerEmail) is set only when the person you act for is the workspace's owner or an admin; for anyone else, and in a run with no person behind it (a schedule, a workflow, a delegated step), it is refused and nothing is written.
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -5720,7 +5720,7 @@ Add or update a member roster entry — set a person's team and/or who they repo
       ]
     },
     "managerEmail": {
-      "description": "The email of who this person reports to; null to clear.",
+      "description": "Who this person reports to: someone of this workspace; null to clear. Only for a workspace owner or admin.",
       "anyOf": [
         {
           "type": "string",

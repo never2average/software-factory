@@ -72,6 +72,8 @@ import { CodeEditor } from "./code-editor";
 import { PromptHistoryButton } from "./prompt-history";
 import { afterMenuClose } from "./after-menu-close";
 import { RosterImportDialog } from "./roster-import";
+import { PersonPeopleData, type PeopleDataPatch } from "./person-people-data";
+import { PEOPLE, departmentLabel, type PersonAttributes } from "@/agent/lib/people-catalogue";
 import { WorkflowBuilder } from "./workflow-builder";
 
 import { SUBAGENT_META } from "../subagent-meta.generated";
@@ -2098,6 +2100,10 @@ interface PersonRow {
   managerEmail: string | null;
   role: Role | null;
   joinedAt: string | null;
+  /** The profile's department keys this person is in (only when the profile declares departments). */
+  departments?: string[];
+  /** Their attributes, when this reader may read them (the person, the workspace's owner and admins). */
+  attributes?: PersonAttributes;
 }
 /** Initials avatar for a person row. */
 function InitialsAvatar({ name, email, size = "sm" }: { name: string | null; email: string; size?: "sm" | "lg" }) {
@@ -2140,7 +2146,7 @@ function PersonContext({
   readonly onSaved: () => Promise<void> | void;
 }) {
   const email = person.email.toLowerCase();
-  const [saving, setSaving] = useState<"manager" | "team" | null>(null);
+  const [saving, setSaving] = useState<"manager" | "team" | "people" | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [teamDraft, setTeamDraft] = useState(person.team ?? "");
   useEffect(() => setTeamDraft(person.team ?? ""), [person.email, person.team]);
@@ -2153,7 +2159,7 @@ function PersonContext({
    * offered a control, so both fields were unreachable and every record read
    * "—" forever.
    */
-  async function save(patch: { team?: string | null; managerEmail?: string | null }, which: "manager" | "team") {
+  async function save(patch: { team?: string | null; managerEmail?: string | null } & PeopleDataPatch, which: "manager" | "team" | "people") {
     setSaving(which);
     setSaveError(null);
     try {
@@ -2203,7 +2209,7 @@ function PersonContext({
         </div>
       )}
 
-      <PanelField label="Reports to">
+      <PanelField label={PEOPLE.supervisorLabel}>
         {canEdit ? (
           <div className="flex flex-col gap-1.5">
             <select
@@ -2251,6 +2257,15 @@ function PersonContext({
         </PanelField>
         <PanelField label="Joined">{person.joinedAt ? fmtTime(person.joinedAt) : "—"}</PanelField>
       </div>
+
+      <PersonPeopleData
+        departments={person.departments}
+        attributes={person.attributes ?? (canEdit ? {} : undefined)}
+        canEdit={canEdit}
+        saving={saving === "people"}
+        onSave={(patch) => void save(patch, "people")}
+        Field={PanelField}
+      />
 
       {reports.length > 0 && (
         <PanelField label={`Direct reports (${reports.length})`}>
@@ -2353,7 +2368,7 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
   const load = useCallback(async () => {
     try {
       const [roster, members, pending, custs] = await Promise.all([
-        opsFetch<{ items: { email: string; name: string | null; team: string | null; managerEmail: string | null }[] }>("/api/ops/roster"),
+        opsFetch<{ items: { email: string; name: string | null; team: string | null; managerEmail: string | null; departments?: string[]; attributes?: PersonAttributes }[] }>("/api/ops/roster"),
         opsFetch<{ items: MemberRow[] }>(`/api/ops/orgs/${orgId}/members`),
         opsFetch<{ items: PendingInvite[] }>(`/api/ops/orgs/${orgId}/invites`),
         // Non-fatal: the roster is the point of this tab, and a customers
@@ -2366,7 +2381,7 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
       const byEmail = new Map<string, PersonRow>();
       for (const p of roster.items) {
         const m = memberByEmail.get(p.email.toLowerCase());
-        byEmail.set(p.email.toLowerCase(), { email: p.email, name: p.name, team: p.team, managerEmail: p.managerEmail, role: m?.role ?? null, joinedAt: m?.acceptedAt ?? null });
+        byEmail.set(p.email.toLowerCase(), { email: p.email, name: p.name, team: p.team, managerEmail: p.managerEmail, role: m?.role ?? null, joinedAt: m?.acceptedAt ?? null, departments: p.departments, attributes: p.attributes });
       }
       for (const m of members.items) {
         const k = m.email.toLowerCase();
@@ -2557,6 +2572,16 @@ function PeopleTab({ orgId, role, authorEmail }: { orgId: string; role: Role; au
         ),
     },
     { key: "manager", header: "Manager", icon: UserIcon, cell: (r) => <span className="text-muted-foreground text-xs">{r.managerEmail ?? "—"}</span>, text: (r) => r.managerEmail ?? "" },
+    // The profile's departments, only when it declares any (agent/lib/people-catalogue.ts).
+    ...(PEOPLE.hasDepartments
+      ? [{
+          key: "departments",
+          header: PEOPLE.department.plural[0].toUpperCase() + PEOPLE.department.plural.slice(1),
+          icon: UserIcon,
+          cell: (r: PersonRow) => <span className="text-muted-foreground text-xs">{r.departments?.length ? r.departments.map(departmentLabel).join(", ") : "—"}</span>,
+          text: (r: PersonRow) => (r.departments ?? []).map(departmentLabel).join(", "),
+        } satisfies Column<PersonRow>]
+      : []),
     ...metaColumns<PersonRow>(
       (r) => ({ actor: r.role ? "Workspace" : null, when: r.joinedAt }),
       (r) => [

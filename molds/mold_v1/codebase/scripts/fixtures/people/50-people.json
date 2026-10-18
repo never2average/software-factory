@@ -1,0 +1,18 @@
+{
+  "$comment": "A deployment that declares a people catalogue (scripts/test-people-data.mjs, scripts/test-people-data-db.mjs): two departments under its own word, a person may be in both, and one attribute of each of the workflow engine's four types.",
+  "people": {
+    "department_label": { "singular": "desk", "plural": "desks" },
+    "supervisor_label": "Supervisor",
+    "multiple_departments": true,
+    "departments": [
+      { "key": "north", "label": "North desk" },
+      { "key": "south", "label": "South desk" }
+    ],
+    "attributes": [
+      { "key": "grade", "label": "Grade", "type": "choice", "options": [{ "value": "g1", "label": "Grade 1" }, { "value": "g2", "label": "Grade 2" }] },
+      { "key": "languages", "label": "Languages", "type": "multi_choice", "options": [{ "value": "en", "label": "English" }, { "value": "hi", "label": "Hindi" }] },
+      { "key": "on_call", "label": "On call", "type": "boolean" },
+      { "key": "desk_phone", "label": "Desk phone", "type": "text", "help": "The number on the person's desk." }
+    ]
+  }
+}

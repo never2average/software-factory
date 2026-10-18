@@ -709,6 +709,63 @@ What differs from the areas:
   the MCP tool, and appear in pickers), so the fields are not shown in the web app yet. Not covered either: the
   data-room workbook (`Master.xlsx`) and the account report.
 
+### `people`
+
+**Who is who in a workspace**: what the workspace's owner (or an admin) records about each person on its roster,
+beside the name and team it already had. The workflow engine (docs/WORKFLOW_ENGINE.md, phase 4) routes a step by these:
+"whoever is in the north desk", "one level up from the submitter", "someone with grade g2". The catalogue (which
+departments exist, which attributes, their types) is the **deployment's**, declared here; a workspace fills in values,
+never keys, so a workflow step that names a department or an attribute value finds the same key in every workspace.
+That is why departments are profile-declared rather than managed per workspace: a per-workspace list would let a
+step's department exist in one workspace and not the next, and the engine's directory query would then quietly match
+nobody.
+
+| Key | Meaning | Default |
+|---|---|---|
+| `people.department_label` | What a department is called, `{ singular, plural }`: the field's label, the column's header, the sentences. | `{ "singular": "department", "plural": "departments" }` |
+| `people.supervisor_label` | The label of the reporting line (who the person reports to: `people_roster.manager_email`, their supervisor) in the person drawer. | `"Reports to"` |
+| `people.multiple_departments` | May a person be in more than one department. | `false` |
+| `people.departments` | `[{ "key", "label" }]`: the departments a person may be in. `key`: lower-case letters, digits and `_`, stored; `label`: what a person and the model read. Empty: no department field anywhere. | `[]` |
+| `people.attributes` | `[{ "key", "label", "type", "options"?, "help"? }]`: typed attributes recorded about each person. `type` is one of the workflow engine's four: `choice` (one of `options`), `multi_choice` (some of them), `boolean`, `text` (one line, at most 500 characters). `options` are `[{ "value", "label" }]`, only for the two choice types. A key may not be a field every person already carries in the engine's directory (`id`, `email`, `name`, `role`, `team`, `department(s)`, `business_unit(s)`, `supervisor`, `manager`, `reporting_managers`, `employment_status_active` and any key ending in `_ids`). Empty: no attribute anywhere. | `[]` |
+
+```json
+{
+  "people": {
+    "department_label": { "singular": "desk", "plural": "desks" },
+    "supervisor_label": "Supervisor",
+    "multiple_departments": true,
+    "departments": [{ "key": "north", "label": "North desk" }, { "key": "south", "label": "South desk" }],
+    "attributes": [
+      { "key": "grade", "label": "Grade", "type": "choice", "options": [{ "value": "g1", "label": "Grade 1" }, { "value": "g2", "label": "Grade 2" }] },
+      { "key": "on_call", "label": "On call", "type": "boolean" }
+    ]
+  }
+}
+```
+
+Where the values live and who touches them (`agent/lib/people-data.ts`, the pure half `agent/lib/people-catalogue.ts`):
+
+- **Storage**: `people_roster.departments` (jsonb list of keys, `[]` by default) and `people_roster.attributes` (jsonb
+  object by key, `{}` by default), `drizzle/0046_people_directory.sql`. The supervisor is the roster's existing reporting
+  line, `people_roster.manager_email`. All three sit under the roster's row-level security: another workspace reads
+  none of them.
+- **Who sets them**: the workspace's owner or an admin, in the Control Panel's person drawer (People tab) or through
+  `POST /api/ops/roster` (`managerEmail`, `departments`, `attributes`; attributes merge per key, `null` clears one).
+  Anyone else gets a 403 and nothing is written; a member still sets a team and escalation contacts as before. The
+  supervisor must be someone of the same workspace (on its roster or one of its signed-in people), never the person
+  themself, and must not close a reporting loop, checked under a per-workspace lock in the write's transaction. The
+  bulk and workbook roster imports hold the same reporting-line rules over the whole sheet and are applied whole or not
+  at all; the model's `upsert_roster_member` changes a reporting line only for a caller who is the workspace's owner or
+  an admin.
+- **Who reads them**: everyone in the workspace reads each person's departments (as the team and reporting line
+  before them); a person's attributes are read by that person and by the workspace's owner and admins
+  (`GET /api/ops/roster`, `GET /api/ops/people/:email`). With nothing declared, both answer exactly what they did.
+- **The model**: `list_roster` adds each person's `departments`, by the profile's labels, only when departments are
+  declared; with none declared its description and results are what they were (the default surface is unchanged).
+- **The engine's directory**: `identitySnapshot()` in `agent/lib/people-directory.ts` builds the engine's identity
+  snapshot (directory people, role boundaries, reporting rows) from one workspace's roster and signed-in people.
+  Nothing calls it at runtime until the engine is wired into record moves (phase 5).
+
 ### `records`
 
 **Record areas**: the one model behind the four kinds of record a deployment shapes. Each area is bound to the table

@@ -993,12 +993,25 @@ export const peopleRoster = pgTable("people_roster", {
   orgId: text("org_id").notNull(),
   name: text("name"),
   team: text("team"),
-  // Who this person REPORTS to (the reporting chain walks this).
+  // Who this person REPORTS to (the reporting chain walks this): their supervisor (profile `people.supervisor_label`).
+  // Another person of the SAME workspace, never themselves, never a loop; set by the workspace's owner or an admin
+  // (agent/lib/people-data.ts holds every writer to that).
   managerEmail: text("manager_email"),
   // ESCALATION contacts: multiple managers, each pinged under a specific
   // condition (client escalation, technical blocker, SLA breach, …). Distinct
   // from the single reporting line above.
   escalations: jsonb("escalations").$type<{ email: string; reason: string }[]>(),
+  /**
+   * The department keys this person is in, from the deployment profile's `people.departments` (never a workspace's own
+   * list: a workflow step routed by a department must find the same key in every workspace). [] = none. Set by the
+   * workspace's owner or an admin only, checked by agent/lib/people-data.ts. drizzle/0046.
+   */
+  departments: jsonb("departments").$type<string[]>().notNull().default([]),
+  /**
+   * Typed person attributes by key, from the profile's `people.attributes` (the workflow engine's four types: choice,
+   * multi_choice, boolean, text). {} = none. Same writers and checks as `departments`. drizzle/0046.
+   */
+  attributes: jsonb("attributes").$type<Record<string, string | string[] | boolean>>().notNull().default({}),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
