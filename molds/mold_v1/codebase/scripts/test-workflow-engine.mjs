@@ -209,7 +209,12 @@ await check("loading: every vendored TypeScript file loads under --experimental-
 
 await check("loading: nothing outside the engine's own glue imports the vendored engine (no runtime behaviour changes)", () => {
   // The build-time checks of a profile's workflows (phase 2) read the DSL's validator and spec at build, never at runtime.
-  const GLUE = new Set(["lib/workflow-step-rules.ts", "scripts/test-workflow-engine.mjs", "scripts/sync-workflow-engine.mjs", "scripts/lib/record-workflows.mjs", "scripts/test-people-data.mjs"]);
+  // The Postgres store (phase 3) implements the engine's store interface; nothing calls it until phase 5, and its own
+  // test fails if anything outside its tests names it.
+  const GLUE = new Set([
+    "lib/workflow-step-rules.ts", "scripts/test-workflow-engine.mjs", "scripts/sync-workflow-engine.mjs", "scripts/lib/record-workflows.mjs",
+    "lib/record-workflow-store.ts", "scripts/test-record-workflow-store.mjs", "scripts/test-record-workflow-store-db.mjs", "scripts/test-people-data.mjs",
+  ]);
   const out = execFileSync("git", ["grep", "--untracked", "-l", "-E", "workflow-engine/|workflow-step-rules", "--", "*.ts", "*.tsx", "*.mjs", "*.js", "*.cjs"], { cwd: ROOT, encoding: "utf8" });
   const importers = out.split("\n").filter(Boolean).filter((f) => !f.startsWith("lib/workflow-engine/") && !GLUE.has(f));
   assert.deepEqual(importers, [], `files outside the glue name the engine: ${importers.join(", ")}`);

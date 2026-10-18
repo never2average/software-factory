@@ -17,21 +17,67 @@ reporting matrix (`core/rbac.ts`), draw the process (`core/diagram.ts`).
 The engine is the upstream workflow engine, vendored. The mold's record lifecycles become engine-configurable on top of
 it, over the mold's own Postgres records: no separate service, no other database.
 
-**Phases 1 and 2 of 8 change no runtime behaviour.** Nothing in the app imports the engine yet; only the build does,
-to check a profile's workflows (phase 2: `scripts/lib/record-workflows.mjs`, the DSL's validator and `spec.json`).
-`npm run test:workflow-engine` fails if anything outside its own glue (the step rules, the test, the sync, the build's
-check) names it. What follows, each its own change:
+**Phases 1 to 3 of 8 change no runtime behaviour.** Nothing in the app imports the engine yet; only the build does,
+to check a profile's workflows (phase 2: `scripts/lib/record-workflows.mjs`, the DSL's validator and `spec.json`), and
+the Postgres store (phase 3: `lib/record-workflow-store.ts`) implements its store interface without anything calling
+it. `npm run test:workflow-engine` fails if anything outside its own glue (the step rules, the test, the sync, the
+build's check, the store and its tests) names it, and `npm run test:record-workflow-store` fails if anything but its
+tests imports the store. What follows, each its own change:
 
 | Phase | What |
 |---|---|
 | 1 | the engine core as a library, its step rules, tests, the sync (this) |
 | 2 | the deployment profile's schema for workflows: `records.workflows`, a lifecycle's `workflow`, each move's `step`, `workflow_states`, checked at build (docs/DEPLOYMENT_PROFILE.md "records.workflows"); email and agent actions and prompt branches refused until a later phase |
-| 3 | Postgres tables for definitions and instances, with row-level security |
+| 3 | Postgres persistence: `record_workflow_instances` (with each instance's pinned definition) and `record_workflow_events`, with row-level security, and the store over them (see "Storage" below) |
 | 4 | people data: the directory, roles and reporting lines from the mold's own records |
 | 5 | runtime wiring: attaching a workflow to a record, a person's change through the step rules |
 | 6 | step actions: the emails and agent runs the rules queue |
 | 7 | surfaces: the screens and the agent's tools |
 | 8 | a pilot on one pack |
+
+## Storage
+
+Phase 3 (`drizzle/0047_record_workflows.sql`, `agent/lib/db/schema.ts`, `lib/record-workflow-store.ts`). Two
+per-workspace tables, each with row-level security ENABLED and FORCED and the `org_isolation` policy on `app.org_id`
+(created by the migration in the production, fail-closed form: no workspace named, no rows):
+
+- `record_workflow_instances`: one row per workflow running on one record (`entity_type`, the area; `entity_id`, the
+  record), unique on `(org_id, entity_type, entity_id, workflow_id)`. It holds the engine's state (`steps`,
+  `fired_once`, `terminal`, and the rest of the instance in `engine_state`), the **pinned** copy of the workflow
+  document it was made from (`definition`) and its `definition_hash` (sha256 over canonical JSON), so a later build that
+  changes the profile's document never changes a running instance's rules, and a `revision`. The record's own values
+  are never copied here; the caller puts them on the instance before running the engine (`withRecordData`).
+- `record_workflow_events`: the instance's history, one row per engine `HistoryEvent`, read back in the order it was
+  appended (an identity id), indexed on `(org_id, instance_id, at)`. It is an audit trail: app_rw may only SELECT and
+  INSERT (the migration revokes UPDATE and DELETE, and both bootstraps take them back again after their grant on all
+  tables: `scripts/lib/append-only-tables.mjs`). Its foreign key carries the workspace, so an event can only hang off
+  an instance of its own workspace, and it RESTRICTS: an instance with a history cannot be deleted.
+
+**Instances outlive their record.** Deleting or archiving a record leaves its workflow instances and their history in
+place; phase 5 marks an instance terminal or detached, never deletes it.
+
+**An instance runs on its pinned definition.** Its `definition_version` is keyed by the pinned document's hash
+(`definitionVersionOf`: the first 48 bits, plus one), so every document a workflow ever ran under has its own version
+with no counter to race on, and an update never changes it. The engine's `getWorkflowVersion(id,
+instance.definition_version)` answers it with the pinned copy, while `getWorkflow(id)` is the deployment's current
+document (what a new instance is pinned to).
+
+`RecordWorkflowStore` implements the engine's `WorkflowStore` interface for one workspace, on the handle of the
+caller's workspace-scoped transaction (`withOrgRls`, `withOrgDb`): it checks once that the transaction's `app.org_id`
+is its workspace and refuses otherwise, and names the workspace in every statement. Its own API: `create(instance,
+definition)`, `get(id)`, `getByEntity(type, id, workflow)`, `listByEntity`, `getDefinition` (the pinned copy),
+`update(instance)` (compare-and-swap on `instance.revision`, appending the history events after the stored ones; an
+instance carrying less history than is stored, such as a list's summary, is refused before anything is written),
+`appendEvent` (moves the revision on; `updated_at` never moves backwards) and `listEvents`. A stale revision, a
+missing instance, a second attachment of a workflow to a record or a history mismatch is a `RecordWorkflowConflict`
+(the engine's `PersistenceConflictError`, `status` 409):
+returned by `create` / `update`, thrown by the engine's `saveInstance`; nothing is written, and no statement fails, so
+the caller's transaction stays usable. Definitions come only from the build (`definitions`, the profile's
+`records.workflows`): registering or changing one throws, as do storing an identity snapshot, callbacks and job leases,
+which this phase does not carry. `getIdentitySnapshot` answers undefined: the directory is the workspace's people data
+(phase 4), handed to the engine by the write path (phase 5). `reassignObjectScope` matches nothing: the record holds its
+own fields. Tests: `npm run test:record-workflow-store` (offline, the statements it sends)
+and `npm run test:record-workflow-store-db` (a real Postgres, as app_rw, two workspaces, fail-closed).
 
 ## Where it came from
 

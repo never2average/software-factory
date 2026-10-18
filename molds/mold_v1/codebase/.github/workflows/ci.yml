@@ -388,6 +388,15 @@ jobs:
         if: always()
         run: npm run test:workflow-engine
 
+      # THE ENGINE'S STORE IN POSTGRES, OFFLINE (lib/record-workflow-store.ts, drizzle/0047): a real engine instance
+      # round-trips through its row and events; the store refuses a transaction that is not its workspace's before
+      # sending anything and names its workspace in every statement; a stale revision, a missing instance and a second
+      # attachment are the engine's conflict type with status 409 and nothing is sent after them; history is append-only
+      # and in order; the migration's row-level security, columns and journal entry; nothing calls the store yet.
+      - name: Record workflow store (offline; the statements it sends, conflicts, history, the migration)
+        if: always()
+        run: npm run test:record-workflow-store
+
       # A choice column's values live in one place, the zod enums in agent/lib/customer-schema.ts. The meanings base
       # code gives a value (defaults, what counts as attention), the Ops API's check and the MCP tools' text are all
       # read from it; a hand-made copy of each had drifted (mold_v1-251). The routes against a database are below.
@@ -1738,6 +1747,23 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:dictation-usage-db
+
+      # A RECORD'S WORKFLOW, STORED (lib/record-workflow-store.ts, drizzle/0047; phase 3 of the workflow engine). Through
+      # the agent's real workspace scope as app_rw, the two tables' policies failing closed: a real engine instance
+      # created, read by id and by its record, updated after the engine ran; a stale revision (also two transactions
+      # racing), a second attachment and a history shorter than the stored one (a list's summary) are 409 conflicts that
+      # write nothing and leave the transaction usable; events in append order, an append moving the revision on; the
+      # history append-only for app_rw (SELECT, INSERT) and an instance with history undeletable (RESTRICT); an instance
+      # runs on its pinned definition through getWorkflowVersion after the document changed; workspace B sees zero rows
+      # of either table through the store and
+      # through raw queries, plants none, and attaches its own; no workspace named sees and writes nothing; the
+      # migration additive, row-level security from the migration itself, the drift plan empty after it.
+      - name: Record workflow store (round trip, revisions, events, two workspaces, no workspace), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-workflow-store-db
 
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()

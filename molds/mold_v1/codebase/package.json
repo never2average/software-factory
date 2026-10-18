@@ -219,6 +219,8 @@
     "test:record-lifecycle-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-lifecycle-db.mjs",
     "test:record-permissions-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-permissions-db.mjs",
     "test:migrations-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-migrations-db.mjs",
+    "test:record-workflow-store": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-store.mjs",
+    "test:record-workflow-store-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-record-workflow-store-db.mjs",
     "test:new-database-db": "node scripts/test-new-database-db.mjs",
     "test:off-vercel-defaults": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-off-vercel-defaults.mjs",
     "test:deployment-upsert-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-upsert-db.mjs",

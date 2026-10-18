@@ -2690,3 +2690,83 @@ export const pushSubscriptions = pgTable(
     index("push_subscriptions_owner_idx").on(t.orgId, t.ownerEmail),
   ],
 );
+
+/**
+ * A RECORD'S WORKFLOW (phase 3 of the workflow engine, docs/WORKFLOW_ENGINE.md; drizzle/0047): one row per workflow
+ * running on one record, the engine's materialized instance. Read and written only by lib/record-workflow-store.ts,
+ * always inside the caller's workspace-scoped transaction (withOrgRls / withOrgDb), so row-level security applies.
+ *
+ * - `entity_type` / `entity_id`: the record the workflow runs on (its area and its id). At most one instance of a
+ *   workflow per record (the unique index).
+ * - `definition` is the PINNED copy of the workflow document the instance was made from, and `definition_hash` its
+ *   sha256 over canonical JSON: a later build that changes the profile's document never changes a running instance's
+ *   rules underneath it.
+ * - `steps`, `fired_once`, `terminal`: the engine's own state (`StepState[]`, the priorities of `once` rules that
+ *   fired, whether `init.terminal_when` holds; NULL when the workflow declares no completion condition).
+ * - `engine_state`: the rest of the engine's instance that is not a column (its start step, flat order, deferred
+ *   prompts, queued actions, definition version, creator), so a read gives back what was written. The record's own
+ *   values are never copied here: the record is their one home.
+ * - `revision`: the compare-and-swap token. A write names the revision it read; a stale one changes nothing and is a
+ *   conflict (409 at the route).
+ *
+ * Org-scoped like every per-workspace table: ENABLE + FORCE row-level security with the `org_isolation` policy.
+ */
+export const recordWorkflowInstances = pgTable(
+  "record_workflow_instances",
+  {
+    orgId: text("org_id").notNull(),
+    id: text("id").notNull(),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    workflowId: text("workflow_id").notNull(),
+    definitionHash: text("definition_hash").notNull(),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+    steps: jsonb("steps").$type<Record<string, unknown>[]>().notNull().default([]),
+    revision: integer("revision").notNull().default(1),
+    terminal: boolean("terminal"),
+    firedOnce: jsonb("fired_once").$type<number[]>().notNull().default([]),
+    engineState: jsonb("engine_state").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: "record_workflow_instances_pk", columns: [t.orgId, t.id] }),
+    uniqueIndex("record_workflow_instances_entity_uidx").on(t.orgId, t.entityType, t.entityId, t.workflowId),
+    index("record_workflow_instances_workflow_idx").on(t.orgId, t.workflowId, t.terminal),
+  ],
+);
+
+/**
+ * A record workflow's HISTORY, append-only (drizzle/0047): one row per engine history event (`instance_created`,
+ * `state_changed`, `diff_rule_fired`, …), in the order the store appended them (`id` is an identity, so two events of
+ * one write keep their order even when they share a time). app_rw may only SELECT and INSERT here
+ * (scripts/lib/append-only-tables.mjs). The foreign key carries the workspace, so an event can only hang off an
+ * instance of its own workspace, and it RESTRICTS: an instance with a history cannot be deleted, so the audit trail
+ * outlives a careless delete (an instance is marked terminal or detached, never removed). Same row-level security as
+ * the instances.
+ */
+export const recordWorkflowEvents = pgTable(
+  "record_workflow_events",
+  {
+    orgId: text("org_id").notNull(),
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    instanceId: text("instance_id").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    type: text("type").notNull(),
+    stepId: text("step_id"),
+    actor: text("actor"),
+    source: text("source"),
+    detail: text("detail"),
+    originInstanceId: text("origin_instance_id"),
+    data: jsonb("data").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: "record_workflow_events_instance_fk",
+      columns: [t.orgId, t.instanceId],
+      foreignColumns: [recordWorkflowInstances.orgId, recordWorkflowInstances.id],
+    }).onDelete("restrict"),
+    index("record_workflow_events_instance_at_idx").on(t.orgId, t.instanceId, t.at),
+  ],
+);

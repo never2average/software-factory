@@ -76,6 +76,12 @@ if (PRODUCTION) {
   await sql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_rw`);
 }
 console.log(`✓ role app_rw (NOBYPASSRLS) + grants${PRODUCTION ? " (incl. default privileges for future tables)" : ""}`);
+{
+  // Append-only tables lose UPDATE and DELETE again, as on a deployment (scripts/lib/append-only-tables.mjs).
+  const { applyAppendOnlyGrants } = await import("./lib/append-only-tables.mjs");
+  const { applied } = await applyAppendOnlyGrants(sql);
+  console.log(`✓ append-only for app_rw: ${applied.join(", ") || "none"}`);
+}
 
 /* 2. RLS on every table that carries a tenant. --------------------------- */
 const PREDICATE = PRODUCTION
