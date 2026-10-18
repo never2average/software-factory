@@ -6,6 +6,7 @@ import { chatThreadMembers, chatThreads } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordActivity } from "@/lib/ops-activity";
 import { threadAccess, callerEmail, guestThread, publicThread } from "@/lib/chat-threads";
+import { callerOwnsSession } from "@/lib/session-gate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +79,24 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     // Metadata edits: owner or participant (viewers are read-only).
     if (access.role === "viewer") {
       return NextResponse.json({ error: "View-only members cannot edit the thread." }, { status: 403 });
+    }
+    // A thread moves to another session only for its OWNER, and only to a session that is theirs on server-written
+    // evidence (mold_v1-293: a thread is what the legacy owner inference reads, so pointing one at someone else's
+    // session must not be a way to claim it).
+    const nextSession = parsed.data.eveSessionId;
+    if (nextSession && nextSession !== access.thread.eveSessionId) {
+      const orgId = access.thread.orgId;
+      const mine =
+        access.role === "owner" &&
+        (await callerOwnsSession(
+          { inOrg: (o, fn) => (o === orgId ? withOrgRls(o, fn) : Promise.reject(new Error("one workspace per request"))) },
+          orgId,
+          nextSession,
+          email,
+        ));
+      if (!mine) {
+        return NextResponse.json({ error: "Only the chat's owner can move it to another session." }, { status: 403 });
+      }
     }
     const [row] = await withOrgRls(access.thread.orgId, (tx) =>
       tx

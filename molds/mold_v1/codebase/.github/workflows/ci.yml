@@ -1872,6 +1872,17 @@ jobs:
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:thread-queue-db
 
+      # NOBODY OWNS SOMEONE ELSE'S OLD SESSION BY FILING A ROW FOR IT (mold_v1-293): a thread a colleague files on a
+      # session from before owner records never names its owner (only the agent's scope row, with a row of the same
+      # person, does), the thread routes refuse a session the caller does not own, a session with only browser
+      # evidence stays unowned, and the read-only owner audit lists a record frozen the old way.
+      - name: Session owner hijack (legacy sessions), against a real Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:session-owner-hijack-db
+
       # deployment_upsert (MCP) posts to POST /api/ops/deployments, which was insert-only: a record could be created
       # and never corrected. Reuses the relabelling build of the workbook route step.
       - name: deployment_upsert updates an existing record, against a fail-closed Postgres

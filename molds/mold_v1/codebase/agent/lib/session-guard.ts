@@ -344,7 +344,9 @@ async function ownershipOf(
   }
   // A session from before owners were recorded, inferred IN THIS WORKSPACE from evidence the agent or the server
   // wrote here (lib/session-gate.ts readLegacyOwnershipIn). Frozen into a record once the inference names an owner or
-  // proves a workflow step, so rows written later cannot change it; an UNOWNED answer is never frozen.
+  // proves a workflow step, so rows written later cannot change it; an UNOWNED answer is never frozen. The name it
+  // freezes is the agent's scope row's person, and only when a row of that person agrees (mold_v1-293): a thread or a
+  // chat row anybody filed on the session never names its owner by itself.
   const legacy = await readLegacyOwnershipIn(db, workspace, sessionId);
   if (legacy && (legacy.ownerEmail || legacy.visibility === "workspace")) {
     await recordOwner(db, {

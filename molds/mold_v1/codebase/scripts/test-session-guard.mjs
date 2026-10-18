@@ -554,8 +554,32 @@ try {
     check("…and nothing was frozen, so the real owner can still be established", rows.length === 0, rows.length);
   }
   await admin`INSERT INTO chat_sessions (id, org_id, owner_email, eve_session_id, title) VALUES ('guard-poisoned', ${ORG_A}, ${ALICE}, ${P}, 'old chat')`;
-  check("once the chat list mirrors it, its real owner reads it (200)", (await stream(P, T.alice)).status === 200);
+  // mold_v1-293: a browser-written row never names an owner on its own — only together with the agent's scope row naming
+  // the same person. Here the scope row names Bob and the chat row Alice: nobody is named, so nobody is let in. (It used
+  // to name Alice from her chat row — and, by the same rule, anyone who filed a thread on the session.)
+  check("a chat row the scope row does not agree with names nobody: the session stays refused (404)", (await stream(P, T.alice)).status === 404);
   check("…and the scope row's colleague still does not (404)", (await stream(P, T.bob)).status === 404);
+  if (saved.has("agent_session_owners")) {
+    const rows = await admin`SELECT 1 FROM agent_session_owners WHERE session_id = ${P}`;
+    check("…and nothing was frozen", rows.length === 0, rows.length);
+  }
+  // mold_v1-293: a colleague files a thread naming HERSELF on Alice's old session (POST /api/ops/threads allowed it for
+  // any session id). The guard's legacy inference used to rank that thread first and freeze her in as the owner.
+  const H = newSession("eve:hijack");
+  sessions.get(H).events.push({ type: "message.received", data: { message: "Alice's HIJACK-7" } });
+  park(H);
+  await admin`INSERT INTO agent_session_scopes (session_id, org_id, principal_email) VALUES (${H}, ${ORG_A}, ${ALICE})`;
+  await admin`INSERT INTO chat_sessions (id, org_id, owner_email, eve_session_id, title) VALUES ('guard-hijack', ${ORG_A}, ${ALICE}, ${H}, 'old chat')`;
+  await admin`INSERT INTO chat_threads (org_id, eve_session_id, title, owner_email) VALUES (${ORG_A}, ${H}, 'mine now', ${BOB})`;
+  const hb = await stream(H, T.bob);
+  check("a colleague who filed a thread on Alice's old session is NOT made its owner (404)", hb.status === 404 && !hb.text.includes("HIJACK-7"), hb.status);
+  check("…nor may she post into it (404)", (await post(H, T.bob, { message: "mine", continuationToken: "eve:hijack" })).status === 404);
+  check("Alice, whose scope row and chat row agree, still reads it (200)", (await stream(H, T.alice)).status === 200);
+  if (saved.has("agent_session_owners")) {
+    const [row] = await admin`SELECT owner_email FROM agent_session_owners WHERE session_id = ${H}`;
+    check("…and the guard froze ALICE as its owner, never the colleague", row?.owner_email === ALICE, row);
+  }
+  check("…after which the colleague is still refused (404)", (await stream(H, T.bob)).status === 404);
   // (b) an ordinary un-mirrored chat, scope row intact.
   const U = newSession("eve:unmirrored");
   park(U);
