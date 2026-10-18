@@ -2,9 +2,9 @@
 
 # Software Factory
 
-### Describe an AI agent app in one page. Your coding agent builds, tests and ships it.
+### Declarative AI apps, built and run with frontier intelligence spent only where it counts.
 
-Multi-workspace · multi-agent · tested before it ships · on Vercel or your own server · MIT licensed
+Apps as declarations, not forks · deterministic tools, frontier judgement · tested before it ships · Vercel or your own server · MIT licensed
 
 <img src="plugins/factory-board/docs/tab-products.png" alt="The factory board: every product, its stage and its live apps" width="760">
 
@@ -12,17 +12,44 @@ Multi-workspace · multi-agent · tested before it ships · on Vercel or your ow
 
 ---
 
+## Two ideas
+
+### 1. An app is a declaration
+
+You don't write an app here. You declare one:
+
+- a **one-page brief**: who it's for, what its agents do, where it runs;
+- a **deployment profile**: its record areas, their fields and stages, who may make which move, its workflows and approvals, its people and departments, and the words every screen and agent uses;
+- a **pack**: its own specialist agents, instructions and starter content;
+- a **brand**: a name, a colour and a logo.
+
+A general-purpose base (a **mold**) reads those declarations and enforces them: it renders the screens, gives the agents their tools in the app's own words, applies the stage rules, and keeps every workspace's data to itself. Molds are never forked for one app, so every app gets every fix, and an app's whole definition fits in a review.
+
+The same app can be re-declared rather than rewritten. Renaming a record area, adding a stage, or putting a four-eyes approval on a move is a change to the profile, checked when the app is built, with existing data kept readable under its old names.
+
+### 2. Frontier intelligence, used token-efficiently
+
+A frontier model is the most capable and the most expensive part of the system, so the factory spends it on judgement and nothing else:
+
+- **Deterministic work runs as plain scripts.** Stamping, branding, deploying, proving isolation and running the test suites are scripts, not prompts. Each returns one machine-readable result (`--json`) and an exit code that says done, failed, could not run, or **a human is needed**. The model reads a line, not a log.
+- **Skills load on demand.** The coding agent opens only the playbook for the job in hand.
+- **Specialists get narrow tools.** In the apps, each specialist agent sees only the tools and words it needs. A build-time check renders exactly what the model will read, so nothing stray reaches it.
+- **Caching is on by default.** The apps send stable context first so the inference provider can cache it.
+- **Every cost is measured.** Usage, model cost per agent and build cost come from the apps' own records. Anything that can't be measured says "not measured", never `$0`.
+
+Measured, not estimated: a full round of eight factory tasks costs **about $1.70** with Claude Code ([benchmarks](#benchmarks)). In a production app, prompt caching cut model spend **36–53% per specialist-agent run** ([proof](#proof-from-a-production-app)).
+
 ## What it does
 
-You write a brief: who the app is for, what its agents do, where it should run. Then you ask your coding agent:
+You write the brief, then ask your coding agent:
 
 > Mint an app called `research_desk` from `briefs/research_desk.md`.
 
 The factory takes it from there:
 
-- **Stamps** the app from a proven base (a **mold**) and adds your own agents, instructions and starter content (a **pack**).
+- **Stamps** the app from a mold, and applies its profile and pack.
 - **Brands** it with your name, colour and logo.
-- **Deploys** it to Vercel or to a server you own. It sizes the server, locks down the firewall and sets up HTTPS.
+- **Deploys** it to Vercel or a server you own. It sizes the server, locks down the firewall and sets up HTTPS.
 - **Proves** that every workspace's data is locked to that workspace before the deploy is allowed to finish.
 - **Tests** it with five suites (functional, context, load, accessibility, responsiveness), signed in as a real user.
 - **Hands back to you** only when it truly needs you: a credential you type yourself, a sign-in code, or a DNS record.
@@ -33,12 +60,12 @@ Then it keeps watching. A board inside your coding agent shows every app's healt
 
 | | |
 |---|---|
-| **Operated by your coding agent** | No dashboard to learn. You ask in plain words; the agent follows the factory's skills and scripts and stops only where a human is needed. |
-| **Nothing ships untested** | A failing check reverts the app and files a ticket with the cause. Accessibility and responsiveness are part of the gate, not an afterthought. |
+| **Declared, not forked** | One general base, many apps. An app is a brief, a profile, a pack and a brand, so it stays small, reviewable and current. |
+| **Frontier judgement, script execution** | The model decides; scripts do. Results come back as one line of JSON, so a round of real work costs dollars, not tens of dollars. |
+| **Operated by your coding agent** | No dashboard to learn. You ask in plain words; the agent follows the factory's skills and stops only where a human is needed. |
+| **Nothing ships untested** | A failing check reverts the app and files a ticket with the cause. Accessibility and responsiveness are part of the gate. |
 | **Workspaces can't see each other** | Every deploy proves row-level security on every workspace table before it finishes, and refuses otherwise. |
-| **Your cloud or your box** | Vercel, or a server you own. It scales its own limits to the box and tells you, with the price, when it needs a bigger one. |
 | **Secrets never enter the chat** | Credentials are referenced by name only. You type the values yourself; the agent never sees them. |
-| **Honest numbers** | Usage, model cost per agent and build cost are measured from the apps' own records. What can't be measured says "not measured", never `$0`. |
 
 ## Proof, from a production app
 
