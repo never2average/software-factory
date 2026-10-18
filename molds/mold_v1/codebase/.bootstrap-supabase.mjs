@@ -178,6 +178,12 @@ await sql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public
 await sql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO app_rw`);
 console.log("✓ Grants applied (incl. default privileges for future tables)");
+{
+  // Append-only tables lose UPDATE and DELETE again: the grant on ALL TABLES above just gave them back.
+  const { applyAppendOnlyGrants } = await import("./scripts/lib/append-only-tables.mjs");
+  const { applied, skipped } = await applyAppendOnlyGrants(sql);
+  console.log(`✓ append-only for app_rw: ${applied.join(", ") || "none"}${skipped.length ? ` (not yet created: ${skipped.join(", ")})` : ""}`);
+}
 
 /* ------------------------------------------------------------------ *
  * 4. Verify — the checks that caught real mistakes before.
