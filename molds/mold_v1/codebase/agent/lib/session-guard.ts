@@ -84,6 +84,7 @@ import {
   WORKSPACE_STEP_GRANT_KIND,
 } from "../../lib/session-token-kinds.ts";
 import { claimsOf, consumePostInDb, postClaimOf, type PostClaim } from "./queue-delivery-auth.ts";
+import { DELIVERY_QUEUE_CLAIM, DELIVERY_THREAD_CLAIM } from "../../lib/queue-delivery-token.ts";
 import { sessionPublicKeyPem } from "./session-public-key.ts";
 import { withoutContinuationTokens } from "../../lib/chat-replay-stream.ts";
 import { noticeDelegations } from "./session-lineage-stream.ts";
@@ -220,6 +221,8 @@ export function callerOf(auth: AuthContext, headers: Headers): GateCaller {
       email,
       boundSessionId: attr(auth, SESSION_BOUND_CLAIM) ?? null,
       boundAct: attr(auth, SESSION_BOUND_ACT_CLAIM) ?? null,
+      boundQueue: attr(auth, DELIVERY_QUEUE_CLAIM) ?? null,
+      boundThread: attr(auth, DELIVERY_THREAD_CLAIM) ?? null,
     };
   }
   if (auth.authenticator === "local-dev") return { kind: "local-dev", email: null, principalId: auth.principalId };

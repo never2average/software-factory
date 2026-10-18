@@ -24,6 +24,7 @@
  */
 import {
   bigint,
+  bigserial,
   boolean,
   doublePrecision,
   foreignKey,
@@ -1851,6 +1852,48 @@ export const chatPresence = pgTable(
     typingUntil: timestamp("typing_until", { withTimezone: true }),
   },
   (t) => [primaryKey({ columns: [t.threadId, t.email] })],
+);
+
+/**
+ * A SHARED CHAT'S QUEUE (mold_v1-290, lib/thread-queue-server.ts): every message the owner or a participant sends into
+ * a shared chat waits here and runs in order, oldest first, one turn at a time. Workspace-scoped like every chat table
+ * (org_isolation); who may post is the route's rule (owner or participant, never a viewer or a guest).
+ */
+export const chatThreadQueue = pgTable(
+  "chat_thread_queue",
+  {
+    orgId: text("org_id").notNull(),
+    // Unique within the workspace (the key is org_id, id): an id says nothing about another workspace.
+    id: text("id").notNull(),
+    threadId: uuid("thread_id").notNull(),
+    authorEmail: text("author_email").notNull(),
+    text: text("text").notNull(),
+    // Arrival order across every sender of the thread.
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    // 'queued' | 'sending' | 'sent' | 'failed'.
+    state: text("state").notNull().default("queued"),
+    claimId: text("claim_id"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    // The single-use send token's counter (agent/lib/queue-delivery-auth.ts spends it once per claim).
+    tokenSeq: integer("token_seq").notNull().default(0),
+    attempts: integer("attempts").notNull().default(0),
+    firstAttemptAt: timestamp("first_attempt_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    // Claims whose send may have reached the agent: checked against the session's history before any resend.
+    // Null until one is (no default: drizzle and Postgres spell an array default differently, which reads as drift).
+    triedClaims: text("tried_claims").array(),
+    // Since when this item, first in line, has been waiting for its author's own page (a deployment that cannot sign).
+    authorWaitSince: timestamp("author_wait_since", { withTimezone: true }),
+    error: text("error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.orgId, t.id] }),
+    index("chat_thread_queue_thread_idx").on(t.orgId, t.threadId, t.state, t.seq),
+    // One item on its way per thread: two pumps can never send two at once.
+    uniqueIndex("chat_thread_queue_one_sending_uidx").on(t.threadId).where(sql`state = 'sending'`),
+  ],
 );
 
 export const browserSessions = pgTable(

@@ -27,10 +27,14 @@
 import { sql } from "drizzle-orm";
 import { jwtEcdsa } from "eve/channels/auth";
 import {
+  DELIVERY_QUEUE_CLAIM,
+  DELIVERY_THREAD_CLAIM,
   POST_BODY_KEYS,
   QUEUE_DELIVERY_AUDIENCE,
   QUEUE_DELIVERY_KIND,
   deliveryReference,
+  THREAD_FROM_CLOSE,
+  THREAD_FROM_OPEN,
   sessionIdOfRoute,
 } from "../../lib/queue-delivery-token.ts";
 import { getDb, withOrgDb } from "./db/index.ts";
@@ -46,6 +50,14 @@ export interface PostClaim {
   readonly claim: string;
   readonly seq: number;
   readonly message: string;
+  /**
+   * The person's own chat queue (`chat_queue_items`), or a SHARED chat's (`chat_thread_queue`, mold_v1-290): there the
+   * item is the author's — the thread's owner or a participant — and its body is their words with their name in front
+   * (`threadMessageText`), on the thread recorded for this session.
+   */
+  readonly queue: "chat" | "thread";
+  /** A shared chat's item: the thread its token is bound to (the item must be in it). */
+  readonly thread?: string;
 }
 
 /** Is this post token's claim live, and its `seq` not yet passed? Read-only (see the note above). */
@@ -53,8 +65,35 @@ export type CheckPost = (c: PostClaim) => Promise<boolean>;
 
 const rowsOf = (r: unknown): unknown[] => (Array.isArray(r) ? r : ((r as { rows?: unknown[] } | null)?.rows ?? []));
 
+/** A shared chat's claimed item, live for this token: its thread on this session, its author, its exact body. */
+function threadClaimSql(c: PostClaim, consume: boolean) {
+  const ref = deliveryReference(c.claim);
+  const live = sql`
+    q.id = ${c.item} and q.org_id = ${c.org} and lower(q.author_email) = ${c.email}
+      and q.state = 'sending' and q.claim_id = ${c.claim}
+      and ${c.message} = ${THREAD_FROM_OPEN} || q.author_email || ${THREAD_FROM_CLOSE} || q.text || ${ref}
+      and q.thread_id::text = ${c.thread ?? ""}
+      and exists (
+        select 1 from chat_threads t
+        where t.id = q.thread_id and t.org_id = ${c.org} and t.eve_session_id = ${c.sid} and t.archived_at is null
+          -- The thread is the SESSION OWNER's, as the agent recorded it (agent_session_owners, never a browser-written
+          -- row): a thread row someone else wrote on this session confers nothing.
+          and lower(t.owner_email) = (select lower(o.owner_email) from agent_session_owners o
+                                      where o.session_id = ${c.sid} and o.org_id = ${c.org}))`;
+  return consume
+    ? sql`update chat_thread_queue q set token_seq = ${c.seq} where ${live} and q.token_seq < ${c.seq} returning q.id`
+    : sql`select q.id from chat_thread_queue q where ${live} and q.token_seq <= ${c.seq}`;
+}
+
 export const checkPostInDb: CheckPost = async (c) => {
   if (!getDb()) return false;
+  if (c.queue === "thread") {
+    try {
+      return rowsOf(await withOrgDb(c.org, (tx) => tx.execute(threadClaimSql(c, false)))).length === 1;
+    } catch {
+      return false;
+    }
+  }
   try {
     return (
       rowsOf(
@@ -78,6 +117,13 @@ export const checkPostInDb: CheckPost = async (c) => {
  */
 export const consumePostInDb: CheckPost = async (c) => {
   if (!getDb()) return false;
+  if (c.queue === "thread") {
+    try {
+      return rowsOf(await withOrgDb(c.org, (tx) => tx.execute(threadClaimSql(c, true)))).length === 1;
+    } catch {
+      return false;
+    }
+  }
   try {
     return (
       rowsOf(
@@ -106,7 +152,21 @@ export function postClaimOf(claims: Record<string, unknown> | null, sessionId: s
   const b = body as Record<string, unknown>;
   if (Object.keys(b).some((k) => !POST_BODY_KEYS.has(k))) return null;
   if (typeof b.message !== "string") return null;
-  return { org, sid: sessionId, email: email.toLowerCase(), item, claim, seq, message: b.message };
+  const queue = claims[DELIVERY_QUEUE_CLAIM] === "thread" ? "thread" : "chat";
+  const thread = claims[DELIVERY_THREAD_CLAIM];
+  // A shared chat's token names its thread; one that does not makes no claim.
+  if (queue === "thread" && (typeof thread !== "string" || !thread)) return null;
+  return {
+    org,
+    sid: sessionId,
+    email: email.toLowerCase(),
+    item,
+    claim,
+    seq,
+    message: b.message,
+    queue,
+    ...(queue === "thread" ? { thread: thread as string } : {}),
+  };
 }
 
 /** The claims of the request's bearer token — read only AFTER it has been verified by a door. */

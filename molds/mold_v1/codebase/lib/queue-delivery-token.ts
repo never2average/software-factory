@@ -21,8 +21,34 @@ export const QUEUE_DELIVERY_TTL_SECONDS = 120;
  *           `token_seq` must be below the token's `seq`, and admitting it raises it (agent/lib/queue-delivery-auth.ts).
  */
 export type DeliveryScope =
-  | { readonly act: "read" }
-  | { readonly act: "post"; readonly item: string; readonly claim: string; readonly seq: number };
+  | { readonly act: "read"; readonly queue?: DeliveryQueue }
+  | {
+      readonly act: "post";
+      readonly item: string;
+      readonly claim: string;
+      readonly seq: number;
+      /** Which queue the item is in: a person's own chat (`chat_queue_items`, the default) or a shared chat's. */
+      readonly queue?: DeliveryQueue;
+      /** For a shared chat's item: its thread. The agent admits the author only as a participant of THAT thread. */
+      readonly thread?: string;
+    };
+
+/**
+ * A SHARED CHAT'S queued message (`chat_thread_queue`, mold_v1-290) is sent AS ITS AUTHOR — the owner or a participant
+ * of the thread — never as whoever's page ran the queue. Its token names that queue in this claim; the agent then
+ * checks the item there, and admits the author as a participant of the thread as well as its owner (lib/chat-gate.ts).
+ */
+export type DeliveryQueue = "chat" | "thread";
+export const DELIVERY_QUEUE_CLAIM = "q";
+/** The thread a shared chat's queued item is in (its token's own thread). */
+export const DELIVERY_THREAD_CLAIM = "thread";
+
+/** The text a shared chat's queued message is sent as: its sender named, so the agent knows who is speaking. */
+export const THREAD_FROM_OPEN = "[from: ";
+export const THREAD_FROM_CLOSE = "]\n\n";
+export function threadMessageText(author: string, text: string): string {
+  return `${THREAD_FROM_OPEN}${author}${THREAD_FROM_CLOSE}${text}`;
+}
 
 /** Keys a queued message's POST body may carry — no `inputResponses` (an answer to a question), nothing else. */
 export const POST_BODY_KEYS: ReadonlySet<string> = new Set(["message", "continuationToken", "outputSchema"]);
@@ -35,6 +61,11 @@ export const POST_BODY_KEYS: ReadonlySet<string> = new Set(["message", "continua
  */
 export function deliveryReference(claimId: string): string {
   return `\n\n⁦directives⁩ (This message was queued earlier and sent automatically when you finished; ref ${claimId}.) ⁦/directives⁩`;
+}
+
+/** Was `message` (a session's `message.received`) sent under one of these claims? */
+export function sentUnderClaim(message: string, claims: readonly string[]): boolean {
+  return claims.some((c) => message.includes(deliveryReference(c)));
 }
 
 /** The eve session a request's route is about: `/eve/v1/session/:id` or `/eve/v1/session/:id/stream`; else null. */

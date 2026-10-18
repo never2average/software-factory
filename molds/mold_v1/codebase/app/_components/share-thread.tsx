@@ -117,8 +117,9 @@ function ShareDialog({
         setIOwnThis(item.ownerEmail.toLowerCase() === (item.viewerEmail ?? item.ownerEmail).toLowerCase());
         await loadMembers(item.id);
         setReady(true);
-        opsFetch<{ online: { email: string }[] }>(`/api/ops/threads/${item.id}/presence`)
-          .then((p) => alive && setOnline(new Set(p.online.map((o) => o.email))))
+        // A guest is listed without an address (the presence route never names one): nothing to mark.
+        opsFetch<{ online: { email?: string }[] }>(`/api/ops/threads/${item.id}/presence`)
+          .then((p) => alive && setOnline(new Set(p.online.flatMap((o) => (o.email ? [o.email] : [])))))
           .catch(() => {});
       } catch (e) {
         if (alive) setError(e instanceof Error ? e.message : String(e));

@@ -214,6 +214,8 @@ export async function readMembership(
   ownership: SessionOwnership,
   sessionId: string,
   callerEmail: string,
+  /** Only this thread (a shared chat's queued message is its thread's, mold_v1-290); any thread on the session when absent. */
+  threadId?: string,
 ): Promise<{ role: string; status: string; expiresAt: Date | null } | null> {
   const owner = norm(ownership.ownerEmail);
   const me = norm(callerEmail);
@@ -231,6 +233,7 @@ export async function readMembership(
           sql`lower(${chatThreads.ownerEmail}) = ${owner}`,
           sql`lower(${chatThreadMembers.email}) = ${me}`,
           ne(chatThreadMembers.status, "revoked"),
+          ...(threadId ? [sql`${chatThreads.id}::text = ${threadId}`] : []),
         ),
       )
       // A participant row outranks a viewer row if the caller somehow holds both.
@@ -316,8 +319,15 @@ export async function readCallerFacts(
   callerOrgs: readonly string[] | null = null,
 ): Promise<GateFacts> {
   const me = norm(caller.email);
-  if (!ownership || !me || caller.kind !== "person") return { ownership, membership: null, callerInWorkspace: false };
+  // A person — or a shared chat's queued message, sent as its author (mold_v1-290): its author's membership decides.
+  const author = caller.kind === "session-bound" && caller.boundQueue === "thread";
+  if (!ownership || !me || (caller.kind !== "person" && !author)) return { ownership, membership: null, callerInWorkspace: false };
   if (me === norm(ownership.ownerEmail)) return { ownership, membership: null, callerInWorkspace: false };
+  if (author) {
+    // Its OWN thread only: a token that names none is no participant of anything.
+    const membership = caller.boundThread ? await readMembership(db, ownership, sessionId, me, caller.boundThread) : null;
+    return { ownership, membership, callerInWorkspace: false };
+  }
   const membership = await readMembership(db, ownership, sessionId, me);
   const callerInWorkspace =
     !membership && ownership.visibility === "workspace"

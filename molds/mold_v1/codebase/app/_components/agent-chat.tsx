@@ -288,6 +288,7 @@ import {
   mergeAttachedEvents,
   outstandingDeliveries,
   pendingInputRequestParts,
+  requestArrival,
   proxiedChildRequestIds,
   renderLoopDetail,
   renderLoopScene,
@@ -358,6 +359,21 @@ import { deriveInsights } from "./insights";
 import { ArtifactPanel, artifactFromHref, readableArtifactName } from "./artifact-view";
 import { ShareThreadButton, type SharePayload } from "./share-thread";
 import { opsFetch } from "./ops/lib";
+import { CHAT_CUES } from "@/lib/ui-words";
+import { completionDue, turnOutcome } from "@/lib/completion-cue";
+import { approvalTimes } from "@/lib/approval-record";
+import { CompletionAnnouncer, CompletionMark, announceCompletion, markTabDone } from "./completion-cue";
+import {
+  PRESENCE_POLL_HIDDEN_MS,
+  PRESENCE_POLL_MS,
+  onlineFrom,
+  personLabel,
+  queueFrom,
+  typingBeatDue,
+  typingLine,
+  type OnlinePerson,
+  type SharedQueueItem,
+} from "@/lib/chat-presence";
 
 // The control panel (runs, graphs, dashboards) is fetched when a chat first shows it, not with the composer. Its
 // placeholder fills the rail it will occupy (the <aside> already has its width), so nothing moves when it lands.
@@ -501,6 +517,16 @@ interface AgentChatProps {
    *  participant, or viewer) — drives presence heartbeats + the avatar stack. */
   readonly sharedThreadId?: string;
   /**
+   * The server thread id of THIS person's own chat when they have shared it: presence and the typing line only
+   * (mold_v1-288). Unlike `sharedThreadId` it changes nothing about how the owner's own messages are sent or queued.
+   */
+  readonly presenceThreadId?: string;
+  /**
+   * The main agent's turn started or ended here (mold_v1-287): the shell watches a chat left while its turn runs, and
+   * marks it done in the chat list when it finishes.
+   */
+  readonly onTurnActivity?: (activity: { readonly sessionId: string | null; readonly running: boolean }) => void;
+  /**
    * `${email}:${orgId}` — the scope the chat cache is stored under. Where a
    * chat's queue and owed deliveries are kept (lib/chat-queue); absent, they
    * live in memory only.
@@ -630,19 +656,24 @@ const NO_ASKERS: ReadonlyMap<string, SpecialistAsker> = new Map();
 const NO_ANSWERS: ReadonlyMap<string, SpecialistAnswerView> = new Map();
 const NO_NOTES: readonly SteeringNoteView[] = [];
 
-interface OnlineMember {
-  email: string;
-  typing: boolean;
-}
 interface Presence {
-  online: OnlineMember[];
+  online: OnlinePerson[];
   turnHolder: string | null;
+  /** The shared chat's queue (mold_v1-290): every member's waiting messages, oldest first. */
+  queue: SharedQueueItem[];
 }
+const NO_PRESENCE: Presence = { online: [], turnHolder: null, queue: [] };
+/** How long the completed mark stays beside the composer. */
+const COMPLETION_SHOWN_MS = 4_000;
+/**
+ * A shared chat whose relayed turn just parked: its transcript is refreshed by REMOUNTING the chat, so the completed
+ * mark is shown by the next mount (module scope outlives the remount; the announcement is made at once, by the
+ * shell's live region, which does not remount).
+ */
+let relayCompletedFor: string | null = null;
+/** Sessions whose turn this page saw running and has not yet seen end (survives a remount of the same chat). */
+const seenRunning = new Set<string>();
 
-/** Polled presence heartbeat for a shared thread: POST every ~9s (bumping the
- *  typing window when the local user is composing) and take the live roster +
- *  current turn-holder from the same response. Best-effort; a failed beat is
- *  silently ignored. Inert when `threadId` is undefined (single-player chat). */
 /**
  * Is the conversation up, so the Control Panel may start reading FINISHED specialists (lib/child-feed.ts)?
  *
@@ -670,48 +701,87 @@ function useConversationSettled(): boolean {
   return painted && openSettled;
 }
 
-function usePresence(threadId: string | undefined, typing: boolean): Presence {
-  const [presence, setPresence] = useState<Presence>({ online: [], turnHolder: null });
-  const typingRef = useRef(typing);
-  typingRef.current = typing;
+/**
+ * Polled presence heartbeat for a shared thread: a beat every couple of seconds while the tab is visible (slower while
+ * hidden), a TYPING beat at most once a second while the person types (`noteTyping`), and the live roster, turn holder
+ * and the chat's queue from the same response. Best-effort; a failed beat is silently ignored. Inert when `threadId`
+ * is undefined (single-player chat).
+ */
+function usePresence(threadId: string | undefined): Presence & {
+  /** A keystroke in the composer: a typing beat, at most one a second (lib/chat-presence.ts). */
+  noteTyping: () => void;
+  /** The draft was sent or cleared: close the typing window now rather than after it lapses. */
+  stopTyping: () => void;
+  /** Read again now (after a send, so the queue shows the new message at once). */
+  refresh: () => void;
+} {
+  const [presence, setPresence] = useState<Presence>(NO_PRESENCE);
+  const lastBeatRef = useRef<number | null>(null);
+  const beatRef = useRef<(typing?: boolean) => void>(() => {});
   useEffect(() => {
     if (!threadId) {
-      setPresence({ online: [], turnHolder: null });
+      setPresence(NO_PRESENCE);
+      beatRef.current = () => {};
       return;
     }
     let alive = true;
-    const beat = async () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const beat = async (typing?: boolean) => {
       try {
-        const p = await opsFetch<Presence>(`/api/ops/threads/${threadId}/presence`, {
-          method: "POST",
-          body: JSON.stringify({ typing: typingRef.current }),
-        });
-        if (alive) setPresence({ online: p.online ?? [], turnHolder: p.turnHolder ?? null });
+        const p = await opsFetch<{ online?: unknown; turnHolder?: string | null; queue?: unknown }>(
+          `/api/ops/threads/${threadId}/presence`,
+          { method: "POST", body: JSON.stringify(typing === undefined ? {} : { typing }) },
+        );
+        if (alive) setPresence({ online: onlineFrom(p.online), turnHolder: p.turnHolder ?? null, queue: queueFrom(p.queue) });
       } catch {
         /* offline / not a member — leave presence as-is */
       }
     };
-    void beat();
-    const timer = setInterval(() => void beat(), 9000);
+    beatRef.current = (typing) => void beat(typing);
+    // Quick while the tab is visible, so a "typing" line appears within a couple of seconds and goes about four
+    // seconds after the typing stops; slow while hidden.
+    const loop = async () => {
+      await beat();
+      if (!alive) return;
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      timer = setTimeout(() => void loop(), hidden ? PRESENCE_POLL_HIDDEN_MS : PRESENCE_POLL_MS);
+    };
+    void loop();
     return () => {
       alive = false;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
+      beatRef.current = () => {};
     };
   }, [threadId]);
-  return presence;
+  const noteTyping = useCallback(() => {
+    const now = Date.now();
+    if (!typingBeatDue(lastBeatRef.current, now)) return;
+    lastBeatRef.current = now;
+    beatRef.current(true);
+  }, []);
+  const stopTyping = useCallback(() => {
+    if (lastBeatRef.current === null) return;
+    lastBeatRef.current = null;
+    beatRef.current(false);
+  }, []);
+  const refresh = useCallback(() => beatRef.current(), []);
+  return { ...presence, noteTyping, stopTyping, refresh };
 }
 
-/** Overlapping avatar stack of the teammates currently viewing a shared thread. */
-function PresenceStack({ online }: { readonly online: OnlineMember[] }) {
+/**
+ * Overlapping avatar stack of the people viewing a shared thread now: named as the workspace's roster names them, a
+ * guest of the chat as a guest. Who is TYPING is said beside the composer (`TypingLine`), not here.
+ */
+function PresenceStack({ online }: { readonly online: readonly OnlinePerson[] }) {
   if (online.length === 0) return null;
   const shown = online.slice(0, 4);
-  const typingNames = online.filter((o) => o.typing).map((o) => o.email.split("@")[0]);
+  const labels = online.map(personLabel);
   return (
-    <span className="flex items-center gap-1.5" title={`${online.length} online`}>
+    <span className="flex items-center gap-1.5" title={labels.join(", ")} data-presence-stack>
       <span className="flex -space-x-1.5">
-        {shown.map((o) => (
-          <span key={o.email} className="rounded-[5px] ring-2 ring-background" title={o.email}>
-            <CustomerMark name={o.email} size="sm" />
+        {shown.map((o, i) => (
+          <span key={o.email ?? `guest-${i}`} className="rounded-[5px] ring-2 ring-background" title={personLabel(o)}>
+            <CustomerMark name={personLabel(o)} size="sm" />
           </span>
         ))}
         {online.length > shown.length ? (
@@ -720,13 +790,70 @@ function PresenceStack({ online }: { readonly online: OnlineMember[] }) {
           </span>
         ) : null}
       </span>
-      {typingNames.length > 0 ? (
-        <span className="text-2xs text-muted-foreground">
-          {typingNames[0]}
-          {typingNames.length > 1 ? ` +${typingNames.length - 1}` : ""} typing…
-        </span>
-      ) : null}
     </span>
+  );
+}
+
+/**
+ * "Name is typing…" beside the composer of a shared chat (mold_v1-288). Information only: the composer stays open
+ * whoever types, and a message sent meanwhile joins the chat's queue (mold_v1-290). Never shows yourself.
+ */
+function TypingLine({ online }: { readonly online: readonly OnlinePerson[] }) {
+  const line = typingLine(online);
+  return (
+    <p data-typing-line={line ? "on" : "off"} aria-live="polite" className="mb-1 min-h-4 px-1 text-2xs text-muted-foreground">
+      {line}
+    </p>
+  );
+}
+
+/**
+ * THE SHARED CHAT'S QUEUE above the composer (mold_v1-290): every member's waiting messages, in the order they will
+ * run, with who sent each. Your own can be taken back while they wait; one that could not be sent says so.
+ */
+function SharedQueueList({
+  items,
+  onRemove,
+}: {
+  readonly items: readonly SharedQueueItem[];
+  readonly onRemove: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mb-2 flex flex-col gap-1" data-shared-queue>
+      <p className="px-1 text-3xs text-muted-foreground">{CHAT_CUES.queueHeading}</p>
+      {items.map((q, i) => (
+        <div
+          key={q.id}
+          data-shared-queue-item={q.state}
+          data-shared-queue-author={q.author}
+          className="flex items-start gap-1.5 rounded-lg border border-border/60 bg-muted/40 px-1.5 py-1 text-xs"
+        >
+          <span className="w-4 shrink-0 text-center text-3xs text-muted-foreground">{i + 1}</span>
+          <span className="shrink-0 font-medium">{q.mine ? CHAT_CUES.you : q.author}</span>
+          <span className="min-w-0 flex-1 truncate text-muted-foreground" title={q.text}>
+            {q.text}
+          </span>
+          {q.state === "sending" ? (
+            <span className="shrink-0 text-3xs text-muted-foreground">{CHAT_CUES.queueSending}</span>
+          ) : q.state === "failed" ? (
+            <span className="shrink-0 text-3xs text-amber-700 dark:text-amber-400" title={q.error ?? undefined}>
+              {CHAT_CUES.queueFailed}
+            </span>
+          ) : null}
+          {q.mine && q.state !== "sending" ? (
+            <button
+              type="button"
+              onClick={() => onRemove(q.id)}
+              aria-label={CHAT_CUES.queueRemove}
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -757,6 +884,8 @@ export function AgentChat({
   relayThreadId,
   onRelaySent,
   sharedThreadId,
+  presenceThreadId,
+  onTurnActivity,
   storageScope,
 }: AgentChatProps) {
   noteRender("AgentChat");
@@ -1774,6 +1903,7 @@ export function AgentChat({
     // A view-only member of a shared thread can never answer approvals/questions
     // — the owner/participants hold the turn.
     if (readOnly) return;
+    for (const r of inputResponses) if (!answeredHereAt.current.has(r.requestId)) answeredHereAt.current.set(r.requestId, Date.now());
     setAnswerError(null);
     setRejectedRequestIds((prev) => withoutRequestIds(prev, inputResponses.map((r) => r.requestId)));
     setRespondedRequestIds((prev) => withRequestIds(prev, inputResponses.map((r) => r.requestId)));
@@ -2066,6 +2196,68 @@ export function AgentChat({
     [viewMessages, respondedRequestIds, expiredRequestIds, countedDismissals],
   );
 
+  /** When each request was asked: the stack beside the composer is in this order, newest last (mold_v1-289). */
+  const arrival = useMemo(() => requestArrival(mergedEvents as readonly TurnEvent[]), [mergedEvents]);
+  /**
+   * What the stack beside the composer shows: every open request, the ones asked on a delegation card included (their
+   * buttons live here, always on screen, instead of on the card up the thread), in arrival order. Display only: the
+   * send gate still counts `pendingInputParts`.
+   */
+  const pendingDock = useMemo(
+    () =>
+      pendingInputRequestParts({
+        messages: viewMessages as readonly { parts?: readonly unknown[] }[],
+        dismissed: countedDismissals,
+        responded: respondedRequestIds,
+        expired: expiredRequestIds,
+        arrival,
+        delegations: true,
+      }) as Array<React.ComponentProps<typeof PendingApprovalCard>["part"]>,
+    [viewMessages, respondedRequestIds, expiredRequestIds, countedDismissals, arrival],
+  );
+
+  /**
+   * WHO ANSWERED AN APPROVAL, AND WHEN — the one-line record it folds to (mold_v1-289). In a chat of one's own every
+   * answer is the person's; in a shared chat only an answer given on this page is known to be theirs. The time is the
+   * stream's (the approved call's result), or the moment it was answered here.
+   */
+  const answeredHereAt = useRef(new Map<string, number>());
+  const approvalAt = useMemo(
+    () => approvalTimes(mergedEvents as readonly unknown[]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedEvents.length],
+  );
+  const shared = Boolean(sharedThreadId ?? presenceThreadId);
+  const approvalRecord = useCallback(
+    (rid: string) => {
+      const here = answeredHereAt.current.get(rid);
+      return { by: here !== undefined || !shared ? CHAT_CUES.you : undefined, at: approvalAt.get(rid) ?? here };
+    },
+    [approvalAt, shared],
+  );
+  const requestIdOfPart = (p: (typeof pendingDock)[number]) =>
+    (p.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined)?.requestId;
+  /** The run behind this request has gone: it expired, ended on the stream, or was stopped. */
+  const requestGone = (rid: string | undefined) =>
+    Boolean(rid && (expiredRequestIds.has(rid) || deadRequests.has(rid) || stopped.requestIds.has(rid)));
+  /** Open requests: the stack beside the composer (none for a view-only member, who has no composer). */
+  const liveDock = readOnly ? [] : pendingDock.filter((p) => !requestGone(requestIdOfPart(p)));
+  /** What a delegation card may point to as "below": exactly the requests in the stack. */
+  const requestsBelow = useMemo(
+    () => new Set(liveDock.map(requestIdOfPart).filter((r): r is string => Boolean(r))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [liveDock.map(requestIdOfPart).join("|")],
+  );
+  /**
+   * Gone ones are history: a note in the thread, where they happened. A specialist's that settled or was stopped
+   * says so on its own tile instead (no second copy).
+   */
+  const expiredDock = pendingDock.filter((p) => {
+    const rid = requestIdOfPart(p);
+    if (!requestGone(rid)) return false;
+    return !(rid && proxiedRequestIds.has(rid) && (deadRequests.has(rid) || stopped.requestIds.has(rid)));
+  });
+
   /**
    * THE SEND GATE — see lib/chat-turn-state `sendGate` for the why.
    *
@@ -2255,6 +2447,60 @@ export function AgentChat({
    * fill. `tailStillWriting` asks for `state === "streaming"` instead.
    */
   const showWorking = !answerOver && !awaitingUser && !tailStillWriting(lastParts);
+  /**
+   * "DONE" AT A GLANCE (mold_v1-287). A turn seen RUNNING during this visit that now ends with an answer earns a short
+   * completed mark beside the composer, a polite announcement for a screen reader, and — if the page is hidden — a
+   * mark on the tab's title. A turn that ends waiting on the person, failed or stopped says so in its own words; the
+   * transcript a chat opens with is history and says nothing. The shell hears when the turn runs and stops
+   * (`onTurnActivity`), so a chat the person LEAVES while it runs is marked done in the chat list when it finishes.
+   */
+  const turnRunning = !answerOver && gate.reason !== "awaiting-input";
+  const activitySid = agent.session?.sessionId ?? initialSession?.sessionId ?? null;
+  const outcome = useMemo(
+    () => turnOutcome(mergedEvents as readonly { type?: string }[]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventCount],
+  );
+  const wasRunningRef = useRef(false);
+  /** The mark is shown for `COMPLETION_SHOWN_MS` from the latest completion (a count, so a second one restarts it). */
+  const [completions, setCompletions] = useState(() => (relayCompletedFor !== null && relayCompletedFor === relayThreadId ? 1 : 0));
+  const [completionShown, setCompletionShown] = useState(() => completions > 0);
+  const showCompletion = useCallback(() => setCompletions((n) => n + 1), []);
+  useEffect(() => {
+    if (completions === 0) return;
+    setCompletionShown(true);
+    const t = setTimeout(() => setCompletionShown(false), COMPLETION_SHOWN_MS);
+    return () => clearTimeout(t);
+  }, [completions]);
+  useEffect(() => {
+    // A shared chat's turn ran through the relay and this mount is its refreshed transcript: said once (above).
+    if (relayCompletedFor !== null && relayCompletedFor === relayThreadId) relayCompletedFor = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (turnRunning) {
+      wasRunningRef.current = true;
+      if (activitySid) seenRunning.add(activitySid);
+      return;
+    }
+    // Not settled yet (the gate can open a moment before the stream's last events are read): keep waiting.
+    if (outcome === "running" || outcome === "none") return;
+    // A remount of the same chat (a resync, a relay refresh) carries on from the mount that saw the turn run.
+    const wasRunning = wasRunningRef.current || (activitySid !== null && seenRunning.has(activitySid));
+    wasRunningRef.current = false;
+    if (activitySid) seenRunning.delete(activitySid);
+    const due = completionDue({ wasRunning, outcome });
+    if (!due) return;
+    showCompletion();
+    announceCompletion(CHAT_CUES.replyCompleted);
+    markTabDone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnRunning, outcome, showCompletion]);
+  const turnActivityRef = useRef(onTurnActivity);
+  turnActivityRef.current = onTurnActivity;
+  useEffect(() => {
+    turnActivityRef.current?.({ sessionId: activitySid, running: turnRunning });
+  }, [activitySid, turnRunning]);
   // A delegation that has not reached a terminal state: "a specialist is running".
   const specialistRunning = useMemo(
     () =>
@@ -2362,10 +2608,97 @@ export function AgentChat({
   // Relay send state for a shared thread this participant contributes to: the
   // optimistic message shown while the server relay runs, and any error.
   const [relayPending, setRelayPending] = useState<string | null>(null);
+  const relayInFlightRef = useRef(false);
   const [relayError, setRelayError] = useState<string | null>(null);
-  // Presence for a shared thread: who else is online/typing, and who (if anyone)
-  // currently holds the in-flight turn. Polled heartbeats (Vercel has no WS).
-  const presence = usePresence(sharedThreadId, Boolean(relayPending));
+  /**
+   * Presence for a shared thread: who else is here, who is TYPING, who (if anyone) holds the in-flight turn, and the
+   * chat's queue. Polled heartbeats (Vercel has no WS). Read on the owner's own copy of a chat they shared too
+   * (`presenceThreadId`), so the owner sees a participant typing.
+   *
+   * The typing flag used to be `Boolean(relayPending)`: "my message is on its way", not "I am typing". So while one
+   * participant's turn ran, everyone else read "<name> typing…" for its whole length, and the composer quietly refused
+   * a second message (`if (!raw || relayPending) return`), which is how a shared chat looked locked to anyone but
+   * its author (mold_v1-290). Typing is now the composer's keystrokes (`noteTyping`), and nothing reads it as a lock.
+   */
+  const presenceId = sharedThreadId ?? presenceThreadId;
+  const presence = usePresence(presenceId);
+  /** Messages this page sent into a shared chat that the server queued, until its list shows them. */
+  const [relayQueued, setRelayQueued] = useState<readonly SharedQueueItem[]>([]);
+  const sharedQueue = useMemo(() => {
+    const listed = new Set(presence.queue.map((q) => q.id));
+    return [...presence.queue, ...relayQueued.filter((q) => !listed.has(q.id))];
+  }, [presence.queue, relayQueued]);
+  // This page's own copy of a queued message lasts until the server lists it (or a few reads have passed without it:
+  // it already ran).
+  const relayQueuedSeen = useRef(new Map<string, number>());
+  useEffect(() => {
+    if (relayQueued.length === 0) return;
+    const listed = new Set(presence.queue.map((q) => q.id));
+    const now = Date.now();
+    for (const q of relayQueued) if (!relayQueuedSeen.current.has(q.id)) relayQueuedSeen.current.set(q.id, now);
+    const keep = relayQueued.filter((q) => !listed.has(q.id) && now - (relayQueuedSeen.current.get(q.id) ?? now) < 10_000);
+    if (keep.length !== relayQueued.length) setRelayQueued(keep);
+  }, [presence.queue, relayQueued]);
+  /**
+   * RUN THE CHAT'S QUEUE when its turn is free (mold_v1-290). The server runs a message at once when it is first in
+   * line; one that had to wait is run by whichever member's page sees the thread free next (`{ drain: true }`). Two
+   * pages asking at once is harmless: the server's claims let exactly one of them send it.
+   */
+  const drainingRef = useRef(false);
+  const lastDrainRef = useRef(0);
+  const sendsHere = Boolean(relayThreadId || presenceThreadId);
+  const headWaits = presence.queue.length > 0 && presence.queue[0].state === "queued";
+  useEffect(() => {
+    if (!presenceId || !sendsHere || !headWaits || presence.turnHolder || drainingRef.current) return;
+    if (Date.now() - lastDrainRef.current < 4_000) return;
+    drainingRef.current = true;
+    lastDrainRef.current = Date.now();
+    void opsFetch<{ outcome?: string }>(`/api/ops/threads/${presenceId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ drain: true }),
+    })
+      .then((r) => {
+        if (r.outcome === "sent" && relayThreadId) {
+          relayCompletedFor = relayThreadId;
+          announceCompletion(CHAT_CUES.replyCompleted);
+          markTabDone();
+          onRelaySent?.();
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        drainingRef.current = false;
+        presence.refresh();
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presenceId, sendsHere, headWaits, presence.turnHolder, presence.queue]);
+  /**
+   * THE OWNER OF A SHARED CHAT WAITS IN THE SAME LINE (mold_v1-290). While anyone's message waits in the chat's queue
+   * or a queued turn runs, the owner's own text joins that queue, behind them, and runs as the owner; anything the
+   * owner's page would send itself (a message with files, the owner's local queue) is held until the line is empty.
+   * The owner's own direct turn holds the thread the other way: the queue runs only when the session is parked.
+   */
+  const sharedHold =
+    Boolean(presenceThreadId) && !relayThreadId && (presence.queue.some((q) => q.state !== "failed") || Boolean(presence.turnHolder));
+  // A queued turn (anyone's, the owner's own included) ran on the server while this owner's page held no reader on
+  // it: when it ends, pull it in, the way a detached turn is.
+  const prevHolderRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevHolderRef.current;
+    prevHolderRef.current = presence.turnHolder;
+    if (!presenceThreadId || relayThreadId || !prev || presence.turnHolder) return;
+    const sid = liveSessionIdRef.current ?? initialSession?.sessionId;
+    if (!sid || agent.status === "submitted" || agent.status === "streaming") return;
+    void onResync?.(sid, clientMarkers(), absoluteIndex(mergedEvents as readonly TurnEvent[])).catch(() => false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presence.turnHolder]);
+  const removeShared = (id: string) => {
+    setRelayQueued((prev) => prev.filter((q) => q.id !== id));
+    if (!presenceId) return;
+    void opsFetch(`/api/ops/threads/${presenceId}/messages?item=${encodeURIComponent(id)}`, { method: "DELETE" })
+      .catch((e) => setRelayError(e instanceof Error ? e.message : String(e)))
+      .finally(() => presence.refresh());
+  };
   // Subagents that finished but whose result never reached the parent (reported
   // by the Cockpit). A grace period avoids flashing during a NORMAL, fast
   // handoff — only a genuinely stuck one persists past it.
@@ -3228,21 +3561,70 @@ export function AgentChat({
     // Shared-thread participant: route through the server relay (atomic token
     // claim + serialized turn). The eve store is NOT involved — the transcript
     // refreshes via onRelaySent once the turn parks.
+    //
+    // NEVER REFUSED FOR BEING SECOND (mold_v1-290). The message goes into the
+    // chat's shared queue: it runs now when nothing is ahead of it, and otherwise
+    // waits its turn behind everyone's earlier messages (the server answers
+    // `queued`). A second message while the first is on its way is queued too —
+    // it used to be dropped here without a word.
     if (relayThreadId) {
-      if (!raw || relayPending) return;
+      if (!raw) return;
+      presence.stopTyping();
       setRelayError(null);
-      setRelayPending(raw);
+      const id = `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const queuedHere: SharedQueueItem = { id, author: "", mine: true, text: raw, state: "queued" };
+      // One message at a time runs from this page (the optimistic bubble); the next goes straight to the queue list.
+      const first = !relayInFlightRef.current;
+      if (first) {
+        relayInFlightRef.current = true;
+        setRelayPending(raw);
+      } else {
+        setRelayQueued((prev) => [...prev, queuedHere]);
+      }
       try {
-        await opsFetch(`/api/ops/threads/${relayThreadId}/messages`, {
+        const r = await opsFetch<{ ok?: boolean; queued?: boolean }>(`/api/ops/threads/${relayThreadId}/messages`, {
           method: "POST",
-          body: JSON.stringify({ message: raw }),
+          body: JSON.stringify({ message: raw, id }),
         });
-        onRelaySent?.();
+        if (r.queued) {
+          setRelayQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, queuedHere]));
+          presence.refresh();
+        } else {
+          relayCompletedFor = relayThreadId;
+          announceCompletion(CHAT_CUES.replyCompleted);
+          markTabDone();
+          onRelaySent?.();
+        }
       } catch (e) {
+        setRelayQueued((prev) => prev.filter((q) => q.id !== id));
         setRelayError(e instanceof Error ? e.message : String(e));
       } finally {
-        setRelayPending(null);
+        if (first) {
+          relayInFlightRef.current = false;
+          setRelayPending(null);
+        }
       }
+      return;
+    }
+    // The owner of a shared chat while others' messages wait or run: in the same line (see `sharedHold`).
+    if (presenceThreadId && sharedHold && effectiveTarget.id === "main" && gate.reason !== "awaiting-input") {
+      if (raw && files.length === 0) {
+        presence.stopTyping();
+        setRelayError(null);
+        const id = `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        setRelayQueued((prev) => [...prev, { id, author: "", mine: true, text: raw, state: "queued" }]);
+        try {
+          await opsFetch(`/api/ops/threads/${presenceThreadId}/messages`, { method: "POST", body: JSON.stringify({ message: raw, id }) });
+          presence.refresh();
+        } catch (e) {
+          setRelayQueued((prev) => prev.filter((q) => q.id !== id));
+          setRelayError(e instanceof Error ? e.message : String(e));
+        }
+        return;
+      }
+      const withFiles = files;
+      setFiles([]);
+      enqueue(raw, withFiles);
       return;
     }
     const outgoing = files;
@@ -3338,7 +3720,7 @@ export function AgentChat({
   const drainAfterRef = useRef(0);
   const [flushTick, setFlushTick] = useState(0);
   useEffect(() => {
-    if (gate.hold || readOnly || flushingRef.current || queued.length === 0) return;
+    if (gate.hold || readOnly || flushingRef.current || queued.length === 0 || sharedHold) return;
     const done = () => {
       flushingRef.current = false;
       setFlushTick((n) => n + 1);
@@ -3371,7 +3753,7 @@ export function AgentChat({
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gate.hold, queued, queue.serverQueued, flushTick, readOnly]);
+  }, [gate.hold, queued, queue.serverQueued, flushTick, readOnly, sharedHold]);
 
   /**
    * Watch a DETACHED turn until it settles, then pull the rest of it in.
@@ -4202,7 +4584,7 @@ export function AgentChat({
           </button>
         ) : null}
         <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
-          {sharedThreadId ? <PresenceStack online={presence.online} /> : null}
+          {presenceId ? <PresenceStack online={presence.online} /> : null}
           {canShare ? <ShareThreadButton getPayload={getSharePayload} /> : null}
           <CustomerSelect
             selected={selectedCustomers}
@@ -4330,6 +4712,8 @@ export function AgentChat({
                   {showAutoDivider ? <CompactionDivider kind="auto" /> : null}
                   <AgentMessage
                     canRespond={!isBusy && !readOnly}
+                    approvalRecord={approvalRecord}
+                    requestsBelow={requestsBelow}
                     hoistPendingInput
                     isProxiedApproval={isProxiedChildApproval}
                     isLast={index === viewMessages.length - 1}
@@ -4383,51 +4767,22 @@ export function AgentChat({
                 <span className="text-muted-foreground">{relayError}</span>
               </div>
             ) : null}
-            {pendingInputParts.length > 0 ? (
-              <div className="flex flex-col">
-                {pendingInputParts.map((p) => {
-                  const requestId = (
-                    p.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined
-                  )?.requestId;
-                  // A specialist's question whose delegation has settled was answered
-                  // (here, in another tab, or in the Control Panel): the tile says how
-                  // it ended. It is not an "expired approval".
-                  if (requestId && deadRequests.has(requestId) && proxiedRequestIds.has(requestId)) return null;
-                  // Stopped: the specialist's tile already says so, in place — a second
-                  // copy hoisted below later replies would read as a new event.
-                  if (requestId && stopped.requestIds.has(requestId) && proxiedRequestIds.has(requestId)) return null;
-                  const cardExpired = Boolean(
-                    requestId && (expiredRequestIds.has(requestId) || deadRequests.has(requestId)),
-                  );
-                  // A specialist's open question says who is asking (mold_v1-234); an unattributed one is as before.
-                  const asker = requestId && !cardExpired ? askers.get(requestId) : undefined;
-                  const card = (
+            {/* Open approvals and questions are NOT here: they stack at the bottom, beside the composer, newest last
+                (mold_v1-289, `liveDock` below), where they are always on screen however far the thread scrolls. One
+                whose run has gone (expired, or ended on the stream) is history, not a prompt: its note stays here, in
+                the thread, where it happened. */}
+            {expiredDock.length > 0 ? (
+              <div className="flex flex-col" data-expired-requests>
+                {expiredDock.map((p) => {
+                  const rid = requestIdOfPart(p);
+                  return (
                     <PendingApprovalCard
                       key={p.toolCallId}
-                      // A dead request reads exactly like an expired one: the run
-                      // that asked has stopped, so the card is a note, not a prompt.
-                      expired={Boolean(
-                        requestId && (expiredRequestIds.has(requestId) || deadRequests.has(requestId)),
-                      )}
+                      expired
                       part={p}
-                      stoppedName={requestId ? stopped.requestNames.get(requestId) : undefined}
+                      stoppedName={rid ? stopped.requestNames.get(rid) : undefined}
                       onInputResponses={respondToInput}
-                      // No Dismiss on a live specialist's question: it cannot be
-                      // waved away (see `effectiveDismissals`) — answer it, or Stop.
-                      onDismiss={
-                        requestId &&
-                        effectiveDismissals(new Set([requestId]), mergedEvents as readonly TurnEvent[]).size > 0
-                          ? () => dismissInput(requestId)
-                          : undefined
-                      }
                     />
-                  );
-                  return asker ? (
-                    <SpecialistQuestionFrame key={p.toolCallId} name={subagentDisplayName(asker.name)}>
-                      {card}
-                    </SpecialistQuestionFrame>
-                  ) : (
-                    card
                   );
                 })}
               </div>
@@ -4525,12 +4880,22 @@ export function AgentChat({
         </ErrorBoundary>
       )}
 
-      {/* Shared thread: someone else holds the in-flight turn. */}
-      {sharedThreadId && presence.turnHolder && !relayPending ? (
+      {/* Shared thread: someone's message is running. Information only — the composer below stays open, and a
+          message sent now joins the chat's queue (mold_v1-290). */}
+      {presenceId && presence.turnHolder && !relayPending ? (
         <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-2 sm:px-6">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-amber-800 text-xs dark:text-amber-400">
+          <span data-turn-holder className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-muted-foreground text-xs">
             <Spinner className="size-3" />
-            {presence.turnHolder.split("@")[0]} is responding…
+            {CHAT_CUES.responding(
+              personLabel(
+                presence.online.find((o) => o.email?.toLowerCase() === presence.turnHolder?.toLowerCase()) ?? {
+                  email: presence.turnHolder,
+                  name: null,
+                  guest: false,
+                  typing: false,
+                },
+              ),
+            )}
           </span>
         </div>
       ) : null}
@@ -4554,7 +4919,7 @@ export function AgentChat({
         )}
       >
         {isEmpty ? <RotatingHero /> : null}
-        <div className="w-full">
+        <div className="relative w-full">
           {goalRun ? (
             (() => {
               const done = goalRun.outcome;
@@ -4669,6 +5034,64 @@ export function AgentChat({
             <p data-cancelled-note role="status" className="mb-2 px-1 text-muted-foreground text-xs">
               {cancelledNote}
             </p>
+          ) : null}
+          {/* OPEN APPROVALS AND QUESTIONS, at the bottom beside the composer, in the order they were asked — newest
+              last, next to where the person types (mold_v1-289). They used to render at the conversation's tail in
+              TRANSCRIPT order, and a specialist's request is attached by eve's reducer to an earlier message, so a
+              new approval landed ABOVE older ones; and one asked on a delegation card stayed on that card, up the
+              thread. Answered ones leave this stack and fold to one line in the thread. */}
+          {liveDock.length > 0 ? (
+            <section
+              data-pending-approvals
+              aria-label={CHAT_CUES.approvalsWaiting(liveDock.length)}
+              className="mb-2 flex max-h-[45vh] flex-col overflow-y-auto"
+            >
+              {liveDock.map((p) => {
+                const requestId = (
+                  p.toolMetadata?.eve?.inputRequest as { requestId?: string } | undefined
+                )?.requestId;
+                // A specialist's question whose delegation has settled was answered
+                // (here, in another tab, or in the Control Panel): the tile says how
+                // it ended. It is not an "expired approval".
+                if (requestId && deadRequests.has(requestId) && proxiedRequestIds.has(requestId)) return null;
+                // Stopped: the specialist's tile already says so, in place — a second
+                // copy hoisted below later replies would read as a new event.
+                if (requestId && stopped.requestIds.has(requestId) && proxiedRequestIds.has(requestId)) return null;
+                const cardExpired = Boolean(
+                  requestId && (expiredRequestIds.has(requestId) || deadRequests.has(requestId)),
+                );
+                // A specialist's open question says who is asking (mold_v1-234); an unattributed one is as before.
+                const asker = requestId && !cardExpired ? askers.get(requestId) : undefined;
+                const card = (
+                  <PendingApprovalCard
+                    key={p.toolCallId}
+                    // A dead request reads exactly like an expired one: the run
+                    // that asked has stopped, so the card is a note, not a prompt.
+                    expired={Boolean(
+                      requestId && (expiredRequestIds.has(requestId) || deadRequests.has(requestId)),
+                    )}
+                    part={p}
+                    stoppedName={requestId ? stopped.requestNames.get(requestId) : undefined}
+                    onInputResponses={respondToInput}
+                    // No Dismiss on a live specialist's question: it cannot be
+                    // waved away (see `effectiveDismissals`) — answer it, or Stop.
+                    onDismiss={
+                      requestId &&
+                      effectiveDismissals(new Set([requestId]), mergedEvents as readonly TurnEvent[]).size > 0
+                        ? () => dismissInput(requestId)
+                        : undefined
+                    }
+                  />
+                );
+                return asker ? (
+                  <SpecialistQuestionFrame key={p.toolCallId} name={subagentDisplayName(asker.name)}>
+                    {card}
+                  </SpecialistQuestionFrame>
+                ) : (
+                  card
+                );
+              })}
+            </section>
           ) : null}
           {/* eve's own rule: while a question is open, free text ANSWERS it. Said
               plainly, so a message meant as a new request is not a surprise. */}
@@ -4984,6 +5407,13 @@ export function AgentChat({
               </button>
             </div>
           )}
+          {presenceId ? (
+            <>
+              <SharedQueueList items={sharedQueue} onRemove={removeShared} />
+              <TypingLine online={presence.online} />
+            </>
+          ) : null}
+          <div onInput={presenceId ? presence.noteTyping : undefined}>
           <ChatComposer
             onStop={stopTurn}
             onSubmit={handleSubmit}
@@ -5101,6 +5531,8 @@ export function AgentChat({
               </>
             }
           />
+          </div>
+          <CompletionMark show={completionShown} />
         </div>
         {isEmpty ? (
           <div className="mt-6 flex w-full flex-col gap-8">

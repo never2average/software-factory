@@ -109,3 +109,52 @@ export function storedValueLabel(field: string, value: string | null | undefined
   if (!LEGACY_MEMBER_VALUE_FIELDS.has(field)) return value;
   return value.replace(LEGACY_VALUE, W.Member);
 }
+
+/**
+ * WHAT THE CHAT SAYS ABOUT ITSELF (mold_v1-287..290): that a reply or a specialist finished, who else is typing in a
+ * shared chat, the chat's shared queue, and the one-line record an answered approval collapses to. None of these name
+ * a profile thing; they are here so a person's words live in one place. A guest of a shared chat is never named: it
+ * reads `guest`.
+ */
+export const CHAT_CUES = {
+  /** Said to a screen reader (and shown briefly) when the main agent's turn ends with an answer. */
+  replyCompleted: "Reply completed",
+  /** A specialist's delegation settled. */
+  specialistCompleted: (name: string): string => `${name} completed`,
+  /** The settled mark on a delegation card and a Control Panel row. */
+  completed: "Completed",
+  /** Put in front of the tab's title while the page is hidden and something finished. */
+  tabDone: "✓",
+  /** The chat list's marker for a chat that finished while the person was in another one. */
+  chatDone: "Done",
+  chatDoneTitle: "Finished while you were in another chat",
+  chatNeedsYou: "Needs you",
+  chatNeedsYouTitle: "Stopped on a question or an approval while you were in another chat",
+  chatFailed: "Failed",
+  chatFailedTitle: "Failed while you were in another chat",
+  /** Someone outside the chat's workspace, reading it through its link. */
+  guest: "Guest",
+  you: "You",
+  /** The line beside the composer while others type in a shared chat. Information only, never a lock. */
+  typing: (names: readonly string[]): string =>
+    names.length === 1
+      ? `${names[0]} is typing…`
+      : names.length === 2
+        ? `${names[0]} and ${names[1]} are typing…`
+        : `${names[0]} and ${names.length - 1} others are typing…`,
+  /** Someone's turn is running in a shared chat. */
+  responding: (name: string): string => `${name}'s message is running…`,
+  /** The shared chat's queue, above the composer. */
+  queueHeading: "Waiting their turn in this chat",
+  queueSending: "Running now",
+  queueFailed: "Didn't send",
+  queueRemove: "Take back this message",
+  queuedNote: "Queued — it runs after the messages ahead of it.",
+  /** Approvals. */
+  approvalAllowed: "Allowed",
+  approvalDenied: "Denied",
+  approvalAnswered: "Answered",
+  /** On a delegation card whose own request waits: its buttons are with the others, beside the composer. */
+  approvalBelow: "Waiting for your answer — below, beside the message box.",
+  approvalsWaiting: (n: number): string => (n === 1 ? "1 approval is waiting for you" : `${n} approvals are waiting for you`),
+} as const;

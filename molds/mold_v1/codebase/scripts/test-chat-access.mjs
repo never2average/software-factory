@@ -226,6 +226,25 @@ check(
   "a session-bound token is never read as its person (no membership widening)",
   !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: "wrun_other" }, membership: { role: "participant" } }).allow,
 );
+check(
+  "a SHARED chat's queued message (q=thread, mold_v1-290) is admitted as its author while they are a live participant, to post only",
+  gate({ caller: { kind: "session-bound", email: ME, boundSessionId: SID, boundAct: "post", boundQueue: "thread", boundThread: "thr-a" }, right: "write", membership: { role: "participant" } }).allow,
+);
+check(
+  "…never for a viewer, a non-member, a read, or a token for another session",
+  !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: SID, boundAct: "post", boundQueue: "thread", boundThread: "thr-a" }, right: "write", membership: { role: "viewer" } }).allow &&
+    !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: SID, boundAct: "post", boundQueue: "thread", boundThread: "thr-a" }, right: "write", membership: null }).allow &&
+    !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: SID, boundAct: "read", boundQueue: "thread", boundThread: "thr-a" }, right: "write", membership: { role: "participant" } }).allow &&
+    !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: "wrun_other", boundAct: "post", boundQueue: "thread", boundThread: "thr-a" }, right: "write", membership: { role: "participant" } }).allow,
+);
+check(
+  "…nor a thread token that names no thread of its own",
+  !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: SID, boundAct: "post", boundQueue: "thread" }, right: "write", membership: { role: "participant" } }).allow,
+);
+check(
+  "…and a person's own-chat queue token (no q) is still the owner's only, whatever membership",
+  !gate({ caller: { kind: "session-bound", email: ME, boundSessionId: SID, boundAct: "post" }, right: "write", membership: { role: "participant" } }).allow,
+);
 check("eve dev's local-dev principal only where local development is allowed", gate({ caller: { kind: "local-dev", email: null }, localDevAllowed: true }).allow && !gate({ caller: { kind: "local-dev", email: null } }).allow);
 check("a caller with no verified identity decides nothing", !gate({ caller: { kind: "none", email: null } }).allow);
 check("…nor a person with an empty email", !gate({ caller: person("") }).allow);

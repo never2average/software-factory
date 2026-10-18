@@ -423,3 +423,280 @@ test.describe("reopening a chat", () => {
     await expect(page.getByTestId("last-turn")).toBeInViewport();
   });
 });
+
+/**
+ * THE CHAT'S CUES IN THE REAL SHELL (mold_v1-287..290), every request answered here:
+ *
+ *   287  a turn that ends while the chat is on screen shows the completed mark and is announced; a chat LEFT while its
+ *        turn runs is marked done in the chat list when it finishes, until it is opened;
+ *   288  in a shared chat, another person's typing shows beside the composer and goes when it stops; your own keystrokes
+ *        send a typing beat about once a second;
+ *   289  an approval still open sits at the bottom, beside the composer, below the conversation; an answered one is a
+ *        one-line row in the thread;
+ *   290  a participant who is not the chat's author can send while someone else's message runs: the composer stays
+ *        open, both messages go to the chat's queue (never dropped, never refused), and the queue is run when free.
+ */
+test.describe("the chat's cues", () => {
+  test.describe.configure({ timeout: 90_000 });
+
+  const RUNNING_TURN = "alpha-t1";
+  const running = () => [
+    ev("session.started"),
+    ev("turn.started", { turnId: RUNNING_TURN }),
+    ev("message.received", { turnId: RUNNING_TURN, message: "Alpha question 1" }),
+    ev("step.started", { turnId: RUNNING_TURN, stepIndex: 0 }),
+    ev("message.appended", { turnId: RUNNING_TURN, stepIndex: 0, messageDelta: "Alpha is still ", messageSoFar: "Alpha is still " }),
+    ev("message.appended", { turnId: RUNNING_TURN, stepIndex: 0, messageDelta: "writing.", messageSoFar: "Alpha is still writing." }),
+  ];
+  const rest = () => [
+    ev("message.completed", { turnId: RUNNING_TURN, stepIndex: 0, message: "Alpha is still writing. Done now.", finishReason: "stop" }),
+    ev("step.completed", { turnId: RUNNING_TURN, stepIndex: 0 }),
+    ev("turn.completed", { turnId: RUNNING_TURN }),
+    ev("session.waiting", { continuationToken: "tok-alpha-done" }),
+  ];
+
+  test("287: a turn that finishes on screen shows the completed mark and is announced", async ({ page }) => {
+    const RUNNING = running();
+    await seed(page, [{ id: "chat-a", title: "Alpha chat", sessionId: "sess-a", streamIndex: 0, local: RUNNING, noToken: true }], "chat-a");
+    await serve(page, { snapshot: () => null, replay: (_s, start) => ({ body: ndjson([...RUNNING.slice(start), marker(RUNNING.length)]) }) });
+    // The chat's live reader resumes where this browser's copy ends, and the turn finishes.
+    await page.route(/\/eve\/v1\/session\/sess-a\/stream/, (route) =>
+      route.fulfill({ status: 200, contentType: "application/x-ndjson", body: ndjson(rest()) }),
+    );
+    await page.goto("/preview/chat-open");
+    await expect(page.getByText("Done now.")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator("[data-completion-cue]")).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("[data-completion-announcer]")).toHaveText("Reply completed");
+    // Brief: it goes again.
+    await expect(page.locator("[data-completion-cue]")).toHaveCount(0, { timeout: 10_000 });
+  });
+
+  for (const end of ["done", "needs-you"] as const) {
+    test(`287: a chat left while its turn runs is marked "${end}" in the list when it comes to rest, until opened`, async ({ page }) => {
+      const RUNNING = running();
+      const BRAVO = conversation("Bravo");
+      // How the turn comes to rest: with an answer, or stopped on an approval (which must never read as "done").
+      const ending =
+        end === "done"
+          ? rest()
+          : [
+              ev("input.requested", { turnId: RUNNING_TURN, requests: [{ requestId: "req-a", prompt: "Run it?", display: "confirmation", options: [{ id: "approve", label: "Yes" }, { id: "deny", label: "No" }], action: { kind: "tool-call", callId: "call-a", toolName: "write_file", input: {} } }] }),
+              ev("turn.completed", { turnId: RUNNING_TURN }),
+              ev("session.waiting", { continuationToken: "tok-alpha-parked" }),
+            ];
+      await seed(
+        page,
+        [
+          { id: "chat-a", title: "Alpha chat", sessionId: "sess-a", streamIndex: 0, local: RUNNING, noToken: true },
+          { id: "chat-b", title: "Bravo chat", sessionId: "sess-b", streamIndex: BRAVO.length, local: BRAVO },
+        ],
+        "chat-a",
+      );
+      await serve(page, { snapshot: () => null, replay: (_s, start) => ({ body: ndjson([...RUNNING.slice(start), marker(RUNNING.length)]) }) });
+      let finished = false;
+      let tailReads = 0;
+      await page.route(/\/eve\/v1\/session\/sess-a\/stream/, (route) => {
+        const start = Number(new URL(route.request().url()).searchParams.get("startIndex") ?? "0");
+        if (start < 0) {
+          tailReads += 1;
+          // Still writing for the first reads after the person leaves; then the turn rests.
+          const all = finished ? [...RUNNING, ...ending] : RUNNING;
+          return route.fulfill({ status: 200, contentType: "application/x-ndjson", body: ndjson(all.slice(start)) });
+        }
+        // The live reader of the open chat: as in the test above, refused — the turn is still going, unseen.
+        return route.fallback();
+      });
+      await page.goto("/preview/chat-open");
+      await expect(page.getByText("Alpha is still writing.")).toBeVisible({ timeout: 60_000 });
+      const title = await page.title();
+      // The row is titled by the chat's first message once it has been opened.
+      const alphaRow = page.getByRole("button", { name: /Alpha (chat|question 1)/ });
+      await page.getByRole("button", { name: /Bravo chat/ }).click();
+      await expect(page.getByText("Bravo answer 2.")).toBeVisible({ timeout: 10_000 });
+      await expect.poll(() => tailReads, { timeout: 15_000 }).toBeGreaterThan(0);
+      await expect(alphaRow.locator("[data-chat-ended]")).toHaveCount(0);
+      // The person is elsewhere when it comes to rest.
+      await page.evaluate(() => Object.defineProperty(document, "hasFocus", { value: () => false, configurable: true }));
+      finished = true;
+      const marker_ = alphaRow.locator("[data-chat-ended]");
+      await expect(marker_).toHaveAttribute("data-chat-ended", end, { timeout: 15_000 });
+      await expect(marker_).toHaveText(end === "done" ? "Done" : "Needs you");
+      // The tab's ✓ is for an answer only.
+      expect(await page.title()).toBe(end === "done" ? `✓ ${title}` : title);
+      await alphaRow.click();
+      await expect(page.locator("[data-chat-ended]")).toHaveCount(0);
+    });
+  }
+
+  test("289: an open approval sits at the bottom beside the composer; an answered one is one line in the thread", async ({ page }) => {
+    const approval = (requestId: string, callId: string, turnId: string) =>
+      ev("input.requested", {
+        turnId,
+        requests: [
+          {
+            requestId,
+            prompt: `Run ${callId}?`,
+            display: "confirmation",
+            allowFreeform: false,
+            options: [
+              { id: "approve", label: "Yes" },
+              { id: "deny", label: "No" },
+            ],
+            action: { kind: "tool-call", callId, toolName: "write_file", input: { path: `${callId}.md` } },
+          },
+        ],
+      });
+    const call = (callId: string, turnId: string) =>
+      ev("actions.requested", { turnId, stepIndex: 0, actions: [{ kind: "tool-call", callId, toolName: "write_file", input: { path: `${callId}.md` } }] });
+    const EVENTS = [
+      ev("session.started"),
+      ev("turn.started", { turnId: "t1" }),
+      ev("message.received", { turnId: "t1", message: "Write the first file" }),
+      ev("step.started", { turnId: "t1", stepIndex: 0 }),
+      call("call-one", "t1"),
+      ev("step.completed", { turnId: "t1", stepIndex: 0, finishReason: "tool-calls" }),
+      approval("req-one", "call-one", "t1"),
+      ev("turn.completed", { turnId: "t1" }),
+      ev("session.waiting", { continuationToken: "tok-1" }),
+      ev("turn.started", { turnId: "t2" }),
+      ev("step.started", { turnId: "t2", stepIndex: 0 }),
+      ev("action.result", { turnId: "t2", stepIndex: 0, status: "completed", result: { kind: "tool-result", callId: "call-one", toolName: "write_file", output: "ok" } }),
+      ev("message.completed", { turnId: "t2", stepIndex: 0, message: "First file written.", finishReason: "stop" }),
+      ev("step.completed", { turnId: "t2", stepIndex: 0 }),
+      ev("turn.completed", { turnId: "t2" }),
+      ev("session.waiting", { continuationToken: "tok-2" }),
+      ev("turn.started", { turnId: "t3" }),
+      ev("message.received", { turnId: "t3", message: "Now the second" }),
+      ev("step.started", { turnId: "t3", stepIndex: 0 }),
+      call("call-two", "t3"),
+      ev("step.completed", { turnId: "t3", stepIndex: 0, finishReason: "tool-calls" }),
+      approval("req-two", "call-two", "t3"),
+      ev("turn.completed", { turnId: "t3" }),
+      ev("session.waiting", { continuationToken: "tok-3" }),
+    ];
+    const answered = { type: "client.input.responded", data: { responses: [{ requestId: "req-one", optionId: "approve" }] } };
+    await seed(page, [{ id: "chat-a", title: "Alpha chat", sessionId: "sess-a", streamIndex: EVENTS.length, local: [...EVENTS, answered] }], "chat-a");
+    await serve(page, { snapshot: () => null, replay: (_s, start) => ({ body: ndjson([...EVENTS.slice(start), marker(EVENTS.length)]) }) });
+    await page.goto("/preview/chat-open");
+    await expect(page.getByText("First file written.")).toBeVisible({ timeout: 60_000 });
+
+    const dock = page.locator("[data-pending-approvals]");
+    await expect(dock).toBeVisible();
+    await expect(dock.getByText("Run call-two?")).toBeVisible();
+    await expect(dock.getByRole("button", { name: "Yes" })).toBeEnabled();
+    // Below the conversation, above the message box — not in the scrolling thread.
+    expect(await dock.evaluate((el) => Boolean(el.closest('[role="log"]')))).toBe(false);
+    const dockBox = await dock.boundingBox();
+    const logBox = await page.locator('[role="log"]').boundingBox();
+    const boxBox = await page.locator('textarea[name="message"]').boundingBox();
+    expect(dockBox && logBox && dockBox.y >= logBox.y + logBox.height - 1, "the stack is below the thread").toBe(true);
+    expect(dockBox && boxBox && dockBox.y + dockBox.height <= boxBox.y + 1, "and above the message box").toBe(true);
+    // The answered one is not in the stack: it is one line in the thread, with its outcome, opening on click.
+    await expect(dock.getByText("Run call-one?")).toHaveCount(0);
+    const record = page.locator('[role="log"] [data-answered-approval="allowed"]');
+    await expect(record).toHaveCount(1);
+    await expect(record).toContainText("Allowed");
+    await expect(record).toContainText("You");
+    expect((await record.boundingBox())?.height ?? 999).toBeLessThan(48);
+  });
+
+  test("288 + 290: in a shared chat, typing shows and expires, and a participant's messages are queued, never refused", async ({ page }) => {
+    const THREAD = "11111111-2222-4333-8444-555555555555";
+    const SHARED = conversation("Shared");
+    await seed(page, [], undefined);
+    await serve(page, { snapshot: () => null, replay: (_s, start) => ({ body: ndjson([...SHARED.slice(start), marker(SHARED.length)]) }) });
+    const state = {
+      typingUntil: 0,
+      turnHolder: "ana@example.test" as string | null,
+      queue: [{ id: "q-ana", author: "Ana Ray", mine: false, text: "Ana's message", state: "sending" }] as Record<string, unknown>[],
+      beats: [] as { typing?: boolean; at: number }[],
+      sends: [] as { message?: string; id?: string; drain?: boolean }[],
+    };
+    await page.route(/\/api\/ops\/threads(\?|$)/, (route) =>
+      route.fulfill({
+        status: 200,
+        json: {
+          items: [
+            { id: THREAD, eveSessionId: "sess-s", title: "Shared plan", ownerEmail: "ana@example.test", role: "participant", clientEvents: [], updatedAt: new Date().toISOString() },
+          ],
+        },
+      }),
+    );
+    // The shared chat's transcript, through the membership-checked proxy.
+    await page.route(new RegExp(`/api/ops/threads/${THREAD}/stream`), (route) =>
+      route.fulfill({ status: 200, contentType: "application/x-ndjson", body: ndjson([...SHARED, marker(SHARED.length)]) }),
+    );
+    await page.route(new RegExp(`/api/ops/threads/${THREAD}/presence`), async (route) => {
+      const body = (route.request().postDataJSON() ?? {}) as { typing?: boolean };
+      state.beats.push({ typing: body.typing, at: Date.now() });
+      return route.fulfill({
+        status: 200,
+        json: {
+          online: [
+            { email: "ana@example.test", name: "Ana Ray", guest: false, typing: Date.now() < state.typingUntil },
+            { name: null, guest: true, typing: false },
+          ],
+          turnHolder: state.turnHolder,
+          queue: state.queue,
+        },
+      });
+    });
+    await page.route(new RegExp(`/api/ops/threads/${THREAD}/messages`), async (route) => {
+      const body = (route.request().postDataJSON() ?? {}) as { message?: string; id?: string; drain?: boolean };
+      state.sends.push(body);
+      if (body.drain) return route.fulfill({ status: 200, json: { outcome: "busy", heldBy: null } });
+      state.queue.push({ id: body.id, author: "Preview", mine: true, text: body.message, state: "queued" });
+      return route.fulfill({ status: 202, json: { queued: true, id: body.id, ahead: state.queue.length - 1 } });
+    });
+
+    await page.goto("/preview/chat-open");
+    await page.getByRole("button", { name: /Shared plan/ }).click();
+    await expect(page.getByText("Shared answer 2.")).toBeVisible({ timeout: 60_000 });
+
+    // 288: Ana types; the line shows her name, and goes about four seconds after she stops.
+    state.typingUntil = Date.now() + 4_000;
+    const line = page.locator('[data-typing-line="on"]');
+    await expect(line).toHaveText("Ana Ray is typing…", { timeout: 10_000 });
+    await expect(line).toHaveCount(0, { timeout: 12_000 });
+    // A guest reads along and is shown as a guest, never by name or address.
+    await expect(page.locator("[data-presence-stack]")).toHaveAttribute("title", /Guest/);
+
+    // 290: Ana's message is running. The composer is open; nothing calls it a lock.
+    await expect(page.locator("[data-turn-holder]")).toHaveText("Ana Ray's message is running…");
+    const composer = page.locator('textarea[name="message"]');
+    await expect(composer).toBeEnabled();
+    await expect(page.getByText(/someone else is typing/i)).toHaveCount(0);
+
+    // Typing sends a beat about once a second, not per keystroke.
+    const before = state.beats.filter((b) => b.typing === true).length;
+    const t0 = Date.now();
+    await composer.pressSequentially("First from me", { delay: 120 });
+    const typed = state.beats.filter((b) => b.typing === true).length - before;
+    const seconds = (Date.now() - t0) / 1000;
+    expect(typed, `typing beats over ${seconds.toFixed(1)} s`).toBeGreaterThan(0);
+    expect(typed).toBeLessThanOrEqual(Math.ceil(seconds) + 1);
+    await composer.press("Enter");
+    await expect.poll(() => state.sends.filter((s) => s.message).length).toBe(1);
+    // A second message while the first waits: sent too (it used to be dropped without a word).
+    await composer.fill("Second from me");
+    await composer.press("Enter");
+    await expect.poll(() => state.sends.filter((s) => s.message).length).toBe(2);
+    expect(state.sends.filter((s) => s.message).map((s) => s.message)).toEqual(["First from me", "Second from me"]);
+    // Sending closed this person's typing window at once.
+    expect(state.beats.some((b) => b.typing === false)).toBe(true);
+
+    const items = page.locator("[data-shared-queue-item]");
+    await expect(items).toHaveCount(3, { timeout: 10_000 });
+    await expect(items.nth(0)).toContainText("Ana Ray");
+    await expect(items.nth(0)).toContainText("Ana's message");
+    await expect(items.nth(1)).toContainText("You");
+    await expect(items.nth(1)).toContainText("First from me");
+    await expect(items.nth(2)).toContainText("Second from me");
+    await expect(composer).toBeEnabled();
+
+    // Ana's turn ends: the thread is free and the next message is first in line — this page runs the queue.
+    state.queue = state.queue.slice(1);
+    state.turnHolder = null;
+    await expect.poll(() => state.sends.filter((s) => s.drain).length, { timeout: 15_000 }).toBeGreaterThan(0);
+  });
+});
