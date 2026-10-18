@@ -4,6 +4,7 @@ import { peopleRoster } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isOrgAdmin, orgContextForRequest } from "@/lib/org-context";
+import { checkReporting } from "@/agent/lib/people-data";
 import { recordOpsAudit } from "@/lib/ops-audit";
 import { diffRoster, parseRosterWorkbook, type RosterPerson } from "@/lib/roster-workbook";
 
@@ -122,30 +123,37 @@ export async function POST(request: NextRequest) {
 
     let created = 0;
     let updated = 0;
-    for (const p of touched) {
-      // Only supplied fields are written: a blank cell means "leave alone", so
-      // a sheet that never carried a column must not erase it.
-      const set: Record<string, unknown> = { updatedAt: new Date() };
-      if (p.name !== null) set.name = p.name || null;
-      if (p.team !== null) set.team = p.team || null;
-      if (p.managerEmail !== null) set.managerEmail = p.managerEmail || null;
-      if (p.escalations !== undefined) set.escalations = p.escalations;
+    // Who each person reports to must be someone of this workspace and close no loop with the lines it already has
+    // (agent/lib/people-data.ts): checked under the workspace's reporting lock, and every row written in the same one
+    // transaction, so a workbook is applied whole or not at all.
+    const lines = new Map(touched.filter((p) => p.managerEmail !== null).map((p) => [p.email, p.managerEmail || null]));
+    const problem = await withOrgRls(ctx.orgId, async (tx) => {
+      const refused = lines.size ? await checkReporting(tx, ctx.orgId, lines, parsed.people.map((p) => p.email)) : null;
+      if (refused) return refused;
+      for (const p of touched) {
+        // Only supplied fields are written: a blank cell means "leave alone", so
+        // a sheet that never carried a column must not erase it.
+        const set: Record<string, unknown> = { updatedAt: new Date() };
+        if (p.name !== null) set.name = p.name || null;
+        if (p.team !== null) set.team = p.team || null;
+        if (p.managerEmail !== null) set.managerEmail = p.managerEmail || null;
+        if (p.escalations !== undefined) set.escalations = p.escalations;
 
-      if (byEmail.has(p.email)) {
-        await withOrgRls(ctx.orgId, (tx) =>
-          tx
+        if (byEmail.has(p.email)) {
+          await tx
             .update(peopleRoster)
             .set(set)
-            .where(and(eq(peopleRoster.email, p.email), eq(peopleRoster.orgId, ctx.orgId))),
-        );
-        updated++;
-      } else {
-        await withOrgRls(ctx.orgId, (tx) =>
-          tx.insert(peopleRoster).values({ email: p.email, orgId: ctx.orgId, ...set }),
-        );
-        created++;
+            .where(and(eq(peopleRoster.email, p.email), eq(peopleRoster.orgId, ctx.orgId)));
+          updated++;
+        } else {
+          await tx.insert(peopleRoster).values({ email: p.email, orgId: ctx.orgId, ...set });
+          created++;
+        }
       }
-    }
+      return null;
+    });
+    // Reported as the workbook's own problems are: the preview stays, nothing is written.
+    if (problem) return NextResponse.json({ applied: false, problems: [problem], changes, rows: parsed.people.length });
 
     void recordOpsAudit(db, {
       automationType: "org",

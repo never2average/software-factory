@@ -326,6 +326,14 @@ jobs:
         if: always()
         run: npm run test:period-area
 
+      # PEOPLE DATA (profiles `people`): the catalogue is checked at build (the workflow engine's four attribute types, no
+      # reserved key); departments and attributes checked and merged per key; the reporting-line rules (same workspace,
+      # not oneself, no loop); who reads a person's attributes; the identity snapshot the engine's directory is seeded
+      # from, validated by the engine's own validator when the engine library is in the tree.
+      - name: People data (the profile's catalogue, value checks, reporting lines, the engine's directory snapshot)
+        if: always()
+        run: npm run test:people-data
+
       # TASKS FROM THE PROFILE'S DEFINITION (records.areas.tasks). With no profile redefining tasks, the root prompt,
       # its briefing and the todo tools are byte for byte the recorded surface, and the coding agent's task tools are
       # upstream main's; under the obligation example (a copy) the todo tools and the briefing are built from the
@@ -1663,6 +1671,18 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:period-area-db
+
+      # PEOPLE DATA FOR THE WORKFLOW ENGINE'S DIRECTORY, against the real roster routes and tools: drizzle/0046
+      # (people_roster.departments and .attributes, additive, the drift plan empty after it); only the workspace's owner
+      # or an admin sets departments, attributes and who someone reports to; a supervisor of another workspace, oneself
+      # or one closing a loop is refused; workspace B reads none of A's people or their fields through the routes, the
+      # tools or RLS.
+      - name: People data (migration, routes, tools, reporting lines), two workspaces, against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:people-data-db
 
       # WHO OWNS A CHAT IN THE LIST MIRROR. The upsert conflicts on the row id
       # (the eve session id) while ownership was checked only on eveSessionId,

@@ -165,6 +165,8 @@
     "test:record-structure": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-structure.mjs",
     "test:period-area": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-period-area.mjs",
     "test:period-area-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-period-area-db.mjs",
+    "test:people-data": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-people-data.mjs",
+    "test:people-data-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-people-data-db.mjs",
     "test:task-area": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-task-area.mjs",
     "test:record-area-panels": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-area-panels.mjs",
     "test:record-lifecycle": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-lifecycle.mjs",

@@ -323,7 +323,10 @@ if (PACK) {
 // "Deliverables & artifacts" section above it says the same). The same lines in both files. And once more (mold_v1-220,
 // paged data-room reads): dataroom_read's and dataroom_list's descriptions say a large file or listing comes back a
 // page at a time and how to read on, and each takes an optional `offset`; the same lines in both files, applied as one
-// diff, and none of them names a folder.
+// diff, and none of them names a folder. And once more (mold_v1-279, people data): upsert_roster_member's description and
+// its managerEmail parameter say that only the workspace's owner or an admin sets who someone reports to, and that a run
+// with no person behind it is refused; its example no longer sets a reporting line. The same lines in both files, and
+// none of them names a folder.
 if (!PACK) {
   const pinned = render([["50-legacy-folders.json", LEGACY_FOLDERS_PIN]], ["--snapshot", "--no-results"]);
   const before = readFileSync(SURFACE_BEFORE, "utf8");

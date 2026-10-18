@@ -15,6 +15,8 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { orgContextForRequest } from "@/lib/org-context";
 import { DEPLOYMENT_PROFILE, DEFAULT_DOMAINS } from "@/lib/deployment-profile.generated";
 import { implementationKey } from "@/agent/lib/implementation-ids";
+import { PEOPLE, declaredDepartments, visibleAttributes } from "@/agent/lib/people-data";
+import { verifyOpsAuth } from "@/lib/ops-auth";
 
 /** "deployment" stays "deployment" until the profile renames the area; then it is the area's singular, lower-cased. */
 function containerNoun(type: string): string {
@@ -57,6 +59,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ email: 
   if (!db) return NextResponse.json(empty);
 
   const raw = decodeURIComponent((await ctx.params).email).trim().toLowerCase();
+  const reader = { email: (await verifyOpsAuth(request.headers.get("authorization")))?.email ?? null, role: octx.role };
 
   try {
     /**
@@ -227,6 +230,15 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ email: 
         lastContact: src?.lastContact ?? null,
       },
       team: rosterRow?.team ?? null,
+      // The people catalogue's values (agent/lib/people-data.ts), only when the profile declares one: the departments
+      // for everyone in the workspace, the attributes for the person themself and the workspace's owner and admins.
+      ...(PEOPLE.hasDepartments ? { departments: declaredDepartments(rosterRow?.departments) } : {}),
+      ...(PEOPLE.hasAttributes && rosterRow
+        ? (() => {
+            const attributes = visibleAttributes(rosterRow, reader);
+            return attributes ? { attributes } : {};
+          })()
+        : {}),
       // The raw links, so the modal's pickers show/edit current values.
       managerEmail,
       chainUp,
