@@ -7,6 +7,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { recordActivity } from "@/lib/ops-activity";
 import { callerEmail, publicThread } from "@/lib/chat-threads";
 import { DEFAULT_ORG, orgContextForRequest } from "@/lib/org-context";
+import { callerOwnsSession } from "@/lib/session-gate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,14 @@ export const dynamic = "force-dynamic";
  * POST /api/ops/threads — the SHARE moment. The owner uploads a local
  * StoredSession's metadata + client markers + current resume token; this
  * creates (or updates, by clientKey) the server-authoritative thread row.
- * Ownership is the VERIFIED caller email, never a client field.
+ * Ownership is the VERIFIED caller email, never a client field — and only for
+ * a session that IS the caller's on server-written evidence (mold_v1-293):
+ * the agent's owner record names them, or, for a session from before that
+ * record, the agent's scope row names them and a row of theirs agrees
+ * (lib/session-gate.ts `callerOwnsSession`). It used to write a thread owned
+ * by the caller for ANY session id they named, and the guard's legacy
+ * inference then read that thread as the session's owner: a colleague could
+ * become the owner of someone's old chat and lock its real owner out.
  *
  * GET /api/ops/threads — every thread I own or am a non-revoked member of
  * (drives the sidebar's "Shared" section). Never returns the continuation token.
@@ -148,6 +156,18 @@ export async function POST(request: NextRequest) {
     const existing =
       (keyMatchIsSameConversation ? byClientKey : undefined) ??
       (shared && shared.ownerEmail === email ? shared : undefined);
+
+    // Only the session's owner may share it (or keep a thread on it up to date): never on a row a browser wrote. The
+    // same answer for "not yours" and "no such session", so nobody learns whose a session id is.
+    const mine = await callerOwnsSession(
+      { inOrg: (orgId, fn) => (orgId === org.orgId ? withOrgRls(orgId, fn) : Promise.reject(new Error("one workspace per request"))) },
+      org.orgId,
+      d.eveSessionId,
+      email,
+    );
+    if (!mine) {
+      return NextResponse.json({ error: "Only the chat's owner can share it." }, { status: 403 });
+    }
 
     const values = {
       orgId: org.orgId,

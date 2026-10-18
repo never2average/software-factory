@@ -204,18 +204,19 @@ try {
     check("…as an owner RECORD (insert-only), not an inference", record?.owner_email === ALICE && record?.owner_kind === "person", record);
 
     // (d) Two claimants: the deleter is not the only one, so its DELETE records nothing (it must not decide for the
-    // other claimant). The other claimant's row still stands, so the session is theirs and a third person's claim
-    // is refused.
+    // other claimant). mold_v1-293: a chat row never names the owner on its own — the scope row's person does, when a
+    // row of theirs agrees — so while Alice's row stands the session is hers, and once it is gone NOBODY's: the other
+    // claimant's row does not make it theirs (it used to), and a third person's claim is refused.
     const TWO = `${SID}_two`;
     const CAROL = "carol@probe.example";
     await scoped(TWO);
     await filedBefore(`${TWO}_a`, ORG, ALICE, TWO, "claimed twice");
     await filedBefore(`${TWO}_x`, ORG, CAROL, TWO, "x");
-    check("with two claimants nothing is inferred", (await ownerOf(TWO)) === null);
+    check("with two claimants, the scope row's person (whose own row agrees) is the owner", (await ownerOf(TWO)) === ALICE);
     check("…and deleting records nothing: Alice is not the only claimant", (await mirror.recordOwnershipBeforeDelete(db, { sessionId: TWO, orgId: ORG, email: ALICE })) === "skipped");
     await deleteChat(TWO, ALICE, { tombstone: false });
-    check("…the remaining claimant is then the owner, and a third person's claim is refused",
-      (await ownerOf(TWO)) === CAROL && (await claim(TWO)).refused === 1 && (await ownerOf(TWO)) === CAROL);
+    check("…the remaining claimant does NOT become the owner (the scope row names Alice), and a third person's claim is refused",
+      (await ownerOf(TWO)) === null && (await claim(TWO)).refused === 1 && (await ownerOf(TWO)) === null);
     check("a session that already has a record is left alone", (await mirror.recordOwnershipBeforeDelete(db, { sessionId: NEW, orgId: ORG, email: ALICE })) === "recorded");
     const route = readFileSync("app/api/ops/chat-sessions/route.ts", "utf8");
     const del = route.slice(route.indexOf("export async function DELETE"));
@@ -259,15 +260,18 @@ try {
     await filedBefore(`${PROBE}_a`, ORG, ALICE, PROBE, "Alice's pre-0016 chat");
     check("an UNANCHORED legacy session (pre-0016, no scope row) is nobody's on a request — nothing outside the request's workspace is read to place it", (await ownerOf(PROBE)) === null);
     check("Mallory's claim from ANOTHER workspace is refused, and no row is written there", (await claimInB(PROBE)) === 1 && (await rowsInB(PROBE)) === 0);
+    // mold_v1-293: only a browser-written row (her chat row) names Alice here, and such a row never names an owner on
+    // its own — the factory's backfill used to record her from it, and by the same rule anyone who filed a thread.
+    // With no server-written row naming anyone, the session stays unowned (refused to all) rather than guessed.
     const dry = await backfill.backfillLegacyOwners(system);
-    check("the factory's owner backfill (a system job, dry run) would record it for Alice", dry.sample.some((x) => x.sessionId === PROBE && x.ownerEmail === ALICE && x.orgId === ORG) && (await ownerOf(PROBE)) === null, dry);
+    check("the factory's owner backfill (a system job, dry run) records nobody: only a browser row names Alice", !dry.sample.some((x) => x.sessionId === PROBE) && (await ownerOf(PROBE)) === null, dry);
     await backfill.backfillLegacyOwners(system, { apply: true });
-    check("…and, applied, the record names Alice, in her workspace", (await ownerOf(PROBE)) === ALICE);
+    check("…nor, applied: the session stays unowned", (await ownerOf(PROBE)) === null && (await admin`select 1 from agent_session_owners where session_id = ${PROBE}`).length === 0);
     const outcome = await deleteChat(PROBE, `${PROBE}_a`, ORG, ALICE);
-    check("Alice deletes her chat: the record already decides", outcome === "recorded", outcome);
-    check("…and Mallory is not the owner", (await ownerOf(PROBE)) === ALICE);
+    check("Alice deletes her chat: nothing anchors it here, so nothing is recorded", outcome === "skipped", outcome);
+    check("…and Mallory is not the owner", (await ownerOf(PROBE)) === null);
     await claimInB(PROBE);
-    check("…nor after she files again once Alice's row is gone (the record decides)", (await ownerOf(PROBE)) === ALICE && (await rowsInB(PROBE)) === 0);
+    check("…nor after she files again once Alice's row is gone", (await ownerOf(PROBE)) === null && (await rowsInB(PROBE)) === 0);
     check(
       "…nor may she read it, from her workspace or naming Alice's",
       !(await gate.gateSessionRequest(db2, { kind: "person", email: MALLORY }, PROBE, "read", { workspace: ORG_B })).allow &&
@@ -301,9 +305,11 @@ try {
     const rec = (await admin`select owner_email, owner_kind, org_id from agent_session_owners where session_id = ${LEG}`)[0] ?? null;
     check("…no tombstone and no owner record exists for the session", rec === null, rec);
     await backfill.backfillLegacyOwners(system, { apply: true });
-    check("…and once her row is gone, the factory's backfill makes the session Alice's, and Alice may read it",
-      (await ownerOf(LEG)) === ALICE && (await gate.gateSessionRequest(db2, { kind: "person", email: ALICE }, LEG, "read", { workspace: ORG })).allow);
-    check("Alice deleting her own chat leaves the record in place", (await mirror.recordOwnershipBeforeDelete(db2, { sessionId: LEG, orgId: ORG, email: ALICE })) === "recorded");
+    // mold_v1-293: Alice's chat row is the only thing naming her (no scope row): it never names an owner by itself.
+    check("…and once her row is gone, the factory's backfill records nobody (only a browser row names Alice): unowned, refused, never guessed",
+      (await ownerOf(LEG)) === null && !(await gate.gateSessionRequest(db2, { kind: "person", email: ALICE }, LEG, "read", { workspace: ORG })).allow &&
+        !(await gate.gateSessionRequest(db2, { kind: "person", email: MALLORY }, LEG, "read", { workspace: ORG_B })).allow);
+    check("Alice deleting her own chat records nothing either (nothing anchors it here)", (await mirror.recordOwnershipBeforeDelete(db2, { sessionId: LEG, orgId: ORG, email: ALICE })) === "skipped");
 
     // (e) Evidence in two workspaces is a conflict for the backfill too: nobody is recorded.
     const SPLIT = `${SID}_split`;

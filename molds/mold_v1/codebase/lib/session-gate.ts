@@ -91,6 +91,13 @@ export interface LegacyEvidence {
   readonly orgId: string;
   /** An `agent_session_scopes` row IN this workspace (written by the agent, from a verified token). */
   readonly scoped: boolean;
+  /**
+   * The person that scope row names (`principal_email`, lower-cased), or null: the verified caller of the session's
+   * first turn (first writer wins since #66's follow-up; it was last-writer-wins before). Server-written, so it is the
+   * only thing that may name a legacy session's owner, and only together with a chat row or thread of the same person
+   * ({@link ownershipFromEvidence}).
+   */
+  readonly principal: string | null;
   /** Owners of shared threads on it (a thread row anybody can write — never an anchor, only an owner hint). */
   readonly threadOwners: readonly string[];
   /** People with a chat-list row for it in this workspace (browser-written — never an anchor). */
@@ -107,7 +114,7 @@ export async function readLegacyEvidenceIn(
 ): Promise<LegacyEvidence> {
   return db.inOrg(orgId, async (tx) => {
     const [scope] = await tx
-      .select({ sessionId: agentSessionScopes.sessionId, orgId: agentSessionScopes.orgId })
+      .select({ sessionId: agentSessionScopes.sessionId, orgId: agentSessionScopes.orgId, principal: agentSessionScopes.principalEmail })
       .from(agentSessionScopes)
       .where(eq(agentSessionScopes.sessionId, sessionId))
       .limit(1);
@@ -141,6 +148,7 @@ export async function readLegacyEvidenceIn(
     return {
       orgId,
       scoped: Boolean(scope && scope.orgId === orgId),
+      principal: scope && scope.orgId === orgId && scope.principal ? norm(scope.principal) : null,
       threadOwners: [...new Set(here(threads).map((t) => norm(t.ownerEmail)).filter(Boolean))],
       claimants: [...new Set(here(mirrors).map((m) => norm(m.ownerEmail)).filter(Boolean))],
       step: Boolean((journal && journal.orgId === orgId) || (app && app.orgId === orgId) || (version && version.orgId === orgId)),
@@ -151,20 +159,19 @@ export async function readLegacyEvidenceIn(
 /**
  * The ownership one workspace's evidence proves, or null. Each kind of row is trusted for exactly one thing:
  *
- *   · the thread owner (one), else the ONLY claimant with a chat row, names the OWNER — two claimants prove nothing;
- *   · a workflow / app / cron step makes the session WORKSPACE-visible (colleagues may read);
- *   · `agent_session_scopes.principal_email` is never read as an owner: it was last-writer-wins while any signed-in
- *     caller could post into any session.
+ *   · the OWNER is named by the server, never by a browser (mold_v1-293): the person the agent's scope row records
+ *     (`principal`), and only when a chat row or a thread of THAT person on this session agrees. A thread or a chat row
+ *     is written by a browser (POST /api/ops/threads used to write one for any session id a member named), so it never
+ *     names an owner on its own — it used to rank first, and a colleague who filed a thread on someone's old session
+ *     was frozen in as its owner on the next pass of the guard. Nor does the scope row name one on its own: it was
+ *     last-writer-wins while any signed-in caller could post into any session, so an old row may name someone who
+ *     once posted into another person's chat. Neither alone, both together, or nobody: an unnamed session is refused;
+ *   · a workflow / app / cron step makes the session WORKSPACE-visible (colleagues may read).
  */
 export function ownershipFromEvidence(evidence: LegacyEvidence): SessionOwnership | null {
-  const ownerEmail =
-    evidence.threadOwners.length > 0
-      ? evidence.threadOwners.length === 1
-        ? evidence.threadOwners[0]
-        : null
-      : evidence.claimants.length === 1
-        ? evidence.claimants[0]
-        : null;
+  const principal = evidence.scoped ? evidence.principal : null;
+  const named = new Set([...evidence.threadOwners, ...evidence.claimants]);
+  const ownerEmail = principal && named.has(principal) ? principal : null;
   if (!ownerEmail && !evidence.step) return null;
   return {
     orgId: evidence.orgId,
@@ -185,7 +192,8 @@ export function ownershipFromEvidence(evidence: LegacyEvidence): SessionOwnershi
  * workflow / app / cron step. Chat-list rows and thread rows are written by browsers, so on their own they anchor
  * nothing: a member of workspace B could file one in B for a session of A, and B's own evidence would then name them.
  * With an anchor, the owner is read from this workspace's rows only ({@link ownershipFromEvidence}), so nothing any
- * other workspace holds can change the answer — and nothing any other workspace holds is read.
+ * other workspace holds can change the answer — and nothing any other workspace holds is read. The owner's NAME comes
+ * from the scope row, confirmed by a row of the same person; never from a browser-written row alone (mold_v1-293).
  *
  * A legacy session with no anchor (older than migration 0016, and never a step) is UNOWNED on the request path. The
  * factory's one-time owner backfill (agent/lib/session-owner-backfill.ts) records those — reading across workspaces,
@@ -334,6 +342,24 @@ export async function readCallerFacts(
       ? (callerOrgs ?? (await db.orgsOf(me))).includes(ownership.orgId)
       : false;
   return { ownership, membership, callerInWorkspace };
+}
+
+/**
+ * MAY `email` FILE A ROW NAMING THIS SESSION AS THEIRS (a shared thread, mold_v1-293)? Only when the session is theirs on
+ * SERVER-written evidence in this workspace: the agent's owner record names them, or — with no record — the legacy
+ * inference does ({@link readLegacyOwnershipIn}: the agent's scope row names them and a row of theirs agrees). A
+ * thread or chat row anybody else filed confers nothing. `orgId` only, never another workspace.
+ */
+export async function callerOwnsSession(
+  db: Pick<GateDb, "inOrg">,
+  orgId: string,
+  sessionId: string,
+  email: string,
+): Promise<boolean> {
+  const me = norm(email);
+  if (!me || !orgId || !sessionId) return false;
+  const ownership = await readOwnership(db, sessionId, orgId);
+  return Boolean(ownership && ownership.orgId === orgId && ownership.ownerKind === "person" && norm(ownership.ownerEmail) === me);
 }
 
 /** The owner recorded in `orgId`, else the in-workspace legacy inference — `orgId` only, never another workspace. */
