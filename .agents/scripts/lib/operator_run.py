@@ -45,8 +45,10 @@ if HERE not in sys.path: sys.path.insert(0, HERE)
 import agent_result as AR  # noqa: E402
 
 PREFIX = "operator:"
+AUDIT = "audit:"     # the mold's read-only audit:* scripts: same path, same secrecy, no yes needed (they write nothing)
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 SCRIPT_FILE = re.compile(r"^scripts/operator/[A-Za-z0-9._-]+\.(?:mjs|js|mts|ts)$")
+AUDIT_FILE = re.compile(r"^scripts/audit-[a-z0-9-]+\.mjs$")   # the read-only audits (audit:* scripts)
 SHELL_BITS = re.compile(r"[;&|<>`$\\]")
 SECRET_FLAG = re.compile(r"(?i)(pass(word|wd)?|secret|token|api[-_]?key|credential|private[-_]?key|^--key$)")
 MARK = "OPERATOR "
@@ -86,14 +88,15 @@ def parse(a):
     name = head[i + 1] if i + 1 < len(head) else ""
     if not name or name.startswith("-"):
         raise Usage("--operator needs the name of one of the app's operator scripts after it, for example: --operator new-org -- --name \"Acme\" --id acme --owner you@example.com")
-    bare = name[len(PREFIX):] if name.startswith(PREFIX) else name
+    prefix = AUDIT if name.startswith(AUDIT) else PREFIX
+    bare = name[len(prefix):] if name.startswith(prefix) else name
     if not NAME.match(bare): raise Usage(f"{name!r} is not the name of an operator script (lower-case letters, digits and hyphens).")
     rest = [x for j, x in enumerate(head[1:], 1) if j not in (i, i + 1)]
     stray = [x for x in rest if x not in OWN_FLAGS]
     if stray:
         raise Usage(f"{' '.join(stray)}: provision.py does not take this with --operator. The script's own arguments go after `--`, "
                     f"for example: --operator {bare} -- {' '.join(stray)}")
-    return {"key": PREFIX + bare, "args": args, "dry": "--dry-run" in rest, "yes": "--yes" in rest}
+    return {"key": prefix + bare, "args": args, "dry": "--dry-run" in rest, "yes": "--yes" in rest}
 
 
 # ---- the allow-list ----------------------------------------------------------------------------------------------
@@ -101,7 +104,7 @@ def allowed(package_json):
     """{"operator:<name>": its command line} from a package.json; {} when there is none to read."""
     try: scripts = json.load(open(package_json)).get("scripts") or {}
     except (OSError, ValueError): return {}
-    return {k: v for k, v in scripts.items() if isinstance(k, str) and k.startswith(PREFIX) and isinstance(v, str)}
+    return {k: v for k, v in scripts.items() if isinstance(k, str) and k.startswith((PREFIX, AUDIT)) and isinstance(v, str)}
 
 
 def node_argv(cmdline):
@@ -111,7 +114,8 @@ def node_argv(cmdline):
     try: toks = shlex.split(cmdline or "")
     except ValueError: return None, "its command line could not be read"
     if not toks or toks[0] != "node": return None, "it does not start the script with node"
-    if not SCRIPT_FILE.match(toks[-1]): return None, "it does not end in one script under scripts/operator/"
+    if not (SCRIPT_FILE.match(toks[-1]) or AUDIT_FILE.match(toks[-1])):
+        return None, "it does not end in one script under scripts/operator/ (or a read-only scripts/audit-*.mjs)"
     flags = toks[1:-1]
     if any(not f.startswith("-") for f in flags): return None, "it passes more than one file to node"
     return ["node", *[f for f in flags if not f.startswith(("--env-file=", "--env-file-if-exists="))], toks[-1]], None
@@ -199,7 +203,8 @@ def server_run(env_file, user, home, app_dir, url, req, run=None, say=print):
     sys.path.insert(0, HERE); import vm_remote as V
     def out(doc, rc): say(MARK + json.dumps(doc)); return rc
     key = str((req or {}).get("script") or ""); args = (req or {}).get("args") or []
-    if not key.startswith(PREFIX) or not NAME.match(key[len(PREFIX):]) or not all(isinstance(x, str) for x in args):
+    pre = AUDIT if key.startswith(AUDIT) else PREFIX
+    if not key.startswith(pre) or not NAME.match(key[len(pre):]) or not all(isinstance(x, str) for x in args):
         return out({"error": "what arrived on stdin is not one operator script and its arguments; nothing was run"}, 2)
     try: pw = pwd.getpwnam(user)
     except KeyError: return out({"error": f"this server has no user {user} yet: it was deployed before each service got a user of its own. Deploy once, then run this again. Nothing was run."}, 1)
@@ -266,11 +271,13 @@ def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None,
         say(f"{app_id}: there is no package.json with operator scripts under {os.path.relpath(build, ROOT)}/ (the app's build copy). "
             f"A deploy makes it. Nothing was contacted."); return 1
     if key not in allow:
-        say(f"{app_id}: {key} is not one of this app's operator scripts. They are: {', '.join(sorted(k[len(PREFIX):] for k in allow))}. Nothing was run."); return 2
+        say(f"{app_id}: {key} is not one of this app's operator scripts. They are: {', '.join(sorted(k[len(PREFIX):] if k.startswith(PREFIX) else k for k in allow))}. Nothing was run."); return 2
     argv, why = node_argv(allow[key])
     if why: say(f"{app_id}: {key} is not run: {why}. Nothing was run."); return 2
     detail = {"script": key, "target": target, "args": shown_args, "dry_run": o["dry"]}
-    rerun = f"python3 .claude/scripts/provision.py {app_id} --operator {key[len(PREFIX):]} --yes -- {shlex.join(shown_args)}".rstrip(" -")
+    read_only = key.startswith(AUDIT)
+    rerun = (f"python3 .claude/scripts/provision.py {app_id} --operator {key if read_only else key[len(PREFIX):]}"
+             + ("" if read_only else " --yes") + f" -- {shlex.join(shown_args)}").rstrip(" -")
     if target == "vercel":
         if P is not None: P._refuse_live_or_shared_project(app_id, infra)
         proj = (infra.get("vercel") or {}).get("project")
@@ -300,7 +307,7 @@ def main_for(app_id, a, app, infra, ds=None, P=None, runner=None, pull_env=None,
     if o["dry"]:
         say("DRY RUN: nothing was run and nothing was contacted.")
         AR.note(summary=f"{app_id}: dry run of {key} on {target}; nothing was run", next=f"Only once the person said yes to running it: {rerun}"); return 0
-    if not o["yes"]:
+    if not o["yes"] and not read_only:
         how = (f"Running {key} writes to the live app {app_id} (its database{', on its own server' if target == 'vm_remote' else ''}). "
                f"Say yes in the chat if it should run with the arguments shown; the agent then runs: {rerun}")
         AR.need("approval", f"yes to run {key} on {app_id}", how)
@@ -404,6 +411,13 @@ def self_test(check=None):
         if check: return check(name, cond, detail)
         n[0] += 1
         if not cond: fails.append(f"{name}{': ' + str(detail)[:400] if detail else ''}")
+    # 0. read-only audit:* scripts take the same path: their own key, their own file pattern, nothing else
+    pa = parse(["app1", "--operator", "audit:session-owners"])
+    ok("an audit:* name keeps its own prefix", pa["key"] == "audit:session-owners" and not pa["yes"], pa)
+    ok("audit:* scripts are on the allow-list beside operator:*", True)
+    ok("a scripts/audit-*.mjs line is accepted", node_argv("node --experimental-strip-types scripts/audit-session-owners.mjs")[1] is None)
+    ok("a non-audit file under an audit name is refused", node_argv("node scripts/other/x.mjs")[1] is not None)
+    ok("an audit name cannot smuggle a path", parse.__defaults__ is None and not NAME.match("../x"))
     # 1. parsing: the script's own arguments are after `--` and are never read as provision.py's
     p = parse(["app1", "--operator", "new-org", "--", "--name", "Acme Co", "--json", "--dry-run", "--yes"])
     ok("operator: parse: name without the prefix, args after -- kept whole (even --json, --dry-run, --yes)",
