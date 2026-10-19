@@ -7,7 +7,7 @@ import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isOrgAdmin, orgContextForRequest } from "@/lib/org-context";
 import { recordOpsAudit } from "@/lib/ops-audit";
-import { checkReporting } from "@/agent/lib/people-data";
+import { RosterWriteConflict, checkReporting, writeRosterRow } from "@/agent/lib/people-data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -134,6 +134,9 @@ export async function POST(request: NextRequest) {
 
     let created = 0;
     let updated = 0;
+    // The undo is the exact prior state of every row, read and locked in the write's own transaction (a row another
+    // writer added since the read above is "existed", with its values): replaying it never wipes what they wrote.
+    const undo: typeof snapshot = [];
     const problem = await withOrgRls(ctx.orgId, async (tx) => {
       const refused = await linesProblem(tx);
       if (refused) return refused;
@@ -146,19 +149,24 @@ export async function POST(request: NextRequest) {
         if (p.managerEmail !== undefined && p.managerEmail !== null) set.managerEmail = p.managerEmail || null;
         if (p.escalations !== undefined) set.escalations = p.escalations;
 
-        if (before.has(p.email)) {
-          await tx
-            .update(peopleRoster)
-            .set(set)
-            .where(and(eq(peopleRoster.email, p.email), eq(peopleRoster.orgId, ctx.orgId)));
-          updated++;
-        } else {
-          await tx.insert(peopleRoster).values({ email: p.email, orgId: ctx.orgId, ...set });
-          created++;
-        }
+        const w = await writeRosterRow(tx, ctx.orgId, p.email, set);
+        if (w.created) created++;
+        else updated++;
+        undo.push({
+          email: p.email,
+          name: w.before?.name ?? null,
+          team: w.before?.team ?? null,
+          managerEmail: w.before?.managerEmail ?? null,
+          escalations: w.before?.escalations ?? [],
+          existed: !w.created,
+        });
       }
       return null;
+    }).catch((e) => {
+      if (e instanceof RosterWriteConflict) return { conflict: e.message };
+      throw e;
     });
+    if (problem && typeof problem === "object") return NextResponse.json({ error: problem.conflict }, { status: 409 });
     if (problem) return NextResponse.json({ error: problem }, { status: 400 });
 
     void recordOpsAudit(db, {
@@ -169,7 +177,7 @@ export async function POST(request: NextRequest) {
       event: `Roster import — ${updated} updated, ${created} added`,
     });
 
-    return NextResponse.json({ ok: true, updated, created, snapshot });
+    return NextResponse.json({ ok: true, updated, created, snapshot: undo });
   } catch (e) {
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }

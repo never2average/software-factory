@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { peopleRoster } from "@/agent/lib/db/schema";
 import { getOpsDb, withOrgRls } from "@/lib/ops-db";
 import { verifyOpsAuth } from "@/lib/ops-auth";
 import { isOrgAdmin, orgContextForRequest } from "@/lib/org-context";
-import { checkReporting } from "@/agent/lib/people-data";
+import { RosterWriteConflict, checkReporting, writeRosterRow } from "@/agent/lib/people-data";
 import { recordOpsAudit } from "@/lib/ops-audit";
 import { diffRoster, parseRosterWorkbook, type RosterPerson } from "@/lib/roster-workbook";
 
@@ -105,24 +105,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const byEmail = new Map(live.map((r) => [r.email.toLowerCase(), r]));
     const touched = parsed.people.filter((p) => changes.some((c) => c.email === p.email));
-
-    /** Exactly what these rows held beforehand — replay it to undo. */
-    const snapshot = touched.map((p) => {
-      const b = byEmail.get(p.email);
-      return {
-        email: p.email,
-        name: b?.name ?? null,
-        team: b?.team ?? null,
-        managerEmail: b?.managerEmail ?? null,
-        escalations: b?.escalations ?? [],
-        existed: b !== undefined,
-      };
-    });
 
     let created = 0;
     let updated = 0;
+    /** Exactly what these rows held beforehand, read in the write's transaction: replay it to undo. */
+    const undo: (RosterPerson & { escalations: { email: string; reason: string }[]; existed: boolean })[] = [];
     // Who each person reports to must be someone of this workspace and close no loop with the lines it already has
     // (agent/lib/people-data.ts): checked under the workspace's reporting lock, and every row written in the same one
     // transaction, so a workbook is applied whole or not at all.
@@ -139,19 +127,26 @@ export async function POST(request: NextRequest) {
         if (p.managerEmail !== null) set.managerEmail = p.managerEmail || null;
         if (p.escalations !== undefined) set.escalations = p.escalations;
 
-        if (byEmail.has(p.email)) {
-          await tx
-            .update(peopleRoster)
-            .set(set)
-            .where(and(eq(peopleRoster.email, p.email), eq(peopleRoster.orgId, ctx.orgId)));
-          updated++;
-        } else {
-          await tx.insert(peopleRoster).values({ email: p.email, orgId: ctx.orgId, ...set });
-          created++;
-        }
+        const w = await writeRosterRow(tx, ctx.orgId, p.email, set);
+        if (w.created) created++;
+        else updated++;
+        // The exact prior state, read and locked in this transaction: a row another writer added since the preview
+        // is "existed" with its values, so replaying the undo never wipes what they wrote.
+        undo.push({
+          email: p.email,
+          name: w.before?.name ?? null,
+          team: w.before?.team ?? null,
+          managerEmail: w.before?.managerEmail ?? null,
+          escalations: w.before?.escalations ?? [],
+          existed: !w.created,
+        });
       }
       return null;
+    }).catch((e) => {
+      if (e instanceof RosterWriteConflict) return { conflict: e.message };
+      throw e;
     });
+    if (problem && typeof problem === "object") return NextResponse.json({ applied: false, error: problem.conflict }, { status: 409 });
     // Reported as the workbook's own problems are: the preview stays, nothing is written.
     if (problem) return NextResponse.json({ applied: false, problems: [problem], changes, rows: parsed.people.length });
 
@@ -163,7 +158,7 @@ export async function POST(request: NextRequest) {
       event: `Roster import from "${file.name}" — ${updated} updated, ${created} added`,
     });
 
-    return NextResponse.json({ applied: true, updated, created, changes, snapshot });
+    return NextResponse.json({ applied: true, updated, created, changes, snapshot: undo });
   } catch (e) {
     // A corrupt or non-workbook file lands here; say so in a sentence rather
     // than returning a zip-parser stack trace.

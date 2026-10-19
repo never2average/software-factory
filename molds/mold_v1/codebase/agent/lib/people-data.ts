@@ -85,3 +85,47 @@ export async function checkReporting(tx: Tx, orgId: string, next: ReadonlyMap<st
   return reportingProblem(lines, people, next.keys());
 }
 
+
+/** One roster row as stored. */
+export type RosterRow = typeof peopleRoster.$inferSelect;
+
+/** Refused when a person's row could be neither updated nor added: another write keeps adding and removing it. */
+export class RosterWriteConflict extends Error {
+  constructor(email: string) {
+    super(`${email} was changed by another write at the same moment; nothing was written for them. Try again.`);
+    this.name = "RosterWriteConflict";
+  }
+}
+
+/**
+ * Write one person's row in the workspace, in the caller's transaction, and say exactly what happened. The roster is
+ * keyed by (org_id, email) (drizzle/0049), so another workspace holding the same email has its own row, never read or
+ * touched here. The stored row is read and locked first: when it is there it is updated and returned as it WAS (the
+ * exact pre-image, for an undo); when it is not, it is inserted, standing down on the key if a concurrent write added it
+ * in between, and then read, locked and updated on a second pass. `created` is true only for a row this call inserted.
+ * `set` may be a function of the stored row (a merge). Never deletes.
+ */
+export async function writeRosterRow(
+  tx: Pick<PostgresJsDatabase<typeof schema>, "select" | "insert" | "update">,
+  orgId: string,
+  email: string,
+  set: Record<string, unknown> | ((before: RosterRow | null) => Record<string, unknown> | Promise<Record<string, unknown>>),
+): Promise<{ created: boolean; before: RosterRow | null; row: RosterRow }> {
+  const where = and(eq(peopleRoster.orgId, orgId), eq(peopleRoster.email, email));
+  for (let pass = 0; pass < 2; pass++) {
+    const [before] = await tx.select().from(peopleRoster).where(where).for("update");
+    const values = typeof set === "function" ? await set(before ?? null) : set;
+    if (before) {
+      const [row] = await tx.update(peopleRoster).set(values).where(where).returning();
+      if (row) return { created: false, before, row };
+      continue;
+    }
+    const [row] = await tx
+      .insert(peopleRoster)
+      .values({ ...values, email, orgId })
+      .onConflictDoNothing({ target: [peopleRoster.orgId, peopleRoster.email] })
+      .returning();
+    if (row) return { created: true, before: null, row };
+  }
+  throw new RosterWriteConflict(email);
+}

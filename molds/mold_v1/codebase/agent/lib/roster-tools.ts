@@ -84,10 +84,9 @@ export const upsertRosterMemberTool = modelFacing("upsert_roster_member", define
     // A session with no person behind it (a schedule, a workflow or app step, a delegated child) has no role: refused.
     const caller = callerFromCtx(ctx).email;
 
-    // Explicit select-then-upsert scoped to (org, email) — deliberately NOT
-    // ON CONFLICT, so this tool is independent of whether the roster PK is
-    // `email` or the composite `(org_id, email)` (the Phase-3 migration flips it
-    // without a coordinated window).
+    // Scoped to (org, email), the roster's key (drizzle/0049): another workspace holding the same email has its own
+    // row, which this never reads or touches. The insert conflicts on that key, so a row a concurrent write added
+    // between the read and the insert is updated, not a database error.
     const out = await withOrgDb(org, async (tx) => {
       if (managerEmail !== undefined) {
         if (!caller) {
@@ -119,6 +118,7 @@ export const upsertRosterMemberTool = modelFacing("upsert_roster_member", define
               team: team ?? null,
               managerEmail: managerEmail ? managerEmail.toLowerCase() : null,
             })
+            .onConflictDoUpdate({ target: [peopleRoster.orgId, peopleRoster.email], set })
             .returning();
       return { row } as const;
     });

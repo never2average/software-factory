@@ -748,7 +748,8 @@ Where the values live and who touches them (`agent/lib/people-data.ts`, the pure
 - **Storage**: `people_roster.departments` (jsonb list of keys, `[]` by default) and `people_roster.attributes` (jsonb
   object by key, `{}` by default), `drizzle/0046_people_directory.sql`. The supervisor is the roster's existing reporting
   line, `people_roster.manager_email`. All three sit under the roster's row-level security: another workspace reads
-  none of them.
+  none of them. The roster is keyed by `(org_id, email)` (`drizzle/0049`): the same person on two workspaces' rosters
+  is two rows, each with its own team, line, departments and attributes.
 - **Who sets them**: the workspace's owner or an admin, in the Control Panel's person drawer (People tab) or through
   `POST /api/ops/roster` (`managerEmail`, `departments`, `attributes`; attributes merge per key, `null` clears one).
   Anyone else gets a 403 and nothing is written; a member still sets a team and escalation contacts as before. The
