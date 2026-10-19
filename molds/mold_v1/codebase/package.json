@@ -167,6 +167,7 @@
     "test:period-area-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-period-area-db.mjs",
     "test:people-data": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-people-data.mjs",
     "test:people-data-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-people-data-db.mjs",
+    "test:roster-key-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-roster-key-db.mjs",
     "test:task-area": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-task-area.mjs",
     "test:record-area-panels": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-area-panels.mjs",
     "test:record-lifecycle": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-lifecycle.mjs",

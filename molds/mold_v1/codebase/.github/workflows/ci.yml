@@ -2053,6 +2053,20 @@ jobs:
         if: always()
         run: ADMIN_URL="$ADMIN_URL" npm run test:owner-columns-contract-db
 
+      # ONE PERSON ON SEVERAL WORKSPACES' ROSTERS (mold_v1-285): drizzle/0049 keys people_roster by (org_id, email).
+      # On the live shape with the journal to 0048 and 300 people in three workspaces: before it, the same email in a
+      # second workspace is a database error; after it no row is lost or changed, row-level security, policies and
+      # grants are as they were, the drift plan is empty and a second run changes nothing (also a journal-built
+      # database with rows of no workspace, one tightened by the old one-off script, and an empty one). Then the app as
+      # app_rw under the fail-closed policies: B's owner adds a person A holds; every roster route, tool and reader
+      # answers each workspace only its own row; a write in one never touches the other; reporting lines per workspace.
+      - name: Roster keyed per workspace, migration on production-shaped data, routes and tools
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:roster-key-db
+
       # ONE HAND-BACK PER STOPPED SPECIALIST, ACROSS INSTANCES (mold_v1-181). The agent is serverless: two Stops on one
       # specialist can land on two instances, where a memory of "already doing this" holds in one. The claim is a row in
       # specialist_handbacks. Two separate node processes per round, released at the same instant against this

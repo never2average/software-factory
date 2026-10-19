@@ -101,7 +101,8 @@ These are now DONE (org scoping has fully permeated):
    the DB for wrapped read paths; per-org HKDF secret keys derive from
    `OPS_SECRETS_KEY` so one workspace's secret dump can't decrypt another's.
 6. Phase-3 tightening migration: `org_id` NOT NULL (DEFAULT kept) + `people_roster`
-   PK `(org_id, email)`.
+   PK `(org_id, email)` (done in the journal by `drizzle/0049_people_roster_key_per_workspace.sql`: the same person
+   can be on several workspaces' rosters, each workspace seeing and changing only its own row).
 
 ## Migration order (the three tenancy migrations)
 

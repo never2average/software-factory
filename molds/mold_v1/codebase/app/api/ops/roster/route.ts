@@ -14,6 +14,8 @@ import {
   checkReporting,
   declaredDepartments,
   mergeAttributes,
+  RosterWriteConflict,
+  writeRosterRow,
   visibleAttributes,
 } from "@/agent/lib/people-data";
 
@@ -146,27 +148,18 @@ export async function POST(request: NextRequest) {
         const problem = await checkReporting(tx, ctx.orgId, new Map([[email, (set.managerEmail as string | null) ?? null]]));
         if (problem) return { refused: problem } as const;
       }
-      // Scope the lookup to the caller's workspace (email is unique per org).
-      const [existing] = await tx
-        .select({ email: peopleRoster.email, attributes: peopleRoster.attributes })
-        .from(peopleRoster)
-        .where(and(eq(peopleRoster.email, email), eq(peopleRoster.orgId, ctx.orgId)))
-        .for("update");
-      if (attributePatch) set.attributes = mergeAttributes(existing?.attributes, attributePatch);
-      if (existing) {
-        const [row] = await tx
-          .update(peopleRoster)
-          .set(set)
-          .where(and(eq(peopleRoster.email, email), eq(peopleRoster.orgId, ctx.orgId)))
-          .returning();
-        return { row } as const;
-      }
-      const [row] = await tx
-        .insert(peopleRoster)
-        .values({ email, orgId: ctx.orgId, ...set })
-        .returning();
+      // The person's row in the caller's workspace only: the roster is keyed by (org_id, email) (drizzle/0049), so
+      // another workspace holding the same email has its own row, which this never reads or touches. The attributes
+      // are merged onto the row as stored and locked, including one a concurrent write added (agent/lib/people-data.ts).
+      const { row } = await writeRosterRow(tx, ctx.orgId, email, (before) =>
+        attributePatch ? { ...set, attributes: mergeAttributes(before?.attributes, attributePatch) } : set,
+      );
       return { row } as const;
+    }).catch((e) => {
+      if (e instanceof RosterWriteConflict) return { conflict: e.message } as const;
+      throw e;
     });
+    if ("conflict" in out) return NextResponse.json({ error: out.conflict }, { status: 409 });
     if ("refused" in out) return NextResponse.json({ error: out.refused }, { status: 400 });
     const reader = { email: (await verifyOpsAuth(request.headers.get("authorization")))?.email ?? null, role: ctx.role };
     return NextResponse.json({ item: rosterItem(out.row, reader) });

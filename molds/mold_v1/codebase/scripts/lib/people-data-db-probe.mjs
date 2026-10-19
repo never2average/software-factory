@@ -135,7 +135,8 @@ try {
   const tools = await import(root("agent/lib/roster-tools.ts"));
   const ctxFor = (email) => ({ session: { id: `sess-${TAG}-${email}`, auth: { current: { authenticator: "app", principalId: email, principalType: "user", attributes: { email } } } } });
   const tool = async (t, input, who) => Promise.resolve().then(() => t.execute(input, ctxFor(who))).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-  const rowOf = async (email) => (await admin`SELECT org_id, team, manager_email, departments, attributes FROM people_roster WHERE email = ${email}`)[0];
+  // The roster is keyed by (org_id, email) (drizzle/0049): a row is read in the workspace it belongs to, A unless named.
+  const rowOf = async (email, org = A) => (await admin`SELECT org_id, team, manager_email, departments, attributes FROM people_roster WHERE org_id = ${org} AND email = ${email}`)[0];
   const snapshotA = async () => JSON.stringify(await admin`SELECT to_jsonb(x) - 'updated_at' AS r FROM people_roster x WHERE org_id = ${A} ORDER BY email`);
   const asOrg = (org, fn) => app.begin(async (tx) => {
     await tx`select set_config('app.org_id', ${org}, true)`;
@@ -268,9 +269,13 @@ try {
     const bLine = await post(BEN, { email: BOB, managerEmail: X1 });
     check("B's owner naming A's person as supervisor: 400", bLine.status === 400 && /is not in this workspace/.test(bLine.body?.error ?? ""), bLine);
     const bWrite = await post(BEN, { email: X1, ...(DECLARED ? { departments: ["north"], attributes: { grade: "g1" } } : { team: "taken" }) });
-    // The roster's key is the email alone today (people_roster's composite key is a later migration), so B cannot add
-    // a row under an email A holds: the write fails, and A's row is untouched.
-    check("B's owner writing A's person's email is not applied, and A's rows are untouched", bWrite.status !== 200 && (await rowOf(X1)).org_id === A && (await snapshotA()) === aBefore, bWrite);
+    // The roster's key is (org_id, email) (drizzle/0049): B adding an email A holds writes B's OWN row, and A's row is
+    // untouched. B's answer carries only what B wrote.
+    const bRow = await rowOf(X1, B);
+    check("B's owner writing A's person's email: 200, B's own row, A's rows untouched", bWrite.status === 200 && bRow?.org_id === B && (DECLARED ? same(bRow.departments, ["north"]) && same(bRow.attributes, { grade: "g1" }) : bRow.team === "taken") && (await rowOf(X1)).org_id === A && (await snapshotA()) === aBefore && bWrite.body?.item?.name == null, { bWrite, bRow });
+    const bAgain = await roster(BEN);
+    check("…B's roster now lists that email once, as B's (B's team, not A's)", bAgain.body.items.filter((i) => i.email === X1).length === 1 && (DECLARED || bAgain.body.items.find((i) => i.email === X1)?.team === "taken"), bAgain.body);
+    await admin`DELETE FROM people_roster WHERE org_id = ${B} AND email = ${X1}`;
     const seen = await asOrg(B, (tx) => tx`SELECT email, departments, attributes FROM people_roster WHERE org_id = ${A}`);
     const changed = await asOrg(B, (tx) => tx`UPDATE people_roster SET departments = '["north"]'::jsonb, attributes = '{"planted": true}'::jsonb WHERE org_id = ${A} RETURNING email`);
     const unscoped = await asOrg(B, (tx) => tx`SELECT email FROM people_roster WHERE email = ${X1}`);

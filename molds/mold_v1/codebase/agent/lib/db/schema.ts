@@ -983,15 +983,17 @@ export const cycleMemberGoals = pgTable(
 /**
  * The org roster — who's on which team and who they report to. Powers the
  * "me / my reportees / my team / everyone" scope filters in the TODOs
- * workspace. Keyed by email (the same email that appears as an owner on
- * tickets/deployments/implementations). Backfilled from internal_staff; team +
- * manager are filled in by an operator (or the agent via upsert_roster_member).
+ * workspace. Keyed by (org_id, email): one workspace's row per person (the same
+ * email that appears as an owner on tickets/deployments/implementations), so the
+ * same person can be on several workspaces' rosters, each seeing only its own row
+ * (drizzle/0049, mold_v1-285). Backfilled from internal_staff; team + manager are
+ * filled in by an operator (or the agent via upsert_roster_member).
  */
 export const peopleRoster = pgTable("people_roster", {
-  // email is the PK today; the composite (org_id, email) PK is deferred to the
-  // NOT-NULL migration (Phase 3) once every write stamps org_id. Nullable now.
-  email: text("email").primaryKey(),
+  // org_id stands before email, the order of the key: drizzle-kit reads a composite key's columns in the order they
+  // stand in the table, so the other way round the deploy's drift step would re-create the key on every deploy.
   orgId: text("org_id").notNull(),
+  email: text("email").notNull(),
   name: text("name"),
   team: text("team"),
   // Who this person REPORTS to (the reporting chain walks this): their supervisor (profile `people.supervisor_label`).
@@ -1016,7 +1018,10 @@ export const peopleRoster = pgTable("people_roster", {
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  // A person is one row PER WORKSPACE (drizzle/0049): workspace B adding an email A holds writes B's own row.
+  primaryKey({ name: "people_roster_org_id_email_pk", columns: [t.orgId, t.email] }),
+]);
 
 export const todos = pgTable(
   "todos",
