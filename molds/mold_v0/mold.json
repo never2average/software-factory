@@ -27,15 +27,30 @@
     ]
   },
   "vercel": {
-    "config": "vercel.json",
+    "$comment": "TWO projects on Vercel (operator's decision 2026-10-20, ticket mold_v0-029): <project>-api is the API and MCP function from the root vercel.json, the only one with the app's own Neon Postgres and the product's minted keys; <project> is the web console (web/, a server-rendered Next.js app behind a middleware) as its own Next.js project, given the API's address through the one variable its next.config reads (found there at plan time, never named here) and only the sign-in names below. Deployed api first; both rolled back if either fails its health.",
     "cron_secret": "CRON_SECRET",
-    "config_env": {
-      "PUBLIC_URL": "{url}"
-    },
-    "console": {
-      "dir": "web",
-      "build": "npm install --no-package-lock --no-audit --no-fund && NEXT_TELEMETRY_DISABLED=1 npm run build",
-      "out": "web/out"
+    "projects": {
+      "api": {
+        "suffix": "-api",
+        "dir": ".",
+        "config": "vercel.json",
+        "database": true,
+        "health": "/healthz"
+      },
+      "web": {
+        "suffix": "",
+        "dir": "web",
+        "framework": "nextjs",
+        "proxied_health": "/healthz",
+        "pages": [
+          "/admin",
+          "/app"
+        ],
+        "operator_env": {
+          "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "optional",
+          "CLERK_SECRET_KEY": "optional"
+        }
+      }
     }
   },
   "lane_key": {
