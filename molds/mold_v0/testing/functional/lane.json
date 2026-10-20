@@ -1,0 +1,74 @@
+{
+  "lane": "functional",
+  "order": 10,
+  "summary": "The product's own checks, run exactly as the product runs them: its typecheck (server, orchestrator, web), its end-to-end smoke test on an embedded throwaway Postgres (every MCP tool, the worker API, scoring, API-key auth, the landing page and access requests, ending in its per-tool tenant-isolation sweep: every MCP tool called as a second organisation with every identifier of the first), and its MCP connector check against the deployed address.",
+  "not_covered": [
+    "The smoke test runs on this machine against an embedded Postgres, not against the deployed database: it proves the code, and the deployed stack is graded by the mcp.check row and the deploy's own health step.",
+    "mcp.check calls the read-only tools only (the product's own scripts/mcp-check.ts): it never launches a simulation or spends inference.",
+    "Signed-in pages (/admin, /app) behind the product's own sign-in provider are not driven by any row here."
+  ],
+  "checks": [
+    {
+      "name": "typecheck",
+      "run": "npm run typecheck; s=$?; rm -f web/tsconfig.tsbuildinfo; exit $s",
+      "cwd": "codebase",
+      "timeout_s": 900,
+      "requires": [
+        {
+          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/node_modules/.bin/tsc"
+        },
+        {
+          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/orchestrator/node_modules"
+        },
+        {
+          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/web/node_modules"
+        }
+      ],
+      "why": "The product's own `npm run typecheck`: a type error in the server, the orchestrator or the web console."
+    },
+    {
+      "name": "smoke",
+      "run": "d=$(mktemp -d) && env -u DATABASE_URL -u CLICKHOUSE_URL PGLITE_DIR=\"$d\" npm run smoke; s=$?; rm -rf \"$d\"; exit $s",
+      "cwd": "codebase",
+      "timeout_s": 2400,
+      "requires": [
+        {
+          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/node_modules/.bin/tsx"
+        }
+      ],
+      "expect": {
+        "stdout": [
+          "isolation sweep: [0-9]+ tools x [0-9]+ argument sets",
+          "smoke test passed"
+        ]
+      },
+      "why": "The product's own `npm run smoke`, which must reach its last section, the per-tool isolation sweep; a failure is the product's own assertion, quoted in the output."
+    },
+    {
+      "name": "mcp.check",
+      "run": "npm run mcp:check -- \"$(python3 {root}/.claude/scripts/lib/single_service.py lane-key-path {app_id})\"",
+      "cwd": "codebase",
+      "timeout_s": 300,
+      "requires": [
+        {
+          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/node_modules/.bin/tsx"
+        },
+        {
+          "cmd": "python3 {root}/.claude/scripts/lib/single_service.py lane-key-path {app_id}",
+          "else": "Deploy the app, then (with the operator's yes, it adds one organisation to the app's data) give the MCP check an organisation of its own: python3 .claude/scripts/provision.py {app_id} --lane-key --dry-run, then --lane-key --yes"
+        }
+      ],
+      "expect": {
+        "stdout": [
+          "connector check passed"
+        ]
+      },
+      "why": "The product's own `npm run mcp:check` against the deployed address, as a client would connect: initialize, tools, prompts, the dashboard resource and every read-only tool."
+    }
+  ]
+}
