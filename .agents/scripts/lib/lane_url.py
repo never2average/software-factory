@@ -11,6 +11,8 @@ Exit 0 with the answer on stdout, or exit 1 with one sentence on stderr.
                     infrastructure.deployed_at is recorded: both are written by provision.py --deploy-remote after
                     the deployed app answered its health checks, so a URL someone typed is never read as this
                     app (factory.py validate refuses that state too; the reader does not trust the validator alone).
+  target compose_remote  infrastructure.compose_remote.production_url, under the same rule as vm_remote (a single-service
+                    mold's own compose stack on its own server; lib/single_service.py, mold_v0-028).
   target vm         no URL.
 
 WHO USES IT. lanes.py for the {url} placeholder, and mint.py / mint_report.py / mint_handoff.py / agent_cli.py for
@@ -26,8 +28,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 def target_url(infra):
     """The deployed URL the lanes grade, or "" when this application has none."""
     infra = infra or {}; t = infra.get("target")
-    if t == "vm_remote":
-        vr = infra.get("vm_remote") or {}
+    if t in ("vm_remote", "compose_remote"):
+        vr = infra.get(t) or {}
         url = (vr.get("production_url") or "").strip().rstrip("/")
         if url and vr.get("domain") and url == f"https://{vr['domain']}" and infra.get("deployed_at"): return url
         return ""
@@ -41,7 +43,7 @@ def main(a):
         print(f"{app_id}: state/application/{app_id}/infrastructure.json is missing or unreadable, so there is no application to measure.", file=sys.stderr); return 1
     url = target_url(infra)
     if not url:
-        how = ("python3 .claude/scripts/provision.py %s --deploy-remote" if infra.get("target") == "vm_remote" else "python3 .claude/scripts/provision.py %s --deploy") % app_id
+        how = ("python3 .claude/scripts/provision.py %s --deploy-remote" if infra.get("target") in ("vm_remote", "compose_remote") else "python3 .claude/scripts/provision.py %s --deploy") % app_id
         print(f"{app_id}: this application has no deployed address yet, and this check grades the running app. Deploy it first: {how}", file=sys.stderr); return 1
     print(f"--url {url}" if harness else url); return 0
 

@@ -279,9 +279,10 @@
           "enum": [
             "managed_provider",
             "private_docker_network",
-            "remote_loopback"
+            "remote_loopback",
+            "compose_network"
           ],
-          "description": "How the database is reachable. There is no public-port option, by design. remote_loopback (target vm_remote): the app's own cluster on the deployed server, listening on 127.0.0.1 only, behind a firewall that opens 22/80/443 and nothing else."
+          "description": "How the database is reachable. There is no public-port option, by design. remote_loopback (target vm_remote): the app's own cluster on the deployed server, listening on 127.0.0.1 only, behind a firewall that opens 22/80/443 and nothing else. compose_network (target compose_remote, mold_v0-028): the stack's own Postgres container, reachable on the compose project's network only, with no published port."
         },
         "network": {
           "type": "string"
@@ -310,9 +311,10 @@
             "s3",
             "gcs",
             "azure_blob",
-            "fs"
+            "fs",
+            "none"
           ],
-          "description": "fs (target vm_remote only): files on the deployed server's disk under infrastructure.vm_remote.storage.dir."
+          "description": "fs (target vm_remote only): files on the deployed server's disk under infrastructure.vm_remote.storage.dir. none: the application has no blob store of its own (a single-service mold such as mold_v0)."
         },
         "root_prefix": {
           "type": "string"

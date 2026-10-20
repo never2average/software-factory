@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """mint.py — one application, from a description to a tested, live product. The whole line, in order.
 
-  mint.py new <app_id> --brief briefs/<app_id>.md [--mold mold_v1]   start one (the brief is a page of plain words)
+  mint.py new <app_id> --brief briefs/<app_id>.md [--mold mold_v0|mold_v1]   start one (the brief is a page of plain words;
+                                   without --mold, the mold on the brief's own `Mold:` line, else mold_v1; an unregistered one is refused)
   mint.py <app_id>                 where it stands: every station, and THE ONE thing that happens next
   mint.py <app_id> run             do every station that needs nobody, in order; stop at the first that needs
                                    the operator (and say exactly what is needed) or at the first that fails
@@ -50,6 +51,13 @@ so `run` can be repeated at any time and picks up where things stand:
              vm_remote.production_url for a server of its own)                                <- the operator's npm sign-in
   address    the application's own domain serves it (only if one is named)                  <- one DNS record
 
+A SINGLE-SERVICE MOLD (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028) keeps the same ten stations and order.
+packs, brand, workspaces and package are "not needed", each with the reason its mold.json gives; keys reads provision.py's
+check as for a server of its own; deploy runs `provision.py <app> --deploy-remote` (its own compose stack, target
+compose_remote) or `--deploy` (one Vercel project), and needs no sign-in; tests is done when the five lanes ran after the
+deploy and none failed, and asks the operator for one yes when the MCP check still lacks an organisation of its own
+(`provision.py <app> --lane-key`). code-request and code are mold_v1's emailed sign-in and refuse such an app.
+
 This file only ORDERS the work. Each station is the script that already owns it (intake.py, packs.py, branding.py,
 provision.py, workspace.py, lanes.py, agent_cli.py, domain.py); their rules and refusals are unchanged.
 """
@@ -65,6 +73,7 @@ DONE, TODO, OPERATOR, FAILED, NA = "done", "next", "needs you", "failed", "not n
 sys.path.insert(0, os.path.join(S, "lib"))
 import lane_url   # target_url(infra): where the application lives, per deploy target (vercel, or a server of its own)
 import membership # who the deployed app will email a sign-in code to, read from its own database (mold_v1-245)
+import single_service   # a mold that ships as one service with its own compose stack: its own station readings (mold_v0-028)
 import agent_result as AR, runs, services   # --json results, background runs, the rehearsal switch and call log
 PRIVATE = services.private_dir()   # FACTORY_PRIVATE_DIR, else ~/.cache/software-factory
 
@@ -112,7 +121,7 @@ def st_brief(app, a, i):
 
 def st_state(app, a, i):
     q = os.path.join(adir(app), "questions.json")
-    if os.path.exists(q) and load(q): return OPERATOR, f"{len(load(q))} question(s) the brief does not answer are in state/application/{app}/questions.json (the intake subagent asks them)"
+    if os.path.exists(q) and load(q): return OPERATOR, f"{len(load(q).get('pending') or []) if isinstance(load(q), dict) else len(load(q))} question(s) the brief does not answer are in state/application/{app}/questions.json (the intake subagent asks them)"
     if not a or not i: return TODO, "turn the brief into the four state files"
     r = quiet(os.path.join(S, "factory.py"), "validate")
     return (DONE, "four state files, valid") if r.returncode == 0 else (FAILED, clean(r.stdout + r.stderr).strip().splitlines()[-1][:200])
@@ -129,7 +138,7 @@ def st_brand(app, a, i):
 
 MISSING_KEYS = {}   # app -> the key names st_keys found missing (for --json's needs)
 def st_keys(app, a, i):
-    if i.get("target") == "vm_remote":
+    if i.get("target") in ("vm_remote", "compose_remote"):
         # Its own server (mold_v1-075): the check is offline, and what is left is the server, the domain and the key
         # name. The values themselves are asked for at a hidden prompt during the deploy and stored on the server.
         r = quiet(os.path.join(S, "provision.py"), app, "--check"); out = clean(r.stdout + r.stderr)
@@ -142,6 +151,7 @@ def st_keys(app, a, i):
     missing = list(dict.fromkeys(re.findall(r"--set-secret (\S+)", out)))
     MISSING_KEYS[app] = missing
     if not missing: return FAILED, out.strip().splitlines()[-1][:220]
+    if single_service.applies(a, ROOT): return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)} (this app's own; never another app's)"
     return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)}. If another of your apps already runs: mint.py {app} reuse-keys <that_app>"
 
 def st_deploy(app, a, i):
@@ -357,7 +367,7 @@ def survey(app):
     a, i = docs(app); rows = []; blocked = False
     for name, fn in STATIONS:
         if (a is None or i is None) and name not in ("brief", "state"): rows.append((name, "later", "")); continue
-        try: st, why = fn(app, a, i)
+        try: st, why = single_service.station(name, app, a, i, ROOT) or fn(app, a, i)
         except Exception as e: st, why = FAILED, f"could not be read: {e}"
         # Everything after a station that is not finished is "later", except the optional ends (package, address),
         # which only wait for the deploy: an npm sign-in must not hold up testing, and the reverse.
@@ -407,6 +417,9 @@ def do(app, name):
         args = [os.path.join(S, "intake.py"), brief, "--app", app]; ans = os.path.join(adir(app), "answers.json")
         if os.path.exists(ans): args += ["--answers", ans]
         return py(*args).returncode in (0,)
+    if name == "deploy" and single_service.applies(a, ROOT):
+        # Its own compose stack on its own server, or one Vercel project: no sign-in, no smoke chat (mold_v0-028).
+        return py(os.path.join(S, "provision.py"), app, "--deploy-remote" if i.get("target") == "compose_remote" else "--deploy").returncode == 0
     if name == "deploy" and (i or {}).get("target") == "vercel" and st_deploy(app, a, i)[1] == SMOKE_PENDING:
         return py(os.path.join(S, "provision.py"), app, "--smoke").returncode == 0
     if name == "deploy":
@@ -501,6 +514,9 @@ RAN, LAST_ROWS = [], {}
 
 def reuse_keys(app, other):
     a, i = docs(app); oa, oi = docs(other)
+    if single_service.applies(a, ROOT):
+        sys.exit(f"{app}: its keys are its own (the database address above all: another app's would share that app's data). Set each with: "
+                 f"python3 .claude/scripts/provision.py {app} --set-secret <NAME>")
     if not i or not oi: sys.exit("both applications need their state written first")
     sys.path.insert(0, S); import clone
     vals = clone.pull_env(oi["vercel"]["project"], ROOT)
@@ -568,11 +584,18 @@ def post(url, body):
         try: sys.exit(json.load(e).get("error") or f"refused ({e.code})")
         except ValueError: sys.exit(f"refused ({e.code})")
 
+def mold_v1_only(app, what):
+    """code-request and code are mold_v1's emailed sign-in; a single-service app has none of its kind (mold_v0-028)."""
+    if single_service.applies(docs(app)[0], ROOT):
+        sys.exit(f"{app}: {what} is the emailed sign-in of mold_v1 apps; {docs(app)[0]['mold_id']} has its own accounts, and its lanes need "
+                 f"no sign-in. Nothing was sent.")
+
 def code_request(app, email, check=None):
     """Ask the app to email `email` a sign-in code, ONLY after looking whether it will (mold_v1-245). The app answers
     the same "on its way" to every address and emails only a member or an invited one, so its answer says nothing:
     an address seen in no workspace is told so and nothing is sent; one that could not be looked up is told the code
     was requested and arrives only if it is a member. "On its way" is said only of an address seen to be one."""
+    mold_v1_only(app, "code-request")
     url = origin(app)
     m = (check or membership.check)(app, email, look)
     send, words = membership.said(app, email, m)
@@ -580,6 +603,7 @@ def code_request(app, email, check=None):
     post(url + "/api/auth/email/request", {"email": email}); print(words); return 0
 
 def code(app, digits, email):
+    mold_v1_only(app, "code")
     r = post(origin(app) + "/api/auth/email/verify", {"email": email, "code": digits})
     os.makedirs(PRIVATE, mode=0o700, exist_ok=True)
     fd = os.open(session_path(app), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -590,7 +614,7 @@ def new(app, brief, mold):
     if not re.match(r"^[a-z][a-z0-9_]{2,40}$", app): sys.exit("an app id is lowercase letters, digits and underscores")
     if os.path.isdir(adir(app)): sys.exit(f"{app} already exists: python3 .claude/scripts/mint.py {app}")
     if not os.path.exists(os.path.join(ROOT, brief)): sys.exit(f"no brief at {brief}")
-    r = py(os.path.join(S, "intake.py"), brief, "--app", app, "--mold", mold)
+    r = py(os.path.join(S, "intake.py"), brief, "--app", app, *(["--mold", mold] if mold else []))
     if r.returncode == 0: finish_new(app, open(os.path.join(ROOT, brief)).read())
     show(app); return 0 if r.returncode in (0, 2) else 1
 
@@ -598,6 +622,7 @@ def finish_new(app, brief_text):
     """What a newcomer should not have to ask for: the brand from the product's name, and the app's own agent
     package under the operator's npm organisation (factory.json defaults.agent_cli_scope)."""
     a, i = docs(app); d = load_factory(os.path.join(ROOT, "state")).get("defaults", {})
+    if single_service.applies(a, ROOT): return     # no brand overlay and no agent package of its own (its mold.json says why)
     m = re.search(r"^\s*product name:\s*\"?([^\n\".]+?)\"?\s*(?:\.|$)", brief_text, re.I | re.M)
     if m and not ((a.get("surface") or {}).get("branding") or {}).get("product_name"):
         args = ["--name", m.group(1).strip()]
@@ -612,6 +637,7 @@ def finish_new(app, brief_text):
 
 def self_test():
     workspace_self_test()          # first: the checks below leave `survey` and `show` replaced
+    SINGLE_N[0] = single_self_test()   # also before them (mold_v0-028): it reads the real survey
     assert clean("\x1b[32mok\x1b[0m") == "ok"
     assert [n for n, _ in STATIONS] == ["brief", "state", "packs", "brand", "keys", "deploy", "workspaces", "tests", "package", "address"]
     assert re.findall(r"--set-secret (\S+)", "  python3 x.py app --set-secret EXA_API_KEY\n  … --set-secret RESEND_API_KEY") == ["EXA_API_KEY", "RESEND_API_KEY"]
@@ -735,7 +761,54 @@ def self_test():
             assert google_note("x", {"google_sign_in": {"check": {"result": "not_working"}}}).startswith("; Google sign-in is NOT WORKING") and google_note("x", {"google_sign_in": {"check": {"result": "hub"}}}) == "" and google_note("x", {}) == ""
         finally:
             globals()["adir"] = real_adir; G.check = real_check; G.services.REHEARSAL = real_reh
-    print("mint: 74 checks passed"); return 0
+    print(f"mint: {74 + SINGLE_N[0]} checks passed ({SINGLE_N[0]} of them: a single-service mold, mold_v0-028)"); return 0
+SINGLE_N = [0]
+
+def single_self_test():
+    """mold_v0-028: the ten stations read a single-service app through lib/single_service.py; its not-needed stations say
+    why; the deploy station needs no sign-in; mold_v1's emailed sign-in, reuse-keys and finish_new leave it alone; `new`
+    lets the brief name the mold."""
+    import shutil
+    n = 0
+    def ok(c, what):
+        nonlocal n; n += 1; assert c, what
+    a = {"app_id": "zz", "mold_id": "mold_v0", "status": "planned", "mold_commit": mold_commit("mold_v0")}
+    i = {"target": "compose_remote", "secrets_user": [], "compose_remote": {"domain": "zz.example.org"}}
+    saved = dict(globals()); saved_st = list(STATIONS)
+    try:
+        globals()["docs"] = lambda app: (a, i)
+        stub = lambda app, a_, i_: (DONE, "stub")
+        STATIONS[:] = [(nm, stub if nm in ("brief", "state", "keys") else fn) for nm, fn in saved_st]
+        rows = {nm: (st, why) for nm, st, why in survey("zz")}
+        ok(all(rows[s][0] == NA and rows[s][1] for s in ("packs", "brand", "workspaces", "package")), f"packs, brand, workspaces, package: not needed, with a reason: {rows}")
+        ok(rows["deploy"] == (TODO, "first deploy to its own server"), f"the deploy is next and needs only a yes: {rows['deploy']}")
+        ok(rows["tests"][0] == "later" and rows["address"][0] == NA, "tests wait for the deploy; the address comes with it")
+        r = survey_result("zz", survey("zz"))
+        ok(r["status"] == "done" and r["next"].startswith("Ask the operator for a plain yes"), "--json: the deploy asks for a plain yes, not a sign-in")
+        ok(needs_for("zz", "tests", "why")[0]["kind"] == "approval", "the tests station's need is a yes (the lane-check organisation), not a sign-in code")
+        ran = []
+        globals()["py"] = lambda *x, **k: ran.append(x) or subprocess.CompletedProcess(x, 0, "", "")
+        ok(do("zz", "deploy") and ran[-1][1:] == ("zz", "--deploy-remote"), f"the deploy station runs provision.py --deploy-remote: {ran[-1:]}")
+        i["target"] = "vercel"; ran.clear(); do("zz", "deploy")
+        ok(ran[-1][1:] == ("zz", "--deploy"), "  ...and --deploy on Vercel")
+        for fn, args in ((code_request, ("zz", "o@example.org")), (code, ("zz", "123456", "o@example.org")), (reuse_keys, ("zz", "other"))):
+            try: fn(*args); ok(False, f"{fn.__name__} refuses a single-service app")
+            except SystemExit as e: ok("Nothing was sent" in str(e) or "its own" in str(e), f"{fn.__name__} refuses a single-service app: {e}")
+        ran.clear(); globals()["docs"] = lambda app: ({"mold_id": "mold_v0"}, {}); finish_new("zz", "Product name: Shop\n")
+        ok(ran == [], "finish_new neither brands nor names an agent package for a single-service app")
+        import tempfile
+        bd = tempfile.mkdtemp(prefix="mint-single-"); brief = os.path.relpath(os.path.join(bd, "zz.md"), ROOT); open(os.path.join(bd, "zz.md"), "w").write("Mold: mold_v0\n")
+        globals()["show"] = lambda app, rows=None: []; globals()["finish_new"] = lambda *x: None
+        globals()["adir"] = lambda app: "/nonexistent-" + app
+        try:
+            ran.clear(); new("zz_mint_selftest", brief, None)
+            ok("--mold" not in ran[0], f"mint new without --mold lets the brief name the mold: {ran[0]}")
+            ran.clear(); new("zz_mint_selftest", brief, "mold_v0")
+            ok(ran[0][-2:] == ("--mold", "mold_v0"), "  ...and passes --mold when given")
+        finally: shutil.rmtree(bd, ignore_errors=True)
+    finally:
+        globals().update({k: saved[k] for k in ("docs", "py", "show", "finish_new", "adir")}); STATIONS[:] = saved_st
+    return n
 
 def workspace_self_test():
     """mold_v1-245. A freshly deployed app had no workspace, so it emailed nobody a code, while code-request said one
@@ -871,6 +944,8 @@ def needs_for(app, name, why):
     if name == "keys":
         return [{"kind": "secret", "name": k, "how": AR.secret_how(app, k)} for k in MISSING_KEYS.get(app) or []] or \
                [{"kind": "approval", "name": "server, domain and key name", "how": why}]
+    if name == "tests" and single_service.applies(docs(app)[0], ROOT):
+        return [{"kind": "approval", "name": "lane-check organisation", "how": why}]
     if name == "tests":
         return [{"kind": "code", "name": "one-time sign-in code", "how":
                  f"Tell me which email address can sign in to {app} and say that I may send it a code. I then run "
@@ -960,7 +1035,7 @@ def main(a):
         return 0
     if a[0] == "new":
         if len(a) < 4 or a[2] != "--brief": sys.exit(__doc__)
-        return new(a[1], a[3], a[a.index("--mold") + 1] if "--mold" in a else "mold_v1")
+        return new(a[1], a[3], a[a.index("--mold") + 1] if "--mold" in a else None)   # none named: the brief's ("mold: mold_v0"), else mold_v1
     app = a[0]
     if len(a) == 1 or a[1] == "status": show(app); return 0
     if a[1] == "run" and "--only" in a:

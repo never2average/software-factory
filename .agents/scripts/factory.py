@@ -273,7 +273,7 @@ def _vm_url(app_id, docs):
             f"delete the vm.production_url line from state/application/{app_id}/infrastructure.json"]
 # The object each target owns; the other must be absent (lane-url.py reads vercel.production_url whatever the target;
 # nothing reads vm.production_url any more, so a URL typed under `vercel` on a vm app is the only door left, and this closes it).
-TARGET_OBJECT = {"vercel": "vercel", "vm": "vm", "vm_remote": "vm_remote"}
+TARGET_OBJECT = {"vercel": "vercel", "vm": "vm", "vm_remote": "vm_remote", "compose_remote": "compose_remote"}
 def _target_objects(app_id, docs):
     """A target=vm app must carry no `vercel` object, a target=vercel app no `vm` object (mold_v1-053).
 
@@ -795,6 +795,14 @@ def _asr(app_id, docs):
     if here not in sys.path: sys.path.insert(0, here)
     import asr
     return asr.problems(app_id, a, os.path.join(ROOT, "molds", str(a.get("mold_id") or ""), "codebase"), ROOT)
+def _single_service(app_id, docs):
+    """A single-service mold (molds/<mold_id>/mold.json, today mold_v0) and the compose_remote target it alone may use
+    (mold_v0-028): its targets, its fixed install path and compose project, its database on the compose network, and
+    production_url only once a deploy recorded it (lib/single_service.py problems)."""
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+    if here not in sys.path: sys.path.insert(0, here)
+    import single_service
+    return single_service.problems(app_id, docs, ROOT)
 def _app_errors(app, adir):
     """(errors, docs) for one application directory: the four files against their schemas, then every rule the
     schemas cannot express. One function for state/application/<app_id>/ and for a fixture named with --app-dir."""
@@ -805,7 +813,8 @@ def _app_errors(app, adir):
             docs[name] = load(f); errs += _check(_current_names(name, docs[name]), load(os.path.join(sdir, f"{name}.schema.json")), f"{app}/{name}.json")
         else: errs.append(f"{app}: missing {name}.json")
     errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
-             + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs))
+             + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs)
+             + _single_service(app, docs))
     return errs, docs
 def cmd_validate(a):
     if "--app-dir" in a:
@@ -983,6 +992,14 @@ def self_test():
         rows = [json.loads(l) for l in open(os.path.join(t, "state", "tasks", "m1.jsonl")) if l.strip()]
         ok(sorted(x["title"] for x in rows if x["title"].startswith("race ")) == sorted(f"race {i}" for i in range(16))
            and len({x["task_id"] for x in rows}) == len(rows) == 19, "concurrent add/set: no write is lost and no number is used twice")
+    # mold_v0-028: compose_remote belongs to a single-service mold, and owns its object like every target
+    cr = {"compose_remote": {"ssh_user": "root", "ssh_port": 22, "ssh_key_ref": "sf_x", "install_path": "/opt/software-factory/x", "compose": {"project": "sf-x", "file": "f"}}}
+    ok(_single_service("x", {"application": {"mold_id": "mold_v1"}, "infrastructure": dict(cr, target="compose_remote")}),
+       "validate: target compose_remote on a mold that is not single-service is refused")
+    ok(_target_objects("x", {"infrastructure": dict(cr, target="compose_remote", vercel={"project": "p"})}),
+       "validate: a compose_remote app carrying a vercel object is refused (one object per target)")
+    ok(_single_service("x", {"application": {"mold_id": "mold_v0"}, "infrastructure": dict(cr, target="vm_remote")}),
+       "validate: mold_v0 on a target its mold.json does not name is refused")
     print(f"factory: {len(checks)} checks passed")
     return 0
 

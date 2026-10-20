@@ -135,6 +135,13 @@ in plain words, then runs the SAME database chain as below ON the server (SCHEMA
 with the URLs read from the server's own env file) and the same /api/ops/health gate. Values only the
 operator holds are typed at a hidden prompt and reach the server on stdin, never a command line.
 
+A SINGLE-SERVICE MOLD (molds/<mold_id>/mold.json "shape": "single_service"; today mold_v0, mold_v0-028) is handed to
+lib/single_service.py right after state is read, for every flag: target compose_remote is a server
+of the app's own running the mold's OWN compose stack under the project sf-<app id> (vm_remote's host probe, SSH,
+DNS check, key pair, hidden prompt, env file and firewall rules, reused), and target vercel is ONE project. The same
+CI gate applies to its deploys. It adds --lane-key [--dry-run] [--yes] (an organisation of the app's own for the
+lanes' MCP check). Its --help: python3 .claude/scripts/lib/single_service.py --help
+
 DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier is exhausted;
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.
 `self_hosted` means a Postgres on a PRIVATE docker network with no host port — never a public one.
@@ -150,6 +157,7 @@ import buildfit             # a heavy build sized to this machine, now (lib/buil
 import asr                  # the app's speech model for dictation, carried as ASR_* (lib/asr.py)
 import vercel_addr          # which addresses are this app's own on Vercel: read, verified, never derived (mold_v1-239)
 import google_signin        # does "Continue with Google" work at the app's address; the sign-in hub's settings (mold_v1-242)
+import single_service       # a mold that ships as one service with its own compose stack (mold_v0-028)
 ST = os.path.join(ROOT, "state")
 NOW = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 def load(p): return json.load(open(p))
@@ -3422,11 +3430,25 @@ def self_test():
         if _env is not None: os.environ["FACTORY_REHEARSAL"] = _env
     self_test_release(check)
     import operator_run; operator_run.self_test(check)   # --operator (mold_v1-230): parsing, allow-list, masking, both targets
+    self_test_single(check)                              # a single-service mold (mold_v0-028): the hand-off and its own module
     if fails:
         sys.exit("self-test FAILED:\n  " + "\n  ".join(fails))
     print(f"self-test ok: {n[0]} checks (deadlines, deploy watch, headroom, OOM retry, honest revert, signals, deploy window; "
           f"--json, exit codes, the deploy lock, --background and status, a piped secret refused; "
-          f"release: the mold CI gate, rollback on a failed health check or smoke test, promote after a rollback, --rollback)")
+          f"release: the mold CI gate, rollback on a failed health check or smoke test, promote after a rollback, --rollback; "
+          f"a single-service mold's hand-off and lib/single_service.py)")
+
+def self_test_single(check):
+    """mold_v0-028: a single-service app is handed to lib/single_service.py before any mold_v1 path, a compose_remote
+    deploy is under the deploy lock and the CI gate like every deploy, and that module's own offline checks pass."""
+    check("mold_v0 is a single-service mold, mold_v1 is not", single_service.applies({"mold_id": "mold_v0"}) and not single_service.applies({"mold_id": "mold_v1"}))
+    src = open(os.path.abspath(__file__)).read()
+    hand, op, vr = (src.index(x) for x in ('if single_service.applies(app) or target == "compose_remote":', 'if "--operator" in (a[:a.index("--")]', 'if target == "vm_remote":\n'))
+    check("the hand-off comes before --operator and the vm_remote, Vercel and local paths", hand < op < vr)
+    check("--deploy-remote of a compose_remote app takes the deploy lock", "--deploy-remote" in DEPLOY_FLAGS and _action(["x", "--deploy-remote"]) == "deploy")
+    r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/lib/single_service_selftest.py")], capture_output=True, text=True, timeout=600)
+    check("lib/single_service_selftest.py passes", r.returncode == 0, (r.stdout + r.stderr).strip()[-600:])
+    if r.returncode == 0: print("  " + r.stdout.strip().splitlines()[-1])
 
 def self_test_agent(check):
     """The agent interface, end to end in a throwaway factory with a refusing stand-in `vercel` first on PATH: one JSON
@@ -3809,6 +3831,15 @@ def _main(a):
     global ADMIN_KEYS
     ADMIN_KEYS = (ds.get("postgres", {}).get("admin_url_ref") or PROVIDER_ADMIN.get(prov, "POSTGRES_ADMIN_URL"),)
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
+    if single_service.applies(app) or target == "compose_remote":
+        # A single-service mold (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028): its own compose stack on a
+        # server of its own (target compose_remote) or one Vercel project. Nothing below this line applies to it: no
+        # three projects, no schema chain, no RLS bootstrap, no workspaces. One module owns it (lib/single_service.py).
+        real = ("--deploy-remote" in a or "--deploy" in a) and not dry
+        if real and single_service.applies(app): deploy_gate.require(app_id, app, infra, adir, a, save=save)   # only deploy what passed CI
+        rc = single_service.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__])
+        if rc == 0 and real: repo_auto(app_id, adir, "a deploy")
+        sys.exit(AR.EXIT["needs_human"] if rc and AR.NOTES["needs"] else rc)
     if "--operator" in (a[:a.index("--")] if "--" in a else a):
         # One of the mold's operator:* scripts against the deployed app (lib/operator_run.py, mold_v1-230): a dry run
         # with --dry-run, exit 3 for a yes without --yes; on the server as the web app's user, or here with the pulled
