@@ -145,6 +145,13 @@ def rehearsal(ok):
         code, out = go("zz_shop", "--json")
         ok(code == 3 and '"needs_human"' in out and "CLERK_SECRET_KEY" in out and "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in out and set(W_()["projects"]) == {"zz-shop-api"},
            f"rehearsal: the check stops for the console's two sign-in keys, creating nothing: {out[-400:]}")
+        # mold_v0-037 (2): --deploy without them stops for a person (exit 3, the keys in `needs`) before any project is made; not reverted
+        before_calls = calls(); code, out = go("zz_shop", "--deploy", "--json")
+        try: d_ = json.loads(out[out.index("{"):])
+        except ValueError: d_ = {}
+        ok(code == 3 and d_.get("status") == "needs_human" and {n_.get("name") for n_ in d_.get("needs") or []} >= {"CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"}
+           and set(W_()["projects"]) == {"zz-shop-api"} and "\"add\"" not in calls()[len(before_calls):] and "\"deploy\"" not in calls()[len(before_calls):] and st().get("status") != "reverted" and "revert" not in st(),
+           f"rehearsal: --deploy without the console's sign-in keys: needs_human, exit 3, nothing created, not reverted: {code} {d_.get('status')} {sorted(W_()['projects'])} {calls()[len(before_calls):][-300:]} {st().get('status')}")
         # what --set-secret leaves behind (it is checked against stand-ins below): the console project, created empty, holding both keys
         clerk = {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_standin", "CLERK_SECRET_KEY": "sk_standin"}
         w0 = W_(); w0["projects"]["zz-shop"] = {"id": "prj_zz-shop", "auto": True, "prod": None, "env": dict(clerk), "deps": []}
@@ -173,7 +180,7 @@ def rehearsal(ok):
         good = prod()
         world(fault={"zz-shop": "health"}); code, out = go("zz_shop", "--deploy")
         rb = inf()["vercel"].get("rollback") or {}
-        ok(code == 1 and prod() == good and st()["status"] == "reverted" and rb.get("result") == "rolled back" and "does not reach the API" in out,
+        ok(code == 1 and prod() == good and st()["status"] == "reverted" and rb.get("result") == "rolled back" and rb.get("health") == {"web": "200", "api": "200"} and "does not reach the API" in out,
            f"rehearsal: a console that fails its health puts BOTH projects back on what served before: {out[-500:]} {rb}")
         n_web = len(W_()["projects"]["zz-shop"]["deps"])
         world(fault={"zz-shop-api": "health"}); code, out = go("zz_shop", "--deploy")
@@ -340,7 +347,7 @@ def run():
                 self.calls = []; self.refuse = refuse; self._db_stat = "REAL"; self.base_choice = base_choice
                 self.projects = {p: {"env": {}, "framework": None} for p in projects}
                 for p, names in (env or {}).items(): self.projects.setdefault(p, {"env": {}, "framework": None})["env"].update({n: "standin" for n in names})
-                self.health = health or {}; self.before = before or {}; self.ndeploy = {}
+                self.health = health or {}; self.before = before or {}; self.ndeploy = {}; self.rolled = False; self.sticky = False
             def _rec(self, *a): self.calls.append(a)
             def _refuse_live_or_shared_project(self, app_id, infra):
                 self._rec("refuse", infra["vercel"]["project"])
@@ -369,9 +376,14 @@ def run():
             def promote_new(self, before, cb, roles): self._rec("promote", roles)
             def _deployed_address(self, proj, out, cb, infra): return f"https://{proj}.vercel.app"
             def pull_env(self, cb, proj, required=False, environment="production"): return dict((self.projects.get(proj) or {"env": {}})["env"])
-            def _read_health(self, url):
-                code = next((c for k, c in self.health.items() if url.startswith(k)), "200"); return (code, {"ok": code == "200"}, "")
-            def _point_production(self, rec, dep, cb, how): self._rec("point", rec["project"], dep, how); return True, "ok"
+            def _read_health(self, url):   # a fault lives in this run's deployment: once rolled back it serves again, unless sticky
+                self._rec("health", url)
+                code = next((c for k, c in self.health.items() if url.startswith(k)), "200") if (not self.rolled or self.sticky) else "200"
+                return (code, {"ok": code == "200"}, "")
+            def _point_production(self, rec, dep, cb, how): self._rec("point", rec["project"], dep, how); self.rolled = True; return True, "ok"
+            def _vapi(self, path, cb, method="GET", timeout=60):   # only asked when _project_meta found nothing: Vercel's not-found
+                self._rec("vapi", path)
+                return (1, {}, "Error: not signed in") if getattr(self, "unreadable", False) else (1, {"error": {"code": "not_found", "message": "Project not found"}}, "Project not found")
             def explain(self, n): pass
             def trusted_stdin(self): return False
             def stop_for_human(self, msg): raise SystemExit(3)
@@ -427,6 +439,50 @@ def run():
                f"a base taken on vercel.app: both projects take the free base provision.py chooses, recorded, and said: {said} {fp.calls}")
             fp = FakeP(projects=["zz-shop-api"]); SS.ensure_projects("zz_shop", cp(vi), cb, K, fp, say=lambda s: None, root=t)
             ok(not any(c[0] == "choose" for c in fp.calls) and ("vrun", "vercel project add zz-shop --scope team-x") in fp.calls, "with one project already there, the base is kept and only the other is made")
+            # mold_v0-037 (1): --set-secret, when it is the first thing to create a project, goes through the same free-base choice
+            sd = os.path.join(t, "ssapp"); os.makedirs(sd, exist_ok=True)
+            fp = FakeP(base_choice=("zz-shop-team", "zz-shop.vercel.app is someone else's, so the projects are named zz-shop-team, zz-shop-team-api, zz-shop-team-workflow")); inf = cp(vi)
+            SS.set_secret_vercel("zz_shop", va, inf, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", fp, root=t, value="pk_standin_xyz", adir=sd, say=lambda s_: None)
+            saved = json.load(open(os.path.join(sd, "infrastructure.json")))
+            ok(("choose", "zz-shop") in fp.calls and ("vrun", "vercel project add zz-shop-team --scope team-x") in fp.calls
+               and not any(c[0] == "vrun" and c[1].startswith("vercel project add zz-shop ") for c in fp.calls)
+               and fp.calls.index(("choose", "zz-shop")) < fp.calls.index(("vrun", "vercel project add zz-shop-team --scope team-x"))
+               and ("set_env", "zz-shop-team", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY") in fp.calls
+               and saved["vercel"]["project"] == "zz-shop-team" and saved["vercel"]["name_history"][0]["from"] == "zz-shop"
+               and saved["vercel"]["projects"] == {"api": "zz-shop-team-api", "web": "zz-shop-team"},
+               f"--set-secret creating the first project takes the free base provision.py chooses, recorded before anything is made: {fp.calls}")
+            fp = FakeP(base_choice=(None, "no free name: zz-shop: taken")); inf = cp(vi)
+            try: SS.set_secret_vercel("zz_shop", va, inf, "PAY_SECRET_KEY", fp, root=t, value="sk-standin-xyz", adir=sd, say=lambda s_: None); ok(False, "--set-secret with no free base is refused")
+            except SS.Stop as e_: ok("refusing to create" in str(e_) and not any(c[0] in ("vrun", "set_env") for c in fp.calls), f"--set-secret with no free base is refused, nothing created or stored: {fp.calls}")
+            fp = FakeP(projects=["zz-shop"], base_choice=("zz-shop-team", "taken")); inf = cp(vi)
+            SS.set_secret_vercel("zz_shop", va, inf, "PAY_SECRET_KEY", fp, root=t, value="sk-standin-xyz", adir=sd, say=lambda s_: None)
+            ok(not any(c[0] == "choose" for c in fp.calls) and ("set_env", "zz-shop-api", "PAY_SECRET_KEY") in fp.calls, "--set-secret next to an existing project keeps the base")
+            # mold_v0-037 (2): --deploy without the console's required sign-in keys stops for a person BEFORE any project is made or renamed
+            vneed = cp(vi); vneed["secrets_user"] = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]
+            vneed["secrets_optional"] = ["PAY_SECRET_KEY"]
+            nd = os.path.join(t, "needapp"); os.makedirs(nd, exist_ok=True); a_need = dict(va); said = []
+            fp = FakeP(base_choice=("zz-shop-team", "taken"))
+            rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], a_need, vneed, {}, nd, fp, say=said.append, root=t)
+            asked = [c for c in fp.calls if c[0] == "ask"]
+            ok(rc == 1 and asked and set(asked[0][1][1]) == {"CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"}
+               and not any(c[0] in ("choose", "vrun", "set_env", "deploy", "neon") for c in fp.calls) and vneed["vercel"]["project"] == "zz-shop"
+               and a_need.get("status") == "planned" and "revert" not in a_need and not os.path.exists(os.path.join(nd, "application.json")),
+               f"--deploy without the required sign-in keys asks for them before any project is made or renamed, and is not reverted: {said[-1:]} {fp.calls}")
+            fp = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop": ["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]})
+            rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], dict(va), cp(vneed), {}, nd, fp, say=lambda s_: None, root=t)
+            asked = [c for c in fp.calls if c[0] == "ask"]
+            ok(rc == 1 and asked and asked[0][1][1] == ["CLERK_SECRET_KEY"] and not any(c[0] in ("vrun", "deploy") for c in fp.calls),
+               f"with the projects there, only the names they do not hold are asked for: {asked}")
+            fp = FakeP(); fp.unreadable = True; said = []; a_un = dict(va)
+            rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], a_un, cp(vneed), {}, nd, fp, say=said.append, root=t)
+            ok(rc == 1 and not any(c[0] in ("ask", "vrun", "choose") for c in fp.calls) and "could not be read from Vercel" in " ".join(said),
+               f"a Vercel that cannot be read (not signed in) is never taken for empty projects: no keys asked for, nothing made: {said[-1:]} {fp.calls}")
+            # a cancelled --set-secret (no value read) leaves the name choice unrecorded and nothing made
+            cd = os.path.join(t, "cancelapp"); os.makedirs(cd, exist_ok=True)
+            fp = FakeP(base_choice=("zz-shop-team", "taken"))
+            try: SS.set_secret_vercel("zz_shop", va, cp(vi), "PAY_SECRET_KEY", fp, root=t, adir=cd, say=lambda s_: None); ok(False, "a piped --set-secret stops")
+            except (SystemExit, SS.Stop): ok(not os.path.exists(os.path.join(cd, "infrastructure.json")) and not any(c[0] in ("vrun", "set_env") for c in fp.calls),
+                                             f"a --set-secret with no value records no new name and makes nothing: {fp.calls}")
         except BaseException as e_: ok(False, f"the Vercel projects: refusals, scope and names: crashed: {type(e_).__name__}: {e_}"[:300])
         # the database: provisioned on the api project when absent (provision.py's Neon path, emptiness read with the mold's own client), never rewritten
         try:
@@ -494,6 +550,67 @@ def run():
             fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before={"zz-shop-api": "dpl_api_old"})
             a_, i_, err = vdeploy(fp)
             ok(not err and ("promote", ["api"]) in fp.calls and not ("promote", ["web"]) in fp.calls, f"a project with an earlier deployment is promoted past an earlier rollback: {err[:120]}")
+            # mold_v0-037 (4): after a rollback health is read again; "rolled back" only when it answered 200 ok
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before, health={web_u: "502"})
+            a_, i_, err = vdeploy(fp); rb = i_["vercel"]["rollback"]
+            last_point = max(i for i, c in enumerate(fp.calls) if c[0] == "point")
+            ok(rb["result"] == "rolled back" and rb["health"] == {"web": "200", "api": "200"}
+               and {("health", web_u + "/healthz"), ("health", api_u + "/healthz")} <= set(fp.calls[last_point:]),
+               f"a rollback re-reads both healths after it and records them: {rb}")
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before, health={web_u: "502"}); fp.sticky = True
+            a_, i_, err = vdeploy(fp); rb = i_["vercel"]["rollback"]
+            ok(rb["result"] == "rolled back, but health is not all 200" and rb["health"]["web"] == "502" and "not all 200" in err,
+               f"a rollback whose health still fails records what it measured, never 'rolled back': {rb} {err[-160:]}")
+            # mold_v0-037 (5): an unexpected error half-way rolls both back, reverts, re-raises; the link temp directories are removed
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before)
+            links = []; real_link = fp._link_dir
+            def link_rec(proj, cb_, real_link=real_link): d_ = real_link(proj, cb_); links.append(d_); return d_
+            fp._link_dir = link_rec
+            def boom(proj, out, cb_, infra_):
+                if proj == "zz-shop": raise RuntimeError("a bug half-way")
+                return f"https://{proj}.vercel.app"
+            fp._deployed_address = boom
+            a_ = dict(va); i_ = cp(vi); raised = None; i_["vercel"].update(api_url=api_u, production_url=web_u)   # what the last good deploy recorded
+            try: SS.vercel_deploy("zz_shop", a_, i_, vdir, fp, say=lambda s_: None, root=t, read_page=pages({}))
+            except RuntimeError as e_: raised = e_
+            except SS.Stop as e_: raised = e_
+            saved_app = json.load(open(os.path.join(vdir, "application.json")))
+            ok(isinstance(raised, RuntimeError) and ("point", "zz-shop", "dpl_web_old", "rollback") in fp.calls and ("point", "zz-shop-api", "dpl_api_old", "rollback") in fp.calls
+               and i_["vercel"]["rollback"]["result"] == "rolled back" and "RuntimeError" in i_["vercel"]["rollback"]["why"]
+               and a_["status"] == "reverted" and saved_app["status"] == "reverted" and "RuntimeError" in saved_app["revert"]["reason"],
+               f"an unexpected error half-way: both projects back, the app reverted, the error re-raised: {raised!r} {i_['vercel'].get('rollback')} {a_.get('revert')}")
+            ok(len(links) == 2 and not any(os.path.exists(d_) for d_ in links), f"the link temp directories are removed: {links}")
+            ok(i_["vercel"]["rollback"]["health"] == {"web": "200", "api": "200"}, f"...health read after it on the addresses the last deploy recorded: {i_['vercel']['rollback']}")
+            a_ = dict(va); i_ = cp(vi); fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before); fp._deployed_address = boom
+            try: SS.vercel_deploy("zz_shop", a_, i_, vdir, fp, say=lambda s_: None, root=t, read_page=pages({}))
+            except RuntimeError: pass
+            ok(i_["vercel"]["rollback"]["health"]["web"] == "no address recorded" and i_["vercel"]["rollback"]["result"] == "rolled back, but health is not all 200",
+               f"a console whose address was never recorded is not claimed healthy after a rollback: {i_['vercel']['rollback']}")
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"]); links = []; real_link = fp._link_dir
+            fp._link_dir = lambda proj, cb_, real_link=real_link: links.append(real_link(proj, cb_)) or links[-1]
+            a_, i_, err = vdeploy(fp)
+            ok(not err and len(links) == 2 and not any(os.path.exists(d_) for d_ in links), f"a good deploy leaves no link temp directory behind: {err[:120]} {links}")
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"]); fp._link_dir = lambda proj, cb_: None
+            a_, i_, err = vdeploy(fp)
+            ok("could not be read back" in err and not any(c[0] == "deploy" for c in fp.calls), f"a project that cannot be linked stops before any deploy: {err[:160]}")
+            # review: one project with nothing to go back to is never "rolled back"
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before={"zz-shop": "dpl_web_old"}, health={web_u: "502"})
+            a_, i_, err = vdeploy(fp); rb = i_["vercel"]["rollback"]
+            ok(rb["result"].startswith("partly rolled back") and "api" in rb["result"] and "still serves this run's deployment" in err,
+               f"a rollback where the API had nothing to go back to says partly: {rb} {err[-160:]}")
+            # review: the rollback itself raising is recorded, never escapes, and the app is still reverted
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before, health={web_u: "502"})
+            fp._point_production = lambda rec, dep, cb_, how: (_ for _ in ()).throw(RuntimeError("vercel api crashed"))
+            a_, i_, err = vdeploy(fp); rb = i_["vercel"]["rollback"]
+            ok(rb["result"] == "rollback FAILED" and "RuntimeError" in rb["projects"]["web"] and "SITE MAY BE DOWN" in err, f"an error inside the rollback is recorded as a failed rollback: {rb}")
+            fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before); fp._deployed_address = boom
+            fp._point_production = lambda rec, dep, cb_, how: (_ for _ in ()).throw(KeyboardInterrupt())
+            a_ = dict(va); i_ = cp(vi); raised = None
+            try: SS.vercel_deploy("zz_shop", a_, i_, vdir, fp, say=lambda s_: None, root=t, read_page=pages({}))
+            except RuntimeError as e_: raised = e_
+            saved_inf = json.load(open(os.path.join(vdir, "infrastructure.json")))
+            ok(isinstance(raised, RuntimeError) and a_["status"] == "reverted" and saved_inf["vercel"]["rollback"]["result"] == "rollback FAILED" and "SITE MAY BE DOWN" in a_["revert"]["reason"],
+               f"an unexpected error, then a Ctrl-C inside the rollback: recorded, reverted, the first error re-raised: {raised!r} {saved_inf['vercel'].get('rollback')}")
             # the console's sign-in keys required by the mold: the deploy asks for them before anything is deployed
             man_r = cp(man); man_r["vercel"]["projects"]["web"]["operator_env"] = {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "required"}
             K_r = SS.console_facts(cb, man_r)

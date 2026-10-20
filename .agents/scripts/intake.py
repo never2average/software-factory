@@ -564,11 +564,11 @@ def self_test_single(n, fails):
         shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
         os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application")
-        def go(app, brief, answers=None):
+        def go(app, brief, answers=None, env=None):
             b = os.path.join(T, "briefs", app + ".md"); open(b, "w").write(brief)
             if answers is not None: save(os.path.join(T, "ans.json"), answers)
             return subprocess.run([sys.executable, I, b, "--app", app, *(["--answers", os.path.join(T, "ans.json")] if answers is not None else [])],
-                                  cwd=T, capture_output=True, text=True)
+                                  cwd=T, capture_output=True, text=True, env=env)
         def docs(app): return {k: load(os.path.join(A, app, k + ".json")) for k in ("application", "infrastructure", "datastores", "datainfra")}
         r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); n += 1
         if r.returncode: fails.append(f"a mold_v0 brief for its own server did not stamp: {(r.stdout + r.stderr).strip()[-300:]}")
@@ -614,6 +614,17 @@ def self_test_single(n, fails):
         if got.get("project") != "zz-six-2" or got.get("projects") != {"api": "zz-six-2-api", "web": "zz-six-2"} or "zz-six-api" not in r.stdout:
             fails.append(f"a default base whose API project (<name>-api) another app holds must be suffixed, both names recorded: {got} {(r.stdout + r.stderr).strip()[-200:]}")
         shutil.rmtree(os.path.join(A, "zz_other"), ignore_errors=True)
+        # mold_v0-037: provision.py's LIVE refusal reads <base>-workflow too, so a base whose -workflow name is LIVE is taken
+        loc = os.path.join(T, "local.json"); save(loc, {"live_projects": {"workflow": "zz-seven-workflow"}})
+        lenv = dict(os.environ, FACTORY_LOCAL=loc)
+        r = go("zz_seven", "Mold: mold_v0\n", {"deploy_target": "vercel"}, env=lenv); n += 1
+        got = (load(os.path.join(A, "zz_seven", "infrastructure.json")).get("vercel") or {}) if r.returncode == 0 else {}
+        if got.get("project") != "zz-seven-2" or "zz-seven-workflow" not in r.stdout:
+            fails.append(f"a default base whose <base>-workflow is a LIVE project must be suffixed and said: {got} {(r.stdout + r.stderr).strip()[-200:]}")
+        r = go("zz_eight", "Mold: mold_v0\n", {"deploy_target": "vercel", "vercel_project": "zz-seven"}, env=lenv); n += 1
+        if r.returncode == 0 or "LIVE" not in r.stdout + r.stderr:
+            fails.append(f"an answered base whose <base>-workflow is a LIVE project must be refused: rc={r.returncode} {(r.stdout + r.stderr).strip()[-200:]}")
+        shutil.rmtree(os.path.join(A, "zz_eight"), ignore_errors=True)
         r = go("zz_two", "Mold: mold_v0\nA product for a team.\n"); n += 1
         q = load(os.path.join(A, "zz_two", "questions.json")) if os.path.exists(os.path.join(A, "zz_two", "questions.json")) else {}
         if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["deploy_target"]:
@@ -829,7 +840,12 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
         # refuses both at deploy time too). The app has TWO, <name>-api and <name> (mold_v0-029): a base whose either name
         # is taken is suffixed when intake chose it, and said; a name someone answered is refused.
         taken = taken_projects(app_id); want = resolved.get("vercel_project") or slug(app_id)
-        hit = lambda b: next(((n, taken[n]) for n in (b, f"{b}-api") if n in taken), None)
+        # provision.py's LIVE refusal also reads <base>-workflow (mold_v1's third name), so a base whose -workflow name is
+        # a LIVE project would be refused at every deploy: intake treats it as taken too.
+        live = set(live_projects().values())
+        hit = lambda b: (next(((n, taken[n]) for n in (b, f"{b}-api") if n in taken), None)
+                         or ((f"{b}-workflow", "one of the LIVE projects this factory never writes to (provision.py refuses any base whose "
+                              "-workflow name is one)") if f"{b}-workflow" in live else None))
         if hit(want):
             name, why = hit(want)
             if "vercel_project" in answers:
