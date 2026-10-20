@@ -16,7 +16,10 @@ const HEALTH_503 = JSON.stringify({
 const WARNING =
   "demo: database at 85.2% of the Neon Free plan's compute time limit (85.25 of 100 CU-hours). Change the Neon plan from Free to Launch (paid) in Vercel (Integrations → Neon → change plan)."
 
-const files = (warn: boolean): Record<string, string> => ({
+/** The board's clock in these tests; a report measured `ageMs` before it. */
+const T = Date.parse('2026-10-20T08:00:00Z')
+
+const files = (warn: boolean, ageMs = 5 * 60_000): Record<string, string> => ({
   [`${ROOT}/state/factory.json`]: JSON.stringify({ molds: [{ mold_id: 'mold_v1', status: 'active', source: { commit: 'abc1234def' } }] }),
   [`${ROOT}/state/products.json`]: JSON.stringify({ products: [] }),
   [`${ROOT}/state/application/demo/application.json`]: JSON.stringify({ mold_id: 'mold_v1', status: 'stamped' }),
@@ -27,7 +30,7 @@ const files = (warn: boolean): Record<string, string> => ({
   [`${ROOT}/.claude/scripts/lib/db_usage.py`]: '# stand-in',
   [`${ROOT}/reports/db-usage/demo.json`]: JSON.stringify({
     app_id: 'demo',
-    generated_at: new Date(Date.now()).toISOString(),
+    generated_at: new Date(T - ageMs).toISOString(),
     provider: 'neon',
     resource: 'demo-db',
     plan: { id: 'free_v3', name: 'Free', paid: false },
@@ -43,7 +46,7 @@ const files = (warn: boolean): Record<string, string> => ({
 for (const surface of ['terminal', 'desktop'] as const) {
   for (const warn of [true, false]) {
     test(`database usage and why an app is down (${surface}, ${warn ? '85% of a limit, down' : '40%, up'})`, async ($, on) => {
-      mock.clock(on)
+      mock.clock(on, { now: T })
       const FILES = files(warn)
       const statuses: string[] = []
       const runs: string[][] = []
@@ -89,9 +92,49 @@ for (const surface of ['terminal', 'desktop'] as const) {
         expect(await ui.find({ key: 'db-usage-banner' })).toBeDefined()
       } else {
         expect(dbText.includes('database: Neon Free · compute time 40/100 CU-hours (40%)')).toBe(true)
+        expect(dbText.includes('measured 5m ago')).toBe(true)
         expect(await ui.find({ key: 'db-usage-banner' })).toBeUndefined()
         expect(await ui.find({ key: 'why-demo' })).toBeUndefined()
         expect(statuses.some(s => s.includes('down'))).toBe(false)
+      }
+    })
+  }
+}
+
+// Opening the board without "refresh": a report from three days ago that said 40% is not shown as a calm ok, and the board
+// measures again at once; a fresh report is left alone (the systemd timer and the 30-minute tick keep it fresh).
+for (const surface of ['terminal', 'desktop'] as const) {
+  for (const stale of [true, false]) {
+    test(`opening the board re-measures a stale database report (${surface}, ${stale ? '3 days old' : '5 minutes old'})`, async ($, on) => {
+      mock.clock(on, { now: T })
+      const FILES = files(false, stale ? 3 * 24 * 3_600_000 : 5 * 60_000)
+      const runs: string[][] = []
+      on('ui.status', async () => ({ value: undefined }))
+      on('fs.read', async (_$, e) => {
+        const text = FILES[e.path]
+        return text === undefined ? { deny: `ENOENT ${e.path}` } : { value: text }
+      })
+      on('fs.list', async () => ({ value: [{ name: 'demo', kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false }] }))
+      on('fs.exists', async (_$, e) => ({ value: e.path in FILES || e.path === `${ROOT}/reports/db-usage` }))
+      on('ui.open', async () => ({ value: { isPlaced: true as const } }))
+      on('http.fetch', async () => ({ value: { status: 200, ok: true, headers: {}, text: '{"ok":true}' } }))
+      on('process.run', async (_$, e) => {
+        runs.push([...((e as any).argv ?? (e as any).command ?? [])].map(String))
+        return { value: { exitCode: 0, stdout: '{}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+      })
+
+      await $.command.run({ command: 'factory', args: '' } as any)
+      const props = { title: 'Factory board', isFocused: true, bodyColumns: 160, placement: 'dock' } as any
+      const ui = await $.ui.mount({ plugin: 'factory-board', surface, component: 'Pane', requestId: 'factory-board', props })
+
+      const measured = runs.some(r => r.join(' ').includes('db_usage.py --all --write --file-tickets'))
+      expect(measured).toBe(stale)
+      const dbText = String((await ui.find({ key: 'db-demo' }))?.text ?? '')
+      if (stale) {
+        expect(dbText.includes('database: not measured since 3d ago (stale) · last: Neon Free · compute time 40/100 CU-hours (40%)')).toBe(true)
+      } else {
+        expect(dbText.includes('database: Neon Free · compute time 40/100 CU-hours (40%)')).toBe(true)
+        expect(dbText.includes('stale')).toBe(false)
       }
     })
   }

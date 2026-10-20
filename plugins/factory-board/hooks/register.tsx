@@ -7,8 +7,10 @@ import {
   STAGE_WORDS,
   ago,
   buildParts,
+  DB_EVERY_MS,
   dbBanner,
   dbLine,
+  dbNeedsMeasure,
   downReasons,
   healthCauses,
   parseDbUsage,
@@ -47,8 +49,8 @@ const BUILD_EVERY_MS = 60 * 60_000
 const COMPUTE_MS = 10 * 60_000
 /** uptime.py writes its state every minute (systemd timer); the board reads it as often. */
 const UPTIME_EVERY_MS = 60_000
-/** lib/db_usage.py reads each database's plan usage from its provider (a few Vercel API reads per app). */
-const DB_EVERY_MS = 30 * 60_000
+/** lib/db_usage.py reads each database's plan usage from its provider (a few Vercel API reads per app); DB_EVERY_MS is
+ * also the period of its systemd timer (uptime.py install), so warnings never depend on an open board. */
 const DB_MS = 5 * 60_000
 
 const board = atom({ plugin: 'factory-board', key: 'board' } as const, null)
@@ -273,13 +275,28 @@ async function computeBuilds($: $): Promise<void> {
 
 /* ---- database plan usage: reports/db-usage/<app>.json, written by .claude/scripts/lib/db_usage.py ------------------ */
 
-async function readDbUsage($: $, apps: readonly AppRow[]): Promise<void> {
+async function readDbReports($: $, apps: readonly AppRow[]): Promise<Record<string, DbUsage>> {
   const found: Record<string, DbUsage> = {}
   for (const app of apps) {
     const parsed = parseDbUsage(await readJson($, `${root}/reports/db-usage/${app.id}.json`).catch(() => null))
     if (parsed) found[app.id] = parsed
   }
+  return found
+}
+
+async function readDbUsage($: $, apps: readonly AppRow[]): Promise<void> {
+  const found = await readDbReports($, apps)
   await update($, dbUsage, () => found)
+}
+
+/** On opening the board: measure when an app has no report or its report is stale (the timer stopped, or none). */
+async function measureDbIfStale($: $): Promise<void> {
+  const apps = ((await read($, board)) ?? (await load($).catch(() => null)))?.apps ?? []
+  const live = apps.filter(a => a.status !== 'retired')
+  const reports = await readDbReports($, live)
+  if (live.length ? dbNeedsMeasure(live.map(a => a.id), reports, await $.clock.now()) : !(await $.fs.exists(`${root}/reports/db-usage`))) {
+    await measureDb($)
+  }
 }
 
 /** Reads every database's usage from its provider (read-only), files a ticket at 80% of a limit, then reads the reports. */
@@ -354,7 +371,8 @@ export const register: Register = on => {
     await $.ui.open({ id: PANE, title: 'Factory board' })
     void refresh($)
     if (arg === 'analytics' && Object.keys(await read($, usage)).length === 0) void collect($)
-    if (arg === 'refresh' || !(await $.fs.exists(`${root}/reports/db-usage`))) void measureDb($)
+    if (arg === 'refresh') void measureDb($)
+    else void measureDbIfStale($)
     const current = await read($, board)
     return { text: current ? summary(current.apps, current.tickets.length) : 'Factory board opened.' }
   })
@@ -367,7 +385,7 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const banner = uptimeBanner(await read($, uptime), now)
     const dbReports = await read($, dbUsage)
-    const dbWarn = dbBanner(dbReports)
+    const dbWarn = dbBanner(dbReports, now)
     const dbProblem = await read($, dbError)
 
     if (!current) return <Text dimColor>{busy ? 'Reading the factory state…' : 'No data yet. Run /factory refresh.'}</Text>
@@ -438,7 +456,7 @@ export const register: Register = on => {
             </Box>
           )}
           {app.status !== 'retired' && (() => {
-            const db = dbLine(dbReports[app.id])
+            const db = dbLine(dbReports[app.id], now)
             const color = db.level === 'limit' ? 'error' : db.level === 'warn' ? 'warning' : undefined
             return (
               <Box key={`db-${app.id}`} paddingLeft={2}>

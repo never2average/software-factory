@@ -21,7 +21,7 @@
   factory.py validate --app-dir <dir>    only the four application files in <dir> (a fixture outside state/),
                                          against the same schemas and the same rules
 """
-import json, sys, os, datetime, re
+import json, sys, os, datetime, re, fcntl, contextlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 import legacy   # an older application's pre-rename state keys, where this machine names them (lib/legacy.py)
 import agent_result as AR   # the one --json result shape (lib/agent_result.py)
@@ -38,8 +38,26 @@ def read_tasks(m):
     p = tasks_path(m)
     return [json.loads(l) for l in open(p) if l.strip()] if os.path.exists(p) else []
 def write_tasks(m, ts):
-    with open(tasks_path(m), "w") as f:
+    # whole file to a temporary name, then renamed: a reader never sees half a backlog
+    tmp = tasks_path(m) + ".tmp"
+    with open(tmp, "w") as f:
         for t in ts: f.write(json.dumps(t)+"\n")
+    os.replace(tmp, tasks_path(m))
+_HELD = {}
+@contextlib.contextmanager
+def tasks_lock(m):
+    """One writer at a time per backlog. add/set/close read, change and rewrite the whole file, so two at once (an agent
+    and the board's usage check) would lose one change. Re-entrant within a process; the lock file is under .runs/."""
+    if _HELD.get(m):
+        _HELD[m] += 1
+        try: yield
+        finally: _HELD[m] -= 1
+        return
+    d = os.path.join(os.path.dirname(os.path.abspath(ST)), ".runs"); os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, f"tasks-{m}.lock"), "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX); _HELD[m] = 1
+        try: yield
+        finally: _HELD[m] = 0
 def all_tasks(): return {t["task_id"]: t for m in molds() for t in read_tasks(m)}
 def blocked_by(t, idx):
     return [d for d in t.get("depends_on", []) if idx.get(d, {}).get("status") != "done"]
@@ -92,6 +110,8 @@ def cmd_next(a):
             for x in t.get("acceptance", []): print(f"    accept: {x}")
         else: print(f"{m}: nothing unblocked")
 def cmd_add(a):
+    with tasks_lock(a[0]): _add(a)
+def _add(a):
     m, title = a[0], a[1]; opts = a[2:]
     def opt(k, d=None):
         return opts[opts.index(k)+1] if k in opts else d
@@ -116,9 +136,13 @@ def _find(tid):
         if t["task_id"]==tid: return m, ts, t
     sys.exit(f"no task {tid}")
 def cmd_set(a):
+    with tasks_lock(a[0].rsplit("-",1)[0]): _set(a)
+def _set(a):
     tid, k, v = a[0], a[1], a[2]; m, ts, t = _find(tid)
     t[k] = int(v) if k=="priority" else v; t["updated"] = TODAY; write_tasks(m, ts); print(f"{tid}.{k} = {v}")
 def cmd_close(a):
+    with tasks_lock(a[0].rsplit("-",1)[0]): _close(a)
+def _close(a):
     tid = a[0]; ev = a[1] if len(a)>1 else None; m, ts, t = _find(tid)
     t["status"]="done"; t["updated"]=TODAY
     if ev: t.setdefault("evidence", []).append(ev)
@@ -952,6 +976,13 @@ def self_test():
         ok(r.returncode == 0 and "No deploy" in d["details"]["deploy"]["summary"] and "--background" in d["details"]["lanes"]["next"], "status <app>: nothing run yet says so, with the start commands")
         r = subprocess.run([sys.executable, F, "status"], capture_output=True, text=True, env=env)
         ok(r.returncode == 0 and r.stdout.startswith("mold "), "status with no app: the products table as before")
+        # 16 writers at once (agents and the board's usage check): every add lands, each with its own number
+        procs = [subprocess.Popen([sys.executable, F, "add", "m1", f"race {i}"], stdout=subprocess.DEVNULL, env=env) for i in range(16)]
+        procs += [subprocess.Popen([sys.executable, F, "set", "m1-002", "owner", f"o{i}"], stdout=subprocess.DEVNULL, env=env) for i in range(4)]
+        for p_ in procs: p_.wait()
+        rows = [json.loads(l) for l in open(os.path.join(t, "state", "tasks", "m1.jsonl")) if l.strip()]
+        ok(sorted(x["title"] for x in rows if x["title"].startswith("race ")) == sorted(f"race {i}" for i in range(16))
+           and len({x["task_id"] for x in rows}) == len(rows) == 19, "concurrent add/set: no write is lost and no number is used twice")
     print(f"factory: {len(checks)} checks passed")
     return 0
 

@@ -262,7 +262,8 @@
         },
         "usage_key_ref": {
           "type": "string",
-          "description": "Optional NAME of a Neon API key on the factory machine (its environment, or ~/.config/software-factory/db-usage.env) that lets .claude/scripts/lib/db_usage.py read storage and data transfer too; default NEON_API_KEY. Never the value. Without it, usage comes from Vercel's integration API (compute only)."
+          "pattern": "^NEON_[A-Z0-9_]+$",
+          "description": "Optional NAME of a Neon API key (NEON_...; db_usage.py uses no other name) on the factory machine (its environment, or ~/.config/software-factory/db-usage.env) that lets .claude/scripts/lib/db_usage.py read compute in CU-hours, storage and data transfer; default NEON_API_KEY. Never the value. Without it, usage comes from Vercel's integration API (compute in hours, shown but not compared with the CU-hour limit)."
         },
         "pooling": {
           "type": "string",

@@ -26,18 +26,28 @@ WHERE THE NUMBERS COME FROM (nothing here is ever a guessed number; what no sour
   Neon's own API, when this machine has a Neon API key: GET https://console.neon.tech/api/v2/projects/<project id>
         (the project id is the store's externalResourceId) gives compute_time_seconds, synthetic_storage_size and
         data_transfer_bytes for the current period, which also measures storage. The key is referenced BY NAME only:
-        datastores.json postgres.usage_key_ref (default NEON_API_KEY), read from this process's environment or from
-        ~/.config/software-factory/db-usage.env (NAME=value, mode 0600, written by the operator). The value is sent
-        to Neon in one header and is never printed, logged or written anywhere.
+        datastores.json postgres.usage_key_ref (default NEON_API_KEY; only a name matching NEON_[A-Z0-9_]+ is used, so
+        a wrong or injected name can never send another credential to Neon), read from this process's environment or
+        from ~/.config/software-factory/db-usage.env (NAME=value, mode 0600, written by the operator; a file others
+        can read is still used, with a warning on stderr). The value is sent to Neon in one header and is never
+        printed, logged or written anywhere.
   A self-hosted database (provider self_hosted, on the app's own server): not measured here; its disk is the server's,
         checked by `provision.py <app> --capacity`.
 
-Compute: Vercel labels Neon's figure "hours" and the free plan's limit "CU-hours"; Neon bills compute in CU-hours, so
-the two are compared and the report says so in the limit's note.
+Compute: Vercel labels Neon's figure "hours" and the free plan's limit "CU-hours". Neon's glossary calls CU x active
+hours "compute hours", but nothing has confirmed that Vercel's "hours" are that measure and not active wall-clock hours
+(at 2 CU those reach the limit at 50%). So Vercel's figure is shown as usage, never compared with the CU-hour limit; the
+limit is compared only from Neon's own compute_time_seconds (with a Neon API key). The provider's usageQuotaExceeded
+flag warns in either case.
+Units: Neon defines a GB as 10^9 bytes (neon.com/docs/reference/glossary, "GB-month"), so bytes / 1e9.
+A limit is "reached" (level limit) only when used >= limit exactly or the provider's flag is set, never by a rounded pct.
+
+Scheduling: `uptime.py install` also installs a systemd timer that runs `--all --write --file-tickets` every 30 minutes,
+so warnings and tickets never depend on an open board; the board re-measures when it finds a report older than 1 hour.
 
 Exit: 0 done (warnings included), 2 bad input. Standard library only.
 """
-import argparse, contextlib, fcntl, io, json, os, re, subprocess, sys, tempfile, urllib.error, urllib.request
+import argparse, contextlib, io, json, os, re, subprocess, sys, tempfile, urllib.error, urllib.request
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,7 +64,10 @@ RESOURCE_KEY = {"neon": "neon_resource", "supabase": "supabase_resource"}
 NOT_USAGE_LIMITS = ("maximum projects", "sizes up to")
 # A plan limit's label -> the usage item that measures it (first word, lower case).
 USAGE_FOR = {"compute": "compute", "storage": "storage", "data": "data transfer", "written": "written data"}
-SAME_UNITS = {("hours", "cu-hours"), ("cu-hours", "cu-hours"), ("hours", "hours"), ("gb", "gb")}
+# Only identical units are compared: Vercel's compute "hours" are not confirmed to be CU-hours (see the docstring).
+SAME_UNITS = {("cu-hours", "cu-hours"), ("hours", "hours"), ("gb", "gb")}
+# The only key names usage_key_ref may name: a Neon credential, never any other variable of this process.
+KEY_NAME = re.compile(r"^NEON_[A-Z0-9_]+$")
 
 
 def now_iso():
@@ -91,12 +104,17 @@ def vercel_resources(team=None):
     return data.get("resources") if isinstance(data, dict) else None
 
 
-def key_by_name(name, env=None, key_file=KEY_FILE):
+def key_by_name(name, env=None, key_file=KEY_FILE, warn=None):
     """The value of the credential NAMED `name`: the environment first, then the operator's 0600 file. Never printed."""
     env = os.environ if env is None else env
+    warn = warn or (lambda text: print(text, file=sys.stderr))
     if env.get(name):
         return env[name]
     try:
+        mode = os.stat(key_file).st_mode & 0o077
+        if mode:
+            warn(f"warning: {key_file} can be read by other users of this machine (mode {oct(os.stat(key_file).st_mode & 0o777)}); "
+                 f"run: chmod 600 {key_file}")
         with open(key_file) as f:
             for line in f:
                 k, _, v = line.strip().partition("=")
@@ -166,6 +184,7 @@ def _neon_usage(project):
     if isinstance(project.get("compute_time_seconds"), (int, float)):
         out.append({"name": "Compute", "value": project["compute_time_seconds"] / 3600, "unit": "CU-hours", "source": "neon"})
     if isinstance(project.get("synthetic_storage_size"), (int, float)):
+        # Neon's GB is 10^9 bytes (its glossary), the unit its plans' "1 GB per project" is stated in.
         out.append({"name": "Storage", "value": project["synthetic_storage_size"] / 1e9, "unit": "GB", "source": "neon"})
     if isinstance(project.get("data_transfer_bytes"), (int, float)):
         out.append({"name": "Data transfer", "value": project["data_transfer_bytes"] / 1e9, "unit": "GB", "source": "neon"})
@@ -219,11 +238,13 @@ def assess(app_id, provider, resource, store, plans, neon=None, neon_why=None):
             continue
         units = (got["unit"].lower(), lim["unit"].lower())
         if units not in SAME_UNITS:
-            not_measured.append(f"{lim['name']}: used is in {got['unit']}, the limit in {lim['unit']}; not compared")
+            not_measured.append(f"{lim['name']}: used is in {got['unit']}, the limit in {lim['unit']}; not compared"
+                                + ("" if neon or provider != "neon" else " (a Neon API key would measure it in CU-hours)"))
             continue
         used = got["value"]
         row = {"name": lim["name"], "limit": lim["limit"], "unit": lim["unit"], "used": round(used, 3),
-               "pct": round(100 * used / lim["limit"], 1) if lim["limit"] else None, "source": got.get("source", "vercel")}
+               "pct": round(100 * used / lim["limit"], 1) if lim["limit"] else None, "source": got.get("source", "vercel"),
+               "reached": bool(lim["limit"]) and used >= lim["limit"]}
         if units[0] != units[1]:
             row["note"] = f"the provider reports {got['unit']}; the plan's limit is in {lim['unit']}"
         limits.append(row)
@@ -238,8 +259,8 @@ def assess(app_id, provider, resource, store, plans, neon=None, neon_why=None):
         warnings.append({"limit": "usage quota", "pct": None, "level": "limit",
                          "text": f"{app_id}: the {plan_words} says a usage limit is REACHED; the database refuses work. {step}"})
     for lim in limits:
-        if lim["pct"] is not None and lim["pct"] >= WARN_AT * 100:
-            level = "limit" if lim["pct"] >= 100 else "warn"
+        if lim["limit"] and lim["used"] >= WARN_AT * lim["limit"]:
+            level = "limit" if lim["reached"] else "warn"
             warnings.append({"limit": lim["name"], "pct": lim["pct"], "level": level,
                              "text": (f"{app_id}: database at {lim['pct']:g}% of the {plan_words}'s {lim['name'].lower()} limit "
                                       f"({lim['used']:g} of {lim['limit']:g} {lim['unit']}). {step}")})
@@ -318,8 +339,11 @@ def measure(app_id, state_dir=STATE, src=Sources, cache=None):
     neon, neon_why = None, None
     if provider == "neon":
         key_name = str(pg.get("usage_key_ref") or "NEON_API_KEY")
-        key = src.key(key_name)
-        if key and store.get("externalResourceId"):
+        key = src.key(key_name) if KEY_NAME.match(key_name) else None
+        if not KEY_NAME.match(key_name):
+            neon_why = (f"datastores.json postgres.usage_key_ref '{key_name[:40]}' is not a Neon key name (NEON_...): "
+                        "not used; storage and data transfer not measured")
+        elif key and store.get("externalResourceId"):
             neon, neon_why = src.neon(store["externalResourceId"], key)
             if neon_why:
                 neon_why = f"{neon_why} for {key_name}; storage and data transfer not measured"
@@ -352,9 +376,22 @@ def ticket_title(w, app_id):
     return f"Database usage: {app_id} at {w['pct']:g}% of its plan's {w['limit'].lower()} limit; upgrade before it stops"
 
 
-def file_tickets(report, state_dir=STATE, factory_py=None):
-    """One open ticket per app and limit: filed through factory.py add (its own record shape and numbering), skipped while
-    an open ticket for the same app and limit exists. Returns the ids filed."""
+OPEN = ("todo", "in_progress", "blocked")
+RANK = {"warn": 1, "limit": 2}
+
+
+def _ticket_level(t):
+    """A usage ticket's level, from the priority it was filed (or raised) at: P1 limit, else warn."""
+    return "limit" if t.get("priority") == 1 else "warn"
+
+
+def file_tickets(report, state_dir=STATE):
+    """One ticket per app and limit, filed through factory.py add (its own record shape and numbering). Returns the ids
+    filed, and "<id> raised to P1" for an open warn ticket whose limit is now reached.
+      - an open ticket for the same app and limit: nothing new; raised to P1 with the limit's title when it is reached;
+      - one closed (done) or dropped in this billing period at the same level or higher: nothing new until the level
+        rises (the operator's call stands; a new period starts over);
+    All of it under factory.py's own lock on that backlog, so a concurrent `factory.py add/set/close` loses nothing."""
     if not report.get("warnings"):
         return []
     app_id = report["app_id"]
@@ -366,42 +403,85 @@ def file_tickets(report, state_dir=STATE, factory_py=None):
     if not mold:
         return []
     sys.path.insert(0, os.path.dirname(HERE))
-    import factory  # noqa: E402 — the factory CLI's own add, pointed at this state directory
+    import factory  # noqa: E402 — the factory CLI's own add/set and lock, pointed at this state directory
     factory.ST = state_dir
-    # Two board sessions can run this at once: one at a time reads the open tickets and adds, so none is filed twice.
-    lock_dir = os.path.join(os.path.dirname(os.path.abspath(state_dir)), ".runs")
-    os.makedirs(lock_dir, exist_ok=True)
-    with open(os.path.join(lock_dir, "db-usage.lock"), "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with factory.tasks_lock(mold):
         return _file_locked(report, application, mold, factory)
+
+
+def _quiet(fn, args):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        fn(args)
+    return out.getvalue().strip()
 
 
 def _file_locked(report, application, mold, factory):
     app_id = report["app_id"]
     lead = TITLE_LEAD.format(app=app_id)
-    open_titles = [t.get("title", "") for t in factory.read_tasks(mold) if t.get("status") in ("todo", "in_progress", "blocked")]
+    period_start = str((report.get("period") or {}).get("start") or "")[:10]
+    tasks = factory.read_tasks(mold)
     filed = []
     for w in report["warnings"]:
         limit_word = "usage limit" if w["pct"] is None else w["limit"].lower()
-        if any(t.startswith(lead) and limit_word in t for t in open_titles):
-            continue
-        args = [mold, ticket_title(w, app_id), "--type", "infra", "--pri", "1" if w["level"] == "limit" else "2",
-                "--accept", "The plan is upgraded (operator's yes) or the usage is brought under 80%",
-                "--accept", w["text"]]
-        product = application.get("product_id")
-        if product and any(p.get("product_id") == product and p.get("mold_id") == mold
-                           for p in factory.products().get("products", [])):
-            args += ["--product", product]
-        out = io.StringIO()
+        mine = [t for t in tasks if str(t.get("title", "")).startswith(lead) and limit_word in str(t.get("title", ""))]
         try:
-            with contextlib.redirect_stdout(out):
-                factory.cmd_add(args)
+            still_open = [t for t in mine if t.get("status") in OPEN]
+            if still_open:
+                t = still_open[-1]
+                if RANK[w["level"]] > RANK[_ticket_level(t)]:
+                    _quiet(factory.cmd_set, [t["task_id"], "priority", "1"])
+                    _quiet(factory.cmd_set, [t["task_id"], "title", ticket_title(w, app_id)])
+                    t["priority"], t["title"] = 1, ticket_title(w, app_id)
+                    filed.append(f"{t['task_id']} raised to P1")
+                continue
+            settled = [t for t in mine if t.get("status") in ("done", "dropped")
+                       and (not period_start or str(t.get("updated") or "") >= period_start)]
+            if any(RANK[_ticket_level(t)] >= RANK[w["level"]] for t in settled):
+                continue
+            args = [mold, ticket_title(w, app_id), "--type", "infra", "--pri", "1" if w["level"] == "limit" else "2",
+                    "--accept", "The plan is upgraded (operator's yes) or the usage is brought under 80%",
+                    "--accept", w["text"]]
+            product = application.get("product_id")
+            if product and any(p.get("product_id") == product and p.get("mold_id") == mold
+                               for p in factory.products().get("products", [])):
+                args += ["--product", product]
+            tid = _quiet(factory.cmd_add, args)
         except (SystemExit, IndexError, KeyError, OSError, ValueError) as e:
-            print(f"could not file a ticket for {app_id} on {mold}: {e}", file=sys.stderr)
+            print(f"could not file a ticket for {app_id} on {mold}: {type(e).__name__}", file=sys.stderr)
             continue
-        filed.append(out.getvalue().strip())
-        open_titles.append(args[1])
+        filed.append(tid)
+        tasks.append({"task_id": tid, "title": args[1], "status": "todo", "priority": 1 if w["level"] == "limit" else 2})
     return filed
+
+
+def measure_safe(app_id, state_dir=STATE, src=Sources, cache=None):
+    """measure(), but an answer of an unexpected shape is that app's 'not measured' (named by its type only), never
+    the end of the run: the apps after it are still measured and their reports rewritten."""
+    try:
+        return measure(app_id, state_dir, src, cache)
+    except Exception as e:  # noqa: BLE001
+        return _blank(app_id, None, f"could not read: {type(e).__name__}")
+
+
+def run(ids, state_dir=STATE, src=Sources, reports_dir=None, tickets=False):
+    """Every app in `ids`: its report (kept in reports_dir when given) and, with tickets, its tickets."""
+    cache, reports, filed = {}, [], []
+    for app_id in ids:
+        r = measure_safe(app_id, state_dir, src, cache)
+        reports.append(r)
+        if reports_dir:
+            os.makedirs(reports_dir, exist_ok=True)
+            tmp = os.path.join(reports_dir, f".{app_id}.json.tmp")
+            with open(tmp, "w") as f:
+                json.dump(r, f, indent=2)
+            os.replace(tmp, os.path.join(reports_dir, f"{app_id}.json"))
+        if tickets:
+            try:
+                filed += file_tickets(r, state_dir)
+            except Exception as e:  # noqa: BLE001 — one app's ticket cannot stop the others
+                print(f"could not file a ticket for {app_id}: {type(e).__name__}", file=sys.stderr)
+    return reports, filed
 
 
 # ---- CLI -----------------------------------------------------------------------------------------------------------------
@@ -432,16 +512,7 @@ def main(argv):
     if a.app and not os.path.isdir(os.path.join(STATE, "application", a.app)):
         print(f"no app {a.app} in state/application", file=sys.stderr)
         return 2
-    cache, reports, filed = {}, [], []
-    for app_id in (app_ids() if a.all else [a.app]):
-        r = measure(app_id, cache=cache)
-        reports.append(r)
-        if a.write:
-            os.makedirs(REPORTS, exist_ok=True)
-            with open(os.path.join(REPORTS, f"{app_id}.json"), "w") as f:
-                json.dump(r, f, indent=2)
-        if a.file_tickets:
-            filed += file_tickets(r)
+    reports, filed = run(app_ids() if a.all else [a.app], STATE, Sources, REPORTS if a.write else None, a.file_tickets)
     if a.json:
         print(json.dumps({"reports": reports, "tickets_filed": filed}, indent=2))
     else:
@@ -491,20 +562,36 @@ def self_test():
           [x["name"] for x in plan_limits(FREE_PLAN)] == ["Storage", "Compute time"])
     check("a paid plan states no fixed limit", plan_limits(LAUNCH_PLAN) == [])
 
-    r = assess("demo", "neon", "demo-db", _store(FREE_PLAN, 85.25), PLANS)
-    check("compute is compared with the free plan's limit", [(x["name"], x["used"], x["limit"], x["pct"]) for x in r["limits"]]
-          == [("Compute time", 85.25, 100.0, 85.2)])
-    check("the hours / CU-hours comparison says so", "CU-hours" in r["limits"][0].get("note", ""))
-    check("storage is not measured without a Neon key, and says how to measure it",
-          any(x.startswith("Storage (1 GB per project)") and "Neon API key" in x for x in r["not_measured"]))
+    H = 3600
+
+    def cu(hours):
+        """Neon's own API answer for a project that used `hours` CU-hours this period."""
+        return {"compute_time_seconds": hours * H}
+
+    rv = assess("demo", "neon", "demo-db", _store(FREE_PLAN, 85.25), PLANS)
+    check("Vercel's compute 'hours' are shown as usage, never compared with the CU-hour limit (unconfirmed unit)",
+          rv["limits"] == [] and rv["warnings"] == [] and rv["usage"] == [{"name": "Compute", "value": 85.25, "unit": "hours"}]
+          and any(x.startswith("Compute time: used is in hours, the limit in CU-hours; not compared")
+                  and "Neon API key" in x for x in rv["not_measured"]))
+    r = assess("demo", "neon", "demo-db", _store(FREE_PLAN, 10.0), PLANS, neon=cu(85.25))
+    check("Neon's own CU-hours are compared with the free plan's limit, and win over Vercel's figure",
+          [(x["name"], x["used"], x["limit"], x["pct"], x["source"]) for x in r["limits"]]
+          == [("Compute time", 85.25, 100.0, 85.2, "neon")])
+    check("storage is not measured when Neon does not report it",
+          any(x.startswith("Storage (1 GB per project)") for x in r["not_measured"]))
+    check("storage without a Neon key says how to measure it",
+          any(x.startswith("Storage (1 GB per project)") and "Neon API key" in x for x in rv["not_measured"]))
     check("85% warns, naming the limit and the upgrade step",
           len(r["warnings"]) == 1 and r["warnings"][0]["level"] == "warn"
           and "compute time limit (85.25 of 100 CU-hours)" in r["warnings"][0]["text"]
           and "from Free to Launch (paid)" in r["warnings"][0]["text"])
-    r79 = assess("demo", "neon", "demo-db", _store(FREE_PLAN, 79.9), PLANS)
+    r79 = assess("demo", "neon", "demo-db", _store(FREE_PLAN, None), PLANS, neon=cu(79.9))
     check("79.9% does not warn", r79["warnings"] == [] and r79["upgrade"] == "")
-    r100 = assess("demo", "neon", "demo-db", _store(FREE_PLAN, 100.0), PLANS)
+    r100 = assess("demo", "neon", "demo-db", _store(FREE_PLAN, None), PLANS, neon=cu(100.0))
     check("100% is a limit-level warning", r100["warnings"][0]["level"] == "limit")
+    r9996 = assess("demo", "neon", "demo-db", _store(FREE_PLAN, None), PLANS, neon=cu(99.96))
+    check("99.96% rounds to 100.0 but is not the limit: a warn, never a false 'reached'",
+          r9996["limits"][0]["pct"] == 100.0 and r9996["warnings"][0]["level"] == "warn")
     rx = assess("demo", "neon", "demo-db", _store(FREE_PLAN, None, exceeded=True), PLANS)
     check("the provider's own 'quota exceeded' flag warns even with no figure",
           rx["quota_exceeded"] is True and rx["warnings"][0]["pct"] is None and "REACHED" in rx["warnings"][0]["text"])
@@ -515,8 +602,8 @@ def self_test():
           rl["limits"] == [] and rl["warnings"] == [] and rl["usage"] == [{"name": "Compute", "value": 4.08, "unit": "hours"}]
           and any("billed per use" in x for x in rl["not_measured"]))
     rn = assess("demo", "neon", "demo-db", _store(FREE_PLAN, 10.0), PLANS,
-                neon={"compute_time_seconds": 90 * 3600, "synthetic_storage_size": 950_000_000, "data_transfer_bytes": 1})
-    check("Neon's own API measures storage and its compute wins over Vercel's",
+                neon={"compute_time_seconds": 90 * H, "synthetic_storage_size": 950_000_000, "data_transfer_bytes": 1})
+    check("Neon's own API measures storage (GB = 10^9 bytes, Neon's unit) and its compute wins over Vercel's",
           [(x["name"], x["pct"], x["source"]) for x in rn["limits"]] == [("Storage", 95.0, "neon"), ("Compute time", 90.0, "neon")]
           and len(rn["warnings"]) == 2)
     rs = assess("demo", "supabase", "demo-sb", _store({"id": "free", "name": "Supabase Free Plan", "details": []}, product="supabase"),
@@ -529,12 +616,12 @@ def self_test():
         st = os.path.join(tmp, "state")
         os.makedirs(os.path.join(st, "tasks"))
 
-        def app(name, provider, infra, status="stamped"):
+        def app(name, provider, infra, status="stamped", key_ref="NEON_DEMO_KEY"):
             d = os.path.join(st, "application", name)
             os.makedirs(d)
             json.dump({"mold_id": "mold_x", "status": status, "product_id": "px"}, open(os.path.join(d, "application.json"), "w"))
             json.dump(infra, open(os.path.join(d, "infrastructure.json"), "w"))
-            json.dump({"postgres": {"provider": provider, "usage_key_ref": "DEMO_NEON_KEY"}}, open(os.path.join(d, "datastores.json"), "w"))
+            json.dump({"postgres": {"provider": provider, "usage_key_ref": key_ref}}, open(os.path.join(d, "datastores.json"), "w"))
 
         app("hot", "neon", {"target": "vercel", "vercel": {"team": "t"}, "datastores": {"neon_resource": "hot-db"}})
         app("own", "self_hosted", {"target": "vm_remote"})
@@ -547,18 +634,19 @@ def self_test():
             json.dumps({"task_id": "mold_x-007", "mold_id": "mold_x", "title": "older", "type": "build", "status": "done",
                         "priority": 2, "owner": "fable"}) + "\n")
         calls, secret = [], "sk-not-a-real-key-0123456789"
+        used = {"hours": 82.0}
 
         class Fake(Sources):
             @staticmethod
             def resources(team):
                 calls.append(("list", team))
-                return [{"id": "store_hot", "name": "hot-db", "product": "Neon"}]
+                return [{"id": "store_hot", "name": "hot-db", "product": "Neon"}, {"name": "bad-db", "product": "Neon"}]
 
             @staticmethod
             def api(path, team):
                 calls.append(("api", path))
                 if path == "/v1/storage/stores/store_hot":
-                    return {"store": _store(FREE_PLAN, 82.0)}
+                    return {"store": _store(FREE_PLAN, 10.0)}
                 if path.endswith("/plans"):
                     return {"plans": PLANS}
                 return None
@@ -566,21 +654,34 @@ def self_test():
             @staticmethod
             def key(name):
                 calls.append(("key", name))
-                return secret if name == "DEMO_NEON_KEY" else None
+                return secret if name in ("NEON_DEMO_KEY", "VERCEL_TOKEN") else None
 
             @staticmethod
             def neon(project_id, key):
                 calls.append(("neon", project_id, key == secret))
+                return cu(used["hours"]), None
+
+        class Refused(Fake):
+            @staticmethod
+            def neon(project_id, key):
                 return None, "Neon's API answered HTTP 401"
 
         check("the app list skips retired apps and the template", app_ids(st) == ["hot", "none", "own"])
         hot = measure("hot", st, Fake)
-        check("a Vercel-integrated Neon app is measured from its store", hot["limits"][0]["pct"] == 82.0 and hot["warnings"])
+        check("a Vercel-integrated Neon app is measured from its store and Neon's own API",
+              hot["limits"][0]["pct"] == 82.0 and hot["warnings"])
         check("the Neon key is looked up by the name in datastores.json and passed only to Neon's call",
-              ("key", "DEMO_NEON_KEY") in calls and ("neon", "proj-a", True) in calls)
+              ("key", "NEON_DEMO_KEY") in calls and ("neon", "proj-a", True) in calls and secret not in json.dumps(hot))
+        refused = measure("hot", st, Refused)
         check("a refused Neon key is a reason, naming the key's NAME, never its value",
-              any("HTTP 401 for DEMO_NEON_KEY" in x for x in hot["not_measured"]) and secret not in json.dumps(hot))
+              any("HTTP 401 for NEON_DEMO_KEY" in x for x in refused["not_measured"]) and secret not in json.dumps(refused))
         check("the team scope is used", ("list", "t") in calls)
+        app("wrongkey", "neon", {"target": "vercel", "datastores": {"neon_resource": "hot-db"}}, key_ref="VERCEL_TOKEN")
+        calls.clear()
+        wk = measure("wrongkey", st, Fake)
+        check("a usage_key_ref that is not a Neon key name is never read or sent anywhere, and says why",
+              ("key", "VERCEL_TOKEN") not in calls and not any(c[0] == "neon" for c in calls)
+              and any("VERCEL_TOKEN" in x and "not a Neon key name" in x for x in wk["not_measured"]))
         check("a self-hosted database is not measured here, with where to look",
               "--capacity" in measure("own", st, Fake)["not_measured"][0])
         app("cloud", "rds", {"target": "vercel"})
@@ -594,19 +695,67 @@ def self_test():
                 return None
         check("Vercel unreadable: not measured, no number", measure("hot", st, Down, cache={})["limits"] == [])
 
+        # one app's answer in an unexpected shape (a resource with no id) does not stop the others
+        app("abad", "neon", {"target": "vercel", "datastores": {"neon_resource": "bad-db"}})
+        out_dir = os.path.join(tmp, "reports")
+        reports, _ = run(["abad", "hot"], st, Fake, out_dir)
+        check("an unexpected answer is that app's 'not measured' (its type only); the next app is still measured and written",
+              reports[0]["not_measured"] == ["could not read: KeyError"] and reports[1]["limits"][0]["pct"] == 82.0
+              and sorted(os.listdir(out_dir)) == ["abad.json", "hot.json"])
+
+        def rows():
+            return [json.loads(x) for x in open(os.path.join(st, "tasks", "mold_x.jsonl")) if x.strip()]
+
         filed = file_tickets(hot, st)
-        tasks = [json.loads(x) for x in open(os.path.join(st, "tasks", "mold_x.jsonl")) if x.strip()]
+        tasks = rows()
         check("a warning files one ticket, through factory.py add's own numbering",
               filed == ["mold_x-008"] and tasks[-1]["title"].startswith("Database usage: hot at 82% ")
-              and tasks[-1]["type"] == "infra" and tasks[-1]["product_id"] == "px" and tasks[-1]["status"] == "todo")
+              and tasks[-1]["type"] == "infra" and tasks[-1]["product_id"] == "px" and tasks[-1]["status"] == "todo"
+              and tasks[-1]["priority"] == 2)
         check("while it is open, the next run files nothing", file_tickets(hot, st) == [])
         check("a report without warnings files nothing", file_tickets(measure("own", st, Fake), st) == [])
+        used["hours"] = 100.0
+        at_limit = measure("hot", st, Fake)
+        check("the limit reached with a warn ticket open: that ticket is raised to P1 and retitled, none filed",
+              file_tickets(at_limit, st) == ["mold_x-008 raised to P1"] and len(rows()) == 2
+              and rows()[-1]["priority"] == 1 and "at 100% " in rows()[-1]["title"])
+        check("raised once: the next run changes nothing", file_tickets(at_limit, st) == [])
+
+        def drop(tid, status="dropped", updated=None):
+            sys.path.insert(0, os.path.dirname(HERE))
+            import factory
+            factory.ST = st
+            ts = factory.read_tasks("mold_x")
+            for t in ts:
+                if t["task_id"] == tid:
+                    t["status"], t["updated"] = status, updated or t.get("updated")
+            factory.write_tasks("mold_x", ts)
+
+        drop("mold_x-008")
+        check("dropped by the operator at the limit level: not filed again in this period", file_tickets(at_limit, st) == [])
+        used["hours"] = 85.0
+        check("dropped at limit level, now a warn: still nothing", file_tickets(measure("hot", st, Fake), st) == [])
+        open(os.path.join(st, "tasks", "mold_x.jsonl"), "a").write(json.dumps(
+            {"task_id": "mold_x-009", "mold_id": "mold_x", "title": "Database usage: hot at 81% of its plan's compute time "
+             "limit; upgrade before it stops", "status": "dropped", "priority": 2, "updated": "2026-10-02"}) + "\n")
+        drop("mold_x-008", "done", "2026-09-30")    # closed last period: does not count for this one
+        check("a warn ticket dropped this period: no new warn ticket", file_tickets(measure("hot", st, Fake), st) == [])
+        used["hours"] = 100.0
+        check("the level rises past a dropped warn ticket: a new P1 ticket is filed",
+              file_tickets(measure("hot", st, Fake), st) == ["mold_x-010"] and rows()[-1]["priority"] == 1)
 
         kf = os.path.join(tmp, "db-usage.env")
-        open(kf, "w").write("OTHER=x\nDEMO_NEON_KEY=from-file\n")
+        open(kf, "w").write("OTHER=x\nNEON_DEMO_KEY=from-file\n")
+        os.chmod(kf, 0o600)
+        warned = []
         check("a key is read by name from the environment first, then the operator's file",
-              key_by_name("DEMO_NEON_KEY", {"DEMO_NEON_KEY": "from-env"}, kf) == "from-env"
-              and key_by_name("DEMO_NEON_KEY", {}, kf) == "from-file" and key_by_name("MISSING", {}, kf) is None)
+              key_by_name("NEON_DEMO_KEY", {"NEON_DEMO_KEY": "from-env"}, kf) == "from-env"
+              and key_by_name("NEON_DEMO_KEY", {}, kf, warned.append) == "from-file"
+              and key_by_name("MISSING", {}, kf, warned.append) is None and warned == [])
+        os.chmod(kf, 0o644)
+        check("a key file others can read is warned about (its path and mode, never a value)",
+              key_by_name("NEON_DEMO_KEY", {}, kf, warned.append) == "from-file" and warned
+              and "chmod 600" in warned[0] and "from-file" not in warned[0])
     print(f"\n{len(fails)} failed" if fails else "\nall passed")
     return 1 if fails else 0
 

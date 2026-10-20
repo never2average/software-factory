@@ -295,7 +295,7 @@ test('uptime: all up is quiet; a monitor that stopped says so; no state file say
   expect(parseUptime({ apps: {} })).toBe(null)
 })
 
-import { DB_WARN_PCT, UNKNOWN_CAUSE, causeOf, dbBanner, dbLine, downReasons, healthCauses, parseDbUsage, summary } from './board'
+import { DB_STALE_MS, DB_WARN_PCT, UNKNOWN_CAUSE, causeOf, dbBanner, dbLine, dbNeedsMeasure, downReasons, healthCauses, parseDbUsage, summary } from './board'
 
 // The same inputs as .claude/scripts/lib/health_cause.py CASES: the board and the uptime monitor must say the same thing.
 const CAUSES: [string, string][] = [
@@ -370,26 +370,29 @@ const DB_FREE = {
   upgrade: 'Change the Neon plan from Free to Launch (paid) in Vercel (Integrations → Neon → change plan).',
 }
 
+/** Ten minutes after DB_FREE was measured. */
+const NOW = Date.parse('2026-10-20T06:10:00Z')
+
 test('database usage: a limit as used/limit (pct), warned at 80%, and what was not measured stays not measured', async () => {
   const d = parseDbUsage(DB_FREE)!
-  expect(dbLine(d)).toEqual({
-    text: 'database: Neon Free · compute time 85.25/100 CU-hours (85%) · not measured: Storage',
+  expect(dbLine(d, NOW)).toEqual({
+    text: 'database: Neon Free · compute time 85.25/100 CU-hours (85%) · not measured: Storage · measured 10m ago',
     level: 'warn',
   })
   expect(DB_WARN_PCT).toBe(80)
-  const b = dbBanner({ shop: d })
+  const b = dbBanner({ shop: d }, NOW)
   expect(b.level).toBe('warn')
   expect(b.lines[0]).toContain('compute time limit (85.25 of 100 CU-hours)')
   expect(b.lines[0]).toContain('from Free to Launch (paid)')
   // under 80%: the line is plain and the banner quiet
   const calm = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 40, pct: 40 }], warnings: [] })!
-  expect(dbLine(calm).level).toBe('ok')
-  expect(dbBanner({ shop: calm })).toEqual({ level: 'ok', lines: [] })
+  expect(dbLine(calm, NOW).level).toBe('ok')
+  expect(dbBanner({ shop: calm }, NOW)).toEqual({ level: 'ok', lines: [] })
   // the provider's own flag: the limit is reached even with no figure
   const hit = parseDbUsage({ ...DB_FREE, limits: [], quota_exceeded: true, warnings: [{ limit: 'usage quota', pct: null, level: 'limit', text: 'shop: REACHED' }] })!
-  expect(dbLine(hit).level).toBe('limit')
-  expect(dbLine(hit).text).toContain('USAGE LIMIT REACHED')
-  expect(dbBanner({ shop: hit, calm: { ...calm, appId: 'calm' } })).toEqual({ level: 'limit', lines: ['shop: REACHED'] })
+  expect(dbLine(hit, NOW).level).toBe('limit')
+  expect(dbLine(hit, NOW).text).toContain('USAGE LIMIT REACHED')
+  expect(dbBanner({ shop: hit, calm: { ...calm, appId: 'calm' } }, NOW)).toEqual({ level: 'limit', lines: ['shop: REACHED'] })
   // a paid plan: usage shown as measured, no limit invented
   const paid = parseDbUsage({
     ...DB_FREE,
@@ -399,12 +402,48 @@ test('database usage: a limit as used/limit (pct), warned at 80%, and what was n
     not_measured: ['the Neon Launch plan states no fixed usage limit (billed per use)'],
     warnings: [],
   })!
-  expect(dbLine(paid)).toEqual({ text: 'database: Neon Launch · compute 4.09 hours this period · billed per use, no fixed limit', level: 'ok' })
+  expect(dbLine(paid, NOW)).toEqual({ text: 'database: Neon Launch · compute 4.09 hours this period · billed per use, no fixed limit · measured 10m ago', level: 'ok' })
   // no source: not measured, with why; no report yet: says so; a broken report is ignored
-  const own = parseDbUsage({ app_id: 'vm', provider: 'self_hosted', plan: null, not_measured: ["the database runs on the app's own server"] })!
-  expect(dbLine(own)).toEqual({ text: "database: own server · not measured (the database runs on the app's own server)", level: 'none' })
-  expect(dbLine(undefined)).toEqual({ text: 'database: not measured yet', level: 'none' })
+  const own = parseDbUsage({ app_id: 'vm', generated_at: DB_FREE.generated_at, provider: 'self_hosted', plan: null, not_measured: ["the database runs on the app's own server"] })!
+  expect(dbLine(own, NOW)).toEqual({ text: "database: own server · not measured (the database runs on the app's own server) · measured 10m ago", level: 'none' })
+  expect(dbLine(undefined, NOW)).toEqual({ text: 'database: not measured yet', level: 'none' })
   expect(parseDbUsage({ limits: [] })).toBe(null)
   // a limit without a measured figure is dropped, never read as 0
   expect(parseDbUsage({ ...DB_FREE, limits: [{ name: 'Storage', limit: 1, unit: 'GB', used: null }] })!.limits).toEqual([])
+})
+
+test('a stale report is "not measured since …", never a calm ok, and makes the board measure again', async () => {
+  const at = Date.parse(DB_FREE.generated_at)
+  const calm = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 40, pct: 40 }], warnings: [] })!
+  const threeDays = at + 3 * 24 * 3_600_000
+  // three days old and it said 40%: the line says it is stale and is not "ok"
+  expect(dbLine(calm, threeDays)).toEqual({
+    text: 'database: not measured since 3d ago (stale) · last: Neon Free · compute time 40/100 CU-hours (40%) · not measured: Storage',
+    level: 'none',
+  })
+  // at the edge: fresh up to two periods (1 hour), stale after
+  expect(dbLine(calm, at + DB_STALE_MS).level).toBe('ok')
+  expect(dbLine(calm, at + DB_STALE_MS + 60_000).level).toBe('none')
+  // a stale warning stays a warning, with its age, in the line and the banner
+  const warn = parseDbUsage(DB_FREE)!
+  expect(dbLine(warn, threeDays).level).toBe('warn')
+  expect(dbBanner({ shop: warn }, threeDays).lines[0]).toContain('(measured 3d ago; stale)')
+  // a time that cannot be read is stale
+  expect(dbLine({ ...calm, generatedAt: '' }, NOW).level).toBe('none')
+  // measure when an app has no report or a stale one; not when every report is fresh
+  expect(dbNeedsMeasure(['shop'], { shop: calm }, NOW)).toBe(false)
+  expect(dbNeedsMeasure(['shop'], { shop: calm }, threeDays)).toBe(true)
+  expect(dbNeedsMeasure(['shop', 'new'], { shop: calm }, NOW)).toBe(true)
+})
+
+test('the provider flag shows on the line with no plan; a pct rounded to 100 is not the limit', async () => {
+  const noPlan = parseDbUsage({ ...DB_FREE, plan: null, limits: [], quota_exceeded: true, not_measured: ['the plan could not be read'] })!
+  expect(dbLine(noPlan, NOW)).toEqual({
+    text: 'database: Neon · USAGE LIMIT REACHED · not measured (the plan could not be read) · measured 10m ago',
+    level: 'limit',
+  })
+  const almost = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 99.96, pct: 100 }] })!
+  expect(dbLine(almost, NOW).level).toBe('warn')
+  const at = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 100, pct: 100 }] })!
+  expect(dbLine(at, NOW).level).toBe('limit')
 })
