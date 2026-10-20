@@ -13,9 +13,10 @@
       "enum": [
         "vercel",
         "vm",
-        "vm_remote"
+        "vm_remote",
+        "compose_remote"
       ],
-      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app — which this factory never deploys — with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here. `vm_remote` (mold_v1-075) is a server this factory deploys to over SSH and that DOES serve the application; it owns the `vm_remote` object and neither of the other two. The same one-object-per-target rule applies, and factory.py validate adds the vm_remote rules the schema cannot express (install_path names this app, production_url is https://<domain> and present only once a deploy recorded it, the datastores and the sandbox agree with the target)."
+      "description": "Which lane owns this app, and therefore WHICH ONE of the `vercel` / `vm` objects may be present. factory.py validate refuses a target=vm app that carries a `vercel` object and a target=vercel app that carries a `vm` object: .claude/scripts/lanes.py takes vercel.production_url as the URL it grades, so a vm app — which this factory never deploys — with a vercel.production_url would have a stranger's server graded as this app (mold_v1-053). The schema cannot express this conditional (the validator is a subset of JSON Schema with no if/then), so the rule lives in validate and is stated here. `vm_remote` (mold_v1-075) is a server this factory deploys to over SSH and that DOES serve the application; it owns the `vm_remote` object and neither of the other two. The same one-object-per-target rule applies, and factory.py validate adds the vm_remote rules the schema cannot express (install_path names this app, production_url is https://<domain> and present only once a deploy recorded it, the datastores and the sandbox agree with the target). `compose_remote` (mold_v0-028) is a server of the app's own, over SSH, running a single-service mold's OWN Docker Compose stack (molds/<mold_id>/mold.json, .claude/scripts/lib/single_service.py); it owns the `compose_remote` object, and validate refuses it for a mold that is not single-service."
     },
     "vercel": {
       "type": "object",
@@ -692,6 +693,143 @@
         }
       }
     },
+    "compose_remote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ssh_user",
+        "ssh_port",
+        "ssh_key_ref",
+        "install_path",
+        "compose"
+      ],
+      "description": "target compose_remote (mold_v0-028): a server of the app's own running a single-service mold's own Docker Compose stack, deployed by provision.py --deploy-remote (.claude/scripts/lib/single_service.py). Names, addresses and verdicts only; every value lives in the env file on the server (/etc/software-factory/<app_id>/env, root, mode 600).",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "digitalocean",
+            "aws",
+            "gcp",
+            "azure",
+            "oci",
+            "hetzner",
+            "bare_metal"
+          ],
+          "description": "Who rents the server. Informational."
+        },
+        "host": {
+          "type": "string",
+          "pattern": "^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$",
+          "description": "The server's public address or host name. Absent until the server exists."
+        },
+        "ssh_host": {
+          "type": "string",
+          "pattern": "^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$",
+          "description": "Where SSH goes when it is not `host`."
+        },
+        "ssh_user": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$"
+        },
+        "ssh_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "ssh_allow_from": {
+          "type": "string",
+          "description": "When named, only this address or network may reach the SSH port."
+        },
+        "ssh_key_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$",
+          "description": "The NAME of the SSH key under ~/.ssh/ on the factory VM, never the key."
+        },
+        "domain": {
+          "type": "string",
+          "pattern": "^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$",
+          "description": "The host name people open, with an A record pointing at `host`; the stack's own Caddy gets its certificate."
+        },
+        "production_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[a-z0-9.-]+$",
+          "description": "https://<domain>, written by the deploy once the stack answered its health checks; never by hand."
+        },
+        "install_path": {
+          "type": "string",
+          "pattern": "^/opt/software-factory/[a-z][a-z0-9_]*$",
+          "description": "Fixed at /opt/software-factory/<app_id>: releases/<id>, `current`, `previous` and the factory's own scripts."
+        },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "project",
+            "file"
+          ],
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^sf-[a-z0-9][a-z0-9-]{1,60}$",
+              "description": "The compose project: sf-<app id>, the app's own containers and volumes. Never the compose file's own default name, which another copy of the same product uses."
+            },
+            "file": {
+              "type": "string",
+              "description": "The mold's compose file, relative to its codebase (molds/<mold_id>/mold.json compose.file)."
+            },
+            "service": {
+              "type": "string",
+              "description": "The service the compose file builds (read from the file at intake)."
+            }
+          }
+        },
+        "release": {
+          "type": "string",
+          "pattern": "^[0-9]{8}T[0-9]{6}Z$",
+          "description": "The release serving after the last deploy (<install>/releases/<id>)."
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The deploy's own verdict, never by hand: the app container's state and user id, the services publishing ports, the public health answer and the disk.",
+          "properties": {
+            "app": {
+              "type": "string"
+            },
+            "uid": {
+              "type": "string"
+            },
+            "published": {
+              "type": "string"
+            },
+            "public": {
+              "type": "string"
+            },
+            "disk_percent": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string"
+            }
+          }
+        },
+        "lane_key": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Names only: the organisation the lanes' MCP check uses (provision.py --lane-key). Its connector address is kept in a private file outside the repository.",
+          "properties": {
+            "slug": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
     "inference": {
       "type": "object",
       "properties": {
@@ -737,7 +875,8 @@
       "enum": [
         "vercel_env",
         "vm_env_file",
-        "vm_remote_env_file"
+        "vm_remote_env_file",
+        "compose_remote_env_file"
       ]
     },
     "secrets_user": {

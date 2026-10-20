@@ -88,7 +88,8 @@
               "enum": [
                 "vercel",
                 "vm",
-                "vm_remote"
+                "vm_remote",
+                "compose_remote"
               ]
             }
           },

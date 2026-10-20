@@ -17,6 +17,7 @@ _sys_fl.path.insert(0, _os_fl.path.join(_os_fl.path.dirname(_os_fl.path.abspath(
 from factory_local import load_factory, live_projects
 import legacy
 import asr
+import single_service   # a mold that ships as one service with its own compose stack (mold_v0-028)
 import json, os, re, sys, datetime, subprocess
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
@@ -67,7 +68,7 @@ def parse_brief(text):
     if m: h["customer_id"] = m.group(1)
     m = re.search(r"domain[:\s]+([a-z0-9.-]+\.[a-z]{2,})", t)
     if m: h["custom_domain"] = m.group(1)
-    m = re.search(r"\bmold[_ ]?v?([123])\b", t)
+    m = re.search(r"\bmold[_ ]?v?([0123])\b", t)
     if m: h["mold_id"] = f"mold_v{m.group(1)}"
     # Only a line that STARTS with the label: "Multi-organization: no, one workspace" once named a workspace "no, one workspace".
     m = re.search(r"^\s*(?:workspace|org(?:anisation|anization)?)(?: name)?:\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I | re.M)
@@ -542,6 +543,58 @@ def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
         carry_forward(di, existing.get("datainfra", {}), OWNED_BY_OMISSION["datainfra"])
     return app, infra, ds, di
 
+def self_test_single(n, fails):
+    """mold_v0-028: a single-service mold's intake, in a temp copy of the factory (scripts and state copied, molds
+    linked read-only): where it runs is asked unless the brief says; state validates; a re-run keeps what a deploy wrote;
+    a switch of target drops the other target's object. The real state/ is never written."""
+    import shutil, tempfile
+    h = parse_brief("Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n")
+    n += 1
+    if (h.get("mold_id"), h.get("deploy_target"), h.get("custom_domain")) != ("mold_v0", "vm_remote", "shop.example.org"):
+        fails.append(f"a mold_v0 brief's hints: {h}")
+    T = tempfile.mkdtemp(prefix="intake-single-")
+    try:
+        shutil.copytree(os.path.dirname(os.path.abspath(__file__)), os.path.join(T, ".claude", "scripts"), ignore=shutil.ignore_patterns("__pycache__", "fixtures"))
+        os.makedirs(os.path.join(T, "state", "application")); os.makedirs(os.path.join(T, "briefs"))
+        for f in os.listdir(ST):
+            if os.path.isfile(os.path.join(ST, f)): shutil.copy(os.path.join(ST, f), os.path.join(T, "state", f))
+        shutil.copytree(os.path.join(ST, "tasks"), os.path.join(T, "state", "tasks"))
+        shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
+        os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
+        I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application")
+        def go(app, brief, answers=None):
+            b = os.path.join(T, "briefs", app + ".md"); open(b, "w").write(brief)
+            if answers is not None: save(os.path.join(T, "ans.json"), answers)
+            return subprocess.run([sys.executable, I, b, "--app", app, *(["--answers", os.path.join(T, "ans.json")] if answers is not None else [])],
+                                  cwd=T, capture_output=True, text=True)
+        def docs(app): return {k: load(os.path.join(A, app, k + ".json")) for k in ("application", "infrastructure", "datastores", "datainfra")}
+        r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); n += 1
+        if r.returncode: fails.append(f"a mold_v0 brief for its own server did not stamp: {(r.stdout + r.stderr).strip()[-300:]}")
+        else:
+            d = docs("zz_one"); i = d["infrastructure"]; n += 1
+            if (i["target"], i["compose_remote"]["compose"]["project"], i["compose_remote"].get("domain"), i["secrets_user"], d["datastores"]["postgres"]["exposure"]) != \
+               ("compose_remote", "sf-zz-one", "shop.example.org", [], "compose_network"):
+                fails.append(f"mold_v0 state for its own server: {i['target']} {i.get('compose_remote')} {d['datastores']['postgres']}")
+            n += 1
+            if "model" in d["application"] or "workspace" in d["application"] or "inference" in i: fails.append("mold_v1's model, workspace or inference was written into a mold_v0 app")
+            # what a deploy writes survives a re-run
+            d["application"]["status"] = "stamped"; d["application"]["testing"]["context"] = {"status": "pass", "run_at": "2026-10-20T00:00:00+00:00"}
+            i.update(deployed_at="2026-10-20T00:00:00+00:00"); i["compose_remote"].update(host="203.0.113.7", production_url="https://shop.example.org", release="20261020T000000Z", health={"app": "healthy", "public": "200"})
+            for k, v in d.items(): save(os.path.join(A, "zz_one", k + ".json"), v)
+            r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); d2 = docs("zz_one"); n += 1
+            if r.returncode or d2 != d: fails.append(f"a same-brief re-run of a deployed mold_v0 app changed its state: {(r.stdout + r.stderr).strip()[-200:]}")
+            r = go("zz_one", "Mold: mold_v0\nDomain: shop.example.org\n", {"deploy_target": "vercel"}); d3 = docs("zz_one"); n += 1
+            if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != ["DATABASE_URL"] \
+               or d3["datastores"]["postgres"]["provider"] != "neon":
+                fails.append(f"switching a mold_v0 app to Vercel: {(r.stdout + r.stderr).strip()[-200:]} {d3['infrastructure'].get('target')}")
+        r = go("zz_two", "Mold: mold_v0\nA product for a team.\n"); n += 1
+        q = load(os.path.join(A, "zz_two", "questions.json")) if os.path.exists(os.path.join(A, "zz_two", "questions.json")) else {}
+        if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["deploy_target"]:
+            fails.append(f"a mold_v0 brief that does not say where it runs must ask exactly that: rc={r.returncode} {q.get('pending')}")
+    finally:
+        shutil.rmtree(T, ignore_errors=True)
+    return n, fails
+
 def self_test(app_id="onfinance_hfc"):
     """Re-run intake on a COPY of a deployed app's state, in a temp tree, and prove nothing a deploy or a
     verify wrote is dropped. The real state/ is read, never written: the run happens under a temp ROOT
@@ -573,8 +626,11 @@ def self_test(app_id="onfinance_hfc"):
     n += 1
     if q[4]({}, {}, {}) != asr.DEFAULT_MODEL or q[4]({}, {"asr_model_unknown": "x"}, {}) is not None or q[4]({}, {}, {"existing_asr": {"model": "@cf/openai/whisper"}}) != "@cf/openai/whisper":
         fails.append("asr_model resolves: default today's model; an unknown brief model is asked; the app's own earlier choice is kept")
+    n, _ = self_test_single(n, fails)
+    if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
     src = os.path.join(ST, "application", app_id)
-    if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none")
+    if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none "
+                                                                      f"(the {n} checks before it passed, the mold_v0 ones among them)")
     T = tempfile.mkdtemp(prefix="intake-selftest-")
     try:
         shutil.copytree(os.path.dirname(os.path.abspath(__file__)), os.path.join(T, ".claude", "scripts"))
@@ -662,6 +718,92 @@ def self_test(app_id="onfinance_hfc"):
     if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
     print(f"intake: {n} checks passed (re-run on a temp copy of {app_id}; real state untouched)")
 
+# ---- a single-service mold (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028) ----------------------------
+# Its state uses the same four schemas, with only the fields that shape needs (lib/single_service.py shape_state). Most
+# of the questions above are mold_v1's (inference, web search, the browser, the data room, the starter library, the
+# speech model) and have no subject here, so they are not asked. Where it runs is asked unless the brief says.
+def _single_target(h, c):
+    if h.get("deploy_target_conflict"): return None
+    t = {"vm_remote": "compose_remote", "vm": "compose_remote", "vercel": "vercel"}.get(h.get("deploy_target"))
+    return t or c.get("existing_target")
+SINGLE_QUESTIONS = [
+ ("deploy_target", "infrastructure.target", "Where should this application run: on a server of its own (the product's own Docker Compose "
+  "stack, with HTTPS from its own Caddy) or on Vercel (one project)?", ["compose_remote", "vercel"], lambda d, h, c: _single_target(h, c)),
+ ("domain", "infrastructure.compose_remote.domain", "The web address people will open, e.g. app.example.com (blank: name it later with "
+  "provision.py <app> --set-remote domain=<name>).", None, lambda d, h, c: h.get("custom_domain") or c.get("existing_domain") or ""),
+ ("vercel_project", "infrastructure.vercel.project", "Vercel project name for this app (target vercel only; one project per app).", None,
+  lambda d, h, c: c.get("existing_project") or slug(c["app_id"])),
+]
+
+def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
+    """The four documents of a single-service app, with what a deploy, a lane run or the operator recorded kept."""
+    mold = next(m for m in factory["molds"] if m["mold_id"] == mold_id)
+    prod = pick_product(mold_id, hints, existing)
+    app, infra, ds, di = single_service.shape_state(app_id, mold_id, ans["deploy_target"], prod, mold, ans, hints,
+                                                    os.path.relpath(brief_path, ROOT), factory.get("defaults", {}), ROOT)
+    ex_app, ex_inf, ex_ds, ex_di = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores", "datainfra"))
+    for k in ("status", "testing", "revert"):
+        if ex_app.get(k): app[k] = ex_app[k]
+    if ex_app.get("mold_commit") and ex_app.get("status") not in (None, "planned"): app["mold_commit"] = ex_app["mold_commit"]
+    other = {"vercel", "vm", "vm_remote", "compose_remote"} - {infra["target"]}
+    carry_forward(app, ex_app, {"customer_id", "packs", "surface", "workspace", "model", "asr", "capabilities"})
+    carry_forward(infra, ex_inf, other | {"inference", "runtime_env"})
+    t = infra["target"]
+    if isinstance(ex_inf.get(t), dict): carry_forward(infra[t], ex_inf[t], set())
+    if ex_ds.get("postgres", {}).get("provider") == ds["postgres"]["provider"]: carry_forward(ds, ex_ds, set())
+    carry_forward(di, ex_di, set())
+    return app, infra, ds, di
+
+def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, answers_path, ask):
+    d = factory.get("defaults", {})
+    ex_inf = existing.get("infrastructure", {})
+    ctx = {"app_id": app_id, "existing_target": ex_inf.get("target") if ex_inf.get("target") in single_service.TARGETS else None,
+           "existing_domain": (ex_inf.get("compose_remote") or {}).get("domain") or (ex_inf.get("vercel") or {}).get("custom_domain"),
+           "existing_project": (ex_inf.get("vercel") or {}).get("project")}
+    answers = load(answers_path) if answers_path else {}
+    qfile = os.path.join(outdir, "questions.json")
+    if os.path.exists(qfile) and not answers: answers.update(load(qfile).get("answers", {}))
+    resolved, pending = {}, []
+    for qid, path, prompt, options, resolve in SINGLE_QUESTIONS:
+        if qid in answers: resolved[qid] = coerce(answers[qid]); continue
+        v = resolve(d, hints, ctx)
+        if v is not None: resolved[qid] = v; continue
+        q = {"id": qid, "path": path, "question": prompt, "options": options, "suggested": "compose_remote" if qid == "deploy_target" else None}
+        if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both a server of its own and Vercel"
+        pending.append(q)
+    if ask and pending:
+        for q in pending:
+            v = input(f"{q['question']} [{'/'.join(q['options'] or [])}] (default: {q['suggested']}): ").strip() or q["suggested"]
+            if q["options"] and v not in q["options"]: sys.exit(f"{v!r} is not one of {', '.join(q['options'])}; nothing was written.")
+            resolved[q["id"]] = v
+        pending = []
+    if pending:
+        save(qfile, {"app_id": app_id, "mold_id": mold_id, "brief": os.path.relpath(brief_path, ROOT), "hints": hints,
+                     "answers": dict(resolved), "pending": pending, "optional": [], "generated": TODAY})
+        print(f"{len(pending)} question(s) pending -> {os.path.relpath(qfile, ROOT)}")
+        for q in pending: print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] else "") + (f"  ({q['why']})" if q.get("why") else ""))
+        sys.exit(2)
+    if resolved["deploy_target"] not in single_service.TARGETS:
+        sys.exit(f"{app_id}: {mold_id} runs on {' or '.join(single_service.TARGETS)}, not {resolved['deploy_target']!r}. Nothing was written.")
+    app, infra, ds, di = build_single(app_id, mold_id, resolved, hints, factory, brief_path, existing)
+    for name, obj in (("application", app), ("infrastructure", infra), ("datastores", ds), ("datainfra", di)):
+        save(os.path.join(outdir, f"{name}.json"), obj)
+    if os.path.exists(qfile): os.remove(qfile)
+    save(os.path.join(outdir, "answers.json"), resolved)
+    raw = load(os.path.join(ST, "factory.json"))     # the repository's file, never the merged view (see main)
+    if app_id not in raw.setdefault("applications", []): raw["applications"].append(app_id); save(os.path.join(ST, "factory.json"), raw)
+    P = load(os.path.join(ST, "products.json"))
+    for p in P["products"]:
+        if p["product_id"] == app["product_id"] and app_id not in p.setdefault("app_ids", []): p["app_ids"].append(app_id)
+    save(os.path.join(ST, "products.json"), P)
+    r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude/scripts/factory.py"), "validate"], capture_output=True, text=True)
+    print(r.stdout.strip())
+    if r.returncode: sys.exit(r.returncode)
+    t = infra["target"]; where = infra.get(t) or {}
+    print(f"state written: state/application/{app_id}/  (mold={mold_id}, target={t}, " +
+          (f"compose project={where['compose']['project']}, domain={where.get('domain') or 'not named yet'}" if t == "compose_remote" else f"project={where.get('project')}") +
+          f", values you set: {', '.join(infra['secrets_user']) or 'none'}, minted at the deploy: {len(infra['secrets_derived'])})")
+
 def main(a):
     if a and a[0] == "--self-test": return self_test(*a[1:2])
     if not a or a[0].startswith("-"): sys.exit(__doc__)
@@ -673,6 +815,8 @@ def main(a):
     mold_id = opt("--mold") or hints.get("mold_id") or "mold_v1"
     outdir = os.path.join(ST, "application", app_id); os.makedirs(outdir, exist_ok=True)
     existing = {n: load(os.path.join(outdir, f"{n}.json")) for n in ("application","infrastructure","datastores","datainfra") if os.path.exists(os.path.join(outdir, f"{n}.json"))}
+    if single_service.manifest(mold_id, ROOT):
+        return main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, opt("--answers"), "--ask" in opts)
     prod = pick_product(mold_id, hints, existing)
     ctx = {"app_id": app_id, "product": prod, "first_app": not [x for x in prod.get("app_ids", []) if x != app_id],
            "suffix": app_id[len(prod["product_id"])+1:] if app_id.startswith(prod["product_id"]+"_") else app_id,

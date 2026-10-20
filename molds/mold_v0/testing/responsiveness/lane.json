@@ -1,0 +1,9 @@
+{
+  "lane": "responsiveness",
+  "order": 50,
+  "summary": "No harness: the product ships no viewport or layout test of its own, and mold_v1's harness grades mold_v1's own routes, so this lane is recorded skipped, never pass.",
+  "not_covered": [
+    "Layout across phone, tablet and desktop widths is not measured for mold_v0 apps."
+  ],
+  "checks": []
+}

@@ -1,0 +1,9 @@
+{
+  "lane": "load",
+  "order": 30,
+  "summary": "No harness: the product ships no load or concurrency test of its own, so this lane is recorded skipped, never pass.",
+  "not_covered": [
+    "Throughput and latency under concurrent MCP clients are not measured for mold_v0 apps. A load harness is a change to the mold's source (or a factory harness written for it), not a default here."
+  ],
+  "checks": []
+}
