@@ -92,7 +92,7 @@ typed by hand, and nothing in the snapshot changes:
   `CLERK_SECRET_KEY`, mold.json `operator_env`), set by the operator with `provision.py <app> --set-secret NAME`, which
   writes a name to every project that reads it (`CLERK_SECRET_KEY` to both, the publishable key to the console only).
   Both are required: the console's `src/proxy.ts` runs Clerk's middleware on `/admin` and `/app`, which cannot start
-  without them, so the deploy stops and asks for them (exit 3) rather than deploying a console that fails its health
+  without them, so the check (`provision.py <app>`) stops and asks for them (exit 3) rather than deploying a console that fails its health
   check. The built-in emailed-code sign-in comes with the generalised shell.
 - Order: the API first (twice on a first deploy, so it reads its own address as `PUBLIC_URL`), its `/healthz` must
   answer 200 ok; then the API-address variable on the console, then the console. Health on the console: `/healthz`

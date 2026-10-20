@@ -151,6 +151,12 @@ def rehearsal(ok):
         w0["projects"]["zz-shop-api"]["env"]["CLERK_SECRET_KEY"] = "sk_standin"; json.dump(w0, open(W, "w"))
         code, out = go("zz_shop")
         ok(code == 0 and "Ready" in out and set(W_()["projects"]) == {"zz-shop-api", "zz-shop"}, f"rehearsal: with both keys set the check is read-only and ready: {out[-400:]}")
+        w0 = W_(); w0["projects"]["zz-shop"]["env"]["DATABASE_URL"] = "standin-old-database"; json.dump(w0, open(W, "w"))
+        code, out = go("zz_shop", "--deploy")
+        ok(code != 0 and "not a console project" in out and "DATABASE_URL" in out and "deploy" not in calls(),
+           f"rehearsal: a console project holding the API's names (the one-project shape) is refused before any deploy: {out[-300:]}")
+        w0 = W_(); w0["projects"]["zz-shop"]["env"].pop("DATABASE_URL"); json.dump(w0, open(W, "w"))
+        st_ = st(); st_["status"] = "stamped"; json.dump(st_, open(os.path.join(a, "application.json"), "w"), indent=2)
         code, out = go("zz_shop", "--deploy")
         w = W_(); v = inf().get("vercel") or {}
         ok(code == 0 and st()["status"] == "stamped" and v.get("projects") == {"api": "zz-shop-api", "web": "zz-shop"} and v.get("api_url") == api_u and v.get("production_url") == web_u
