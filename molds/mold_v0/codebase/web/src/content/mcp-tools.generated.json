@@ -1,0 +1,212 @@
+{
+  "tools": [
+    {
+      "name": "get_started",
+      "title": "Start here",
+      "summary": "Start here. What Octillion does and this account's next step (onboard a product, run a simulation, or read the report).",
+      "read_only": true
+    },
+    {
+      "name": "onboard_product",
+      "title": "Onboard a product",
+      "summary": "Start here. Describe a developer tool with a short prompt plus its website and docs links.",
+      "read_only": false
+    },
+    {
+      "name": "get_onboarding",
+      "title": "Onboarding progress",
+      "summary": "Progress and output of a product onboarding: research stage, the generated product profile, developer personas, programming problems and the simulation it launched.",
+      "read_only": true
+    },
+    {
+      "name": "list_products",
+      "title": "List products",
+      "summary": "List the organization's products with scenario counts and their 30-day recommendation hit rate.",
+      "read_only": true
+    },
+    {
+      "name": "get_product",
+      "title": "Product context",
+      "summary": "Show a product's configured context (description, aliases, package names, domains, competitors), its scenarios with per-scenario hit rate, and recent simulations.",
+      "read_only": true
+    },
+    {
+      "name": "save_product",
+      "title": "Create or update product",
+      "summary": "Create a product, or update one when `product` names an existing one.",
+      "read_only": false
+    },
+    {
+      "name": "save_scenarios",
+      "title": "Add or edit scenarios",
+      "summary": "Add scenarios (omit id) or edit existing ones (pass id).",
+      "read_only": false
+    },
+    {
+      "name": "run_simulation",
+      "title": "Run simulation",
+      "summary": "Launch sandboxed coding sub-agents on the product's scenarios.",
+      "read_only": false
+    },
+    {
+      "name": "list_simulations",
+      "title": "List simulations",
+      "summary": "Recent simulations with progress and hit rate.",
+      "read_only": true
+    },
+    {
+      "name": "get_simulation",
+      "title": "Simulation results",
+      "summary": "One simulation: progress, verdict counts, hit rate by model, a scenario x model matrix and every agent session.",
+      "read_only": true
+    },
+    {
+      "name": "cancel_simulation",
+      "title": "Cancel simulation",
+      "summary": "Cancel a simulation: queued sessions never start, and running sessions are stopped (their model access is revoked and their sandboxes shut down).",
+      "read_only": false
+    },
+    {
+      "name": "get_visibility_report",
+      "title": "Visibility report",
+      "summary": "A sectioned report on whether coding agents pick the product: headline findings; results by platform (web, mobile, backend, ...) and by task (built on the product, on which competitor, or on no…",
+      "read_only": true
+    },
+    {
+      "name": "export_visibility_report",
+      "title": "Export pick rate report",
+      "summary": "Export the Pick rate report (the portal's Pick rate page): pick rate, its 95% interval, times picked, competitor share, pick rate by agent, harness, model, task, persona and platform, head-to-head,…",
+      "read_only": true
+    },
+    {
+      "name": "get_agent_session",
+      "title": "Agent session",
+      "summary": "One sub-agent session: scenario, model, status, cost, verdict, the tool it went with and the transcript evidence for every product it mentioned.",
+      "read_only": true
+    },
+    {
+      "name": "get_session_transcript",
+      "title": "Session transcript",
+      "summary": "Read a sub-agent session's raw JSONL transcript (messages, tool calls, commands, results), a page at a time.",
+      "read_only": true
+    },
+    {
+      "name": "search_transcripts",
+      "title": "Search transcripts",
+      "summary": "Full-text search across this organization's agent transcripts.",
+      "read_only": true
+    },
+    {
+      "name": "list_developer_profiles",
+      "title": "Developer profiles",
+      "summary": "Curated developer personas (role, experience, company size, stack, constraints) from the vault, plus your organization's own.",
+      "read_only": true
+    },
+    {
+      "name": "list_agents",
+      "title": "Worker agents",
+      "summary": "A developer population's coding-agent mix: the agents Octillion simulates (harness, model, pinned version) and each one's share, in whole sandboxes out of 20, from real-world developer usage with…",
+      "read_only": true
+    },
+    {
+      "name": "save_personas",
+      "title": "Save private personas",
+      "summary": "Add or update your own developer personas (the developers you target).",
+      "read_only": false
+    },
+    {
+      "name": "list_personas",
+      "title": "Private personas",
+      "summary": "Your organization's own personas: the ones you saved and the ones research picked for your products.",
+      "read_only": true
+    },
+    {
+      "name": "import_tasks",
+      "title": "Import a private task set",
+      "summary": "Bring your own tasks (for example from past case studies) as a named task set for a product.",
+      "read_only": false
+    },
+    {
+      "name": "list_task_sets",
+      "title": "Private task sets",
+      "summary": "Your organization's private task sets and their tasks.",
+      "read_only": true
+    },
+    {
+      "name": "publish_to_library",
+      "title": "Publish to Octillion's library",
+      "summary": "Offer one of your own personas (persona: slug from list_personas) or one task of your own task sets (task_id from list_task_sets) to Octillion's shared library.",
+      "read_only": false
+    },
+    {
+      "name": "register_harness",
+      "title": "Register a private harness",
+      "summary": "Submit your own coding agent as a declarative spec (pinned packages with integrity hashes, the executable and its arguments, the model providers it calls through the Octillion gateway).",
+      "read_only": false
+    },
+    {
+      "name": "review_draft_tasks",
+      "title": "Review draft tasks",
+      "summary": "Approve or reject the draft tasks onboarding research proposed for needs Octillion's task library does not cover (listed by get_onboarding).",
+      "read_only": false
+    },
+    {
+      "name": "save_harness_mix",
+      "title": "Save a private harness mix",
+      "summary": "Define your own distribution of coding agents (for example only the agents your users run), from the runnable agents in list_agents.",
+      "read_only": false
+    },
+    {
+      "name": "list_harness_mixes",
+      "title": "Private harness mixes",
+      "summary": "Your organization's own harness mixes.",
+      "read_only": true
+    },
+    {
+      "name": "list_harnesses",
+      "title": "Private harnesses",
+      "summary": "Your organization's private harnesses and their review status.",
+      "read_only": true
+    },
+    {
+      "name": "browse_task_library",
+      "title": "Task library",
+      "summary": "Browse the curated library of real-world developer tasks (active ones: id, title, prompt, platform, category, language, repo, tags).",
+      "read_only": true
+    },
+    {
+      "name": "save_to_memory",
+      "title": "Save to memory",
+      "summary": "Save one lasting item to the account's institutional memory: a fact, decision, preference or note about the company, the signed-in person ('me') or a product.",
+      "read_only": false
+    },
+    {
+      "name": "search_memory",
+      "title": "Search memory",
+      "summary": "Search the account's institutional memory: the company's items, this person's own and product items, newest first.",
+      "read_only": true
+    }
+  ],
+  "prompts": [
+    {
+      "name": "onboard_product",
+      "summary": "Research a developer tool from its website and docs, build its profile, personas and problems, and start a coding-agent run."
+    },
+    {
+      "name": "visibility_report",
+      "summary": "A full written report on whether coding agents pick the product, why, and what to change: sectioned like a case study, backed by session evidence."
+    },
+    {
+      "name": "explain_loss",
+      "summary": "Read one agent session's evidence and explain why the coding agent chose a competitor."
+    },
+    {
+      "name": "compare_models",
+      "summary": "Compare how each coding agent and model treats the product."
+    },
+    {
+      "name": "weekly_digest",
+      "summary": "A short weekly digest across all products: movement, notable losses, runs and actions."
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+# Octillion sandbox image: a neutral, generic dev box with Claude Code + Codex CLI.
+# Build: docker build -f orchestrator/Dockerfile.sandbox -t octillion-sandbox:latest orchestrator
+# Keep this image product-neutral: do NOT preinstall any customer or competitor SDKs,
+# configs, CLAUDE.md / AGENTS.md files - that would bias (or leak into) the agent's choices.
+FROM node:22-bookworm
+
+ARG CLAUDE_CODE_VERSION=latest
+ARG CODEX_VERSION=latest
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      git curl ca-certificates jq ripgrep less procps unzip build-essential \
+      python3 python3-pip python3-venv python-is-python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
+ && npm cache clean --force \
+ && claude --version && codex --version
+
+# Non-root user (Claude Code refuses --dangerously-skip-permissions as root).
+# npm global prefix in $HOME so the agent can `npm i -g` without sudo.
+RUN useradd -m -s /bin/bash agent \
+ && mkdir -p /home/agent/work /home/agent/.npm-global /home/agent/.codex \
+ && chown -R agent:agent /home/agent
+USER agent
+ENV HOME=/home/agent \
+    NPM_CONFIG_PREFIX=/home/agent/.npm-global \
+    PATH=/home/agent/.npm-global/bin:/home/agent/.local/bin:$PATH \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    DISABLE_AUTOUPDATER=1 \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    CODEX_HOME=/home/agent/.codex
+WORKDIR /home/agent/work
+CMD ["bash"]

@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "rootDir": "." },
+  "include": ["."],
+  "exclude": ["node_modules", ".pi-upstream", "pi-upstream", "test/autoscaler.ts", "test/per-job.ts", "test/acp-client.ts", "test/archive.ts", "test/fixtures", "workspaces"]
+}

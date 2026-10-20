@@ -1,0 +1,23 @@
+<!-- Mounted as /etc/clickhouse-server/users.d/octillion.xml: a dedicated user for transcript storage and search
+     when using the local stack's ClickHouse, limited to the octillion database. Local-only password.
+     To use ClickHouse Cloud instead, see CLICKHOUSE_URL / CLICKHOUSE_CREDENTIALS_FILE in .env.example. -->
+<clickhouse>
+  <profiles>
+    <octillion>
+      <enable_full_text_index>1</enable_full_text_index>
+    </octillion>
+  </profiles>
+  <users>
+    <octillion>
+      <password>octillion</password>
+      <profile>octillion</profile>
+      <networks><ip>::/0</ip></networks>
+      <grants>
+        <query>GRANT ALL ON octillion.*</query>
+        <!-- index stats (part/index sizes) for the search view -->
+        <query>GRANT SELECT ON system.parts</query>
+        <query>GRANT SELECT ON system.data_skipping_indices</query>
+      </grants>
+    </octillion>
+  </users>
+</clickhouse>

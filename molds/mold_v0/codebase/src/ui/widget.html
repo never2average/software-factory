@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Octillion</title>
+<style>
+  /* Colour tokens. Host style variables (MCP Apps hostContext.styles.variables, e.g. --color-text-primary)
+     take precedence when the host sends them; our palette is the fallback for both themes. */
+  :root {
+    color-scheme: light;
+    --page: var(--color-background-primary, #f9f9f7);
+    --surface: var(--color-background-primary, #fcfcfb);
+    --surface-2: var(--color-background-secondary, #f0efec);
+    --ink: var(--color-text-primary, #0b0b0b);
+    --ink-2: var(--color-text-secondary, #52514e);
+    --muted: var(--color-text-tertiary, #898781);
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: var(--color-border-secondary, rgba(11, 11, 11, 0.10));
+    --accent: #2a78d6;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+    --good-ink: #006300; --critical-ink: #b42f2f;
+    --sans: var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
+    --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: var(--color-background-primary, #0d0d0d); --surface: var(--color-background-primary, #1a1a19); --surface-2: var(--color-background-secondary, #262624);
+      --ink: var(--color-text-primary, #ffffff); --ink-2: var(--color-text-secondary, #c3c2b7); --muted: var(--color-text-tertiary, #898781);
+      --grid: #2c2c2a; --axis: #383835; --border: var(--color-border-secondary, rgba(255, 255, 255, 0.10));
+      --accent: #3987e5;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+      --good-ink: #0ca30c; --critical-ink: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: var(--color-background-primary, #0d0d0d); --surface: var(--color-background-primary, #1a1a19); --surface-2: var(--color-background-secondary, #262624);
+    --ink: var(--color-text-primary, #ffffff); --ink-2: var(--color-text-secondary, #c3c2b7); --muted: var(--color-text-tertiary, #898781);
+    --grid: #2c2c2a; --axis: #383835; --border: var(--color-border-secondary, rgba(255, 255, 255, 0.10));
+    --accent: #3987e5;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    --good-ink: #0ca30c; --critical-ink: #e66767;
+  }
+  /* Host fixed the container height (containerDimensions.height): fill it and scroll inside. */
+  :root.fixed-height, :root.fixed-height body { height: 100%; }
+  :root.fixed-height body { overflow: auto; }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page); color: var(--ink);
+    font: 14px/1.45 var(--sans);
+    padding: 16px;
+  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; font-weight: 600; margin: 0 0 10px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  p { margin: 0; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  .sub { color: var(--ink-2); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .stack > * + * { margin-top: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .spread { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .grid-wide { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+  .nav { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .nav button, .btn {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+    padding: 5px 12px; font-size: 13px;
+  }
+  .nav button[aria-current="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  .nav button:hover, .btn:hover { border-color: var(--axis); }
+  .nav .back { margin-right: auto; }
+
+  .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+  .status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .status.ok .dot { background: var(--good); }
+  .status.error .dot { background: var(--critical); }
+  .status.timeout .dot { background: var(--warning); }
+  .status.completed .dot { background: var(--good); }
+  .status.failed .dot { background: var(--critical); }
+  .status.active .dot { background: var(--accent); }
+  .lf { font-size: 12px; white-space: nowrap; }
+
+  .tile .label { font-size: 12px; color: var(--ink-2); }
+  .tile .value { font-size: 24px; font-weight: 600; margin-top: 2px; letter-spacing: -0.01em; }
+  .tile .note { font-size: 12px; color: var(--muted); }
+
+  .meter { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+  .meter > span { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--grid); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--surface-2); }
+  .table-wrap { overflow-x: auto; }
+
+  .feature h3 { font-size: 14px; margin: 0 0 4px; }
+  .feature p { font-size: 13px; color: var(--ink-2); }
+  .tier .price { font-size: 22px; font-weight: 600; }
+  .tier ul { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* Horizontal bars (population) */
+  .hbars { display: grid; grid-template-columns: minmax(90px, 160px) 1fr auto; gap: 6px 10px; align-items: center; }
+  .hbars .track { position: relative; height: 18px; }
+  .hbars .bar { position: absolute; left: 0; top: 2px; bottom: 2px; background: var(--s1); border-radius: 0 4px 4px 0; }
+  .hbars .val { font-variant-numeric: tabular-nums; font-size: 13px; text-align: right; }
+  .hbars .hit { cursor: default; }
+
+  /* Session timeline */
+  .wf { display: grid; grid-template-columns: minmax(90px, 140px) 1fr 64px; gap: 4px 10px; align-items: center; font-size: 13px; }
+  .wf .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wf .lane { position: relative; height: 16px; background: linear-gradient(to right, var(--grid) 1px, transparent 1px) 0 0 / 25% 100%; }
+  .wf .span { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; min-width: 3px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+  .err-box { border-left: 3px solid var(--critical); background: var(--surface-2); padding: 8px 12px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+  select { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+
+  .ev { display: grid; grid-template-columns: 130px 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid); }
+  .ev-meta { display: flex; flex-direction: column; font-size: 12px; }
+  .ev-type { font-weight: 600; color: var(--ink-2); }
+  .ev-user_message .ev-type { color: var(--accent); }
+  .ev-body { min-width: 0; }
+  .ev-run_end, .ev-session_start, .ev-session_end { background: var(--surface-2); padding-left: 8px; padding-right: 8px; border-radius: 6px; }
+  pre.code { margin: 4px 0 0; padding: 8px; background: var(--surface-2); border-radius: 6px; font-size: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  code { font-family: var(--mono); font-size: 12px; }
+  @media (max-width: 560px) { .ev { grid-template-columns: 1fr; gap: 4px; } }
+  mark { background: color-mix(in srgb, var(--s4) 35%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+  input[type="search"] { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+  .ev.clickable:hover { background: var(--surface-2); }
+  .btn[aria-current="true"] { background: var(--ink); color: var(--surface); }
+  #tip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--ink); color: var(--surface); font-size: 12px; padding: 6px 8px; border-radius: 6px;
+    max-width: 260px; white-space: pre-line;
+  }
+  .loading { opacity: 0.55; transition: opacity 0.15s; }
+  .empty { padding: 40px 0; text-align: center; color: var(--muted); }
+  svg text { fill: var(--muted); font-size: 11px; }
+
+  /* Octillion additions */
+  .verdict { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid var(--border); }
+  .verdict.adopted { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--good-ink); }
+  .verdict.recommended { background: color-mix(in srgb, var(--good) 10%, transparent); color: var(--good-ink); }
+  .verdict.mentioned { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--ink-2); }
+  .verdict.competitor { background: color-mix(in srgb, var(--critical) 15%, transparent); color: var(--critical-ink); }
+  .verdict.none, .verdict.pending { background: var(--surface-2); color: var(--muted); }
+  .status.queued .dot { background: var(--muted); }
+  .status.running .dot { background: var(--accent); }
+  .status.cancelled .dot { background: var(--axis); }
+  .vbar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+  .vbar > span { display: block; height: 100%; }
+  .v-adopted { background: var(--good); } .v-recommended { background: color-mix(in srgb, var(--good) 55%, var(--surface)); }
+  .v-mentioned { background: var(--warning); } .v-competitor { background: var(--critical); } .v-none { background: var(--axis); }
+  .hbars .bar.target { background: var(--accent); } .hbars .bar.rival { background: var(--s2); }
+  .ci { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cell { text-align: center; border-radius: 6px; padding: 6px 4px; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .prompt { white-space: pre-wrap; background: var(--surface-2); border-radius: 6px; padding: 10px 12px; font-size: 13px; }
+  .ev.evidence { box-shadow: inset 3px 0 0 var(--s4); padding-left: 10px; }
+  .warn { border-left: 3px solid var(--warning); background: var(--surface-2); padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+  .findings { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
+  .brand { font-weight: 700; letter-spacing: -0.02em; margin-right: 6px; align-self: center; }
+</style>
+</head>
+<body>
+<div id="app"><div class="empty">Waiting for data…</div></div>
+<div id="tip"></div>
+<script>
+(() => {
+  const app = document.getElementById("app");
+  const tip = document.getElementById("tip");
+  const history = [];
+  const PREVIEW = window.__OCTILLION_PREVIEW__; // set by the local preview server only
+  let product = null; // slug of the product in view, so the nav can stay on it
+
+  // ---------- helpers ----------
+  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const nf = new Intl.NumberFormat();
+  const num = (n) => nf.format(Math.round(Number(n) || 0));
+  const pct = (n) => (n == null ? "–" : `${Math.round(Number(n) * 100)}%`);
+  const ci = (c) => (c ? `<span class="ci">${Math.round(c[0] * 100)}–${Math.round(c[1] * 100)}%</span>` : "");
+  const usd = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const ms = (n) => {
+    if (n >= 3600000) return `${Math.floor(n / 3600000)}h ${Math.round((n % 3600000) / 60000)}m`;
+    if (n >= 60000) return `${Math.floor(n / 60000)}m ${Math.round((n % 60000) / 1000)}s`;
+    return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`;
+  };
+  const ago = (t) => {
+    if (!t) return "–";
+    const s = (Date.now() - new Date(t).getTime()) / 1000;
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    return `${Math.round(s / 86400)}d ago`;
+  };
+  const VERDICT = { adopted: "✓✓ adopted", recommended: "✓ recommended", mentioned: "~ mentioned", competitor: "✕ competitor", none: "– none" };
+  const verdict = (v) => `<span class="verdict ${esc(v || "pending")}">${esc(VERDICT[v] || "pending")}</span>`;
+  const statusPill = (s) => {
+    const label = { completed: "✓ completed", failed: "✕ failed", timeout: "◷ timeout", running: "● running", queued: "○ queued", cancelled: "⊘ cancelled" }[s] || s;
+    return `<span class="status ${esc(s)}"><span class="dot"></span>${esc(label)}</span>`;
+  };
+  const tile = (label, value, note = "") =>
+    `<div class="card tile"><div class="label">${esc(label)}</div><div class="value">${value}</div>${note ? `<div class="note">${note}</div>` : ""}</div>`;
+  const args = (o) => esc(JSON.stringify(o));
+  const go = (tool, a, label, cls = "btn") => `<button class="${cls}" data-tool="${tool}" data-args="${args(a)}">${label}</button>`;
+  const chips = (xs) => (xs && xs.length ? `<div class="chips">${xs.map((x) => `<span class="badge">${esc(x)}</span>`).join("")}</div>` : `<span class="muted">–</span>`);
+
+  // ---------- host bridge ----------
+  // MCP Apps (SEP-1865, spec 2026-01-26): the view is a JSON-RPC 2.0 peer of the host over postMessage.
+  // ui/initialize -> ui/notifications/initialized handshake; tool data arrives as ui/notifications/tool-input and
+  // ui/notifications/tool-result; drill-downs are tools/call requests the host proxies to this MCP server;
+  // size, links, display mode and model context go through ui/* requests and notifications.
+  const PROTOCOL_VERSION = "2026-01-26";
+  const APP_INFO = { name: "octillion-dashboard", version: "2.1.0" };
+  const host = { connected: false, capabilities: {}, info: null, context: {} };
+  const rpcPending = new Map();
+  let rpcSeq = 0;
+
+  const send = (msg) => window.parent.postMessage({ jsonrpc: "2.0", ...msg }, "*");
+  const notify = (method, params) => send(params === undefined ? { method } : { method, params });
+  function request(method, params, timeoutMs = 120000) {
+    const id = ++rpcSeq;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { rpcPending.delete(id); reject(new Error(`${method} timed out`)); }, timeoutMs);
+      rpcPending.set(id, { resolve, reject, timer });
+      send({ id, method, params });
+    });
+  }
+
+  const hostRequests = {
+    ping: () => ({}),
+    "ui/resource-teardown": () => ({}),
+  };
+  const hostNotifications = {
+    "ui/notifications/tool-input": () => {
+      if (!history.length) loadingView(host.context.toolInfo?.tool?.name);
+    },
+    "ui/notifications/tool-input-partial": () => {},
+    "ui/notifications/tool-result": (result) => showResult(result),
+    "ui/notifications/tool-cancelled": ({ reason }) => flash(`Tool call cancelled${reason ? `: ${reason}` : ""}`),
+    "ui/notifications/host-context-changed": (ctx) => {
+      host.context = { ...host.context, ...ctx };
+      applyHostContext(ctx);
+    },
+  };
+
+  window.addEventListener("message", (ev) => {
+    if (ev.source !== window.parent) return;
+    const m = ev.data;
+    if (!m || typeof m !== "object" || m.jsonrpc !== "2.0") return;
+    if (m.method === undefined) { // response to one of our requests
+      const p = rpcPending.get(m.id);
+      if (!p) return;
+      rpcPending.delete(m.id);
+      clearTimeout(p.timer);
+      if (m.error) p.reject(Object.assign(new Error(m.error.message || "Host error"), { code: m.error.code }));
+      else p.resolve(m.result);
+    } else if (m.id !== undefined) { // request from the host
+      const handler = hostRequests[m.method];
+      Promise.resolve()
+        .then(() => (handler ? handler(m.params ?? {}) : Promise.reject(Object.assign(new Error(`Method not found: ${m.method}`), { code: -32601 }))))
+        .then((result) => send({ id: m.id, result: result ?? {} }),
+              (e) => send({ id: m.id, error: { code: typeof e.code === "number" ? e.code : -32603, message: String(e.message || e) } }));
+    } else {
+      hostNotifications[m.method]?.(m.params ?? {});
+    }
+  });
+
+  function applyHostContext(ctx) {
+    const root = document.documentElement;
+    if (ctx.theme === "dark" || ctx.theme === "light") {
+      root.dataset.theme = ctx.theme;
+      root.style.colorScheme = ctx.theme;
+    }
+    for (const [k, v] of Object.entries(ctx.styles?.variables ?? {})) if (v != null) root.style.setProperty(k, v);
+    const fonts = ctx.styles?.css?.fonts;
+    if (fonts && !document.getElementById("host-fonts")) {
+      const style = document.createElement("style");
+      style.id = "host-fonts";
+      style.textContent = fonts;
+      document.head.appendChild(style);
+    }
+    const dims = ctx.containerDimensions;
+    if (dims) root.classList.toggle("fixed-height", "height" in dims);
+    if (ctx.locale) root.lang = ctx.locale;
+    if (ctx.displayMode && history.length) render(history[history.length - 1]);
+  }
+
+  // Report the content size so the host can size the iframe (ui/notifications/size-changed), as the SDK's autoResize does.
+  function startSizeReporting() {
+    let scheduled = false, lastW = 0, lastH = 0;
+    const measure = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        const html = document.documentElement;
+        const prev = html.style.height;
+        html.style.height = "max-content";
+        const height = Math.ceil(html.getBoundingClientRect().height);
+        html.style.height = prev;
+        const width = Math.ceil(window.innerWidth);
+        if (width !== lastW || height !== lastH) {
+          lastW = width; lastH = height;
+          notify("ui/notifications/size-changed", { width, height });
+        }
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(document.documentElement);
+    ro.observe(document.body);
+  }
+
+  async function connect() {
+    if (window.parent === window) throw new Error("not embedded in an MCP Apps host");
+    const res = await request("ui/initialize", {
+      appInfo: APP_INFO,
+      appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+      protocolVersion: PROTOCOL_VERSION,
+    }, 15000);
+    host.capabilities = res?.hostCapabilities ?? {};
+    host.info = res?.hostInfo ?? null;
+    host.context = res?.hostContext ?? {};
+    applyHostContext(host.context);
+    notify("ui/notifications/initialized");
+    host.connected = true;
+    document.documentElement.dataset.bridge = "connected"; // observable by tests
+    startSizeReporting();
+  }
+
+  async function invokeTool(name, params) {
+    if (PREVIEW) {
+      const res = await fetch(PREVIEW.toolEndpoint, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key: PREVIEW.key, name, arguments: params }),
+      });
+      return res.json();
+    }
+    if (host.connected) return request("tools/call", { name, arguments: params });
+    if (window.openai?.callTool) return window.openai.callTool(name, params); // pre-MCP-Apps ChatGPT runtime
+    throw new Error("Not connected to the host yet");
+  }
+
+  async function callTool(toolName, params = {}, { replace = false } = {}) {
+    app.classList.add("loading");
+    try {
+      const result = await invokeTool(toolName, params);
+      const data = result?.structuredContent;
+      if (result?.isError || !data) throw new Error(result?.content?.[0]?.text || "Tool returned no data");
+      if (replace) history.pop();
+      show(data, true);
+      // Tell the model what the user is now looking at, so follow-up questions have context.
+      if (host.connected && host.capabilities.updateModelContext) {
+        const summary = String(result.content?.find((c) => c.type === "text")?.text ?? "").split("\n\n")[0].slice(0, 4000);
+        request("ui/update-model-context", { content: [{ type: "text", text: `The user opened ${toolName} ${JSON.stringify(params)} in the Octillion dashboard. ${summary}` }] }).catch(() => {});
+      }
+    } catch (e) {
+      flash(String(e.message || e));
+    } finally {
+      app.classList.remove("loading");
+    }
+  }
+
+  function showResult(result) {
+    if (result?.isError) { flash(result.content?.[0]?.text || "Tool failed"); return; }
+    const data = result?.structuredContent;
+    if (!data || !data.view) return;
+    const top = history[history.length - 1];
+    if (top && JSON.stringify(top) === JSON.stringify(data)) return; // same payload delivered twice
+    show(data, true);
+  }
+
+  function openLink(url) {
+    if (host.connected && host.capabilities.openLinks) return request("ui/open-link", { url }).catch((e) => flash(String(e.message || e)));
+    if (window.openai?.openExternal) return window.openai.openExternal({ href: url });
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  async function toggleFullscreen() {
+    const mode = host.context.displayMode === "fullscreen" ? "inline" : "fullscreen";
+    try {
+      const res = await request("ui/request-display-mode", { mode });
+      host.context.displayMode = res?.mode ?? host.context.displayMode;
+      if (history.length) render(history[history.length - 1]);
+    } catch (e) { flash(String(e.message || e)); }
+  }
+  const canFullscreen = () => host.connected && (host.context.availableDisplayModes ?? []).includes("fullscreen");
+
+  function loadingView(tool) {
+    app.innerHTML = `<div class="empty">Loading${tool ? ` ${esc(tool.replace(/_/g, " "))}` : ""}…</div>`;
+  }
+
+  function flash(text) {
+    const el = document.createElement("div");
+    el.className = "card err-box";
+    el.style.marginBottom = "12px";
+    el.textContent = text;
+    app.prepend(el);
+  }
+
+  // ---------- tooltips ----------
+  document.addEventListener("pointermove", (e) => {
+    const t = e.target.closest?.("[data-tip]");
+    if (!t) { tip.style.display = "none"; return; }
+    tip.textContent = t.dataset.tip;
+    tip.style.display = "block";
+    const x = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+    const y = e.clientY + 14 + tip.offsetHeight > window.innerHeight ? e.clientY - tip.offsetHeight - 10 : e.clientY + 14;
+    tip.style.left = `${x}px`; tip.style.top = `${y}px`;
+  });
+  document.addEventListener("pointerleave", () => (tip.style.display = "none"));
+
+  // ---------- click actions ----------
+  app.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-tool]");
+    if (el) { e.preventDefault(); callTool(el.dataset.tool, JSON.parse(el.dataset.args || "{}")); return; }
+    const link = e.target.closest("a[href^='http']");
+    if (link) { e.preventDefault(); openLink(link.href); return; }
+    if (e.target.closest("[data-fullscreen]")) { toggleFullscreen(); return; }
+    const back = e.target.closest("[data-back]");
+    if (back && history.length > 1) { history.pop(); render(history[history.length - 1]); }
+  });
+  app.addEventListener("submit", (e) => {
+    const form = e.target.closest("form[data-search], form[data-memory-search]");
+    if (!form) return;
+    e.preventDefault();
+    const params = {};
+    for (const [k, v] of new FormData(form).entries()) if (v !== "") params[k] = v;
+    callTool(form.hasAttribute("data-memory-search") ? "search_memory" : "search_transcripts", params);
+  });
+  app.addEventListener("change", (e) => {
+    const f = e.target.closest("[data-filter]");
+    if (!f) return;
+    const current = history[history.length - 1];
+    const filters = { product: current.product.slug, days: current.filters.days, model: current.filters.model || undefined };
+    filters[f.dataset.filter] = f.dataset.filter === "days" ? Number(f.value) : f.value || undefined;
+    callTool("get_visibility_report", filters, { replace: true });
+  });
+
+  function nav(view) {
+    const p = product ? { product } : {};
+    const items = [
+      ["products", "Products", "list_products", {}],
+      ...(product ? [["product", "Context", "get_product", p], ["report", "Report", "get_visibility_report", p]] : []),
+      ["simulations", "Simulations", "list_simulations", p],
+      ["library", "Personas", "list_personas", {}],
+      ["memory", "Memory", "search_memory", {}],
+    ];
+    const group = { simulation: "simulations", session: "simulations", transcript: "simulations", profiles: "library", personas: "library", agents: "library" }[view] || view;
+    return `<nav class="nav">
+      <span class="brand">Octillion</span>
+      ${items.map(([v, label, tool, a]) => `<button data-tool="${tool}" data-args="${args(a)}" aria-current="${v === group}">${label}</button>`).join("")}
+      <span style="margin-left:auto"></span>
+      ${history.length > 1 ? `<button class="back" style="margin-right:0" data-back>← Back</button>` : ""}
+      ${canFullscreen() ? `<button data-fullscreen title="Toggle fullscreen">${host.context.displayMode === "fullscreen" ? "Exit fullscreen" : "⤢ Expand"}</button>` : ""}
+    </nav>`;
+  }
+
+  function show(data, push) {
+    if (push) history.push(data);
+    render(data);
+  }
+
+  function render(d) {
+    tip.style.display = "none";
+    product = d.product?.slug ?? d.simulation?.product_slug ?? d.session?.product_slug ?? (typeof d.product === "string" ? d.product : product);
+    const views = { products: viewProducts, product: viewProduct, report: viewReport, simulations: viewSimulations, simulation: viewSimulation, session: viewSession, transcript: viewTranscript, search: viewSearch, memory: viewMemory, profiles: viewProfiles, agents: viewAgents, onboarding: viewOnboarding, personas: viewPersonas, task_sets: viewTaskSets, harnesses: viewHarnesses, harness_mixes: viewMixes, library_submission: viewSubmission, library: viewLibraryNote, visibility_export: viewPickRate };
+    const fn = views[d.view];
+    const note = d.truncated ? `<div class="warn" style="margin-bottom:12px">Result shortened to fit the host's size limit. Page through it or narrow the filters to see the rest.</div>` : "";
+    app.innerHTML = nav(d.view) + note + (fn ? fn(d) : `<div class="empty">Unknown view: ${esc(d.view)}</div>`);
+  }
+
+  // ---------- products ----------
+  function viewProducts({ org, products }) {
+    if (!products.length)
+      return `<div class="card stack"><h1>Welcome, ${esc(org.name)}</h1>
+        <p class="sub">No products yet. Ask me to add one, e.g. <em>"Add our product Acme Queue (npm @acme/queue) with competitors BullMQ and Inngest"</em>, then add a few realistic coding scenarios and run a simulation.</p></div>`;
+    return `<div class="stack"><div class="spread"><h1>${esc(org.name)}</h1><span class="muted">${products.length} product${products.length === 1 ? "" : "s"}</span></div>
+      <div class="grid-wide">${products.map((p) => `
+        <div class="card stack">
+          <div class="spread"><div><h1 style="font-size:17px">${esc(p.name)}</h1><div class="muted" style="font-size:12px">${esc(p.category || p.slug)}</div></div>
+            <div style="text-align:right"><div style="font-size:22px;font-weight:600">${pct(p.hit_rate_30d)}</div><div class="muted" style="font-size:11px">hit rate · 30d · n=${num(p.sessions_30d)}</div></div></div>
+          <div class="muted" style="font-size:12px">${num(p.scenarios)} scenarios · ${num(p.competitors)} competitors · last run ${ago(p.last_run_at)}</div>
+          <div class="row">${go("get_visibility_report", { product: p.slug }, "Report")}${go("get_product", { product: p.slug }, "Context")}${go("list_simulations", { product: p.slug }, "Simulations")}</div>
+        </div>`).join("")}</div></div>`;
+  }
+
+  // Competitors with where each came from (research cites a page), and a Remove button (save_product with the rest).
+  function competitorsCard(p) {
+    const SRC = { research: "found by research", customer: "added by you", runs: "picked by agents in runs" };
+    const rows = p.competitors.length
+      ? p.competitors.map((c, i) => `<tr><td><strong>${esc(c.name)}</strong><div class="muted" style="font-size:12px">${esc(SRC[c.source] || "added by hand")}</div></td>
+          <td>${/^https?:\/\//.test(c.evidence_url || "") ? `<a href="${esc(c.evidence_url)}" rel="noopener">${esc(new URL(c.evidence_url).hostname.replace(/^www\./, ""))} ↗</a>` : `<span class="muted">–</span>`}</td>
+          <td>${chips(c.packages)}</td><td>${chips(c.domains)}</td>
+          <td>${go("save_product", { product: p.slug, competitors: p.competitors.filter((_, j) => j !== i) }, "Remove")}</td></tr>`).join("")
+      : `<tr><td colspan="5" class="muted">No competitors configured</td></tr>`;
+    return `<div class="card"><h2>Competitors</h2>
+      <p class="sub" style="font-size:13px">Sessions where an agent picks one of these count as a loss to it; anything else counts as "no tool". Missing one? Ask me to add it (e.g. <em>"add competitor X with package x-sdk"</em>).</p>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Evidence</th><th>Packages</th><th>Domains</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }
+
+  // ---------- product context ----------
+  function viewProduct({ product: p, scenarios, simulations, warnings, models }) {
+    return `<div class="stack">
+      <div class="card stack">
+        <div class="spread"><div><h1>${esc(p.name)}</h1><div class="sub">${esc(p.category)}</div></div>
+          <div class="row">${go("get_visibility_report", { product: p.slug }, "Visibility report →")}</div></div>
+        ${p.description ? `<p class="sub">${esc(p.description)}</p>` : ""}
+        ${[["Website", p.website_url], ["Docs", p.docs_url]].filter(([, u]) => /^https?:\/\//.test(u || "")).map(([l, u]) => `<a href="${esc(u)}" rel="noopener">${l} ↗</a>`).join(" · ")}
+        <div class="grid-wide">
+          <div><h2>Aliases</h2>${chips(p.aliases)}</div><div><h2>Packages</h2>${chips(p.packages)}</div><div><h2>Domains</h2>${chips(p.domains)}</div>
+        </div>
+      </div>
+      ${warnings.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("")}
+      ${competitorsCard(p)}
+      <div class="card"><h2>Scenarios</h2><div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>Scenario</th><th>Expect</th><th class="num">Hit rate</th><th>Usually picks</th></tr></thead>
+        <tbody>${scenarios.map((s) => `<tr${s.active ? "" : ' style="opacity:.5"'}${s.prompt ? ` data-tip="${esc(s.prompt)}"` : ""}>
+          <td class="muted">${s.id}</td><td>${esc(s.title)}${s.curated ? ' <span class="badge">curated by Octillion</span>' : ""}${s.active ? "" : ' <span class="badge">retired</span>'}${s.platform ? ` <span class="badge">${esc(s.platform)}</span>` : ""}${s.language ? ` <span class="badge">${esc(s.language)}</span>` : ""}</td>
+          <td>${s.expectation === "avoid" ? '<span class="badge">avoid</span>' : '<span class="badge">recommend</span>'}</td>
+          <td class="num">${pct(s.hit_rate)} <span class="ci">n=${num(s.sessions)}</span></td><td>${esc(s.usual_winner || "–")}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No scenarios yet</td></tr>`}</tbody>
+      </table></div></div>
+      <div class="card"><h2>Recent simulations</h2>${simulations.length ? `<div class="table-wrap"><table><tbody>${simulations.map((s) => `
+        <tr class="clickable" data-tool="get_simulation" data-args="${args({ simulation_id: s.id })}"><td>${esc(s.name)}</td><td>${statusPill(s.status)}</td><td class="muted">${esc(s.models.join(", "))}</td><td class="muted">${ago(s.created_at)}</td></tr>`).join("")}</tbody></table></div>`
+        : `<p class="muted">None yet. Available models: ${esc(models.join(", "))}</p>`}</div>
+    </div>`;
+  }
+
+  // ---------- visibility report ----------
+  function verdictBar(t) {
+    const n = Number(t.sessions) || 1;
+    const parts = ["adopted", "recommended", "mentioned", "competitor", "none"].map((k) => [k, Number(t[k]) || 0]).filter(([, v]) => v);
+    return `<div class="vbar">${parts.map(([k, v]) => `<span class="v-${k}" style="width:${(v / n) * 100}%" data-tip="${esc(VERDICT[k])}: ${v} of ${n}"></span>`).join("")}</div>
+      <div class="legend" style="margin-top:8px">${parts.map(([k, v]) => `<span><i class="v-${k}"></i>${esc(VERDICT[k])} ${v}</span>`).join("")}</div>`;
+  }
+
+  function trendChart(daily) {
+    const W = 640, H = 140, pad = 24, bw = (W - pad) / daily.length;
+    const bars = daily.map((d, i) => {
+      const h = d.hit_rate == null ? 0 : d.hit_rate * (H - 30);
+      const x = pad + i * bw;
+      return `<rect x="${x + 1}" y="${H - 18 - h}" width="${Math.max(1, bw - 3)}" height="${h}" rx="2" fill="var(--s1)" data-tip="${esc(d.day)}: ${pct(d.hit_rate)} of ${d.sessions} sessions"></rect>
+        ${d.sessions ? "" : `<rect x="${x + 1}" y="${H - 20}" width="${Math.max(1, bw - 3)}" height="2" fill="var(--grid)"></rect>`}`;
+    }).join("");
+    const grid = [0, 0.5, 1].map((v) => `<line x1="${pad}" x2="${W}" y1="${H - 18 - v * (H - 30)}" y2="${H - 18 - v * (H - 30)}" stroke="var(--grid)"></line><text x="0" y="${H - 14 - v * (H - 30)}">${v * 100}%</text>`).join("");
+    const labels = daily.filter((_, i) => i % Math.ceil(daily.length / 6) === 0).map((d) => `<text x="${pad + daily.indexOf(d) * bw}" y="${H - 2}">${esc(d.day.slice(5))}</text>`).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Daily hit rate">${grid}${bars}${labels}</svg>`;
+  }
+
+  function viewReport(d) {
+    const t = d.totals;
+    const max = Math.max(1, ...d.share_of_voice.map((v) => Number(v.share) || 0));
+    const sel = (name, opts, cur) => `<select data-filter="${name}">${opts.map(([v, l]) => `<option value="${esc(v)}"${String(v) === String(cur ?? "") ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+    if (!Number(t.sessions))
+      return `<div class="stack"><h1>${esc(d.product.name)}</h1><div class="card empty">No scored agent sessions in the last ${d.filters.days} days.<br>Run a simulation to see how coding agents treat ${esc(d.product.name)}.</div></div>`;
+    return `<div class="stack">
+      <div class="spread"><div><h1>${esc(d.product.name)}</h1><div class="sub">Do coding agents pick ${esc(d.product.name)}?${d.method?.scope ? ` · run ${esc(d.method.scope.name)}` : ""}</div></div>
+        <div class="row">${sel("model", [["", "All models"], ...d.models.map((m) => [m, m])], d.filters.model)}${sel("days", [[7, "7 days"], [30, "30 days"], [90, "90 days"]], d.filters.days)}</div></div>
+      ${d.headline?.length ? `<div class="card"><h2>Headline</h2><ul class="findings">${d.headline.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></div>` : ""}
+      ${d.by_platform?.length ? `<div class="card"><h2>By platform</h2><div class="table-wrap"><table>
+        <thead><tr><th>Platform</th><th style="width:30%">Outcomes (should win)</th><th class="num">${esc(d.product.name)}</th><th class="num">Mentioned</th><th class="num">Control</th><th></th></tr></thead>
+        <tbody>${d.by_platform.map((x) => { const n = x.sessions || 1; return `<tr>
+          <td><span class="badge">${esc(x.platform)}</span> <span class="muted">${num(x.tasks)} task${x.tasks === 1 ? "" : "s"}</span></td>
+          <td>${x.sessions ? `<div class="vbar">${[["adopted", x.product], ["competitor", x.competitor], ["none", x.no_vendor]].filter(([, v]) => v).map(([k, v]) => `<span class="v-${k}" style="width:${(v / n) * 100}%"></span>`).join("")}</div>` : '<span class="muted">control only</span>'}</td>
+          <td class="num">${num(x.product)}/${num(x.sessions)} ${ci(x.hit_ci)}</td>
+          <td class="num">${num(x.product_mentioned)}/${num(x.sessions)}</td>
+          <td class="num">${x.control.sessions ? `${num(x.control.correct)}/${num(x.control.sessions)}` : "–"}</td>
+          <td>${d.filters.platform ? "" : go("get_visibility_report", { product: d.product.slug, ...(d.filters.simulation ? { simulation: d.filters.simulation } : { days: d.filters.days }), platform: x.platform }, "Only these →")}</td></tr>`; }).join("")}</tbody>
+      </table></div></div>` : ""}
+      <div class="grid">
+        ${tile("Hit rate", pct(t.hit_rate), `${ci(t.hit_ci)} 95% CI · n=${num(t.sessions)}`)}
+        ${t.weighted_hit_rate != null ? tile("Adoption-weighted", pct(t.weighted_hit_rate), `per-agent rates × developer usage · covers ${pct(t.adoption_coverage)}`) : ""}
+        ${tile("Adopted", pct(t.adoption_rate), "installed or imported it")}
+        ${tile("Lost to competitor", pct(t.competitor_rate), `${num(t.competitor)} sessions`)}
+        ${tile("Agent spend", usd(t.cost_usd), `${num(t.sessions)} sessions`)}
+      </div>
+      <div class="card"><h2>Verdicts</h2>${verdictBar(t)}</div>
+      <div class="grid-wide">
+        <div class="card"><h2>Share of voice</h2><div class="hbars">${d.share_of_voice.map((v) => `
+          <div class="hit" style="${v.target ? "font-weight:600" : ""}">${esc(v.tool)}</div>
+          <div class="track"><span class="bar ${v.target ? "target" : "rival"}" style="width:${((Number(v.share) || 0) / max) * 100}%" data-tip="${esc(v.tool)}: recommended or adopted in ${v.recommended} sessions, mentioned in ${v.mentioned}"></span></div>
+          <div class="val">${pct(v.share)}</div>`).join("") || '<span class="muted">No tools detected</span>'}</div>
+          <p class="muted" style="font-size:12px;margin-top:8px">Share of sessions where the agent recommended or adopted each tool.</p></div>
+        <div class="card"><h2>By coding agent</h2><table><thead><tr><th>Agent</th><th class="num">Usage</th><th class="num">Hit rate</th><th class="num" data-tip="On tasks the product should win: built on it / on a competitor / no vendor">Product · rival · none</th></tr></thead><tbody>${d.by_agent.map((a) => `
+          <tr><td>${esc(a.label)}</td><td class="num muted">${a.weight ? pct(a.weight) : "–"}</td><td class="num">${pct(a.hit_rate)} ${ci(a.hit_ci)}</td><td class="num">${a.on_target ? `${num(a.on_target.product)} · ${num(a.on_target.competitor)} · ${num(a.on_target.no_vendor)}` : `${num(a.competitor)} lost`}</td></tr>`).join("")}</tbody></table>
+          <p class="muted" style="font-size:12px;margin-top:8px">${go("list_agents", {}, "Usage = share of real-world developer adoption")}</p></div>
+      </div>
+      ${d.by_profile.length ? `<div class="card"><h2>By developer profile</h2><table><thead><tr><th>Profile</th><th class="num">Hit rate</th><th class="num">n</th><th class="num">Questions answered</th></tr></thead><tbody>${d.by_profile.map((p) => `
+        <tr><td>${esc(p.name)}</td><td class="num">${pct(p.hit_rate)} ${ci(p.hit_ci)}</td><td class="num">${num(p.sessions)}</td><td class="num">${Number(p.avg_user_turns || 0).toFixed(1)} avg</td></tr>`).join("")}</tbody></table></div>` : ""}
+      <div class="card"><h2>Daily hit rate</h2>${trendChart(d.daily)}</div>
+      <div class="card"><h2>Results by task (weakest first)</h2>
+        <div class="legend" style="margin-bottom:8px"><span><i class="v-adopted"></i>Built on ${esc(d.product.name)}</span><span><i class="v-competitor"></i>Competitor</span><span><i class="v-none"></i>No vendor</span></div>
+        <div class="table-wrap"><table>
+        <thead><tr><th>Task</th><th style="width:28%">Outcomes</th><th class="num">Hit rate</th><th>Instead</th><th class="num" data-tip="Sessions that mentioned the product at all">Mentioned</th></tr></thead>
+        <tbody>${d.by_scenario.map((s) => { const o = s.outcomes, n = Number(s.sessions) || 1; return `<tr${s.prompt ? ` data-tip="${esc(s.prompt)}"` : ""}>
+          <td>${esc(s.title)} <span class="badge">${s.curated ? "curated by Octillion" : "yours"}</span>${s.platform ? ` <span class="badge">${esc(s.platform)}</span>` : ""}${s.expectation === "avoid" ? ' <span class="badge">control</span>' : ""}</td>
+          <td>${o ? `<div class="vbar">${[["adopted", o.product, d.product.name], ["competitor", o.competitor, "Competitor"], ["none", o.no_vendor, "No vendor"]].filter(([, v]) => v).map(([k, v, l]) => `<span class="v-${k}" style="width:${(v / n) * 100}%" data-tip="${esc(l)}: ${v} of ${n}"></span>`).join("")}</div>` : ""}</td>
+          <td class="num">${num(s.hits)}/${num(s.sessions)} ${ci(s.hit_ci)}</td>
+          <td>${esc((s.winners || []).map((w) => `${w.tool} ${w.sessions}`).join(", ") || (s.alternatives || []).slice(0, 3).map((a) => a.tool).join(", ") || s.usual_winner || "–")}</td>
+          <td class="num">${s.product_mentioned != null ? `${num(s.product_mentioned)}/${num(s.sessions)}` : "–"}</td></tr>`; }).join("")}</tbody>
+      </table></div></div>
+      ${d.recent_losses.length ? `<div class="card"><h2>Recent losses</h2><table><tbody>${d.recent_losses.map((l) => `
+        <tr class="clickable" data-tool="get_agent_session" data-args="${args({ session_id: l.id })}"><td>${esc(l.scenario)}</td><td class="muted">${esc(l.model)}</td><td>${verdict("competitor")} ${esc(l.winner || "")}</td><td class="muted">${ago(l.ended_at)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${d.untracked_tools?.packages?.length ? `<div class="card"><h2>Installed but not tracked</h2>
+        <p class="sub" style="font-size:13px">In the ${num(d.untracked_tools.sessions_with_no_tool)} sessions scored "no vendor", agents installed these packages, which are neither ${esc(d.product.name)} nor a tracked competitor. If one does the same job, add it so its wins count as losses.</p>
+        <table><tbody>${d.untracked_tools.packages.map((x) => `<tr><td><strong>${esc(x.name)}</strong> <span class="muted">${esc(x.ecosystem)}</span></td><td class="num">${num(x.sessions)} session${x.sessions === 1 ? "" : "s"}</td>
+          <td>${go("save_product", { product: d.product.slug, competitors: [...d.untracked_tools.competitors, { name: x.name, packages: [x.name], source: "runs" }] }, "Add as competitor")}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${d.evidence?.length ? `<div class="card"><h2>The deciding sessions</h2><div class="stack">${d.evidence.map((e) => `
+        <div class="ev evidence clickable" data-tool="get_agent_session" data-args="${args({ session_id: e.session_id })}">
+          <div class="spread"><span><b>${esc(e.scenario)}</b> <span class="muted">· ${esc(e.agent)}${e.profile ? ` as ${esc(e.profile)}` : ""}</span></span>
+            <span>${e.outcome === "competitor" ? verdict("competitor") + " " + esc(e.winner || "") : e.outcome === "product" ? verdict(e.verdict) : `<span class="badge">no vendor${e.mentioned_product ? ", mentioned" : ""}</span>`}</span></div>
+          ${e.evidence ? `<div class="muted" style="font-size:13px;margin-top:4px">“${esc(e.evidence.quote)}” <span class="ci">${esc(e.evidence.tool)} · #${e.evidence.seq}</span></div>` : ""}
+        </div>`).join("")}</div></div>` : ""}
+      ${d.method ? `<div class="grid-wide">
+        <div class="card"><h2>How this was run</h2><ul class="findings">
+          <li>${num(d.method.tasks.total)} tasks: ${num(d.method.tasks.recommend)} the product should win, ${num(d.method.tasks.avoid)} control</li>
+          <li>${num(d.method.sessions)} sessions, ${num(d.method.scored)} scored · ${usd(d.method.cost_usd)}</li>
+          <li>Agents: ${esc(d.method.agents.map((a) => `${a.label} ${a.sessions}`).join(", ") || "–")}</li>
+          <li>Personas: ${esc(d.method.personas.map((x) => `${x.name} ${x.sessions}`).join(", ") || "–")}</li>
+          <li>Competitors: ${esc(d.method.competitors.join(", ") || "–")}</li>
+          ${d.method.sampling ? `<li>Adaptive sampling up to ${num(d.method.sampling.max_per_task)} per task: ${num(d.method.sampling.settled)} settled, ${num(d.method.sampling.at_cap)} at the cap</li>` : ""}
+        </ul></div>
+        <div class="card"><h2>Limits</h2><ul class="findings">${d.limits.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>
+      </div>` : ""}
+    </div>`;
+  }
+
+  // ---------- private assets (this organization only) ----------
+  const privateNote = `<p class="muted" style="font-size:12px;margin-top:8px">Private to your organization: no other organization can see, search or use these.</p>`;
+  function viewPersonas({ personas }) {
+    if (!personas.length) return `<div class="card empty">No personas yet. Onboarding picks Octillion-curated ones for your product; ask me to add the developers you target.</div>`;
+    return `<div class="card"><h2>Private personas</h2><div class="table-wrap"><table>
+      <thead><tr><th>Persona</th><th>Summary</th><th>Source</th><th>Published</th><th>Slug</th></tr></thead>
+      <tbody>${personas.map((p) => `<tr${p.active ? "" : ' style="opacity:.5"'}><td>${esc(p.name)}</td><td class="muted">${esc(p.curated ? "Curated by Octillion" : p.summary || "–")}</td><td><span class="badge">${esc(p.curated ? "curated" : p.source)}</span></td><td>${pubCell(p.publication)}</td><td class="muted">${esc(p.slug)}</td></tr>`).join("")}</tbody>
+    </table></div>${privateNote}</div>`;
+  }
+  // Publication to Octillion's library (publish_to_library): Published, Submitted, Declined, or – when never published.
+  const pubLabel = (p) => (!p ? "–" : p.status === "accepted" ? "Published" : p.status === "declined" ? "Declined" : "Submitted");
+  const pubCell = (p) => (p ? `<span class="badge" data-tip="${esc(p.status === "declined" ? p.reason || "" : "")}">${pubLabel(p)}</span>` : `<span class="muted">–</span>`);
+  function viewSubmission({ kind, title, credit_usd }) {
+    return `<div class="card stack"><h2>Submitted to Octillion's library</h2><p class="sub">${kind === "persona" ? "Persona" : "Task"} <strong>${esc(title)}</strong> is waiting for Octillion's review. Only its content is shared, never your organization's name. If it is accepted it may be used for every customer, and your organization earns a $${esc(String(credit_usd))} credit on its next invoice.</p></div>`;
+  }
+  function viewTaskSets({ task_sets }) {
+    if (!task_sets.length) return `<div class="card empty">No private task sets yet. Ask me to import your own tasks.</div>`;
+    return `<div class="stack">${task_sets.map((t) => `<div class="card"><div class="spread"><h2>${esc(t.name)}</h2><span class="muted">${esc(t.product)} · ${num(t.active_tasks)} active</span></div>
+      ${t.description ? `<p class="sub">${esc(t.description)}</p>` : ""}
+      <div class="table-wrap"><table><tbody>${(t.tasks || []).map((x) => `<tr${x.active ? "" : ' style="opacity:.5"'}><td class="muted">${x.id}</td><td>${esc(x.title)}</td><td><span class="badge">${esc(x.platform || "?")}</span></td><td><span class="badge">${esc(x.expectation)}</span></td><td>${pubCell(x.publication)}</td></tr>`).join("")}</tbody></table></div></div>`).join("")}${privateNote}</div>`;
+  }
+  function viewHarnesses({ harnesses }) {
+    if (!harnesses.length) return `<div class="card empty">No private harnesses yet. Ask me to register your coding agent.</div>`;
+    return `<div class="card"><h2>Private harnesses</h2><div class="table-wrap"><table>
+      <thead><tr><th>Harness</th><th>Version</th><th>Status</th><th>Providers</th></tr></thead>
+      <tbody>${harnesses.map((h) => `<tr><td>${esc(h.name)}</td><td class="muted">${esc(h.version)}</td><td><span class="badge" data-tip="${esc(h.status_reason || "")}">${esc(h.status)}</span></td><td class="muted">${esc((h.providers || []).join(", "))}</td></tr>`).join("")}</tbody>
+    </table></div>${privateNote}</div>`;
+  }
+
+  function viewMixes({ mixes }) {
+    if (!mixes.length) return `<div class="card empty">No private harness mixes yet. The default is the market-weighted mix.</div>`;
+    return `<div class="stack">${mixes.map((m) => `<div class="card"><div class="spread"><h2>${esc(m.name)}</h2><span class="muted">${esc(m.slug)}</span></div>
+      <div class="hbars">${m.agents.map((a) => `<div class="hit">${esc(a.agent_id)}</div><div class="track"><span class="bar rival" style="width:${(Number(a.share) || 0) * 100}%"></span></div><div class="val">${pct(a.share)}</div>`).join("")}</div></div>`).join("")}
+      <p class="muted" style="font-size:12px">Reports on a custom mix are labelled and never blended with the market-weighted default.</p>${privateNote}</div>`;
+  }
+
+  // ---------- simulations ----------
+  function viewSimulations({ simulations }) {
+    if (!simulations.length) return `<div class="card empty">No simulations yet. Ask me to run one.</div>`;
+    return `<div class="card"><h2>Simulations</h2><div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Product</th><th>Status</th><th class="num">Progress</th><th class="num">Hit rate</th><th>Started</th></tr></thead>
+      <tbody>${simulations.map((s) => `<tr class="clickable" data-tool="get_simulation" data-args="${args({ simulation_id: s.id })}">
+        <td>${esc(s.name)}</td><td>${esc(s.product)}</td><td>${statusPill(s.status)}</td><td class="num">${num(s.finished)}/${num(s.sessions)}</td><td class="num">${pct(s.hit_rate)}</td><td class="muted">${ago(s.created_at)}</td></tr>`).join("")}</tbody>
+    </table></div></div>`;
+  }
+
+  function viewSimulation(d) {
+    const s = d.simulation, t = d.totals;
+    const finished = ["completed", "failed", "timeout", "cancelled"].reduce((a, k) => a + (d.status[k] || 0), 0);
+    const cellColor = (c) => (c.hit_rate == null ? "var(--surface-2)" : `color-mix(in srgb, var(--good) ${Math.round(c.hit_rate * 45)}%, color-mix(in srgb, var(--critical) ${Math.round((1 - c.hit_rate) * 25)}%, var(--surface)))`);
+    return `<div class="stack">
+      <div class="spread"><div><h1>${esc(s.name)}</h1><div class="sub">${esc(s.product)} · ${s.mode === "representative" ? `${s.repeats} sessions per scenario, agents mixed by developer adoption` : `${s.repeats}× per scenario and agent`}</div></div>
+        <div class="row">${statusPill(s.status)}${s.status === "queued" || s.status === "running" ? go("get_simulation", { simulation_id: s.id }, "↻ Refresh") : ""}</div></div>
+      <div class="card"><div class="spread"><h2>Progress</h2><span class="muted">${finished}/${t.sessions} sessions finished</span></div>
+        <div class="meter"><span style="width:${(finished / Math.max(1, t.sessions)) * 100}%"></span></div>
+        <div class="legend" style="margin-top:8px">${Object.entries(d.status).map(([k, v]) => `<span>${statusPill(k)} ${v}</span>`).join("")}</div></div>
+      <div class="grid">
+        ${tile("Hit rate", pct(t.hit_rate), `${ci(t.hit_ci)} n=${t.scored}`)}
+        ${d.by_agent.map((a) => tile(a.label, pct(a.hit_rate), `${ci(a.hit_ci)} n=${a.scored}`)).join("")}
+        ${tile("Agent spend", usd(t.cost_usd))}
+      </div>
+      ${d.by_profile.length ? `<div class="grid">${d.by_profile.map((p) => tile(p.profile, pct(p.hit_rate), `${ci(p.hit_ci)} n=${p.scored}`)).join("")}</div>` : ""}
+      <div class="card"><h2>Scenario × agent</h2><div class="table-wrap"><table>
+        <thead><tr><th>Scenario</th>${(d.matrix[0]?.cells || []).map((c) => `<th class="num">${esc(c.label)}</th>`).join("")}</tr></thead>
+        <tbody>${d.matrix.map((r) => `<tr><td>${esc(r.scenario)}${r.expectation === "avoid" ? ' <span class="badge">avoid</span>' : ""}</td>${r.cells.map((c) => `<td><div class="cell" style="background:${cellColor(c)}" data-tip="${esc(c.label)}: ${c.hits} hits of ${c.scored} scored (${c.sessions} sessions)">${c.sessions ? (c.scored ? `${c.hits}/${c.scored}` : "…") : "–"}</div></td>`).join("")}</tr>`).join("")}</tbody>
+      </table></div></div>
+      <div class="card"><h2>Agent sessions</h2><div class="table-wrap"><table>
+        <thead><tr><th>Scenario</th><th>Agent</th><th>Profile</th><th>#</th><th>Status</th><th>Verdict</th><th>Went with</th></tr></thead>
+        <tbody>${d.sessions.map((x) => `<tr class="clickable" data-tool="get_agent_session" data-args="${args({ session_id: x.id })}">
+          <td>${esc(x.scenario)}</td><td class="muted">${esc(x.agent_id || x.model)}</td><td class="muted">${esc(x.profile || "–")}</td><td class="muted">${x.attempt}</td><td>${statusPill(x.status)}</td><td>${x.verdict ? verdict(x.verdict) : '<span class="muted">–</span>'}</td><td>${esc(x.winner || "–")}</td></tr>`).join("")}</tbody>
+      </table></div></div>
+    </div>`;
+  }
+
+  // ---------- session ----------
+  function viewSession({ session: s }) {
+    const dur = s.started_at && s.ended_at ? ms(new Date(s.ended_at) - new Date(s.started_at)) : "–";
+    const mentions = (s.mentions || []).map((m) => `
+      <div class="card stack">
+        <div class="spread"><strong>${esc(m.tool)}${m.target ? ' <span class="badge">your product</span>' : ""}</strong>${verdict(m.level)}</div>
+        ${m.evidence.map((e) => `<div class="ev clickable" data-tool="get_session_transcript" data-args="${args({ session_id: s.id, offset: Math.max(0, e.seq - 3), limit: 20 })}">
+          <div class="ev-meta"><span class="ev-type">${esc(e.level)}</span><span class="muted">event #${e.seq} · ${esc(e.kind)}</span></div>
+          <div class="ev-body"><code>${esc(e.snippet)}</code></div></div>`).join("")}
+      </div>`).join("");
+    return `<div class="stack">
+      <div class="spread"><div><h1>${esc(s.scenario)}</h1><div class="sub">${esc(s.agent_id || s.harness)} · ${esc(s.model)} · run ${s.attempt} of ${esc(s.simulation)}${s.profile ? ` · as ${esc(s.profile)}` : ""}</div></div>
+        <div class="row">${statusPill(s.status)}${verdict(s.verdict)}</div></div>
+      <div class="grid">
+        ${tile("Went with", esc(s.winner || "–"))}
+        ${tile("Duration", dur)}
+        ${tile("Events", num(s.events), `${num(s.user_turns)} questions answered by the developer`)}
+        ${tile("Cost", usd(s.cost_usd), `${num(s.tokens_in)} in · ${num(s.tokens_out)} out`)}
+      </div>
+      ${s.error_message ? `<div class="err-box">${esc(s.error_message)}</div>` : ""}
+      <div class="card stack"><h2>Task given to the agent</h2><div class="prompt">${esc(s.curated ? "Curated by Octillion" : s.prompt)}</div>${s.repo_url ? `<div class="muted">Starter repo: <code>${esc(s.repo_url)}</code></div>` : ""}</div>
+      ${s.profile ? `<div class="card"><h2>Simulated developer</h2><strong>${esc(s.profile)}</strong><p class="sub">${esc(s.profile_curated ? "Curated by Octillion" : s.profile_summary || "")}</p></div>` : ""}
+      <div class="spread"><h2 style="margin:0">Evidence</h2>${go("get_session_transcript", { session_id: s.id }, "Full transcript →")}</div>
+      ${mentions || `<div class="card empty">${s.verdict ? "No tracked product was mentioned by the agent." : "Not scored yet."}</div>`}
+    </div>`;
+  }
+
+  // ---------- transcript ----------
+  const str = (v) => (typeof v === "string" ? v : JSON.stringify(v, null, 2));
+  function eventParts(e) {
+    const m = e.message;
+    if (m && Array.isArray(m.content)) return m.content.map((b) => b.type === "text" ? ["text", b.text] : b.type === "tool_use" ? ["code", `${b.name} ${str(b.input)}`] : b.type === "tool_result" ? ["out", str(b.content)] : ["out", str(b)]);
+    if (m && typeof m.content === "string") return [["text", m.content]];
+    if (e.item) return [[e.item.type === "agent_message" ? "text" : "code", e.item.text ?? e.item.command ?? str(e.item)]];
+    if (e.type === "assistant_message" || e.type === "user_message" || e.type === "simulated_user") return [["text", str(e.content)]];
+    if (e.type === "tool_call") return [["code", `${e.name ?? ""} ${str(e.input)}`]];
+    const { seq, ts, type, ...rest } = e;
+    return [["out", str(rest)]];
+  }
+  function viewTranscript(t) {
+    const evidence = new Set(t.evidence_seqs);
+    const pager = `<div class="row">
+      ${t.offset > 0 ? go("get_session_transcript", { session_id: t.session_id, offset: Math.max(0, t.offset - t.limit), limit: t.limit }, "← Earlier") : ""}
+      <span class="muted">${t.total ? t.offset + 1 : 0}–${t.offset + t.events.length} of ${t.total}</span>
+      ${t.offset + t.events.length < t.total ? go("get_session_transcript", { session_id: t.session_id, offset: t.offset + t.limit, limit: t.limit }, "Later →") : ""}</div>`;
+    const rows = t.events.map((e) => {
+      const role = e.message?.role || e.role || "";
+      return `<div class="ev ${evidence.has(e.seq) ? "evidence" : ""}">
+        <div class="ev-meta"><span class="ev-type">${esc(e.type)}${role && role !== e.type ? ` · ${esc(role)}` : ""}</span><span class="muted">#${e.seq}${evidence.has(e.seq) ? " · evidence" : ""}</span></div>
+        <div class="ev-body">${eventParts(e).map(([k, v]) => k === "text" ? `<div style="white-space:pre-wrap">${esc(v)}</div>` : `<pre class="code">${esc(String(v).slice(0, 4000))}</pre>`).join("")}</div>
+      </div>`;
+    }).join("");
+    return `<div class="stack">
+      <div class="spread"><div><h1>Transcript</h1><div class="sub">${esc(t.scenario)} · ${esc(t.model)}</div></div>
+        <div class="row">${verdict(t.verdict)}${go("get_agent_session", { session_id: t.session_id }, "Session")}</div></div>
+      ${pager}<div class="card">${rows || '<div class="empty">No events yet</div>'}</div>${pager}</div>`;
+  }
+
+  // ---------- onboarding ----------
+  function viewOnboarding({ research: r, product: p, personas, scenarios, simulation: sim, warnings, failure, next_step: next, drafts }) {
+    const stages = ["reading", "profiling", "personas", "problems", "validating", "done"];
+    const at = r.status === "completed" ? stages.length - 1 : Math.max(0, stages.indexOf(r.stage || "reading"));
+    const steps = stages.map((s, i) => `<span class="badge" style="${i <= at ? "background:var(--accent);color:var(--surface)" : ""}">${i < at || r.status === "completed" ? "✓ " : ""}${esc(s)}</span>`).join("");
+    if (r.status !== "completed")
+      return `<div class="stack"><div class="spread"><div><h1>Onboarding ${esc(p.name)}</h1><div class="sub">${esc(r.input.website_url || "")} ${esc(r.input.docs_url || "")}</div></div>${statusPill(r.status === "failed" ? "failed" : r.status === "queued" ? "queued" : "running")}</div>
+        <div class="card stack"><div class="chips">${steps}</div><p class="sub">${esc(r.note || "The orchestrator reads the website and docs, then writes the product profile, target developer personas and programming problems.")}</p>
+        ${failure ? `<div class="warn"><strong>${esc(failure.summary)}</strong><ol style="margin:6px 0 0 18px">${failure.next.map((x) => `<li>${esc(x)}</li>`).join("")}</ol></div>` : ""}
+        ${r.status === "failed" ? "" : go("get_onboarding", { research_id: r.id }, "↻ Refresh")}</div></div>`;
+    return `<div class="stack">
+      <div class="spread"><div><h1>${esc(p.name)}</h1><div class="sub">${esc(p.category)}</div></div>
+        <div class="row">${sim ? go("get_simulation", { simulation_id: sim.id }, `Run: ${sim.finished}/${sim.sessions} →`) : ""}${go("get_visibility_report", { product: p.slug }, "Report →")}</div></div>
+      ${next ? `<div class="card stack"><div class="spread"><div><h2>Next: run it</h2><p class="sub">${esc(next.message)}</p></div>${go(next.tool, next.args, "▶ Run simulation")}</div></div>` : ""}
+      ${drafts?.length ? `<div class="card"><h2>Draft tasks waiting for your approval</h2><p class="sub">Octillion's curated tasks had nothing that fits these needs, so research wrote them. They run only once you approve them.</p>${drafts.map((s) => `<div class="ev"><div class="spread"><strong>#${s.id} ${esc(s.title)}</strong><span class="row">${go("review_draft_tasks", { product: p.slug, approve: [s.id] }, "Approve")}${go("review_draft_tasks", { product: p.slug, reject: [s.id] }, "Reject")}</span></div><div class="sub" style="font-size:13px">${esc(s.prompt)}</div></div>`).join("")}</div>` : ""}
+      <div class="card stack"><h2>Product profile</h2><p class="sub">${esc(p.description)}</p>
+        <div class="grid-wide"><div><h2>Aliases</h2>${chips(p.aliases)}</div><div><h2>Packages</h2>${chips(p.packages)}</div><div><h2>Domains</h2>${chips(p.domains)}</div></div></div>
+      ${competitorsCard(p)}
+      ${warnings.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("")}
+      <div class="card"><h2>Target developer personas</h2><div class="grid-wide">${personas.map((x) => `<div><strong>${esc(x.name)}</strong><p class="sub" style="font-size:13px">${esc(x.curated ? "Curated by Octillion" : x.summary || "")}</p></div>`).join("")}</div></div>
+      <div class="card"><h2>Programming problems</h2>${scenarios.map((s) => `<div class="ev"${s.prompt ? ` data-tip="${esc(s.prompt)}"` : ""}>
+        <div class="ev-meta"><span class="ev-type">#${s.id} ${esc(s.source || "")}</span><span class="muted">${esc(s.language || "")}</span>${s.expectation === "avoid" ? '<span class="badge">avoid</span>' : ""}</div>
+        <div class="ev-body"><strong>${esc(s.title)}</strong><div class="sub" style="font-size:13px;margin-top:2px">${esc(s.curated ? "Curated by Octillion" : s.prompt)}</div></div></div>`).join("")}</div>
+      ${r.sources?.length ? `<div class="card"><h2>Sources read</h2>${r.sources.map((x) => `<div style="font-size:13px">${esc(x.title || x.url)} <span class="muted">${esc(x.url)}</span></div>`).join("")}</div>` : ""}
+    </div>`;
+  }
+
+  // ---------- developer profiles: the shared personas and this organization's own ----------
+  function viewProfiles({ profiles, query }) {
+    return `<div class="stack"><div class="spread"><h1>Developer profiles</h1>${go("list_agents", {}, "Coding agents →")}</div>
+      ${profiles.length ? `<div class="grid-wide">${profiles.map((p) => `<div class="card stack">
+        <div><strong>${esc(p.name)}</strong> <span class="badge">${esc(p.slug)}</span>${p.curated ? ' <span class="badge">curated by Octillion</span>' : ""}</div>
+        ${p.curated ? "" : `<p class="sub" style="font-size:13px">${esc(p.summary || "")}</p>
+        ${chips(Object.entries(p.attributes || {}).filter(([, v]) => typeof v !== "object" || Array.isArray(v)).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`))}`}
+      </div>`).join("")}</div>` : `<div class="card empty">No profiles${query ? ` matching "${esc(query)}"` : " yet"}.</div>`}</div>`;
+  }
+  // browse_task_library: the dashboard has no Library tab and lists no library tasks; the model reads them from the result.
+  // export_visibility_report: the Pick rate report's sections as tables (titles and names only).
+  function viewPickRate(d) {
+    const f = d.filters || {};
+    const picked = [f.product && `Product: ${f.product.name}`, (f.competitor || []).length && `Competitors: ${f.competitor.join(", ")}`,
+      (f.persona || []).length && `Personas: ${f.persona.map((x) => x.name || `#${x.id}`).join(", ")}`, (f.task || []).length && `Tasks: ${f.task.map((x) => x.title || `#${x.id}`).join(", ")}`].filter(Boolean);
+    const cell = (v) => (v == null ? "–" : typeof v === "number" ? (Number.isInteger(v) ? num(v) : String(v)) : esc(String(v)));
+    return `<div class="stack"><div><h1>${esc(d.report)}</h1><div class="sub">${esc(d.account)} · ${esc(d.range.from)} to ${esc(d.range.to)}${picked.length ? ` · ${esc(picked.join(" · "))}` : ""}</div></div>
+      ${d.sections.map((t) => `<div class="card"><h2>${esc(t.title)}</h2>${t.rows.length ? `<div class="table-wrap"><table><thead><tr>${t.columns.map((c) => `<th>${esc(c.replace(/_/g, " "))}</th>`).join("")}</tr></thead>
+        <tbody>${t.rows.map((r) => `<tr>${r.map((v) => `<td>${cell(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<div class="empty">Nothing in this period.</div>`}</div>`).join("")}</div>`;
+  }
+
+  function viewLibraryNote({ tasks }) {
+    return `<div class="card empty">${tasks.length ? `${num(tasks.length)} task(s) from Octillion's library are in the chat. Ask me to add one to your product.` : "No matching tasks in the library."}</div>`;
+  }
+
+  function viewAgents(d) {
+    const max = Math.max(...d.agents.map((a) => a.weight), 0.01);
+    return `<div class="stack"><div class="spread"><div><h1>Coding agents we simulate</h1><div class="sub">Sandboxes out of ${d.sandbox_unit}, from real-world developer adoption (sums to 100%)${d.as_of ? ` · as of ${esc(d.as_of)}` : ""}</div></div>${go("list_developer_profiles", {}, "Developer profiles →")}</div>
+      <div class="card"><div class="hbars">${d.agents.filter((a) => a.enabled).map((a) => `
+        <div>${esc(a.label)}</div><div class="track"><span class="bar target" style="width:${(a.weight / max) * 100}%" data-tip="${esc(`${a.harness} ${a.harness_version || ""} · ${a.model} · ${pct(a.market_share)} of all developer usage${a.notes ? `\n${a.notes}` : ""}`)}"></span></div><div class="val">${a.sandboxes}/${d.sandbox_unit} · ${pct(a.weight)}</div>`).join("")}</div>
+        <p class="muted" style="font-size:12px;margin-top:10px">Agents running today cover ${pct(d.runnable_coverage)} of representable usage.${d.unrepresented_share != null ? ` ${pct(d.unrepresented_share)} of developer usage is in tools that can't run headless and isn't represented.` : ""}</p></div>
+      ${d.agents.some((a) => !a.enabled) ? `<div class="card"><h2>Not running yet</h2>${chips(d.agents.filter((a) => !a.enabled).map((a) => `${a.label} · ${a.status}`))}</div>` : ""}
+      ${d.sources.length ? `<div class="card"><h2>Sources</h2>${d.sources.map((x) => `<div style="font-size:13px;margin:4px 0">${esc(x.title || x.id)}${x.note ? ` <span class="muted">· ${esc(x.note)}</span>` : ""}</div>`).join("")}</div>` : ""}
+    </div>`;
+  }
+
+  // ---------- search ----------
+  function highlight(text, query) {
+    const words = String(query || "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    let out = esc(text);
+    for (const w of words) out = out.replace(new RegExp(`(${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"), "<mark>$1</mark>");
+    return out;
+  }
+  function snippet(text, query, width = 260) {
+    const w = String(query || "").toLowerCase().split(/\s+/)[0] || "";
+    const i = Math.max(0, text.toLowerCase().indexOf(w) - width / 3);
+    return (i > 0 ? "…" : "") + text.slice(i, i + width) + (i + width < text.length ? "…" : "");
+  }
+  function viewSearch(d) {
+    const f = d.filters, r = d.results;
+    const form = `<form data-search class="row card">
+      <input type="search" name="query" value="${esc(d.query)}" placeholder="Search agent transcripts" style="flex:1;min-width:180px">
+      <select name="mode">${["all", "any", "phrase"].map((m) => `<option${m === f.mode ? " selected" : ""}>${m}</option>`).join("")}</select>
+      ${product ? `<input type="hidden" name="product" value="${esc(f.product || "")}">` : ""}
+      <button class="btn" type="submit">Search</button></form>`;
+    return `<div class="stack">${form}
+      <div class="card"><div class="spread"><h2 style="margin:0">${num(r.total)} matching events</h2><span class="muted" style="font-size:12px">${r.stats.ms}ms · ${esc(r.stats.backend)}</span></div></div>
+      <div class="card">${r.hits.map((h) => `
+        <div class="ev clickable" data-tool="get_session_transcript" data-args="${args({ session_id: h.session_id, offset: Math.max(0, h.seq - 3), limit: 20 })}">
+          <div class="ev-meta"><span class="ev-type">${esc(h.type)}</span><span class="muted">${esc(h.model)} · #${h.seq}</span><span class="muted">${ago(h.ts)}</span></div>
+          <div class="ev-body" style="word-break:break-word">${highlight(snippet(h.text, d.query), d.query)}</div></div>`).join("") || '<div class="empty">No transcript events match</div>'}</div>
+    </div>`;
+  }
+
+  // ---------- memory ----------
+  function viewMemory(d) {
+    const who = (m) => m.scope === "product" ? m.subject_name : m.scope === "user" ? "You" : "Company";
+    const row = (m) => `<div class="ev"><div class="ev-meta"><span class="ev-type">${esc(m.kind)}</span><span class="muted">${esc(who(m))} · #${m.id}</span><span class="muted">${ago(m.created_at)}</span></div>
+      <div class="ev-body" style="word-break:break-word">${d.query ? highlight(m.body, d.query) : esc(m.body)}</div></div>`;
+    const form = `<form data-memory-search class="row card">
+      <input type="search" name="query" value="${esc(d.query)}" placeholder="Search your team's memory" style="flex:1;min-width:180px">
+      <select name="scope">${["all", "company", "me", "product"].map((x) => `<option${x === d.scope ? " selected" : ""}>${x}</option>`).join("")}</select>
+      <button class="btn" type="submit">Search</button></form>`;
+    if (d.action === "saved") return `<div class="stack">
+      <div class="card stack"><h2 style="margin:0">Saved to memory</h2>${row(d.saved)}<p class="muted" style="font-size:12px;margin:0">Your team sees and edits it on the Octillion account page under Context.</p></div>${form}</div>`;
+    return `<div class="stack">${form}
+      <div class="card"><h2 style="margin:0 0 8px">${num(d.items.length)} item${d.items.length === 1 ? "" : "s"}${d.query ? ` matching “${esc(d.query)}”` : ""}</h2>
+        ${d.items.map(row).join("") || '<div class="empty">Nothing in memory yet. Ask me to remember something.</div>'}</div></div>`;
+  }
+
+  // ---------- boot ----------
+  if (PREVIEW?.error) flash(PREVIEW.error.map((c) => c.text).join(" "));
+  if (PREVIEW?.data) show(PREVIEW.data, true);
+  if (!PREVIEW) {
+    // ChatGPT also exposes window.openai.toolOutput before load; render it right away if present.
+    if (window.openai?.toolOutput?.view) show(window.openai.toolOutput, true);
+    connect().catch((e) => {
+      if (!history.length) app.innerHTML = `<div class="empty">Could not connect to the host: ${esc(e.message || e)}</div>`;
+    });
+  }
+})();
+</script>
+</body>
+</html>

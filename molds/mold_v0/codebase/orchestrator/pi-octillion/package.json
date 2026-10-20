@@ -1,0 +1,17 @@
+{
+  "name": "pi-octillion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi extension that makes Pi the Octillion orchestrator: drives coding-agent harnesses in sandboxes and role-plays the developer.",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

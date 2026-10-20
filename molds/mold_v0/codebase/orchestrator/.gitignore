@@ -1,0 +1,5 @@
+# Pi upstream clone (reference only; pinned SHA in README). Dot-prefixed so the root tsconfig's
+# "orchestrator" include skips it.
+.pi-upstream/
+pi-upstream/
+node_modules/

@@ -1,0 +1,18 @@
+# TLS + reverse proxy for the Octillion server.
+# Upstreams are every replica of the `octillion` service (Docker DNS), re-resolved each second, so a rolling deploy can
+# run the new replica next to the old one. A draining replica refuses new connections: Caddy retries the request on
+# another replica and stops picking the refused one for a while. In-flight responses (model streams) are never moved.
+{$DOMAIN:localhost} {
+	reverse_proxy {
+		dynamic a {
+			name octillion
+			port 3333
+			refresh 1s
+		}
+		lb_try_duration 20s
+		lb_try_interval 250ms
+		fail_duration 10s
+		max_fails 1
+		flush_interval -1
+	}
+}

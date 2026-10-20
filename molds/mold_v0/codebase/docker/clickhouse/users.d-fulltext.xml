@@ -1,0 +1,8 @@
+<!-- Enables the full-text index (used by transcript search) for every user's default profile. -->
+<clickhouse>
+  <profiles>
+    <default>
+      <enable_full_text_index>1</enable_full_text_index>
+    </default>
+  </profiles>
+</clickhouse>

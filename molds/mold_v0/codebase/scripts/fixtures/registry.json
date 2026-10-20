@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "as_of": "2026-10-10",
+  "methodology": "Test fixture for scripts/smoke.ts; not real adoption data.",
+  "unrepresented_share": 0.25,
+  "sources": [
+    {
+      "id": "fixture",
+      "title": "Smoke test fixture"
+    }
+  ],
+  "agents": [
+    {
+      "id": "claude-code/sonnet",
+      "harness": "claude-code",
+      "label": "Claude Code · Sonnet",
+      "model": "claude-sonnet-5-5",
+      "weight": 0.5,
+      "enabled": true,
+      "harness_version": "2.1.296",
+      "image": {
+        "docker": "octillion/agent-claude-code:2.1.296",
+        "boat_snapshot": "octillion-claude-code-2.1.296"
+      },
+      "requires_env": [
+        "SMOKE_LLM_API_KEY",
+        "SMOKE_VENDOR_TOKEN"
+      ]
+    },
+    {
+      "id": "codex/default",
+      "harness": "codex",
+      "label": "Codex CLI",
+      "model": "gpt-test",
+      "weight": 0.3,
+      "enabled": true
+    },
+    {
+      "id": "cursor-agent/default",
+      "harness": "cursor-agent",
+      "label": "Cursor CLI",
+      "model": "cursor-test",
+      "weight": 0.2,
+      "enabled": true
+    },
+    {
+      "id": "ide-only/x",
+      "harness": "ide-only",
+      "label": "Some IDE agent",
+      "model": "n/a",
+      "weight": 0.4,
+      "enabled": false,
+      "notes": "no headless mode"
+    }
+  ]
+}

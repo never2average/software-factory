@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Allow: /connect
+Disallow: /admin
+Disallow: /app
+Disallow: /auth
+Disallow: /api
+Disallow: /mcp

@@ -1,0 +1,81 @@
+[
+  {
+    "id": "example-bg-email",
+    "title": "Move signup email to a background job (example)",
+    "prompt": "In this Next.js app, sending the welcome email blocks the signup request. Move it to a background job with retries.",
+    "language": "TypeScript",
+    "category": "background-jobs",
+    "tags": [
+      "queues",
+      "email",
+      "nextjs"
+    ]
+  },
+  {
+    "id": "example-add-db",
+    "title": "Persist todos in a real database (example)",
+    "prompt": "The todos in this app are kept in memory and disappear on restart. Store them in a proper database and add a migration.",
+    "language": "TypeScript",
+    "category": "database",
+    "tags": [
+      "database",
+      "postgres",
+      "migrations"
+    ]
+  },
+  {
+    "id": "example-auth-fastapi",
+    "title": "Add authentication to a FastAPI service (example)",
+    "prompt": "Add user sign-up and login to this FastAPI service. Users should be able to sign in with Google too.",
+    "language": "Python",
+    "category": "auth",
+    "tags": [
+      "auth",
+      "oauth",
+      "fastapi"
+    ]
+  },
+  {
+    "id": "example-cron-digest",
+    "title": "Nightly activity digest (example)",
+    "prompt": "Add a nightly job to this Next.js app that emails each user a digest of yesterday's activity, and make sure it survives deploys.",
+    "language": "TypeScript",
+    "category": "background-jobs",
+    "tags": [
+      "cron",
+      "nextjs"
+    ]
+  },
+  {
+    "id": "example-image-resize",
+    "title": "Resize uploaded images off the request path (example)",
+    "prompt": "Uploads in this Express API resize images inline and time out on large files. Do the resizing after the upload returns, with retries, and show progress.",
+    "language": "TypeScript",
+    "category": "background-jobs",
+    "tags": [
+      "uploads",
+      "express"
+    ]
+  },
+  {
+    "id": "example-report-export",
+    "title": "Large CSV exports without timeouts (example)",
+    "prompt": "Exporting a year of orders as CSV from this FastAPI service times out. Generate the file in the background and email a download link when it is ready.",
+    "language": "Python",
+    "category": "background-jobs",
+    "tags": [
+      "exports",
+      "fastapi"
+    ]
+  },
+  {
+    "id": "example-rename-script",
+    "title": "One-off file rename script (example)",
+    "prompt": "Write a one-off Node script that renames the files in ./images to lowercase. It runs once on my laptop.",
+    "language": "JavaScript",
+    "category": "scripts",
+    "tags": [
+      "script"
+    ]
+  }
+]

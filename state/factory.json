@@ -32,8 +32,8 @@
   "molds": [
     {
       "mold_id": "mold_v0",
-      "status": "coming_soon",
-      "definition": "product shell around an already-deployed MCP server: per-client install pages, generated docs and playground, onboarding, a metering gateway with per-user and per-workspace usage, a per-user credential vault, MCP OAuth for clients, an admin console and upstream health and changelog; no agent runtime",
+      "status": "wip",
+      "definition": "the operator's existing MCP product pinned as-is (clone first, generalise after): stateless MCP endpoint, hashed per-organisation keys, admin console, client install pages, onboarding, usage analytics, key vault, billing and email; to become a general MCP product shell step by step (molds/mold_v0/MOLD.md)",
       "target_model": "none (proxies the upstream MCP server; runs no model)",
       "capabilities": [
         "install_pages",
@@ -50,7 +50,11 @@
         "billing_hooks",
         "email_notifications"
       ],
-      "path": "molds/mold_v0"
+      "path": "molds/mold_v0",
+      "source": {
+        "commit": "5310a514bf491bcb43ed86f3efc7e9f2a5cf3d35",
+        "snapshot_date": "2026-10-20"
+      }
     },
     {
       "mold_id": "mold_v1",

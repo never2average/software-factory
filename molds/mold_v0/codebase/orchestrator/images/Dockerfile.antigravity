@@ -1,0 +1,50 @@
+# Octillion worker image: Google Antigravity CLI (`agy`).
+# The official installer (https://antigravity.google/cli/install.sh) reads a "latest" manifest from
+# https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_<amd64|arm64>.json
+# and downloads a tarball (one binary, `antigravity`, which it links as `agy`) from storage.googleapis.com. We download that tarball directly, pinned by
+# version + build id, and verify the sha512 from the manifest of that release (copied here).
+# Neutral base: node 22, python 3, git, build tools. No dev-tool SDKs, no GEMINI.md, no MCP config.
+FROM node:22-bookworm
+
+ARG HARNESS_VERSION=1.3.4
+ARG AGY_BUILD=1.3.4-5524158944247808
+ARG AGY_SHA512_AMD64=dbdacfc5a1d9874fbbea3a21026d3990b4728e2e3487fd0316dc53cae9a3091023f969425828f3e2e0fadda43cea07dd978ea96f4ca7c202adf2201f419c56dd
+ARG AGY_SHA512_ARM64=24a1d463319701f4943b2d4932cb86ca34d60d2e9fedcd9018ca31809773d719f272512068911632db175d7233088551033bcecc0a2a56b1bcfa041269687eaf
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      git curl ca-certificates jq ripgrep less procps unzip build-essential \
+      python3 python3-pip python3-venv python-is-python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    case "$(uname -m)" in \
+      x86_64|amd64) path="linux-x64/cli_linux_x64.tar.gz"; sha="${AGY_SHA512_AMD64}";; \
+      aarch64|arm64) path="linux-arm/cli_linux_arm64.tar.gz"; sha="${AGY_SHA512_ARM64}";; \
+      *) echo "unsupported arch"; exit 1;; \
+    esac; \
+    curl -fsSL -o /tmp/agy.tgz "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_BUILD}/${path}"; \
+    echo "${sha}  /tmp/agy.tgz" | sha512sum -c -; \
+    mkdir -p /opt/agy; tar -xzf /tmp/agy.tgz -C /opt/agy; rm /tmp/agy.tgz; \
+    bin=/opt/agy/antigravity; test -x "$bin"; \
+    ln -s "$bin" /usr/local/bin/agy; \
+    agy --version
+
+# Non-root user. npm global prefix in $HOME so the agent can `npm i -g` without sudo.
+RUN useradd -m -s /bin/bash agent \
+ && mkdir -p /home/agent/work /home/agent/.npm-global \
+ && chown -R agent:agent /home/agent
+USER agent
+ENV HOME=/home/agent \
+    NPM_CONFIG_PREFIX=/home/agent/.npm-global \
+    PATH=/home/agent/.npm-global/bin:/home/agent/.local/bin:$PATH \
+    PIP_BREAK_SYSTEM_PACKAGES=1
+# Metadata as labels, not env: env would be visible to the agent and leak context into its session.
+LABEL dev.octillion.harness="antigravity" \
+      dev.octillion.harness_version="${HARNESS_VERSION}"
+WORKDIR /home/agent/work
+# Healthcheck prints the harness version (docker inspect --format '{{json .State.Health}}' <c>).
+HEALTHCHECK --interval=5m --timeout=30s --start-period=30s --start-interval=5s --retries=2 CMD agy --version || exit 1
+# Warm pod: idle until the worker runs the harness with `docker exec -u agent -e KEY=... <c> <cli> ...`.
+# No API keys are baked in; they are passed at exec time.
+CMD ["sleep", "infinity"]

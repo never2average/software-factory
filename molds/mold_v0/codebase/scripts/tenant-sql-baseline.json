@@ -1,0 +1,4 @@
+{
+  "note": "Queries on tenant tables without an org_id filter that existed when scripts/check-tenant-sql.ts was added (2026-10-15). Pending review: annotate each with /* tenant: how it is scoped */ or add an org filter, then remove it here.",
+  "pending": []
+}

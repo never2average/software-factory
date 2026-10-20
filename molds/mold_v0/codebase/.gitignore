@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.pglite/
+.env
+.transcripts/
+clickhouse_credentials.txt
+__pycache__/
+*.pyc
+.pglite-preview/
+.vercel
+.env*
