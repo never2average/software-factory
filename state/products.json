@@ -290,7 +290,9 @@
           "docs, pricing/packaging and the operator runbook written"
         ]
       },
-      "app_ids": [],
+      "app_ids": [
+        "octillion"
+      ],
       "deploy_targets": [
         "vercel",
         "compose_remote"

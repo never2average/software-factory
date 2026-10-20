@@ -114,7 +114,8 @@
     "sf_gateway_probe",
     "onfinance_hfc",
     "onfinance_hfc_vm",
-    "compliance_os"
+    "compliance_os",
+    "octillion"
   ],
   "products": "state/products.json",
   "tasks": "state/tasks/<mold_id>.jsonl",
