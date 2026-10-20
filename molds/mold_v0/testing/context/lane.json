@@ -1,0 +1,24 @@
+{
+  "lane": "context",
+  "order": 20,
+  "summary": "Tenant isolation as the product itself guards it: its tenant-SQL check, which fails on any new query over a tenant table that neither filters by organisation nor says how it is scoped. (Its per-tool isolation sweep runs in the functional lane's smoke row, which it ends.)",
+  "not_covered": [
+    "Row-level security: the product scopes rows in its queries, not with database policies (datastores.postgres.rls is \"off\"). Proving row-level security on every deploy is ticket mold_v0-031.",
+    "Queries the product's baseline file lists as pending review (scripts/tenant-sql-baseline.json) are reported by the product's own check, not failed."
+  ],
+  "checks": [
+    {
+      "name": "check:tenant-sql",
+      "run": "npm run check:tenant-sql",
+      "cwd": "codebase",
+      "timeout_s": 300,
+      "requires": [
+        {
+          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/node_modules/.bin/tsx"
+        }
+      ],
+      "why": "The product's own `npm run check:tenant-sql`: a query over a tenant table with no organisation filter and no scoping note."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "lane": "accessibility",
+  "order": 40,
+  "summary": "No harness: the product ships no accessibility test of its own, and mold_v1's browser harness grades mold_v1's own routes and sign-in, so this lane is recorded skipped, never pass.",
+  "not_covered": [
+    "WCAG and keyboard traversal of the landing page, /admin and /app are not measured for mold_v0 apps."
+  ],
+  "checks": []
+}

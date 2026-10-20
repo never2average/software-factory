@@ -166,7 +166,7 @@ def subst(s, ctx):
 def deploy_flag(infra):
     """{deploy}: the flag of the one deploy command this application's target has. A lane.json writes its
     instruction once (`provision.py {app_id} {deploy}`) and it names a command the operator can really type."""
-    return "--deploy-remote" if (infra or {}).get("target") == "vm_remote" else "--deploy"
+    return "--deploy-remote" if (infra or {}).get("target") in ("vm_remote", "compose_remote") else "--deploy"
 
 def state_get(docs, path):
     doc, _, rest = path.partition(".")
@@ -697,7 +697,17 @@ def self_test():
         ok(code == 1 and "failed" in r.stdout, "status without --json: one plain sentence and the exit code")
     finally:
         shutil.rmtree(t, ignore_errors=True)
-    print(f"lanes: {len(checks)} checks passed (--json, exit codes, the lane lock, --background and status)")
+    # mold_v0-028: a single-service app on its own server is graded at compose_remote.production_url, only once deployed;
+    # its lanes declare themselves and an empty lane is skipped, never pass
+    ok(deploy_flag({"target": "compose_remote"}) == "--deploy-remote" and deploy_flag({"target": "vercel"}) == "--deploy", "{deploy} for compose_remote is --deploy-remote")
+    cr = {"target": "compose_remote", "deployed_at": "2026-10-20T00:00:00+00:00", "compose_remote": {"domain": "a.example.org", "production_url": "https://a.example.org"}}
+    ok(lane_url.target_url(cr) == "https://a.example.org" and lane_url.target_url(dict(cr, deployed_at=None)) == "", "compose_remote is graded at its recorded address, only once a deploy wrote it")
+    specs = {l: read_spec(l, "mold_v0") for l in LANES}
+    ok(all(specs.values()) and [c["name"] for c in specs["functional"]["checks"]] == ["typecheck", "smoke", "mcp.check"]
+       and [c["name"] for c in specs["context"]["checks"]] == ["check:tenant-sql"], "mold_v0's lanes run the product's own typecheck, smoke, MCP check and tenant-SQL check")
+    ok(all(specs[l]["checks"] == [] and "skipped" in specs[l]["summary"] for l in ("load", "accessibility", "responsiveness")),
+       "mold_v0's lanes with no harness of the product's own are empty, and say they are skipped, never pass")
+    print(f"lanes: {len(checks)} checks passed (--json, exit codes, the lane lock, --background and status; mold_v0's lanes)")
     return 0
 
 if __name__ == "__main__":
