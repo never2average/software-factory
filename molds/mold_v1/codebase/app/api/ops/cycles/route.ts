@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
+import { workflowRefusal } from "@/lib/record-workflow-moves";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { cycles } from "@/agent/lib/db/schema";
@@ -129,6 +130,9 @@ async function createDeclared(request: NextRequest, ctx: { orgId: string; role?:
     if (!r.ok) return NextResponse.json(r.conflict ?? { error: r.errors.join(" "), errors: r.errors }, { status: r.status });
     return NextResponse.json({ item: periodOut(r.row), ...(r.check && r.check.enforce === "warn" && !r.check.allowed ? { warnings: [warningOf(r.check)] } : {}) }, { status: 201 });
   } catch (e) {
+    // A lifecycle that runs a workflow: its instance changed under the write (nothing was kept).
+    const stopped = workflowRefusal(e, areaView("periods").noun);
+    if (stopped) return NextResponse.json(stopped.body, { status: stopped.status });
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

@@ -15,7 +15,7 @@ import { RECORD_AREAS, type RecordRole } from "./record-areas.generated.ts";
 import { areaView, type AreaRow, type RecordAreas } from "./record-areas.ts";
 import { validateRecordWrite, type TransitionCheck } from "./record-validate.ts";
 import { earlierKeys } from "./own-keys.ts";
-import { warningOf, type LifecycleConflict, type MoveCheck, type WriteWarning } from "./record-lifecycle.ts";
+import { warningOf, type LifecycleConflict, type MoveCheck, type WorkflowGate, type WriteWarning } from "./record-lifecycle.ts";
 import { CHOICE_MEANINGS } from "./customer-schema.ts";
 import { DOMAIN_FIELDS } from "./deployment-profile.generated.ts";
 import type { AccountAreaId } from "./record-area-records.ts";
@@ -72,6 +72,8 @@ export interface WriteWho {
   before?: AreaRow | null;
   /** Who moved the stored record into its state (lib/record-lifecycle-server.ts lifecycleContext), for four eyes. */
   enteredBy?: string | null;
+  /** The step rules, when the area's lifecycle runs a workflow (agent/lib/record-lifecycle.ts WorkflowGate). */
+  workflow?: WorkflowGate;
   /**
    * false: skip who-may (agent/lib/record-permissions.ts), for a form's own pre-check when the screen does not know
    * the caller's role. Every server path leaves it on and passes `role`.
@@ -125,7 +127,7 @@ export function prepareRecordWrite(
   // The lifecycle's rules are the validator's (agent/lib/record-lifecycle.ts): a move it refuses under "strict" comes
   // back with `conflict` (the routes' 409), one under "warn" goes through with its warning and its activity lines.
   const comment = typeof body.reason === "string" ? body.reason : null;
-  const r = validateRecordWrite(id, { mode, before: who.before ?? null, patch, actor: who.actor, role: who.role, now: who.now, comment, enteredBy: who.enteredBy }, areas);
+  const r = validateRecordWrite(id, { mode, before: who.before ?? null, patch, actor: who.actor, role: who.role, now: who.now, comment, enteredBy: who.enteredBy, ...(who.workflow ? { workflow: who.workflow } : {}) }, areas);
   if (!r.ok || idError) return { ok: false, errors: [...(idError ? [idError] : []), ...(r.ok ? [] : r.errors)], ...(!r.ok && r.conflict ? { conflict: r.conflict } : {}) };
   const columns: Record<string, unknown> = { ...r.columns };
   if ("displayName" in body && body.displayName !== undefined) columns.displayName = typeof body.displayName === "string" ? body.displayName.trim() || null : null;

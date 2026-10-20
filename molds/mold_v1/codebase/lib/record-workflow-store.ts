@@ -2,8 +2,8 @@
  * A RECORD'S WORKFLOW, STORED IN POSTGRES (phase 3 of the workflow engine, docs/WORKFLOW_ENGINE.md "Storage").
  *
  * The engine's `WorkflowStore` interface (lib/workflow-engine/engine/src/core/store.ts) over two per-workspace tables,
- * `record_workflow_instances` and `record_workflow_events` (drizzle/0047, agent/lib/db/schema.ts). Nothing at runtime
- * calls it yet: phase 5 wires it into the record write path.
+ * `record_workflow_instances` and `record_workflow_events` (drizzle/0047, agent/lib/db/schema.ts). The record write
+ * path calls it (phase 5, lib/record-workflow-moves.ts), in the transaction the record is written in.
  *
  * ONE STORE IS ONE WORKSPACE, INSIDE ITS SCOPE. It is made with the handle of the caller's workspace-scoped
  * transaction (`withOrgRls` in the web app, `withOrgDb` in the agent) and that workspace's id, and every statement runs

@@ -9,7 +9,11 @@
  *   3. preparePeriodWrite: who may (#180), the definition's types and choices, the lifecycle (#175/#177);
  *   4. the row written: columns set, own fields merged PER KEY in SQL onto what is stored at write time
  *      (customMergeSql), so a key the write does not name, or the profile no longer declares, is never touched;
- *   5. the move's activity lines (and a broken rule's, under "warn") in the same transaction.
+ *   5. the move's activity lines (and a broken rule's, under "warn") in the same transaction;
+ *   6. when the lifecycle runs a workflow (lib/record-workflow-moves.ts): the period's instance and the step rules read
+ *      before 3 (the validator applies them), and after 4 the instance attached or its step moved, in the same
+ *      transaction; a stale revision throws RecordWorkflowConflict, so nothing of the write is kept (the routes answer
+ *      409). `evidence` in the body is the move's evidence then, and no field.
  *
  * Every function takes the caller's workspace-scoped transaction (`withOrgRls` in the web app, `withOrgDb` in the
  * agent) and also filters on org_id: row-level security is the fence, the filter is the query saying what it means.
@@ -30,8 +34,9 @@ import { memberRole } from "./record-area-store.ts";
 import { periodRow, preparePeriodWrite } from "./period-area.ts";
 import { WORK_PERIODS, type WorkPeriods } from "./work-periods.ts";
 import { newPeriodWindow } from "./work-period-store.ts";
+import { commitRecordWorkflow, lockRecordWorkflow, openRecordWorkflow, recordWorkflowBound, takeEvidence } from "../../lib/record-workflow-moves.ts";
 
-type Tx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert" | "update" | "delete">;
+type Tx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert" | "update" | "delete" | "execute">;
 export type CycleRow = typeof cycles.$inferSelect;
 
 export type PeriodWriteResult =
@@ -61,9 +66,14 @@ export async function writeDeclaredPeriod(
 ): Promise<PeriodWriteResult> {
   const v = areaView("periods", areas);
   const lc = v.lifecycle;
-  const body: Record<string, unknown> = { ...input.body };
+  // A lifecycle that runs a workflow takes the move's evidence beside the body (no field of the period).
+  const bound = recordWorkflowBound("periods", areas);
+  const taken = bound ? takeEvidence({ ...input.body }) : { body: { ...input.body }, evidence: null };
+  const body: Record<string, unknown> = taken.body;
   let before: CycleRow | null = null;
   if (input.id) {
+    // A lifecycle that runs a workflow: the period's workflow lock first, so the move is checked from its current state.
+    if (bound) await lockRecordWorkflow(tx, orgId, "periods", input.id);
     [before] = await tx.select().from(cycles).where(and(eq(cycles.id, input.id), eq(cycles.orgId, orgId))).limit(1);
     if (!before) return { ok: false, status: 404, errors: [`No ${v.noun} with that id.`] };
   }
@@ -90,7 +100,10 @@ export async function writeDeclaredPeriod(
       if (body.name === undefined || body.name === null || body.name === "") body.name = window.name;
     }
   }
-  const prepared = preparePeriodWrite(input.id ? "update" : "create", body, { actor: input.actor, role, now: input.now, before: stored, enteredBy }, areas);
+  const workflow = bound
+    ? await openRecordWorkflow(tx, orgId, "periods", { entityId: input.id, before: stored, actor: input.actor, comment: typeof body.reason === "string" ? body.reason : null, evidence: taken.evidence, now: input.now }, { areas })
+    : null;
+  const prepared = preparePeriodWrite(input.id ? "update" : "create", body, { actor: input.actor, role, now: input.now, before: stored, enteredBy, ...(workflow?.gate ? { workflow: workflow.gate } : {}) }, areas);
   if (!prepared.ok) return { ok: false, status: prepared.forbidden ? 403 : prepared.conflict ? 409 : 400, errors: prepared.errors, ...(prepared.conflict ? { conflict: prepared.conflict } : {}) };
   const changed = [...Object.keys(prepared.columns), ...Object.keys(prepared.customDelta?.set ?? {}), ...(prepared.customDelta?.clear ?? [])];
   let row: CycleRow | undefined;
@@ -111,6 +124,7 @@ export async function writeDeclaredPeriod(
   }
   const comment = typeof body.reason === "string" ? body.reason : null;
   if (prepared.lifecycle) await writeOutcome(tx, orgId, { type: "cycle", id: row.id }, input.actor, v, prepared.lifecycle, comment);
+  if (workflow) await commitRecordWorkflow(workflow, { entityId: row.id, created: !input.id, check: prepared.lifecycle, after: periodRow(row as unknown as Record<string, unknown>) });
   return { ok: true, row, before, changed, check: prepared.lifecycle, warnings: prepared.warnings };
 }
 

@@ -10,8 +10,9 @@
  * identitySnapshot() builds that snapshot from ONE workspace's people: its roster rows (people_roster: name, the
  * departments, the attributes and the reporting line its owner set; agent/lib/people-data.ts) and its signed-in people
  * with their workspace role (org_members). Pure: the caller reads both under the workspace's row-level security and
- * passes them in, and a row of another workspace is dropped, never carried. Nothing calls it at runtime yet; phase 5
- * (wiring the engine into record moves) does.
+ * passes them in, and a row of another workspace is dropped, never carried. The record write path calls it (phase 5,
+ * lib/record-workflow-moves.ts) for an area whose lifecycle runs a workflow, from the rows it reads in the write's own
+ * workspace-scoped transaction.
  *
  * The types below copy the SHAPE of the engine's (core/evaluator.ts DirectoryUser, core/rbac.ts RoleBoundary and
  * ReportingRow, integrations/identity.ts IdentitySnapshot), not the engine itself, so this module stands on its own

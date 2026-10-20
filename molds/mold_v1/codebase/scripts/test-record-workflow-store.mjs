@@ -18,7 +18,7 @@
  *   7. THE MIGRATION AND THE JOURNAL: two tables, ENABLE + FORCE row-level security and the org_isolation policy on
  *      app.org_id for both, additive only; the same columns as schema.ts; the journal entry at its own index with a
  *      later `when` than the one before it.
- *   8. NOTHING CALLS IT YET: no file outside the tests names the store (phase 5 wires it).
+ *   8. ONLY THE WRITE PATH CALLS IT: no file outside the tests and lib/record-workflow-moves.ts names the store.
  *
  * Usage: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-store.mjs
  */
@@ -619,13 +619,15 @@ await check("the journal carries it at its own index, after every other entry, w
   assert.ok(entries[at].when > 1793400000000, "later than 0046's when");
 });
 
-// ── 8. nothing calls it yet ────────────────────────────────────────────────────────────────────────────────────────
+// ── 8. only the write path calls it ────────────────────────────────────────────────────────────────────────────────
 
-section("8. Nothing calls the store yet");
+section("8. Only the write path calls the store");
 
-await check("no file outside the store's tests imports it (phase 5 wires it)", () => {
+await check("no file outside the store's tests and the record write path (lib/record-workflow-moves.ts) imports it", () => {
   const out = execFileSync("git", ["grep", "--untracked", "-l", "-E", "record-workflow-store(\\.ts)?[\"'`]", "--", "*.ts", "*.tsx", "*.mjs", "*.js", "*.cjs"], { cwd: ROOT, encoding: "utf8" });
-  const names = out.split("\n").filter(Boolean).filter((f) => !["lib/record-workflow-store.ts", "scripts/test-record-workflow-store.mjs", "scripts/test-record-workflow-store-db.mjs", "scripts/test-workflow-engine.mjs"].includes(f));
+  // Phase 5: every door that moves a record of an area running a workflow reaches the store through
+  // lib/record-workflow-moves.ts, in its own workspace-scoped transaction; nothing else names it.
+  const names = out.split("\n").filter(Boolean).filter((f) => !["lib/record-workflow-store.ts", "scripts/test-record-workflow-store.mjs", "scripts/test-record-workflow-store-db.mjs", "scripts/test-workflow-engine.mjs", "lib/record-workflow-moves.ts", "scripts/test-record-workflow-runtime.mjs", "scripts/lib/record-workflow-runtime-db-probe.mjs"].includes(f));
   assert.deepEqual(names, []);
 });
 

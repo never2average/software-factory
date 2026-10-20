@@ -8,6 +8,10 @@
  *     defaults and fixed values a new row needs; a refusal is a 400 with the sentences (`error`, and each in `errors`);
  *   - the lifecycle around it (lib/record-lifecycle-server.ts): who entered the stored state for four eyes, a strict
  *     refusal as its 409, the move and a broken rule in the activity feed, `warnings` in the answer under "warn";
+ *   - when the area's lifecycle runs a workflow (lib/record-workflow-moves.ts): the write, its feed lines and the record's
+ *     workflow (attached on create or on the first move, its step moved through the step rules) in ONE transaction; the
+ *     step rules refuse like the lifecycle's (409 under "strict"), and a workflow someone else moved in between is a 409
+ *     with nothing kept. `evidence` in the body is the move's evidence then;
  *   - a list is filtered, sorted and paged in the database (agent/lib/record-query.ts), from `?where=&sort=&q=&cursor=
  *     &limit=`, and each row carries its title (the definition's template) and its `values` by field key.
  *
@@ -30,6 +34,9 @@ import type { OrgContext } from "@/lib/org-context";
 import { lifecycleConflictResponse, lifecycleContext, recordLifecycleOutcome } from "@/lib/record-lifecycle-server";
 import { implementationKey, manyPerAccount, namedImplementationId, newImplementationId } from "@/agent/lib/implementation-ids";
 import { an, W } from "@/lib/ui-words";
+import { enteredByOf } from "@/agent/lib/record-area-store";
+import { writeOutcome } from "@/agent/lib/record-lifecycle-store";
+import { commitRecordWorkflow, lockedRead, openRecordWorkflow, recordWorkflowBound, takeEvidence, workflowRecordKey, workflowRefusal } from "@/lib/record-workflow-moves";
 
 const TABLE = { deployments, implementations: implementation } as const;
 const tableOf = (id: AccountAreaId) => TABLE[id] as unknown as AreaTable & typeof deployments;
@@ -135,6 +142,7 @@ export async function declaredUpsert(id: AccountAreaId, ctx: OrgContext, body: u
   }
   const t = tableOf(id);
   const where = rowWhere(id, ctx.orgId, customerId, recordId);
+  if (recordWorkflowBound(id)) return boundUpsert(id, ctx, b, me, { customerId, recordId, many, where }, retried);
   const [before] = await withOrgRls(ctx.orgId, (tx) => tx.select().from(t).where(where));
   // A row of another account under this id is not this account's to change, nor its id to take.
   if (many && before && (before as AreaRow).customerId !== customerId) return refused([`That ${W.implementation} belongs to another ${W.account}.`], 409);
@@ -193,6 +201,8 @@ export async function declaredPatch(
   me: string,
 ): Promise<NextResponse> {
   const t = tableOf(id);
+  // The record's own key and feed id are read from its row, never from the body's `entityId` (lib/record-workflow-moves.ts).
+  if (recordWorkflowBound(id)) return boundPatch(id, ctx, db, where, body, me);
   const [before] = await withOrgRls(ctx.orgId, (tx) => tx.select().from(t).where(where));
   if (!before) return NextResponse.json({ error: `${id === "deployments" ? W.Deployment : W.Implementation} not found` }, { status: 404 });
   const actor = typeof body.actor === "string" && body.actor ? body.actor : "web";
@@ -211,6 +221,119 @@ export async function declaredPatch(
   await recordLifecycleOutcome(ctx.orgId, id, entity, me, prepared.lifecycle, comment);
   void recordChanges(db, id, ctx, activityId, actor, before as AreaRow, item as AreaRow, Boolean(prepared.lifecycle));
   return NextResponse.json({ ok: true, ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}) });
+}
+
+/** A write the record's workflow stopped (thrown out of the transaction, nothing kept): its 409; else rethrown. */
+function stoppedByWorkflow(id: AccountAreaId, e: unknown): NextResponse {
+  const stopped = workflowRefusal(e, areaView(id).noun);
+  if (stopped) return NextResponse.json(stopped.body, { status: stopped.status });
+  throw e;
+}
+
+/**
+ * declaredUpsert for an area whose lifecycle runs a workflow: the read, the checks with the step rules, the write, its
+ * feed lines and the record's workflow in one transaction (see the file's header).
+ */
+async function boundUpsert(
+  id: AccountAreaId,
+  ctx: OrgContext,
+  b: Record<string, unknown>,
+  me: string,
+  key: { customerId: string; recordId: string | undefined; many: boolean; where: SQL },
+  retried: boolean,
+): Promise<NextResponse> {
+  const { customerId, recordId, many, where } = key;
+  const t = tableOf(id);
+  const v = areaView(id);
+  const { customerId: _c, ...given } = b;
+  const { body: rest, evidence } = takeEvidence(given);
+  const comment = typeof b.reason === "string" ? b.reason : null;
+  try {
+    const out = await withOrgRls(ctx.orgId, async (tx): Promise<NextResponse | "retry"> => {
+      // The record's workflow lock first (on the key the record has, or will have), then the record as it is now.
+      const expected = workflowRecordKey(id, id === "deployments" ? { customerId, deploymentId: recordId } : { implementationId: recordId ?? customerId });
+      const { row: stored, key } = await lockedRead(tx, ctx.orgId, id, async () => ((await tx.select().from(t).where(where)) as AreaRow[])[0], expected);
+      const before = stored ?? null;
+      if (many && before && before.customerId !== customerId) return refused([`That ${W.implementation} belongs to another ${W.account}.`], 409);
+      const entity = { type: ENTITY[id], id: before ? itemId(id, before) : recordId ?? customerId };
+      const enteredBy = await enteredByOf(tx, ctx.orgId, v, entity, before);
+      const workflow = await openRecordWorkflow(tx, ctx.orgId, id, { entityId: before ? key : null, feedId: entity.id, before, actor: me, comment, evidence });
+      const prepared = prepareRecordWrite(id, before ? "update" : "create", rest, { actor: me, role: ctx.role, before, enteredBy, ...(workflow?.gate ? { workflow: workflow.gate } : {}) });
+      if (!prepared.ok) return prepared.conflict ? lifecycleConflictResponse(prepared.conflict) : refused(prepared.errors, prepared.forbidden ? 403 : 400);
+      let row: AreaRow | undefined;
+      if (before) {
+        const set: Record<string, unknown> = { ...prepared.columns };
+        delete set.deploymentId;
+        if (prepared.customDelta) set.custom = customSql(id, prepared.customDelta);
+        if (!Object.keys(set).length) return refused([`This ${id === "deployments" ? W.deployment : W.implementation} already exists and the request names nothing to change.`]);
+        [row] = (await tx.update(t).set(set).where(where).returning()) as AreaRow[];
+        if (!row) return refused([`It was removed while it was being updated.`], 409);
+      } else {
+        const values: Record<string, unknown> = {
+          ...prepared.columns,
+          ...(id === "deployments" ? { deploymentId: recordId } : { implementationId: recordId ?? customerId }),
+          customerId,
+          custom: prepared.custom,
+          orgId: ctx.orgId,
+        };
+        [row] = (await tx.insert(t).values(values as never).onConflictDoNothing().returning()) as AreaRow[];
+        // Created by someone else since the read: this call is an update of it (once).
+        if (!row) return "retry";
+      }
+      const written = { type: ENTITY[id], id: itemId(id, row) };
+      await writeOutcome(tx, ctx.orgId, written, me, v, prepared.lifecycle, comment);
+      if (workflow) await commitRecordWorkflow(workflow, { entityId: workflowRecordKey(id, row)!, created: !before, check: prepared.lifecycle, after: row });
+      const warned = prepared.warnings.length ? { warnings: prepared.warnings } : {};
+      return before
+        ? NextResponse.json({ item: { id: written.id }, updated: true, ...warned }, { status: 200 })
+        : NextResponse.json({ item: { id: written.id }, created: true, ...warned }, { status: 201 });
+    });
+    if (out !== "retry") return out;
+  } catch (e) {
+    return stoppedByWorkflow(id, e);
+  }
+  return retried ? refused(["It changed while it was being written; send it again."], 409) : boundUpsert(id, ctx, b, me, key, true);
+}
+
+/** declaredPatch for an area whose lifecycle runs a workflow: everything in one transaction (see the file's header). */
+async function boundPatch(id: AccountAreaId, ctx: OrgContext, db: Db, where: SQL, body: Record<string, unknown>, me: string): Promise<NextResponse> {
+  const t = tableOf(id);
+  const v = areaView(id);
+  const actor = typeof body.actor === "string" && body.actor ? body.actor : "web";
+  // The body's `entityId` is ignored here: the record's feed id and its workflow's key are its own (itemId, workflowRecordKey).
+  const { customerId: _c, entityId: _e, ...given } = body;
+  const { body: rest, evidence } = takeEvidence(given);
+  const comment = typeof body.reason === "string" ? body.reason : null;
+  let changed: { before: AreaRow; item: AreaRow; moveNoted: boolean; feedId: string } | null = null;
+  try {
+    const out = await withOrgRls(ctx.orgId, async (tx): Promise<NextResponse> => {
+      // The record's workflow lock first, then the record as it is now: the move is checked from its current state.
+      const { row: stored, key } = await lockedRead(tx, ctx.orgId, id, async () => ((await tx.select().from(t).where(where)) as AreaRow[])[0]);
+      if (!stored || !key) return NextResponse.json({ error: `${id === "deployments" ? W.Deployment : W.Implementation} not found` }, { status: 404 });
+      const before = stored;
+      const entity = { type: ENTITY[id], id: itemId(id, before) };
+      const enteredBy = await enteredByOf(tx, ctx.orgId, v, entity, before);
+      const workflow = await openRecordWorkflow(tx, ctx.orgId, id, { entityId: key, feedId: entity.id, before, actor: me, comment, evidence });
+      const prepared = prepareRecordWrite(id, "update", rest, { actor: me, role: ctx.role, before, enteredBy, ...(workflow?.gate ? { workflow: workflow.gate } : {}) });
+      if (!prepared.ok) return prepared.conflict ? lifecycleConflictResponse(prepared.conflict) : refused(prepared.errors, prepared.forbidden ? 403 : 400);
+      const set: Record<string, unknown> = { ...prepared.columns };
+      delete set.deploymentId;
+      if (prepared.customDelta) set.custom = customSql(id, prepared.customDelta);
+      if (!Object.keys(set).length) return refused(["Nothing to update"]);
+      const [item] = (await tx.update(t).set(set).where(where).returning()) as AreaRow[];
+      if (!item) return NextResponse.json({ error: `${id === "deployments" ? W.Deployment : W.Implementation} not found` }, { status: 404 });
+      await writeOutcome(tx, ctx.orgId, entity, me, v, prepared.lifecycle, comment);
+      if (workflow) await commitRecordWorkflow(workflow, { entityId: key, created: false, check: prepared.lifecycle, after: item });
+      changed = { before, item, moveNoted: Boolean(prepared.lifecycle), feedId: entity.id };
+      return NextResponse.json({ ok: true, ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}) });
+    });
+    // The field lines, once the write is kept, as declaredPatch writes them.
+    const c = changed as { before: AreaRow; item: AreaRow; moveNoted: boolean; feedId: string } | null;
+    if (c) void recordChanges(db, id, ctx, c.feedId, actor, c.before, c.item, c.moveNoted);
+    return out;
+  } catch (e) {
+    return stoppedByWorkflow(id, e);
+  }
 }
 
 /**

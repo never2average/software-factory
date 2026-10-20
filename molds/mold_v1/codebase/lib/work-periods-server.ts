@@ -20,7 +20,7 @@ import { prepareTaskWrite, taskLifecycleEnforced } from "@/agent/lib/task-area";
 import { permissionsDeclared } from "@/agent/lib/record-permissions";
 import { areaView, type AreaRow } from "@/agent/lib/record-areas";
 import type { RecordRole } from "@/agent/lib/record-areas.generated";
-import { needsEnteredBy, storedStateOf } from "@/agent/lib/record-lifecycle";
+import { needsEnteredBy, storedStateOf, type WorkflowGate } from "@/agent/lib/record-lifecycle";
 import { recursOnDone } from "@/agent/lib/task-recurrence";
 import { stageStateOf, storedTask, whoEntered } from "@/agent/lib/record-lifecycle-store";
 import { lifecycleConflictResponse, type TaskLifecycleOutcome } from "@/lib/record-lifecycle-server";
@@ -67,7 +67,12 @@ export async function guardTaskRequest(
   taskId: string | null,
   wp: WorkPeriods = WORK_PERIODS,
   areas: RecordAreas = RECORD_AREAS,
-  who: { role?: RecordRole } = {},
+  /**
+   * `workflow`: the step rules, when the tasks' lifecycle runs a workflow (lib/record-workflow-server.ts), with `inputs`:
+   * the stored task and what its lifecycle reads, already read under the record's workflow lock (so nothing is read
+   * again here, and no transaction is opened inside the caller's).
+   */
+  who: { role?: RecordRole; workflow?: WorkflowGate; inputs?: TaskLifecycleInputs } = {},
 ): Promise<{ response: NextResponse } | { body: string | undefined; lifecycle?: TaskLifecycleOutcome }> {
   if (request.method === "GET" || request.method === "HEAD" || request.method === "DELETE") return { body: undefined };
   let text = await request.text();
@@ -85,8 +90,8 @@ export async function guardTaskRequest(
   // Who may (records.areas.tasks.permissions) reads the caller and the stored task (an `own` rule); a refusal is a 403.
   const perms = permissionsDeclared("tasks", areas);
   const me = areas.tasks.redefined || enforced || recurs || perms ? (await callerEmail(request)) ?? "" : "";
-  const lifecycleInputs = enforced || recurs || perms ? await taskLifecycleInputs(orgId, taskId, parsed as Record<string, unknown>, areas) : {};
-  const prepared = prepareTaskWrite(taskId ? "update" : "create", parsed as Record<string, unknown>, { actor: me, role: who.role, ...lifecycleInputs }, areas);
+  const lifecycleInputs = who.inputs ?? (enforced || recurs || perms ? await taskLifecycleInputs(orgId, taskId, parsed as Record<string, unknown>, areas) : {});
+  const prepared = prepareTaskWrite(taskId ? "update" : "create", parsed as Record<string, unknown>, { actor: me, role: who.role, ...lifecycleInputs, ...(who.workflow ? { workflow: who.workflow } : {}) }, areas);
   if (!prepared.ok) {
     if (prepared.conflict) return { response: lifecycleConflictResponse(prepared.conflict) };
     return { response: NextResponse.json({ error: prepared.errors.join(" "), errors: prepared.errors }, { status: prepared.forbidden ? 403 : 400 }) };
@@ -103,19 +108,25 @@ export async function guardTaskRequest(
   return "body" in guarded && lifecycle ? { ...guarded, lifecycle } : guarded;
 }
 
+/** What a task's lifecycle reads besides the body. */
+export type TaskLifecycleInputs = { before?: AreaRow | null; stageState?: string | null; enteredBy?: string | null };
+
 /** The stored task, the state a requested stage stands for, and who entered the stored state (a four-eyes move). */
-async function taskLifecycleInputs(orgId: string, taskId: string | null, body: Record<string, unknown>, areas: RecordAreas): Promise<{ before?: AreaRow | null; stageState?: string | null; enteredBy?: string | null }> {
+async function taskLifecycleInputs(orgId: string, taskId: string | null, body: Record<string, unknown>, areas: RecordAreas): Promise<TaskLifecycleInputs> {
   if (!taskId || !getOpsDb()) return {};
+  return withOrgRls(orgId, (tx) => taskLifecycleInputsIn(tx, orgId, taskId, body, areas));
+}
+
+/** taskLifecycleInputs on the caller's own workspace-scoped transaction. */
+export async function taskLifecycleInputsIn(tx: Parameters<typeof storedTask>[0], orgId: string, taskId: string, body: Record<string, unknown>, areas: RecordAreas = RECORD_AREAS): Promise<TaskLifecycleInputs> {
   const v = areaView("tasks", areas);
   const lc = v.lifecycle!;
-  return withOrgRls(orgId, async (tx) => {
-    const before = await storedTask(tx, orgId, taskId);
-    if (!before) return {};
-    const stageState = !lc.own && typeof body.stageId === "string" ? await stageStateOf(tx, orgId, v, taskId, body.stageId) : null;
-    const from = storedStateOf(v, before);
-    const by = from !== null && needsEnteredBy(v, from) ? await whoEntered(tx, orgId, { type: "task", id: taskId }, v, before, from) : null;
-    return { before, stageState, enteredBy: by };
-  });
+  const before = await storedTask(tx, orgId, taskId);
+  if (!before) return {};
+  const stageState = !lc.own && typeof body.stageId === "string" ? await stageStateOf(tx, orgId, v, taskId, body.stageId) : null;
+  const from = storedStateOf(v, before);
+  const by = from !== null && needsEnteredBy(v, from) ? await whoEntered(tx, orgId, { type: "task", id: taskId }, v, before, from) : null;
+  return { before, stageState, enteredBy: by };
 }
 
 /** The work periods' rules for a task write (see the file's header), on the body as it will be sent. */

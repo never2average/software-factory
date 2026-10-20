@@ -765,7 +765,8 @@ Where the values live and who touches them (`agent/lib/people-data.ts`, the pure
   declared; with none declared its description and results are what they were (the default surface is unchanged).
 - **The engine's directory**: `identitySnapshot()` in `agent/lib/people-directory.ts` builds the engine's identity
   snapshot (directory people, role boundaries, reporting rows) from one workspace's roster and signed-in people.
-  Nothing calls it at runtime until the engine is wired into record moves (phase 5).
+  The record write path calls it for an area whose lifecycle runs a workflow (phase 5, docs/WORKFLOW_ENGINE.md
+  "Runtime").
 
 ### `records`
 
@@ -1018,10 +1019,12 @@ an area other than periods or naming an area a period cannot contain; a target `
 
 **Workflows** (phase 2 of the workflow engine, `docs/WORKFLOW_ENGINE.md`): a profile or a pack supplies workflow
 documents in the vendored engine's DSL (its `init` + `diff` shape, `lib/workflow-engine/dsl/spec.json`) and binds a
-record area's lifecycle to one. **This phase is the schema and the build's checks only**: nothing at runtime reads a
-workflow yet, the documents are not emitted, and a profile that declares none builds byte for byte as before. Storing
-the definitions and instances (phase 3), the people they route to (phase 4) and running them on a record's moves
-(phase 5) come next.
+record area's lifecycle to one. The build checks them (below); the documents a lifecycle names are emitted on their own
+(`lib/record-workflows.generated.ts`) and run on the record's moves under an enforced lifecycle (`warn` or `strict`;
+phase 5, docs/WORKFLOW_ENGINE.md "Runtime"): a move's `step` goes through the step's own rules (who holds it, whether it
+is open, the workflow's step transitions, its comment and evidence), refused under `strict` like any lifecycle rule,
+noted and made as an administrative change under `warn`, never run under `off`. A profile that declares none builds and
+writes byte for byte as before.
 
 ```jsonc
 "records": {
@@ -1083,8 +1086,9 @@ last states the workflow) or `profiles/<file>: records.areas.<area>.lifecycle…
   (the schema, `scripts/schemas/record-area.schema.json`).
 
 The compiled area carries the binding as written (`RecordLifecycle.workflow`, `.workflow_states`,
-`RecordTransition.step` in `agent/lib/record-areas.generated.ts`); nothing reads it yet. Held by
-`npm run test:record-areas-workflows`.
+`RecordTransition.step` in `agent/lib/record-areas.generated.ts`), read by the write path (lib/record-workflow-moves.ts).
+A bound area's ops routes take the move's `evidence` beside its `reason`. Held by `npm run test:record-areas-workflows`,
+`npm run test:record-workflow-runtime` and `npm run test:record-workflow-runtime-db`.
 
 ### `records.hub`
 

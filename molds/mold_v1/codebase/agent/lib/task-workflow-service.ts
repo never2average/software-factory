@@ -14,7 +14,7 @@ export async function taskWorkflowRequest<T>(
   orgId: string,
   actor: string,
   path: string,
-  init: { method: "POST" | "PATCH" | "DELETE"; body?: unknown },
+  init: { method: "POST" | "PATCH" | "DELETE"; body?: unknown; timeoutMs?: number },
 ): Promise<T> {
   const url = process.env.TASK_WORKFLOW_SERVICE_URL?.replace(/\/$/, "");
   const token = process.env.TASK_WORKFLOW_SERVICE_TOKEN;
@@ -35,6 +35,7 @@ export async function taskWorkflowRequest<T>(
         ...TASK_STATES_HEADER,
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      ...(init.timeoutMs ? { signal: AbortSignal.timeout(init.timeoutMs) } : {}),
     });
   } catch (error) {
     throw new Error(`Task workflow service is unavailable: ${error instanceof Error ? error.message : String(error)}`);

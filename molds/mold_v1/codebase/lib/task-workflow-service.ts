@@ -26,6 +26,8 @@ export async function proxyTaskWorkflow(
   path: string,
   /** The request body, when the caller has already read it (lib/work-periods-server.ts guardTaskRequest). */
   bodyText?: string,
+  /** How long to wait for the service at most (lib/record-workflow-server.ts); no limit when not given, as before. */
+  opts: { timeoutMs?: number } = {},
 ): Promise<NextResponse> {
   const config = serviceConfig();
   if (!config) {
@@ -49,6 +51,7 @@ export async function proxyTaskWorkflow(
       },
       body: hasBody ? (bodyText ?? (await request.text())) : undefined,
       cache: "no-store",
+      ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
     });
     // A deployment without work periods (profile work_periods.mode "off") answers a task without its period.
     if (!WORK_PERIODS.enabled && (upstream.headers.get("content-type") ?? "").includes("application/json")) {

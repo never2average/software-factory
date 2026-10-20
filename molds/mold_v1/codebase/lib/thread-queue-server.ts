@@ -31,7 +31,21 @@
  *  5. RETRIES THAT DO NOT BLOCK. A refusal that may pass (409, 429) backs off exponentially (`next_attempt_at`); later
  *     items run meanwhile. A permanent one (another 4xx, an oversized message) fails at once, and one still refused
  *     `GIVE_UP_AFTER_MS` after its FIRST attempt fails too. Its author is told.
- *  6. NO TABLE, NO OUTAGE. Code can reach a database before drizzle/0048 does (a database shared with another app and
+ *  6. A SESSION WITH NO OWNER RECORD (mold_v1-291). The agent's door admits a signed author token only on a thread whose
+ *     owner is the session's owner AS THE AGENT RECORDED IT (`agent_session_owners`, since drizzle/0022). A session from
+ *     before that record has none, so a token minted for it would only be refused there. Such a session's messages are
+ *     never signed for: each is sent on its AUTHOR's own sign-in, by the author's own page — when they send it and the
+ *     chat is free, or when their page runs the queue — exactly as a message was sent before the queue
+ *     (`sessionOwnerRecorded`). Anyone else's page leaves it where it is (`waiting-for-author`, the same bounded wait
+ *     as a deployment that cannot sign), so it is sent as its author or failed with a reason its author sees; never
+ *     sent as whoever ran the queue. The web app does not write the missing record itself: the only rows it could
+ *     take an owner from are browser-written (the chat list, the thread) or last-writer-wins (the agent's scope row).
+ *     The agent writes it itself the first time the session passes its guard and its server-written evidence names an
+ *     owner (agent/lib/session-guard.ts `ownershipOf`, lib/session-gate.ts `ownershipFromEvidence`, mold_v1-293: the
+ *     person its scope row names, confirmed by a row of that same person — never a thread or chat row alone); from
+ *     then on its messages are signed for like any other. A session that evidence does not place stays unowned, and
+ *     the agent's gate refuses every sign-in on it: its messages fail with that reason, visible to their authors.
+ *  7. NO TABLE, NO OUTAGE. Code can reach a database before drizzle/0048 does (a database shared with another app and
  *     not migrated by it, a build that went out by a git push). Every entry point then says so (`no-queue`, `empty`, an
  *     empty list) instead of throwing, and the relay sends the message the direct way, as it did before the queue.
  *
@@ -371,14 +385,25 @@ export interface PumpDeps {
   /** May this page send as `author`? True when the server signs for the author, or the page is the author's own. */
   readonly canSendAs: (author: string) => boolean;
   /**
+   * Does the agent hold an owner record for this session in this workspace (`agent_session_owners`)? Without one the
+   * agent's door refuses every signed author token, so the session's messages go on their author's own sign-in only.
+   * Defaults to {@link sessionOwnerRecorded} (the database read); injected only by tests.
+   */
+  readonly ownerRecorded?: (orgId: string, sessionId: string) => Promise<boolean>;
+  /**
    * Does `forward` send with a single-use token the agent spends at its door (the server signs)? Then a send whose
    * answer was lost can be proved unspent and withdrawn. Without one, such a send is checked in the session's history.
    */
   readonly singleUse: boolean;
   /** The session's continuation token if it is PARKED (its last event is `session.waiting`), else none: a turn runs. */
   readonly parkedToken: (sessionId: string) => Promise<{ readonly token?: string; readonly sessionId: string }>;
-  /** Send one message AS `author`, single-use for this claim (`seq`). */
+  /**
+   * Send one message AS `author`, single-use for this claim (`seq`). `signed`: on a token the server signs for the
+   * author (bound to this item and thread). Otherwise on the sign-in of the page that runs the queue, which the pump
+   * guarantees is the author's own (`author` equals `pumper`); `forward` must refuse anything else.
+   */
   readonly forward: (send: {
+    readonly signed: boolean;
     readonly sessionId: string;
     /** The thread the item is in: its token is bound to it (the agent admits the author only as ITS participant). */
     readonly thread: string;
@@ -436,6 +461,38 @@ async function releaseStale(tx: Tx, orgId: string, threadId: string): Promise<vo
     set state = 'queued', tried_claims = array_append(tried_claims, claim_id), claim_id = null, claimed_at = null
     where org_id = ${orgId} and thread_id = ${threadId} and state = 'sending'
       and claimed_at < now() - make_interval(secs => ${SENDING_STALE_MS / 1000})`);
+}
+
+/**
+ * Does the agent hold an owner record for `sessionId` in this workspace (`agent_session_owners`, written by the agent's
+ * session guard at creation, or by its own legacy inference — never by a browser)? Read in the workspace's RLS scope.
+ * Records are only ever added, so a "yes" stays a "yes". A database without the table answers no (the author's own
+ * sign-in, which the agent's gate decides as it always did); any other error is thrown, as every read here is.
+ */
+export async function sessionOwnerRecorded(runIn: RunIn, orgId: string, sessionId: string): Promise<boolean> {
+  if (!sessionId) return false;
+  try {
+    const row = rowsOf(
+      await runIn(orgId, (tx) =>
+        tx.execute(sql`
+          select 1 as one from agent_session_owners where session_id = ${sessionId} and org_id = ${orgId} limit 1`),
+      ),
+    )[0];
+    return Boolean(row);
+  } catch (e) {
+    if (isUndefinedTable(e)) return false;
+    throw e;
+  }
+}
+
+/** The session a thread is on now (`chat_threads.eve_session_id`), or "" when the thread is not here. */
+async function threadSession(runIn: RunIn, orgId: string, threadId: string): Promise<string> {
+  const row = rowsOf(
+    await runIn(orgId, (tx) =>
+      tx.execute(sql`select eve_session_id from chat_threads where id = ${threadId} and org_id = ${orgId}`),
+    ),
+  )[0];
+  return row?.eve_session_id ? String(row.eve_session_id) : "";
 }
 
 /** The oldest item that may run now (not backing off), without claiming it. */
@@ -546,6 +603,18 @@ export async function pumpThreadQueue(
   });
   if (!ready) return { outcome: "empty" };
 
+  // May this page run `author`'s message, and how? On a session the agent holds an owner record for: as #197 — a token
+  // signed for the author (or, where the server cannot sign, the author's own page). On one it holds none for: the
+  // author's own page, on their own sign-in, and never a token (the door would refuse it) — see the file comment, 6.
+  const ownerRecorded = deps.ownerRecorded ?? ((o: string, sid: string) => sessionOwnerRecorded(runIn, o, sid));
+  const pumper = input.pumper.toLowerCase();
+  const own = (author: string) => author.toLowerCase() === pumper;
+  const routeFor = (recorded: boolean) => ({
+    signed: recorded && deps.singleUse,
+    mayRun: (author: string) => (recorded ? deps.canSendAs(author) : own(author)),
+  });
+  let route = routeFor(await ownerRecorded(orgId, await threadSession(runIn, orgId, threadId)));
+
   // The head, with every message whose sender may no longer post failed on the way (nothing of theirs is sent), and
   // every one that has waited too long for its author's own page failed too (below), so nobody's line is held for ever.
   let item: ThreadQueueItem | null = null;
@@ -557,8 +626,9 @@ export async function pumpThreadQueue(
       await markFailed(runIn, orgId, next.id, standing.reason, null);
       continue;
     }
-    if (!deps.canSendAs(next.authorEmail)) {
-      // A deployment that cannot sign: only the author's own page may send it. Wait for it — but not for ever.
+    if (!route.mayRun(next.authorEmail)) {
+      // Only the author's own page may send it (a deployment that cannot sign, or a session with no owner record).
+      // Wait for it — but not for ever.
       const since = await waitingForAuthor(runIn, orgId, next.id);
       if (Date.now() - since > (deps.authorWaitMs ?? AUTHOR_WAIT_MS)) {
         await markFailed(runIn, orgId, next.id, AUTHOR_GONE_REASON, null);
@@ -584,6 +654,18 @@ export async function pumpThreadQueue(
     return { outcome: "busy", heldBy: null };
   }
   const session = parked.sessionId;
+  // The session the send goes to is the one checked (the thread may have moved to another since the check above).
+  route = routeFor(await ownerRecorded(orgId, session));
+  if (!route.mayRun(item.authorEmail)) {
+    await releaseThread(runIn, { orgId, threadId, claim: thread });
+    // The same bounded wait as above: the clock starts (or runs on) here too, so this path can never hold the line.
+    const since = await waitingForAuthor(runIn, orgId, item.id);
+    if (Date.now() - since > (deps.authorWaitMs ?? AUTHOR_WAIT_MS)) {
+      await markFailed(runIn, orgId, item.id, AUTHOR_GONE_REASON, null);
+      return { outcome: "refused", item, failed: true, status: 0, detail: AUTHOR_GONE_REASON };
+    }
+    return { outcome: "waiting-for-author", item };
+  }
   const claimId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const claimed = await claimItem(runIn, orgId, item, claimId);
   if (!claimed) {
@@ -616,6 +698,7 @@ export async function pumpThreadQueue(
   let sent: SendOutcome;
   try {
     sent = await deps.forward({
+      signed: route.signed,
       sessionId: session,
       thread: threadId,
       author: claimed.authorEmail,
@@ -646,7 +729,7 @@ export async function pumpThreadQueue(
     // a late copy unacceptable (the claim it names is gone) — then it is safe to try again later. Otherwise it is
     // remembered, and the session's history is checked before any resend; the thread stays held only as long as a
     // turn may be running from it (the next pump reads the session).
-    const withdrawn = deps.singleUse && (await requeue(runIn, orgId, claimed, claimId, detail, wait, { unspentSeq: seq }));
+    const withdrawn = route.signed && (await requeue(runIn, orgId, claimed, claimId, detail, wait, { unspentSeq: seq }));
     if (!withdrawn) await requeue(runIn, orgId, claimed, claimId, detail, 0, { tried: true });
     await releaseThread(runIn, { orgId, threadId, claim: thread });
     return { outcome: "refused", item: claimed, failed: false, status: sent.status, detail };

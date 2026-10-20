@@ -58,7 +58,7 @@ export interface RecordLifecycle {
   /** What a move outside `transitions` does: "off" (allowed, the default), "warn" (allowed and noted), "strict" (refused). */
   enforce?: "off" | "warn" | "strict";
   transitions?: RecordTransition[];
-  /** The workflow this lifecycle runs: an id of the profile's `records.workflows` (checked at build; not run yet). */
+  /** The workflow this lifecycle runs: an id of the profile's `records.workflows` (checked at build; run on the record's moves when enforced: lib/record-workflow-moves.ts). */
   workflow?: string;
   /** Record state -> each step's state: where a record already mid-lifecycle stands, for its workflow to be attached lazily. */
   workflow_states?: Record<string, Record<string, RecordWorkflowStepState>>;

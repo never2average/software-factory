@@ -207,13 +207,17 @@ await check("loading: every vendored TypeScript file loads under --experimental-
   for (const f of files) await import(join(ROOT, f));
 });
 
-await check("loading: nothing outside the engine's own glue imports the vendored engine (no runtime behaviour changes)", () => {
+await check("loading: nothing outside the engine's own glue imports the vendored engine (the runtime reaches it through one module)", () => {
   // The build-time checks of a profile's workflows (phase 2) read the DSL's validator and spec at build, never at runtime.
-  // The Postgres store (phase 3) implements the engine's store interface; nothing calls it until phase 5, and its own
-  // test fails if anything outside its tests names it.
+  // The Postgres store (phase 3) implements the engine's store interface, and its own test fails if anything outside
+  // its tests and the write path names it. The runtime (phase 5): lib/record-workflow-runtime.ts is the ONE module of
+  // the app that imports the engine (the step rules, init, diff, the directory and role scopes); the write path
+  // (lib/record-workflow-moves.ts) and every door reach the engine only through it, so they are not listed here.
+  // Its offline test drives the engine beside it.
   const GLUE = new Set([
     "lib/workflow-step-rules.ts", "scripts/test-workflow-engine.mjs", "scripts/sync-workflow-engine.mjs", "scripts/lib/record-workflows.mjs",
     "lib/record-workflow-store.ts", "scripts/test-record-workflow-store.mjs", "scripts/test-record-workflow-store-db.mjs", "scripts/test-people-data.mjs",
+    "lib/record-workflow-runtime.ts", "scripts/test-record-workflow-runtime.mjs",
   ]);
   const out = execFileSync("git", ["grep", "--untracked", "-l", "-E", "workflow-engine/|workflow-step-rules", "--", "*.ts", "*.tsx", "*.mjs", "*.js", "*.cjs"], { cwd: ROOT, encoding: "utf8" });
   const importers = out.split("\n").filter(Boolean).filter((f) => !f.startsWith("lib/workflow-engine/") && !GLUE.has(f));

@@ -70,6 +70,8 @@
  *                      person's decision but RETURNS the question as its result instead of asking, so the batch it
  *                      was called in holds nothing)
  *                      `steps=<n>` (works in n `bash` tool steps, then answers)
+ *                      `hold=<n>` (answers only once `POST /__release/<n>` was sent: a specialist that finishes
+ *                      when the test says, not after a guessed time, mold_v1-286)
  *                      or `fail` (its model call is refused with a 500 every time, so the session
  *                      fails). A root that receives the system's automatic hand-back (a stopped
  *                      specialist, agent/lib/specialist-handback.ts) answers `PARENT-TOLD: …` naming
@@ -231,6 +233,8 @@ function decideHandback(messages) {
     }
     // `long=<n>`: the answer is streamed as n pieces with no delay between them, so the specialist's own stream holds
     // a long history of `.delta` events (scripts/test-specialist-detach.mjs `sweeptiming`, mold_v1-199).
+    // `hold=<n>`: the answer waits for `POST /__release/<n>` (sent before the call: answered at once).
+    if (kind === "hold") return { text: `CHILD-RESULT ${child}`, hold: String(mode?.[2] ?? "0") };
     if (kind === "long") return { text: Array.from({ length: Number(mode?.[2] ?? 1000) }, (_, i) => `piece ${i + 1}. `).join("") + `CHILD-RESULT ${child}`, chunked: true, chunkDelayMs: 0 };
     return { text: `CHILD-RESULT ${child}`, delayMs: kind === "slow" || kind === "askslow" ? Number(mode?.[2] ?? 0) : 0 };
   }
@@ -519,10 +523,24 @@ function sseChunks(decision, model) {
   return out;
 }
 
+/** `hold=<n>` (mold_v1-286): answers waiting for their release, and the holds already released. */
+const heldAnswers = new Map();
+const releasedHolds = new Set();
+
 const server = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    const release = /\/__release\/([0-9]+)/.exec(req.url ?? "");
+    if (release) {
+      releasedHolds.add(release[1]);
+      const waiting = heldAnswers.get(release[1]) ?? [];
+      heldAnswers.delete(release[1]);
+      for (const answer of waiting) answer();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ released: waiting.length }));
+      return;
+    }
     if (req.url?.includes("__log")) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(LOG));
@@ -584,6 +602,10 @@ const server = createServer((req, res) => {
     }
     if (decision.delayMs > 0) {
       setTimeout(() => respond(payload, decision, res), decision.delayMs);
+      return;
+    }
+    if (decision.hold !== undefined && !releasedHolds.has(decision.hold)) {
+      heldAnswers.set(decision.hold, [...(heldAnswers.get(decision.hold) ?? []), () => respond(payload, decision, res)]);
       return;
     }
     if (CHILD_BARRIER > 1 && SCRIPT === "handback" && /^CHILD-RESULT /.test(decision.text ?? "")) {

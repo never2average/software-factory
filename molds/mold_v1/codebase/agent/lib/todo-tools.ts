@@ -29,6 +29,18 @@ import type { RecordRole } from "./record-areas.generated.ts";
 import { periodDeclared, periodOut, writablePeriodFields } from "./period-area.ts";
 import { writeDeclaredPeriod } from "./period-area-store.ts";
 import { memberRole } from "./record-area-store.ts";
+import {
+  attachCreatedRecord,
+  lockRecordWorkflow,
+  openRecordWorkflow,
+  RECORD_SERVICE_TIMEOUT_MS,
+  RecordWorkflowBusy,
+  recordWorkflowBound,
+  reserveRecordMove,
+  settleReservedMove,
+  workflowRefusal,
+  type RecordWorkflowSession,
+} from "../../lib/record-workflow-moves.ts";
 
 function callerEmail(ctx: {
   session: {
@@ -74,6 +86,8 @@ const RECURS = recursOnDone();
  * a write reads the caller's role and the stored task, as the ops API does. Off by default.
  */
 const PERMS = permissionsDeclared("tasks");
+/** The lifecycle runs a workflow (records.areas.tasks.lifecycle.workflow, enforced): a move goes through its step rules. */
+const WORKFLOW = recordWorkflowBound("tasks");
 /** Some move needs a comment: the tool takes one (`reason`), only then. */
 const TAKES_COMMENT = ENFORCED && (TASKS.area.lifecycle?.transitions ?? []).some((t) => t.requires_comment);
 
@@ -105,47 +119,99 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
   // The deployment's definition of a task: a refused write never reaches the task service. With its lifecycle
   // enforced, a move is checked against the stored task as the caller's role (a refusal names the moves there are).
   const lifecycle = ENFORCED || RECURS || PERMS ? await lifecycleInputs(orgId, actor, id ?? null) : {};
-  const prepared = prepareTaskWrite(id ? "update" : "create", fields, { actor, ...lifecycle });
-  if (!prepared.ok) throw new Error(prepared.errors.join(" "));
-  const body = prepared.body ?? fields;
-  // After the write: the next occurrence of a recurring task it completed (once), then its move in the feed.
-  const recur = async (item: unknown): Promise<{ next?: NextOccurrence }> => {
-    if (!RECURS) return {};
-    try {
-      const next = await recurAfterWrite({ orgId, actor, before: (lifecycle as { before?: AreaRow | null }).before ?? null, item: item as AreaRow, withTx: (fn) => withOrgDb(orgId, fn) });
-      return next ? { next } : {};
-    } catch (error) {
-      console.error("[upsert_todo] could not create the next occurrence:", error);
-      return {};
+  // One write. `wf`, when the lifecycle runs a workflow: the step rules (read under the task's workflow lock, with the
+  // stored task `lc` read there too), then the move reserved, the service's write with nothing held, and the task's
+  // actual state settling the reservation (lib/record-workflow-moves.ts, "A record written elsewhere"). Without one,
+  // exactly today's write.
+  const run = async (lc: typeof lifecycle, wf: { session: RecordWorkflowSession | null } | null) => {
+    // While another mover's reserved move is pending, the step rules are not asked (a move is answered "being moved").
+    const prepared = prepareTaskWrite(id ? "update" : "create", fields, { actor, ...lc, ...(wf?.session?.gate && !wf.session.busy ? { workflow: wf.session.gate } : {}) });
+    if (!prepared.ok) throw new Error(prepared.errors.join(" "));
+    // Another mover's reserved move is not settled yet: a move now would be checked against a step about to change.
+    if (wf?.session?.busy && prepared.lifecycle) throw new RecordWorkflowBusy();
+    const body = prepared.body ?? fields;
+    // After the write: the next occurrence of a recurring task it completed (once), then its move in the feed.
+    const recur = async (item: unknown): Promise<{ next?: NextOccurrence }> => {
+      if (!RECURS) return {};
+      try {
+        const next = await recurAfterWrite({ orgId, actor, before: (lc as { before?: AreaRow | null }).before ?? null, item: item as AreaRow, withTx: (fn) => withOrgDb(orgId, fn) });
+        return next ? { next } : {};
+      } catch (error) {
+        console.error("[upsert_todo] could not create the next occurrence:", error);
+        return {};
+      }
+    };
+    const recordMove = async (taskId: string) => {
+      if (!prepared.lifecycle) return;
+      const comment = typeof fields.reason === "string" ? fields.reason : null;
+      await withOrgDb(orgId, (tx) => writeOutcome(tx, orgId, { type: "task", id: taskId }, actor, TASKS, prepared.lifecycle, comment)).catch((error) => {
+        console.error(`[upsert_todo] could not record the move of task ${taskId}:`, error);
+      });
+    };
+    const limit = wf ? { timeoutMs: RECORD_SERVICE_TIMEOUT_MS } : {};
+
+    if (id) {
+      // The move reserved on the instance, if the task and its instance are still what was checked (else a refusal).
+      const moveId = wf?.session ? (await withOrgDb(orgId, (tx) => reserveRecordMove(tx, wf.session!, { entityId: id, check: prepared.lifecycle ?? null, readRecord: () => storedTask(tx, orgId, id) }))).id : null;
+      const settle = () =>
+        moveId
+          ? withOrgDb(orgId, (tx) => settleReservedMove(tx, orgId, "tasks", { entityId: id, moveId, readRecord: () => storedTask(tx, orgId, id) })).catch((error) => {
+              console.error(`[upsert_todo] could not settle the move of task ${id}:`, error);
+              return null;
+            })
+          : Promise.resolve(null);
+      let item: { id: string; title: string; done: boolean };
+      try {
+        item = await taskWorkflowRequest<{ id: string; title: string; done: boolean }>(orgId, actor, `/api/v1/tasks/${encodeURIComponent(id)}`, { method: "PATCH", body, ...limit });
+      } catch (e) {
+        // The service refused, failed or did not answer: the task's state says whether the move was made after all.
+        if (moveId) {
+          const settled = await settle();
+          if (settled?.outcome === "applied") throw new Error(`The task service did not confirm the change, but it was made: this ${TASKS.noun} now reads "${settled.state}", and its workflow step followed. Read it again before changing it.`);
+          if (!settled) throw new Error(`The task service did not confirm the change, and it could not be checked whether it was made. Read this ${TASKS.noun} again: its workflow follows what it reads.`);
+        }
+        throw e;
+      }
+      const settled = moveId ? await settle() : null;
+      const note = moveId && !settled ? { workflow_note: `This ${TASKS.noun} was changed, but its workflow step could not be updated just now; it follows on the next read of this ${TASKS.noun}.` } : {};
+      await recordMove(item.id);
+      return { updated: true as const, todo: { id: item.id, title: item.title, done: item.done }, ...(prepared.warnings.length && ENFORCED ? { warnings: prepared.warnings } : {}), ...(await recur(item)), ...note };
     }
-  };
-  const recordMove = async (taskId: string) => {
-    if (!prepared.lifecycle) return;
-    const comment = typeof fields.reason === "string" ? fields.reason : null;
-    await withOrgDb(orgId, (tx) => writeOutcome(tx, orgId, { type: "task", id: taskId }, actor, TASKS, prepared.lifecycle, comment)).catch((error) => {
-      console.error(`[upsert_todo] could not record the move of task ${taskId}:`, error);
-    });
-  };
 
-  if (id) {
-    const item = await taskWorkflowRequest<{ id: string; title: string; done: boolean }>(
-      orgId,
-      actor,
-      `/api/v1/tasks/${encodeURIComponent(id)}`,
-      { method: "PATCH", body },
-    );
+    const item = await taskWorkflowRequest<{ id: string; title: string }>(orgId, actor, "/api/v1/tasks", { method: "POST", body, ...limit });
+    let note = {};
+    if (wf) {
+      // The new task's instance, attached once the service made it; if not now, on its first move.
+      const attached = item?.id
+        ? await withOrgDb(orgId, (tx) => attachCreatedRecord(tx, orgId, "tasks", { entityId: item.id, actor, check: prepared.lifecycle ?? null, comment: typeof fields.reason === "string" ? fields.reason : null, readRecord: () => storedTask(tx, orgId, item.id) })).catch((error) => {
+            console.error(`[upsert_todo] could not attach the workflow of task ${item.id}:`, error);
+            return null;
+          })
+        : null;
+      if (!attached) note = { workflow_note: `This ${TASKS.noun} was created; its workflow is attached on its first move.` };
+    }
     await recordMove(item.id);
-    return { updated: true as const, todo: { id: item.id, title: item.title, done: item.done }, ...(prepared.warnings.length && ENFORCED ? { warnings: prepared.warnings } : {}), ...(await recur(item)) };
+    return { created: true as const, todo: { id: item.id, title: item.title }, ...(prepared.warnings.length && ENFORCED ? { warnings: prepared.warnings } : {}), ...note };
+  };
+  if (!WORKFLOW) return run(lifecycle, null);
+  // The lifecycle runs a workflow: under the task's workflow lock, the task as it is now and its instance (a short
+  // transaction, closed before anything else is read or sent).
+  try {
+    const comment = typeof fields.reason === "string" ? fields.reason : null;
+    const opened = await withOrgDb(orgId, async (tx) => {
+      if (!id) return { lc: lifecycle, session: await openRecordWorkflow(tx, orgId, "tasks", { entityId: null, before: null, actor, comment }) };
+      await lockRecordWorkflow(tx, orgId, "tasks", id);
+      const before = await storedTask(tx, orgId, id);
+      const from = storedStateOf(TASKS, before);
+      const enteredBy = before && from !== null && needsEnteredBy(TASKS, from) ? await whoEntered(tx, orgId, { type: "task", id }, TASKS, before, from) : null;
+      const session = before ? await openRecordWorkflow(tx, orgId, "tasks", { entityId: id, before, actor, comment }) : null;
+      return { lc: { ...lifecycle, before, enteredBy }, session };
+    });
+    return await run(opened.lc, { session: opened.session });
+  } catch (e) {
+    const stopped = workflowRefusal(e, TASKS.noun);
+    throw stopped ? new Error(stopped.body.error) : e;
   }
-
-  const item = await taskWorkflowRequest<{ id: string; title: string }>(
-    orgId,
-    actor,
-    "/api/v1/tasks",
-    { method: "POST", body },
-  );
-  await recordMove(item.id);
-  return { created: true as const, todo: { id: item.id, title: item.title }, ...(prepared.warnings.length && ENFORCED ? { warnings: prepared.warnings } : {}) };
 }
 
 /** What the lifecycle's rules read besides the body: the caller's role, the stored task, who entered its state. */
@@ -458,7 +524,13 @@ async function writePeriodTool(org: string, actor: string, id: string | null, bo
     if (!r.ok) throw new Error(r.status === 404 ? `No cycle with id "${id}".` : `Nothing was written. ${r.errors.join(" ")}`);
     return r;
   };
-  return tx ? run(tx) : withOrgDb(org, run);
+  try {
+    return await (tx ? run(tx) : withOrgDb(org, run));
+  } catch (e) {
+    // A lifecycle that runs a workflow: its instance changed under the move (nothing was kept); the sentence, not the store's.
+    const stopped = workflowRefusal(e, areaView("periods").noun);
+    throw stopped ? new Error(stopped.body.error) : e;
+  }
 }
 
 /**

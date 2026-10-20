@@ -47,7 +47,9 @@ const AGENT_URL = process.env.NEXT_PUBLIC_EVE_API_URL ?? "";
  * with a single-use token the server signs for the message's AUTHOR (lib/auth-session.ts `mintQueueDeliveryToken`,
  * queue "thread"), which the agent admits for that one body, once, while the author is the thread's owner or a live
  * participant. The author's standing is checked again right before (removed, or now a viewer: failed, nothing sent).
- * Where this deployment cannot sign, only the author's own page sends the author's messages.
+ * Where this deployment cannot sign, only the author's own page sends the author's messages — and the same on a
+ * session the agent holds no owner record for (one from before drizzle/0022, mold_v1-291): no token is minted for it,
+ * and each message goes on its author's own sign-in, exactly as before the queue.
  *
  * Who may post is unchanged: the owner and participants, never a viewer or a guest. An ANSWER (`inputResponses`) is
  * not queued: it belongs to the turn that asked, and is sent directly, by the person answering. On a database
@@ -271,10 +273,14 @@ function pumpDeps(authHeader: string, access: Access, threadId: string, caller: 
     runIn,
     singleUse: signs,
     canSendAs: (author) => signs || author.toLowerCase() === caller.toLowerCase(),
+    // ownerRecorded: the pump's default, the agent's owner record read in this workspace (lib/thread-queue-server.ts).
     parkedToken: (sessionId) => parkedToken(sessionId, authHeader),
     forward: async (send) => {
       let bearer = authHeader;
-      if (signs) {
+      // `signed` only when this deployment signs AND the agent holds an owner record for the session (a session from
+      // before that record gets no token: its door would refuse it). Unsigned: the caller's own sign-in, for the
+      // caller's own message only — the pump guarantees it, and this refuses anything else.
+      if (send.signed) {
         try {
           bearer = `Bearer ${await mintQueueDeliveryToken(send.author, {
             org: orgId,

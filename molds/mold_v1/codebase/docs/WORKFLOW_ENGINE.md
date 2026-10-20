@@ -17,12 +17,15 @@ reporting matrix (`core/rbac.ts`), draw the process (`core/diagram.ts`).
 The engine is the upstream workflow engine, vendored. The mold's record lifecycles become engine-configurable on top of
 it, over the mold's own Postgres records: no separate service, no other database.
 
-**Phases 1 to 3 of 8 change no runtime behaviour.** Nothing in the app imports the engine yet; only the build does,
-to check a profile's workflows (phase 2: `scripts/lib/record-workflows.mjs`, the DSL's validator and `spec.json`), and
-the Postgres store (phase 3: `lib/record-workflow-store.ts`) implements its store interface without anything calling
-it. `npm run test:workflow-engine` fails if anything outside its own glue (the step rules, the test, the sync, the
-build's check, the store and its tests) names it, and `npm run test:record-workflow-store` fails if anything but its
-tests imports the store. What follows, each its own change:
+**Phases 1 to 4 changed no runtime behaviour; phase 5 runs the engine on record moves, and only where a profile asks.**
+The build checks a profile's workflows (phase 2: `scripts/lib/record-workflows.mjs`, the DSL's validator and
+`spec.json`), the Postgres store (phase 3: `lib/record-workflow-store.ts`) holds the instances, and the record write
+path (phase 5, "Runtime" below) runs them. ONE module of the app imports the engine, `lib/record-workflow-runtime.ts`;
+everything else reaches it through it. `npm run test:workflow-engine` fails if anything outside its own glue (the step
+rules, the runtime, their tests, the sync, the build's check, the store and its tests) names it, and
+`npm run test:record-workflow-store` fails if anything but its tests and the write path (`lib/record-workflow-moves.ts`)
+imports the store. A profile that binds no workflow (the default) never reaches either: every write is byte for byte
+what it was. What follows, each its own change:
 
 | Phase | What |
 |---|---|
@@ -30,7 +33,7 @@ tests imports the store. What follows, each its own change:
 | 2 | the deployment profile's schema for workflows: `records.workflows`, a lifecycle's `workflow`, each move's `step`, `workflow_states`, checked at build (docs/DEPLOYMENT_PROFILE.md "records.workflows"); email and agent actions and prompt branches refused until a later phase |
 | 3 | Postgres persistence: `record_workflow_instances` (with each instance's pinned definition) and `record_workflow_events`, with row-level security, and the store over them (see "Storage" below) |
 | 4 | people data: the directory, roles and reporting lines from the mold's own records |
-| 5 | runtime wiring: attaching a workflow to a record, a person's change through the step rules |
+| 5 | runtime wiring: attaching a workflow to a record, a person's change through the step rules (this; "Runtime" below) |
 | 6 | step actions: the emails and agent runs the rules queue |
 | 7 | surfaces: the screens and the agent's tools |
 | 8 | a pilot on one pack |
@@ -78,6 +81,100 @@ which this phase does not carry. `getIdentitySnapshot` answers undefined: the di
 (phase 4), handed to the engine by the write path (phase 5). `reassignObjectScope` matches nothing: the record holds its
 own fields. Tests: `npm run test:record-workflow-store` (offline, the statements it sends)
 and `npm run test:record-workflow-store-db` (a real Postgres, as app_rw, two workspaces, fail-closed).
+
+## Runtime
+
+Phase 5. A record area whose lifecycle names a `workflow` (docs/DEPLOYMENT_PROFILE.md "records.workflows") runs one
+engine instance per record, on the record's own moves. The pieces:
+
+| File | What it is |
+|---|---|
+| `lib/record-workflows.generated.ts` | `RECORD_WORKFLOWS`: the documents a lifecycle names, emitted by the profile generator (`{}` by default). |
+| `lib/record-workflow-runtime.ts` | The pure half, and the one module that imports the engine: the binding, the directory, seeding an instance, the step rules as checkMove's gate, the step change. |
+| `lib/record-workflow-moves.ts` | The half that reads and writes, on the caller's workspace-scoped transaction: `openRecordWorkflow` before the validator, `commitRecordWorkflow` after the record is written, `workflowRefusal` for the 409. |
+| `lib/record-workflow-server.ts` | The tasks' ops routes: the task-workflow service writes a task; a reserved move settled by the task's actual state keeps the two together. |
+| `agent/lib/record-lifecycle.ts` | `WorkflowGate`, and checkMove asking it about every transition that names a `step` (no engine import). |
+
+**One key per record.** An instance is stored under the record's own server-derived key (`workflowRecordKey`):
+a task's and a period's `id`, an implementation's `implementation_id`, a deployment's account and id. Nothing a request
+names is used for it (an `entityId` in a body is ignored by a bound area's routes, which also read four eyes from the
+record's own feed id), so every door reaches the same single instance.
+
+**Where the engine is called, and the transaction.** Every door that writes a record of a bound area in this database
+does, in ONE workspace-scoped transaction (`withOrgRls` / `withOrgDb`): take the record's workflow lock
+(`pg_advisory_xact_lock` on its key) and only then read the record (`lockedRead`), so the move is checked from the state
+the record is in now and a second mover waits; `openRecordWorkflow` (reads the instance or seeds one in memory, the
+workspace's people for the directory); the validator with the step rules; the record write and its feed lines;
+`commitRecordWorkflow` (attaches or saves the instance through `RecordWorkflowStore`, compare-and-swap on the revision
+read). A stale revision throws `RecordWorkflowConflict` out of the transaction, so the record write rolls back with it
+and the door answers 409 (`code: "workflow_conflict"`). The doors:
+
+- deployments and implementations: `lib/record-area-routes.ts` (`boundUpsert`, `boundPatch`; the unbound routes are
+  untouched) and the agent's `upsert_<area>` (`agent/lib/record-area-tools.ts`);
+- periods: `agent/lib/period-area-store.ts` `writeDeclaredPeriod` (the cycles routes and `upsert_cycle`);
+- `upsert_customer`'s nested rows: a nested MOVE of a bound area is refused before anything is written (its several
+  writes are not one transaction); a nested create is attached on its first move.
+
+**A record written by another service (tasks).** The task-workflow service writes a task, outside this database. No
+connection and no lock is held across its call; the record and its instance are kept together by a reserved move
+(`lib/record-workflow-server.ts` for the todos routes, `upsert_todo` in `agent/lib/todo-tools.ts`):
+
+1. a short transaction: the lock, the task as it is now and what its lifecycle reads, the instance and the step rules;
+   then the checks with nothing held (a refusal reaches nothing);
+2. a short transaction (`reserveRecordMove`): under the lock the task and its instance must still be what (1) read (else
+   409, nothing written); the move is recorded on the instance as pending (`record_move`: id, from, to, step, comment,
+   evidence) and saved;
+3. the service's write, with nothing held and a time limit (`RECORD_WORKFLOW_SERVICE_TIMEOUT_MS`, 30 s by default);
+4. a short transaction (`settleReservedMove`): the task's ACTUAL state settles the reservation: it reached the target →
+   the step changes as checked; it stayed → released. So a refusal, a failure or a timeout never leaves the two apart,
+   and the answer says what happened (a late write: 502 with `moved: true`; a refusal: the service's own answer).
+   If (4) itself fails, the answer says the task moved and its step follows (`workflow_note`); the reservation stays,
+   a second mover is answered 409 `workflow_busy`, and once it is older than two minutes the next read settles it the
+   same way. A new task's instance is attached in its own short transaction once the service made it (or, failing
+   that, on its first move, and the answer says so).
+
+**A record moved without the engine** (a period's rollover, a system move): the instance remembers the record state
+it was last brought in line with (`record_state`); when the record is found elsewhere, the steps `workflow_states`
+lists for its state are re-synced first, as `provisioning` history rows, so a stale step never refuses a move.
+
+**Binding.** An instance is attached when a record is created, or on its first move after the binding (a record that
+existed before). Its steps are seeded from `lifecycle.workflow_states` for the record's state as the rules read it (under
+whichever key the row holds it, a legacy spelling as the state it stands for): each listed step starts in its state
+through the engine's migrated-step support (a template whose state starts `completed`, `completed_at` the time the
+activity feed shows the record entering that state, else the record's own last change), as `provisioning` history rows, never a
+`state_changed` row. A record the workflow's `init.condition` does not take gets none. Instances are pinned to the
+document they were made from.
+
+**Moves.** A transition with `step: {id, state}` changes that step. Before the write the step rules are checkMove's
+own: `not_holder` (the caller may not act on the step: only its holders, the workspace's owners and admins, and a
+holder's supervisor), `step_inactive` (the step is not open yet), `step_transition` (the workflow's `init.transitions`),
+`step_comment` and `step_evidence` (the step's demands; the comment is the move's `reason`, the evidence the request's
+`evidence`, accepted only by a bound area's ops routes). Each is a broken rule with a sentence in the profile's words,
+naming who holds the step. After the write the change is made as upstream's step route makes it
+(`lib/workflow-step-rules.ts`): the comment and evidence, the change and its history rows, a hand-placed holder kept,
+re-resolution on entry, the workflow's own rules (`runDiff`), the finish (`terminal_when`).
+
+**Enforcement.** `strict`: a broken step rule refuses the move like any lifecycle rule (409, `code:
+"lifecycle_refused"`, every broken rule and the moves there are, each marked `held_by` when someone else holds its
+step: by their name on the roster, their email only for an owner or an admin); nothing is written. `warn`: the move goes through; its warning and the feed's line name the step rule; the step
+changes as an ADMINISTRATIVE change when a STEP rule was broken (`step_patched` with `administrative: true` and those
+rules only, its `state_changed` marked so), and the workflow's own rules still run. `off`: the engine is never called, nothing is read, `evidence` is no
+field.
+
+**The directory.** `agent/lib/people-directory.ts` `identitySnapshot`, from the rows of `people_roster` and
+`org_members` read in the write's transaction: owner and admin may do everything (`All`), engineers and members act on
+what they hold or created and on what their reportees hold (supervisors by `manager_email`).
+
+**Not in this phase.** Email and agent actions are refused at build and, defensively, at run (`RecordWorkflowRefused`):
+ticket 281 turns them into notifications and assistant tasks. Rules guarded on other records (cohorts) do not run.
+Changing a step's holder or due date has no door yet (the step rules for both are in `lib/workflow-step-rules.ts`; the
+surfaces are ticket 282). The agent's tools take a move's
+comment but no evidence. `describeMoves` says which step a move changes and that only whoever holds it may make it;
+the full screens are ticket 282.
+
+Tests: `npm run test:record-workflow-runtime` (offline) and `npm run test:record-workflow-runtime-db` (the real routes
+and tools, as app_rw, fail-closed, two workspaces: strict, warn and off), on the neutral fixture
+`scripts/fixtures/record-workflows/review.json`.
 
 ## Where it came from
 
