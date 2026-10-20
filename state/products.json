@@ -270,23 +270,26 @@
       "product_id": "mcp_product_shell",
       "mold_id": "mold_v0",
       "name": "MCP Product Shell",
-      "tagline": "A deployed MCP server, turned into a product: install, docs, onboarding, usage and credentials",
+      "tagline": "An agent-run shell with an MCP front door: workspaces, sandboxed harness runs, a metered inference gateway, vaults and record areas, with each product's surface in a pack",
       "stage": "defined",
-      "target_model": "none (proxies the upstream MCP server; runs no model)",
+      "target_model": "any model the inference gateway serves to sandboxed harness runs, metered per run",
       "gates": {
         "stamped": [
-          "the operator's mold_v0 repository fetched to molds/mold_v0/codebase at a recorded commit (mold.py fetch mold_v0)",
-          "molds/mold_v0/MOLD.md and the deployment-profile schema written; one app's four state files validate"
+          "molds/mold_v0/codebase pinned at a recorded commit (mold_v0-022, 027), then in-tree with its fork point recorded (mold_v0-040)",
+          "MOLD.md and SCOPE.md describe the agent-run shell, its pack and record-area contract and where each capability lives; one app's four state files validate (factory.py validate)",
+          "the pack seam works: zero packs is a neutral shell that passes smoke and tenant-sql, and packs [\"octillion\"] reproduces the old pin with an empty surface diff (mold_v0-038, 039)"
         ],
         "lanes_passing": [
-          "all five mold_v0 lanes pass against the fake upstream MCP server, including the cross-workspace credential and token isolation rows"
+          "the five mold_v0 lanes, each with a harness (mold_v0-021: load, accessibility and responsiveness are recorded skipped until then), run on the build copy (mold + packs, mold_v0-024) and pass, including a two-workspace context lane over every workspace-scoped table, snapshot, credential and run result",
+          "a fixture run kind goes through claim, events, complete, retry and cancel, with its cost from gateway usage and its egress allowlist enforced"
         ],
         "deployed": [
-          "one app live on Vercel in front of a real upstream: a client from the install page completes OAuth, calls a tool, and the call shows in usage",
-          "secrets present by name only in state"
+          "an app from the shell live on Vercel (two projects) with its own database and its brand: a client signs in, calls a pack tool, starts a run, and the run's result and metered cost show in the console",
+          "secrets present by name only in state; workspace credentials reach a run by name only (canary test: zero hits)"
         ],
         "released": [
-          "onboarding works end to end for a new user (sign up, workspace, connect credentials, install in one client, first call)",
+          "the second app (an audit-agent pack) minted from the same shell with no shell change: deployed, lanes passing, a first run end to end",
+          "onboarding works end to end for a new workspace from pack-declared steps",
           "docs, pricing/packaging and the operator runbook written"
         ]
       },
