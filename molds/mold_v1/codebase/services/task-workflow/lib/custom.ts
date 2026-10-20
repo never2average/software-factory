@@ -52,3 +52,13 @@ export function isRecursFromConflict(error: unknown): boolean {
   const e = error as { code?: unknown; constraint_name?: unknown; constraint?: unknown } | null;
   return Boolean(e && e.code === "23505" && (e.constraint_name ?? e.constraint) === "todos_recurs_from_uidx");
 }
+
+/**
+ * The unique violation of todos_workflow_action_uidx (the app's drizzle/0050_todos_workflow_action_unique.sql): a second
+ * task made from one record workflow's agent action. The write that hits it is answered 409, and the app's deliverer
+ * finds the first task and takes it as delivered.
+ */
+export function isWorkflowActionConflict(error: unknown): boolean {
+  const e = error as { code?: unknown; constraint_name?: unknown; constraint?: unknown } | null;
+  return Boolean(e && e.code === "23505" && (e.constraint_name ?? e.constraint) === "todos_workflow_action_uidx");
+}

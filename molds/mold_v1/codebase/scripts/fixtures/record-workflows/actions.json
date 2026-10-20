@@ -1,0 +1,42 @@
+{
+  "$comment": "Step actions for the neutral maker-checker review (docs/WORKFLOW_ENGINE.md phase 6; scripts/test-record-workflow-actions.mjs, scripts/test-record-workflow-actions-db.mjs): added to scripts/fixtures/record-workflows/review.json's rules, never on their own. An email while the preparation is done (a $condn rule: it matches again at every later change, and fires once per entry of the step), a task for the assistant when it completes, and an email when the review completes.",
+  "rules": [
+    {
+      "priority": 4,
+      "applicability": "all",
+      "selector": { "rule": "single", "group_selector": { "id": "prepare" } },
+      "condition": { "step$state": { "$condn": { "$eq": "completed" } } },
+      "action": {
+        "external": {
+          "email": {
+            "recipients": { "$or": { "query": { "duty": "checker" } } },
+            "subject": { "value": "Ready for review" },
+            "body": { "value": "The material is in; the review can start." }
+          }
+        }
+      }
+    },
+    {
+      "priority": 5,
+      "applicability": "all",
+      "selector": { "rule": "single", "group_selector": { "id": "prepare" } },
+      "condition": { "step$state": { "$delta": { "before": "", "after": "completed" } } },
+      "action": {
+        "external": {
+          "agent": [{ "_id": "summarise", "name": "Summarise the material", "prompt": "Read the material and write a short summary for the review." }]
+        }
+      }
+    },
+    {
+      "priority": 6,
+      "applicability": "all",
+      "selector": { "rule": "single", "group_selector": { "id": "review" } },
+      "condition": { "step$state": { "$delta": { "before": "", "after": "completed" } } },
+      "action": {
+        "external": {
+          "email": { "recipients": { "$or": { "query": { "duty": "checker" } } }, "subject": { "value": "Approved" } }
+        }
+      }
+    }
+  ]
+}

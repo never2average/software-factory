@@ -93,5 +93,10 @@
     "source": "^scripts/seed-ops\\.mjs$",
     "literal": "^Plan & execute $",
     "why": "The verb, in a specialist's one-line description (\"Plan & execute … data migrations\")."
+  },
+  {
+    "source": "^lib/record-workflow-actions\\.ts$",
+    "literal": "e -> 'delivery' ->> '",
+    "why": "SQL reading a stored step action's state as the vendored workflow engine writes it (lib/workflow-engine/engine/src/core/state.ts OutboxDelivery, the outbox entry's `delivery` key: status, next_attempt_at, claimed_at). A JSON key of the engine's own stored state, generated from upstream and never edited by hand, not a record; SQL is never shown."
   }
 ]

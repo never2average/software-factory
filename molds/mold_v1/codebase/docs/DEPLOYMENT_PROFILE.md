@@ -1071,13 +1071,14 @@ last states the workflow) or `profiles/<file>: records.areas.<area>.lifecycle…
   workflow): `records.workflows.w.init.steps[0]: must have required property 'title'`;
 - **the engine's validator** (`validateWorkflow`, `dsl/validate.ts`): cross-step references, rule priorities, supported
   query operators, guards (`records.workflows.w.init.start_id: start_id "nope" is not a step id`);
-- **what this phase cannot run**, each refused with the sentence that it comes in a later phase:
-  an `external` action (an email or an agent: `….diff[5].action.external: email and agent actions are not run yet;
-  they come in a later phase, as notifications and assistant tasks. Use internal actions only for now`) and a `prompt`
-  branch (`$or.prompt` choosing a holder or deciding whether evidence or a comment is needed, a rule's
-  `applicability_query.prompt`, an `internal.set.<property>.prompt`: `….prompt: a "prompt" branch is resolved by a
-  model, which comes in a later phase; give the deterministic branch instead ("query", or "value")`), even beside a
-  `query` the engine would prefer;
+- **what the app cannot run**: a `prompt` branch (`$or.prompt` choosing a holder or deciding whether evidence or a
+  comment is needed, a rule's `applicability_query.prompt`, an `internal.set.<property>.prompt`, an email's
+  `recipients.$or.prompt`, `subject.prompt` or `body.prompt`: `….prompt: a "prompt" branch is resolved by a model, which
+  this app does not run; give the deterministic branch instead ("query", or "value")`), even beside a `query` or a
+  `value` the engine would prefer; and an email's `attachments` (generated or searched for). **Email and agent actions
+  themselves run** (docs/WORKFLOW_ENGINE.md "Step actions"): an email becomes the app's own notification to the step's
+  holders and the people its `recipients` query names, in the action's own `subject` and `body`; an agent run becomes a
+  task for the assistant (its `name`, its `prompt` as the instructions). Nothing sends an email;
 - **the binding**: `lifecycle.workflow` naming a workflow the profile does not declare (the declared ones are listed);
   a transition's `step` or `workflow_states` on a lifecycle with no `workflow`; a step id that is not one of the
   workflow's steps (they are listed); a step state that is not one of the engine's; a `workflow_states` key that is not

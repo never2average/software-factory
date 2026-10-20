@@ -1068,6 +1068,10 @@ export const todos = pgTable(
     // derived by Postgres, never written. Its unique index below makes recurrence once at the database.
     // drizzle/0042_todos_recurs_from_unique.sql.
     recursFrom: text("recurs_from").generatedAlwaysAs(sql`(custom ->> 'recurs_from'::text)`),
+    // The record workflow's agent action this task was made from (lib/record-workflow-actions.ts writes it as
+    // custom.workflow_action): derived by Postgres, never written. Its unique index below makes the task once at the
+    // database. drizzle/0050_todos_workflow_action_unique.sql.
+    workflowAction: text("workflow_action").generatedAlwaysAs(sql`(custom ->> 'workflow_action'::text)`),
   },
   (t) => [
     index("todos_done_idx").on(t.done),
@@ -1077,6 +1081,8 @@ export const todos = pgTable(
     index("todos_custom_idx").using("gin", t.custom.op("jsonb_path_ops")),
     // A task has at most ONE next occurrence: two completions at once cannot both create one (drizzle/0042).
     uniqueIndex("todos_recurs_from_uidx").on(t.orgId, t.recursFrom).where(sql`recurs_from IS NOT NULL`),
+    // A workflow's agent action makes at most ONE task: two deliveries at once cannot both write one (drizzle/0050).
+    uniqueIndex("todos_workflow_action_uidx").on(t.orgId, t.workflowAction).where(sql`workflow_action IS NOT NULL`),
   ],
 );
 

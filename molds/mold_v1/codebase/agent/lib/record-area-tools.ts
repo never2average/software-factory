@@ -208,7 +208,7 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
         }
         if (!row) throw new Error("It was removed while it was being written; send it again.");
         await writeOutcome(tx, orgId, bound ? { ...entity, id: recordEntityId(id, row as AreaRow) } : entity, actor, v, prepared.lifecycle);
-        if (workflow) await commitRecordWorkflow(workflow, { entityId: workflowRecordKey(id, row)!, created: !before, check: prepared.lifecycle, after: row as AreaRow });
+        if (workflow) await commitRecordWorkflow(workflow, { entityId: workflowRecordKey(id, row)!, created: !before, check: prepared.lifecycle, after: row as AreaRow, deliver: (org, fn) => withOrgDb(org, fn as never) });
         return { [before ? "updated" : "created"]: true, record: rowForModel(id, row as AreaRow, areas), ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}) };
       });
       if (!bound) return write();

@@ -107,7 +107,7 @@ export async function forwardWorkflowTask(request: NextRequest, ctx: OrgContext,
   let moveId: string | null = null;
   if (taskId && opened.session) {
     try {
-      moveId = (await withOrgRls(ctx.orgId, (tx) => reserveRecordMove(tx, opened.session!, { entityId: taskId, check, readRecord: readTask(tx) }))).id;
+      moveId = (await withOrgRls(ctx.orgId, (tx) => reserveRecordMove(tx, opened.session!, { entityId: taskId, check, readRecord: readTask(tx), deliver: (org, fn) => withOrgRls(org, fn as never) }))).id;
     } catch (e) {
       return stopped(e);
     }
@@ -121,7 +121,7 @@ export async function forwardWorkflowTask(request: NextRequest, ctx: OrgContext,
   if (taskId && moveId) {
     let settled: Awaited<ReturnType<typeof settleReservedMove>> | null = null;
     try {
-      settled = await withOrgRls(ctx.orgId, (tx) => settleReservedMove(tx, ctx.orgId, "tasks", { entityId: taskId, moveId: moveId!, readRecord: readTask(tx) }));
+      settled = await withOrgRls(ctx.orgId, (tx) => settleReservedMove(tx, ctx.orgId, "tasks", { entityId: taskId, moveId: moveId!, readRecord: readTask(tx), deliver: (org, fn) => withOrgRls(org, fn as never) }));
     } catch (error) {
       console.error(`[record-workflow] could not settle the move of task ${taskId}:`, error);
     }
@@ -150,7 +150,7 @@ export async function forwardWorkflowTask(request: NextRequest, ctx: OrgContext,
     let attached = false;
     if (id) {
       try {
-        attached = Boolean(await withOrgRls(ctx.orgId, (tx) => attachCreatedRecord(tx, ctx.orgId, "tasks", { entityId: id, actor: me, check, comment, evidence, readRecord: () => storedTask(tx, ctx.orgId, id) })));
+        attached = Boolean(await withOrgRls(ctx.orgId, (tx) => attachCreatedRecord(tx, ctx.orgId, "tasks", { entityId: id, actor: me, check, comment, evidence, readRecord: () => storedTask(tx, ctx.orgId, id), deliver: (org, fn) => withOrgRls(org, fn as never) })));
       } catch (error) {
         console.error(`[record-workflow] could not attach the workflow of task ${id}:`, error);
       }

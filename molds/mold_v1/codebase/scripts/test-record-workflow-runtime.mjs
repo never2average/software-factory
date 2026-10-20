@@ -406,9 +406,9 @@ await check("under warn, a move that broke a rule changes its step as an adminis
   assert.equal(inst.steps[1].status, true, "the workflow's own rules still run");
 });
 
-await check("a pinned definition that would queue an email or an agent run is refused, never queued and dropped", async () => {
+await check("a pinned definition whose email a model would write is refused, never queued and dropped (phase 6 runs the rest: scripts/test-record-workflow-actions.mjs)", async () => {
   const withEmail = structuredClone(DSL);
-  withEmail.diff.push({ priority: 9, applicability: "all", selector: { rule: "forAll" }, condition: { "step$state": { $delta: { before: "", after: "completed" } } }, action: { external: { email: { recipients: { $or: { query: { duty: "checker" } } }, subject: { value: "s" }, body: { value: "b" } } } } });
+  withEmail.diff.push({ priority: 9, applicability: "all", selector: { rule: "forAll" }, condition: { "step$state": { $delta: { before: "", after: "completed" } } }, action: { external: { email: { recipients: { $or: { query: { duty: "checker" } } }, subject: { prompt: "Sum it up." } } } } });
   await assert.rejects(runtime.applyStepMove({ dsl: withEmail, instance: seed("drafting"), directory, rbac, step: { id: "prepare", state: "completed" }, actor: MAKER, comment: "c", evidence: "e", now: T0 }), runtime.RecordWorkflowRefused);
 });
 

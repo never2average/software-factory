@@ -36,7 +36,10 @@ import { implementationKey, manyPerAccount, namedImplementationId, newImplementa
 import { an, W } from "@/lib/ui-words";
 import { enteredByOf } from "@/agent/lib/record-area-store";
 import { writeOutcome } from "@/agent/lib/record-lifecycle-store";
-import { commitRecordWorkflow, lockedRead, openRecordWorkflow, recordWorkflowBound, takeEvidence, workflowRecordKey, workflowRefusal } from "@/lib/record-workflow-moves";
+import { commitRecordWorkflow, lockedRead, openRecordWorkflow, recordWorkflowBound, takeEvidence, workflowRecordKey, workflowRefusal, type StepActionRunner } from "@/lib/record-workflow-moves";
+
+/** The step actions a move fired are delivered in the record's workspace, once its transaction committed. */
+const deliverInOrg: StepActionRunner = (org, fn) => withOrgRls(org, fn as never);
 
 const TABLE = { deployments, implementations: implementation } as const;
 const tableOf = (id: AccountAreaId) => TABLE[id] as unknown as AreaTable & typeof deployments;
@@ -282,7 +285,7 @@ async function boundUpsert(
       }
       const written = { type: ENTITY[id], id: itemId(id, row) };
       await writeOutcome(tx, ctx.orgId, written, me, v, prepared.lifecycle, comment);
-      if (workflow) await commitRecordWorkflow(workflow, { entityId: workflowRecordKey(id, row)!, created: !before, check: prepared.lifecycle, after: row });
+      if (workflow) await commitRecordWorkflow(workflow, { entityId: workflowRecordKey(id, row)!, created: !before, check: prepared.lifecycle, after: row, deliver: deliverInOrg });
       const warned = prepared.warnings.length ? { warnings: prepared.warnings } : {};
       return before
         ? NextResponse.json({ item: { id: written.id }, updated: true, ...warned }, { status: 200 })
@@ -323,7 +326,7 @@ async function boundPatch(id: AccountAreaId, ctx: OrgContext, db: Db, where: SQL
       const [item] = (await tx.update(t).set(set).where(where).returning()) as AreaRow[];
       if (!item) return NextResponse.json({ error: `${id === "deployments" ? W.Deployment : W.Implementation} not found` }, { status: 404 });
       await writeOutcome(tx, ctx.orgId, entity, me, v, prepared.lifecycle, comment);
-      if (workflow) await commitRecordWorkflow(workflow, { entityId: key, created: false, check: prepared.lifecycle, after: item });
+      if (workflow) await commitRecordWorkflow(workflow, { entityId: key, created: false, check: prepared.lifecycle, after: item, deliver: deliverInOrg });
       changed = { before, item, moveNoted: Boolean(prepared.lifecycle), feedId: entity.id };
       return NextResponse.json({ ok: true, ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}) });
     });

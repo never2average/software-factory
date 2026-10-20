@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { customDelta, directStatus, isRecursFromConflict } from "../lib/custom.ts";
+import { customDelta, directStatus, isRecursFromConflict, isWorkflowActionConflict } from "../lib/custom.ts";
 import { errorResponse } from "../lib/http.ts";
 import { taskCreateSchema, taskPatchSchema } from "../lib/types.ts";
 
@@ -51,4 +51,15 @@ test("a second next occurrence of one task (todos_recurs_from_uidx) is a conflic
   const res = errorResponse(new Error("Conflict: the task already has its next occurrence"));
   assert.equal(res.status, 409);
   assert.deepEqual(await res.json(), { error: "the task already has its next occurrence" });
+});
+
+test("a second task from one workflow action (todos_workflow_action_uidx) is a conflict, answered 409; other violations are not", async () => {
+  assert.equal(isWorkflowActionConflict({ code: "23505", constraint_name: "todos_workflow_action_uidx" }), true);
+  assert.equal(isWorkflowActionConflict({ code: "23505", constraint_name: "todos_recurs_from_uidx" }), false);
+  assert.equal(isRecursFromConflict({ code: "23505", constraint_name: "todos_workflow_action_uidx" }), false);
+  assert.equal(isWorkflowActionConflict({ code: "23503", constraint_name: "todos_workflow_action_uidx" }), false);
+  assert.equal(isWorkflowActionConflict(null), false);
+  const res = errorResponse(new Error("Conflict: this workflow action already has its task"));
+  assert.equal(res.status, 409);
+  assert.deepEqual(await res.json(), { error: "this workflow action already has its task" });
 });

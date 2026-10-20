@@ -24,16 +24,23 @@
  *                      that broke a rule under "warn" changes its step as an ADMINISTRATIVE change: the history row says
  *                      so and names the rules, and the rules that react to it still run.
  *
- * Email and agent actions (the engine's outbox) are refused at build until a later phase; a pinned definition that
- * would queue one is refused here too, never queued and dropped. Rules guarded on other records (cohorts) are not run in
- * this phase.
+ *   takeStepActions    what the workflow's own rules queued on the move (the engine's outbox: an email, an agent run),
+ *                      as STEP ACTIONS (phase 6): each fires once per entry of its step (the fired-once ledger on the
+ *                      instance, `fired_actions`), an email to the step's holders (and whom the action names), an agent
+ *                      run as a task for the assistant. Nothing is sent here: the actions are saved with the step change,
+ *                      in its transaction, and delivered after it by lib/record-workflow-actions.ts (the app's own
+ *                      notification; a task through the task path). Nothing ever sends an email.
+ *
+ * A pinned definition with what this app cannot run (a model-resolved `prompt` branch in an email's recipients, subject
+ * or body; attachments) is refused at build, and here too, never queued and dropped. Rules guarded on other records
+ * (cohorts) are not run in this phase.
  */
 import { STEP_STATES, type StepStateValue, type WorkflowDSL } from "./workflow-engine/dsl/types.ts";
 import { isTerminal, runDiff, type StepChange } from "./workflow-engine/engine/src/core/diff.ts";
 import { Directory, offlineEvaluator, type DirectoryUser } from "./workflow-engine/engine/src/core/evaluator.ts";
 import { initInstance } from "./workflow-engine/engine/src/core/init.ts";
 import { Rbac, type ReportingRow, type RoleBoundary } from "./workflow-engine/engine/src/core/rbac.ts";
-import { isMutableStepProperty, setStepProperty, stepPropertyValue, type HistoryEvent, type StepState, type WorkflowInstance } from "./workflow-engine/engine/src/core/state.ts";
+import { isMutableStepProperty, setStepProperty, stepPropertyValue, type HistoryEvent, type OutboxEntry, type StepState, type WorkflowInstance } from "./workflow-engine/engine/src/core/state.ts";
 import {
   afterPersonPatch,
   checkContributionLength,
@@ -49,7 +56,7 @@ import type { AreaRow, AreaView, RecordAreas } from "../agent/lib/record-areas.t
 import type { BrokenRule, MoveCheck, WorkflowGate } from "../agent/lib/record-lifecycle.ts";
 import type { DirectorySnapshot } from "../agent/lib/people-directory.ts";
 
-export type { WorkflowDSL, WorkflowInstance };
+export type { HistoryEvent, OutboxEntry, StepState, WorkflowDSL, WorkflowInstance };
 
 /** An area's binding to the workflow its lifecycle runs. */
 export interface WorkflowBinding {
@@ -172,7 +179,7 @@ export interface RecordMove {
   administrative: { rules: string[]; message: string } | null;
   at: string;
 }
-type Kept = { record_state?: string | null; record_move?: RecordMove };
+type Kept = { record_state?: string | null; record_move?: RecordMove; fired_actions?: string[] };
 export const recordStateOf = (instance: WorkflowInstance): string | null | undefined => (instance as WorkflowInstance & Kept).record_state;
 export const setRecordState = (instance: WorkflowInstance, state: string | null): void => {
   (instance as WorkflowInstance & Kept).record_state = state;
@@ -239,6 +246,9 @@ export async function settleRecordMove(input: { binding: WorkflowBinding; dsl: W
 }
 
 const quoted = (s: string) => `"${s}"`;
+
+/** The text a record's workflow lock is taken on (`pg_advisory_xact_lock(hashtext(...))`): every door, and delivery. */
+export const recordWorkflowLockKey = (orgId: string, areaId: string, key: string): string => `record_workflow:${orgId}:${areaId}:${key}`;
 
 const STEP_RULES = new Set(["step_inactive", "not_holder", "step_transition", "step_comment", "step_evidence"]);
 /**
@@ -334,9 +344,23 @@ export function stepGate(input: {
   };
 }
 
-/** A pinned definition that would queue an email or an agent run: refused until the phase that delivers them. */
-export function queuesExternal(dsl: WorkflowDSL): boolean {
-  return dsl.diff.some((r) => r.action && "external" in r.action);
+/**
+ * What this app cannot run in a definition's email and agent actions, as a sentence, or null. The build refuses the
+ * same (scripts/lib/record-workflows.mjs); a pinned definition is checked again before a move, never queued and dropped:
+ * an email's recipients, subject or body left to a model (a `prompt`, even beside a deterministic `query` / `value`), and
+ * attachments (generated or searched for: nothing here makes them).
+ */
+export function unsupportedActions(dsl: WorkflowDSL): string | null {
+  for (const rule of dsl.diff) {
+    const email = rule.action?.external?.email;
+    if (!email) continue;
+    if (!email.recipients?.$or?.query || email.recipients.$or.prompt !== undefined) return `the email of rule ${rule.priority} leaves its recipients to a model`;
+    for (const k of ["subject", "body"] as const) {
+      if (email[k]?.prompt !== undefined) return `the email of rule ${rule.priority} leaves its ${k} to a model`;
+    }
+    if (email.attachments) return `the email of rule ${rule.priority} asks for attachments`;
+  }
+  return null;
 }
 
 export class RecordWorkflowRefused extends Error {
@@ -364,7 +388,8 @@ export async function applyStepMove(input: {
   administrative?: { rules: string[]; message: string } | null;
 }): Promise<boolean> {
   const { dsl, instance, directory, rbac, now } = input;
-  if (queuesExternal(dsl)) throw new RecordWorkflowRefused("This workflow sends emails or starts agents, which are not run yet; nothing was written.");
+  const unsupported = unsupportedActions(dsl);
+  if (unsupported) throw new RecordWorkflowRefused(`This workflow asks for what this app does not run (${unsupported}); nothing was written.`);
   const step = instance.steps.find((s) => s.id === input.step.id);
   if (!step) return false;
   const actorId = input.actor.trim().toLowerCase();
@@ -407,9 +432,130 @@ export async function applyStepMove(input: {
   instance.history.push(patched);
   if (change.changed.state) instance.history.push({ at, type: "state_changed", step_id: step.id, detail: transition, data: { ...change.changed.state, ...(admin ? { administrative: true } : {}) }, actor: actorId, source });
   afterPersonPatch({ step, change, dsl, directory, instance, at, actorId, org: rbac });
+  const queued = { outbox: instance.outbox.length, history: instance.history.length };
   await runDiff(instance, dsl, change, directory, offlineEvaluator, now, actorId, undefined, rbac);
-  if (instance.outbox.length) throw new RecordWorkflowRefused("This workflow queued an email or an agent run, which are not run yet; nothing was written.");
+  takeStepActions({ instance, from: queued, actor: actorId, now });
   instance.terminal = isTerminal(dsl, instance);
   instance.updated_at = at;
   return true;
+}
+
+// ── step actions (phase 6) ─────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A fired email or agent action, as the instance keeps it until it is delivered (the engine's outbox entry, plus what
+ * the delivery needs to say, read when it fired):
+ *   key      its place in the fired-once ledger (`fired_actions`): rule, step, the step's entry, kind (and agent);
+ *   step     the step's title as the workflow names it; holders: who held it then;
+ *   record   the record it is about: its area, its key (`workflowRecordKey`) and a label (its title or name), so a
+ *            notification or a task can name it without reading the record again;
+ *   actor    whose move fired it (the task's author).
+ * An email's `recipients` are the step's holders and the people the action's own query names, every one of them in the
+ * workspace's directory. Its delivery state is the engine's own (`delivery`: pending, processing, delivered, dead_letter).
+ */
+export type StepAction = OutboxEntry & {
+  key: string;
+  step: string;
+  /** Who held the step when it fired (an agent action's task is assigned to the first). */
+  holders: string[];
+  record: { area: string; id: string; label: string | null };
+  actor: string;
+};
+
+/** The history rows a step action's DELIVERY writes (lib/record-workflow-actions.ts finishStepActions): never a move. */
+export const DELIVERY_HISTORY = new Set(["external_delivered", "external_dead_lettered"]);
+
+/**
+ * What a move of the record DEPENDS ON in its stored instance: everything but the revision, the last change's time, the
+ * record's data (the record is compared on its own), the outbox (its delivery state) and the history rows delivery
+ * writes. A step action's claim and finish save the instance (moving its revision on) and change none of this, so a
+ * move checked before a delivery and reserved after it is still the move that was checked (lib/record-workflow-moves.ts
+ * reserveRecordMove); any step change, re-sync, reservation or fired action changes it.
+ */
+export function moveBasisOf(instance: WorkflowInstance): string {
+  const { revision: _r, updated_at: _u, outbox: _o, task: _t, object, history, ...rest } = instance as WorkflowInstance & Record<string, unknown>;
+  const kept = history.filter((e) => !DELIVERY_HISTORY.has(e.type));
+  const stable = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, stable((v as Record<string, unknown>)[k])])) : v;
+  return JSON.stringify(stable({ ...rest, object: { type: object.type, id: object.id }, history: kept }));
+}
+
+/** The fired-once ledger on the instance: one key per action fired, per entry of its step. */
+export const firedActionsOf = (instance: WorkflowInstance): string[] => (instance as WorkflowInstance & Kept).fired_actions ?? [];
+
+/**
+ * The step's entries so far: each change of its state (a person's, a rule's, an administrative one: `state_changed`),
+ * and each time the record placed it (seeded or re-synced: a provisioning `step_patched` with a state). An action that
+ * reacts to a step fires once for each.
+ */
+export function stepEntryOf(instance: WorkflowInstance, stepId: string): number {
+  let n = 0;
+  for (const e of instance.history) {
+    if (e.step_id !== stepId) continue;
+    if (e.type === "state_changed") n += 1;
+    else if (e.type === "step_patched" && e.source === "provisioning" && (e.data as { state?: unknown } | undefined)?.state) n += 1;
+  }
+  return n;
+}
+
+/** The pending actions of an instance (fired, not delivered yet), in the order they fired. */
+export const stepActionsOf = (instance: WorkflowInstance): StepAction[] => instance.outbox.filter((e): e is StepAction => typeof (e as Partial<StepAction>).key === "string");
+
+/** How a notification or a task names the record: its title or name, else its own id (a deployment's, not its account's). */
+const recordLabel = (data: Record<string, unknown>, key: string): string | null => {
+  for (const k of ["title", "name", "label"]) if (typeof data[k] === "string" && (data[k] as string).trim()) return (data[k] as string).trim().slice(0, 200);
+  const own = key.split("/").at(-1);
+  if (!own) return null;
+  try {
+    return decodeURIComponent(own).slice(0, 200);
+  } catch {
+    return own.slice(0, 200);
+  }
+};
+
+/**
+ * The actions the workflow's own rules queued on this change (the outbox entries from `from.outbox` on, and their
+ * `external_queued` rows from `from.history` on), kept as step actions: once per entry of their step. An action whose
+ * key is already in the ledger (a rule that matches again while its step stays where it is, such as a `$condn` on an
+ * open step at every later change) is taken back, its queued row with it: it fired already. Mutates `instance`.
+ */
+export function takeStepActions(input: { instance: WorkflowInstance; from: { outbox: number; history: number }; actor: string; now: Date }): StepAction[] {
+  const { instance } = input;
+  const fresh = instance.outbox.splice(input.from.outbox);
+  if (!fresh.length) return [];
+  const fired = new Set(firedActionsOf(instance));
+  const kept: StepAction[] = [];
+  const dropped: { step: string; detail: string }[] = [];
+  for (const entry of fresh) {
+    const step = instance.steps.find((s) => s.id === entry.step_id);
+    const detail = entry.kind === "email" ? "email" : `agent:${entry.name}`;
+    const key = `${entry.rule_priority}:${entry.step_id}:${stepEntryOf(instance, entry.step_id)}:${entry.kind}${entry.kind === "agent" ? `:${entry.agent_id}` : ""}`;
+    if (fired.has(key)) {
+      dropped.push({ step: entry.step_id, detail });
+      continue;
+    }
+    fired.add(key);
+    const record = { area: instance.object.type, id: instance.object.id, label: recordLabel(instance.task ?? {}, instance.object.id) };
+    const base = { key, step: step?.title?.trim() || entry.step_id, holders: [...(step?.assignee ?? [])], record, actor: input.actor };
+    if (entry.kind === "email") {
+      if (!Array.isArray(entry.recipients)) throw new RecordWorkflowRefused("This workflow left an email's recipients to a model, which this app does not run; nothing was written.");
+      const recipients = [...new Set([...(step?.assignee ?? []), ...entry.recipients].map((r) => String(r).trim().toLowerCase()).filter((r) => r.includes("@")))];
+      kept.push({ ...entry, recipients, ...base });
+    } else {
+      kept.push({ ...entry, ...base });
+    }
+  }
+  // The queued rows of the actions taken back: the last ones of their kind on their step, from this change.
+  for (const d of dropped) {
+    for (let i = instance.history.length - 1; i >= input.from.history; i -= 1) {
+      const e = instance.history[i];
+      if (e.type === "external_queued" && e.step_id === d.step && e.detail === d.detail) {
+        instance.history.splice(i, 1);
+        break;
+      }
+    }
+  }
+  instance.outbox.push(...kept);
+  (instance as WorkflowInstance & Kept).fired_actions = [...fired];
+  return kept;
 }

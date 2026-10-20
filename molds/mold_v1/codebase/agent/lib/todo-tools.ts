@@ -152,10 +152,10 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
 
     if (id) {
       // The move reserved on the instance, if the task and its instance are still what was checked (else a refusal).
-      const moveId = wf?.session ? (await withOrgDb(orgId, (tx) => reserveRecordMove(tx, wf.session!, { entityId: id, check: prepared.lifecycle ?? null, readRecord: () => storedTask(tx, orgId, id) }))).id : null;
+      const moveId = wf?.session ? (await withOrgDb(orgId, (tx) => reserveRecordMove(tx, wf.session!, { entityId: id, check: prepared.lifecycle ?? null, readRecord: () => storedTask(tx, orgId, id), deliver: (o, fn) => withOrgDb(o, fn as never) }))).id : null;
       const settle = () =>
         moveId
-          ? withOrgDb(orgId, (tx) => settleReservedMove(tx, orgId, "tasks", { entityId: id, moveId, readRecord: () => storedTask(tx, orgId, id) })).catch((error) => {
+          ? withOrgDb(orgId, (tx) => settleReservedMove(tx, orgId, "tasks", { entityId: id, moveId, readRecord: () => storedTask(tx, orgId, id), deliver: (o, fn) => withOrgDb(o, fn as never) })).catch((error) => {
               console.error(`[upsert_todo] could not settle the move of task ${id}:`, error);
               return null;
             })
@@ -183,7 +183,7 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
     if (wf) {
       // The new task's instance, attached once the service made it; if not now, on its first move.
       const attached = item?.id
-        ? await withOrgDb(orgId, (tx) => attachCreatedRecord(tx, orgId, "tasks", { entityId: item.id, actor, check: prepared.lifecycle ?? null, comment: typeof fields.reason === "string" ? fields.reason : null, readRecord: () => storedTask(tx, orgId, item.id) })).catch((error) => {
+        ? await withOrgDb(orgId, (tx) => attachCreatedRecord(tx, orgId, "tasks", { entityId: item.id, actor, check: prepared.lifecycle ?? null, comment: typeof fields.reason === "string" ? fields.reason : null, readRecord: () => storedTask(tx, orgId, item.id), deliver: (o, fn) => withOrgDb(o, fn as never) })).catch((error) => {
             console.error(`[upsert_todo] could not attach the workflow of task ${item.id}:`, error);
             return null;
           })
@@ -520,7 +520,7 @@ function declaredPeriodOut(c: typeof cycles.$inferSelect) {
 /** One upsert_cycle write of a declared period, as the ops routes make it; a refusal throws its sentences. */
 async function writePeriodTool(org: string, actor: string, id: string | null, body: Record<string, unknown>, tx?: Parameters<typeof writeDeclaredPeriod>[0]) {
   const run = async (t: Parameters<typeof writeDeclaredPeriod>[0]) => {
-    const r = await writeDeclaredPeriod(t, org, { id, body, actor, role: await memberRole(t, org, actor) });
+    const r = await writeDeclaredPeriod(t, org, { id, body, actor, role: await memberRole(t, org, actor), deliver: (o, fn) => withOrgDb(o, fn as never) });
     if (!r.ok) throw new Error(r.status === 404 ? `No cycle with id "${id}".` : `Nothing was written. ${r.errors.join(" ")}`);
     return r;
   };
