@@ -47,8 +47,8 @@
           "/app"
         ],
         "operator_env": {
-          "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "optional",
-          "CLERK_SECRET_KEY": "optional"
+          "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "required",
+          "CLERK_SECRET_KEY": "required"
         }
       }
     }
