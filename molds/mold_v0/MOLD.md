@@ -6,12 +6,14 @@
 
 ## A recorded exception
 
-Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 starts as the opposite, a working product copied as it is, so the factory can reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: each capability in [SCOPE.md](SCOPE.md) (tickets mold_v0-001 to 021) is extracted into a neutral shell, with the product's own words, data and integrations moving into its pack. Until then, an app minted from mold_v0 inherits the product's code.
+Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 starts as the opposite, a working product copied as it is, so the factory can reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives in the snapshot today and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets), and the product's own tools, pages, record areas and tables move into the pack `octillion`. Until then, an app minted from mold_v0 inherits the product's code.
 
 ## What is in it today
 
-- A TypeScript server (Express) with a stateless MCP endpoint, per-organisation API keys (hashed), an admin console, client install pages, onboarding, usage analytics, a key vault, billing and email.
-- Postgres (schema applied on boot), plus optional analytics and archive stores.
+- A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`, tools in `src/server.ts`), per-organisation API keys (hashed), Clerk sign-in, client install guides, onboarding, usage analytics, billing and email.
+- An agent-run engine: a job queue (`src/worker.ts`, `/api/worker`), an autoscaler that launches one sandboxed orchestrator per job (`src/autoscaler.ts`, `orchestrator/`), pinned coding-agent harnesses (`harnesses/registry.json`), an inference gateway with per-session tokens and cost metering (`src/gateway.ts`, `src/usage.ts`), a versioned key vault and per-organisation data keys (`src/keyvault.ts`, `src/orgcrypto.ts`), transcripts and an off-machine archive.
+- A web console in `web/` (Next.js): `/admin` for platform staff, `/app` for an account's people.
+- Postgres (schema applied on boot, `sql/schema.sql`), plus optional analytics and archive stores.
 - Two ways to run: its own server (Docker Compose with HTTPS) and Vercel.
 
 ## Before anything built on it is sold (ticket mold_v0-031)
@@ -20,7 +22,7 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 
 ## Decisions
 
-- Default sign-in for apps from the generalised shell: a built-in emailed code plus Google; Clerk optional.
+- Sign-in for apps from the generalised shell: Clerk at launch, the adapter the product already uses (operator decision, 2026-10-20, mold_v0-046); a built-in emailed code plus Google comes later, with Clerk then optional (mold_v0-004).
 - The source has no licence constraints (a hackathon project).
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).
 - Generalisation (2026-10-20): mold_v0 becomes an **agent-run shell** (tenancy, an MCP front door, a run engine with sandboxed
@@ -30,17 +32,68 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
   to "never edit a mold in place" (mold_v0-040). The product's own features become the pack `octillion`; the second app's is its own
   pack. Backlog: mold_v0-038 to 050.
 
+## Pack and record-area contract
+
+This is the seam the generalised shell exposes (mold_v0-038, record areas mold_v0-047). None of it exists in the
+pinned snapshot yet: today every tool, page and table is the product's own, and `mold.json` says packs are "not
+needed" for that reason. This section is the target the tickets build to.
+
+**In the shell.** A pack is a directory the shell discovers at build time. `gen-packs.mjs` (new, mold_v0-038) reads every
+pack in the build copy and writes a generated registry the server and the console import; nothing in the shell names
+a pack. Each pack exports one `definePack({...})`:
+
+| Field | What the pack declares | Where the shell puts it |
+|---|---|---|
+| `tools` | MCP tools: name, input and output schemas, annotations, a handler that receives the calling workspace first | the tool registry behind `/mcp` (today hand-written in `src/server.ts`) |
+| `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
+| `jobKinds` | run kinds: the harness or runner, the image, token lifetime, budget, egress allowlist, a result validator | the run engine (mold_v0-041) |
+| `recordAreas` | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), fields, list columns and links to other areas | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047) |
+| `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034); only names reach a run's definition |
+| `schedules` | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
+| `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011) |
+| `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
+| nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
+
+Record-area roles: a `source` is where requirements come from (versioned, read-only to customers); a `check` is a unit
+checked repeatedly and traced to a source (library at platform scope, its per-workspace state at workspace scope); an
+`asset` is what is checked and holds the workspace's private data (workspace scope only, sealed with the workspace
+data key). Platform-scope areas are read-only to customers; workspace-scope areas pass the cross-workspace test. A
+run's results are rows of (run, workspace, check, asset, status, finding fingerprint, evidence reference).
+
+A pack that wraps an upstream project (the second app's audit-agent pack, for one) pins it by commit in its manifest
+and runs it at a process boundary inside the run's sandbox; it is never vendored into the pack or the shell, and never
+patched locally (changes go upstream by pull request).
+
+**In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
+codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
+`packs.py apply <app>` copies them into `build/<app_id>/`, then runs the mold's generators there; deploys and lanes
+use that build copy, never `molds/mold_v0/codebase`. Today `packs.py` carries mold_v1's rules (where a pack may add
+files, which generator proves the mold supports packs) and refuses mold_v0. mold_v0-024 moves those rules into each
+mold's `mold.json`: the paths a pack may add to under mold_v0 (its pack directory, `{pack}`-named migrations, console
+pages under the pack's route), the generator to run (`gen-packs.mjs`), mold_v0's brand rules, and deploy and lanes from
+the build copy. A pack file that would replace a shell file is refused, as for mold_v1.
+
+**Two proofs.**
+
+- **Zero packs is a neutral shell.** A build with `packs: []` signs in, has workspaces, keys, the console, the vaults
+  and the run engine, passes the smoke test and the tenant-SQL check, and has none of the product's tools, pages or
+  tables (mold_v0-038, 039, 049); the vocabulary check finds no product word in it (mold_v0-045).
+- **`["octillion"]` reproduces today's product.** A build of the new shell plus `packs/octillion` has the same surface as
+  the old pin: the same MCP tools with the same schemas (the list `scripts/export-mcp-tools.ts` writes), the same HTTP
+  routes, the same console pages and navigation, and the same tables. The surface diff between the two must be empty,
+  and the re-mint (mold_v0-029) must still pass smoke, `mcp:check` and the isolation sweep (mold_v0-039).
+
 ## How the factory runs it
 
 mold_v0 is a **single-service mold**: [mold.json](mold.json) says so, and every factory script hands such an app to
-`.claude/scripts/lib/single_service.py` before any mold_v1 path. The snapshot is never edited: what the factory needs
+`.claude/scripts/lib/single_service.py` before any mold_v1 path. Until mold_v0-040 the snapshot is never edited: what the factory needs
 (the compose project's default name, the service it builds, its port, the env names it requires or accepts, the
 health check) is read from the product's own `deploy/docker-compose.prod.yml`, `deploy/bootstrap.sh` and `Dockerfile`
 each time.
 
 **Mint.** `mint.py new <app> --brief briefs/<app>.md` (the brief says `Mold: mold_v0`) runs the same ten stations as any
 app. *packs*, *brand*, *workspaces* and *package* are "not needed", each with the reason in mold.json: no pack mechanism
-and no brand overlay yet, organisations made in the product's own console, no agent package. `code-request`, `code`
+(until mold_v0-038 and 024) and no brand overlay yet, organisations made in the product's own console, no agent package. `code-request`, `code`
 and `reuse-keys` refuse a mold_v0 app.
 
 **Intake.** The same four state files and schemas. It asks only where the app runs, unless the brief says ("its own
