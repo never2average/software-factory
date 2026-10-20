@@ -1,5 +1,5 @@
 import { Faq } from '@/features/site/faq';
-import { Hero, Scorecard, Section, WhatIsApo, WhereYouWork, WhyNow } from '@/features/site/sections';
+import { ClosestToRevenue, Hero, Scorecard, Section, WhatIsApo, WhereYouWork, WhyNow } from '@/features/site/sections';
 
 export default function LandingPage() {
   return (
@@ -7,6 +7,7 @@ export default function LandingPage() {
       <Hero />
       <WhyNow />
       <WhatIsApo />
+      <ClosestToRevenue />
       <Scorecard />
       <WhereYouWork />
       <Section id='faq' center eyebrow='FAQ' title='Questions.'
