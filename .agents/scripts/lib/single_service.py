@@ -13,7 +13,11 @@ Two deploy targets (infrastructure.target):
                   handling, the DNS precondition, the key pair, the hidden prompt for values only the operator holds,
                   the env file (names in, names out; root, mode 600) and the firewall rules, and deploys the mold's own
                   compose stack under a project name of the app's own (sf-<app-id>), never the compose file's default.
-  vercel          one Vercel project, when the mold's vercel.json describes one function (mold_v0's does).
+  vercel          one Vercel project, when the mold's vercel.json describes one function (mold_v0's does): never a LIVE
+                  project or another app's (provision.py's refusal), its own Neon Postgres (provision.py's provisioning,
+                  proven empty first; DATABASE_URL written by the integration, never here), the product's keys minted,
+                  production put back on the deployment before when the health check fails, and the web console served
+                  by the same function when the product's console builds as a static export (console_overlay).
 
 Through provision.py (main_for):
 
@@ -41,7 +45,8 @@ answered its health checks or switches `current` back to the release that served
               systemd, memory, CPUs, disk, no other web server, the web ports free or this app's own. KVM is not needed
    dns        the domain must already point at the server, or the stack's own Caddy cannot get a certificate
    bundle     the generated scripts and the factory's tooling -> <install>/factory
-   packages   Docker and its compose plugin (if absent), ufw, fail2ban, rsync, python3, openssl
+   packages   Docker and its compose plugin where there is no Docker; an existing Docker is never replaced (only its own
+              compose plugin is added, or the step refuses); ufw, fail2ban, rsync, python3, openssl
    firewall   ufw: SSH, 80 and 443 only (vm_remote's rules); fail2ban for ssh. Docker publishes only what the compose
               file names, and the health step fails if anything else publishes a port
    names      which env names the server already holds (names only)
@@ -51,8 +56,10 @@ answered its health checks or switches `current` back to the release that served
               name still missing is minted ON THE SERVER by the mold's own bootstrap script, run in a private temp
               directory that sees the NAMES already present and never their values. Nothing is printed but names
    up         `current` -> the new release; docker compose -p sf-<app> ... up -d --build --wait. On failure: back
+              (and `previous` restored, so it never names the release that failed)
    health     on the server: the app container healthy, running as a user other than root, and only the services
-              the compose file publishes holding a port; from here: https://<domain><health_path> answers 200 ok
+              the compose file publishes holding a port; from here: https://<domain><health_path> answers 200 ok;
+              otherwise the server goes back to the release that served before (up.sh --back --drop), by itself
    keep       every release but the serving and the previous one removed
 
 The database is the stack's own Postgres container on the compose network (no published port). Its password and the
@@ -204,12 +211,13 @@ def install_path(app_id): return f"/opt/software-factory/{app_id}"
 
 def secret_names(F, target):
     """(user, derived, optional) names for a target. compose_remote: the compose file's required names are written
-    from state or minted on the server; vercel: the database address is the operator's, the names the app reads whole
-    are minted by the same bootstrap script, plus CRON_SECRET for Vercel's own cron calls."""
+    from state or minted on the server; vercel: DATABASE_URL comes from the app's own Neon database (provisioned at the
+    first deploy), the names the app reads whole are minted by the same bootstrap script, plus CRON_SECRET for Vercel's
+    own cron calls. Nothing is the operator's to type."""
     if target == "compose_remote":
         return [], [n for n in F["required"] if n not in F["config"]], list(F["optional_secrets"])
-    derived = [n for n in F["app_reads_required"] if n not in F["config"]] + ["CRON_SECRET"]
-    return ["DATABASE_URL"], derived, [n for n in F["optional_secrets"] if n not in derived]
+    derived = ["DATABASE_URL"] + [n for n in F["app_reads_required"] if n not in F["config"]] + ["CRON_SECRET"]
+    return [], derived, [n for n in F["optional_secrets"] if n not in derived]
 
 def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defaults=None, root=None):
     """The four state documents of a single-service app, from intake's answers. The same four schemas as every app; the
@@ -236,7 +244,7 @@ def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defa
     else:
         infra["vercel"] = {"team": d.get("vercel_team", "your-vercel-team"), "project": ans.get("vercel_project") or slug(app_id)}
         if dom: infra["vercel"]["custom_domain"] = dom
-        pg = {"provider": "neon", "exposure": "managed_provider"}
+        pg = {"provider": "neon", "exposure": "managed_provider", "admin_url_ref": "DATABASE_URL_UNPOOLED", "pooling": "transaction"}
     # rls "off": the product scopes tenant rows in its queries (its tenant-SQL check guards that), not with row-level
     # security; proving RLS on every deploy is ticket mold_v0-031. "off" is measured and recorded, never claimed.
     ds = {"$schema": "../app_id/datastores.schema.json",
@@ -336,14 +344,23 @@ fi
 echo "WEB_HOLDER=$h"
 """
 
+# Docker: installed only where there is none. An existing Docker is never replaced (docker.io over docker-ce would
+# swap the engine under whatever runs there); only its compose plugin is added, from the same packaging, or the
+# script refuses with the reason.
+DOCKER_LINES = """if ! command -v docker >/dev/null 2>&1; then
+  apt-get install -y -q --no-upgrade docker.io docker-compose-v2
+elif ! docker compose version >/dev/null 2>&1; then
+  if dpkg -s docker-ce >/dev/null 2>&1; then apt-get install -y -q --no-upgrade docker-compose-plugin
+  elif dpkg -s docker.io >/dev/null 2>&1; then apt-get install -y -q --no-upgrade docker-compose-v2
+  else echo "packages: Docker is installed here, but not from a package this deploy knows (docker-ce or docker.io), and it has no compose plugin. Nothing was changed; add the compose plugin by hand or use a fresh server." >&2; exit 4
+  fi
+fi
+"""
 def packages_sh(S):
     return _head(S) + VR.fill("""export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q --no-upgrade ca-certificates curl rsync ufw fail2ban python3 openssl iproute2
-if ! docker compose version >/dev/null 2>&1; then
-  apt-get install -y -q --no-upgrade docker.io docker-compose-v2
-fi
-systemctl enable --now docker >/dev/null
+""" + DOCKER_LINES + """systemctl enable --now docker >/dev/null
 install -d -m 755 /opt/software-factory @INSTALL@ @INSTALL@/releases @FACTORY@
 install -d -m 700 /etc/software-factory @ENVDIR@
 echo "packages: $(docker --version | cut -d, -f1), compose $(docker compose version --short 2>/dev/null || echo present)"
@@ -375,20 +392,39 @@ echo "firewall: fail2ban on for ssh"
         PORTS=", ".join(str(p) for p in sorted({S["port"], 80, 443})) + (f" (SSH from {S['ssh_allow_from']} only)" if S["ssh_allow_from"] else ""))
 
 def up_sh(S):
-    """`current` -> the release named by $1, then the stack up and healthy; on failure, back to the one before."""
-    return _head(S) + _dc(S) + VR.fill("""REL="${1:?usage: up.sh <release-id>}"
-case "$REL" in *[!0-9TZ]*|"") echo "up: not a release id: $REL" >&2; exit 2;; esac
-cd @INSTALL@
-[ -d "releases/$REL" ] || { echo "up: releases/$REL does not exist" >&2; exit 2; }
-prev=""; [ -L current ] && prev="$(basename "$(readlink current)")"
+    """`up.sh <release>`: `current` -> that release, the stack up and healthy; on failure, back to the one before, with
+    `previous` restored to what it said before this deploy (so it never names the release that failed).
+    `up.sh --back`: the operator's rollback: to `previous`, which then names the release just left (run again: forward).
+    `up.sh --back --drop`: the deploy's own rollback after a failed health check: to `previous`, which is then restored
+    to what it said before this deploy. Either --back says NOTHING= and changes nothing when there is nowhere to go."""
+    return _head(S) + _dc(S) + VR.fill("""cd @INSTALL@
 point() { ln -sfn "releases/$1" current.new && mv -T current.new current; }
+cur=""; [ -L current ] && cur="$(basename "$(readlink current)")"
+restore() { if [ -n "$1" ]; then echo "$1" > previous; else rm -f previous; fi; }
+if [ "${1:-}" = "--back" ]; then
+  to="$(cat previous 2>/dev/null || true)"
+  if [ -z "$to" ] || [ "$to" = "$cur" ] || [ ! -d "releases/$to" ]; then
+    echo "NOTHING=no earlier release to go back to (serving ${cur:-nothing}); nothing was changed"; echo "SERVING=$cur"; exit 0
+  fi
+  point "$to"
+  if dc up -d --build --wait --wait-timeout @WAIT@; then
+    if [ "${2:-}" = "--drop" ]; then restore "$(cat previous.before 2>/dev/null || true)"; else echo "$cur" > previous; fi
+    echo "ROLLED_BACK=$to"; echo "SERVING=$to"; exit 0
+  fi
+  point "$cur"; echo "ROLLBACK_FAILED=$to"; exit 1
+fi
+REL="${1:?usage: up.sh <release-id> | --back [--drop]}"
+case "$REL" in *[!0-9TZ]*|"") echo "up: not a release id: $REL" >&2; exit 2;; esac
+[ -d "releases/$REL" ] || { echo "up: releases/$REL does not exist" >&2; exit 2; }
+was="$(cat previous 2>/dev/null || true)"
+if [ -n "$was" ]; then echo "$was" > previous.before; else rm -f previous.before; fi
 point "$REL"
-if [ -n "$prev" ] && [ "$prev" != "$REL" ]; then echo "$prev" > previous; fi
+if [ -n "$cur" ] && [ "$cur" != "$REL" ]; then echo "$cur" > previous; fi
 if dc up -d --build --wait --wait-timeout @WAIT@; then echo "UP=ok"; echo "SERVING=$REL"; exit 0; fi
 echo "UP=failed"
-if [ -n "$prev" ] && [ "$prev" != "$REL" ] && [ -d "releases/$prev" ]; then
-  point "$prev"
-  if dc up -d --build --wait --wait-timeout @WAIT@; then echo "ROLLED_BACK=$prev"; else echo "ROLLBACK_FAILED=$prev"; fi
+if [ -n "$cur" ] && [ "$cur" != "$REL" ] && [ -d "releases/$cur" ]; then
+  point "$cur"; restore "$was"
+  if dc up -d --build --wait --wait-timeout @WAIT@; then echo "ROLLED_BACK=$cur"; else echo "ROLLBACK_FAILED=$cur"; fi
 else
   echo "SWITCH_BACK=none"
 fi
@@ -476,6 +512,8 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
          "argv": ssh(g(f"bash {S['factory_dir']}/health.sh")), "timeout": 120},
         {"id": "public", "title": f"from here: {S['url']}{S['health_path']} answers 200 with ok", "argv": None, "timeout": PUBLIC_WAIT_S},
         {"id": "keep", "title": "every release but the serving and the previous one removed", "argv": ssh(g(f"bash {S['factory_dir']}/keep.sh")), "timeout": 300},
+        {"id": "back", "title": "ONLY if the health step or the public read fails: back to the release that served before (up.sh --back --drop)",
+         "argv": ssh(g(f"bash {S['factory_dir']}/up.sh --back --drop")), "timeout": UP_WAIT_S * 2 + 600},
     ]
 
 def print_plan(S, F, steps, say=print):
@@ -634,8 +672,12 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
             wait(10)
         bad = health_verdict(F, kv, public)
         if bad:
-            raise Stop(f"release {release} is up but does not serve as it should: " + "; ".join(bad) +
-                       f". Go back to the release before it: python3 .claude/scripts/provision.py {S['app_id']} --rollback-remote")
+            # The release came up but does not serve: back to the one that served before, by itself (as on Vercel).
+            rb = run("back", check=False); bk = _kv(rb.stdout)
+            what = (f"the server switched back by itself to {bk['ROLLED_BACK']}, which serves again" if rb.returncode == 0 and bk.get("ROLLED_BACK") else
+                    f"there was no earlier release to switch back to, so {release} is still in place" if rb.returncode == 0 and bk.get("NOTHING") else
+                    f"the switch back to {bk.get('ROLLBACK_FAILED') or 'the earlier release'} FAILED too; try: python3 .claude/scripts/provision.py {S['app_id']} --rollback-remote")
+            raise Stop(f"release {release} came up but does not serve as it should: " + "; ".join(bad) + f". {what}. Fix the cause and deploy again.")
         say(f"[public] {url} answered 200 ok")
         run("keep", check=False)
         return {"release": release, "facts": facts,
@@ -708,12 +750,13 @@ def set_secret_remote(app_id, S, name, P, runner=None, value=None, say=print):
 
 def rollback_remote(app_id, S, F, dry=False, runner=None, say=print):
     st = {"id": "rollback", "title": "the server back to the release that served before (up.sh with the previous release)",
-          "argv": VR.ssh_argv(S, VR.guarded(S, f"bash -c {shlex.quote('bash ' + S['factory_dir'] + '/up.sh \"$(cat ' + S['install'] + '/previous)\"')}"), shown=dry), "timeout": UP_WAIT_S * 2 + 600}
+          "argv": VR.ssh_argv(S, VR.guarded(S, f"bash {S['factory_dir']}/up.sh --back"), shown=dry), "timeout": UP_WAIT_S * 2 + 600}
     if dry:
         say(f"{app_id}: --rollback-remote would run, and nothing was contacted:\n  $ {VR.shown_cmd(S, st['argv'])}"); return 0
     _ready_to_contact(S, app_id)
     r = (runner or VR.real_runner)(st, None); kv = _kv(r.stdout)
-    if r.returncode == 0: say(f"{app_id}: the server serves release {kv.get('SERVING')} again (the one before the last deploy)."); return 0
+    if r.returncode == 0 and kv.get("NOTHING"): say(f"{app_id}: {kv['NOTHING']}."); return 0
+    if r.returncode == 0: say(f"{app_id}: the server serves release {kv.get('SERVING')} again (the one before the last deploy); run --rollback-remote again to go forward."); return 0
     say(f"{app_id}: the rollback did not finish (exit {r.returncode}): " + VR.redact((r.stderr or "").strip())[-300:]); return 1
 
 # ---------------------------------------------------------------------------------------------------------
@@ -722,6 +765,13 @@ def rollback_remote(app_id, S, F, dry=False, runner=None, say=print):
 def private_dir():
     import services
     return services.private_dir()
+def write_private(path, text):
+    """A private file: its directory 0700 and the file 0600, enforced even when either already exists with wider modes
+    (os.makedirs and os.open apply a mode only to what they create)."""
+    d = os.path.dirname(path); os.makedirs(d, mode=0o700, exist_ok=True); os.chmod(d, 0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try: os.fchmod(fd, 0o600); os.write(fd, text.encode())
+    finally: os.close(fd)
 def lane_key_path(app_id): return os.path.join(private_dir(), f"{app_id}.mcp-connector")
 
 def lane_key_ok(app_id, url):
@@ -774,8 +824,7 @@ def lane_key(app_id, app, infra, a, P, runner=None, say=print, root=None, adir=N
     if r.returncode or not m:
         raise Stop(f"{app_id}: the organisation's connector address was not made (exit {r.returncode}): " + VR.redact(re.sub(lk["url_pattern"], "<address>", (r.stderr or out)))[-300:])
     AR.forbid(m.group(0))
-    os.makedirs(private_dir(), mode=0o700, exist_ok=True)
-    fd = os.open(lane_key_path(app_id), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600); os.write(fd, (m.group(0) + "\n").encode()); os.close(fd)
+    write_private(lane_key_path(app_id), m.group(0) + "\n")
     if t == "compose_remote" and adir:      # names only: which organisation, and when (the address stays in the private file)
         infra["compose_remote"]["lane_key"] = {"slug": lk["create"][1], "at": now()}; save(os.path.join(adir, "infrastructure.json"), infra)
     say(f"{app_id}: the lane-check organisation's connector address is kept in {lane_key_path(app_id)} (mode 600, never shown). The MCP check can run: "
@@ -788,15 +837,17 @@ def lane_key(app_id, app, infra, a, P, runner=None, say=print, root=None, adir=N
 def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
 
 def vercel_plan(app_id, F, infra, man):
-    v = infra.get("vercel") or {}; proj = vercel_project(infra); team = v.get("team", "")
-    return [f"the Vercel project {proj} (one project; created if absent, never connected to git)",
-            f"the operator's values checked by name: {', '.join(infra.get('secrets_user') or []) or 'none'}",
-            f"minted if absent, by the mold's own {F['mint']} run in a private temp directory here (values never shown): {', '.join(infra.get('secrets_derived') or [])}",
-            f"a build copy build/{app_id}/ of the snapshot (no node_modules), linked to {proj}",
-            f"vercel deploy --prod --yes{(' --scope ' + team) if team else ''} from that copy ({man['vercel']['config']}: one function, its crons)",
+    v = infra.get("vercel") or {}; proj = vercel_project(infra); team = v.get("team", ""); sc = f" --scope {team}" if team else ""
+    return [f"refuse a project that is a LIVE one or another app's (provision.py's own rule), before anything is written",
+            f"the Vercel project {proj} (one project; created with `vercel project add {proj}{sc}` if absent, never connected to git)",
+            f"the app's own Postgres: an empty free Neon database adopted, or a new one from the Vercel Marketplace (provision.py's Neon provisioning: "
+            f"proven empty in a throwaway project before it is connected); DATABASE_URL is the one the integration writes, never written here",
+            f"minted if absent, by the mold's own {F['mint']} run in a private temp directory here (values never shown): {', '.join(n for n in infra.get('secrets_derived') or [] if n != 'DATABASE_URL')}",
+            f"a build copy build/{app_id}/ of the snapshot (no node_modules); the web console built in it and served by the same function when its build gives a static export (see MOLD.md)",
+            f"vercel deploy --prod --yes{sc} from that copy ({man['vercel']['config']}: one function, its crons); the deployment serving before is recorded",
             "the production address read back from Vercel (never derived from the name); PUBLIC_URL set to it, and one more deploy when it changed",
-            f"health: <address>{man['health_path']} answers 200 with ok",
-            "state: vercel.production_url, vercel.health.web, deployed_at, status stamped (or reverted, with the reason)"]
+            f"health: <address>{man['health_path']} answers 200 with ok; otherwise production goes back to the deployment that served before",
+            "state: vercel.production_url, vercel.health.web, deployed_at, status stamped (or reverted, with the reason and the rollback)"]
 
 def mint_values(cb, F, names, run=subprocess.run):
     """{name: value} for `names`, minted by the mold's own bootstrap script in a private temp directory. In memory only."""
@@ -811,43 +862,122 @@ def mint_values(cb, F, names, run=subprocess.run):
     if "CRON_SECRET" in names and "CRON_SECRET" not in out: out["CRON_SECRET"] = pysecrets.token_hex(32)
     return out
 
-def vercel_check(app_id, app, infra, P, say=print, root=None):
-    import agent_result as AR
-    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); proj = vercel_project(infra)
-    meta = P._project_meta(proj, cb); present = P.vercel_env_names(cb, proj) if meta.get("id") else set()
-    say(f"  Vercel project {proj}: {'exists' if meta.get('id') else 'not created yet (a deploy creates it)'}; one project ({man['vercel']['config']})")
-    missing = [n for n in infra.get("secrets_user") or [] if n not in present]
-    say(f"  minted at the deploy if absent: {', '.join(n for n in infra.get('secrets_derived') or [] if n not in present) or 'nothing (all present)'}")
-    say("a deploy will create:")
-    for i, l in enumerate(vercel_plan(app_id, F, infra, man), 1): say(f"  {i}. {l}")
-    if missing:
-        for n in missing:
-            say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
-        say(f"{len(missing)} value(s) only you hold are not on the project yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
-    say(f"secrets present: {len(infra.get('secrets_user') or [])}/{len(infra.get('secrets_user') or [])}. Ready. See the plan: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
-    return 0
+def refuse_project(app_id, infra, P):
+    """provision.py's own refusal (a LIVE project, or one another app deploys to) as a Stop, before any project write."""
+    try: P._refuse_live_or_shared_project(app_id, infra)
+    except SystemExit as e: raise Stop(str(e.code if e.code is not None else e))
 
-def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None):
+def ensure_project(proj, team, cb, P, say=print):
+    """Create the one project if absent, under the team scope, and unhook it from git."""
+    if P._project_meta(proj, cb).get("id"): return False
+    r = P.vrun(f"vercel project add {proj}" + (f" --scope {team}" if team else ""), shell=True, cwd=cb, capture_output=True, text=True)
+    if not P._project_meta(proj, cb).get("id"): raise Stop(f"could not create the Vercel project {proj}: " + ((r.stdout or "") + (r.stderr or "")).strip()[-200:])
+    P.disconnect_git(proj, cb); say(f"  created the Vercel project {proj}")
+    return True
+
+DB_STAT_MJS = """import pg from "pg";
+const c = new pg.Client({ connectionString: process.env.DB_URL, connectionTimeoutMillis: 15000 });
+await c.connect();
+try {
+  const { rows: [r] } = await c.query(`SELECT (SELECT count(*)::int FROM information_schema.tables WHERE table_schema='public') AS tables,
+    (SELECT count(*)::int FROM pg_policies) AS policies, pg_size_pretty(pg_database_size(current_database())) AS size`);
+  console.log(JSON.stringify(r));
+} finally { await c.end().catch(() => {}); }
+"""
+def db_stat_with(cb, P):
+    """provision.py's _db_stat (is this database empty?), read with the mold's own `pg` client: the mold's node_modules,
+    linked from a temp directory, never a file in the snapshot. The address stays in an environment variable."""
+    def stat(mold_dir, proj, key="DATABASE_URL_UNPOOLED", environment="production"):
+        vals = P.pull_env(mold_dir, proj, environment=environment, required=False)
+        url = vals.get(key) or vals.get("DATABASE_URL")
+        if not url: return None
+        d = tempfile.mkdtemp(prefix="sf-dbstat-")
+        try:
+            os.symlink(os.path.join(os.path.abspath(cb), "node_modules"), os.path.join(d, "node_modules"))
+            open(os.path.join(d, "db-stat.mjs"), "w").write(DB_STAT_MJS)
+            r = subprocess.run(["node", os.path.join(d, "db-stat.mjs")], cwd=d, env=dict(os.environ, DB_URL=url), capture_output=True, text=True, timeout=60)
+            try: return json.loads((r.stdout.strip().splitlines() or ["{}"])[-1]) if r.returncode == 0 else None
+            except ValueError: return None
+        finally: shutil.rmtree(d, ignore_errors=True)
+    return stat
+
+def ensure_database(app_id, infra, cb, proj, present, P, say=print):
+    """The app's own Postgres through provision.py's Neon provisioning: an empty spare adopted or a new free one made,
+    each proven EMPTY in a throwaway project before the app's project is connected to it (a database already holding
+    tables is never adopted). DATABASE_URL is the one the integration writes; this factory never writes it here, and
+    never replaces one that is already set (write-once). Returns True when it provisioned."""
+    if "DATABASE_URL" in present: return False
+    if not os.path.isfile(os.path.join(cb, "node_modules", "pg", "package.json")):
+        raise Stop(f"the emptiness check reads the database with the mold's own `pg` client, which is not installed in molds/{os.path.basename(os.path.dirname(cb))}/codebase. "
+                   f"Install the mold's dependencies first: npm --prefix {os.path.relpath(cb, ROOT)} ci. Nothing was provisioned.")
+    real = P._db_stat; P._db_stat = db_stat_with(cb, P)
+    try:
+        try: P.adopt_or_create_neon(app_id, cb, infra, proj)
+        except SystemExit as e: raise Stop(str(e.code if e.code is not None else e))
+    finally: P._db_stat = real
+    if "DATABASE_URL" not in P.vercel_env_names(cb, proj):
+        raise Stop(f"{proj}: a database was connected but no DATABASE_URL arrived on the project. Nothing was deployed.")
+    say(f"  {proj}: the app's own Postgres is connected ({(infra.get('datastores') or {}).get('neon_resource', 'Neon')}); DATABASE_URL written by the integration, never shown")
+    return True
+
+def console_overlay(build, man, run=subprocess.run, say=print):
+    """The product's web console on the same project, from the build copy only (never the snapshot): built with its own
+    `npm run build`; when that yields a static export (web/out, what the product's server serves at /), the copy's
+    .vercelignore and a factory vercel config let the one function carry it. Returns (config path or None, why)."""
+    w = man.get("vercel", {}).get("console") or {}
+    if not w: return None, "the mold declares no console"
+    wd = os.path.join(build, w["dir"])
+    if not os.path.isdir(wd): return None, f"{w['dir']}/ is not in the snapshot"
+    cfgs = [os.path.join(wd, f) for f in ("next.config.ts", "next.config.mjs", "next.config.js") if os.path.isfile(os.path.join(wd, f))]
+    if cfgs and not any(re.search(r"""output\s*:\s*['"]export['"]""", open(f).read()) for f in cfgs):
+        # Measured on mold_v0 at 5310a51: `next build` lists its /admin and /app routes as server-rendered (ƒ) behind a
+        # middleware, and writes no web/out. A server app cannot ride in the API's function; building it would only
+        # spend ten minutes to learn that again.
+        return None, (f"{w['dir']}/{os.path.basename(cfgs[0])} builds a server-rendered Next.js app (no `output: 'export'`), so there is no "
+                      f"static {w['out']} for the one function to serve")
+    r = run(["bash", "-c", w["build"]], cwd=wd, capture_output=True, text=True, timeout=1800)
+    out = os.path.join(build, w["out"])
+    if r.returncode or not os.path.isdir(out):
+        why = (f"its build stopped (exit {r.returncode})" if r.returncode else
+               f"its build produced no static export at {w['out']} (the product's next.config.ts has no `output: 'export'`; it builds a server app)")
+        return None, why
+    cfg = json.load(open(os.path.join(build, man["vercel"]["config"])))
+    for fn in (cfg.get("functions") or {}).values():
+        inc = fn.get("includeFiles", "")
+        fn["includeFiles"] = (inc[:-1] + "," + w["out"] + "/**}") if inc.startswith("{") and inc.endswith("}") else "{" + ",".join(x for x in (inc, w["out"] + "/**") if x) + "}"
+    path = os.path.join(build, "vercel.factory.json"); json.dump(cfg, open(path, "w"), indent=2)
+    vi = os.path.join(build, ".vercelignore")
+    lines = [l for l in (open(vi).read().splitlines() if os.path.isfile(vi) else []) if l.strip() not in (w["dir"], "/" + w["dir"])]
+    open(vi, "w").write("\n".join(lines + [f"/{w['dir']}/*", f"!/{w['out']}"]) + "\n")
+    say(f"  console: built in the build copy; {w['out']} rides in the function (vercel.factory.json, .vercelignore of the copy only)")
+    return path, ""
+
+def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, console=console_overlay):
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man)
     v = infra["vercel"]; proj = v["project"]; team = v.get("team", ""); scope = f"--scope {team}" if team else ""
-    if not P._project_meta(proj, cb).get("id"):
-        r = P.vrun(f"vercel project add {proj} {scope}", shell=True, cwd=cb, capture_output=True, text=True)
-        if not P._project_meta(proj, cb).get("id"): raise Stop(f"could not create the Vercel project {proj}: " + (r.stdout + r.stderr).strip()[-200:])
-        P.disconnect_git(proj, cb); say(f"  created the Vercel project {proj}")
+    refuse_project(app_id, infra, P)
+    ensure_project(proj, team, cb, P, say=say)
     present = P.vercel_env_names(cb, proj)
     missing = [n for n in infra.get("secrets_user") or [] if n not in present]
     if missing:
         P.ask_nicely_for(app_id, missing); raise Stop(f"{app_id}: {', '.join(missing)} not set on {proj}; nothing was deployed.")
-    want = [n for n in infra.get("secrets_derived") or [] if n not in present]
+    if ensure_database(app_id, infra, cb, proj, present, P, say=say): save(os.path.join(adir, "infrastructure.json"), infra)
+    want = [n for n in infra.get("secrets_derived") or [] if n not in present and n != "DATABASE_URL"]
     for n, val in mint_values(cb, F, want).items():
         P._set_env(n, val, cb, project=proj); say(f"  {proj}: {n} minted and written (not shown)")
     build = os.path.join(root or ROOT, "build", app_id); os.makedirs(build, exist_ok=True)
-    r = subprocess.run(["rsync", "-a", "--delete", *[x for e in F["excludes"] for x in ("--exclude", e)], cb.rstrip("/") + "/", build + "/"], capture_output=True, text=True)
+    r = subprocess.run(["rsync", "-a", "--delete", *[x for e in F["excludes"] for x in ("--exclude", e)],
+                        cb.rstrip("/") + "/", build + "/"], capture_output=True, text=True)
     if r.returncode: raise Stop(f"the build copy could not be made: {r.stderr.strip()[-200:]}")
+    cfg, why = console(build, man, say=say)
+    if not cfg: say(f"  console: NOT served on Vercel: {why}. The API, /mcp and the landing page are; MOLD.md says what the product needs upstream.")
+    v["console"] = "served" if cfg else f"not served: {why}"[:200]
     link = P._link_dir(proj, cb); os.makedirs(os.path.join(build, ".vercel"), exist_ok=True); shutil.copyfile(os.path.join(link, ".vercel", "project.json"), os.path.join(build, ".vercel", "project.json"))
+    before = P.production_of(proj, cb) or {}
     url = ""
     for attempt in (1, 2):
-        out = P.vercel_deploy(f"vercel deploy --prod --yes {scope}", build, f"{proj} deploy")
+        out = P.vercel_deploy(f"vercel deploy --prod --yes {scope}" + (f" --local-config {os.path.basename(cfg)}" if cfg else ""), build, f"{proj} deploy")
+        if before.get("id"): P.promote_new({"projects": {"web": before}}, cb, ["web"])   # after an earlier rollback Vercel holds production
         url = P._deployed_address(proj, out, cb, infra)
         cur = P.pull_env(cb, proj, required=False).get("PUBLIC_URL")
         if cur == url: break
@@ -855,21 +985,50 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None):
     code, doc, why = P._read_health(url + man["health_path"])
     v["production_url"] = url; v["health"] = {"web": str(code) if code else "no answer"}
     if str(code) != "200" or not (isinstance(doc, dict) and doc.get("ok") is True):
+        # Back to the deployment that served before, as mold_v1's deploy does after a failed gate.
+        if before.get("id"):
+            ok, detail = P._point_production(before, before["id"], cb, "rollback")
+            v["rollback"] = {"at": now(), "by": "the deploy's own health check", "why": f"{man['health_path']} answered {code or 'nothing'}",
+                             "projects": {"web": f"rolled back to {before['id']}" if ok else f"NOT rolled back: {detail}"}, "result": "rolled back" if ok else "rollback FAILED"}
+            back = f" Production went back to the deployment that served before ({before['id']})." if ok else f" The rollback FAILED too ({detail}): the site may be down."
+        else: back = " There was no earlier deployment to go back to."
         save(os.path.join(adir, "infrastructure.json"), infra)
-        raise Stop(f"{proj} deployed to {url}, but {man['health_path']} answered {code or 'nothing'} {why}".strip() + ". Recorded as reverted.")
+        raise Stop(f"{proj} deployed to {url}, but {man['health_path']} answered {code or 'nothing'} {why}".strip() + "." + back + " Recorded as reverted.")
     infra["deployed_at"] = now(); app["status"] = "stamped" if app.get("status") in (None, "planned", "reverted") else app["status"]; app.pop("revert", None)
     app["mold_commit"] = mold_commit(app["mold_id"], root) or app.get("mold_commit", "")
     save(os.path.join(adir, "infrastructure.json"), infra); save(os.path.join(adir, "application.json"), app)
     say(f"{app_id}: deployed to {url}; {man['health_path']} answered 200 ok"); return 0
 
-def set_secret_vercel(app_id, infra, name, P, root_cb):
+def vercel_check(app_id, app, infra, P, say=print, root=None):
+    """Read-only. Exit 0 = ready for --deploy (nothing on Vercel is the operator's to type; optional keys stay off)."""
+    import agent_result as AR
+    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); proj = vercel_project(infra)
+    meta = P._project_meta(proj, cb); present = P.vercel_env_names(cb, proj) if meta.get("id") else set()
+    say(f"  Vercel project {proj}: {'exists' if meta.get('id') else 'not created yet (a deploy creates it)'}; one project ({man['vercel']['config']})")
+    say(f"  database: {'DATABASE_URL is on the project (kept as it is: written once)' if 'DATABASE_URL' in present else 'the app gets its own Postgres at the first deploy (an empty free Neon database, proven empty before it is connected)'}")
+    say(f"  minted at the deploy if absent: {', '.join(n for n in infra.get('secrets_derived') or [] if n not in present and n != 'DATABASE_URL') or 'nothing (all present)'}")
+    if infra.get("secrets_optional"): say(f"  optional, off while empty (set one with --set-secret NAME): {', '.join(infra['secrets_optional'])}")
+    say("a deploy will create:")
+    for i, l in enumerate(vercel_plan(app_id, F, infra, man), 1): say(f"  {i}. {l}")
+    missing = [n for n in infra.get("secrets_user") or [] if n not in present]
+    if missing:
+        for n in missing:
+            say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
+        say(f"{len(missing)} value(s) only you hold are not on the project yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
+    pg = os.path.isfile(os.path.join(cb, "node_modules", "pg", "package.json"))
+    if "DATABASE_URL" not in present and not pg:
+        say(f"  - install the mold's dependencies first (the database emptiness check uses its own `pg` client): npm --prefix {os.path.relpath(cb, root or ROOT)} ci"); return 1
+    say(f"Ready. See the plan: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
+    return 0
+
+def set_secret_vercel(app_id, infra, name, P, root_cb, value=None):
     declared = set(infra.get("secrets_user") or []) | set(infra.get("secrets_optional") or []) | set(infra.get("secrets_derived") or [])
     if name not in declared: raise Stop(f"{name} is not a name this app reads (it reads: {', '.join(sorted(declared))}). Nothing was stored.")
+    if name == "DATABASE_URL": raise Stop(f"{app_id}: DATABASE_URL is written by the database integration at the first deploy and never by hand. Nothing was stored.")
+    refuse_project(app_id, infra, P)
     proj = vercel_project(infra)
-    v = _hidden_value(app_id, name, P)
-    if not P._project_meta(proj, root_cb).get("id"):
-        print(f"creating the Vercel project {proj} to hold {name} (empty, free, no deployment) ...")
-        P.vrun(f"vercel project add {proj}", shell=True, cwd=root_cb, capture_output=True, text=True); P.disconnect_git(proj, root_cb)
+    v = value if value is not None else _hidden_value(app_id, name, P)
+    if ensure_project(proj, (infra.get("vercel") or {}).get("team", ""), root_cb, P): print(f"  (created empty to hold {name}: free, no deployment)")
     P._set_env(name, v, root_cb, project=proj)
     print(f"{name} set on {proj} (the value was never shown or stored here). It applies at the next deploy."); return 0
 
@@ -881,11 +1040,14 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
     t = infra.get("target"); dry = "--dry-run" in a
     try:
         errs = VR.state_problems(app_id, adir) if root is None else []
-        if "--lane-key" in a: return lane_key(app_id, app, infra, a, P, say=say, root=root, adir=adir)
+        if "--lane-key" in a:
+            if t == "vercel": refuse_project(app_id, infra, P)
+            return lane_key(app_id, app, infra, a, P, say=say, root=root, adir=adir)
         if t == "vercel":
             cb = codebase(app["mold_id"], root)
             for f in ("--deploy-remote", "--set-remote", "--remote-key", "--qualify-remote", "--rollback-remote"):
                 if f in a: raise Stop(f"{app_id}: {f} is for an app on a server of its own; this one is on Vercel. Use --deploy.")
+            refuse_project(app_id, infra, P)   # a LIVE project or another app's: refused before any read or write of it
             if "--set-secret" in a: return set_secret_vercel(app_id, infra, a[a.index("--set-secret") + 1], P, cb)
             if "--deploy" in a:
                 if errs: raise Stop("the state does not validate; nothing was done:\n  " + "\n  ".join(errs))

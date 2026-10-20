@@ -68,8 +68,10 @@ def parse_brief(text):
     if m: h["customer_id"] = m.group(1)
     m = re.search(r"domain[:\s]+([a-z0-9.-]+\.[a-z]{2,})", t)
     if m: h["custom_domain"] = m.group(1)
-    m = re.search(r"\bmold[_ ]?v?([0123])\b", t)
-    if m: h["mold_id"] = f"mold_v{m.group(1)}"
+    # The mold comes from a line of its own ("Mold: mold_v0"), never from a mention in prose ("unlike mold_v1, ..."); a
+    # mold that is not registered in state/factory.json is refused in main(), never guessed.
+    m = re.search(r"^\s*mold:\s*([a-z][a-z0-9_]*)\s*\.?\s*$", t, re.M)
+    if m: h["mold_id"] = m.group(1)
     # Only a line that STARTS with the label: "Multi-organization: no, one workspace" once named a workspace "no, one workspace".
     m = re.search(r"^\s*(?:workspace|org(?:anisation|anization)?)(?: name)?:\s*\"?([^\n\".]+?)\"?\s*(?:\.|\n|$)", text, re.I | re.M)
     if m: h["workspace_name"] = m.group(1).strip()
@@ -584,9 +586,27 @@ def self_test_single(n, fails):
             r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); d2 = docs("zz_one"); n += 1
             if r.returncode or d2 != d: fails.append(f"a same-brief re-run of a deployed mold_v0 app changed its state: {(r.stdout + r.stderr).strip()[-200:]}")
             r = go("zz_one", "Mold: mold_v0\nDomain: shop.example.org\n", {"deploy_target": "vercel"}); d3 = docs("zz_one"); n += 1
-            if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != ["DATABASE_URL"] \
+            if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != [] or "DATABASE_URL" not in d3["infrastructure"]["secrets_derived"] \
                or d3["datastores"]["postgres"]["provider"] != "neon":
                 fails.append(f"switching a mold_v0 app to Vercel: {(r.stdout + r.stderr).strip()[-200:]} {d3['infrastructure'].get('target')}")
+        # review fixes (PR #17): the mold only from its own line and only a registered one; a Vercel project that is taken
+        n += 1
+        if parse_brief("Unlike mold_v1, this product is small.\n").get("mold_id") or parse_brief("Mold: mold_v0\n").get("mold_id") != "mold_v0":
+            fails.append("the mold must come from a `Mold:` line only, never from a mention in prose")
+        r = go("zz_bad", "Mold: mold_v9\nIt runs on its own server.\n"); n += 1
+        if r.returncode == 0 or "not registered" not in r.stdout + r.stderr or os.path.exists(os.path.join(A, "zz_bad", "application.json")):
+            fails.append(f"a brief naming an unregistered mold must be refused with nothing written: rc={r.returncode}")
+        shutil.copytree(os.path.join(A, "zz_one"), os.path.join(A, "zz_other"))   # zz_one is on Vercel by now: a whole, valid app
+        for nm, f in (("application", lambda d: d.update(app_id="zz_other")), ("infrastructure", lambda d: d["vercel"].update(project="zz-four"))):
+            d_ = load(os.path.join(A, "zz_other", nm + ".json")); f(d_); save(os.path.join(A, "zz_other", nm + ".json"), d_)
+        r = go("zz_four", "Mold: mold_v0\n", {"deploy_target": "vercel"}); n += 1
+        got = (load(os.path.join(A, "zz_four", "infrastructure.json")).get("vercel") or {}).get("project") if r.returncode == 0 else None
+        if got != "zz-four-2" or "zz-four-2" not in r.stdout:
+            fails.append(f"a default Vercel project another app holds must be suffixed and said: {got} {(r.stdout + r.stderr).strip()[-200:]}")
+        r = go("zz_five", "Mold: mold_v0\n", {"deploy_target": "vercel", "vercel_project": "zz-four"}); n += 1
+        if r.returncode == 0 or "zz_other" not in r.stdout + r.stderr:
+            fails.append(f"an answered Vercel project another app holds must be refused: rc={r.returncode}")
+        shutil.rmtree(os.path.join(A, "zz_other"), ignore_errors=True)
         r = go("zz_two", "Mold: mold_v0\nA product for a team.\n"); n += 1
         q = load(os.path.join(A, "zz_two", "questions.json")) if os.path.exists(os.path.join(A, "zz_two", "questions.json")) else {}
         if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["deploy_target"]:
@@ -754,6 +774,18 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     carry_forward(di, ex_di, set())
     return app, infra, ds, di
 
+def taken_projects(app_id):
+    """{project name: why it is not this app's to take}: the live projects, and every project another app deploys to
+    (a mold_v1 app's three: <p>, <p>-api, <p>-workflow)."""
+    out = {p: "one of the LIVE projects this factory never writes to" for p in live_projects().values()}
+    adir = os.path.join(ST, "application")
+    for o in sorted(os.listdir(adir)) if os.path.isdir(adir) else []:
+        if o in (app_id, "app_id"): continue
+        try: p = (load(os.path.join(adir, o, "infrastructure.json")).get("vercel") or {}).get("project")
+        except (OSError, ValueError): continue
+        for x in ((p, f"{p}-api", f"{p}-workflow") if p else ()): out.setdefault(x, f"already {o}'s project")
+    return out
+
 def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, answers_path, ask):
     d = factory.get("defaults", {})
     ex_inf = existing.get("infrastructure", {})
@@ -783,6 +815,17 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
         print(f"{len(pending)} question(s) pending -> {os.path.relpath(qfile, ROOT)}")
         for q in pending: print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] else "") + (f"  ({q['why']})" if q.get("why") else ""))
         sys.exit(2)
+    if resolved["deploy_target"] == "vercel":
+        # One project is one environment namespace: never a LIVE project, never one another app deploys to (provision.py
+        # refuses both at deploy time too). A name intake chose itself is suffixed, and said; a name someone answered is refused.
+        taken = taken_projects(app_id); want = resolved.get("vercel_project") or slug(app_id)
+        if want in taken:
+            if "vercel_project" in answers:
+                sys.exit(f"{app_id}: the Vercel project {want!r} is {taken[want]}. Answer another vercel_project. Nothing was written.")
+            n = 2
+            while f"{want}-{n}" in taken: n += 1
+            print(f"note: the Vercel project name {want!r} is {taken[want]}, so this app gets {want}-{n} (answer vercel_project to choose another)")
+            resolved["vercel_project"] = f"{want}-{n}"
     if resolved["deploy_target"] not in single_service.TARGETS:
         sys.exit(f"{app_id}: {mold_id} runs on {' or '.join(single_service.TARGETS)}, not {resolved['deploy_target']!r}. Nothing was written.")
     app, infra, ds, di = build_single(app_id, mold_id, resolved, hints, factory, brief_path, existing)
@@ -813,6 +856,10 @@ def main(a):
     text = open(brief_path).read(); hints = parse_brief(text)
     factory = load_factory(ST); d = factory.get("defaults", {})
     mold_id = opt("--mold") or hints.get("mold_id") or "mold_v1"
+    known = [m.get("mold_id") for m in factory.get("molds", [])]
+    if mold_id not in known:
+        sys.exit(f"{app_id}: mold {mold_id!r} is not registered in state/factory.json (registered: {', '.join(known)}). "
+                 f"Fix the brief's `Mold:` line or --mold. Nothing was written.")
     outdir = os.path.join(ST, "application", app_id); os.makedirs(outdir, exist_ok=True)
     existing = {n: load(os.path.join(outdir, f"{n}.json")) for n in ("application","infrastructure","datastores","datainfra") if os.path.exists(os.path.join(outdir, f"{n}.json"))}
     if single_service.manifest(mold_id, ROOT):

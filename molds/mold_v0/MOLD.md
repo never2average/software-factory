@@ -43,7 +43,8 @@ server", or "Vercel"), and takes the domain from the brief (`Domain: app.example
 `blob.provider: "none"`. `postgres.rls` is `"off"`: the product scopes tenant rows in its queries, which its tenant-SQL
 check guards; proving row-level security on every deploy is mold_v0-031.
 
-**Its own server** (target `compose_remote`): `provision.py <app> --set-remote host=<address> domain=<name>`,
+**Its own server** (target `compose_remote`; a deploy that comes up but fails its health checks switches back to the
+release that served before, by itself): `provision.py <app> --set-remote host=<address> domain=<name>`,
 `--remote-key`, then `--deploy-remote` (see every step first with `--dry-run`). It reuses vm_remote's host probe, SSH,
 DNS check, key pair, hidden prompt and env file, then:
 
@@ -66,11 +67,26 @@ DNS check, key pair, hidden prompt and env file, then:
 HTTPS comes from the stack's own Caddy (automatic certificate for `DOMAIN`), which is why the domain must point at the
 server first. `--rollback-remote` goes back to the previous release by hand.
 
-**Vercel** (target `vercel`): one project, from the product's own `vercel.json` (one function and its cron). The
-operator sets `DATABASE_URL` (a managed Postgres such as Neon) with `--set-secret`; the product's keys and
-`CRON_SECRET` are minted by the same `bootstrap.sh`, run in a private temp directory here, and written to the project
-without being shown; `PUBLIC_URL` is the address Vercel reports. The product's own README calls this entry a preview:
-its `.vercelignore` leaves out the web console, and background loops run only on a server.
+**Vercel** (target `vercel`): one project, from the product's own `vercel.json` (one function and its cron). Nothing
+is typed by hand:
+- the project is refused if it is one of the live projects or another app's (provision.py's own rule), before anything
+  reads or writes it; intake suffixes a default name that is taken, and says so;
+- the app gets its own Postgres through provision.py's Neon provisioning: an empty free database adopted, or a new
+  one from the Vercel Marketplace, each proven empty (with the product's own `pg` client, from a throwaway project)
+  before the app's project is connected. `DATABASE_URL` is the one the integration writes, never written by the
+  factory and never replaced. Row-level security is not part of this gate: the product has none yet (mold_v0-031);
+- the product's keys and `CRON_SECRET` are minted by the same `bootstrap.sh`, in a private temp directory here, and
+  written without being shown; `PUBLIC_URL` is the address Vercel reports;
+- a deploy whose `/healthz` does not answer 200 ok puts production back on the deployment that served before.
+
+**The web console on Vercel is not served yet, and why.** `web/` is a server-rendered Next.js app (its `/admin` and
+`/app` routes render on the server behind a middleware, and `next.config.ts` has no `output: 'export'`); measured with
+its own `npm run build` at 5310a51, it writes no `web/out`. The API function serves `web/out` when it exists, so the
+factory builds the console into the one function only when the product's config produces a static export (the build
+step and its config overlay live in the build copy, never the snapshot). Today the deploy records
+`vercel.console: "not served: ..."`. The product needs one of these upstream: a static export of the console, or the
+two-project shape its own comments describe (`web/` as its own Next.js project, with the API-address variable in `web/next.config.ts` set to the
+API's address). The same gap stops the image build on a server: the `Dockerfile` copies `/web/out` from its web stage.
 
 **Lanes** (`molds/mold_v0/testing/`, run by `lanes.py` as for any mold): *functional* runs the product's
 `npm run typecheck`, `npm run smoke` (embedded throwaway Postgres; it must reach its per-tool tenant-isolation sweep) and
@@ -81,7 +97,8 @@ says yes. It runs the product's `scripts/create-org.ts` and keeps the connector 
 the repository (mode 600, never shown).
 
 **Known before the first deploy (mold_v0-029).** The snapshot at the pinned commit lacks `web/package-lock.json`,
-which the `Dockerfile` copies (the product's own `web/.gitignore` keeps it out), so the image cannot build from it. The
-deploy refuses before contacting anything. The fix belongs in the product's repository, followed by
+which the `Dockerfile` copies (the product's own `web/.gitignore` keeps it out), and its web stage writes no `web/out`
+for the final stage to copy (above), so the image cannot build from it. The server deploy refuses the first before
+contacting anything. The fix belongs in the product's repository, followed by
 `mold.py refresh mold_v0`. The product's repository has no CI workflow, so the factory's CI gate refuses its deploys
 unless the operator chooses `--allow-unverified-mold "<reason>"`.
