@@ -509,6 +509,21 @@ export function summary(apps: readonly AppRow[], open: number): string {
 
 /** The share of a limit at which the board warns (db_usage.py WARN_AT). */
 export const DB_WARN_PCT = 80
+/** How often the usage is measured: the systemd timer (uptime.py install) and an open board's own tick. */
+export const DB_EVERY_MS = 30 * 60_000
+/** A report older than two periods is stale: whatever it said is no longer a measurement. */
+export const DB_STALE_MS = 2 * DB_EVERY_MS
+
+/** True when the report is older than DB_STALE_MS, or its time cannot be read. */
+export function dbStale(d: DbUsage, now: number): boolean {
+  const at = Date.parse(d.generatedAt)
+  return !Number.isFinite(at) || now - at > DB_STALE_MS
+}
+
+/** Whether the board should measure now: an app (not retired) has no report, or its report is stale. */
+export function dbNeedsMeasure(appIds: readonly string[], reports: Record<string, DbUsage>, now: number): boolean {
+  return appIds.some(id => !reports[id] || dbStale(reports[id]!, now))
+}
 
 const PROVIDER_WORDS: Record<string, string> = { neon: 'Neon', supabase: 'Supabase', self_hosted: 'own server' }
 
@@ -549,11 +564,29 @@ export function parseDbUsage(raw: Json | null | undefined): DbUsage | null {
 
 const figure = (n: number): string => String(Math.round(n * 100) / 100)
 
-/** One app's database line: its plan, each limit as used/limit (pct), usage with no limit, and what was not measured. */
-export function dbLine(d: DbUsage | null | undefined): DbLine {
+/** One app's database line: its plan, each limit as used/limit (pct), usage with no limit, what was not measured, and
+ * when it was measured. A stale report is "not measured since …": what it said is shown, but never as a calm "ok". */
+export function dbLine(d: DbUsage | null | undefined, now: number): DbLine {
   if (!d) return { text: 'database: not measured yet', level: 'none' }
+  const line = dbLineOf(d)
+  const when = ago(d.generatedAt, now)
+  if (dbStale(d, now)) {
+    return {
+      text: `database: not measured since ${when} (stale) · last: ${line.text.replace(/^database: /, '')}`,
+      level: line.level === 'ok' ? 'none' : line.level,
+    }
+  }
+  return { text: `${line.text} · measured ${when}`, level: line.level }
+}
+
+function dbLineOf(d: DbUsage): DbLine {
   const provider = PROVIDER_WORDS[d.provider] ?? (d.provider || 'database')
-  if (!d.plan) return { text: `database: ${provider} · not measured (${d.notMeasured[0] ?? 'no source'})`, level: 'none' }
+  if (!d.plan) {
+    const why = `not measured (${d.notMeasured[0] ?? 'no source'})`
+    // the provider's own flag stands even when the plan could not be read
+    if (d.quotaExceeded) return { text: `database: ${provider} · USAGE LIMIT REACHED · ${why}`, level: 'limit' }
+    return { text: `database: ${provider} · ${why}`, level: 'none' }
+  }
   const parts = [`database: ${provider} ${d.plan.name}`]
   if (d.quotaExceeded) parts.push('USAGE LIMIT REACHED')
   for (const l of d.limits) parts.push(`${l.name.toLowerCase()} ${figure(l.used)}/${figure(l.limit)} ${l.unit}${l.pct === null ? '' : ` (${Math.round(l.pct)}%)`}`)
@@ -564,15 +597,20 @@ export function dbLine(d: DbUsage | null | undefined): DbLine {
   if (d.limits.length === 0 && d.plan.paid) parts.push('billed per use, no fixed limit')
   const unmeasured = d.notMeasured.filter(n => !/states no fixed usage limit/.test(n))
   if (unmeasured.length) parts.push(`not measured: ${unmeasured.map(n => n.split(/ \(|: /)[0]).join(', ')}`)
-  const top = Math.max(0, ...d.limits.map(l => l.pct ?? 0))
-  const level = d.quotaExceeded || top >= 100 ? 'limit' : top >= DB_WARN_PCT ? 'warn' : 'ok'
+  // reached only when used >= limit exactly (a pct rounded to 100 is not the limit), or by the provider's own flag
+  const reached = d.limits.some(l => l.limit > 0 && l.used >= l.limit)
+  const near = d.limits.some(l => l.limit > 0 && l.used >= (DB_WARN_PCT / 100) * l.limit)
+  const level = d.quotaExceeded || reached ? 'limit' : near ? 'warn' : 'ok'
   return { text: parts.join(' · '), level }
 }
 
-/** The banner above the tabs: each app's warning (it names the limit and the upgrade step); quiet when none. */
-export function dbBanner(reports: Record<string, DbUsage>): DbBanner {
+/** The banner above the tabs: each app's warning (it names the limit and the upgrade step); quiet when none. A warning
+ * from a stale report stays, with when it was measured. */
+export function dbBanner(reports: Record<string, DbUsage>, now: number): DbBanner {
   const all = Object.values(reports).sort((a, b) => a.appId.localeCompare(b.appId))
-  const lines = all.flatMap(d => d.warnings.map(w => w.text))
+  const lines = all.flatMap(d =>
+    d.warnings.map(w => (dbStale(d, now) ? `${w.text} (measured ${ago(d.generatedAt, now)}; stale)` : w.text)),
+  )
   const level = all.some(d => d.quotaExceeded || d.warnings.some(w => w.level === 'limit')) ? 'limit' : lines.length ? 'warn' : 'ok'
   return { level, lines }
 }
