@@ -586,7 +586,7 @@ def self_test_single(n, fails):
             r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); d2 = docs("zz_one"); n += 1
             if r.returncode or d2 != d: fails.append(f"a same-brief re-run of a deployed mold_v0 app changed its state: {(r.stdout + r.stderr).strip()[-200:]}")
             r = go("zz_one", "Mold: mold_v0\nDomain: shop.example.org\n", {"deploy_target": "vercel"}); d3 = docs("zz_one"); n += 1
-            if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != [] or "DATABASE_URL" not in d3["infrastructure"]["secrets_derived"] \
+            if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"] or "DATABASE_URL" not in d3["infrastructure"]["secrets_derived"] \
                or d3["datastores"]["postgres"]["provider"] != "neon":
                 fails.append(f"switching a mold_v0 app to Vercel: {(r.stdout + r.stderr).strip()[-200:]} {d3['infrastructure'].get('target')}")
         # review fixes (PR #17): the mold only from its own line and only a registered one; a Vercel project that is taken
@@ -597,7 +597,7 @@ def self_test_single(n, fails):
         if r.returncode == 0 or "not registered" not in r.stdout + r.stderr or os.path.exists(os.path.join(A, "zz_bad", "application.json")):
             fails.append(f"a brief naming an unregistered mold must be refused with nothing written: rc={r.returncode}")
         shutil.copytree(os.path.join(A, "zz_one"), os.path.join(A, "zz_other"))   # zz_one is on Vercel by now: a whole, valid app
-        for nm, f in (("application", lambda d: d.update(app_id="zz_other")), ("infrastructure", lambda d: d["vercel"].update(project="zz-four"))):
+        for nm, f in (("application", lambda d: d.update(app_id="zz_other")), ("infrastructure", lambda d: d["vercel"].update(project="zz-four", projects={"api": "zz-four-api", "web": "zz-four"}))):
             d_ = load(os.path.join(A, "zz_other", nm + ".json")); f(d_); save(os.path.join(A, "zz_other", nm + ".json"), d_)
         r = go("zz_four", "Mold: mold_v0\n", {"deploy_target": "vercel"}); n += 1
         got = (load(os.path.join(A, "zz_four", "infrastructure.json")).get("vercel") or {}).get("project") if r.returncode == 0 else None
@@ -606,6 +606,13 @@ def self_test_single(n, fails):
         r = go("zz_five", "Mold: mold_v0\n", {"deploy_target": "vercel", "vercel_project": "zz-four"}); n += 1
         if r.returncode == 0 or "zz_other" not in r.stdout + r.stderr:
             fails.append(f"an answered Vercel project another app holds must be refused: rc={r.returncode}")
+        shutil.rmtree(os.path.join(A, "zz_five"), ignore_errors=True)   # the refused run above leaves its (empty) folder
+        d_ = load(os.path.join(A, "zz_other", "infrastructure.json")); d_["vercel"].update(project="zz-six-api", projects={"api": "zz-six-api-api", "web": "zz-six-api"})
+        save(os.path.join(A, "zz_other", "infrastructure.json"), d_)
+        r = go("zz_six", "Mold: mold_v0\n", {"deploy_target": "vercel"}); n += 1
+        got = (load(os.path.join(A, "zz_six", "infrastructure.json")).get("vercel") or {}) if r.returncode == 0 else {}
+        if got.get("project") != "zz-six-2" or got.get("projects") != {"api": "zz-six-2-api", "web": "zz-six-2"} or "zz-six-api" not in r.stdout:
+            fails.append(f"a default base whose API project (<name>-api) another app holds must be suffixed, both names recorded: {got} {(r.stdout + r.stderr).strip()[-200:]}")
         shutil.rmtree(os.path.join(A, "zz_other"), ignore_errors=True)
         r = go("zz_two", "Mold: mold_v0\nA product for a team.\n"); n += 1
         q = load(os.path.join(A, "zz_two", "questions.json")) if os.path.exists(os.path.join(A, "zz_two", "questions.json")) else {}
@@ -748,10 +755,10 @@ def _single_target(h, c):
     return t or c.get("existing_target")
 SINGLE_QUESTIONS = [
  ("deploy_target", "infrastructure.target", "Where should this application run: on a server of its own (the product's own Docker Compose "
-  "stack, with HTTPS from its own Caddy) or on Vercel (one project)?", ["compose_remote", "vercel"], lambda d, h, c: _single_target(h, c)),
+  "stack, with HTTPS from its own Caddy) or on Vercel (two projects: the API, and the web console)?", ["compose_remote", "vercel"], lambda d, h, c: _single_target(h, c)),
  ("domain", "infrastructure.compose_remote.domain", "The web address people will open, e.g. app.example.com (blank: name it later with "
   "provision.py <app> --set-remote domain=<name>).", None, lambda d, h, c: h.get("custom_domain") or c.get("existing_domain") or ""),
- ("vercel_project", "infrastructure.vercel.project", "Vercel project name for this app (target vercel only; one project per app).", None,
+ ("vercel_project", "infrastructure.vercel.project", "Vercel project name for this app (target vercel only): its two projects are <name>-api (the API) and <name> (the web console).", None,
   lambda d, h, c: c.get("existing_project") or slug(c["app_id"])),
 ]
 
@@ -776,14 +783,16 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
 
 def taken_projects(app_id):
     """{project name: why it is not this app's to take}: the live projects, and every project another app deploys to
-    (a mold_v1 app's three: <p>, <p>-api, <p>-workflow)."""
+    (a mold_v1 app's three: <p>, <p>-api, <p>-workflow; a single-service app's two, also recorded in vercel.projects)."""
     out = {p: "one of the LIVE projects this factory never writes to" for p in live_projects().values()}
     adir = os.path.join(ST, "application")
     for o in sorted(os.listdir(adir)) if os.path.isdir(adir) else []:
         if o in (app_id, "app_id"): continue
-        try: p = (load(os.path.join(adir, o, "infrastructure.json")).get("vercel") or {}).get("project")
+        try: v = load(os.path.join(adir, o, "infrastructure.json")).get("vercel") or {}
         except (OSError, ValueError): continue
-        for x in ((p, f"{p}-api", f"{p}-workflow") if p else ()): out.setdefault(x, f"already {o}'s project")
+        p = v.get("project")
+        for x in ((p, f"{p}-api", f"{p}-workflow") if p else ()) + tuple(x for x in (v.get("projects") or {}).values() if isinstance(x, str)):
+            out.setdefault(x, f"already {o}'s project")
     return out
 
 def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, answers_path, ask):
@@ -817,14 +826,17 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
         sys.exit(2)
     if resolved["deploy_target"] == "vercel":
         # One project is one environment namespace: never a LIVE project, never one another app deploys to (provision.py
-        # refuses both at deploy time too). A name intake chose itself is suffixed, and said; a name someone answered is refused.
+        # refuses both at deploy time too). The app has TWO, <name>-api and <name> (mold_v0-029): a base whose either name
+        # is taken is suffixed when intake chose it, and said; a name someone answered is refused.
         taken = taken_projects(app_id); want = resolved.get("vercel_project") or slug(app_id)
-        if want in taken:
+        hit = lambda b: next(((n, taken[n]) for n in (b, f"{b}-api") if n in taken), None)
+        if hit(want):
+            name, why = hit(want)
             if "vercel_project" in answers:
-                sys.exit(f"{app_id}: the Vercel project {want!r} is {taken[want]}. Answer another vercel_project. Nothing was written.")
+                sys.exit(f"{app_id}: the Vercel project {name!r} is {why}. Answer another vercel_project. Nothing was written.")
             n = 2
-            while f"{want}-{n}" in taken: n += 1
-            print(f"note: the Vercel project name {want!r} is {taken[want]}, so this app gets {want}-{n} (answer vercel_project to choose another)")
+            while hit(f"{want}-{n}"): n += 1
+            print(f"note: the Vercel project name {name!r} is {why}, so this app's projects are {want}-{n}-api and {want}-{n} (answer vercel_project to choose another)")
             resolved["vercel_project"] = f"{want}-{n}"
     if resolved["deploy_target"] not in single_service.TARGETS:
         sys.exit(f"{app_id}: {mold_id} runs on {' or '.join(single_service.TARGETS)}, not {resolved['deploy_target']!r}. Nothing was written.")
@@ -844,7 +856,7 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     if r.returncode: sys.exit(r.returncode)
     t = infra["target"]; where = infra.get(t) or {}
     print(f"state written: state/application/{app_id}/  (mold={mold_id}, target={t}, " +
-          (f"compose project={where['compose']['project']}, domain={where.get('domain') or 'not named yet'}" if t == "compose_remote" else f"project={where.get('project')}") +
+          (f"compose project={where['compose']['project']}, domain={where.get('domain') or 'not named yet'}" if t == "compose_remote" else f"projects={', '.join((where.get('projects') or {}).values()) or where.get('project')}") +
           f", values you set: {', '.join(infra['secrets_user']) or 'none'}, minted at the deploy: {len(infra['secrets_derived'])})")
 
 def main(a):
