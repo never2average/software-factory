@@ -23,6 +23,12 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 - Default sign-in for apps from the generalised shell: a built-in emailed code plus Google; Clerk optional.
 - The source has no licence constraints (a hackathon project).
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).
+- Generalisation (2026-10-20): mold_v0 becomes an **agent-run shell** (tenancy, an MCP front door, a run engine with sandboxed
+  harness runs, an inference gateway with metering, vaults, storage, record areas, schedules, a console), with each product's own
+  surface in a pack. The shell is authored **in this repository** (operator decision): after one last refresh that takes in the
+  product's hardening (mold_v0-031), `molds/mold_v0/codebase` stops being a snapshot and is edited here, a second recorded exception
+  to "never edit a mold in place" (mold_v0-040). The product's own features become the pack `octillion`; the second app's is its own
+  pack. Backlog: mold_v0-038 to 050.
 
 ## How the factory runs it
 
