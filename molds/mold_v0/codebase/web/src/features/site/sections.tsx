@@ -239,36 +239,43 @@ export function WhyNow() {
 // ---------- what is APO ----------
 
 const ERAS = [
-  { icon: IconSearch, short: 'SEO', who: 'People', win: 'A click', measure: 'Rankings' },
-  { icon: IconMessageChatbot, short: 'GEO', who: 'Chatbots', win: 'A mention', measure: 'Citations' },
-  { icon: IconTerminal2, short: 'APO', who: 'Coding agents', win: 'An install', measure: 'Pick rate per agent', current: true }
+  { icon: IconSearch, short: 'SEO', who: 'People', win: 'A click', next: 'A visit, then maybe a signup', measure: 'Rankings' },
+  { icon: IconMessageChatbot, short: 'GEO', who: 'Chatbots', win: 'A mention', next: 'Maybe a search, then a visit', measure: 'Citations' },
+  { icon: IconTerminal2, short: 'APO', who: 'Coding agents', win: 'An install', next: 'Nothing: it’s already in their code', measure: 'Pick rate per agent', current: true }
 ];
-const ERA_ROWS: [string, 'who' | 'win' | 'measure'][] = [['Who decides', 'who'], ['You win', 'win'], ['You measure', 'measure']];
+const ERA_ROWS: [string, 'who' | 'win' | 'next' | 'measure'][] = [['Who decides', 'who'], ['You win', 'win'], ['Still to go', 'next'], ['You measure', 'measure']];
 
 export function WhatIsApo() {
   return (
     <Section id='apo' eyebrow='What is APO' title='Earn the agent’s pick, and prove it.'
       lead='Agentic Preference Optimization measures and improves how often coding agents choose your product in the middle of real work. Like SEO, you can’t buy the pick, but you can earn it.'>
-      <div className='grid gap-14 lg:grid-cols-[1.1fr_1fr] lg:items-center'>
-        <div className='grid grid-cols-[auto_1fr_1fr_1fr] text-sm'>
-          <span />
+      <ApoLoop />
+    </Section>
+  );
+}
+
+/** SEO, GEO, APO side by side: each channel's win, and how far that win still is from a customer. */
+export function ClosestToRevenue() {
+  return (
+    <Section id='convert' eyebrow='Why APO converts' title='The step closest to revenue.'
+      lead='A click still has to become a signup, and a mention still has to become a visit. When a coding agent picks you, the install has already happened: your product is in the codebase, the step every other channel is working toward.'>
+      <div className='mx-auto grid max-w-3xl grid-cols-[auto_1fr_1fr_1fr] text-sm'>
+        <span />
+        {ERAS.map((e) => (
+          <div key={e.short} className={cn('flex flex-col items-center gap-2 rounded-t-xl px-2 pt-4 pb-3', e.current && 'bg-primary/10 border-primary/40 border-x border-t')}>
+            <e.icon className={cn('size-6', e.current ? 'text-primary' : 'text-muted-foreground')} stroke={1.5} />
+            <span className={cn('font-mono text-xl font-semibold', e.current ? 'text-primary' : 'text-foreground/80')}>{e.short}</span>
+          </div>
+        ))}
+        {ERA_ROWS.map(([label, key], r) => (<Fragment key={key}>
+          <span className='text-muted-foreground border-t py-4 pr-4 text-xs leading-tight sm:text-sm'>{label}</span>
           {ERAS.map((e) => (
-            <div key={e.short} className={cn('flex flex-col items-center gap-2 rounded-t-xl px-2 pt-4 pb-3', e.current && 'bg-primary/10 border-primary/40 border-x border-t')}>
-              <e.icon className={cn('size-6', e.current ? 'text-primary' : 'text-muted-foreground')} stroke={1.5} />
-              <span className={cn('font-mono text-xl font-semibold', e.current ? 'text-primary' : 'text-foreground/80')}>{e.short}</span>
-            </div>
+            <span key={`${key}-${e.short}`} className={cn('border-t px-2 py-4 text-center leading-tight',
+              e.current ? cn('bg-primary/10 border-x-primary/40 border-x font-medium', r === ERA_ROWS.length - 1 && 'border-b-primary/40 rounded-b-xl border-b') : 'text-muted-foreground')}>
+              {e[key]}
+            </span>
           ))}
-          {ERA_ROWS.map(([label, key], r) => (<Fragment key={key}>
-            <span className='text-muted-foreground border-t py-4 pr-4 text-xs leading-tight sm:text-sm'>{label}</span>
-            {ERAS.map((e) => (
-              <span key={`${key}-${e.short}`} className={cn('border-t px-2 py-4 text-center leading-tight',
-                e.current ? cn('bg-primary/10 border-x-primary/40 border-x font-medium', r === ERA_ROWS.length - 1 && 'border-b-primary/40 rounded-b-xl border-b') : 'text-muted-foreground')}>
-                {e[key]}
-              </span>
-            ))}
-          </Fragment>))}
-        </div>
-        <ApoLoop />
+        </Fragment>))}
       </div>
     </Section>
   );
