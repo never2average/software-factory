@@ -1102,6 +1102,10 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     refuse_project(app_id, infra, P, root)
     names = ensure_projects(app_id, infra, cb, K, P, adir=adir, say=say, root=root); api, web = names["api"], names["web"]
     present = {r: P.vercel_env_names(cb, n) for r, n in names.items()}
+    stray = sorted((present["web"] & (api_names(F) | {"DATABASE_URL"})) - set(K["required"]) - set(K["optional"]))
+    if stray:   # e.g. an app from the one-project shape, whose <base> was the API: its data would stay behind on the console
+        raise Stop(f"{web} holds the API's own names ({', '.join(stray)}), so it is not a console project; nothing was deployed. "
+                   "Move the app to new project names, or remove those names from it, first.")
     missing = [n for n in infra.get("secrets_user") or [] if not all(n in present[r] for r in project_for(F, K, n))]
     if missing:
         P.ask_nicely_for(app_id, missing); raise Stop(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
