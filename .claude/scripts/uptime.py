@@ -15,7 +15,9 @@ status         prints the last state; with --json the file itself. Also the time
 preview-alert  prints the exact email an alert would send, built from the current state or a made-up outage of the
                app named. Sends nothing.
 install        writes a systemd timer (system units as root, else user units) that runs `check --quiet` every
-               minute, enables and starts it. Idempotent: unchanged files are left alone. `uninstall` removes it.
+               minute, and a second one that runs `lib/db_usage.py --all --write --file-tickets` (database plan usage,
+               read-only at the provider; a ticket at 80% of a limit) every 30 minutes; enables and starts both.
+               Idempotent: unchanged files are left alone. `uninstall` removes both.
 set-email-key  for the operator, in their own terminal: asks for a Resend key with sending access (hidden while
                typed) and keeps it in ~/.config/software-factory/uptime.env (0600). Never in the repository.
 send-test-email --yes   sends one clearly-marked test email to the operator. Only when they asked for one.
@@ -30,7 +32,9 @@ Alert channels:
   log     every alert is appended to .runs/uptime/alerts.jsonl.
 
 Alert text carries the app id, its address, the time, and what each page answered in plain words: an HTTP status
-and reason, a timeout, a refused connection; never a response body, a header or a key.
+and reason, a timeout, a refused connection; never a response body, a header or a key. When the app's /api/ops/health
+answers with its parts' state (503 and {"ok": false, "db": {...}, ...}), the failing part and a classified cause are
+added, e.g. "database: the request was refused (usage limit?)" (lib/health_cause.py); the part's own text is not.
 
 THE GAP, and monitoring from outside: this runs ON the factory machine. If that machine is off, out of disk, or off
 the internet, nothing checks anything and nothing is sent; the board banner turns amber ("the monitor last ran N min
@@ -55,10 +59,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 from factory_local import load_factory  # noqa: E402
+from health_cause import causes as health_causes  # noqa: E402
 
 STATE_DIR = os.environ.get("UPTIME_STATE_DIR") or os.path.join(ROOT, ".runs", "uptime")
 EMAIL_ENV = os.path.expanduser("~/.config/software-factory/uptime.env")
 UNIT = "factory-uptime"
+# The same family: the database plan usage check (lib/db_usage.py), every 30 minutes, so a warning and its ticket never
+# depend on someone having the factory board open (2026-10-19: a database reached its plan limit with no warning).
+DB_UNIT = "factory-db-usage"
+DB_SCRIPT = os.path.join(HERE, "lib", "db_usage.py")
 TIMEOUT_S = 10
 RETRY_PAUSE_S = 2
 DOWN_AFTER = 2                      # consecutive failing checks
@@ -153,13 +162,19 @@ def probe_once(url, timeout_s=TIMEOUT_S):
         with urllib.request.urlopen(req, timeout=timeout_s) as r:
             code, reason, body = r.status, r.reason, r.read(65536)
     except urllib.error.HTTPError as e:
-        code, reason, body = e.code, e.reason, b""
+        try:
+            body = e.read(65536)    # an app's /api/ops/health answers 503 WITH its parts' state: read to name the cause
+        except Exception:           # noqa: BLE001
+            body = b""
+        code, reason = e.code, e.reason
     except Exception as e:          # noqa: BLE001 — every failure is an answer, never a crash of the monitor
         return {"ok": False, "status": None, "answer": _plain_error(e, timeout_s), "ms": int((time.monotonic() - started) * 1000)}
     ms = int((time.monotonic() - started) * 1000)
+    why = health_causes(body)       # "database: the request was refused (usage limit?)": classified, never the body itself
     if not 200 <= code < 300:
         what = "an error page" if code >= 500 else "an unexpected answer"
-        return {"ok": False, "status": code, "answer": f"{what} (HTTP {code} {scrub(reason or '')})".replace(" )", ")"), "ms": ms}
+        answer = f"{what} (HTTP {code} {scrub(reason or '')})".replace(" )", ")")
+        return {"ok": False, "status": code, "answer": answer + (f": {'; '.join(why)}" if why else ""), "ms": ms}
     try:
         data = json.loads(body.decode("utf-8", "replace"))
     except ValueError:
@@ -167,7 +182,8 @@ def probe_once(url, timeout_s=TIMEOUT_S):
     if isinstance(data, dict) and data.get("ok") is False:
         parts = [k for k, v in data.items() if isinstance(v, dict) and v.get("ok") is False]
         return {"ok": False, "status": code, "ms": ms,
-                "answer": "it is running but reports a problem" + (f" with: {', '.join(scrub(p) for p in parts[:5])}" if parts else "")}
+                "answer": "it is running but reports a problem" + (f": {'; '.join(why)}" if why else
+                                                                     f" with: {', '.join(scrub(p) for p in parts[:5])}" if parts else "")}
     return {"ok": True, "status": code, "answer": f"OK (HTTP {code})", "ms": ms}
 
 
@@ -509,7 +525,41 @@ def unit_files(python=sys.executable, script=os.path.abspath(__file__), root=ROO
         "WantedBy=timers.target",
         "",
     ])
-    return {f"{UNIT}.service": service, f"{UNIT}.timer": timer}
+    vercel = shutil.which("vercel")
+    path = os.pathsep.join(dict.fromkeys(([os.path.dirname(vercel)] if vercel else [])
+                                         + ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]))
+    db_service = "\n".join([
+        "[Unit]",
+        "Description=Software factory database plan usage check of every app (read-only at the provider)",
+        "After=network-online.target",
+        "Wants=network-online.target",
+        "",
+        "[Service]",
+        "Type=oneshot",
+        f"WorkingDirectory={root}",
+        # `vercel api` reads this machine's Vercel sign-in under HOME; the Neon key file is under it too
+        f"Environment=HOME={os.path.expanduser('~')}",
+        f"Environment=PATH={path}",
+        f"ExecStart={python} {os.path.join(os.path.dirname(script), 'lib', 'db_usage.py')} --all --write --file-tickets",
+        "TimeoutStartSec=600",
+        "Nice=10",
+        "",
+    ])
+    db_timer = "\n".join([
+        "[Unit]",
+        "Description=Run the software factory database plan usage check every 30 minutes",
+        "",
+        "[Timer]",
+        "OnCalendar=*-*-* *:00,30:00",
+        "RandomizedDelaySec=60",
+        "Persistent=true",
+        f"Unit={DB_UNIT}.service",
+        "",
+        "[Install]",
+        "WantedBy=timers.target",
+        "",
+    ])
+    return {f"{UNIT}.service": service, f"{UNIT}.timer": timer, f"{DB_UNIT}.service": db_service, f"{DB_UNIT}.timer": db_timer}
 
 
 def unit_dir(user):
@@ -561,20 +611,23 @@ def install(user, dry_run=False, run=subprocess.run, directory=None, guard=True)
         return 0
     if changed:
         run(ctl + ["daemon-reload"], check=False)
-    r = run(ctl + ["enable", "--now", f"{UNIT}.timer"], check=False, capture_output=True, text=True)
-    if getattr(r, "returncode", 0) != 0:
-        print(f"systemctl enable failed: {(getattr(r, 'stderr', '') or '').strip()}")
-        return 1
+    for unit in (UNIT, DB_UNIT):
+        r = run(ctl + ["enable", "--now", f"{unit}.timer"], check=False, capture_output=True, text=True)
+        if getattr(r, "returncode", 0) != 0:
+            print(f"systemctl enable {unit}.timer failed: {(getattr(r, 'stderr', '') or '').strip()}")
+            return 1
     if user:
         print("note: a user timer runs while you are logged in unless lingering is on: `loginctl enable-linger $USER`")
     print(f"{UNIT}.timer enabled: the check runs every minute")
+    print(f"{DB_UNIT}.timer enabled: the database plan usage check runs every 30 minutes")
     return 0
 
 
 def uninstall(user, run=subprocess.run, directory=None):
     directory = directory or unit_dir(user)
     ctl = ["systemctl"] + (["--user"] if user else [])
-    run(ctl + ["disable", "--now", f"{UNIT}.timer"], check=False, capture_output=True, text=True)
+    for unit in (UNIT, DB_UNIT):
+        run(ctl + ["disable", "--now", f"{unit}.timer"], check=False, capture_output=True, text=True)
     removed = []
     for name in unit_files(user=user):
         p = os.path.join(directory, name)
@@ -590,15 +643,19 @@ def uninstall(user, run=subprocess.run, directory=None):
 def timer_status(user=None):
     user = (os.geteuid() != 0) if user is None else user
     ctl = ["systemctl"] + (["--user"] if user else [])
-    try:
-        active = subprocess.run(ctl + ["is-active", f"{UNIT}.timer"], capture_output=True, text=True, timeout=10).stdout.strip()
-        show = subprocess.run(ctl + ["show", f"{UNIT}.service", "-p", "ExecMainExitTimestamp", "-p", "ExecMainStatus",
-                                     "-p", "Result"], capture_output=True, text=True, timeout=10).stdout.strip()
-        nxt = subprocess.run(ctl + ["show", f"{UNIT}.timer", "-p", "NextElapseUSecRealtime"], capture_output=True,
-                             text=True, timeout=10).stdout.strip()
-    except Exception as e:  # noqa: BLE001
-        return f"timer: unknown ({e})"
-    return f"timer: {active or 'not installed'}; {' '.join(show.split())}; {nxt}"
+    lines = []
+    for unit in (UNIT, DB_UNIT):
+        try:
+            active = subprocess.run(ctl + ["is-active", f"{unit}.timer"], capture_output=True, text=True, timeout=10).stdout.strip()
+            show = subprocess.run(ctl + ["show", f"{unit}.service", "-p", "ExecMainExitTimestamp", "-p", "ExecMainStatus",
+                                         "-p", "Result"], capture_output=True, text=True, timeout=10).stdout.strip()
+            nxt = subprocess.run(ctl + ["show", f"{unit}.timer", "-p", "NextElapseUSecRealtime"], capture_output=True,
+                                 text=True, timeout=10).stdout.strip()
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"{unit} timer: unknown ({e})")
+            continue
+        lines.append(f"{unit} timer: {active or 'not installed'}; {' '.join(show.split())}; {nxt}")
+    return "\n".join(lines)
 
 
 # ---- commands -----------------------------------------------------------------------------------------------------
@@ -697,6 +754,10 @@ def self_test():
                 body, code = json.dumps({"ok": False, "db": {"ok": False, "detail": "password=hunter2"}}).encode(), 200
             elif m == "502":
                 body, code = b"<html>bad gateway</html>", 502
+            elif m == "quota":                 # 2026-10-19: the database provider refused work at its plan's usage limit
+                body, code = json.dumps({"ok": False, "db": {"ok": False, "detail": "Your project has exceeded the compute "
+                                         "time quota. Upgrade your plan to increase limits.", "ms": 30},
+                                         "blob": {"ok": True, "detail": "ok", "ms": 5}}).encode(), 503
             else:
                 body, code = json.dumps({"ok": True}).encode(), 200
             try:
@@ -743,8 +804,14 @@ def self_test():
         check("no answer within the timeout is failing", not r["ok"] and "did not answer within 0.5 seconds" in r["answer"], r)
         mode["web"] = "notok"
         r = probe(f"{base}/api/ops/health", 1, 0)
-        check('{"ok": false} is failing and names the part, never its detail',
-              not r["ok"] and r["answer"] == "it is running but reports a problem with: db" and "hunter2" not in json.dumps(r), r)
+        check('{"ok": false} is failing and names the part and a cause, never its detail',
+              not r["ok"] and r["answer"] == "it is running but reports a problem: database: it failed (a cause the factory "
+              "does not recognise)" and "hunter2" not in json.dumps(r), r)
+        mode["web"] = "quota"
+        r = probe(f"{base}/api/ops/health", 1, 0)
+        check("a 503 health page names the failing part and its cause from its JSON",
+              not r["ok"] and r["answer"] == "an error page (HTTP 503 Service Unavailable): database: the request was refused "
+              "(usage limit?)" and "quota" not in r["answer"], r)
         mode["web"] = "flaky"
         r = probe(f"{base}/api/ops/health", 1, 0)
         check("one retry: a single failed try is not a failure", r["ok"], r)
@@ -867,15 +934,23 @@ def self_test():
         ud = os.path.join(d, "units")
         install(False, run=rec_run, directory=ud, guard=False)
         check("install writes a service and a every-minute timer, reloads, enables",
-              sorted(os.listdir(ud)) == [f"{UNIT}.service", f"{UNIT}.timer"] and ["systemctl", "daemon-reload"] in calls
+              sorted(os.listdir(ud)) == sorted([f"{UNIT}.service", f"{UNIT}.timer", f"{DB_UNIT}.service", f"{DB_UNIT}.timer"])
+              and ["systemctl", "daemon-reload"] in calls
               and ["systemctl", "enable", "--now", f"{UNIT}.timer"] in calls
               and "OnCalendar=*-*-* *:*:00" in open(os.path.join(ud, f"{UNIT}.timer")).read()
               and " check --quiet" in open(os.path.join(ud, f"{UNIT}.service")).read(), calls)
+        db_svc = open(os.path.join(ud, f"{DB_UNIT}.service")).read()
+        check("install also runs the database usage check every 30 minutes, with tickets, needing no open board",
+              ["systemctl", "enable", "--now", f"{DB_UNIT}.timer"] in calls
+              and "OnCalendar=*-*-* *:00,30:00" in open(os.path.join(ud, f"{DB_UNIT}.timer")).read()
+              and f"{DB_SCRIPT} --all --write --file-tickets" in db_svc and "Environment=HOME=" in db_svc, calls)
         calls.clear()
         install(False, run=rec_run, directory=ud, guard=False)
         check("install twice: no file rewritten, no reload", ["systemctl", "daemon-reload"] not in calls, calls)
+        calls.clear()
         uninstall(False, run=rec_run, directory=ud)
-        check("uninstall removes both units", os.listdir(ud) == [])
+        check("uninstall removes every unit and stops both timers", os.listdir(ud) == []
+              and ["systemctl", "disable", "--now", f"{DB_UNIT}.timer"] in calls)
     srv.shutdown()
     print(f"uptime self-test: {'ok' if not fails else f'{len(fails)} failed'}")
     return 1 if fails else 0
