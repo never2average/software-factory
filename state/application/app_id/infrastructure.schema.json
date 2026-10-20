@@ -28,6 +28,16 @@
           "type": "string",
           "description": "Base name of the app's three projects (<project>, <project>-api, <project>-workflow). Never an address: the addresses are read from Vercel after each deploy (mold_v1-239)."
         },
+        "projects": {
+          "type": "object",
+          "description": "A single-service mold's two projects on Vercel (mold_v0-029), written by intake and the deploy from vercel.project: api is <project>-api (the API and MCP function, the only one with the app's database), web is <project> (the web console). Never by hand; validate refuses names the base does not give.",
+          "properties": {
+            "api": {"type": "string"},
+            "web": {"type": "string"}
+          },
+          "required": ["api", "web"],
+          "additionalProperties": false
+        },
         "name_prefix": {
           "type": "string",
           "description": "Word put in front of the project name when <project>.vercel.app is someone else's (default: the app's customer_id)."
@@ -89,6 +99,11 @@
             },
             "web": {
               "type": "string"
+            },
+            "pages": {
+              "type": "object",
+              "description": "A single-service mold's console pages (mold_v0-029): the HTTP status each answered without following a redirect (a sign-in redirect counts as answering), or \"no answer\".",
+              "additionalProperties": {"type": "string"}
             }
           },
           "additionalProperties": false

@@ -54,7 +54,7 @@ so `run` can be repeated at any time and picks up where things stand:
 A SINGLE-SERVICE MOLD (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028) keeps the same ten stations and order.
 packs, brand, workspaces and package are "not needed", each with the reason its mold.json gives; keys reads provision.py's
 check as for a server of its own; deploy runs `provision.py <app> --deploy-remote` (its own compose stack, target
-compose_remote) or `--deploy` (one Vercel project), and needs no sign-in; tests is done when the five lanes ran after the
+compose_remote) or `--deploy` (two Vercel projects: the API, then the console), and needs no sign-in; tests is done when the five lanes ran after the
 deploy and none failed, and asks the operator for one yes when the MCP check still lacks an organisation of its own
 (`provision.py <app> --lane-key`). code-request and code are mold_v1's emailed sign-in and refuse such an app.
 
@@ -418,7 +418,7 @@ def do(app, name):
         if os.path.exists(ans): args += ["--answers", ans]
         return py(*args).returncode in (0,)
     if name == "deploy" and single_service.applies(a, ROOT):
-        # Its own compose stack on its own server, or one Vercel project: no sign-in, no smoke chat (mold_v0-028).
+        # Its own compose stack on its own server, or two Vercel projects (the API and the console): no sign-in, no smoke chat (mold_v0-028/029).
         return py(os.path.join(S, "provision.py"), app, "--deploy-remote" if i.get("target") == "compose_remote" else "--deploy").returncode == 0
     if name == "deploy" and (i or {}).get("target") == "vercel" and st_deploy(app, a, i)[1] == SMOKE_PENDING:
         return py(os.path.join(S, "provision.py"), app, "--smoke").returncode == 0
