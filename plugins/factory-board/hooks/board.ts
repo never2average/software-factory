@@ -1,4 +1,4 @@
-import type { AgentUsage, AppRow, Build, BuildBasis, Check, CostBasis, Measured, MoldRow, ProductRow, Ticket, Uptime, UptimeApp, UptimeBanner, Usage, UsageNumbers, UserUsage } from '../types'
+import type { AgentUsage, AppRow, Build, BuildBasis, Check, CostBasis, DbBanner, DbLimit, DbLine, DbUsage, DbWarning, Measured, MoldRow, ProductRow, Ticket, Uptime, UptimeApp, UptimeBanner, Usage, UsageNumbers, UserUsage } from '../types'
 
 // Pure readers of the factory's own state files (state/factory.json, state/products.json,
 // state/application/<id>/*.json, state/tasks/<mold>.jsonl). No I/O here, so the tests drive them directly.
@@ -436,4 +436,181 @@ export function uptimeBanner(u: Uptime | null, now: number): UptimeBanner {
   if (stale) lines.push(`Uptime monitor last ran ${since(u.checkedAt, now)} ago; it may have stopped (uptime.py status).`)
   if (down.length) return { level: 'down', lines }
   return stale ? { level: 'stale', lines } : { level: 'ok', lines: [] }
+}
+
+/* ---- why an app is down: the app's /api/ops/health JSON ----------------------------------------------------------- */
+
+/** The health JSON's parts, in the order the board names them. */
+const HEALTH_PARTS: [string, string][] = [
+  ['db', 'database'],
+  ['blob', 'file storage'],
+  ['inference', 'the assistant'],
+  ['taskWorkflow', 'background tasks'],
+]
+
+/** First match wins. The TypeScript twin of .claude/scripts/lib/health_cause.py (RULES): change both. */
+const CAUSE_RULES: [RegExp, string][] = [
+  [/\b53000\b|insufficient[_ ]resources|quota|usage limit|exceeded the|limit (?:was |has been )?reached|plan limit/i, 'the request was refused (usage limit?)'],
+  [/\b53300\b|too many (?:clients|connections)|remaining connection slots/i, 'too many connections at once'],
+  [/password authentication failed|\b28P01\b|\b28000\b|role \S+ does not exist/i, 'sign-in to it was refused (wrong password or role)'],
+  [/suspended|endpoint (?:is |has been )?disabled/i, 'it is switched off at the provider (suspended)'],
+  [/ECONNREFUSED|connection refused/i, 'it refused the connection (not running?)'],
+  [/ENOTFOUND|EAI_AGAIN|getaddrinfo|could not be found/i, 'its address could not be found'],
+  [/timed? ?out|timeout|ETIMEDOUT|aborted/i, 'it did not answer in time'],
+  [/MISCONFIGURED|not configured|unset or unusable|\bno [A-Z][A-Z_]{3,}\b/, 'it is not set up (a setting is missing)'],
+  [/returned (\d{3})/, 'it answered with an error (HTTP $1)'],
+  [/not ready|unhealthy/i, 'it reports it is not ready'],
+]
+export const UNKNOWN_CAUSE = 'it failed (a cause the factory does not recognise)'
+
+/** One part's plain cause from its detail text; the text itself is never shown (it can carry a host or a role). */
+export function causeOf(detail: unknown): string {
+  const text = String(detail ?? '')
+  for (const [rx, words] of CAUSE_RULES) {
+    const m = text.match(rx)
+    if (m) return words.replace('$1', m[1] ?? '')
+  }
+  return UNKNOWN_CAUSE
+}
+
+/** "<part>: <cause>" for each part the app's health JSON reports failing; [] when the body is not that JSON. */
+export function healthCauses(body: string): string[] {
+  let data: Json
+  try {
+    data = JSON.parse(body)
+  } catch {
+    return []
+  }
+  if (!data || typeof data !== 'object' || data.ok !== false) return []
+  return HEALTH_PARTS.filter(([key]) => data[key]?.ok === false).map(([key, part]) => `${part}: ${causeOf(data[key]?.detail)}`)
+}
+
+/** What the board says for a down app: each failing page with its causes, e.g. "web 503: database: the request was refused …". */
+export function downReasons(checks: readonly Check[]): string[] {
+  return checks
+    .filter(c => !(typeof c.status === 'number' && c.status >= 200 && c.status < 300) && c.status !== 'pending')
+    .map(c => `${c.name} ${String(c.status)}${c.causes?.length ? `: ${c.causes.join('; ')}` : ''}`)
+}
+
+/** The status-line summary; a down app is named with its first cause, not only counted. */
+export function summary(apps: readonly AppRow[], open: number): string {
+  const live = apps.filter(a => a.checks.length > 0)
+  const healthy = live.filter(a => verdict(a.checks) === 'healthy').length
+  const down = live.filter(a => verdict(a.checks) === 'down')
+  const named = down.map(a => {
+    const cause = a.checks.flatMap(c => c.causes ?? [])[0]
+    return cause ? `${a.id} (${cause})` : a.id
+  })
+  const downText = live.length - healthy ? ` · ${live.length - healthy} down${named.length ? `: ${named.join(', ')}` : ''}` : ''
+  return `factory: ${healthy}/${live.length} apps healthy${downText} · ${open} open ticket${open === 1 ? '' : 's'}`
+}
+
+/* ---- database plan usage: reports/db-usage/<app>.json, written by .claude/scripts/lib/db_usage.py ------------------- */
+
+/** The share of a limit at which the board warns (db_usage.py WARN_AT). */
+export const DB_WARN_PCT = 80
+/** How often the usage is measured: the systemd timer (uptime.py install) and an open board's own tick. */
+export const DB_EVERY_MS = 30 * 60_000
+/** A report older than two periods is stale: whatever it said is no longer a measurement. */
+export const DB_STALE_MS = 2 * DB_EVERY_MS
+
+/** True when the report is older than DB_STALE_MS, or its time cannot be read. */
+export function dbStale(d: DbUsage, now: number): boolean {
+  const at = Date.parse(d.generatedAt)
+  return !Number.isFinite(at) || now - at > DB_STALE_MS
+}
+
+/** Whether the board should measure now: an app (not retired) has no report, or its report is stale. */
+export function dbNeedsMeasure(appIds: readonly string[], reports: Record<string, DbUsage>, now: number): boolean {
+  return appIds.some(id => !reports[id] || dbStale(reports[id]!, now))
+}
+
+const PROVIDER_WORDS: Record<string, string> = { neon: 'Neon', supabase: 'Supabase', self_hosted: 'own server' }
+
+export function parseDbUsage(raw: Json | null | undefined): DbUsage | null {
+  if (!raw || typeof raw !== 'object' || typeof raw.app_id !== 'string') return null
+  const limits: DbLimit[] = (Array.isArray(raw.limits) ? raw.limits : [])
+    .filter((l: Json) => num(l?.limit) !== null && num(l?.used) !== null)
+    .map((l: Json) => ({
+      name: String(l.name ?? ''),
+      limit: num(l.limit)!,
+      unit: String(l.unit ?? ''),
+      used: num(l.used)!,
+      pct: num(l.pct),
+      note: String(l.note ?? ''),
+    }))
+  const warnings: DbWarning[] = (Array.isArray(raw.warnings) ? raw.warnings : []).map((w: Json) => ({
+    limit: String(w?.limit ?? ''),
+    pct: num(w?.pct),
+    level: w?.level === 'limit' ? 'limit' : 'warn',
+    text: String(w?.text ?? ''),
+  }))
+  return {
+    appId: raw.app_id,
+    generatedAt: String(raw.generated_at ?? ''),
+    provider: String(raw.provider ?? ''),
+    resource: String(raw.resource ?? ''),
+    plan: raw.plan && typeof raw.plan === 'object' ? { name: String(raw.plan.name ?? '?'), paid: raw.plan.paid === true } : null,
+    quotaExceeded: typeof raw.quota_exceeded === 'boolean' ? raw.quota_exceeded : null,
+    limits,
+    usage: (Array.isArray(raw.usage) ? raw.usage : [])
+      .filter((u: Json) => num(u?.value) !== null)
+      .map((u: Json) => ({ name: String(u.name ?? ''), value: num(u.value)!, unit: String(u.unit ?? '') })),
+    notMeasured: (Array.isArray(raw.not_measured) ? raw.not_measured : []).map(String),
+    warnings,
+    upgrade: String(raw.upgrade ?? ''),
+  }
+}
+
+const figure = (n: number): string => String(Math.round(n * 100) / 100)
+
+/** One app's database line: its plan, each limit as used/limit (pct), usage with no limit, what was not measured, and
+ * when it was measured. A stale report is "not measured since …": what it said is shown, but never as a calm "ok". */
+export function dbLine(d: DbUsage | null | undefined, now: number): DbLine {
+  if (!d) return { text: 'database: not measured yet', level: 'none' }
+  const line = dbLineOf(d)
+  const when = ago(d.generatedAt, now)
+  if (dbStale(d, now)) {
+    return {
+      text: `database: not measured since ${when} (stale) · last: ${line.text.replace(/^database: /, '')}`,
+      level: line.level === 'ok' ? 'none' : line.level,
+    }
+  }
+  return { text: `${line.text} · measured ${when}`, level: line.level }
+}
+
+function dbLineOf(d: DbUsage): DbLine {
+  const provider = PROVIDER_WORDS[d.provider] ?? (d.provider || 'database')
+  if (!d.plan) {
+    const why = `not measured (${d.notMeasured[0] ?? 'no source'})`
+    // the provider's own flag stands even when the plan could not be read
+    if (d.quotaExceeded) return { text: `database: ${provider} · USAGE LIMIT REACHED · ${why}`, level: 'limit' }
+    return { text: `database: ${provider} · ${why}`, level: 'none' }
+  }
+  const parts = [`database: ${provider} ${d.plan.name}`]
+  if (d.quotaExceeded) parts.push('USAGE LIMIT REACHED')
+  for (const l of d.limits) parts.push(`${l.name.toLowerCase()} ${figure(l.used)}/${figure(l.limit)} ${l.unit}${l.pct === null ? '' : ` (${Math.round(l.pct)}%)`}`)
+  const limited = new Set(d.limits.map(l => l.name.toLowerCase().split(' ')[0]))
+  for (const u of d.usage) {
+    if (!limited.has(u.name.toLowerCase().split(' ')[0])) parts.push(`${u.name.toLowerCase()} ${figure(u.value)} ${u.unit} this period`)
+  }
+  if (d.limits.length === 0 && d.plan.paid) parts.push('billed per use, no fixed limit')
+  const unmeasured = d.notMeasured.filter(n => !/states no fixed usage limit/.test(n))
+  if (unmeasured.length) parts.push(`not measured: ${unmeasured.map(n => n.split(/ \(|: /)[0]).join(', ')}`)
+  // reached only when used >= limit exactly (a pct rounded to 100 is not the limit), or by the provider's own flag
+  const reached = d.limits.some(l => l.limit > 0 && l.used >= l.limit)
+  const near = d.limits.some(l => l.limit > 0 && l.used >= (DB_WARN_PCT / 100) * l.limit)
+  const level = d.quotaExceeded || reached ? 'limit' : near ? 'warn' : 'ok'
+  return { text: parts.join(' · '), level }
+}
+
+/** The banner above the tabs: each app's warning (it names the limit and the upgrade step); quiet when none. A warning
+ * from a stale report stays, with when it was measured. */
+export function dbBanner(reports: Record<string, DbUsage>, now: number): DbBanner {
+  const all = Object.values(reports).sort((a, b) => a.appId.localeCompare(b.appId))
+  const lines = all.flatMap(d =>
+    d.warnings.map(w => (dbStale(d, now) ? `${w.text} (measured ${ago(d.generatedAt, now)}; stale)` : w.text)),
+  )
+  const level = all.some(d => d.quotaExceeded || d.warnings.some(w => w.level === 'limit')) ? 'limit' : lines.length ? 'warn' : 'ok'
+  return { level, lines }
 }

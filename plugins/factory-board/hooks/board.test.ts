@@ -294,3 +294,156 @@ test('uptime: all up is quiet; a monitor that stopped says so; no state file say
   expect(uptimeBanner(parseUptime(null), 0).level).toBe('missing')
   expect(parseUptime({ apps: {} })).toBe(null)
 })
+
+import { DB_STALE_MS, DB_WARN_PCT, UNKNOWN_CAUSE, causeOf, dbBanner, dbLine, dbNeedsMeasure, downReasons, healthCauses, parseDbUsage, summary } from './board'
+
+// The same inputs as .claude/scripts/lib/health_cause.py CASES: the board and the uptime monitor must say the same thing.
+const CAUSES: [string, string][] = [
+  ['Your account or project has exceeded the compute time quota. Upgrade your plan to increase limits.', 'the request was refused (usage limit?)'],
+  ['insufficient_resources (53000)', 'the request was refused (usage limit?)'],
+  ['sorry, too many clients already', 'too many connections at once'],
+  ['password authentication failed for user "app_rw"', 'sign-in to it was refused (wrong password or role)'],
+  ['The endpoint has been disabled. Enable it using Neon API and retry.', 'it is switched off at the provider (suspended)'],
+  ['connect ECONNREFUSED 192.0.2.1:5432', 'it refused the connection (not running?)'],
+  ['getaddrinfo ENOTFOUND db.example.test', 'its address could not be found'],
+  ['The operation was aborted due to timeout', 'it did not answer in time'],
+  ['no DATABASE_URL — the DB is not configured', 'it is not set up (a setting is missing)'],
+  ['agent health returned 502', 'it answered with an error (HTTP 502)'],
+  ['task workflow service reported unhealthy', 'it reports it is not ready'],
+  ['something odd', UNKNOWN_CAUSE],
+]
+
+const HEALTH_503 = JSON.stringify({
+  ok: false,
+  checkedAt: 't',
+  db: { ok: false, detail: 'Your project has exceeded the compute time quota.', ms: 40 },
+  blob: { ok: true, detail: 'write → head → delete ok', ms: 9 },
+  inference: { ok: false, detail: 'agent health returned 503', ms: 5 },
+  taskWorkflow: { ok: true, detail: 'ready', ms: 3 },
+  mail: { configured: false, via: null, detail: 'No channel' },
+})
+
+test('health causes: each failing part of /api/ops/health in plain words, never its own text', async () => {
+  for (const [detail, want] of CAUSES) expect(causeOf(detail)).toBe(want)
+  expect(healthCauses(HEALTH_503)).toEqual(['database: the request was refused (usage limit?)', 'the assistant: it answered with an error (HTTP 503)'])
+  expect(healthCauses(JSON.stringify({ ok: true, db: { ok: true } }))).toEqual([])
+  expect(healthCauses('<html>Bad Gateway</html>')).toEqual([])
+  expect(healthCauses(JSON.stringify({ ok: false, db: { ok: false, detail: 'connect ECONNREFUSED 192.0.2.1:5432' } })).join()).not.toContain('192.0.2.1')
+})
+
+test('a down app is named with its cause, not only counted', async () => {
+  const down = {
+    ...appRow('shop', { status: 'stamped' }, { target: 'vercel', vercel: { production_url: 'https://a.example.test' } }, {}, new Map()),
+    checks: [
+      { name: 'web', url: 'u', status: 503 as const, causes: healthCauses(HEALTH_503) },
+      { name: 'api', url: 'u', status: 200 as const },
+    ],
+  }
+  const up = { ...down, id: 'other', checks: [{ name: 'web', url: 'u', status: 200 as const }] }
+  expect(downReasons(down.checks)).toEqual([
+    'web 503: database: the request was refused (usage limit?); the assistant: it answered with an error (HTTP 503)',
+  ])
+  expect(downReasons([{ name: 'web', url: 'u', status: 'down' }])).toEqual(['web down'])
+  expect(summary([down, up], 2)).toBe('factory: 1/2 apps healthy · 1 down: shop (database: the request was refused (usage limit?)) · 2 open tickets')
+  expect(summary([up], 1)).toBe('factory: 1/1 apps healthy · 1 open ticket')
+})
+
+const DB_FREE = {
+  app_id: 'shop',
+  generated_at: '2026-10-20T06:00:00+00:00',
+  provider: 'neon',
+  resource: 'shop-db',
+  via: 'vercel_integration',
+  plan: { id: 'free_v3', name: 'Free', paid: false },
+  quota_exceeded: false,
+  limits: [{ name: 'Compute time', limit: 100, unit: 'CU-hours', used: 85.25, pct: 85.2, source: 'vercel', note: 'the provider reports hours' }],
+  usage: [{ name: 'Compute', value: 85.25, unit: 'hours' }],
+  not_measured: ['Storage (1 GB per project): the provider reports no figure for it; a Neon API key would measure it'],
+  warnings: [
+    {
+      limit: 'Compute time',
+      pct: 85.2,
+      level: 'warn',
+      text: "shop: database at 85.2% of the Neon Free plan's compute time limit (85.25 of 100 CU-hours). Change the Neon plan from Free to Launch (paid) in Vercel (Integrations → Neon → change plan).",
+    },
+  ],
+  upgrade: 'Change the Neon plan from Free to Launch (paid) in Vercel (Integrations → Neon → change plan).',
+}
+
+/** Ten minutes after DB_FREE was measured. */
+const NOW = Date.parse('2026-10-20T06:10:00Z')
+
+test('database usage: a limit as used/limit (pct), warned at 80%, and what was not measured stays not measured', async () => {
+  const d = parseDbUsage(DB_FREE)!
+  expect(dbLine(d, NOW)).toEqual({
+    text: 'database: Neon Free · compute time 85.25/100 CU-hours (85%) · not measured: Storage · measured 10m ago',
+    level: 'warn',
+  })
+  expect(DB_WARN_PCT).toBe(80)
+  const b = dbBanner({ shop: d }, NOW)
+  expect(b.level).toBe('warn')
+  expect(b.lines[0]).toContain('compute time limit (85.25 of 100 CU-hours)')
+  expect(b.lines[0]).toContain('from Free to Launch (paid)')
+  // under 80%: the line is plain and the banner quiet
+  const calm = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 40, pct: 40 }], warnings: [] })!
+  expect(dbLine(calm, NOW).level).toBe('ok')
+  expect(dbBanner({ shop: calm }, NOW)).toEqual({ level: 'ok', lines: [] })
+  // the provider's own flag: the limit is reached even with no figure
+  const hit = parseDbUsage({ ...DB_FREE, limits: [], quota_exceeded: true, warnings: [{ limit: 'usage quota', pct: null, level: 'limit', text: 'shop: REACHED' }] })!
+  expect(dbLine(hit, NOW).level).toBe('limit')
+  expect(dbLine(hit, NOW).text).toContain('USAGE LIMIT REACHED')
+  expect(dbBanner({ shop: hit, calm: { ...calm, appId: 'calm' } }, NOW)).toEqual({ level: 'limit', lines: ['shop: REACHED'] })
+  // a paid plan: usage shown as measured, no limit invented
+  const paid = parseDbUsage({
+    ...DB_FREE,
+    plan: { id: 'launch_v3', name: 'Launch', paid: true },
+    limits: [],
+    usage: [{ name: 'Compute', value: 4.086, unit: 'hours' }],
+    not_measured: ['the Neon Launch plan states no fixed usage limit (billed per use)'],
+    warnings: [],
+  })!
+  expect(dbLine(paid, NOW)).toEqual({ text: 'database: Neon Launch · compute 4.09 hours this period · billed per use, no fixed limit · measured 10m ago', level: 'ok' })
+  // no source: not measured, with why; no report yet: says so; a broken report is ignored
+  const own = parseDbUsage({ app_id: 'vm', generated_at: DB_FREE.generated_at, provider: 'self_hosted', plan: null, not_measured: ["the database runs on the app's own server"] })!
+  expect(dbLine(own, NOW)).toEqual({ text: "database: own server · not measured (the database runs on the app's own server) · measured 10m ago", level: 'none' })
+  expect(dbLine(undefined, NOW)).toEqual({ text: 'database: not measured yet', level: 'none' })
+  expect(parseDbUsage({ limits: [] })).toBe(null)
+  // a limit without a measured figure is dropped, never read as 0
+  expect(parseDbUsage({ ...DB_FREE, limits: [{ name: 'Storage', limit: 1, unit: 'GB', used: null }] })!.limits).toEqual([])
+})
+
+test('a stale report is "not measured since …", never a calm ok, and makes the board measure again', async () => {
+  const at = Date.parse(DB_FREE.generated_at)
+  const calm = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 40, pct: 40 }], warnings: [] })!
+  const threeDays = at + 3 * 24 * 3_600_000
+  // three days old and it said 40%: the line says it is stale and is not "ok"
+  expect(dbLine(calm, threeDays)).toEqual({
+    text: 'database: not measured since 3d ago (stale) · last: Neon Free · compute time 40/100 CU-hours (40%) · not measured: Storage',
+    level: 'none',
+  })
+  // at the edge: fresh up to two periods (1 hour), stale after
+  expect(dbLine(calm, at + DB_STALE_MS).level).toBe('ok')
+  expect(dbLine(calm, at + DB_STALE_MS + 60_000).level).toBe('none')
+  // a stale warning stays a warning, with its age, in the line and the banner
+  const warn = parseDbUsage(DB_FREE)!
+  expect(dbLine(warn, threeDays).level).toBe('warn')
+  expect(dbBanner({ shop: warn }, threeDays).lines[0]).toContain('(measured 3d ago; stale)')
+  // a time that cannot be read is stale
+  expect(dbLine({ ...calm, generatedAt: '' }, NOW).level).toBe('none')
+  // measure when an app has no report or a stale one; not when every report is fresh
+  expect(dbNeedsMeasure(['shop'], { shop: calm }, NOW)).toBe(false)
+  expect(dbNeedsMeasure(['shop'], { shop: calm }, threeDays)).toBe(true)
+  expect(dbNeedsMeasure(['shop', 'new'], { shop: calm }, NOW)).toBe(true)
+})
+
+test('the provider flag shows on the line with no plan; a pct rounded to 100 is not the limit', async () => {
+  const noPlan = parseDbUsage({ ...DB_FREE, plan: null, limits: [], quota_exceeded: true, not_measured: ['the plan could not be read'] })!
+  expect(dbLine(noPlan, NOW)).toEqual({
+    text: 'database: Neon · USAGE LIMIT REACHED · not measured (the plan could not be read) · measured 10m ago',
+    level: 'limit',
+  })
+  const almost = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 99.96, pct: 100 }] })!
+  expect(dbLine(almost, NOW).level).toBe('warn')
+  const at = parseDbUsage({ ...DB_FREE, limits: [{ ...DB_FREE.limits[0], used: 100, pct: 100 }] })!
+  expect(dbLine(at, NOW).level).toBe('limit')
+})
