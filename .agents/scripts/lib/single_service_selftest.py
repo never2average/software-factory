@@ -142,19 +142,26 @@ def rehearsal(ok):
         code, out = go("zz_shop", "--deploy", "--dry-run")
         ok(code == 0 and "zz-shop-api" in out and "SHOP_API_URL" in out and "BOTH projects" in out and set(W_()["projects"]) == {"zz-shop-api"} and "project add" not in calls(),
            f"rehearsal: --deploy --dry-run shows both projects, the API-address variable and the rollback, and creates nothing: {out[-400:]}")
+        code, out = go("zz_shop", "--json")
+        ok(code == 3 and '"needs_human"' in out and "CLERK_SECRET_KEY" in out and "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in out and set(W_()["projects"]) == {"zz-shop-api"},
+           f"rehearsal: the check stops for the console's two sign-in keys, creating nothing: {out[-400:]}")
+        # what --set-secret leaves behind (it is checked against stand-ins below): the console project, created empty, holding both keys
+        clerk = {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_standin", "CLERK_SECRET_KEY": "sk_standin"}
+        w0 = W_(); w0["projects"]["zz-shop"] = {"id": "prj_zz-shop", "auto": True, "prod": None, "env": dict(clerk), "deps": []}
+        w0["projects"]["zz-shop-api"]["env"]["CLERK_SECRET_KEY"] = "sk_standin"; json.dump(w0, open(W, "w"))
         code, out = go("zz_shop")
-        ok(code == 0 and "Ready" in out and "not created yet" in out and set(W_()["projects"]) == {"zz-shop-api"}, f"rehearsal: the check is read-only and ready: {out[-400:]}")
+        ok(code == 0 and "Ready" in out and set(W_()["projects"]) == {"zz-shop-api", "zz-shop"}, f"rehearsal: with both keys set the check is read-only and ready: {out[-400:]}")
         code, out = go("zz_shop", "--deploy")
         w = W_(); v = inf().get("vercel") or {}
         ok(code == 0 and st()["status"] == "stamped" and v.get("projects") == {"api": "zz-shop-api", "web": "zz-shop"} and v.get("api_url") == api_u and v.get("production_url") == web_u
            and (v.get("health") or {}).get("pages") == {"/admin": "307", "/app": "307"} and inf().get("deployed_at"), f"rehearsal: a first deploy serves both projects: {out[-700:]} {v}")
-        ok(w["projects"]["zz-shop"]["env"] == {"SHOP_API_URL": api_u} and w["projects"]["zz-shop"].get("framework") == "nextjs"
+        ok(w["projects"]["zz-shop"]["env"] == dict(clerk, SHOP_API_URL=api_u) and w["projects"]["zz-shop"].get("framework") == "nextjs"
            and w["projects"]["zz-shop-api"]["env"].get("PUBLIC_URL") == api_u and "APP_VAULT_KEY" in w["projects"]["zz-shop-api"]["env"],
            f"rehearsal: the console holds the API's address and nothing else; the API its database, keys and own address: {sorted(w['projects']['zz-shop']['env'])}")
         lines = [json.loads(l) for l in calls().splitlines()]
         dep = [x["argv"][x["argv"].index("--project") + 1] for x in lines if x.get("tool") == "vercel" and x["argv"][:1] == ["deploy"]]
         adds = [" ".join(x["argv"]) for x in lines if x.get("tool") == "vercel" and x["argv"][:2] == ["project", "add"]]
-        ok(dep[-1] == "zz-shop" and set(dep[:-1]) == {"zz-shop-api"} and adds == ["project add zz-shop --scope t"], f"rehearsal: the API deploys first, the console last; the console project made under the team scope: {dep} {adds}")
+        ok(dep[-1] == "zz-shop" and set(dep[:-1]) == {"zz-shop-api"} and adds == [], f"rehearsal: the API deploys first, the console last, into the project --set-secret made: {dep} {adds}")
         r = subprocess.run([sys.executable, os.path.join(t, ".claude", "scripts", "lib", "single_service.py"), "lane-key-path", "zz_shop"], cwd=t, env=env, capture_output=True, text=True)
         ok(r.returncode == 1 and api_u in r.stderr and web_u not in r.stderr, f"rehearsal: the lanes' MCP check is for the API's address: {r.stderr.strip()[-200:]}")
         good = prod()
