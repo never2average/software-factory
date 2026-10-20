@@ -139,6 +139,8 @@ def cmd_set(a):
     with tasks_lock(a[0].rsplit("-",1)[0]): _set(a)
 def _set(a):
     tid, k, v = a[0], a[1], a[2]; m, ts, t = _find(tid)
+    if k in ("depends_on", "acceptance", "evidence"):   # list fields: a JSON list, or comma-separated ids
+        v = json.loads(v) if v.strip().startswith("[") else [x.strip() for x in v.split(",") if x.strip()]
     t[k] = int(v) if k=="priority" else v; t["updated"] = TODAY; write_tasks(m, ts); print(f"{tid}.{k} = {v}")
 def cmd_close(a):
     with tasks_lock(a[0].rsplit("-",1)[0]): _close(a)
