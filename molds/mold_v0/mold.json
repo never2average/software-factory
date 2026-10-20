@@ -2,25 +2,53 @@
   "$comment": "What the factory reads to run mold_v0 (.claude/scripts/lib/single_service.py). The codebase next to it is a verbatim snapshot and is never edited; every product-specific value the factory needs (env names, the service, its port) is READ from the codebase's own files at plan time, so this file names paths and rules only.",
   "mold_id": "mold_v0",
   "shape": "single_service",
-  "targets": ["compose_remote", "vercel"],
+  "targets": [
+    "compose_remote",
+    "vercel"
+  ],
   "health_path": "/healthz",
   "compose": {
     "file": "deploy/docker-compose.prod.yml",
     "mint": "deploy/bootstrap.sh",
-    "config": {"DOMAIN": "{domain}", "PUBLIC_URL": "https://{domain}"},
+    "config": {
+      "DOMAIN": "{domain}",
+      "PUBLIC_URL": "https://{domain}"
+    },
     "dockerfile": "Dockerfile",
-    "source_excludes": ["node_modules", ".git", ".env", ".env.*", ".pglite*", ".vercel", ".transcripts", "deploy/.env"]
+    "source_excludes": [
+      "node_modules",
+      ".git",
+      ".env",
+      ".env.*",
+      ".pglite*",
+      ".vercel",
+      ".transcripts",
+      "deploy/.env"
+    ]
   },
   "vercel": {
     "config": "vercel.json",
-    "database_ref": "DATABASE_URL",
     "cron_secret": "CRON_SECRET",
-    "config_env": {"PUBLIC_URL": "{url}"}
+    "config_env": {
+      "PUBLIC_URL": "{url}"
+    },
+    "console": {
+      "dir": "web",
+      "build": "npm install --no-package-lock --no-audit --no-fund && NEXT_TELEMETRY_DISABLED=1 npm run build",
+      "out": "web/out"
+    }
   },
   "lane_key": {
     "script": "scripts/create-org.ts",
-    "create": ["Factory lane check", "factory-lane-check"],
-    "again": ["--key", "factory-lane-check", "factory-lanes"],
+    "create": [
+      "Factory lane check",
+      "factory-lane-check"
+    ],
+    "again": [
+      "--key",
+      "factory-lane-check",
+      "factory-lanes"
+    ],
     "url_pattern": "https?://\\S+/mcp/[A-Za-z0-9_-]+"
   },
   "not_needed": {

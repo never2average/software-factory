@@ -2,7 +2,7 @@
 """mint.py — one application, from a description to a tested, live product. The whole line, in order.
 
   mint.py new <app_id> --brief briefs/<app_id>.md [--mold mold_v0|mold_v1]   start one (the brief is a page of plain words;
-                                   without --mold, the mold the brief names, else mold_v1)
+                                   without --mold, the mold on the brief's own `Mold:` line, else mold_v1; an unregistered one is refused)
   mint.py <app_id>                 where it stands: every station, and THE ONE thing that happens next
   mint.py <app_id> run             do every station that needs nobody, in order; stop at the first that needs
                                    the operator (and say exactly what is needed) or at the first that fails
