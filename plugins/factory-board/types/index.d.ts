@@ -1,4 +1,10 @@
-export type Check = { name: string; url: string; status: number | 'down' | 'pending' }
+export type Check = {
+  name: string
+  url: string
+  status: number | 'down' | 'pending'
+  /** When the page failed and answered the app's health JSON: "<part>: <cause>" per failing part (healthCauses). */
+  causes?: string[]
+}
 
 export type AppRow = {
   id: string
@@ -140,6 +146,32 @@ export type Build = {
 
 export type Tab = 'products' | 'molds' | 'tickets' | 'analytics'
 
+/** One plan limit compared with what the provider reported (reports/db-usage/<app>.json, lib/db_usage.py). */
+export type DbLimit = { name: string; limit: number; unit: string; used: number; pct: number | null; note: string }
+
+export type DbWarning = { limit: string; pct: number | null; level: 'warn' | 'limit'; text: string }
+
+/** An app's database plan usage, read from the provider; what no source reports is in notMeasured, never a number. */
+export type DbUsage = {
+  appId: string
+  generatedAt: string
+  provider: string
+  resource: string
+  plan: { name: string; paid: boolean } | null
+  /** The provider's own "a usage limit is reached" flag; null when it gives none. */
+  quotaExceeded: boolean | null
+  limits: DbLimit[]
+  usage: { name: string; value: number; unit: string }[]
+  notMeasured: string[]
+  warnings: DbWarning[]
+  upgrade: string
+}
+
+/** The board's database line for one app: ok, warn (80% or more of a limit) or limit (reached). */
+export type DbLine = { text: string; level: 'ok' | 'warn' | 'limit' | 'none' }
+
+export type DbBanner = { level: 'ok' | 'warn' | 'limit'; lines: string[] }
+
 /** One app in .runs/uptime/state.json, written every minute by .claude/scripts/uptime.py. */
 export type UptimeApp = {
   id: string
@@ -174,6 +206,8 @@ declare module 'claude-code' {
       isComputing: boolean
       computeError: string
       uptime: Uptime | null
+      dbUsage: Record<string, DbUsage>
+      dbError: string
     }
   }
 }

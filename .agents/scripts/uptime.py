@@ -30,7 +30,9 @@ Alert channels:
   log     every alert is appended to .runs/uptime/alerts.jsonl.
 
 Alert text carries the app id, its address, the time, and what each page answered in plain words: an HTTP status
-and reason, a timeout, a refused connection; never a response body, a header or a key.
+and reason, a timeout, a refused connection; never a response body, a header or a key. When the app's /api/ops/health
+answers with its parts' state (503 and {"ok": false, "db": {...}, ...}), the failing part and a classified cause are
+added, e.g. "database: the request was refused (usage limit?)" (lib/health_cause.py); the part's own text is not.
 
 THE GAP, and monitoring from outside: this runs ON the factory machine. If that machine is off, out of disk, or off
 the internet, nothing checks anything and nothing is sent; the board banner turns amber ("the monitor last ran N min
@@ -55,6 +57,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 from factory_local import load_factory  # noqa: E402
+from health_cause import causes as health_causes  # noqa: E402
 
 STATE_DIR = os.environ.get("UPTIME_STATE_DIR") or os.path.join(ROOT, ".runs", "uptime")
 EMAIL_ENV = os.path.expanduser("~/.config/software-factory/uptime.env")
@@ -153,13 +156,19 @@ def probe_once(url, timeout_s=TIMEOUT_S):
         with urllib.request.urlopen(req, timeout=timeout_s) as r:
             code, reason, body = r.status, r.reason, r.read(65536)
     except urllib.error.HTTPError as e:
-        code, reason, body = e.code, e.reason, b""
+        try:
+            body = e.read(65536)    # an app's /api/ops/health answers 503 WITH its parts' state: read to name the cause
+        except Exception:           # noqa: BLE001
+            body = b""
+        code, reason = e.code, e.reason
     except Exception as e:          # noqa: BLE001 — every failure is an answer, never a crash of the monitor
         return {"ok": False, "status": None, "answer": _plain_error(e, timeout_s), "ms": int((time.monotonic() - started) * 1000)}
     ms = int((time.monotonic() - started) * 1000)
+    why = health_causes(body)       # "database: the request was refused (usage limit?)": classified, never the body itself
     if not 200 <= code < 300:
         what = "an error page" if code >= 500 else "an unexpected answer"
-        return {"ok": False, "status": code, "answer": f"{what} (HTTP {code} {scrub(reason or '')})".replace(" )", ")"), "ms": ms}
+        answer = f"{what} (HTTP {code} {scrub(reason or '')})".replace(" )", ")")
+        return {"ok": False, "status": code, "answer": answer + (f": {'; '.join(why)}" if why else ""), "ms": ms}
     try:
         data = json.loads(body.decode("utf-8", "replace"))
     except ValueError:
@@ -167,7 +176,8 @@ def probe_once(url, timeout_s=TIMEOUT_S):
     if isinstance(data, dict) and data.get("ok") is False:
         parts = [k for k, v in data.items() if isinstance(v, dict) and v.get("ok") is False]
         return {"ok": False, "status": code, "ms": ms,
-                "answer": "it is running but reports a problem" + (f" with: {', '.join(scrub(p) for p in parts[:5])}" if parts else "")}
+                "answer": "it is running but reports a problem" + (f": {'; '.join(why)}" if why else
+                                                                     f" with: {', '.join(scrub(p) for p in parts[:5])}" if parts else "")}
     return {"ok": True, "status": code, "answer": f"OK (HTTP {code})", "ms": ms}
 
 
@@ -697,6 +707,10 @@ def self_test():
                 body, code = json.dumps({"ok": False, "db": {"ok": False, "detail": "password=hunter2"}}).encode(), 200
             elif m == "502":
                 body, code = b"<html>bad gateway</html>", 502
+            elif m == "quota":                 # 2026-10-19: the database provider refused work at its plan's usage limit
+                body, code = json.dumps({"ok": False, "db": {"ok": False, "detail": "Your project has exceeded the compute "
+                                         "time quota. Upgrade your plan to increase limits.", "ms": 30},
+                                         "blob": {"ok": True, "detail": "ok", "ms": 5}}).encode(), 503
             else:
                 body, code = json.dumps({"ok": True}).encode(), 200
             try:
@@ -743,8 +757,14 @@ def self_test():
         check("no answer within the timeout is failing", not r["ok"] and "did not answer within 0.5 seconds" in r["answer"], r)
         mode["web"] = "notok"
         r = probe(f"{base}/api/ops/health", 1, 0)
-        check('{"ok": false} is failing and names the part, never its detail',
-              not r["ok"] and r["answer"] == "it is running but reports a problem with: db" and "hunter2" not in json.dumps(r), r)
+        check('{"ok": false} is failing and names the part and a cause, never its detail',
+              not r["ok"] and r["answer"] == "it is running but reports a problem: database: it failed (a cause the factory "
+              "does not recognise)" and "hunter2" not in json.dumps(r), r)
+        mode["web"] = "quota"
+        r = probe(f"{base}/api/ops/health", 1, 0)
+        check("a 503 health page names the failing part and its cause from its JSON",
+              not r["ok"] and r["answer"] == "an error page (HTTP 503 Service Unavailable): database: the request was refused "
+              "(usage limit?)" and "quota" not in r["answer"], r)
         mode["web"] = "flaky"
         r = probe(f"{base}/api/ops/health", 1, 0)
         check("one retry: a single failed try is not a failure", r["ok"], r)
