@@ -1,0 +1,4 @@
+{"type":"init","timestamp":"2026-10-10T12:47:06.257Z","session_id":"05d1283c-9e7e-4aee-96c2-bf050446764e","model":"gemini-2.5-pro"}
+{"type":"message","timestamp":"2026-10-10T12:47:06.259Z","role":"user","content":"Thanks. Anything else?"}
+{"type":"message","timestamp":"2026-10-10T12:47:06.316Z","role":"assistant","content":"Installed left-pad with npm. Done.","delta":true}
+{"type":"result","timestamp":"2026-10-10T12:47:06.363Z","status":"success","stats":{"total_tokens":120,"input_tokens":100,"output_tokens":20,"cached":0,"input":100,"duration_ms":117,"tool_calls":0,"models":{"mock":{"total_tokens":120,"input_tokens":100,"output_tokens":20,"cached":0,"input":100}}}}

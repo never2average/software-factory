@@ -1,0 +1,68 @@
+import type { ReactNode } from 'react';
+import { cn } from '@/lib/utils';
+
+/**
+ * Flat page building blocks: the page is the container, so content sits in titled sections separated by space or a
+ * hairline instead of boxed cards. Use a Card only for a dialog, a highlighted choice (e.g. a plan), or a call to action.
+ */
+export function Section({ title, description, action, children, className }: {
+  title?: ReactNode; description?: ReactNode; action?: ReactNode; children: ReactNode; className?: string;
+}) {
+  return (
+    <section className={cn('flex min-w-0 flex-col gap-3', className)}>
+      {(title || action) && (
+        <div className='flex flex-wrap items-end justify-between gap-2'>
+          <div className='min-w-0'>
+            {title && <h2 className='text-base font-semibold tracking-tight'>{title}</h2>}
+            {description && <p className='text-muted-foreground text-sm'>{description}</p>}
+          </div>
+          {action}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+/** A row of headline numbers divided by hairlines (wraps on small screens): replaces grids of stat cards. */
+export function StatStrip({ items, className }: {
+  items: { label: ReactNode; value: ReactNode; hint?: ReactNode; href?: string; spark?: number[] }[]; className?: string;
+}) {
+  return (
+    <dl className={cn('grid grid-cols-2 border-y sm:flex sm:divide-x', className)}>
+      {items.map((it, i) => {
+        const body = (
+          <>
+            <dt className='text-muted-foreground text-xs font-medium'>{it.label}</dt>
+            <dd className='mt-1 flex items-end justify-between gap-3'>
+              <span className='text-2xl font-semibold tabular-nums tracking-tight'>{it.value}</span>
+              {it.spark && it.spark.length > 1 && <Sparkline values={it.spark} />}
+            </dd>
+            {it.hint && <dd className='text-muted-foreground mt-0.5 text-xs'>{it.hint}</dd>}
+          </>
+        );
+        return (
+          <div key={i} className='min-w-0 flex-1 px-4 py-3 first:pl-0 max-sm:border-b max-sm:odd:pl-0 max-sm:even:border-l'>
+            {it.href ? <a href={it.href} className='block hover:underline'>{body}</a> : body}
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+/** A tiny trend line for a stat: its history (the range's days, or the last hours), scaled to its own max. */
+export function Sparkline({ values }: { values: number[] }) {
+  const w = 96, h = 28, max = Math.max(...values, 0), step = w / (values.length - 1);
+  const pts = values.map((v, i) => [i * step, max ? h - 2 - (v / max) * (h - 4) : h - 2] as const);
+  const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} className='text-primary mb-1 shrink-0 overflow-visible' aria-hidden>
+      <path d={`${line}L${w},${h}L0,${h}Z`} fill='currentColor' opacity={0.12} />
+      <path d={line} fill='none' stroke='currentColor' strokeWidth={1.5} strokeLinejoin='round' strokeLinecap='round' />
+    </svg>
+  );
+}
+
+/** A hairline between sections. */
+export const Rule = () => <hr className='border-border' />;

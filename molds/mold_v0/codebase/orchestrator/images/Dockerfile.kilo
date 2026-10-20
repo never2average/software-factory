@@ -1,0 +1,35 @@
+# Octillion worker image: Kilo Code CLI (npm @kilocode/cli, binary `kilo`).
+# Install: https://kilo.ai/docs/cli (npm i -g @kilocode/cli)
+# Neutral base: node 22, python 3, git, build tools. No dev-tool SDKs, no rules/instructions files, no MCP config.
+FROM node:22-bookworm
+
+ARG HARNESS_VERSION=7.8.8
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      git curl ca-certificates jq ripgrep less procps unzip build-essential \
+      python3 python3-pip python3-venv python-is-python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g "@kilocode/cli@${HARNESS_VERSION}" \
+ && npm cache clean --force \
+ && kilo --version
+
+# Non-root user. npm global prefix in $HOME so the agent can `npm i -g` without sudo.
+RUN useradd -m -s /bin/bash agent \
+ && mkdir -p /home/agent/work /home/agent/.npm-global \
+ && chown -R agent:agent /home/agent
+USER agent
+ENV HOME=/home/agent \
+    NPM_CONFIG_PREFIX=/home/agent/.npm-global \
+    PATH=/home/agent/.npm-global/bin:/home/agent/.local/bin:$PATH \
+    PIP_BREAK_SYSTEM_PACKAGES=1
+# Metadata as labels, not env: env would be visible to the agent and leak context into its session.
+LABEL dev.octillion.harness="kilo" \
+      dev.octillion.harness_version="${HARNESS_VERSION}"
+WORKDIR /home/agent/work
+# Healthcheck prints the harness version (docker inspect --format '{{json .State.Health}}' <c>).
+HEALTHCHECK --interval=5m --timeout=30s --start-period=30s --start-interval=5s --retries=2 CMD kilo --version || exit 1
+# Warm pod: idle until the worker runs the harness with `docker exec -u agent -e KEY=... <c> <cli> ...`.
+# No API keys are baked in; they are passed at exec time.
+CMD ["sleep", "infinity"]

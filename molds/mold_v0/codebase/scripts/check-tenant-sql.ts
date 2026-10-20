@@ -1,0 +1,49 @@
+// Tenant-SQL check (docs/security.md): every SQL query in src/ that touches a tenant table must filter by organization
+// (mention org_id) or say how it is scoped with a /* tenant: ... */ note (e.g. "by session id from a job token").
+// Queries that existed when the check was added are listed in scripts/tenant-sql-baseline.json, pending review;
+// anything new that is unscoped fails.
+//   npm run check:tenant-sql              check
+//   npm run check:tenant-sql -- --update  rewrite the baseline (only after reviewing what changed)
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+const ROOT = path.resolve(import.meta.dirname, "..");
+const TENANT_TABLES = ["agent_sessions", "simulations", "products", "scenarios", "product_research", "org_task_sets",
+  "org_harnesses", "transcript_events", "gateway_usage", "mcp_events", "worker_tokens", "api_keys", "library_submissions", "visibility_reports"];
+const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
+
+const files = readdirSync(path.join(ROOT, "src")).filter((f) => f.endsWith(".ts")).map((f) => path.join("src", f));
+const offenders: { file: string; line: number; hash: string; sql: string }[] = [];
+const literal = /`([^`]*)`|"((?:[^"\\]|\\.)*)"/g;
+for (const file of files) {
+  const src = readFileSync(path.join(ROOT, file), "utf8");
+  // A file-level note constant (const TENANT = "/* tenant: ... */") counts where a query interpolates it.
+  const notes = [...src.matchAll(/const (\w+) = "(\/\*\s*tenant:[^"]*)"/g)];
+  for (const m of src.matchAll(literal)) {
+    const sql = notes.reduce((q, [, name, note]) => q.replaceAll(`\${${name}}`, note), m[1] ?? m[2] ?? "");
+    if (!/\b(SELECT|UPDATE|DELETE|INSERT)\b/.test(sql) || !/\b(FROM|INTO|UPDATE|JOIN)\b/i.test(sql)) continue;
+    const touched = TENANT_TABLES.filter((t) => new RegExp(`\\b(FROM|JOIN|INTO|UPDATE)\\s+${t}\\b`, "i").test(sql));
+    if (!touched.length || /\borg_id\b/.test(sql) || /\/\*\s*tenant:/.test(sql)) continue;
+    const norm = sql.replace(/\s+/g, " ").trim();
+    offenders.push({ file, line: src.slice(0, m.index).split("\n").length, hash: createHash("sha256").update(`${file}\n${norm}`).digest("hex").slice(0, 16), sql: norm.slice(0, 160) });
+  }
+}
+
+if (process.argv.includes("--update")) {
+  writeFileSync(BASELINE, JSON.stringify({
+    note: "Queries on tenant tables without an org_id filter that existed when scripts/check-tenant-sql.ts was added (2026-10-15). Pending review: annotate each with /* tenant: how it is scoped */ or add an org filter, then remove it here.",
+    pending: offenders.map(({ file, hash, sql }) => ({ file, hash, sql })),
+  }, null, 2) + "\n");
+  console.log(`baseline written: ${offenders.length} pending quer${offenders.length === 1 ? "y" : "ies"}`);
+  process.exit(0);
+}
+const known = new Set((JSON.parse(readFileSync(BASELINE, "utf8")).pending as { hash: string }[]).map((x) => x.hash));
+const fresh = offenders.filter((o) => !known.has(o.hash));
+if (fresh.length) {
+  console.error(`TENANT SQL CHECK FAIL: ${fresh.length} new quer${fresh.length === 1 ? "y" : "ies"} on tenant tables without an org filter:`);
+  for (const o of fresh) console.error(`  ${o.file}:${o.line}  ${o.sql}`);
+  console.error("Add an org_id filter, or a /* tenant: <how it is scoped> */ note if it is scoped another way.");
+  process.exit(1);
+}
+console.log(`TENANT SQL CHECK PASS (${offenders.length} baseline quer${offenders.length === 1 ? "y" : "ies"} pending review, 0 new)`);

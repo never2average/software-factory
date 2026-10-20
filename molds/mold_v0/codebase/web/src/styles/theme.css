@@ -1,0 +1,32 @@
+/* Import individual theme files */
+@import './themes/supabase.css';
+
+/* No rubber-band bounce: the root scroller is html, so it needs it too (body alone does nothing in Chrome/Safari).
+   Inner vertical scroll areas (side panels, fixed-height lists) keep their scroll to themselves. */
+html,
+body {
+  overscroll-behavior: none;
+}
+/* Only real vertical scroll areas keep their scroll; a table that merely scrolls sideways (overflow-x-auto, which also
+   makes it a vertical scroll container) must let the wheel scroll the page. */
+.overflow-y-auto {
+  overscroll-behavior-y: contain;
+}
+
+:root {
+  --header-height: calc(var(--spacing, 0.25rem) * 12 + 1px);
+}
+
+/* Apply theme fonts to body for all themes */
+/* This ensures theme-specific fonts override Next.js font variables */
+/* Font variables are defined on [data-theme] (html element) */
+/* We need to override Next.js font variables on body to use html's values */
+/* Using initial removes the property, allowing parent (html) values to cascade */
+[data-theme] body {
+  /* Remove Next.js font variables to allow theme variables from html to cascade */
+  --font-sans: initial;
+  --font-mono: initial;
+  --font-serif: initial;
+  /* Apply font-family - will now resolve from html's [data-theme] variables */
+  font-family: var(--font-sans);
+}

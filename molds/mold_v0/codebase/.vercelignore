@@ -1,0 +1,16 @@
+.git
+.pglite*
+node_modules
+/vault/build
+/deploy
+/docs
+.env
+*.log
+.env.local
+.agents
+.claude
+skills-lock.json
+/scripts
+orchestrator/node_modules
+web
+web-static
