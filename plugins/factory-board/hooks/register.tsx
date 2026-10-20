@@ -1,12 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AppRow, Board, Build, Check, Tab, Ticket, Uptime, Usage } from '../types'
+import type { AppRow, Board, Build, Check, DbUsage, Tab, Ticket, Uptime, Usage } from '../types'
 import {
   STAGES,
   STAGE_WORDS,
   ago,
   buildParts,
+  dbBanner,
+  dbLine,
+  downReasons,
+  healthCauses,
+  parseDbUsage,
+  summary,
   parseBuild,
   sumBuilds,
   fit,
@@ -41,6 +47,9 @@ const BUILD_EVERY_MS = 60 * 60_000
 const COMPUTE_MS = 10 * 60_000
 /** uptime.py writes its state every minute (systemd timer); the board reads it as often. */
 const UPTIME_EVERY_MS = 60_000
+/** lib/db_usage.py reads each database's plan usage from its provider (a few Vercel API reads per app). */
+const DB_EVERY_MS = 30 * 60_000
+const DB_MS = 5 * 60_000
 
 const board = atom({ plugin: 'factory-board', key: 'board' } as const, null)
 const isRefreshing = atom({ plugin: 'factory-board', key: 'isRefreshing' } as const, false)
@@ -55,6 +64,8 @@ const builds = atom({ plugin: 'factory-board', key: 'builds' } as const, {})
 const isComputing = atom({ plugin: 'factory-board', key: 'isComputing' } as const, false)
 const computeError = atom({ plugin: 'factory-board', key: 'computeError' } as const, '')
 const uptime = atom({ plugin: 'factory-board', key: 'uptime' } as const, null)
+const dbUsage = atom({ plugin: 'factory-board', key: 'dbUsage' } as const, {})
+const dbError = atom({ plugin: 'factory-board', key: 'dbError' } as const, '')
 
 type $ = EngineInterface
 
@@ -66,6 +77,7 @@ let root = FALLBACK_ROOT
 let refreshing = false
 let collecting = false
 let computing = false
+let measuringDb = false
 const STORE_KEY = 'last-board'
 
 async function readJson($: $, path: string): Promise<any> {
@@ -117,10 +129,14 @@ async function load($: $): Promise<Board> {
 /** One health page, given up on after PROBE_MS. */
 async function probe($: $, check: Check): Promise<Check> {
   const answer = await Promise.race([
-    $.http.fetch(check.url).then(r => r.status).catch(() => 'down' as const),
-    $.clock.sleep(PROBE_MS).then(() => 'down' as const),
+    $.http
+      .fetch(check.url)
+      // a failing /api/ops/health answers its parts' state: keep the failing part and its cause, never the text itself
+      .then(r => ({ status: r.status, causes: r.status >= 300 ? healthCauses(String(r.text ?? '')) : [] }))
+      .catch(() => ({ status: 'down' as const, causes: [] })),
+    $.clock.sleep(PROBE_MS).then(() => ({ status: 'down' as const, causes: [] })),
   ])
-  return { ...check, status: answer }
+  return { ...check, status: answer.status, ...(answer.causes.length ? { causes: answer.causes } : {}) }
 }
 
 async function refresh($: $): Promise<void> {
@@ -144,6 +160,7 @@ async function refresh($: $): Promise<void> {
     }
     await readUsage($, apps)
     await readBuilds($, apps)
+    await readDbUsage($, apps)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await update($, board, current => ({
@@ -254,11 +271,34 @@ async function computeBuilds($: $): Promise<void> {
   }
 }
 
-function summary(apps: readonly AppRow[], open: number): string {
-  const live = apps.filter(a => a.checks.length > 0)
-  const healthy = live.filter(a => verdict(a.checks) === 'healthy').length
-  const down = live.length - healthy
-  return `factory: ${healthy}/${live.length} apps healthy${down ? ` · ${down} down` : ''} · ${open} open ticket${open === 1 ? '' : 's'}`
+/* ---- database plan usage: reports/db-usage/<app>.json, written by .claude/scripts/lib/db_usage.py ------------------ */
+
+async function readDbUsage($: $, apps: readonly AppRow[]): Promise<void> {
+  const found: Record<string, DbUsage> = {}
+  for (const app of apps) {
+    const parsed = parseDbUsage(await readJson($, `${root}/reports/db-usage/${app.id}.json`).catch(() => null))
+    if (parsed) found[app.id] = parsed
+  }
+  await update($, dbUsage, () => found)
+}
+
+/** Reads every database's usage from its provider (read-only), files a ticket at 80% of a limit, then reads the reports. */
+async function measureDb($: $): Promise<void> {
+  if (measuringDb) return
+  measuringDb = true
+  try {
+    const script = `${root}/.claude/scripts/lib/db_usage.py`
+    if (!(await $.fs.exists(script))) return
+    const ran = await $.process.run(['python3', script, '--all', '--write', '--file-tickets'], { cwd: root, timeoutMs: DB_MS })
+    const why = (ran.stderr || ran.stdout).trim().split('\n').slice(-1)[0] ?? ''
+    await update($, dbError, () => (ran.exitCode === 0 ? '' : `The database usage check stopped (exit ${ran.exitCode}). ${why}`.trim()))
+    const current = await read($, board)
+    if (current) await readDbUsage($, current.apps)
+  } catch (error) {
+    await update($, dbError, () => (error instanceof Error ? error.message : String(error)))
+  } finally {
+    measuringDb = false
+  }
 }
 
 const COLOR = { healthy: 'success', down: 'error', pending: 'subtle', 'n/a': 'inactive' } as const
@@ -297,6 +337,7 @@ export const register: Register = on => {
     $.clock.every(USAGE_EVERY_MS, () => void collect($))
     $.clock.every(BUILD_EVERY_MS, () => void computeBuilds($))
     $.clock.every(UPTIME_EVERY_MS, () => void tickUptime($))
+    $.clock.every(DB_EVERY_MS, () => void measureDb($))
     return started
   })
 
@@ -313,6 +354,7 @@ export const register: Register = on => {
     await $.ui.open({ id: PANE, title: 'Factory board' })
     void refresh($)
     if (arg === 'analytics' && Object.keys(await read($, usage)).length === 0) void collect($)
+    if (arg === 'refresh' || !(await $.fs.exists(`${root}/reports/db-usage`))) void measureDb($)
     const current = await read($, board)
     return { text: current ? summary(current.apps, current.tickets.length) : 'Factory board opened.' }
   })
@@ -324,6 +366,9 @@ export const register: Register = on => {
     const shown = await read($, tab)
     const now = await $.clock.now()
     const banner = uptimeBanner(await read($, uptime), now)
+    const dbReports = await read($, dbUsage)
+    const dbWarn = dbBanner(dbReports)
+    const dbProblem = await read($, dbError)
 
     if (!current) return <Text dimColor>{busy ? 'Reading the factory state…' : 'No data yet. Run /factory refresh.'}</Text>
 
@@ -385,6 +430,24 @@ export const register: Register = on => {
               {app.moldId}@{app.moldCommit || '?'} {app.isCurrent ? 'current' : 'behind'}
             </Text>
           </Box>
+          {health === 'down' && (
+            <Box key={`why-${app.id}`} paddingLeft={2}>
+              <Text color="error" wrap="wrap">
+                why: {downReasons(app.checks).join(' · ')}
+              </Text>
+            </Box>
+          )}
+          {app.status !== 'retired' && (() => {
+            const db = dbLine(dbReports[app.id])
+            const color = db.level === 'limit' ? 'error' : db.level === 'warn' ? 'warning' : undefined
+            return (
+              <Box key={`db-${app.id}`} paddingLeft={2}>
+                <Text color={color} dimColor={!color} wrap="wrap">
+                  {db.text}
+                </Text>
+              </Box>
+            )
+          })()}
           {app.url && (
             <Text dimColor wrap="truncate">
               {'  '}
@@ -475,6 +538,7 @@ export const register: Register = on => {
           ~ est.: work not yet counted, estimated.
         </Text>
         {computeProblem && <Text color="error">{computeProblem}</Text>}
+        {dbProblem && <Text color="error">{dbProblem}</Text>}
       </Box>
     )
 
@@ -784,6 +848,18 @@ export const register: Register = on => {
             </Text>
             {banner.lines.map((line, i) => (
               <Text key={`uptime-line-${i}`} color="error" wrap="wrap">
+                {line}
+              </Text>
+            ))}
+          </Box>
+        )}
+        {dbWarn.level !== 'ok' && (
+          <Box key="db-usage-banner" flexDirection="column" borderStyle="round" borderColor={dbWarn.level === 'limit' ? 'error' : 'warning'} paddingX={1}>
+            <Text bold color={dbWarn.level === 'limit' ? 'error' : 'warning'}>
+              {dbWarn.level === 'limit' ? '✕ A database has reached its plan limit.' : '! A database is near its plan limit.'}
+            </Text>
+            {dbWarn.lines.map((line, i) => (
+              <Text key={`db-line-${i}`} color={dbWarn.level === 'limit' ? 'error' : 'warning'} wrap="wrap">
                 {line}
               </Text>
             ))}

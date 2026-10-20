@@ -35,6 +35,8 @@ Each product in `state/products.json` gets:
   - **Health:** live health (`healthy`, `down`, `pending`, or `n/a` for a retired app), shown only when it isn't plain `stamped`. Its record status shows beside it, as `reverted` or `retired`. Where it runs: `vercel`, or `own server`.
   - **Checks:** the answer from each health page the board loads itself (web, api, and on Vercel the workflow service). Also the workspace-isolation proof from the last deploy: `RLS 62/62` means all 62 workspace tables are locked to their workspace. And what the last deploy found about "Continue with Google": `Google sign-in ok`, `via hub`, or in red `Google sign-in NOT working` (`python3 .claude/scripts/provision.py <app> --google-signin` gives the steps).
   - **Deploy:** when it was last deployed, and the base-code (mold) version it runs. `current` is the factory's latest snapshot; `behind` means a redeploy would update it.
+  - **Why, when it is down:** a red `why:` line names each failing page and, when the app's health page says which part failed, that part and its cause in plain words, for example `why: web 503: database: the request was refused (usage limit?)`. The app's own error text is never shown (it can name a host or a database role). The status line names the down app with its first cause too.
+  - **Database:** its database plan and how much of each limit the provider says is used, for example `database: Neon Free · compute time 85.25/100 CU-hours (85%) · not measured: Storage`. Amber at 80% of a limit, red when it is reached. On a paid plan with no fixed limit it shows the usage this billing period. A figure no source reports says **not measured**, never `0`. See [Database plan usage](#database-plan-usage).
   - **Address:** its web address.
   - **Built:** what it took to make the app, for example `built: $1,299 (shared) + ~$37.62 est. · agent 16h 55m · active 12h 39m · first message → live 21h 33m · 70 deploys`:
     - **built:** the AI (Claude) the factory spent making it, at list prices, read from the agent sessions' own cost counters. On a Claude subscription it is the value used, not an invoice.
@@ -104,11 +106,22 @@ The numbers come from `.claude/scripts/app_usage.py`, which the board runs every
 `.claude/scripts/uptime.py` checks every app that isn't retired once a minute, from a systemd timer on the factory machine (`uptime.py install`; `uptime.py status` shows the timer). It loads the same health pages as the board, with a 10-second timeout and one retry, and writes `.runs/uptime/state.json`, which is not committed.
 
 - An app is **down** after 2 failing checks in a row, so a single blip alerts nobody.
-- While any app is down, a **red banner** sits above the tabs on every tab. It names the app, its address, since when, what it answered, and whether the operator was emailed. The status line starts with `✕ DOWN: <app>`.
+- While any app is down, a **red banner** sits above the tabs on every tab. It names the app, its address, since when, what it answered (with the failing part and its cause when the health page says, e.g. `database: the request was refused (usage limit?)`), and whether the operator was emailed. The status line starts with `✕ DOWN: <app>`.
 - If the monitor hasn't written anything for 5 minutes, an amber line says it may have stopped.
 - The board only reads the monitor's file, once a minute. It never sends anything itself.
 - **Email:** the operator gets an email when the app goes down, again every 30 minutes while it stays down, and when it's back up, with how long it was down. This needs the factory machine's own sending key (`uptime.py set-email-key`, typed by the operator). Without one, the banner is the alert. `uptime.py preview-alert` prints the exact email and sends nothing.
 - **The gap:** the monitor runs on the factory machine, so it can't report that machine being down. The top of `uptime.py` lists free outside options and their trade-offs.
+
+## Database plan usage
+
+`.claude/scripts/lib/db_usage.py` reads each app's database usage from its provider, against the limits its plan states. The board runs it every 30 minutes, on `/factory refresh`, and when there is no report yet. It keeps the results in `reports/db-usage/<app>.json`, which is not committed.
+
+- **Neon or Supabase through Vercel:** read with this machine's Vercel sign-in, so no key of ours is needed. Vercel gives the plan in effect and the limits it states (Neon Free: 100 CU-hours of compute and 1 GB of storage per database). It also gives what the provider reported this billing period (Neon: compute only) and the provider's own "limit reached" flag. Supabase reports no usage figures, so only its flag is read.
+- **Neon's own API:** if the factory machine has a Neon API key, the check also measures storage and data transfer. The key is referenced by name only (`postgres.usage_key_ref` in the app's `datastores.json`, default `NEON_API_KEY`), from the environment or `~/.config/software-factory/db-usage.env`, and is never printed.
+- **A database on the app's own server:** not measured here. `provision.py <app> --capacity` checks that server's disk.
+- **At 80% of any limit**, or when the provider says a limit is reached, a banner sits above the tabs on every tab. It names the app, the limit and the upgrade step, for example changing the Neon plan from Free to Launch in Vercel. A paid plan needs the operator's yes. The check also files one factory ticket for that app and limit, and files no other while that one is open.
+
+Run it yourself with `python3 .claude/scripts/lib/db_usage.py <app>` (prints, writes nothing) or `--all`. `--self-test` runs offline.
 
 ## The status line
 
@@ -126,7 +139,7 @@ Inside the factory there is nothing to do: `.claude/settings.json` turns the plu
 /plugin install factory-board --marketplace never2average/software-factory
 ```
 
-The board reads the factory's records from the folder Claude Code was started in when that folder is the factory, and otherwise from `/root/software-factory`. It never changes a record, a ticket or an app.
+The board reads the factory's records from the folder Claude Code was started in when that folder is the factory, and otherwise from `/root/software-factory`. It never changes a record or an app. The one ticket it may add is the database usage check's warning, described above.
 
 ## Developing it
 
@@ -136,7 +149,8 @@ The board reads the factory's records from the folder Claude Code was started in
 
 The tests are:
 
-- `hooks/board.test.ts` for the readers, the build lines and the product totals;
+- `hooks/board.test.ts` for the readers, the build lines, the product totals, the health causes (the same cases as `lib/health_cause.py --self-test`) and the database lines;
+- `hooks/db-usage-ui.test.tsx`, which checks that a database at 85% of a limit shows its line and the warning banner, and that a down app's card says why, on both surfaces;
 - `hooks/uptime-ui.test.tsx`, which checks that the red banner and the status line show a down app, and stay away while it's up, on both surfaces;
 - `hooks/tickets-ui.test.tsx`, which clicks through the tickets, the filters and the Products & apps tab (with its build lines and **Recompute build costs**) on the terminal and desktop surfaces against a small fake factory.
 
