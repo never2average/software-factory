@@ -148,7 +148,7 @@ def st_keys(app, a, i):
     if i.get("target") != "vercel": return NA, "a vm application's keys live in its own environment file"
     r = quiet(os.path.join(S, "provision.py"), app, "--check"); out = clean(r.stdout + r.stderr)
     if r.returncode == 0: return DONE, (re.search(r"secrets present: \S+", out) or [""])[0] or "all present"
-    missing = list(dict.fromkeys(re.findall(r"--set-secret (\S+)", out)))
+    missing = list(dict.fromkeys(n for n in re.findall(r"--set-secret ([A-Z][A-Z0-9_]*)(?![\w)])", out) if n != "NAME"))   # not the usage line's "--set-secret NAME):"
     MISSING_KEYS[app] = missing
     if not missing: return FAILED, out.strip().splitlines()[-1][:220]
     if single_service.applies(a, ROOT): return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)} (this app's own; never another app's)"
