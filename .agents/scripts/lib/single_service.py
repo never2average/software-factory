@@ -80,6 +80,9 @@ SCRIPTS = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
 TARGETS = ("compose_remote", "vercel")
 Stop = VR.Stop
+class NeedsHuman(Stop):
+    """Only the operator can do the next thing (a value only they hold). provision.py turns it into exit 3 through the
+    `needs` it noted; it never marks the app reverted, because nothing was tried."""
 PROJECT_RE = re.compile(r"^sf-[a-z0-9][a-z0-9-]{1,60}$")
 RELEASE_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 HOST_MIN = {"mem_kb": 3_600_000, "vcpu": 2, "disk_free_gb": 20}   # a "4 GB" plan reports about 3.8 GB; the image build needs ~3
@@ -932,12 +935,24 @@ def refuse_project(app_id, infra, P, root=None):
         raise Stop(f"{app_id}: " + "; ".join(hit) + ". One project is one environment namespace, so this app's values would land in another "
                    f"app's. Give this app its own vercel.project in state/application/{app_id}/infrastructure.json and rerun. Nothing was written.")
 
-def ensure_projects(app_id, infra, cb, K, P, adir=None, say=print, root=None):
-    """The app's two projects, created where absent under the team scope (`vercel project add <name> --scope <team>`),
-    unhooked from git at once, the console set to its framework preset. When NEITHER exists yet and a name is taken in
-    this team or on vercel.app (someone else's), provision.py's own choice of a free base is used and recorded in
-    vercel.name_history before anything is created; the new names pass the same refusals. Returns {role: project}."""
-    v = infra["vercel"]; team = v.get("team", ""); base = v["project"]; names = vercel_projects(base)
+def project_exists(P, name, cb):
+    """True / False for a project of this team, False ONLY when Vercel answers not-found. Any other failure (not signed
+    in, no network, an unreadable answer) is a Stop: a project that cannot be read is never taken for an empty one,
+    which would ask the operator for keys it already holds."""
+    if P._project_meta(name, cb).get("id"): return True
+    rc, doc, err = P._vapi(f"/v9/projects/{name}", cb)
+    e = doc.get("error") if isinstance(doc, dict) else None
+    if (isinstance(e, dict) and e.get("code") == "not_found") or "not found" in (err or "").lower(): return False
+    if isinstance(doc, dict) and doc.get("id"): return True
+    raise Stop(f"{name} could not be read from Vercel ({VR.redact(err or 'no answer')[:160]}), so it is not known what it holds. "
+               "Check that this machine is signed in to Vercel (vercel whoami) and rerun. Nothing was created or deployed.")
+
+def choose_names(app_id, infra, cb, P, adir=None, say=print, root=None):
+    """The app's two project names, BEFORE anything creates either: when NEITHER exists yet and a name is taken in this
+    team or on vercel.app (someone else's), provision.py's own choice of a free base is used and recorded in
+    vercel.name_history; the new names pass the same refusals; no free name at all is refused. Every writer that may
+    create a project (--deploy and --set-secret) comes through here first. Returns {role: project}."""
+    v = infra["vercel"]; base = v["project"]; names = vercel_projects(base)
     if not any(P._project_meta(n, cb).get("id") for n in names.values()):
         new, note = P.choose_project_base(app_id, base, infra, cb)
         if not new: raise Stop(f"refusing to create {base}'s projects: {note}. Set vercel.project in state/application/{app_id}/infrastructure.json to a free name and rerun. Nothing was created.")
@@ -949,6 +964,14 @@ def ensure_projects(app_id, infra, cb, K, P, adir=None, say=print, root=None):
             say(f"  {why}: this app's projects are named {names['api']} (the API) and {names['web']} (the console) instead")
     v["projects"] = names
     if adir: save(os.path.join(adir, "infrastructure.json"), infra)
+    return names
+
+def ensure_projects(app_id, infra, cb, K, P, adir=None, say=print, root=None):
+    """The app's two projects, created where absent under the team scope (`vercel project add <name> --scope <team>`),
+    unhooked from git at once, the console set to its framework preset, under the names choose_names() gives (a free
+    base chosen and recorded when neither exists yet and a name is taken). Returns {role: project}."""
+    team = infra["vercel"].get("team", "")
+    names = choose_names(app_id, infra, cb, P, adir=adir, say=say, root=root)
     for r in ORDER:
         n = names[r]
         ensure_project(n, team, cb, P, say=lambda l, r=r: say(f"{l} ({'the API' if r == 'api' else 'the console'})"))
@@ -1071,9 +1094,12 @@ def console_verdict(P, url, K, read_page=_read_page):
         if not PAGE_OK.match(code or ""): bad.append(f"{pg} answered {_said((code, None, why))}")
     return bad, {"web": str(res[0]) if res[0] else "no answer", "pages": pages}
 
-def rollback_both(before, cb, P, why, by="the deploy's own health check"):
-    """Both projects back on the production deployment recorded before this run, the console first. Never raises: the
-    caller decides how the run ends. Returns the record kept in vercel.rollback."""
+def rollback_both(before, cb, P, why, by="the deploy's own health check", health_urls=None):
+    """Both projects back on the production deployment recorded before this run, the console first, then health read
+    AGAIN on every project that had one to go back to (health_urls: {role: address + health path}). result is
+    'rolled back' only when every such project moved back and each health answered 200 ok (the schema's rule);
+    otherwise it says what was measured. Never raises: the caller decides how the run ends. Returns the record kept
+    in vercel.rollback."""
     rec = {"at": now(), "by": by, "why": why[:300], "projects": {}}
     for r in ("web", "api"):
         b = before.get(r) or {}
@@ -1083,11 +1109,52 @@ def rollback_both(before, cb, P, why, by="the deploy's own health check"):
             if cur.get("id") == b["id"]: rec["projects"][r] = f"already serving {b['id']}"; continue
             ok, detail = P._point_production(b, b["id"], cb, "rollback")
         except SystemExit as e: ok, detail = False, str(e.code if e.code is not None else e)[:200]
+        except BaseException as e:   # never raises: an error (or a second Ctrl-C) here is recorded, and the caller still reverts
+            ok, detail = False, f"the rollback itself stopped ({type(e).__name__})"
         rec["projects"][r] = f"rolled back to {b['id']}" if ok else f"NOT rolled back: {detail}"
+    rec["health"] = {}
+    for r in ("web", "api"):
+        if not (before.get(r) or {}).get("id"): continue      # nothing went back there, so there is nothing to re-read
+        u = (health_urls or {}).get(r)
+        if not u: rec["health"][r] = "no address recorded"; continue
+        try:
+            res = P._read_health(u)
+            rec["health"][r] = "200" if _healthy(res) else (f"{res[0]} (not ok)" if str(res[0]) == "200" else (str(res[0]) or "no answer"))
+        except BaseException as e:   # never raises; a read that blew up is what was measured
+            rec["health"][r] = f"not read: {type(e).__name__}"
     vals = list(rec["projects"].values())
+    moved = any(x.startswith(("rolled back", "already serving")) for x in vals)
+    stayed = [r for r, x in rec["projects"].items() if x.startswith("nothing to roll back to")]
+    healthy = rec["health"] and all(h == "200" for h in rec["health"].values())
     rec["result"] = ("rollback FAILED" if any(x.startswith("NOT") for x in vals) else
-                     "rolled back" if any(x.startswith(("rolled back", "already serving")) for x in vals) else "nothing to roll back to")
+                     "nothing to roll back to" if not moved else
+                     "rolled back, but health is not all 200" if not healthy else
+                     f"partly rolled back: {', '.join(stayed)} had nothing to go back to" if stayed else
+                     "rolled back")
     return rec
+
+def _rollback_recorded(before, cb, P, why, health_urls, v, ipath, infra):
+    """rollback_both, its record kept in vercel.rollback and saved whatever happens (rollback_both never raises; the
+    save still runs if something around it does)."""
+    rec = {"at": now(), "by": "the deploy's own health check", "why": why[:300], "projects": {}, "result": "rollback interrupted"}
+    try:
+        urls = {}
+        try: urls = health_urls()
+        except Exception: pass
+        rec = rollback_both(before, cb, P, why, health_urls=urls)
+    finally:
+        v["rollback"] = rec; save(ipath, infra)
+    return rec
+
+def _rollback_said(rec, names):
+    """One sentence for the operator: where each project now is, and what health said after it."""
+    back = "; ".join(f"{names[role]}: {x}" for role, x in rec["projects"].items())
+    health = ", ".join(f"{names[r]} {h}" for r, h in (rec.get("health") or {}).items())
+    warn = (" THE SITE MAY BE DOWN." if rec["result"] == "rollback FAILED" else
+            f" Health after it is not all 200 ({health}): the site may not be serving." if rec["result"].startswith("rolled back, but") else
+            f" {rec['result'][0].upper() + rec['result'][1:]}, so it still serves this run's deployment." if rec["result"].startswith("partly") else "")
+    if rec["result"] == "rollback interrupted": warn = " THE ROLLBACK WAS INTERRUPTED: THE SITE MAY BE DOWN."
+    return f"Both projects were put back where possible ({back}).{warn}" + (f" Health after it: {health}." if health and not warn else "")
 
 def _stop_text(e): return str(e.code if isinstance(e, SystemExit) and e.code is not None else e)
 
@@ -1100,6 +1167,14 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     pre = console_preflight(K)
     if pre: raise Stop("The console project cannot be deployed from the mold's snapshot as it is; nothing was created:\n  - " + "\n  - ".join(pre))
     refuse_project(app_id, infra, P, root)
+    # the values only the operator holds, BEFORE any project is created or renamed: a project that does not exist yet
+    # holds no names, so every name it must hold is missing. Exit 3 (needs_human) through provision.py; not reverted.
+    now_names = vercel_projects(vercel_project(infra))
+    held = {r: (P.vercel_env_names(cb, n) if project_exists(P, n, cb) else set()) for r, n in now_names.items()}
+    missing = [n for n in infra.get("secrets_user") or [] if not all(n in held[r] for r in project_for(F, K, n))]
+    if missing:
+        P.ask_nicely_for(app_id, missing)
+        raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {now_names['api']} / {now_names['web']}; nothing was created or deployed.")
     names = ensure_projects(app_id, infra, cb, K, P, adir=adir, say=say, root=root); api, web = names["api"], names["web"]
     present = {r: P.vercel_env_names(cb, n) for r, n in names.items()}
     stray = sorted((present["web"] & (api_names(F) | {"DATABASE_URL"})) - set(K["required"]) - set(K["optional"]))
@@ -1108,7 +1183,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
                    "Move the app to new project names, or remove those names from it, first.")
     missing = [n for n in infra.get("secrets_user") or [] if not all(n in present[r] for r in project_for(F, K, n))]
     if missing:
-        P.ask_nicely_for(app_id, missing); raise Stop(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
+        P.ask_nicely_for(app_id, missing); raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
     if ensure_database(app_id, infra, cb, api, present["api"], P, say=say): save(ipath, infra)
     want = [n for n in infra.get("secrets_derived") or [] if n not in present["api"] and n != "DATABASE_URL"]
     for n, val in mint_values(cb, F, want).items():
@@ -1118,10 +1193,17 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
                         cb.rstrip("/") + "/", build + "/"], capture_output=True, text=True)
     if r.returncode: raise Stop(f"the build copy could not be made: {r.stderr.strip()[-200:]}")
     for role, d in (("api", build), ("web", os.path.join(build, K["dir"]))):
-        link = P._link_dir(names[role], cb); os.makedirs(os.path.join(d, ".vercel"), exist_ok=True)
-        shutil.copyfile(os.path.join(link, ".vercel", "project.json"), os.path.join(d, ".vercel", "project.json"))
+        link = P._link_dir(names[role], cb)       # a throwaway temp directory: removed as soon as its link file is copied
+        try:
+            if not link: raise Stop(f"{names[role]} could not be read back from Vercel to link the build copy to it; nothing was deployed.")
+            os.makedirs(os.path.join(d, ".vercel"), exist_ok=True)
+            shutil.copyfile(os.path.join(link, ".vercel", "project.json"), os.path.join(d, ".vercel", "project.json"))
+        finally:
+            if link: shutil.rmtree(link, ignore_errors=True)
     before = {role: P.production_of(n, cb) or {} for role, n in names.items()}
     v["release"] = {"at": now(), "before": {role: before[role].get("id") for role in ORDER}}; v.pop("console", None); save(ipath, infra)
+    # where health is read after a rollback: this run's addresses once known, else the ones the last deploy recorded
+    health_urls = lambda: {r: u + p for r, u, p in (("api", v.get("api_url"), man["health_path"]), ("web", v.get("production_url"), K["proxied_health"])) if u}
     try:
         api_url = ""
         for attempt in (1, 2):
@@ -1142,10 +1224,15 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         bad, h = console_verdict(P, url, K, read_page); v["health"].update(h)
         if bad: raise Stop(f"{web} deployed to {url}, but " + "; ".join(bad))
     except (Stop, SystemExit) as e:
-        why = _stop_text(e); rec = rollback_both(before, cb, P, why); v["rollback"] = rec; save(ipath, infra)
-        back = "; ".join(f"{names[role]}: {x}" for role, x in rec["projects"].items())
-        warn = " THE SITE MAY BE DOWN." if rec["result"] == "rollback FAILED" else ""
-        raise Stop(why.rstrip(".") + f". Both projects were put back where possible ({back}).{warn} Recorded as reverted.")
+        why = _stop_text(e); rec = _rollback_recorded(before, cb, P, why, health_urls, v, ipath, infra)
+        raise Stop(why.rstrip(".") + f". {_rollback_said(rec, names)} Recorded as reverted.")
+    except BaseException as e:   # anything unexpected (a bug, a broken pipe, Ctrl-C) half-way: both back, reverted, then re-raised
+        first = (str(e).strip().splitlines() or [""])[0]           # the first line only, redacted: it lands in state
+        why = f"the deploy stopped on an unexpected error ({type(e).__name__}" + (f": {VR.redact(first)[:160]}" if first else "") + ")"
+        rec = {"result": "rollback interrupted", "projects": {}}
+        try: rec = _rollback_recorded(before, cb, P, why, health_urls, v, ipath, infra)
+        finally: revert(adir, app, why + f". {_rollback_said(rec, names)}")
+        raise
     infra["deployed_at"] = now(); app["status"] = "stamped" if app.get("status") in (None, "planned", "reverted") else app["status"]; app.pop("revert", None)
     app["mold_commit"] = mold_commit(app["mold_id"], root) or app.get("mold_commit", "")
     save(ipath, infra); save(os.path.join(adir, "application.json"), app)
@@ -1185,7 +1272,7 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
     say(f"Ready. See the plan: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
     return 0
 
-def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None):
+def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None, adir=None, say=print):
     """One value, at a hidden prompt, onto the project(s) that read NAME: the API when it reads it, the console when it
     is one of its sign-in names, both when both do. Never DATABASE_URL, and nothing the console does not read."""
     cb = codebase(app["mold_id"], root); man = manifest(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
@@ -1194,8 +1281,9 @@ def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None):
     if name not in declared or not roles: raise Stop(f"{name} is not a name this app reads (it reads: {', '.join(sorted(declared))}). Nothing was stored.")
     if name == "DATABASE_URL": raise Stop(f"{app_id}: DATABASE_URL is written by the database integration at the first deploy and never by hand. Nothing was stored.")
     refuse_project(app_id, infra, P, root)
-    names = vercel_projects(vercel_project(infra)); team = (infra.get("vercel") or {}).get("team", "")
+    names = choose_names(app_id, infra, cb, P, adir=None, say=say, root=root); team = (infra.get("vercel") or {}).get("team", "")
     v = value if value is not None else _hidden_value(app_id, name, P)
+    if adir: save(os.path.join(adir, "infrastructure.json"), infra)   # the name choice is recorded once a value is in hand, before any project is made
     for r in roles:
         if ensure_project(names[r], team, cb, P): print(f"  (created {names[r]} empty to hold {name}: free, no deployment)")
         P._set_env(name, v, cb, project=names[r])
@@ -1217,7 +1305,7 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
             for f in ("--deploy-remote", "--set-remote", "--remote-key", "--qualify-remote", "--rollback-remote"):
                 if f in a: raise Stop(f"{app_id}: {f} is for an app on a server of its own; this one is on Vercel. Use --deploy.")
             refuse_project(app_id, infra, P, root)   # a LIVE project or another app's (either of the two): refused before any read or write
-            if "--set-secret" in a: return set_secret_vercel(app_id, app, infra, a[a.index("--set-secret") + 1], P, root=root)
+            if "--set-secret" in a: return set_secret_vercel(app_id, app, infra, a[a.index("--set-secret") + 1], P, root=root, adir=adir, say=say)
             if "--deploy" in a:
                 if errs: raise Stop("the state does not validate; nothing was done:\n  " + "\n  ".join(errs))
                 man = manifest(app["mold_id"], root); F = compose_facts(cb, man)
@@ -1228,6 +1316,7 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
                     for p in console_preflight(K): say("  NOT READY (a real deploy refuses here, before anything is created): " + p)
                     return 0
                 try: return vercel_deploy(app_id, app, infra, adir, P, say=say, root=root)
+                except NeedsHuman: raise                      # nothing was tried, so nothing is reverted
                 except Stop as e: revert(adir, app, str(e)); raise
             for f in ("--rollback", "--smoke", "--verify-db", "--verify-rls"):
                 if f in a: raise Stop(f"{app_id}: {f} belongs to mold_v1's three-project deploy; this app's --deploy checks both of its projects and rolls both back itself, and its lanes do the rest.")
