@@ -1,7 +1,7 @@
 import { Fragment } from 'react';
 import Link from 'next/link';
 import {
-  IconArrowRight, IconBolt, IconCode, IconEyeOff, IconGitCompare, IconMessageChatbot, IconSearch, IconSparkles, IconTerminal2
+  IconBolt, IconCode, IconEyeOff, IconGitCompare, IconMessageChatbot, IconSearch, IconTerminal2
 } from '@tabler/icons-react';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -53,10 +53,7 @@ export function Hero() {
       <div className='relative mx-auto max-w-6xl px-4 pt-16 pb-14 sm:px-6 sm:pt-24 sm:pb-20'>
         <div className='grid gap-12 lg:grid-cols-[1fr_1.1fr] lg:items-center'>
           <div className='min-w-0'>
-            <Link href='/#apo' className='border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors'>
-              <IconSparkles className='size-3.5' /> Agentic Preference Optimization <IconArrowRight className='size-3.5' />
-            </Link>
-            <h1 className='mt-6 text-3xl font-semibold tracking-tight text-balance sm:text-4xl lg:text-[2.75rem] lg:leading-[1.1]'>
+            <h1 className='text-3xl font-semibold tracking-tight text-balance sm:text-4xl lg:text-[2.75rem] lg:leading-[1.1]'>
               Get picked by <span className='text-primary'>coding agents.</span>
             </h1>
             <p className='text-muted-foreground mt-4 max-w-md text-base text-pretty sm:text-lg'>Octillion measures how often AI coding agents choose your dev tool, and shows why.</p>
@@ -101,7 +98,7 @@ function DecisionGraph() {
   const ys = [50, 150, 250, 350];
   return (
     <figure className='min-w-0'>
-      <PicksList />
+      <DecisionGraphVertical />
       <svg viewBox='0 0 560 400' className='hidden h-auto w-full sm:block' role='img' aria-label='One prompt sent to four coding agents: two pick Postgres, one picks MongoDB, one uses SQLite.'>
         <rect x='1' y='174' width='170' height='52' rx='10' className='fill-card stroke-border' />
         <text x='18' y='206' className='fill-foreground font-mono text-[15px]'>&gt; add a database</text>
@@ -127,23 +124,35 @@ function DecisionGraph() {
   );
 }
 
-const PILL = { good: 'border-primary/50 bg-primary/15 text-primary', bad: 'border-destructive/50 bg-destructive/15 text-destructive', meh: 'bg-muted text-muted-foreground' };
-
-/** The same picture on a phone, where the SVG's text would be too small to read: the prompt, then one row per agent. */
-function PicksList() {
+/**
+ * The same graph turned vertical for phones, drawn at 1:1 so the text stays readable: the prompt on top, a trunk down
+ * the left that branches into one row per agent, each row flowing into its pick.
+ */
+function DecisionGraphVertical() {
+  const top = 70, step = 58;
+  const ys = PICKS.map((_, i) => top + 22 + i * step);
   return (
-    <div className='flex flex-col gap-2 sm:hidden' aria-hidden='true'>
-      <div className='bg-card mb-1 w-fit rounded-lg border px-3 py-2 font-mono text-sm'>&gt; add a database</div>
-      {PICKS.map((p) => (
-        <div key={p.agent} className='flex items-center gap-3 font-mono text-sm'>
-          <span className='bg-card flex flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-muted-foreground'>
-            <AgentLogo id={p.agent} size={16} className='text-foreground' aria-hidden='true' />{p.agent}
-          </span>
-          <span className='text-muted-foreground'>→</span>
-          <span className={cn('w-28 rounded-full border px-3 py-1.5 text-center font-medium', PILL[p.tone])}>{p.pick}</span>
-        </div>
-      ))}
-    </div>
+    <svg viewBox='0 0 340 316' className='h-auto w-full sm:hidden' role='img' aria-label='One prompt sent to four coding agents: two pick Postgres, one picks MongoDB, one uses SQLite.'>
+      <rect x='1' y='1' width='176' height='42' rx='9' className='fill-card stroke-border' />
+      <text x='14' y='27' className='fill-foreground font-mono text-[13px]'>&gt; add a database</text>
+      {ys.map((y, i) => {
+        const p = PICKS[i];
+        const branch = `M22 43 L22 ${y - 14} Q22 ${y} 36 ${y} L48 ${y}`;
+        return (
+          <g key={p.agent}>
+            <path d={branch} fill='none' className='stroke-border' strokeWidth='1.5' />
+            <path d={branch} fill='none' className={FLOW} strokeWidth='1.5' />
+            <rect x='48' y={y - 18} width='150' height='36' rx='8' className='fill-card stroke-border' />
+            <AgentLogo id={p.agent} x='58' y={y - 8} size={16} className='text-foreground' aria-hidden='true' />
+            <text x='82' y={y + 4.5} className='fill-muted-foreground font-mono text-[13px]'>{p.agent}</text>
+            <path d={`M198 ${y} L226 ${y}`} className='stroke-border' strokeWidth='1.5' />
+            <path d={`M198 ${y} L226 ${y}`} className={FLOW} strokeWidth='1.5' />
+            <rect x='226' y={y - 18} width='113' height='36' rx='18' className={TONE[p.tone].box} />
+            <text x='282.5' y={y + 4.5} textAnchor='middle' className={cn('font-mono text-[13px] font-medium', TONE[p.tone].text)}>{p.pick}</text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -265,48 +274,68 @@ export function WhatIsApo() {
   );
 }
 
-const LOOP = [
-  { x: 210, y: 52, label: 'Profile product', sub: 'what you sell, who buys it' },
-  { x: 368, y: 210, label: 'Blind tasks', sub: 'real work, never naming you' },
-  { x: 210, y: 368, label: 'Agents run', sub: 'every major coding agent' },
-  { x: 52, y: 210, label: 'Score & fix', sub: 'docs, SDKs, examples' }
+const STEPS = [
+  { n: '01', label: 'Profile product', sub: 'what you sell, who buys it' },
+  { n: '02', label: 'Blind tasks', sub: 'real work, never naming you' },
+  { n: '03', label: 'Agents run', sub: 'every major coding agent' }
 ];
 
-function ApoLoop() {
+/** An arrowhead pointing down (or left) with its tip at x, y. */
+const tipDown = (x: number, y: number) => `M${x - 4.5} ${y - 7} L${x + 4.5} ${y - 7} L${x} ${y} Z`;
+const tipLeft = (x: number, y: number) => `M${x + 7} ${y - 4.5} L${x + 7} ${y + 4.5} L${x} ${y} Z`;
+
+/** A dashed, flowing connector with its arrowhead. */
+function Flow({ d, tip }: { d: string; tip: string }) {
   return (
-    <>
-      <ol className='flex flex-col gap-2 sm:hidden' aria-label='The APO loop, repeated every release'>
-        {LOOP.map((s, i) => (
-          <li key={s.label} className='border-primary/60 flex items-baseline gap-3 rounded-xl border px-4 py-3'>
-            <span className='text-primary font-mono text-xs'>{`0${i + 1}`}</span>
-            <span className='flex flex-col'>
-              <span className='font-medium'>{s.label}</span>
-              <span className='text-muted-foreground text-sm'>{s.sub}</span>
-            </span>
-          </li>
-        ))}
-        <li className='text-muted-foreground pt-1 font-mono text-xs'>↻ repeat every release</li>
-      </ol>
-      <ApoLoopDiagram />
-    </>
+    <g>
+      <path d={d} fill='none' className='stroke-border' strokeWidth='1.5' />
+      <path d={d} fill='none' className={FLOW} strokeWidth='2' />
+      <path d={tip} className='fill-primary' />
+    </g>
   );
 }
 
-function ApoLoopDiagram() {
+/**
+ * APO as an if/else: profile, pose blind tasks, let the agents run, then branch on the verdict. Picked: keep it there
+ * by tracking the pick rate every release. Not picked: score the transcripts, fix docs/SDKs/examples, and run again.
+ * One vertical drawing at every width, drawn near 1:1 on a phone so its text stays readable.
+ */
+function ApoLoop() {
+  const W = 280, h = 56, x0 = 40, cx = 180;
+  const ys = STEPS.map((_, i) => i * (h + 28));
+  const dy = ys[2] + h + 30 + 40; // diamond centre
+  const by = dy + 80; // branch boxes' top
   return (
-    <svg viewBox='-60 -10 540 440' className='mx-auto hidden h-auto w-full max-w-lg sm:block' role='img' aria-label='The APO loop: profile your product, pose blind tasks, agents run them, score and fix, repeat every release.'>
-      <circle cx='210' cy='210' r='158' fill='none' className='stroke-border' strokeWidth='1.5' />
-      <circle cx='210' cy='210' r='158' fill='none' className={FLOW} strokeWidth='2' />
-      <text x='210' y='212' textAnchor='middle' className='fill-primary font-mono text-[34px] font-semibold'>APO</text>
-      <text x='210' y='238' textAnchor='middle' className='fill-muted-foreground font-mono text-[12px]'>repeat every release</text>
-      {LOOP.map((s, i) => (
-        <g key={s.label}>
-          <rect x={s.x - 92} y={s.y - 30} width='184' height='60' rx='14' className='fill-background stroke-primary/60' />
-          <text x={s.x - 76} y={s.y - 4} className='fill-primary font-mono text-[12px]'>{`0${i + 1}`}</text>
-          <text x={s.x - 52} y={s.y - 4} className='fill-foreground text-[14px] font-medium'>{s.label}</text>
-          <text x={s.x - 76} y={s.y + 16} className='fill-muted-foreground text-[11.5px]'>{s.sub}</text>
+    <svg viewBox='0 0 380 460' className='mx-auto h-auto w-full max-w-md' role='img'
+      aria-label='APO: profile your product, pose blind tasks, agents run them. If an agent picks you, track the pick rate every release; if not, score and fix your docs, SDKs and examples, then run again.'>
+      {ys.slice(0, -1).map((y) => <Flow key={y} d={`M${cx} ${y + h} L${cx} ${y + h + 27}`} tip={tipDown(cx, y + h + 28)} />)}
+      <Flow d={`M${cx} ${ys[2] + h} L${cx} ${dy - 41}`} tip={tipDown(cx, dy - 40)} />
+      {STEPS.map((st, i) => (
+        <g key={st.n}>
+          <rect x={x0} y={ys[i] + 1} width={W} height={h} rx='14' className='fill-background stroke-primary/60' />
+          <text x={x0 + 16} y={ys[i] + 26} className='fill-primary font-mono text-[12px]'>{st.n}</text>
+          <text x={x0 + 42} y={ys[i] + 26} className='fill-foreground text-[14px] font-medium'>{st.label}</text>
+          <text x={x0 + 16} y={ys[i] + 45} className='fill-muted-foreground text-[12px]'>{st.sub}</text>
         </g>
       ))}
+      {/* if: did the agent pick you? */}
+      <path d={`M${cx} ${dy - 40} L${cx + 78} ${dy} L${cx} ${dy + 40} L${cx - 78} ${dy} Z`} className='fill-primary/10 stroke-primary' strokeWidth='1.5' />
+      <text x={cx} y={dy + 5} textAnchor='middle' className='fill-foreground text-[14px] font-semibold'>Picked you?</text>
+      <Flow d={`M${cx - 78} ${dy} L${83} ${dy} L${83} ${by - 1}`} tip={tipDown(83, by)} />
+      <text x={cx - 92} y={dy - 8} textAnchor='end' className='fill-primary font-mono text-[12px]'>yes</text>
+      <Flow d={`M${cx + 78} ${dy} L${255} ${dy} L${255} ${by - 1}`} tip={tipDown(255, by)} />
+      <text x={cx + 92} y={dy - 8} className='fill-destructive font-mono text-[12px]'>no</text>
+      {/* then: keep it */}
+      <rect x='1' y={by} width='164' height={h} rx='14' className='fill-primary/15 stroke-primary/60' />
+      <text x='16' y={by + 25} className='fill-primary text-[14px] font-medium'>✓ Picked</text>
+      <text x='16' y={by + 44} className='fill-muted-foreground text-[12px]'>track it every release</text>
+      {/* else: fix and run again */}
+      <rect x='175' y={by} width='160' height={h} rx='14' className='fill-background stroke-destructive/60' />
+      <text x='190' y={by + 25} className='fill-foreground text-[14px] font-medium'><tspan className='fill-destructive font-mono text-[12px]'>04</tspan><tspan dx='8'>Score &amp; fix</tspan></text>
+      <text x='190' y={by + 44} className='fill-muted-foreground text-[12px]'>docs, SDKs, examples</text>
+      <Flow d={`M255 ${by + h} L255 ${by + h + 14} Q255 ${by + h + 22} 263 ${by + h + 22} L352 ${by + h + 22} L352 ${ys[2] + h / 2} L${x0 + W + 8} ${ys[2] + h / 2}`}
+        tip={tipLeft(x0 + W + 1, ys[2] + h / 2)} />
+      <text x='368' y={(by + ys[2] + h) / 2} textAnchor='middle' transform={`rotate(-90 368 ${(by + ys[2] + h) / 2})`} className='fill-muted-foreground font-mono text-[11px]'>run again</text>
     </svg>
   );
 }
