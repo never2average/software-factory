@@ -13,11 +13,16 @@ Two deploy targets (infrastructure.target):
                   handling, the DNS precondition, the key pair, the hidden prompt for values only the operator holds,
                   the env file (names in, names out; root, mode 600) and the firewall rules, and deploys the mold's own
                   compose stack under a project name of the app's own (sf-<app-id>), never the compose file's default.
-  vercel          one Vercel project, when the mold's vercel.json describes one function (mold_v0's does): never a LIVE
-                  project or another app's (provision.py's refusal), its own Neon Postgres (provision.py's provisioning,
-                  proven empty first; DATABASE_URL written by the integration, never here), the product's keys minted,
-                  production put back on the deployment before when the health check fails, and the web console served
-                  by the same function when the product's console builds as a static export (console_overlay).
+  vercel          TWO Vercel projects (mold_v0-029): <project>-api, the API function from the mold's own vercel.json,
+                  and <project>, the web console (a server-rendered Next.js app in the mold's web/) as its own Next.js
+                  project, pointed at the API through the API-address variable its next.config reads. Neither may be a
+                  LIVE project or another app's (provision.py's refusal, plus every name another app holds); both are
+                  created under the team scope, and a base name taken on vercel.app is suffixed (provision.py's own
+                  choice, recorded). Only the api project gets the app's own Neon Postgres (provision.py's provisioning,
+                  proven empty first; DATABASE_URL written by the integration, never here) and the product's minted keys;
+                  the console gets the API's address and only the sign-in names the operator sets for it. Deployed api
+                  first, then the console; health on both; when either fails, BOTH go back to the production deployment
+                  that served before.
 
 Through provision.py (main_for):
 
@@ -26,10 +31,10 @@ Through provision.py (main_for):
   provision.py <app_id> --remote-key                     the SSH key pair named by ssh_key_ref; prints the PUBLIC half
   provision.py <app_id> --qualify-remote                 the read-only host probe, judged for a compose stack
   provision.py <app_id> --deploy-remote [--dry-run]      the deploy (compose_remote); --dry-run prints every step
-  provision.py <app_id> --deploy [--dry-run]             the deploy (vercel, one project)
+  provision.py <app_id> --deploy [--dry-run]             the deploy (vercel: the api project, then the console project)
   provision.py <app_id> --rollback-remote [--dry-run]    the server back to the release that served before
   provision.py <app_id> --set-secret NAME                one value at a hidden prompt, into the server's env file (or
-                                                         the Vercel project); it applies at the next deploy
+                                                         the Vercel project(s) that read NAME); it applies at the next deploy
   provision.py <app_id> --lane-key [--dry-run] [--yes]   an organisation of the app's own for the lanes' MCP check (the
                                                          product's own org:create), its connector address kept in a
                                                          private file outside the repository. It writes to the app's
@@ -209,21 +214,25 @@ def preflight(cb, F, S):
 def slug(app_id): return app_id.replace("_", "-")
 def install_path(app_id): return f"/opt/software-factory/{app_id}"
 
-def secret_names(F, target):
+def secret_names(F, target, K=None):
     """(user, derived, optional) names for a target. compose_remote: the compose file's required names are written
     from state or minted on the server; vercel: DATABASE_URL comes from the app's own Neon database (provisioned at the
     first deploy), the names the app reads whole are minted by the same bootstrap script, plus CRON_SECRET for Vercel's
-    own cron calls. Nothing is the operator's to type."""
+    own cron calls, all on the api project. With K (console_facts), the console's sign-in names join them: the operator's
+    to set when mold.json says the console needs them, else optional. Nothing else is the operator's to type."""
     if target == "compose_remote":
         return [], [n for n in F["required"] if n not in F["config"]], list(F["optional_secrets"])
     derived = ["DATABASE_URL"] + [n for n in F["app_reads_required"] if n not in F["config"]] + ["CRON_SECRET"]
-    return [], derived, [n for n in F["optional_secrets"] if n not in derived]
+    opt = [n for n in F["optional_secrets"] if n not in derived]
+    user = list(K["required"]) if K else []
+    opt += [n for n in (K["optional"] if K else []) if n not in opt and n not in user]
+    return user, derived, [n for n in opt if n not in user]
 
 def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defaults=None, root=None):
     """The four state documents of a single-service app, from intake's answers. The same four schemas as every app; the
     fields only this shape needs are infrastructure.compose_remote, postgres.exposure "compose_network" and blob "none"."""
     man = manifest(mold_id, root); F = compose_facts(codebase(mold_id, root), man); d = defaults or {}
-    user, derived, optional = secret_names(F, target)
+    user, derived, optional = secret_names(F, target, console_facts(codebase(mold_id, root), man) if target == "vercel" else None)
     app = {"$schema": "../app_id/application.schema.json", "app_id": app_id, "mold_id": mold_id,
            "mold_commit": (mold.get("source") or {}).get("commit", ""), "status": "planned", "brief": brief_rel,
            "product_id": prod["product_id"], "service_surface": [],
@@ -242,7 +251,8 @@ def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defa
         infra["compose_remote"] = cr
         pg = {"provider": "self_hosted", "host": "postgres", "exposure": "compose_network"}
     else:
-        infra["vercel"] = {"team": d.get("vercel_team", "your-vercel-team"), "project": ans.get("vercel_project") or slug(app_id)}
+        base = ans.get("vercel_project") or slug(app_id)   # two projects: <base>-api (the API) and <base> (the console)
+        infra["vercel"] = {"team": d.get("vercel_team", "your-vercel-team"), "project": base, "projects": vercel_projects(base)}
         if dom: infra["vercel"]["custom_domain"] = dom
         pg = {"provider": "neon", "exposure": "managed_provider", "admin_url_ref": "DATABASE_URL_UNPOOLED", "pooling": "transaction"}
     # rls "off": the product scopes tenant rows in its queries (its tenant-SQL check guards that), not with row-level
@@ -272,6 +282,11 @@ def problems(app_id, docs, root=None):
     if t == "vercel":
         if infra.get("secret_store") != "vercel_env": out.append(f"{f}: a Vercel app keeps its values in the project's environment — set \"secret_store\": \"vercel_env\" in {fix}")
         if pg.get("provider") == "self_hosted": out.append(f"{app_id}/datastores.json: a Vercel function cannot reach a database on a server's private network — set postgres.provider to \"neon\"")
+        v = infra.get("vercel") or {}; base = v.get("project") or ""
+        if not base: out.append(f"{f}: a Vercel app needs vercel.project, the base name of its two projects (<name>-api and <name>) — set it in {fix}")
+        elif v.get("projects") is not None and v.get("projects") != vercel_projects(base):
+            out.append(f"{f}: vercel.projects is {v.get('projects')} but the base name {base!r} gives {vercel_projects(base)} (the API and the console) — "
+                       f"set it to that, or delete the line, in {fix}")
         return out
     cr = infra.get("compose_remote")
     if not isinstance(cr, dict): return [f"{f}: target is 'compose_remote' but there is no compose_remote object — add it to {fix}"]
@@ -793,7 +808,7 @@ def lane_key(app_id, app, infra, a, P, runner=None, say=print, root=None, adir=N
     man = manifest(app["mold_id"], root); F = compose_facts(codebase(app["mold_id"], root), man); lk = man.get("lane_key")
     if not lk: raise Stop(f"{app['mold_id']} declares no lane_key in its mold.json, so there is nothing to make.")
     t = infra.get("target"); S = settings(app_id, app, infra, root)
-    url = (infra.get("compose_remote") or {}).get("production_url") if t == "compose_remote" else (infra.get("vercel") or {}).get("production_url")
+    url = (infra.get("compose_remote") or {}).get("production_url") if t == "compose_remote" else (infra.get("vercel") or {}).get("api_url")   # the MCP check targets the API
     what = (f"the product's own {lk['script']} \"{lk['create'][0]}\" {lk['create'][1]} (or, when that organisation exists, a new key for it), "
             f"run {'in its container on the server' if t == 'compose_remote' else 'here against its production database'}; the connector address it prints "
             f"is written to {lane_key_path(app_id)} (mode 600), never shown")
@@ -813,8 +828,8 @@ def lane_key(app_id, app, infra, a, P, runner=None, say=print, root=None, adir=N
         if r.returncode: r = run({"id": "lane-key", "argv": lane_key_argv(S, F, man, again=True), "timeout": 120}, None)
         out = r.stdout or ""
     else:
-        vals = P.pull_env(codebase(app["mold_id"], root), infra["vercel"]["project"], required=False)
-        if not vals.get("DATABASE_URL") or vals["DATABASE_URL"] == "[SENSITIVE]": raise Stop(f"{app_id}: DATABASE_URL could not be read back from the project; nothing was made.")
+        vals = P.pull_env(codebase(app["mold_id"], root), vercel_projects(vercel_project(infra))["api"], required=False)   # the database is the api project's alone
+        if not vals.get("DATABASE_URL") or vals["DATABASE_URL"] == "[SENSITIVE]": raise Stop(f"{app_id}: DATABASE_URL could not be read back from the api project; nothing was made.")
         env = dict(os.environ, DATABASE_URL=vals["DATABASE_URL"], PUBLIC_URL=url); AR.forbid(vals["DATABASE_URL"])
         cmd = ["npx", "tsx", lk["script"]]
         r = subprocess.run(cmd + lk["create"], cwd=codebase(app["mold_id"], root), env=env, capture_output=True, text=True, timeout=180)
@@ -832,24 +847,141 @@ def lane_key(app_id, app, infra, a, P, runner=None, say=print, root=None, adir=N
     return 0
 
 # ---------------------------------------------------------------------------------------------------------
-# vercel: one project
+# vercel: two projects, the API function and the web console (mold_v0-029)
 # ---------------------------------------------------------------------------------------------------------
-def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
+# The operator's decision (2026-10-20): the product runs on Vercel as TWO projects. <base>-api is the API and MCP
+# function, deployed from the snapshot's own vercel.json; <base> is the web console (web/, a server-rendered Next.js
+# app with a middleware) as its own Next.js project, pointed at the API through the one variable its next.config reads
+# for the API's address. The suffixes are vercel_addr.ROLES' own ("" and "-api"), so provision.py's LIVE-project
+# refusal, intake's taken names and the address guard cover both projects as they cover mold_v1's.
+SUFFIX = {"api": "-api", "web": ""}
+ORDER = ("api", "web")                       # deployed in this order: the console is pointed at the API's address
+PAGE_OK = re.compile(r"^(2\d\d|3\d\d|401|403)$")   # a console page that renders, or its sign-in redirect / refusal
 
-def vercel_plan(app_id, F, infra, man):
-    v = infra.get("vercel") or {}; proj = vercel_project(infra); team = v.get("team", ""); sc = f" --scope {team}" if team else ""
-    return [f"refuse a project that is a LIVE one or another app's (provision.py's own rule), before anything is written",
-            f"the Vercel project {proj} (one project; created with `vercel project add {proj}{sc}` if absent, never connected to git)",
-            f"the app's own Postgres: an empty free Neon database adopted, or a new one from the Vercel Marketplace (provision.py's Neon provisioning: "
-            f"proven empty in a throwaway project before it is connected); DATABASE_URL is the one the integration writes, never written here",
-            f"minted if absent, by the mold's own {F['mint']} run in a private temp directory here (values never shown): {', '.join(n for n in infra.get('secrets_derived') or [] if n != 'DATABASE_URL')}",
-            f"a build copy build/{app_id}/ of the snapshot (no node_modules); the web console built in it and served by the same function when its build gives a static export (see MOLD.md)",
-            f"vercel deploy --prod --yes{sc} from that copy ({man['vercel']['config']}: one function, its crons); the deployment serving before is recorded",
-            "the production address read back from Vercel (never derived from the name); PUBLIC_URL set to it, and one more deploy when it changed",
-            f"health: <address>{man['health_path']} answers 200 with ok; otherwise production goes back to the deployment that served before",
-            "state: vercel.production_url, vercel.health.web, deployed_at, status stamped (or reverted, with the reason and the rollback)"]
+def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
+def vercel_projects(base): return {r: f"{base}{s}" for r, s in SUFFIX.items()} if base else {}
+def vercel_spec(man, role): return (((man or {}).get("vercel") or {}).get("projects") or {}).get(role) or {}
+
+NEXT_CONFIGS = ("next.config.ts", "next.config.mjs", "next.config.js")
+API_ENV = re.compile(r"""process\.env\.([A-Z][A-Z0-9_]*)\s*\?\?\s*['"`]https?://""")
+def console_facts(cb, man):
+    """What the console project needs, READ from the snapshot each time: its directory, its Next.js config, the ONE
+    variable that config reads for the API's address (`process.env.NAME ?? 'http://...'`), whether its lockfile is
+    committed (Vercel installs from it), and the sign-in names the operator sets for it (mold.json operator_env)."""
+    w = vercel_spec(man, "web"); d = w.get("dir", "web"); wd = os.path.join(cb, d)
+    cfg = next((f for f in NEXT_CONFIGS if os.path.isfile(os.path.join(wd, f))), "")
+    names = sorted(set(API_ENV.findall(open(os.path.join(wd, cfg)).read()))) if cfg else []
+    env = w.get("operator_env") or {}
+    return {"dir": d, "present": os.path.isdir(wd), "config": f"{d}/{cfg}" if cfg else "", "api_env": names[0] if len(names) == 1 else "",
+            "api_env_found": names, "framework": w.get("framework", "nextjs"), "lockfile": os.path.isfile(os.path.join(wd, "package-lock.json")),
+            "required": sorted(n for n, k in env.items() if k == "required"), "optional": sorted(n for n, k in env.items() if k != "required"),
+            "proxied_health": w.get("proxied_health") or man.get("health_path", "/healthz"), "pages": list(w.get("pages") or ["/admin", "/app"])}
+
+def console_preflight(K):
+    """Plain sentences for what stops the console project before anything is created; [] when none."""
+    bad = []
+    if not K["present"]: return [f"the console's directory {K['dir']}/ is not in the mold's snapshot"]
+    if not K["config"]: bad.append(f"{K['dir']}/ has no next.config (.ts, .mjs or .js), so it is not the Next.js console the second project builds")
+    elif not K["api_env"]:
+        found = ", ".join(K["api_env_found"]) or "none"
+        bad.append(f"{K['config']} must read exactly one variable for the API's address (process.env.NAME ?? 'http://...'); it reads {found}. "
+                   f"The console project is pointed at the API through that variable")
+    if not K["lockfile"]:
+        bad.append(f"{K['dir']}/package-lock.json is not committed in the mold's snapshot, so Vercel cannot install the console's exact dependencies "
+                   f"(a change to the mold's source, then mold.py refresh)")
+    return bad
+
+def api_names(F):
+    """Every name the API project reads (minted, provisioned or optional), from the compose file and the manifest."""
+    u, d, o = secret_names(F, "vercel", K=None)
+    return set(u) | set(d) | set(o)
+
+def project_for(F, K, name):
+    """Which of the two projects take NAME: the API when it reads it, the console when it is one of its sign-in names."""
+    return [r for r, hit in (("api", name in api_names(F)), ("web", name in set(K["required"]) | set(K["optional"]))) if hit]
+
+def taken_by_others(app_id, root=None):
+    """{project name: app id} for every Vercel project another (not retired) app deploys to: its base, -api and
+    -workflow names, and any names its state records."""
+    out = {}; adir = os.path.join(root or ROOT, "state", "application")
+    for o in sorted(os.listdir(adir)) if os.path.isdir(adir) else []:
+        if o in (app_id, "app_id"): continue
+        try:
+            v = load(os.path.join(adir, o, "infrastructure.json")).get("vercel") or {}
+            st = load(os.path.join(adir, o, "application.json")).get("status")
+        except (OSError, ValueError): continue
+        if st in ("retired", "dropped"): continue
+        b = v.get("project")
+        for n in ([b, f"{b}-api", f"{b}-workflow"] if b else []) + [x for x in (v.get("projects") or {}).values() if isinstance(x, str)]:
+            if n: out.setdefault(n, o)
+    return out
+
+def refuse_project(app_id, infra, P, root=None):
+    """provision.py's own refusal (a LIVE project, or a base another app deploys to) and, for BOTH of this app's
+    projects, any name another app holds, as a Stop, before any project is read or written."""
+    try: P._refuse_live_or_shared_project(app_id, infra)
+    except SystemExit as e: raise Stop(str(e.code if e.code is not None else e))
+    base = vercel_project(infra); mine = vercel_projects(base); rec = (infra.get("vercel") or {}).get("projects")
+    if not base: raise Stop(f"{app_id}: state names no Vercel project (vercel.project). Nothing was written.")
+    if rec and rec != mine:
+        raise Stop(f"{app_id}: vercel.projects says {rec}, but the projects of the base name {base!r} are {mine}. The deploy writes that line; "
+                   f"delete it from state/application/{app_id}/infrastructure.json and rerun. Nothing was written.")
+    others = taken_by_others(app_id, root)
+    hit = [f"{n} is {others[n]}'s project" for n in mine.values() if n in others]
+    if hit:
+        raise Stop(f"{app_id}: " + "; ".join(hit) + ". One project is one environment namespace, so this app's values would land in another "
+                   f"app's. Give this app its own vercel.project in state/application/{app_id}/infrastructure.json and rerun. Nothing was written.")
+
+def ensure_projects(app_id, infra, cb, K, P, adir=None, say=print, root=None):
+    """The app's two projects, created where absent under the team scope (`vercel project add <name> --scope <team>`),
+    unhooked from git at once, the console set to its framework preset. When NEITHER exists yet and a name is taken in
+    this team or on vercel.app (someone else's), provision.py's own choice of a free base is used and recorded in
+    vercel.name_history before anything is created; the new names pass the same refusals. Returns {role: project}."""
+    v = infra["vercel"]; team = v.get("team", ""); base = v["project"]; names = vercel_projects(base)
+    if not any(P._project_meta(n, cb).get("id") for n in names.values()):
+        new, note = P.choose_project_base(app_id, base, infra, cb)
+        if not new: raise Stop(f"refusing to create {base}'s projects: {note}. Set vercel.project in state/application/{app_id}/infrastructure.json to a free name and rerun. Nothing was created.")
+        if new != base:
+            why = note.split(", so the projects")[0]
+            v.setdefault("name_history", []).append({"at": now(), "from": base, "to": new, "why": why[:300]})
+            v["project"] = new; v.pop("projects", None); names = vercel_projects(new)
+            refuse_project(app_id, infra, P, root)
+            say(f"  {why}: this app's projects are named {names['api']} (the API) and {names['web']} (the console) instead")
+    v["projects"] = names
+    if adir: save(os.path.join(adir, "infrastructure.json"), infra)
+    for r in ORDER:
+        n = names[r]
+        ensure_project(n, team, cb, P, say=lambda l, r=r: say(f"{l} ({'the API' if r == 'api' else 'the console'})"))
+        if r == "web" and P._project_meta(n, cb).get("framework") != K["framework"]:
+            try: P.set_framework(n, K["framework"], cb)
+            except SystemExit as e: raise Stop(str(e.code if e.code is not None else e))
+    return names
+
+def vercel_plan(app_id, F, infra, man, K=None, cb=None):
+    v = infra.get("vercel") or {}; names = vercel_projects(vercel_project(infra)); team = v.get("team", ""); sc = f" --scope {team}" if team else ""
+    K = K or console_facts(cb or codebase(man["mold_id"]), man)
+    minted = ", ".join(n for n in infra.get("secrets_derived") or [] if n != "DATABASE_URL")
+    signin = ", ".join(K["required"] + K["optional"]) or "none"
+    return [f"refuse {names.get('api')} or {names.get('web')} if either is a LIVE project or another app's (provision.py's rule and every name another app holds), before anything is written",
+            f"two Vercel projects, each created if absent with `vercel project add <name>{sc}` and never connected to git: {names.get('api')} (the API and MCP "
+            f"function, from {man['vercel']['projects']['api'].get('config', 'vercel.json')}) and {names.get('web')} (the console, {K['dir']}/, framework {K['framework']}); "
+            f"when neither exists and a name is taken (in this team or on vercel.app), a free base name is chosen and recorded",
+            f"{names.get('api')} only: the app's own Postgres, an empty free Neon database adopted or a new one from the Vercel Marketplace (provision.py's "
+            f"Neon provisioning: proven empty in a throwaway project before it is connected); DATABASE_URL is the one the integration writes, never written here",
+            f"{names.get('api')} only: minted if absent by the mold's own {F['mint']} in a private temp directory here (values never shown): {minted or 'nothing'}",
+            f"a build copy build/{app_id}/ of the snapshot (no node_modules, no .next); the deployment serving each project now is recorded",
+            f"vercel deploy --prod --yes --project {names.get('api')}{sc} from the copy; its address read back from Vercel; PUBLIC_URL set to it (one more deploy when it changed); "
+            f"health: <api>{man['health_path']} answers 200 ok",
+            f"{names.get('web')}: {K['api_env'] or '<the API-address variable>'} set to the API's address (nothing else of the API's: never DATABASE_URL, never a minted key; "
+            f"sign-in names the operator sets for it: {signin})",
+            f"vercel deploy --prod --yes --project {names.get('web')}{sc} from build/{app_id}/{K['dir']}/; its address read back from Vercel",
+            f"health: <console>{K['proxied_health']} answers 200 ok through the console (it reaches the API), and {' and '.join(K['pages'])} answer (a page, or its sign-in redirect; never 5xx)",
+            "if anything after the first deploy fails: BOTH projects back on the production deployment that served before (where there was one)",
+            "state: vercel.projects, vercel.api_url, vercel.production_url (the console: people open it, and it carries the API's paths too), vercel.health, "
+            "vercel.release, deployed_at, status stamped (or reverted, with the reason and the rollback)"]
 
 def mint_values(cb, F, names, run=subprocess.run):
+
     """{name: value} for `names`, minted by the mold's own bootstrap script in a private temp directory. In memory only."""
     out = {}; t = tempfile.mkdtemp(prefix="sf-mint-")
     try:
@@ -862,13 +994,8 @@ def mint_values(cb, F, names, run=subprocess.run):
     if "CRON_SECRET" in names and "CRON_SECRET" not in out: out["CRON_SECRET"] = pysecrets.token_hex(32)
     return out
 
-def refuse_project(app_id, infra, P):
-    """provision.py's own refusal (a LIVE project, or one another app deploys to) as a Stop, before any project write."""
-    try: P._refuse_live_or_shared_project(app_id, infra)
-    except SystemExit as e: raise Stop(str(e.code if e.code is not None else e))
-
 def ensure_project(proj, team, cb, P, say=print):
-    """Create the one project if absent, under the team scope, and unhook it from git."""
+    """Create one project if absent, under the team scope, and unhook it from git. True when it created it."""
     if P._project_meta(proj, cb).get("id"): return False
     r = P.vrun(f"vercel project add {proj}" + (f" --scope {team}" if team else ""), shell=True, cwd=cb, capture_output=True, text=True)
     if not P._project_meta(proj, cb).get("id"): raise Stop(f"could not create the Vercel project {proj}: " + ((r.stdout or "") + (r.stderr or "")).strip()[-200:])
@@ -920,117 +1047,159 @@ def ensure_database(app_id, infra, cb, proj, present, P, say=print):
     say(f"  {proj}: the app's own Postgres is connected ({(infra.get('datastores') or {}).get('neon_resource', 'Neon')}); DATABASE_URL written by the integration, never shown")
     return True
 
-def console_overlay(build, man, run=subprocess.run, say=print):
-    """The product's web console on the same project, from the build copy only (never the snapshot): built with its own
-    `npm run build`; when that yields a static export (web/out, what the product's server serves at /), the copy's
-    .vercelignore and a factory vercel config let the one function carry it. Returns (config path or None, why)."""
-    w = man.get("vercel", {}).get("console") or {}
-    if not w: return None, "the mold declares no console"
-    wd = os.path.join(build, w["dir"])
-    if not os.path.isdir(wd): return None, f"{w['dir']}/ is not in the snapshot"
-    cfgs = [os.path.join(wd, f) for f in ("next.config.ts", "next.config.mjs", "next.config.js") if os.path.isfile(os.path.join(wd, f))]
-    if cfgs and not any(re.search(r"""output\s*:\s*['"]export['"]""", open(f).read()) for f in cfgs):
-        # Measured on mold_v0 at 5310a51: `next build` lists its /admin and /app routes as server-rendered (ƒ) behind a
-        # middleware, and writes no web/out. A server app cannot ride in the API's function; building it would only
-        # spend ten minutes to learn that again.
-        return None, (f"{w['dir']}/{os.path.basename(cfgs[0])} builds a server-rendered Next.js app (no `output: 'export'`), so there is no "
-                      f"static {w['out']} for the one function to serve")
-    r = run(["bash", "-c", w["build"]], cwd=wd, capture_output=True, text=True, timeout=1800)
-    out = os.path.join(build, w["out"])
-    if r.returncode or not os.path.isdir(out):
-        why = (f"its build stopped (exit {r.returncode})" if r.returncode else
-               f"its build produced no static export at {w['out']} (the product's next.config.ts has no `output: 'export'`; it builds a server app)")
-        return None, why
-    cfg = json.load(open(os.path.join(build, man["vercel"]["config"])))
-    for fn in (cfg.get("functions") or {}).values():
-        inc = fn.get("includeFiles", "")
-        fn["includeFiles"] = (inc[:-1] + "," + w["out"] + "/**}") if inc.startswith("{") and inc.endswith("}") else "{" + ",".join(x for x in (inc, w["out"] + "/**") if x) + "}"
-    path = os.path.join(build, "vercel.factory.json"); json.dump(cfg, open(path, "w"), indent=2)
-    vi = os.path.join(build, ".vercelignore")
-    lines = [l for l in (open(vi).read().splitlines() if os.path.isfile(vi) else []) if l.strip() not in (w["dir"], "/" + w["dir"])]
-    open(vi, "w").write("\n".join(lines + [f"/{w['dir']}/*", f"!/{w['out']}"]) + "\n")
-    say(f"  console: built in the build copy; {w['out']} rides in the function (vercel.factory.json, .vercelignore of the copy only)")
-    return path, ""
+def _read_page(url):
+    """(status, why) for one console page, WITHOUT following a redirect: a sign-in redirect is an answer. Read-only."""
+    r = subprocess.run(["curl", "--silent", "--show-error", "--max-time", "20", "-o", "/dev/null", "-w", "%{http_code}", url],
+                       capture_output=True, text=True)
+    m = re.search(r"(\d{3})\s*$", r.stdout or "")
+    if r.returncode or not m or m.group(1) == "000":
+        return "", "nothing answered: " + (((r.stderr or "").strip().splitlines() or ["no response"])[-1])[:120]
+    return m.group(1), ""
 
-def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, console=console_overlay):
-    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man)
-    v = infra["vercel"]; proj = v["project"]; team = v.get("team", ""); scope = f"--scope {team}" if team else ""
-    refuse_project(app_id, infra, P)
-    ensure_project(proj, team, cb, P, say=say)
-    present = P.vercel_env_names(cb, proj)
-    missing = [n for n in infra.get("secrets_user") or [] if n not in present]
+def _healthy(res): return str(res[0]) == "200" and isinstance(res[1], dict) and res[1].get("ok") is True
+def _said(res): return (f"HTTP {res[0]}" if res[0] else "nothing") + (f" ({res[2]})" if res[2] else "")
+
+def console_verdict(P, url, K, read_page=_read_page):
+    """([why the console does not serve], health record): <console><proxied_health> answers 200 ok THROUGH the console
+    (so its API-address variable reaches the API), and each page answers: a page, its sign-in redirect or a refusal;
+    never a 5xx and never nothing."""
+    bad = []; res = P._read_health(url + K["proxied_health"])
+    if not _healthy(res): bad.append(f"{K['proxied_health']} through the console answered {_said(res)}, so the console does not reach the API")
+    pages = {}
+    for pg in K["pages"]:
+        code, why = read_page(url + pg); pages[pg] = code or "no answer"
+        if not PAGE_OK.match(code or ""): bad.append(f"{pg} answered {_said((code, None, why))}")
+    return bad, {"web": str(res[0]) if res[0] else "no answer", "pages": pages}
+
+def rollback_both(before, cb, P, why, by="the deploy's own health check"):
+    """Both projects back on the production deployment recorded before this run, the console first. Never raises: the
+    caller decides how the run ends. Returns the record kept in vercel.rollback."""
+    rec = {"at": now(), "by": by, "why": why[:300], "projects": {}}
+    for r in ("web", "api"):
+        b = before.get(r) or {}
+        if not b.get("id"): rec["projects"][r] = "nothing to roll back to: no production deployment before this one"; continue
+        try:
+            cur = P.production_of(b["project"], cb) or {}
+            if cur.get("id") == b["id"]: rec["projects"][r] = f"already serving {b['id']}"; continue
+            ok, detail = P._point_production(b, b["id"], cb, "rollback")
+        except SystemExit as e: ok, detail = False, str(e.code if e.code is not None else e)[:200]
+        rec["projects"][r] = f"rolled back to {b['id']}" if ok else f"NOT rolled back: {detail}"
+    vals = list(rec["projects"].values())
+    rec["result"] = ("rollback FAILED" if any(x.startswith("NOT") for x in vals) else
+                     "rolled back" if any(x.startswith(("rolled back", "already serving")) for x in vals) else "nothing to roll back to")
+    return rec
+
+def _stop_text(e): return str(e.code if isinstance(e, SystemExit) and e.code is not None else e)
+
+def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page):
+    """The two-project deploy: the api project first, then the console pointed at its address; health on both; when
+    anything after the first deploy fails, both projects go back to what served before. Raises Stop with the reason."""
+    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
+    v = infra["vercel"]; team = v.get("team", ""); scope = f" --scope {team}" if team else ""
+    ipath = os.path.join(adir, "infrastructure.json")
+    pre = console_preflight(K)
+    if pre: raise Stop("The console project cannot be deployed from the mold's snapshot as it is; nothing was created:\n  - " + "\n  - ".join(pre))
+    refuse_project(app_id, infra, P, root)
+    names = ensure_projects(app_id, infra, cb, K, P, adir=adir, say=say, root=root); api, web = names["api"], names["web"]
+    present = {r: P.vercel_env_names(cb, n) for r, n in names.items()}
+    stray = sorted((present["web"] & (api_names(F) | {"DATABASE_URL"})) - set(K["required"]) - set(K["optional"]))
+    if stray:   # e.g. an app from the one-project shape, whose <base> was the API: its data would stay behind on the console
+        raise Stop(f"{web} holds the API's own names ({', '.join(stray)}), so it is not a console project; nothing was deployed. "
+                   "Move the app to new project names, or remove those names from it, first.")
+    missing = [n for n in infra.get("secrets_user") or [] if not all(n in present[r] for r in project_for(F, K, n))]
     if missing:
-        P.ask_nicely_for(app_id, missing); raise Stop(f"{app_id}: {', '.join(missing)} not set on {proj}; nothing was deployed.")
-    if ensure_database(app_id, infra, cb, proj, present, P, say=say): save(os.path.join(adir, "infrastructure.json"), infra)
-    want = [n for n in infra.get("secrets_derived") or [] if n not in present and n != "DATABASE_URL"]
+        P.ask_nicely_for(app_id, missing); raise Stop(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
+    if ensure_database(app_id, infra, cb, api, present["api"], P, say=say): save(ipath, infra)
+    want = [n for n in infra.get("secrets_derived") or [] if n not in present["api"] and n != "DATABASE_URL"]
     for n, val in mint_values(cb, F, want).items():
-        P._set_env(n, val, cb, project=proj); say(f"  {proj}: {n} minted and written (not shown)")
+        P._set_env(n, val, cb, project=api); say(f"  {api}: {n} minted and written (not shown)")
     build = os.path.join(root or ROOT, "build", app_id); os.makedirs(build, exist_ok=True)
-    r = subprocess.run(["rsync", "-a", "--delete", *[x for e in F["excludes"] for x in ("--exclude", e)],
+    r = subprocess.run(["rsync", "-a", "--delete", *[x for e in F["excludes"] + [".next"] for x in ("--exclude", e)],
                         cb.rstrip("/") + "/", build + "/"], capture_output=True, text=True)
     if r.returncode: raise Stop(f"the build copy could not be made: {r.stderr.strip()[-200:]}")
-    cfg, why = console(build, man, say=say)
-    if not cfg: say(f"  console: NOT served on Vercel: {why}. The API, /mcp and the landing page are; MOLD.md says what the product needs upstream.")
-    v["console"] = "served" if cfg else f"not served: {why}"[:200]
-    link = P._link_dir(proj, cb); os.makedirs(os.path.join(build, ".vercel"), exist_ok=True); shutil.copyfile(os.path.join(link, ".vercel", "project.json"), os.path.join(build, ".vercel", "project.json"))
-    before = P.production_of(proj, cb) or {}
-    url = ""
-    for attempt in (1, 2):
-        out = P.vercel_deploy(f"vercel deploy --prod --yes {scope}" + (f" --local-config {os.path.basename(cfg)}" if cfg else ""), build, f"{proj} deploy")
-        if before.get("id"): P.promote_new({"projects": {"web": before}}, cb, ["web"])   # after an earlier rollback Vercel holds production
-        url = P._deployed_address(proj, out, cb, infra)
-        cur = P.pull_env(cb, proj, required=False).get("PUBLIC_URL")
-        if cur == url: break
-        P._set_env("PUBLIC_URL", url, cb, project=proj); say(f"  {proj}: PUBLIC_URL set to {url}" + ("; deploying once more so the app reads it" if attempt == 1 else ""))
-    code, doc, why = P._read_health(url + man["health_path"])
-    v["production_url"] = url; v["health"] = {"web": str(code) if code else "no answer"}
-    if str(code) != "200" or not (isinstance(doc, dict) and doc.get("ok") is True):
-        # Back to the deployment that served before, as mold_v1's deploy does after a failed gate.
-        if before.get("id"):
-            ok, detail = P._point_production(before, before["id"], cb, "rollback")
-            v["rollback"] = {"at": now(), "by": "the deploy's own health check", "why": f"{man['health_path']} answered {code or 'nothing'}",
-                             "projects": {"web": f"rolled back to {before['id']}" if ok else f"NOT rolled back: {detail}"}, "result": "rolled back" if ok else "rollback FAILED"}
-            back = f" Production went back to the deployment that served before ({before['id']})." if ok else f" The rollback FAILED too ({detail}): the site may be down."
-        else: back = " There was no earlier deployment to go back to."
-        save(os.path.join(adir, "infrastructure.json"), infra)
-        raise Stop(f"{proj} deployed to {url}, but {man['health_path']} answered {code or 'nothing'} {why}".strip() + "." + back + " Recorded as reverted.")
+    for role, d in (("api", build), ("web", os.path.join(build, K["dir"]))):
+        link = P._link_dir(names[role], cb); os.makedirs(os.path.join(d, ".vercel"), exist_ok=True)
+        shutil.copyfile(os.path.join(link, ".vercel", "project.json"), os.path.join(d, ".vercel", "project.json"))
+    before = {role: P.production_of(n, cb) or {} for role, n in names.items()}
+    v["release"] = {"at": now(), "before": {role: before[role].get("id") for role in ORDER}}; v.pop("console", None); save(ipath, infra)
+    try:
+        api_url = ""
+        for attempt in (1, 2):
+            out = P.vercel_deploy(f"vercel deploy --prod --yes --project {api}{scope}", build, f"{api} deploy")
+            if before["api"].get("id"): P.promote_new({"projects": {"api": before["api"]}}, cb, ["api"])   # after an earlier rollback Vercel holds production
+            api_url = P._deployed_address(api, out, cb, infra)
+            if P.pull_env(cb, api, required=False).get("PUBLIC_URL") == api_url: break
+            P._set_env("PUBLIC_URL", api_url, cb, project=api); say(f"  {api}: PUBLIC_URL set to {api_url}" + ("; deploying once more so the API reads it" if attempt == 1 else ""))
+        v["api_url"] = api_url
+        res = P._read_health(api_url + man["health_path"]); v["health"] = {"api": str(res[0]) if res[0] else "no answer"}
+        if not _healthy(res): raise Stop(f"{api} deployed to {api_url}, but {man['health_path']} answered {_said(res)}")
+        say(f"  {api}: {api_url}{man['health_path']} answered 200 ok")
+        if P.pull_env(cb, web, required=False).get(K["api_env"]) != api_url:
+            P._set_env(K["api_env"], api_url, cb, project=web); say(f"  {web}: {K['api_env']} set to the API's address {api_url}")
+        out = P.vercel_deploy(f"vercel deploy --prod --yes --project {web}{scope}", os.path.join(build, K["dir"]), f"{web} deploy")
+        if before["web"].get("id"): P.promote_new({"projects": {"web": before["web"]}}, cb, ["web"])
+        url = P._deployed_address(web, out, cb, infra); v["production_url"] = url
+        bad, h = console_verdict(P, url, K, read_page); v["health"].update(h)
+        if bad: raise Stop(f"{web} deployed to {url}, but " + "; ".join(bad))
+    except (Stop, SystemExit) as e:
+        why = _stop_text(e); rec = rollback_both(before, cb, P, why); v["rollback"] = rec; save(ipath, infra)
+        back = "; ".join(f"{names[role]}: {x}" for role, x in rec["projects"].items())
+        warn = " THE SITE MAY BE DOWN." if rec["result"] == "rollback FAILED" else ""
+        raise Stop(why.rstrip(".") + f". Both projects were put back where possible ({back}).{warn} Recorded as reverted.")
     infra["deployed_at"] = now(); app["status"] = "stamped" if app.get("status") in (None, "planned", "reverted") else app["status"]; app.pop("revert", None)
     app["mold_commit"] = mold_commit(app["mold_id"], root) or app.get("mold_commit", "")
-    save(os.path.join(adir, "infrastructure.json"), infra); save(os.path.join(adir, "application.json"), app)
-    say(f"{app_id}: deployed to {url}; {man['health_path']} answered 200 ok"); return 0
+    save(ipath, infra); save(os.path.join(adir, "application.json"), app)
+    say(f"{app_id}: deployed. The console {url} ({web}; {K['proxied_health']} reaches the API, {', '.join(f'{p} {c}' for p, c in h['pages'].items())}); "
+        f"the API {api_url} ({api}; {man['health_path']} 200 ok)"); return 0
 
 def vercel_check(app_id, app, infra, P, say=print, root=None):
-    """Read-only. Exit 0 = ready for --deploy (nothing on Vercel is the operator's to type; optional keys stay off)."""
+    """Read-only. Exit 0 = ready for --deploy (nothing on Vercel is the operator's to type unless the console's sign-in
+    names are required; optional keys stay off)."""
     import agent_result as AR
-    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); proj = vercel_project(infra)
-    meta = P._project_meta(proj, cb); present = P.vercel_env_names(cb, proj) if meta.get("id") else set()
-    say(f"  Vercel project {proj}: {'exists' if meta.get('id') else 'not created yet (a deploy creates it)'}; one project ({man['vercel']['config']})")
-    say(f"  database: {'DATABASE_URL is on the project (kept as it is: written once)' if 'DATABASE_URL' in present else 'the app gets its own Postgres at the first deploy (an empty free Neon database, proven empty before it is connected)'}")
-    say(f"  minted at the deploy if absent: {', '.join(n for n in infra.get('secrets_derived') or [] if n not in present and n != 'DATABASE_URL') or 'nothing (all present)'}")
+    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
+    names = vercel_projects(vercel_project(infra))
+    meta = {r: P._project_meta(n, cb) for r, n in names.items()}
+    present = {r: (P.vercel_env_names(cb, n) if meta[r].get("id") else set()) for r, n in names.items()}
+    for r in ORDER:
+        say(f"  Vercel project {names[r]} ({'the API and MCP function' if r == 'api' else 'the console, ' + K['dir'] + '/'}): "
+            f"{'exists' if meta[r].get('id') else 'not created yet (a deploy creates it)'}")
+    say(f"  database ({names['api']} only): {'DATABASE_URL is on the project (kept as it is: written once)' if 'DATABASE_URL' in present['api'] else 'the app gets its own Postgres at the first deploy (an empty free Neon database, proven empty before it is connected)'}")
+    say(f"  minted at the deploy if absent ({names['api']} only): {', '.join(n for n in infra.get('secrets_derived') or [] if n not in present['api'] and n != 'DATABASE_URL') or 'nothing (all present)'}")
+    say(f"  console: pointed at the API through {K['api_env'] or '(no single API-address variable found)'} ({K['config'] or 'no next.config'}); never DATABASE_URL or a minted key")
+    for n in K["required"] + K["optional"]:
+        say(f"  console sign-in name {n} ({'required' if n in K['required'] else 'optional'}): {'set' if n in present['web'] else 'not set'} on {names['web']}")
     if infra.get("secrets_optional"): say(f"  optional, off while empty (set one with --set-secret NAME): {', '.join(infra['secrets_optional'])}")
-    say("a deploy will create:")
-    for i, l in enumerate(vercel_plan(app_id, F, infra, man), 1): say(f"  {i}. {l}")
-    missing = [n for n in infra.get("secrets_user") or [] if n not in present]
+    say("a deploy will:")
+    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K), 1): say(f"  {i}. {l}")
+    pre = console_preflight(K)
+    for p in pre: say("  not ready: " + p)
+    missing = [n for n in infra.get("secrets_user") or [] if not all(n in present[r] for r in project_for(F, K, n))]
     if missing:
         for n in missing:
             say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
-        say(f"{len(missing)} value(s) only you hold are not on the project yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
+        say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
+    if pre: say("  - the mold's snapshot cannot run as two projects as it is (see 'not ready' above): a change to the mold's source, then mold.py refresh"); return 1
     pg = os.path.isfile(os.path.join(cb, "node_modules", "pg", "package.json"))
-    if "DATABASE_URL" not in present and not pg:
+    if "DATABASE_URL" not in present["api"] and not pg:
         say(f"  - install the mold's dependencies first (the database emptiness check uses its own `pg` client): npm --prefix {os.path.relpath(cb, root or ROOT)} ci"); return 1
     say(f"Ready. See the plan: python3 .claude/scripts/provision.py {app_id} --deploy --dry-run")
     return 0
 
-def set_secret_vercel(app_id, infra, name, P, root_cb, value=None):
-    declared = set(infra.get("secrets_user") or []) | set(infra.get("secrets_optional") or []) | set(infra.get("secrets_derived") or [])
-    if name not in declared: raise Stop(f"{name} is not a name this app reads (it reads: {', '.join(sorted(declared))}). Nothing was stored.")
+def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None):
+    """One value, at a hidden prompt, onto the project(s) that read NAME: the API when it reads it, the console when it
+    is one of its sign-in names, both when both do. Never DATABASE_URL, and nothing the console does not read."""
+    cb = codebase(app["mold_id"], root); man = manifest(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
+    declared = set(infra.get("secrets_user") or []) | set(infra.get("secrets_optional") or []) | set(infra.get("secrets_derived") or []) | set(K["required"]) | set(K["optional"])
+    roles = project_for(F, K, name)
+    if name not in declared or not roles: raise Stop(f"{name} is not a name this app reads (it reads: {', '.join(sorted(declared))}). Nothing was stored.")
     if name == "DATABASE_URL": raise Stop(f"{app_id}: DATABASE_URL is written by the database integration at the first deploy and never by hand. Nothing was stored.")
-    refuse_project(app_id, infra, P)
-    proj = vercel_project(infra)
+    refuse_project(app_id, infra, P, root)
+    names = vercel_projects(vercel_project(infra)); team = (infra.get("vercel") or {}).get("team", "")
     v = value if value is not None else _hidden_value(app_id, name, P)
-    if ensure_project(proj, (infra.get("vercel") or {}).get("team", ""), root_cb, P): print(f"  (created empty to hold {name}: free, no deployment)")
-    P._set_env(name, v, root_cb, project=proj)
-    print(f"{name} set on {proj} (the value was never shown or stored here). It applies at the next deploy."); return 0
+    for r in roles:
+        if ensure_project(names[r], team, cb, P): print(f"  (created {names[r]} empty to hold {name}: free, no deployment)")
+        P._set_env(name, v, cb, project=names[r])
+    print(f"{name} set on {' and '.join(names[r] for r in roles)} (the value was never shown or stored here). It applies at the next deploy."); return 0
 
 # ---------------------------------------------------------------------------------------------------------
 # provision.py hands over here
@@ -1041,25 +1210,27 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
     try:
         errs = VR.state_problems(app_id, adir) if root is None else []
         if "--lane-key" in a:
-            if t == "vercel": refuse_project(app_id, infra, P)
+            if t == "vercel": refuse_project(app_id, infra, P, root)
             return lane_key(app_id, app, infra, a, P, say=say, root=root, adir=adir)
         if t == "vercel":
             cb = codebase(app["mold_id"], root)
             for f in ("--deploy-remote", "--set-remote", "--remote-key", "--qualify-remote", "--rollback-remote"):
                 if f in a: raise Stop(f"{app_id}: {f} is for an app on a server of its own; this one is on Vercel. Use --deploy.")
-            refuse_project(app_id, infra, P)   # a LIVE project or another app's: refused before any read or write of it
-            if "--set-secret" in a: return set_secret_vercel(app_id, infra, a[a.index("--set-secret") + 1], P, cb)
+            refuse_project(app_id, infra, P, root)   # a LIVE project or another app's (either of the two): refused before any read or write
+            if "--set-secret" in a: return set_secret_vercel(app_id, app, infra, a[a.index("--set-secret") + 1], P, root=root)
             if "--deploy" in a:
                 if errs: raise Stop("the state does not validate; nothing was done:\n  " + "\n  ".join(errs))
                 man = manifest(app["mold_id"], root); F = compose_facts(cb, man)
                 if dry:
                     say(f"{app_id}: --deploy --dry-run: a deploy would do, in this order (nothing is created by this dry run):")
-                    for i, l in enumerate(vercel_plan(app_id, F, infra, man), 1): say(f"  {i}. {l}")
+                    K = console_facts(cb, man)
+                    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K), 1): say(f"  {i}. {l}")
+                    for p in console_preflight(K): say("  NOT READY (a real deploy refuses here, before anything is created): " + p)
                     return 0
                 try: return vercel_deploy(app_id, app, infra, adir, P, say=say, root=root)
                 except Stop as e: revert(adir, app, str(e)); raise
             for f in ("--rollback", "--smoke", "--verify-db", "--verify-rls"):
-                if f in a: raise Stop(f"{app_id}: {f} belongs to mold_v1's three-project deploy; a single-service app has its health check in --deploy and its lanes.")
+                if f in a: raise Stop(f"{app_id}: {f} belongs to mold_v1's three-project deploy; this app's --deploy checks both of its projects and rolls both back itself, and its lanes do the rest.")
             return vercel_check(app_id, app, infra, P, say=say, root=root)
         # compose_remote
         if "--set-remote" in a:
@@ -1101,6 +1272,10 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
 # ---------------------------------------------------------------------------------------------------------
 DONE, TODO, OPERATOR, FAILED, NA = "done", "next", "needs you", "failed", "not needed"
 LANES = ("functional", "context", "load", "accessibility", "responsiveness")
+def mcp_address(infra):
+    """Where the MCP connector lives: on Vercel the api project's address (the console's is for people), else the app's."""
+    return ((infra.get("vercel") or {}).get("api_url") or "").rstrip("/") if infra.get("target") == "vercel" else address(infra)
+
 def address(infra):
     t = infra.get("target")
     if t == "compose_remote":
@@ -1119,7 +1294,7 @@ def station(name, app_id, a, i, root=None):
     if name == "deploy":
         if (not url or not i.get("deployed_at")) and a.get("status") == "reverted" and (a.get("revert") or {}).get("reason"):
             return (FAILED, f"the first deploy stopped: {' '.join(str(a['revert']['reason']).split())[:300]} (python3 .claude/scripts/provision.py {app_id} {flag} once the cause is fixed)")
-        if not url or not i.get("deployed_at"): return (TODO, "first deploy" + (" to its own server" if t == "compose_remote" else " (one Vercel project)"))
+        if not url or not i.get("deployed_at"): return (TODO, "first deploy" + (" to its own server" if t == "compose_remote" else " (two Vercel projects: the API, then the console)"))
         if a.get("status") == "reverted": return (TODO, "a lane failed or a deploy stopped; redeploy once the cause is fixed")
         now_c = mold_commit(a["mold_id"], root); was = a.get("mold_commit")
         if was and now_c and was != now_c: return (TODO, f"the mold moved ({was[:7]} -> {now_c[:7]}); redeploy to pick it up")
@@ -1129,7 +1304,7 @@ def station(name, app_id, a, i, root=None):
         if any((tt.get(l) or {}).get("status") == "fail" for l in tt): return (FAILED, "a lane failed; its report is named in application.json testing")
         ran = [(tt.get(l) or {}).get("run_at") or "" for l in LANES]
         if not all(ran) or min(ran) < dep: return (TODO, "run the five lanes against this deploy")
-        if url and not lane_key_ok(app_id, url):
+        if url and not lane_key_ok(app_id, mcp_address(i)):
             return (OPERATOR, f"nothing failed, but the MCP check was skipped: it needs an organisation of the app's own. Say yes to it, then: "
                               f"python3 .claude/scripts/provision.py {app_id} --lane-key --yes (see it first with --dry-run); then the lanes run again")
         skipped = [l for l in LANES if (tt.get(l) or {}).get("status") == "skipped"]
@@ -1178,8 +1353,8 @@ def cli(a):
         app_id = a[1] if len(a) > 1 else ""
         try: infra = load(os.path.join(ROOT, "state", "application", app_id, "infrastructure.json"))
         except (OSError, ValueError): print(f"{app_id}: no state", file=sys.stderr); return 1
-        url = address(infra)
-        if not url: print(f"{app_id} is not deployed yet: python3 .claude/scripts/provision.py {app_id} --deploy-remote", file=sys.stderr); return 1
+        url = mcp_address(infra)
+        if not url: print(f"{app_id} is not deployed yet: python3 .claude/scripts/provision.py {app_id} " + ("--deploy" if infra.get("target") == "vercel" else "--deploy-remote"), file=sys.stderr); return 1
         if not lane_key_ok(app_id, url):
             print(f"{app_id} has no lane-check organisation for {url} yet; with the operator's yes: python3 .claude/scripts/provision.py {app_id} --lane-key --yes", file=sys.stderr); return 1
         print(lane_key_path(app_id)); return 0

@@ -4,7 +4,7 @@
 The self-test links each name to this file in <FACTORY_REHEARSAL>/bin (lib/services.py puts that first on PATH). The
 whole outside world is <FACTORY_REHEARSAL>/world.json:
 
-  projects   {name: {id, auto, prod, env: {NAME: 1}, deps: [{uid, created, state, fault, alias}], domain}}   Vercel, as
+  projects   {name: {id, auto, prod, env: {NAME: value}, deps: [{uid, created, state, fault, alias}], domain}}   Vercel, as
              far as the deploy, the rollback and the promote go. A rollback sets auto false (as Vercel does); a promote
              sets it back. A deployment is put in front of traffic by itself only while auto is true. `domains` are the
              project's production address labels (<label>.rehearsal.invalid): claimed, or given at the first deploy.
@@ -12,7 +12,7 @@ whole outside world is <FACTORY_REHEARSAL>/world.json:
              site, so a project created under that name gets <label>-x7 at its first deploy, as Vercel does. Every
              request a stranger's site receives is logged with whether it carried an authorization header.
   fault      {project: "build" | "health" | "chat"}   the NEXT deployment of that project fails its build, answers
-             health 500, or fails every chat turn. Used once.
+             health 500 (a single-service console's pages too), or fails every chat turn. Used once.
   ci         "green" | "red" | "pending"              the mold source's CI for any commit (gh api)
   token, memberships                                  the fake app's one session and the operator's workspaces
 Every call is appended to world.json.calls. Nothing leaves the machine.
@@ -36,7 +36,7 @@ SUF = ".rehearsal.invalid"
 
 def meta(n, p):
     prod = next((d for d in p["deps"] if d["uid"] == p.get("prod")), None)
-    return {"id": p["id"], "name": n, "autoAssignCustomDomains": p.get("auto", True), "link": None,
+    return {"id": p["id"], "name": n, "autoAssignCustomDomains": p.get("auto", True), "link": None, "framework": p.get("framework"),
             "targets": {"production": {"id": prod["uid"], "createdAt": prod["created"], "readyState": prod["state"],
                                        "alias": prod.get("alias", [])}} if prod else {}}
 
@@ -56,7 +56,7 @@ def vercel():
     log()
     if cmd == "api":
         path, method = A[1], (opt("-X") or "GET")
-        field = dict(x.split("=", 1) for x in [A[i + 1] for i, a in enumerate(A[:-1]) if a == "-f"])
+        field = dict(x.split("=", 1) for x in [A[i + 1] for i, a in enumerate(A[:-1]) if a in ("-f", "-F")])
         m = re.match(r"^/v4/aliases/([^/?]+)$", path)
         if m:
             n = by_domain(w, label_of(m.group(1))); p = w["projects"].get(n) if n else None
@@ -86,12 +86,14 @@ def vercel():
             if not n: print('{"error": {"code": "not_found", "message": "Project not found"}}'); return 1
             if method == "PATCH" and field.get("name"):
                 w["projects"][field["name"]] = w["projects"].pop(n); n = field["name"]; save(w)
+            if method == "PATCH" and field.get("framework"):
+                w["projects"][n]["framework"] = field["framework"]; save(w)
             print(json.dumps(meta(n, w["projects"][n]))); return 0
         m = re.match(r"^/v\d+/projects/([^/?]+)/env$", path)
         if m:
             n = proj_by_id(w, m.group(1))
             if method == "POST":
-                body = json.loads(sys.stdin.read() or "{}"); w["projects"][n]["env"][body["key"]] = 1; save(w)
+                body = json.loads(sys.stdin.read() or "{}"); w["projects"][n]["env"][body["key"]] = body.get("value", 1); save(w)
                 print(json.dumps({"created": {"key": body["key"]}})); return 0
             print(json.dumps({"envs": [{"key": k, "type": "encrypted", "target": ["production"]} for k in w["projects"][n]["env"]]})); return 0
         m = re.match(r"^/v6/deployments\?projectId=([^&]+)", path)
@@ -113,6 +115,9 @@ def vercel():
             for k in sorted((p or {}).get("env", {})): print(f"{k:40} Encrypted   Production   1d ago")
             return 0
         if A[1:2] == ["rm"] and p: p["env"].pop(A[2], None); save(w)
+        if A[1:2] == ["pull"] and p:   # the file the CLI writes: the project's values, as `vercel env pull` writes encrypted ones
+            out = next((a for a in A[2:] if not a.startswith("-") and a != opt("--project")), None)
+            if out: open(out, "w").write("".join(f'{k}="{v}"\n' for k, v in p.get("env", {}).items() if isinstance(v, str)))
         return 0
     if cmd == "project" and A[1:2] == ["add"]:
         w["projects"].setdefault(A[2], {"id": "prj_" + A[2], "auto": True, "prod": None, "env": {}, "deps": []}); save(w)
@@ -146,6 +151,11 @@ def app(method, url, headers, body):
     p = w.get("projects", {}).get(n)
     prod = next((d for d in (p or {}).get("deps", []) if d["uid"] == (p or {}).get("prod")), None)
     if not prod: return 404, {"error": "DEPLOYMENT_NOT_FOUND"}
+    if path == "/healthz":   # a single-service mold's API, and its console passing it through (mold_v0-029)
+        if prod.get("fault") == "health": return 500, {"ok": False, "error": "rehearsal: this deployment is broken"}
+        return 200, {"ok": True}
+    if path in ("/admin", "/app"):   # a single-service mold's console pages: the sign-in redirect an anonymous visitor gets
+        return (500, {"error": "rehearsal: this deployment is broken"}) if prod.get("fault") == "health" else (307, {"redirect": "/auth/sign-in"})
     if path in ("/api/health", "/eve/v1/health", "/api/ops/health"):
         if prod.get("fault") == "health": return 500, {"ok": False, "error": "rehearsal: this deployment is broken"}
         return 200, ({"ok": True, "db": {"ok": True, "detail": "SELECT 1 ok · role app_rw (RLS enforced)"}} if path == "/api/ops/health" else {"ok": True})

@@ -138,7 +138,8 @@ operator holds are typed at a hidden prompt and reach the server on stdin, never
 A SINGLE-SERVICE MOLD (molds/<mold_id>/mold.json "shape": "single_service"; today mold_v0, mold_v0-028) is handed to
 lib/single_service.py right after state is read, for every flag: target compose_remote is a server
 of the app's own running the mold's OWN compose stack under the project sf-<app id> (vm_remote's host probe, SSH,
-DNS check, key pair, hidden prompt, env file and firewall rules, reused), and target vercel is ONE project. The same
+DNS check, key pair, hidden prompt, env file and firewall rules, reused), and target vercel is TWO projects: <project>-api
+(the API function, with the app's own database) and <project> (the web console, pointed at the API) (mold_v0-029). The same
 CI gate applies to its deploys. It adds --lane-key [--dry-run] [--yes] (an organisation of the app's own for the
 lanes' MCP check). Its --help: python3 .claude/scripts/lib/single_service.py --help
 
@@ -3833,8 +3834,9 @@ def _main(a):
     print(f"{app_id}: target={target} store={store} postgres={prov} secrets={len(secrets)}")
     if single_service.applies(app) or target == "compose_remote":
         # A single-service mold (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028): its own compose stack on a
-        # server of its own (target compose_remote) or one Vercel project. Nothing below this line applies to it: no
-        # three projects, no schema chain, no RLS bootstrap, no workspaces. One module owns it (lib/single_service.py).
+        # server of its own (target compose_remote) or two Vercel projects, its API and its console (mold_v0-029).
+        # Nothing below this line applies to it: no mold_v1 projects, no schema chain, no RLS bootstrap, no
+        # workspaces. One module owns it (lib/single_service.py).
         real = ("--deploy-remote" in a or "--deploy" in a) and not dry
         if real and single_service.applies(app): deploy_gate.require(app_id, app, infra, adir, a, save=save)   # only deploy what passed CI
         rc = single_service.main_for(app_id, a, app, infra, ds, adir, sys.modules[__name__])
