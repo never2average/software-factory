@@ -29,10 +29,11 @@ import { areaView, describeArea, describeField, type AreaRow, type RecordAreas, 
 import { ACCOUNT_FIELD, recordTitle, recordValues, writableFields, type AccountAreaId } from "./record-area-records.ts";
 import { prepareRecordWrite } from "./record-area-write.ts";
 import { writeOutcome } from "./record-lifecycle-store.ts";
-import { enforced, enteredByOf, memberRole } from "./record-area-store.ts";
+import { enforced, enteredByOf, memberRole, recordEntityId } from "./record-area-store.ts";
 import { permissionsDeclared } from "./record-permissions.ts";
 import { compileRecordQuery, defaultSort, encodeCursor, parseRecordQuery, type AreaTable } from "./record-query.ts";
 import { IMPLEMENTATION_ID, manyPerAccount, namedImplementationId, newImplementationId } from "./implementation-ids.ts";
+import { commitRecordWorkflow, lockedRead, openRecordWorkflow, recordWorkflowBound, workflowRecordKey, workflowRefusal } from "../../lib/record-workflow-moves.ts";
 
 const TABLE = { deployments, implementations: implementation } as const;
 const tableOf = (id: AccountAreaId) => TABLE[id] as unknown as AreaTable & typeof deployments;
@@ -136,6 +137,8 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
   // An account holds several implementations (`per_account: "many"`): each is named by its own id
   // (agent/lib/implementation-ids.ts); without one, a new one is created.
   const many = id === "implementations" && manyPerAccount(areas);
+  // The lifecycle runs a workflow (enforced): a move goes through its step rules (lib/record-workflow-moves.ts).
+  const bound = recordWorkflowBound(id, areas);
   const values = z.object(Object.fromEntries(fields.filter((f) => f.key !== "deploymentId").map((f) => [f.key, fieldParam(f)]))).describe(`The ${v.noun}'s fields to set, by key; null clears one.`);
   return defineTool({
     description: upsert,
@@ -158,20 +161,29 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
       const where = id === "deployments"
         ? and(eq(t.orgId, orgId), eq(t.customerId, customerId), eq(deployments.deploymentId, recordId ?? ""))!
         : many ? and(eq(t.orgId, orgId), eq(implementation.implementationId, recordId ?? ""))! : and(eq(t.orgId, orgId), eq(t.customerId, customerId))!;
-      return withOrgDb(orgId, async (tx) => {
-        const [before] = await tx.select().from(t).where(where);
+      const write = () => withOrgDb(orgId, async (tx) => {
+        // A lifecycle that runs a workflow: the record's workflow lock first (on the key the record has, or will have),
+        // then the record as it is now. Otherwise the read is today's.
+        const locked = bound
+          ? await lockedRead(tx, orgId, id, async () => (await tx.select().from(t).where(where))[0] as Record<string, unknown> | undefined, workflowRecordKey(id, id === "deployments" ? { customerId, deploymentId: recordId } : { implementationId: recordId ?? customerId }))
+          : null;
+        const [before] = locked ? [locked.row ?? undefined] : await tx.select().from(t).where(where);
         if (many && before && (before as AreaRow).customerId !== customerId) throw new Error(`Nothing was written. ${IMPLEMENTATION_ID} ${recordId} is another ${VOCABULARY.records.account.singular}'s ${areaView(id, areas).noun}, not ${customerId}'s.`);
         const body = Object.fromEntries(Object.entries(given ?? {}).filter(([, x]) => x !== undefined));
         if (id === "deployments" && !before) body.deploymentId = recordId;
         // The lifecycle (agent/lib/record-lifecycle.ts), as the routes keep it: who entered the stored state, for four
         // eyes; a refused move throws the rule book's sentence; the move goes to the activity feed with the write.
         const v = areaView(id, areas);
-        const entity = { type: id === "deployments" ? ("deployment" as const) : ("implementation" as const), id: id === "deployments" || many ? String(recordId) : customerId };
+        // Under a workflow, a stored record's feed id is the one the lists and the routes key it by (recordEntityId).
+        const entity = { type: id === "deployments" ? ("deployment" as const) : ("implementation" as const), id: bound && before ? recordEntityId(id, before as AreaRow) : id === "deployments" || many ? String(recordId) : customerId };
         // The caller's role in the workspace, for a transition's `roles` and the area's permissions (read only when the
         // lifecycle is enforced or the area says who may write it).
         const role = enforced(v) || permissionsDeclared(id, areas) ? await memberRole(tx, orgId, actor) : undefined;
         const enteredBy = await enteredByOf(tx, orgId, v, entity, (before as AreaRow | undefined) ?? null);
-        const prepared = prepareRecordWrite(id, before ? "update" : "create", body, { actor, role, before: (before as AreaRow | undefined) ?? null, enteredBy }, areas);
+        // A lifecycle that runs a workflow: the record's instance and the step rules (lib/record-workflow-moves.ts), in
+        // this transaction; none otherwise.
+        const workflow = bound ? await openRecordWorkflow(tx, orgId, id, { entityId: before ? locked!.key : null, feedId: entity.id, before: (before as AreaRow | undefined) ?? null, actor }, { areas }) : null;
+        const prepared = prepareRecordWrite(id, before ? "update" : "create", body, { actor, role, before: (before as AreaRow | undefined) ?? null, enteredBy, ...(workflow?.gate ? { workflow: workflow.gate } : {}) }, areas);
         if (!prepared.ok) throw new Error(prepared.conflict ? prepared.conflict.error : `Nothing was written. ${prepared.errors.join(" ")}`);
         const delta = prepared.customDelta ? ({ ...prepared.customDelta } as unknown as CustomDelta) : null;
         let row: Record<string, unknown> | undefined;
@@ -195,9 +207,18 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
           }
         }
         if (!row) throw new Error("It was removed while it was being written; send it again.");
-        await writeOutcome(tx, orgId, entity, actor, v, prepared.lifecycle);
+        await writeOutcome(tx, orgId, bound ? { ...entity, id: recordEntityId(id, row as AreaRow) } : entity, actor, v, prepared.lifecycle);
+        if (workflow) await commitRecordWorkflow(workflow, { entityId: workflowRecordKey(id, row)!, created: !before, check: prepared.lifecycle, after: row as AreaRow });
         return { [before ? "updated" : "created"]: true, record: rowForModel(id, row as AreaRow, areas), ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}) };
       });
+      if (!bound) return write();
+      try {
+        return await write();
+      } catch (e) {
+        // Its workflow changed under the move: nothing was kept; the sentence, not the store's.
+        const stopped = workflowRefusal(e, areaView(id, areas).noun);
+        throw stopped ? new Error(stopped.body.error) : e;
+      }
     },
   });
 }

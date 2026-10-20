@@ -45,11 +45,15 @@
  *             failed (AI_MissingToolResultsError). Now the question is answered "not asked, ask again on its own",
  *             and the turn goes on: alone, with a "reports later" sibling, and (in `all`) under eve's own batch.
  *   sweeptiming  the specialist sweep's whole-history read (agent/lib/specialist-sweep-world.ts, mold_v1-199): a long
- *             stream is read from the start once (about 2 ms an event here), the next pass's read takes only the tail.
+ *             stream is read from the start once (about 2 ms an event here; a pass that runs out of time keeps what it
+ *             got and the next goes on from there), the next pass's read takes only the tail. Counted, not timed.
  *   all       an app WITHOUT the setting behaves as eve always has: the finished result is held while the other asks,
  *             both arrive together once the question is answered, and nothing is "reports later".
  *
  * Run:  npm run test:specialist-detach     (about 6 minutes; EVE_DETACH_KEEP=1 keeps the temporary apps)
+ *       EVE_DETACH_PACE_FACTOR=<n>         an upper time bound is at least n no-op turns of this machine (default 4)
+ *       EVE_DETACH_WAIT_FACTOR=<n>         how many times longer a wait for an event runs before it fails (default 3)
+ *       EVE_DETACH_AFTER_MS=<ms>           the bound the scratch app is set to and no hand-over may beat (default 3000)
  *       EVE_DETACH_SHARD=<k>/<n>           only the k-th of n slices of SCENARIOS (every n-th, from the k-th); the n
  *                                          slices are disjoint and together every scenario. CI runs two side by side.
  * Without the patch (`npx patch-package --reverse`, then `EVE_DETACH_TEST_CONFIG=omit`, because unpatched eve refuses
@@ -65,7 +69,36 @@ import { freePort, spawnFakeModel } from "./lib/own-listener.mjs";
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const ONLY = (process.env.EVE_DETACH_ONLY ?? "").split(",").filter(Boolean);
 const OMIT_CONFIG = process.env.EVE_DETACH_TEST_CONFIG === "omit";
-const DETACH_AFTER_MS = 3_000;
+/**
+ * TIME ON A BUSY MACHINE (mold_v1-286). The runtime here is the real one, on the machine the test runs on: on a loaded
+ * 8 GB box every step of it (eve's local queue, its workflow replays, one file per event) is several times slower than
+ * on a quiet one, and a check that held a hand-over to fixed milliseconds failed there on unchanged code. So the time
+ * checks are split by what they claim:
+ *
+ *   - THE PRODUCT'S PROMISE is the bound itself: a batch is handed over no EARLIER than `detachAfterMs` (or the idle
+ *     bound). That is a lower bound, fixed, read from EVE_DETACH_AFTER_MS (default 3000, what the scratch app is set
+ *     to); a slow machine only makes a hand-over later, so it never needs loosening there.
+ *   - "PROMPTLY AFTER" is not a number the product promises: a hand-over or a late result can be no faster than the
+ *     runtime moves anything. Those upper bounds are today's milliseconds as a floor, raised to PACE_FACTOR times a
+ *     no-op specialist turn measured in the same scenario, on the same app, at the same moment (`turnMs`,
+ *     `paceProbe`): on a quiet machine they are exactly what they were, on a loaded one they grow with the machine and
+ *     not with a guess.
+ *   - What the timing used to stand in for is asserted as order: a hand-over happens BEFORE the slow sibling finishes
+ *     (it is not "when all are back"), a late result arrives with no message from the person in between.
+ *   - A specialist that must still be working at some moment is HELD until the test releases it (`hold=<key>`), not
+ *     given a guessed duration that a slow hand-over could outlast (the scenario would then test something else).
+ *   - The sweep's tail read (`sweeptiming`) is asserted by counting what each read takes from the runtime's stream,
+ *     not by how long it took.
+ */
+const DETACH_AFTER_MS = Number(process.env.EVE_DETACH_AFTER_MS ?? 3_000);
+const PACE_FACTOR = Number(process.env.EVE_DETACH_PACE_FACTOR ?? 4);
+const WAIT_FACTOR = Number(process.env.EVE_DETACH_WAIT_FACTOR ?? 3);
+if (!(DETACH_AFTER_MS > 0) || !(PACE_FACTOR > 0) || !(WAIT_FACTOR > 0)) {
+  console.error("EVE_DETACH_AFTER_MS, EVE_DETACH_PACE_FACTOR and EVE_DETACH_WAIT_FACTOR must be positive numbers");
+  process.exit(2);
+}
+/** An upper bound for "promptly": `floorMs` (today's value), or PACE_FACTOR no-op turns on this machine now if more. */
+const promptly = (floorMs, paceMs) => Math.max(floorMs, Number.isFinite(paceMs) ? Math.round(PACE_FACTOR * paceMs) : 0);
 let passed = 0;
 const failures = [];
 const check = (what, ok, detail) => {
@@ -194,14 +227,25 @@ async function startApp({ detach, idleMs }) {
       "  if (b.op === 'add') { const n = { id: crypto.randomUUID(), parentSessionId: b.parentSessionId, callId: b.callId, author: b.author, text: b.text, status: 'pending' }; notes.push(n); return Response.json({ ok: true, note: n }); }",
       "  return Response.json({ notes });",
       "}),",
-      // TEST ONLY: how long the sweep's whole-history read of one session takes on this runtime (mold_v1-199).
+      // TEST ONLY: one pass of the sweep's whole-history read of one session on this runtime (mold_v1-199), and what it
+      // took from the runtime (mold_v1-286): every stream it opened, the index it opened it at, and how many events it
+      // pulled from it. The runtime is ONE object for every request, as `delegationSweep` is in production, so the
+      // reader's per-runtime cache lives across passes exactly as it does there. Each stream hands out an event only
+      // when the reader asks for one (highWaterMark 0), so a count is what the reader read, not what was buffered.
       "POST('/test/sweep-history', async (request) => {",
       "  const { delegationSweep } = await import('eve/channels');",
       `  const { wholeHistory } = await import(${JSON.stringify(join(ROOT, "agent/lib/specialist-sweep-world.ts"))});`,
       "  const b = await request.json();",
+      "  const reads = (globalThis.__sweepReads = []);",
+      "  globalThis.__countedSweep ??= { async events(id, startIndex) {",
+      "    const read = { startIndex, events: 0 };",
+      "    globalThis.__sweepReads.push(read);",
+      "    const source = (await delegationSweep.events(id, startIndex)).getReader();",
+      "    return new ReadableStream({ async pull(c) { const x = await source.read(); if (x.done) c.close(); else { read.events++; c.enqueue(x.value); } }, cancel(reason) { return source.cancel(reason); } }, { highWaterMark: 0 });",
+      "  } };",
       "  const t0 = Date.now();",
-      "  const events = await wholeHistory(delegationSweep)(b.sessionId);",
-      "  return Response.json({ ms: Date.now() - t0, n: events ? events.length : null, last: events?.at(-1)?.type ?? null });",
+      "  const events = await wholeHistory(globalThis.__countedSweep)(b.sessionId);",
+      "  return Response.json({ ms: Date.now() - t0, n: events ? events.length : null, last: events?.at(-1)?.type ?? null, reads });",
       "}),",
       // TEST ONLY: the app's own sweep (agent/lib/specialist-sweep.ts over agent/lib/specialist-sweep-world.ts, the
       // world it runs in production) on this runtime, with an in-memory ledger and the bounds the request names.
@@ -233,6 +277,13 @@ async function startApp({ detach, idleMs }) {
     mkdirSync(join(APP, rel, ".."), { recursive: true });
     writeFileSync(join(APP, rel), text);
   }
+  // The app is its own source root, as a real app in its repository is (mold_v1-286). `eve dev` looks upward from the
+  // app for `.git` / `pnpm-workspace.yaml` to find the root it watches; with none in the app, a stray marker above it
+  // (a `.git` left in the temporary directory by anything else on the machine) made it watch the WHOLE temporary
+  // directory: every file created or removed there by any process re-read its thousands of entries, and the runtime
+  // under test ran at a fraction of its speed (seen on a shared 8 GB box: eve dev at 100% CPU in chokidar's crawl of
+  // /tmp; hand-overs 10 s late, a 90 s wait for a first step). An empty `.git` here stops that search at the app.
+  mkdirSync(join(APP, ".git"));
   symlinkSync(join(ROOT, "node_modules"), join(APP, "node_modules"), "dir");
   const model = await spawnFakeModel(["--script", "handback"], { cwd: ROOT });
   const port = await freePort();
@@ -267,14 +318,19 @@ async function startApp({ detach, idleMs }) {
     const r = await fetch(`${B}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
     return { status: r.status, body: await r.json().catch(() => null) };
   };
-  /** A session's history as of now: its stream from the start, read until it has been quiet for a moment. */
-  async function history(id, quietMs = 700) {
+  /**
+   * A session's history as of now: its stream from the start, read until it has been quiet for a moment. The first
+   * event may take longer than that moment on a loaded machine (the runtime opens the stream and reads its first file
+   * first), and a read cut there would be an empty history, so the wait for it is longer (mold_v1-286).
+   */
+  async function history(id, quietMs = 700, firstMs = 5_000) {
     const ctrl = new AbortController();
     const out = [];
     let quiet;
+    let first = true;
     const arm = () => {
       clearTimeout(quiet);
-      quiet = setTimeout(() => ctrl.abort(), quietMs);
+      quiet = setTimeout(() => ctrl.abort(), first ? Math.max(quietMs, firstMs) : quietMs);
     };
     try {
       const res = await fetch(`${B}/eve/v1/session/${id}/stream?startIndex=0`, { signal: ctrl.signal });
@@ -285,6 +341,7 @@ async function startApp({ detach, idleMs }) {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        first = false;
         arm();
         buf += dec.decode(value, { stream: true });
         for (let i; (i = buf.indexOf("\n")) >= 0; ) {
@@ -305,8 +362,10 @@ async function startApp({ detach, idleMs }) {
     clearTimeout(quiet);
     return collapse191(out.filter((e) => e && typeof e.type === "string" && !e.type.endsWith(".appended") && !e.type.endsWith(".delta")), id);
   }
+  /** Waits for something that must happen. Its time is no claim (a check reads the times off the stream), so on a busy
+   * machine it waits WAIT_FACTOR times as long before calling it missing (mold_v1-286). */
   async function until(id, test, what, ms = 30_000) {
-    const deadline = Date.now() + ms;
+    const deadline = Date.now() + ms * WAIT_FACTOR;
     for (;;) {
       const h = await history(id);
       if (test(h)) return h;
@@ -328,6 +387,30 @@ const realResultsFor = (h, callId) => resultsFor(h, callId).filter((e) => !isPla
 const replies = (h, re) => h.filter((e) => e.type === "message.completed" && re.test(e.data?.message ?? ""));
 const callsOf = (h) => Object.fromEntries(h.filter((e) => e.type === "subagent.called").map((e) => [e.data.name, e.data]));
 const userMessagesAfterFirst = (h) => h.filter((e) => e.type === "message.received").slice(1);
+const completedAt = (run) => at(run.find((e) => e.type === "session.completed"));
+/**
+ * The machine's pace now: how long one turn of a specialist that answers at once takes, from its session.started to its
+ * session.completed (the scripted model has no delay, so this is the runtime's own cost: its queue, its steps, its
+ * writes). NaN when the run is not complete.
+ */
+const turnMs = (run) => completedAt(run) - at(run.find((e) => e.type === "session.started"));
+/**
+ * A pace probe beside a scenario that has no fast specialist of its own: a lone `[[hb <who>:fast]]` main thread on
+ * the same app, started now, and the no-op turn of its specialist. Start it with the scenario and await it after.
+ */
+async function paceProbe(appX, who = "beta") {
+  const P = (await appX.post("/eve/v1/session", { message: `[[hb ${who}:fast]]` })).body.sessionId;
+  const h = await appX.until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the pace probe's reply", 30_000);
+  return turnMs(await appX.until(callsOf(h)[who].childSessionId, (x) => types(x).includes("session.completed"), "the pace probe's specialist", 30_000));
+}
+/**
+ * A specialist that must still be working when something happens is HELD (`<name>:hold=<key>`, the scripted model
+ * answers it only once released) rather than given a guessed duration (`slow=<ms>`): on a loaded machine a 6 s
+ * specialist could finish before a 3 s bound's hand-over did, and the scenario then tested something else (mold_v1-286).
+ */
+let holds = 0;
+const holdKey = () => String(++holds);
+const release = (appX, key) => fetch(`${appX.model.base}/__release/${key}`, { method: "POST" }).then((r) => r.json());
 
 /**
  * A main thread's events, without what differs between runs (ids, times, the scripted model's call ids): the shape a
@@ -413,11 +496,14 @@ try {
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the main agent's first reply", 30_000);
     const calls = callsOf(h);
     check("both specialists were called in one step, each marked detachable", Boolean(calls.alpha && calls.beta) && calls.alpha.detachable === true && calls.beta.detachable === true, calls);
-    const alphaRun = await history(calls.alpha.childSessionId);
+    const alphaRun = await until(calls.alpha.childSessionId, (x) => types(x).includes("session.completed"), "alpha's own run");
     const alphaDone = alphaRun.find((e) => e.type === "session.completed");
     const alphaResult = realResultsFor(h, calls.alpha.callId)[0];
     const heldMs = at(alphaResult) - at(alphaDone);
-    check(`alpha's result reached the main agent within seconds of alpha finishing (${heldMs} ms), not held behind beta's question`, Boolean(alphaResult) && heldMs >= 0 && heldMs < 8_000, { heldMs, types: types(h) });
+    // alpha answers at once: its own turn is this machine's no-op turn, measured in this very scenario.
+    const pace = turnMs(alphaRun);
+    const heldMax = promptly(8_000, pace);
+    check(`alpha's result reached the main agent within seconds of alpha finishing (${heldMs} ms; at most ${heldMax}, a no-op turn here took ${pace} ms), not held behind beta's question (it came before the question was answered)`, Boolean(alphaResult) && heldMs >= 0 && heldMs < heldMax, { heldMs, heldMax, pace, types: types(h) });
     const placeholder = resultsFor(h, calls.beta.callId);
     check("beta is handed over as 'reports later': one action.result { status: running, childSessionId, name }", placeholder.length === 1 && isPlaceholder(placeholder[0]) && placeholder[0].data.result.output.childSessionId === calls.beta.childSessionId && placeholder[0].data.result.output.name === "beta", placeholder.map((e) => e.data.result));
     check("…which is not 'subagent.completed'", !h.some((e) => e.type === "subagent.completed" && e.data?.callId === calls.beta.callId));
@@ -437,8 +523,9 @@ try {
     check("the answer reached beta and beta finished", /CHILD-RESULT beta/.test(betaRun.filter((e) => e.type === "message.completed").at(-1)?.data?.message ?? ""));
     h = await until(P, (x) => replies(x, /PARENT-LATE/).length > 0, "beta's late result on the main thread", 30_000);
     const late = realResultsFor(h, calls.beta.callId);
-    const lateMs = at(late[0]) - at(betaRun.find((e) => e.type === "session.completed"));
-    check(`beta's result reached the main agent as a turn of its own (${lateMs} ms after it finished)`, late.length === 1 && lateMs >= 0 && lateMs < 8_000, { lateMs, n: late.length });
+    const lateMs = at(late[0]) - completedAt(betaRun);
+    const lateMax = promptly(8_000, pace);
+    check(`beta's result reached the main agent as a turn of its own (${lateMs} ms after it finished; at most ${lateMax})`, late.length === 1 && lateMs >= 0 && lateMs < lateMax, { lateMs, lateMax, pace, n: late.length });
     check("…read as that delegation's TOOL result: PARENT-LATE carries beta's result", /PARENT-LATE: CHILD-RESULT beta/.test(replies(h, /PARENT-LATE/)[0].data.message), replies(h, /PARENT-LATE/)[0]?.data?.message);
     check("…no user message was sent to the main thread for it", userMessagesAfterFirst(h).length === 0, userMessagesAfterFirst(h).map((e) => e.data?.message));
     const requests = (await (await fetch(`${app.model.base}/__requests`)).json()).map((r) => r.body ?? r);
@@ -453,16 +540,24 @@ try {
 
   await scenario("slow", async () => {
     console.log("\none finishes while the other is merely slow:");
-    const P = (await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=9000]]" })).body.sessionId;
+    // beta is held until the hand-over is seen: it is "merely slow" for as long as the hand-over takes.
+    const betaHold = holdKey();
+    const P = (await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${betaHold}]]` })).body.sessionId;
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the main agent's first reply", 30_000);
     const calls = callsOf(h);
-    const alphaDone = (await history(calls.alpha.childSessionId)).find((e) => e.type === "session.completed");
-    const handedMs = at(realResultsFor(h, calls.alpha.callId)[0]) - at(alphaDone);
-    check(`alpha's result was handed over after the ${DETACH_AFTER_MS} ms bound (${handedMs} ms after alpha finished), with beta 'running'`, handedMs >= DETACH_AFTER_MS - 500 && handedMs < DETACH_AFTER_MS + 6_000 && isPlaceholder(resultsFor(h, calls.beta.callId)[0]), { handedMs, beta: resultsFor(h, calls.beta.callId).map((e) => e.data.result.output) });
+    const alphaRun = await until(calls.alpha.childSessionId, (x) => types(x).includes("session.completed"), "alpha's own run");
+    const handedAt = at(realResultsFor(h, calls.alpha.callId)[0]);
+    const handedMs = handedAt - completedAt(alphaRun);
+    const pace = turnMs(alphaRun);
+    const handedMax = DETACH_AFTER_MS + promptly(6_000, pace);
+    check(`alpha's result was handed over after the ${DETACH_AFTER_MS} ms bound (${handedMs} ms after alpha finished; not before ${DETACH_AFTER_MS - 500}, at most ${handedMax}, a no-op turn here took ${pace} ms), with beta 'running'`, handedMs >= DETACH_AFTER_MS - 500 && handedMs < handedMax && isPlaceholder(resultsFor(h, calls.beta.callId)[0]), { handedMs, handedMax, pace, beta: resultsFor(h, calls.beta.callId).map((e) => e.data.result.output) });
+    await release(app, betaHold);
     h = await until(P, (x) => replies(x, /PARENT-LATE/).length > 0, "beta's late result", 40_000);
-    const betaDone = (await history(calls.beta.childSessionId)).find((e) => e.type === "session.completed");
-    const lateMs = at(realResultsFor(h, calls.beta.callId)[0]) - at(betaDone);
-    check(`beta's result arrived as its own turn ${lateMs} ms after beta finished, once`, lateMs >= 0 && lateMs < 8_000 && realResultsFor(h, calls.beta.callId).length === 1, { lateMs });
+    const betaRun = await until(calls.beta.childSessionId, (x) => types(x).includes("session.completed"), "beta's own run");
+    check("…the hand-over happened while beta was still working (before beta finished), not when all were back", handedAt < completedAt(betaRun), { handedAt: new Date(handedAt).toISOString(), betaDone: new Date(completedAt(betaRun)).toISOString() });
+    const lateMs = at(realResultsFor(h, calls.beta.callId)[0]) - completedAt(betaRun);
+    const lateMax = promptly(8_000, pace);
+    check(`beta's result arrived as its own turn ${lateMs} ms after beta finished (at most ${lateMax}), once, with no message from the person`, lateMs >= 0 && lateMs < lateMax && realResultsFor(h, calls.beta.callId).length === 1 && userMessagesAfterFirst(h).length === 0, { lateMs, lateMax, pace });
     dump("slow: the main thread", h);
     record("slow-main-thread", h);
   });
@@ -527,18 +622,26 @@ try {
 
   await scenario("midturn", async () => {
     console.log("\na detached result lands while the main thread is mid-turn:");
-    const started = await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=8000]]" });
+    // Order, not durations: beta is released once the second turn waits on its own specialist, and that specialist is
+    // released once beta has finished (mold_v1-286; a guessed 8 s beta raced a slow hand-over and finished first).
+    const betaHold = holdKey();
+    const secondHold = holdKey();
+    const started = await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${betaHold}]]` });
     const P = started.body.sessionId;
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0 && types(x).at(-1) === "session.waiting", "the hand-over", 30_000);
     const beta = callsOf(h).beta;
-    await post(`/eve/v1/session/${P}`, { message: "[[hb alpha:slow=14000]]", continuationToken: tokenOf(h) ?? started.body.continuationToken });
+    await post(`/eve/v1/session/${P}`, { message: `[[hb alpha:hold=${secondHold}]]`, continuationToken: tokenOf(h) ?? started.body.continuationToken });
+    h = await until(P, (x) => x.filter((e) => e.type === "subagent.called").length === 3, "the second turn's delegation", 30_000);
+    await release(app, betaHold);
     const betaRun = await until(beta.childSessionId, (x) => types(x).includes("session.completed"), "beta to finish", 30_000);
+    await sleep(2_000);
     h = await history(P);
     const busy = h.filter((e) => e.type === "turn.started").length === 2 && types(h).at(-1) !== "session.waiting";
     check("beta finished while the main thread was in another turn (waiting on a specialist)", busy && realResultsFor(h, beta.callId).length === 0, types(h).slice(-5));
+    await release(app, secondHold);
     h = await until(P, (x) => replies(x, /PARENT-LATE/).length > 0, "beta's late result after that turn", 40_000);
     const late = realResultsFor(h, beta.callId);
-    const secondTurnEnd = h.findIndex((e, i) => e.type === "turn.completed" && i > h.findIndex((x) => x.type === "message.received" && /alpha:slow=14000/.test(x.data?.message ?? "")) && h.slice(0, i).some((x) => x.type === "message.completed" && /PARENT-DONE: CHILD-RESULT alpha$/.test(x.data?.message ?? "")));
+    const secondTurnEnd = h.findIndex((e, i) => e.type === "turn.completed" && i > h.findIndex((x) => x.type === "message.received" && x.data?.message === `[[hb alpha:hold=${secondHold}]]`) && h.slice(0, i).some((x) => x.type === "message.completed" && /PARENT-DONE: CHILD-RESULT alpha$/.test(x.data?.message ?? "")));
     check("…its result was delivered when that turn ended, as a turn of its own, once (not lost)", late.length === 1 && h.indexOf(late[0]) > secondTurnEnd && secondTurnEnd > 0, { late: late.length, at: h.indexOf(late[0]), secondTurnEnd, types: types(h) });
     check("…after beta finished", at(late[0]) >= at(betaRun.find((e) => e.type === "session.completed")));
     dump("midturn: the main thread", h);
@@ -547,7 +650,8 @@ try {
 
   await scenario("twice", async () => {
     console.log("\na second copy of a late result arrives through the durable queue with the real one:");
-    const started = await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=6000]]" });
+    const betaHold = holdKey();
+    const started = await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${betaHold}]]` });
     const P = started.body.sessionId;
     const T = started.body.continuationToken;
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the hand-over", 30_000);
@@ -556,6 +660,7 @@ try {
     const stray = await post("/test/redeliver", { sessionId: P, continuationToken: T, result: { callId: calls.alpha.callId, kind: "subagent-result", output: "CHILD-RESULT alpha (copy)", subagentName: "alpha" } });
     check("a copy of a result that was not detached is accepted by the queue…", stray.status === 200, stray.status === 200 ? stray : `${JSON.stringify(stray)}\n${app.log().split("\n").filter((l) => /redeliver|Error|error/.test(l)).slice(-12).join("\n")}`);
     // When beta finishes, three more copies of its result, at the same moment as its own.
+    await release(app, betaHold);
     await until(calls.beta.childSessionId, (x) => types(x).includes("session.completed"), "beta to finish", 30_000);
     const copies = await Promise.all([1, 2, 3].map((n) => post("/test/redeliver", { sessionId: P, continuationToken: T, result: { callId: calls.beta.callId, kind: "subagent-result", output: `CHILD-RESULT beta (copy ${n})`, subagentName: "beta" } })));
     check("three copies of beta's result are accepted by the queue at the moment beta's own is sent", copies.every((c) => c.status === 200), copies);
@@ -573,13 +678,15 @@ try {
 
   await scenario("ownq", async () => {
     console.log("\na late result lands while the main agent waits on ITS OWN question; then the answer:");
-    const started = await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=7000]]" });
+    const betaHold = holdKey();
+    const started = await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${betaHold}]]` });
     const P = started.body.sessionId;
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0 && types(x).at(-1) === "session.waiting", "the hand-over", 30_000);
     const beta = callsOf(h).beta;
     await post(`/eve/v1/session/${P}`, { message: "[[hbq]]", continuationToken: tokenOf(h) ?? started.body.continuationToken });
     h = await until(P, (x) => x.filter((e) => e.type === "input.requested").length === 1 && types(x).at(-1) === "session.waiting", "the main agent's own question", 30_000);
     const own = h.find((e) => e.type === "input.requested").data.requests[0].requestId;
+    await release(app, betaHold);
     await until(beta.childSessionId, (x) => types(x).includes("session.completed"), "beta to finish", 30_000);
     await sleep(4_000);
     h = await history(P);
@@ -595,13 +702,15 @@ try {
 
   await scenario("ownqthen", async () => {
     console.log("\n…and the answer's turn then delegates (the path that used to lose a batch's results):");
-    const started = await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=7000]]" });
+    const betaHold = holdKey();
+    const started = await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${betaHold}]]` });
     const P = started.body.sessionId;
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0 && types(x).at(-1) === "session.waiting", "the hand-over", 30_000);
     const beta = callsOf(h).beta;
     await post(`/eve/v1/session/${P}`, { message: "[[hbq then=alpha:fast]]", continuationToken: tokenOf(h) ?? started.body.continuationToken });
     h = await until(P, (x) => x.filter((e) => e.type === "input.requested").length === 1 && types(x).at(-1) === "session.waiting", "the main agent's own question", 30_000);
     const own = h.find((e) => e.type === "input.requested").data.requests[0].requestId;
+    await release(app, betaHold);
     await until(beta.childSessionId, (x) => types(x).includes("session.completed"), "beta to finish", 30_000);
     await sleep(4_000);
     h = await history(P);
@@ -640,7 +749,7 @@ try {
 
   await scenario("stopaskingbatch", async () => {
     console.log("\na specialist waiting on its question INSIDE a batch that still waits is stopped:");
-    const P = (await post("/eve/v1/session", { message: "[[hb alpha:slow=20000 beta:ask]]" })).body.sessionId;
+    const P = (await post("/eve/v1/session", { message: `[[hb alpha:hold=${holdKey()} beta:ask]]` })).body.sessionId;
     let h = await until(P, (x) => types(x).includes("input.requested"), "beta's question", 30_000);
     const calls = callsOf(h);
     const stop = await post(`/eve/v1/session/${calls.beta.childSessionId}/cancel`);
@@ -691,7 +800,8 @@ try {
     check(`the hook stayed alive: eve's own Stop still stops it (${stop.body?.status}), reported once`, stop.body?.status === "accepted" && realResultsFor(h, beta.callId).length === 1 && realResultsFor(h, beta.callId)[0].data.result.output?.code === "SUBAGENT_STOPPED");
 
     // The bound's own timer hook takes only { kind: "detach-timer" }: a forged resume does not hand the batch over early.
-    const Q = (await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=12000]]" })).body.sessionId;
+    const forgeryHold = holdKey();
+    const Q = (await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${forgeryHold}]]` })).body.sessionId;
     h = await until(Q, (x) => x.filter((e) => e.type === "subagent.called").length === 2, "the delegations", 30_000);
     const calls = callsOf(h);
     const alphaDone = await until(calls.alpha.childSessionId, (x) => types(x).includes("session.completed"), "alpha to finish", 30_000);
@@ -705,7 +815,8 @@ try {
     }
     h = await until(Q, (x) => replies(x, /PARENT-DONE/).length > 0, "the hand-over", 30_000);
     const handedMs = at(realResultsFor(h, calls.alpha.callId)[0]) - at(alphaDone.find((e) => e.type === "session.completed"));
-    check(`forged resumes of the bound's timer hook (sent ${forged ? "and accepted by both routes" : "— hook not reachable"}) do not hand the batch over early: it went at the bound (${handedMs} ms)`, forged > 0 && handedMs >= DETACH_AFTER_MS - 500, { handedMs, forged: forged > 0 });
+    check(`forged resumes of the bound's timer hook (sent ${forged ? "and accepted by both routes" : "— hook not reachable"}) do not hand the batch over early: it went at the bound (${handedMs} ms), beta still 'running'`, forged > 0 && handedMs >= DETACH_AFTER_MS - 500 && isPlaceholder(resultsFor(h, calls.beta.callId)[0]), { handedMs, forged: forged > 0 });
+    await release(app, forgeryHold);
   });
 
   await scenario("lone", async () => {
@@ -750,7 +861,10 @@ try {
     check("alone: the turn does not fail (no AI_MissingToolResultsError)", !types(h).includes("turn.failed") && !types(h).includes("step.failed"), h.filter((e) => /failed/.test(e.type)).map((e) => e.data?.details?.message ?? e.data?.code));
     check("…alpha's result reached the main agent once, and the question came back to it as not asked (it may ask again on its own)", realResultsFor(h, c1.alpha?.callId).length === 1 && notAsked(h).length === 1, replies(h, /PARENT/).map((e) => e.data.message));
     check("…the person was never shown that question", !types(h).includes("input.requested"));
-    const P2 = (await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=6000 +ask]]" })).body.sessionId;
+    const betaHold = holdKey();
+    const P2 = (await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${betaHold} +ask]]` })).body.sessionId;
+    h = await until(P2, (x) => replies(x, /PARENT-DONE/).length > 0 || types(x).includes("turn.failed"), "the hand-over", 30_000);
+    await release(app, betaHold);
     h = await until(P2, (x) => replies(x, /PARENT-LATE/).length > 0 || types(x).includes("turn.failed"), "beta's late result", 40_000);
     const c2 = callsOf(h);
     check("with a 'reports later' sibling: handed over (alpha, beta 'running', the question not asked), no failure, then beta's late result once", !types(h).includes("turn.failed") && notAsked(h).length === 1 && h.some(isPlaceholder) && realResultsFor(h, c2.alpha.callId).length === 1 && realResultsFor(h, c2.beta.callId).length === 1 && replies(h, /PARENT-LATE/).length === 1, types(h));
@@ -758,13 +872,18 @@ try {
 
   await scenario("parallel", async () => {
     console.log("\none part delegated, one independent part done in the same step (mold_v1-197):");
-    const P = (await post("/eve/v1/session", { message: "[[hb alpha:slow=9000 +work]]" })).body.sessionId;
+    const alphaHold = holdKey();
+    const P = (await post("/eve/v1/session", { message: `[[hb alpha:hold=${alphaHold} +work]]` })).body.sessionId;
+    const probe = paceProbe(app);
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the main agent's first reply", 30_000);
     const calls = callsOf(h);
     const done = replies(h, /PARENT-DONE/)[0];
     check("the main agent replied with the independent part while the specialist still worked (alpha 'reports later')", /INDEPENDENT-PART/.test(done.data.message) && isPlaceholder(resultsFor(h, calls.alpha.callId)[0]), { reply: done.data.message, alpha: resultsFor(h, calls.alpha.callId).map((e) => e.data.result.output) });
     const handed = at(resultsFor(h, calls.alpha.callId)[0]) - at(h.find((e) => e.type === "subagent.called"));
-    check(`…handed over at the bound with NOTHING back yet (${handed} ms after the call; bound ${DETACH_AFTER_MS} ms), not when alpha finished`, handed >= DETACH_AFTER_MS - 500 && handed < DETACH_AFTER_MS + 4_000, { handed });
+    const pace = await probe;
+    const handedMax = DETACH_AFTER_MS + promptly(4_000, pace);
+    check(`…handed over at the bound with NOTHING back yet (${handed} ms after the call; bound ${DETACH_AFTER_MS} ms, at most ${handedMax}, a no-op turn here took ${pace} ms), not when alpha finished`, handed >= DETACH_AFTER_MS - 500 && handed < handedMax, { handed, handedMax, pace });
+    await release(app, alphaHold);
     const alphaRun = await until(calls.alpha.childSessionId, (x) => types(x).includes("session.completed"), "alpha to finish", 30_000);
     check("…the independent part reached the person BEFORE the specialist returned", at(done) < at(alphaRun.find((e) => e.type === "session.completed")), { reply: done.meta?.at, alpha: alphaRun.find((e) => e.type === "session.completed")?.meta?.at });
     h = await until(P, (x) => replies(x, /PARENT-LATE/).length > 0, "alpha's late result", 30_000);
@@ -813,10 +932,12 @@ try {
 
   await scenario("sweeprace", async () => {
     console.log("\nthe sweep's copy of a result and the specialist's own land together:");
-    const started = await post("/eve/v1/session", { message: "[[hb alpha:fast beta:slow=6000]]" });
+    const betaHold = holdKey();
+    const started = await post("/eve/v1/session", { message: `[[hb alpha:fast beta:hold=${betaHold}]]` });
     const P = started.body.sessionId;
     let h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the hand-over", 30_000);
     const beta = callsOf(h).beta;
+    await release(app, betaHold);
     await until(beta.childSessionId, (x) => types(x).some((t) => t === "message.completed"), "beta's answer", 30_000);
     const copies = await Promise.all([1, 2].map((n) => post("/test/sweep", { op: "deliver", sessionId: P, token: tokenOf(h) ?? started.body.continuationToken, result: { callId: beta.callId, kind: "subagent-result", subagentName: "beta", output: `CHILD-RESULT beta (sweep copy ${n})` } })));
     check("two sweep copies sent as beta finishes are taken", copies.every((c) => c.body?.ok === true), copies);
@@ -879,31 +1000,58 @@ try {
   await scenario("sweeptiming", async () => {
     console.log("\na long history is read from the start once, then only what is new (mold_v1-199):");
     // alpha streams a long answer: on this runtime (the local world, one file per event) its stream is read from the
-    // start at about 2 ms an event. Each request below is a new reader, as each pass of the sweep makes one.
+    // start at about 2 ms an event on a quiet machine, several times that on a loaded one. Each request below is one
+    // pass of the sweep: a new reader over the same runtime. What a pass READ is counted (the events each stream it
+    // opened handed out, and where it opened it), so the claim is held without a clock (mold_v1-286): a pass that
+    // runs out of its 10 s keeps what it got and the next goes on from there, every event of the stream is read from
+    // the runtime once, and once the history is whole a pass takes only the tail.
     const P = (await post("/eve/v1/session", { message: "[[hb alpha:long=12000 beta:ask]]" })).body.sessionId;
     const h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0 && types(x).at(-1) === "session.waiting", "the main agent's first reply", 120_000);
     const calls = callsOf(h);
     await until(calls.beta.childSessionId, (x) => types(x).includes("input.requested"), "beta's question", 30_000);
     await sleep(2_000);
-    const first = (await post("/test/sweep-history", { sessionId: calls.alpha.childSessionId })).body;
-    const second = (await post("/test/sweep-history", { sessionId: calls.alpha.childSessionId })).body;
-    check(`a specialist with a long stream: the first read, from the start, took ${first?.ms} ms`, first?.ms >= 500 && first?.last === "session.completed" && first?.n > 0, first);
-    check(`…the next pass's read took ${second?.ms} ms: only the tail, the same whole history`, second?.n === first?.n && second?.last === "session.completed" && second.ms < 300 && second.ms * 3 < first.ms, { first, second });
+    // About 250 events on this runtime (eve writes the 12 000 pieces' deltas in batches); a stream this long is what
+    // makes a tail read worth having: reading it from the start took about 1 s on a quiet machine, 10 s on a loaded one.
+    const LONG_STREAM_EVENTS = 100;
+    const forward = (pass) => pass.reads.filter((r) => r.startIndex >= 0);
+    const passes = [];
+    let whole;
+    for (let i = 0; i < 8 && !whole; i++) {
+      const pass = (await post("/test/sweep-history", { sessionId: calls.alpha.childSessionId })).body;
+      passes.push(pass);
+      if (typeof pass?.n === "number") whole = pass;
+    }
+    const pulled = passes.flatMap(forward);
+    const length = pulled.reduce((sum, r) => sum + r.events, 0);
+    const chained = pulled.every((r, i) => r.startIndex === pulled.slice(0, i).reduce((sum, p) => sum + p.events, 0));
+    const readMs = passes.reduce((sum, p) => sum + (p?.ms ?? 0), 0);
+    check(`a specialist with a long stream (${length} events): read from the start once, whole after ${passes.length} pass(es) (${readMs} ms in all), each pass going on where the last stopped, no event read twice`, Boolean(whole) && whole.last === "session.completed" && whole.n > 0 && length >= LONG_STREAM_EVENTS && pulled[0]?.startIndex === 0 && chained, { passes: passes.map((p) => ({ ms: p?.ms, n: p?.n, reads: p?.reads })) });
+    const next = (await post("/test/sweep-history", { sessionId: calls.alpha.childSessionId })).body;
+    const nextPulled = (next?.reads ?? []).reduce((sum, r) => sum + r.events, 0);
+    check(`…the next pass took only the tail: ${nextPulled} event(s) of ${length}, from the end (${next?.ms} ms), and gave the same whole history`, next?.n === whole?.n && next?.last === "session.completed" && forward(next ?? { reads: [] }).length === 0 && next.reads.length >= 1 && nextPulled <= 1, { next, whole: { n: whole?.n } });
     for (const [what, id] of [["the main thread (waiting on the person)", P], ["the specialist waiting on its question", calls.beta.childSessionId]]) {
       const r = (await post("/test/sweep-history", { sessionId: id })).body;
-      check(`${what}: read whole in ${r?.ms} ms (last ${r?.last})`, typeof r?.n === "number" && r.n > 0 && r.ms < 2_000, r);
+      check(`${what}: read whole in one pass (${r?.n} events, last ${r?.last}, ${r?.ms} ms)`, typeof r?.n === "number" && r.n > 0, r);
     }
   });
 
   await scenario("idle", async () => {
     console.log("\na lone delegation with nothing else to do is handed over at the idle bound (mold_v1-197):");
     const idleApp = await startApp({ detach: true, idleMs: 5_000 });
-    const P = (await idleApp.post("/eve/v1/session", { message: "[[hb alpha:slow=12000]]" })).body.sessionId;
+    const alphaHold = holdKey();
+    const P = (await idleApp.post("/eve/v1/session", { message: `[[hb alpha:hold=${alphaHold}]]` })).body.sessionId;
+    const probe = paceProbe(idleApp);
     let h = await idleApp.until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the main agent's reply", 30_000);
     const alpha = callsOf(h).alpha;
-    const handed = at(resultsFor(h, alpha.callId)[0]) - at(h.find((e) => e.type === "subagent.called"));
-    check(`the main agent got 'reports later' ${handed} ms after the call (idle bound 5000 ms) and replied while alpha worked`, isPlaceholder(resultsFor(h, alpha.callId)[0]) && handed >= 4_500 && handed < 9_000, { handed });
+    const handedAt = at(resultsFor(h, alpha.callId)[0]);
+    const handed = handedAt - at(h.find((e) => e.type === "subagent.called"));
+    const pace = await probe;
+    const handedMax = 5_000 + promptly(4_000, pace);
+    check(`the main agent got 'reports later' ${handed} ms after the call (idle bound 5000 ms; at most ${handedMax}, a no-op turn here took ${pace} ms) and replied while alpha worked`, isPlaceholder(resultsFor(h, alpha.callId)[0]) && handed >= 4_500 && handed < handedMax, { handed, handedMax, pace });
+    await release(idleApp, alphaHold);
     h = await idleApp.until(P, (x) => replies(x, /PARENT-LATE/).length > 0, "alpha's late result", 30_000);
+    const alphaRun = await idleApp.until(alpha.childSessionId, (x) => types(x).includes("session.completed"), "alpha's own run");
+    check("…handed over before alpha finished (the bound, not alpha's return)", handedAt < completedAt(alphaRun), { handedAt: new Date(handedAt).toISOString(), alphaDone: new Date(completedAt(alphaRun)).toISOString() });
     await sleep(3_000);
     h = await idleApp.history(P);
     check("…then alpha's result arrived once, as its own turn", realResultsFor(h, alpha.callId).length === 1 && replies(h, /PARENT-LATE: CHILD-RESULT alpha/).length === 1);
@@ -919,8 +1067,15 @@ try {
     const P = (await post("/eve/v1/session", { message: "[[hb beta:steer=6000]]" })).body.sessionId;
     let h = await until(P, (x) => Boolean(callsOf(x).beta), "beta to be called", 30_000);
     const beta = callsOf(h).beta;
-    // beta is in its first step (a tool call the model takes 6 s to make): the note arrives while it works.
-    await sleep(1_500);
+    // beta is in its first step (a tool call the model takes 6 s to make): the note arrives while it works. Sent once
+    // that first model call has reached the model (not after a guessed 1.5 s, which a loaded machine can outrun).
+    const isSteerCall = (r) => Array.isArray(r.messages) && r.messages.some((m) => /You are the subagent "beta"/.test(typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""))) && r.messages.some((m) => /HBMODE:steer=6000/.test(typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")));
+    for (let i = 0; ; i++) {
+      const requests = (await (await fetch(`${app.model.base}/__requests`)).json()).map((r) => r.body ?? r);
+      if (requests.some(isSteerCall)) break;
+      if (i > 300 * WAIT_FACTOR) throw new Error("beta's first model call never reached the model");
+      await sleep(100);
+    }
     const added = await post("/test/steer", { op: "add", parentSessionId: P, callId: beta.callId, author: "tester", text: "focus on FY24 only" });
     check("a note is written to beta's inbox while beta works", added.status === 200 && added.body?.ok === true, added);
     h = await until(P, (x) => replies(x, /PARENT-DONE/).length > 0, "the main agent's reply", 40_000);

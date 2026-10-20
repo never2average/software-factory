@@ -1,0 +1,682 @@
+{
+  "$comment": "A neutral fixture for the workflow runtime (docs/WORKFLOW_ENGINE.md phase 5; scripts/test-record-workflow-runtime.mjs, scripts/test-record-workflow-runtime-db.mjs): three record areas run one maker-checker workflow. The deployments area's own review state (renamed twice, renamed_from, and holding two legacy spellings, legacy_values, so a record stored under any of them still drives the steps; enforce warn, which the tests override); the tasks' own state (strict); the periods' state column (strict); the implementations' own review state (strict, one per account), whose three doors must reach one instance. A test fixture; no deployment ships it.",
+  "people": {
+    "attributes": [
+      {
+        "key": "duty",
+        "label": "Duty",
+        "type": "choice",
+        "options": [
+          {
+            "value": "maker",
+            "label": "Maker"
+          },
+          {
+            "value": "checker",
+            "label": "Checker"
+          }
+        ]
+      }
+    ]
+  },
+  "records": {
+    "workflows": {
+      "maker-checker": {
+        "_notes": [
+          "A neutral maker-checker review for the runtime tests: one person with the maker duty prepares (a comment and evidence to submit), anyone with the checker duty reviews (a comment to approve or send back). A send-back reopens the preparation and puts the review back to sleep."
+        ],
+        "user_attributes": [
+          {
+            "key": "duty",
+            "options": [
+              "maker",
+              "checker"
+            ]
+          }
+        ],
+        "init": {
+          "start_id": "prepare",
+          "transitions": {
+            "open": [
+              "completed",
+              "rejected",
+              "escalated"
+            ],
+            "completed": [
+              "open"
+            ],
+            "rejected": [
+              "open"
+            ],
+            "escalated": [
+              "completed",
+              "rejected",
+              "open"
+            ]
+          },
+          "terminal_when": {
+            "selector": {
+              "id": "review"
+            },
+            "all": {
+              "state": "completed"
+            }
+          },
+          "steps": [
+            {
+              "id": "prepare",
+              "title": "Prepare",
+              "comments_required": {
+                "default": true,
+                "evaluation_criterion": "What was done.",
+                "required_on": [
+                  "completed"
+                ]
+              },
+              "evidence_required": {
+                "default": true,
+                "evaluation_criterion": "The material that shows it.",
+                "required_on": [
+                  "completed"
+                ]
+              },
+              "assignee": {
+                "condition": {
+                  "$or": {
+                    "query": {
+                      "duty": "maker"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "review",
+              "title": "Review",
+              "status": {
+                "default": false
+              },
+              "comments_required": {
+                "default": true,
+                "evaluation_criterion": "Why it is approved, or what is missing.",
+                "required_on": [
+                  "completed",
+                  "rejected"
+                ]
+              },
+              "assignee": {
+                "condition": {
+                  "$or": {
+                    "query": {
+                      "duty": "checker"
+                    }
+                  }
+                },
+                "limit": 2
+              }
+            }
+          ]
+        },
+        "diff": [
+          {
+            "priority": 0,
+            "applicability": "all",
+            "selector": {
+              "rule": "forAll"
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "completed"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "self",
+                "set": {
+                  "completed_at": {
+                    "value": {
+                      "$delta": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 0.5,
+            "applicability": "all",
+            "selector": {
+              "rule": "forAll"
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "completed",
+                  "after": ""
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "self",
+                "set": {
+                  "completed_at": {
+                    "value": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 1,
+            "applicability": "all",
+            "selector": {
+              "rule": "single",
+              "group_selector": {
+                "id": "prepare"
+              }
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "completed"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "other",
+                "other_selector": {
+                  "id": "review"
+                },
+                "set": {
+                  "status": {
+                    "value": true
+                  },
+                  "state": {
+                    "value": "open"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 2,
+            "applicability": "all",
+            "selector": {
+              "rule": "single",
+              "group_selector": {
+                "id": "review"
+              }
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "rejected"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "other",
+                "other_selector": {
+                  "id": "prepare"
+                },
+                "set": {
+                  "status": {
+                    "value": true
+                  },
+                  "state": {
+                    "value": "open"
+                  },
+                  "completed_at": {
+                    "value": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 3,
+            "applicability": "all",
+            "selector": {
+              "rule": "single",
+              "group_selector": {
+                "id": "review"
+              }
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "rejected"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "self",
+                "set": {
+                  "status": {
+                    "value": false
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "areas": {
+      "deployments": {
+        "fields": {
+          "review_state": {
+            "type": "pick_list",
+            "label": "Review state",
+            "options": [
+              {
+                "value": "drafting",
+                "label": "Drafting"
+              },
+              {
+                "value": "in_review",
+                "label": "In review"
+              },
+              {
+                "value": "approved",
+                "label": "Approved"
+              },
+              {
+                "value": "sent_back",
+                "label": "Sent back"
+              }
+            ],
+            "legacy_values": {
+              "draft": "drafting",
+              "pending": "in_review"
+            },
+            "renamed_from": [
+              "approval_state",
+              "review_status"
+            ]
+          }
+        },
+        "lifecycle": {
+          "field": "review_state",
+          "initial": "drafting",
+          "enforce": "warn",
+          "categories": {
+            "drafting": "open",
+            "in_review": "active",
+            "approved": "done",
+            "sent_back": "open"
+          },
+          "workflow": "maker-checker",
+          "transitions": [
+            {
+              "from": [
+                "drafting",
+                "sent_back"
+              ],
+              "to": "in_review",
+              "label": "Submit",
+              "step": {
+                "id": "prepare",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "in_review"
+              ],
+              "to": "approved",
+              "label": "Approve",
+              "not_by": "{entered_by}",
+              "step": {
+                "id": "review",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "in_review"
+              ],
+              "to": "sent_back",
+              "label": "Send back",
+              "requires_comment": true,
+              "step": {
+                "id": "review",
+                "state": "rejected"
+              }
+            }
+          ],
+          "workflow_states": {
+            "drafting": {
+              "prepare": "open"
+            },
+            "in_review": {
+              "prepare": "completed",
+              "review": "open"
+            },
+            "approved": {
+              "prepare": "completed",
+              "review": "completed"
+            },
+            "sent_back": {
+              "prepare": "open",
+              "review": "rejected"
+            }
+          }
+        }
+      },
+      "tasks": {
+        "label": {
+          "singular": "item",
+          "plural": "items"
+        },
+        "fields": {
+          "state": {
+            "type": "pick_list",
+            "label": "Item state",
+            "options": [
+              {
+                "value": "drafting",
+                "label": "Drafting"
+              },
+              {
+                "value": "in_review",
+                "label": "In review"
+              },
+              {
+                "value": "approved",
+                "label": "Approved"
+              },
+              {
+                "value": "sent_back",
+                "label": "Sent back"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "field": "state",
+          "initial": "drafting",
+          "enforce": "strict",
+          "categories": {
+            "drafting": "open",
+            "in_review": "active",
+            "approved": "done",
+            "sent_back": "open"
+          },
+          "workflow": "maker-checker",
+          "transitions": [
+            {
+              "from": [
+                "drafting",
+                "sent_back"
+              ],
+              "to": "in_review",
+              "label": "Submit",
+              "step": {
+                "id": "prepare",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "in_review"
+              ],
+              "to": "approved",
+              "label": "Approve",
+              "not_by": "{entered_by}",
+              "step": {
+                "id": "review",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "in_review"
+              ],
+              "to": "sent_back",
+              "label": "Send back",
+              "requires_comment": true,
+              "step": {
+                "id": "review",
+                "state": "rejected"
+              }
+            }
+          ],
+          "workflow_states": {
+            "drafting": {
+              "prepare": "open"
+            },
+            "in_review": {
+              "prepare": "completed",
+              "review": "open"
+            },
+            "approved": {
+              "prepare": "completed",
+              "review": "completed"
+            },
+            "sent_back": {
+              "prepare": "open",
+              "review": "rejected"
+            }
+          }
+        },
+        "views": {
+          "board": {
+            "by": "state"
+          },
+          "table": {
+            "columns": [
+              "title",
+              "state",
+              "dueAt",
+              "assignee"
+            ]
+          },
+          "filters": [
+            {
+              "field": "state"
+            }
+          ]
+        }
+      },
+      "periods": {
+        "label": {
+          "singular": "batch",
+          "plural": "batches"
+        },
+        "fields": {
+          "state": {
+            "label": "Batch state",
+            "options": [
+              {
+                "value": "planning",
+                "label": "Draft"
+              },
+              {
+                "value": "active",
+                "label": "Open"
+              },
+              {
+                "value": "review",
+                "label": "In review"
+              },
+              {
+                "value": "closed",
+                "label": "Signed off"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "field": "state",
+          "initial": "planning",
+          "enforce": "strict",
+          "categories": {
+            "planning": "open",
+            "active": "active",
+            "review": "active",
+            "closed": "done"
+          },
+          "workflow": "maker-checker",
+          "transitions": [
+            {
+              "from": [
+                "planning",
+                "active"
+              ],
+              "to": "review",
+              "label": "Submit",
+              "step": {
+                "id": "prepare",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "review"
+              ],
+              "to": "closed",
+              "label": "Approve",
+              "not_by": "{entered_by}",
+              "step": {
+                "id": "review",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "review"
+              ],
+              "to": "active",
+              "label": "Send back",
+              "requires_comment": true,
+              "step": {
+                "id": "review",
+                "state": "rejected"
+              }
+            }
+          ],
+          "workflow_states": {
+            "planning": {
+              "prepare": "open"
+            },
+            "active": {
+              "prepare": "open"
+            },
+            "review": {
+              "prepare": "completed",
+              "review": "open"
+            },
+            "closed": {
+              "prepare": "completed",
+              "review": "completed"
+            }
+          }
+        }
+      },
+      "implementations": {
+        "fields": {
+          "review_state": {
+            "type": "pick_list",
+            "label": "Review state",
+            "options": [
+              {
+                "value": "drafting",
+                "label": "Drafting"
+              },
+              {
+                "value": "in_review",
+                "label": "In review"
+              },
+              {
+                "value": "approved",
+                "label": "Approved"
+              },
+              {
+                "value": "sent_back",
+                "label": "Sent back"
+              }
+            ]
+          }
+        },
+        "lifecycle": {
+          "field": "review_state",
+          "initial": "drafting",
+          "enforce": "strict",
+          "categories": {
+            "drafting": "open",
+            "in_review": "active",
+            "approved": "done",
+            "sent_back": "open"
+          },
+          "workflow": "maker-checker",
+          "transitions": [
+            {
+              "from": [
+                "drafting",
+                "sent_back"
+              ],
+              "to": "in_review",
+              "label": "Submit",
+              "step": {
+                "id": "prepare",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "in_review"
+              ],
+              "to": "approved",
+              "label": "Approve",
+              "not_by": "{entered_by}",
+              "step": {
+                "id": "review",
+                "state": "completed"
+              }
+            },
+            {
+              "from": [
+                "in_review"
+              ],
+              "to": "sent_back",
+              "label": "Send back",
+              "requires_comment": true,
+              "step": {
+                "id": "review",
+                "state": "rejected"
+              }
+            }
+          ],
+          "workflow_states": {
+            "drafting": {
+              "prepare": "open"
+            },
+            "in_review": {
+              "prepare": "completed",
+              "review": "open"
+            },
+            "approved": {
+              "prepare": "completed",
+              "review": "completed"
+            },
+            "sent_back": {
+              "prepare": "open",
+              "review": "rejected"
+            }
+          }
+        }
+      }
+    }
+  }
+}

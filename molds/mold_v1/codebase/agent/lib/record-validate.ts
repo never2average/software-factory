@@ -29,7 +29,7 @@ import { RECORD_AREAS, type RecordAreaId, type RecordField, type RecordRole } fr
 import { areaView, CATEGORY_STATUS, type AreaRow, type RecordAreas } from "./record-areas.ts";
 import { coerceFieldValue, fieldName } from "./record-values.ts";
 import { earlierKeys, ownValue } from "./own-keys.ts";
-import { checkMove, conflictBody, type LifecycleConflict, type MoveCheck } from "./record-lifecycle.ts";
+import { checkMove, conflictBody, type LifecycleConflict, type MoveCheck, type WorkflowGate } from "./record-lifecycle.ts";
 
 export { coerceFieldValue, LONG_TEXT_MAX, realDate, TEXT_MAX, type CoercedValue, type CoercibleField } from "./record-values.ts";
 const isBlank = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
@@ -71,6 +71,8 @@ export interface WriteInput {
   comment?: string | null;
   /** Who moved the record into its stored state (lib/record-lifecycle-server.ts), for `not_by: "{entered_by}"`. */
   enteredBy?: string | null;
+  /** The step rules of a lifecycle that runs a workflow (agent/lib/record-lifecycle.ts WorkflowGate); none otherwise. */
+  workflow?: WorkflowGate;
 }
 export interface TransitionCheck {
   field: string;
@@ -225,7 +227,7 @@ export function validateRecordWrite(areaId: RecordAreaId, input: WriteInput, are
     if (moves) {
       const from = input.mode === "update" && typeof prev === "string" ? prev : null;
       const row: AreaRow = { ...(before ?? {}), ...columns, custom };
-      const check = checkMove(v, { from, to: after as string, row, before, actor: input.actor, role: input.role, comment: input.comment, enteredBy: input.enteredBy, now });
+      const check = checkMove(v, { from, to: after as string, row, before, actor: input.actor, role: input.role, comment: input.comment, enteredBy: input.enteredBy, now, ...(input.workflow ? { workflow: input.workflow } : {}) });
       if (input.mode === "update") transition = { field: lc.field, from, to: after as string, allowed: check.allowed, reasons: check.allowed ? [] : [check.sentence] };
       if (mode !== "off") {
         if (!check.allowed && mode === "strict" && input.enforceTransitions !== false) return { ok: false, errors: [check.sentence], conflict: conflictBody(check) };

@@ -415,7 +415,8 @@ still outstanding. A delegation the sweep acts on is seen settled on the next pa
 specialist's own delegation) does not hold its main thread open: only a main thread's direct children are counted.
 
 **Reading a long history (mold_v1-199, second part).** On the self-hosted local world a session's stream is one file
-per event, and reading it from the start costs about 2 ms an event (`npm run test:specialist-detach`, `sweeptiming`). A
+per event, and reading it from the start costs about 2–4 ms an event on a quiet machine and several times that on a
+loaded one (`npm run test:specialist-detach`, `sweeptiming`, which counts what each pass reads rather than timing it). A
 research thread or specialist with thousands of events did not fit the sweep's 10 s read at all: after the candidate
 list was cut to 2 threads, each pass still took 20 s, two reads giving up at 10 s and the waiting specialist never
 judged. The reader (`wholeHistory`, agent/lib/specialist-sweep-world.ts) now keeps, per process, what it has read of

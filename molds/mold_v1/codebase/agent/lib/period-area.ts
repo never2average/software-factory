@@ -22,7 +22,7 @@
 import { RECORD_AREAS, type RecordRole } from "./record-areas.generated.ts";
 import { areaView, type AreaRow, type AreaView, type RecordAreas, type RecordCategory } from "./record-areas.ts";
 import { validateRecordWrite, type TransitionCheck } from "./record-validate.ts";
-import { warningOf, type LifecycleConflict, type MoveCheck, type WriteWarning } from "./record-lifecycle.ts";
+import { warningOf, type LifecycleConflict, type MoveCheck, type WorkflowGate, type WriteWarning } from "./record-lifecycle.ts";
 import { createRefusal, updateRefusal } from "./record-permissions.ts";
 
 /** The three states the cycles table has always stored, as the default profile names them. */
@@ -134,6 +134,8 @@ export interface PeriodWho {
   before?: AreaRow | null;
   /** Who moved the stored period into its state, for a four-eyes move. */
   enteredBy?: string | null;
+  /** The step rules, when the periods' lifecycle runs a workflow (agent/lib/record-lifecycle.ts WorkflowGate). */
+  workflow?: WorkflowGate;
   /** false: leave who-may to the API (a screen's own pre-check, which does not know the caller's role). */
   checkPermissions?: boolean;
 }
@@ -154,7 +156,7 @@ export function preparePeriodWrite(mode: "create" | "update", body: Record<strin
   const lc = v.lifecycle;
   if (mode === "create" && lc && !(lc.field in patch) && lc.initial) patch[lc.field] = lc.initial;
   const comment = typeof body.reason === "string" ? body.reason : null;
-  const r = validateRecordWrite("periods", { mode, before: who.before ?? null, patch, actor: who.actor, role: who.role, now: who.now, comment, enteredBy: who.enteredBy }, areas);
+  const r = validateRecordWrite("periods", { mode, before: who.before ?? null, patch, actor: who.actor, role: who.role, now: who.now, comment, enteredBy: who.enteredBy, ...(who.workflow ? { workflow: who.workflow } : {}) }, areas);
   if (!r.ok) return { ok: false, errors: r.errors, ...(r.conflict ? { conflict: r.conflict } : {}) };
   const columns: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(r.columns)) {

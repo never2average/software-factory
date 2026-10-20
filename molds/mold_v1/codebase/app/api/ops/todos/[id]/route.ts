@@ -4,6 +4,7 @@ import { proxyTaskWorkflow } from "@/lib/task-workflow-service";
 import { guardTaskRequest } from "@/lib/work-periods-server";
 import { afterTaskWrite } from "@/lib/record-lifecycle-server";
 import { taskDeleteForbidden } from "@/lib/record-permissions-server";
+import { forwardWorkflowTask, taskWorkflowWrite } from "@/lib/record-workflow-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,8 @@ async function forward(request: NextRequest, context: RouteContext) {
     const no = await taskDeleteForbidden(request, ctx, id);
     if (no) return no;
   }
+  // A lifecycle that runs a workflow: the move goes through its step rules, held around the service's write.
+  if (taskWorkflowWrite(request.method)) return forwardWorkflowTask(request, ctx, id, `/api/v1/tasks/${encodeURIComponent(id)}`);
   // The caller's role: what a lifecycle transition's `roles` reads (agent/lib/record-lifecycle.ts).
   const guarded = await guardTaskRequest(request, ctx.orgId, id, undefined, undefined, { role: ctx.role });
   if ("response" in guarded) return guarded.response;

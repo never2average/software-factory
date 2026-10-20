@@ -21,7 +21,7 @@ import { RECORD_AREAS, type RecordRole } from "./record-areas.generated.ts";
 import type { RecordAreas } from "./record-areas.ts";
 import { validateRecordWrite } from "./record-validate.ts";
 import { areaView, type AreaRow } from "./record-areas.ts";
-import type { LifecycleConflict, MoveCheck } from "./record-lifecycle.ts";
+import type { LifecycleConflict, MoveCheck, WorkflowGate } from "./record-lifecycle.ts";
 import { createRefusal, updateRefusal } from "./record-permissions.ts";
 
 /** Keys of a task request that are not fields of a task: identities, audit labels, the request's own switches. */
@@ -42,6 +42,8 @@ export interface TaskWho {
   enteredBy?: string | null;
   /** The state a requested pipeline stage (`stageId`) stands for (record-lifecycle.ts stateForStage). */
   stageState?: string | null;
+  /** The step rules, when the tasks' lifecycle runs a workflow (agent/lib/record-lifecycle.ts WorkflowGate). */
+  workflow?: WorkflowGate;
   /** false: skip who-may (agent/lib/record-permissions.ts), for a screen's own pre-check that does not know the role. */
   checkPermissions?: boolean;
 }
@@ -83,7 +85,7 @@ export function prepareTaskWrite(
     }
   }
   const comment = typeof body.reason === "string" ? body.reason : null;
-  const r = validateRecordWrite("tasks", { mode, patch, actor: who.actor, role: who.role, now: who.now, passThrough: TASK_PASS_THROUGH, before: enforced ? who.before ?? null : null, comment, enteredBy: who.enteredBy }, areas);
+  const r = validateRecordWrite("tasks", { mode, patch, actor: who.actor, role: who.role, now: who.now, passThrough: TASK_PASS_THROUGH, before: enforced ? who.before ?? null : null, comment, enteredBy: who.enteredBy, ...(who.workflow ? { workflow: who.workflow } : {}) }, areas);
   if (!r.ok) return { ok: false, errors: r.errors, ...(r.conflict ? { conflict: r.conflict } : {}) };
   const moved = r.lifecycle ? { lifecycle: r.lifecycle } : {};
   if (!redefined) return { ok: true, body: null, warnings: r.warnings, ...moved };

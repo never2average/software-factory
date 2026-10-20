@@ -365,6 +365,9 @@ export function describeMoves(id: RecordAreaId, areas: RecordAreas = RECORD_AREA
         t.label ?? "",
         t.roles?.length ? `${t.roles.join(" or ")} only` : "",
         t.not_by === "{entered_by}" ? "not by whoever moved it into the state it leaves: a second person must" : t.not_by ? `not by its ${v.label(t.not_by).toLowerCase()}` : "",
+        // A lifecycle that runs a workflow: the move changes a step, which only whoever holds it may (or someone who may
+        // act on every step). Nothing is said for a lifecycle that runs none.
+        t.step && a.lifecycle?.workflow ? `only by whoever holds the workflow's "${t.step.id}" step, which it marks ${t.step.state}` : "",
         t.requires?.length ? `needs ${t.requires.map((k) => `"${v.label(k)}"`).join(" and ")} set` : "",
         t.requires_comment ? `needs a comment saying why${id === "tasks" ? " (`reason`)" : ""}` : "",
         ...Object.entries(t.set ?? {}).map(([k, x]) => `sets "${v.label(k)}" to ${x === "{me}" ? "you" : x === "{today}" || x === "{now}" ? "today" : JSON.stringify(x)}`),

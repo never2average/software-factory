@@ -24,6 +24,12 @@
  * lifecycle's states by CATEGORY (stateForStage; the service's own copy is services/task-workflow/lib/stages.ts):
  * a stage's own `category`, else the state its label names, else today's six status names.
  *
+ * A lifecycle that runs a workflow (`workflow`, each move's `step`; docs/WORKFLOW_ENGINE.md phase 5) adds the step's own
+ * rules to a move that names a step: the caller hands checkMove a WorkflowGate (lib/record-workflow-runtime.ts builds one
+ * from the record's workflow instance and the workspace's people), and what it refuses is a broken rule like any other
+ * (`step_inactive`, `not_holder`, `step_transition`, `step_comment`, `step_evidence`), so "warn" and "strict" treat it
+ * the same way. Without a gate (no workflow, or enforce "off") nothing here reads one and every answer is what it was.
+ *
  * Pure: no database, no fetch.
  */
 import type { RecordCategory, RecordRole, RecordTransition } from "./record-areas.generated.ts";
@@ -33,7 +39,13 @@ export type EnforceMode = "off" | "warn" | "strict";
 /** `not_by` value: the person who moved the record into the state the move leaves (four eyes). */
 export const ENTERED_BY = "{entered_by}";
 
-export type LifecycleRule = "transition" | "roles" | "not_by" | "requires" | "requires_comment";
+export type LifecycleRule = "transition" | "roles" | "not_by" | "requires" | "requires_comment" | StepRule;
+/**
+ * A rule of the step a move changes (a lifecycle that runs a workflow): the step is not open yet (`step_inactive`), the
+ * caller does not hold it (`not_holder`), the workflow does not let the step go to that state (`step_transition`), it
+ * needs a comment (`step_comment`) or evidence (`step_evidence`).
+ */
+export type StepRule = "step_inactive" | "not_holder" | "step_transition" | "step_comment" | "step_evidence";
 export interface BrokenRule {
   rule: LifecycleRule;
   /** What is wrong, as a clause ("only owner or admin may make it"). */
@@ -53,6 +65,18 @@ export interface AllowedMove {
   requires_comment?: boolean;
   /** This caller may not make it (`not_by`): a second person must. */
   not_you?: boolean;
+  /** The step it changes is held by someone else (a lifecycle that runs a workflow): who holds it. */
+  held_by?: string[];
+}
+/**
+ * The step rules of a lifecycle that runs a workflow, for one caller and one record (lib/record-workflow-runtime.ts
+ * stepGate). checkMove asks it about every transition that names a `step`; it never changes anything.
+ */
+export interface WorkflowGate {
+  /** What the transition's step refuses this caller, as broken rules (clauses, in the profile's words); [] when none. */
+  stepBroken(t: RecordTransition): BrokenRule[];
+  /** Who holds the step a transition changes ([] when nobody does, or it names none). */
+  holders(t: RecordTransition): string[];
 }
 export interface MoveCheck {
   field: string;
@@ -84,6 +108,8 @@ export interface MoveInput {
   /** Who moved the record into `from` (lib/record-lifecycle-server.ts enteredBy), for `not_by: "{entered_by}"`. */
   enteredBy?: string | null;
   now?: Date;
+  /** The step rules, when the lifecycle runs a workflow (see the file's header). */
+  workflow?: WorkflowGate;
 }
 
 const isBlank = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
@@ -148,7 +174,18 @@ export function checkMove(v: AreaView, input: MoveInput): MoveCheck {
   const base = { field: lc.field, from, to, enforce };
   // The moves there are for this role; those `not_by` bars this caller from are marked (a second person must).
   const barred = (t: RecordTransition | null) => Boolean(t?.not_by && notByHits(v, t.not_by, input));
-  const allowedMoves = movesFrom(v, from, input.role).map((m) => (barred((v.area.lifecycle?.transitions ?? []).find((t) => t.to === m.to && (t.from === "*" || (from !== null && t.from.includes(from)))) ?? null) ? { ...m, not_you: true } : m));
+  const transitionOf = (to: string) => (v.area.lifecycle?.transitions ?? []).find((t) => t.to === to && (t.from === "*" || (from !== null && t.from.includes(from)))) ?? null;
+  // A step someone else holds is marked with who holds it (only when the lifecycle runs a workflow).
+  const held = (t: RecordTransition | null): string[] | null => {
+    if (!t?.step || !input.workflow) return null;
+    return input.workflow.stepBroken(t).some((b) => b.rule === "not_holder") ? input.workflow.holders(t) : null;
+  };
+  const allowedMoves = movesFrom(v, from, input.role).map((m) => {
+    const t = transitionOf(m.to);
+    const by = held(t);
+    const out = barred(t) ? { ...m, not_you: true } : m;
+    return by ? { ...out, held_by: by } : out;
+  });
   const ok = (transition: RecordTransition | null, stamp: Record<string, unknown> = {}): MoveCheck => ({ ...base, allowed: true, transition, broken: [], allowedMoves, stamp, sentence: "" });
   // No transitions listed: every move is allowed. A record created in its initial state starts where it should.
   if (!ts.length) return ok(null);
@@ -174,6 +211,7 @@ export function checkMove(v: AreaView, input: MoveInput): MoveCheck {
     const missing = (t.requires ?? []).filter((k) => isBlank(v.get(after, k)));
     if (missing.length) why.push({ rule: "requires", message: `it needs ${missing.map((k) => `"${v.label(k)}"`).join(" and ")}`, transition: name });
     if (t.requires_comment && isBlank(input.comment)) why.push({ rule: "requires_comment", message: "it needs a comment saying why", transition: name });
+    if (t.step && input.workflow) why.push(...input.workflow.stepBroken(t).map((b) => ({ ...b, transition: name })));
     if (!why.length) return ok(t, stamp);
     broken.push(...why);
     reasons.push(`${label(to)}${t.label ? ` (${t.label})` : ""}: ${why.map((w) => w.message).join("; ")}.`);
@@ -218,7 +256,7 @@ export function movesFrom(v: AreaView, state: string | null, role?: RecordRole):
 }
 
 function describeMove(m: AllowedMove): string {
-  const notes = [m.action, m.not_you ? "not by you: a second person must" : "", m.requires?.length ? `needs ${m.requires.map((r) => `"${r}"`).join(" and ")}` : "", m.requires_comment ? "needs a comment" : ""].filter(Boolean);
+  const notes = [m.action, m.not_you ? "not by you: a second person must" : "", m.held_by ? (m.held_by.length ? `held by ${m.held_by.join(", ")}` : "nobody holds its step yet") : "", m.requires?.length ? `needs ${m.requires.map((r) => `"${r}"`).join(" and ")}` : "", m.requires_comment ? "needs a comment" : ""].filter(Boolean);
   return `"${m.label}"${notes.length ? ` (${notes.join("; ")})` : ""}`;
 }
 

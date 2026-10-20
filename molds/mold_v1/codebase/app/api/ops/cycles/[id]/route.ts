@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorText } from "@/lib/ops-errors";
+import { workflowRefusal } from "@/lib/record-workflow-moves";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { cycles } from "@/agent/lib/db/schema";
@@ -146,6 +147,9 @@ async function patchDeclared(request: NextRequest, ctx: OrgContext, db: NonNulla
     }
     return NextResponse.json({ item: periodOut(r.row), ...(r.warnings.length ? { warnings: r.warnings } : {}) });
   } catch (e) {
+    // A lifecycle that runs a workflow: its instance changed under the move (nothing was kept).
+    const stopped = workflowRefusal(e, areaView("periods").noun);
+    if (stopped) return NextResponse.json(stopped.body, { status: stopped.status });
     return NextResponse.json({ error: errorText(e) }, { status: 500 });
   }
 }

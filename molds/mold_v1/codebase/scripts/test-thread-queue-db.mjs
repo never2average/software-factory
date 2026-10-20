@@ -25,6 +25,11 @@
  *     Where only the author's page can send, a message first in line waits a few minutes, then fails with a reason.
  *     A token is its own thread's: the gate and the door refuse it for another thread, or a thread not the owner's.
  *  8. NO TABLE, NO OUTAGE: on a database the migration has not reached, nothing throws and enqueue says to send directly.
+ *  9. A SESSION WITH NO OWNER RECORD (mold_v1-291, older than drizzle/0022): no token is ever minted for it (the door
+ *     would refuse one); a participant's message is sent on the participant's OWN sign-in — when they send it, or when
+ *     their page runs the queue — and the owner's page running the queue cannot send it as anyone; it is sent or
+ *     failed with a reason its author sees, never lost; nothing writes the missing record; and once the agent records
+ *     the owner, the session's messages are signed for exactly as in 1.
  *
  * Run:  ADMIN_URL=… DATABASE_URL=…app_rw… npm run test:thread-queue-db
  */
@@ -60,6 +65,9 @@ const BOB = "bob@probe.example"; // a participant, not the author
 const CAROL = "carol@probe.example"; // another participant
 const MALLORY = "mallory@probe.example"; // a workspace member who wrote a thread row on someone else's session
 const SID = `wrun_TQPROBE_${STAMP}`;
+const SID_OLD = `wrun_TQPROBE_OLD_${STAMP}`; // a session from before owner records: no agent_session_owners row
+const SID_UNPLACED = `wrun_TQPROBE_UNPLACED_${STAMP}`; // …and one the agent holds no evidence about either
+const SID_FILED = `wrun_TQPROBE_FILED_${STAMP}`; // …and one whose only thread a colleague filed (mold_v1-293)
 
 const { withOrgDb, closeDb } = await import("../agent/lib/db/index.ts");
 const q = await import("../lib/thread-queue-server.ts");
@@ -79,11 +87,14 @@ const applyMigration = async () => {
 /**
  * A fake agent. ONE live token (`ct-k`); a send with any other is refused (409). A send is admitted only if the
  * agent's real door spends its single-use author token (`consumePostInDb`, queue "thread"), exactly as the guard does.
+ * A send that is NOT signed goes on the sign-in of the page that ran the queue (`_pumper`), as the route's `forward`
+ * does: refused unless that is the author's own (the route's 403), then decided by the agent's REAL session gate for
+ * that person (lib/session-gate.ts readOwnership + readCallerFacts, lib/chat-gate.ts sessionGateDecision).
  * An admitted send starts a turn: the session is not parked (no token) until `park()`. `ownerTurn()` starts a turn
  * nobody's queue started (the owner typing straight into their copy). Records who each turn ran as.
  */
 function fakeAgent() {
-  const a = { k: 1, busy: false, posts: [], sends: [], refuse: [], loseAfter: 0, loseBefore: 0, inFlight: 0, maxInFlight: 0 };
+  const a = { k: 1, busy: false, posts: [], sends: [], refuse: [], loseAfter: 0, loseBefore: 0, inFlight: 0, maxInFlight: 0, notOwn: 0 };
   a.park = () => {
     if (a.busy) {
       a.busy = false;
@@ -108,6 +119,24 @@ function fakeAgent() {
           throw new Error("socket hang up (before the agent)");
         }
         if (a.refuse.length) return { ok: false, status: a.refuse.shift(), detail: "refused" };
+        if (!send.signed) {
+          // The page's own sign-in: the route sends only its caller's own message this way.
+          const signIn = over._pumper;
+          if (!signIn || signIn !== send.author) {
+            a.notOwn += 1;
+            return { ok: false, status: 403, detail: "Only its author can send it here." };
+          }
+          const db = agentGateDb();
+          const caller = { kind: "person", email: signIn };
+          const ownership = await readOwnership(db, send.sessionId, ORG);
+          const facts = await readCallerFacts(db, caller, send.sessionId, ownership);
+          const gate = sessionGateDecision({ caller, sessionId: send.sessionId, right: "write", ownership, membership: facts.membership, callerInWorkspace: facts.callerInWorkspace, localDevAllowed: false });
+          if (!gate.allow) return { ok: false, status: 404, detail: "the session gate refused the sign-in" };
+          if (a.busy || send.continuationToken !== `ct-${a.k}`) return { ok: false, status: 409, detail: "stale token" };
+          a.posts.push({ as: send.author, signIn, via: "sign-in", message: send.message });
+          a.busy = true;
+          return { ok: true, status: 200, sessionId: send.sessionId };
+        }
         const spent = await door.consumePostInDb({
           org: ORG,
           sid: send.sessionId,
@@ -121,7 +150,7 @@ function fakeAgent() {
         });
         if (!spent) return { ok: false, status: 404, detail: "the door refused the token" };
         if (a.busy || send.continuationToken !== `ct-${a.k}`) return { ok: false, status: 409, detail: "stale token" };
-        a.posts.push({ as: send.author, message: send.message });
+        a.posts.push({ as: send.author, via: "token", message: send.message });
         a.busy = true;
         await sleep(5);
         if (a.loseAfter > 0) {
@@ -143,11 +172,11 @@ function fakeAgent() {
   return a;
 }
 
-const newThread = async (owner = ALICE) => {
+const newThread = async (owner = ALICE, sid = SID) => {
   const id = randomUUID();
   await admin`
     insert into chat_threads (id, org_id, eve_session_id, title, owner_email, continuation_token)
-    values (${id}, ${ORG}, ${SID}, 'probe', ${owner}, 'ct-1')`;
+    values (${id}, ${ORG}, ${sid}, 'probe', ${owner}, 'ct-1')`;
   for (const who of [BOB, CAROL]) {
     await admin`
       insert into chat_thread_members (org_id, thread_id, email, role, status, invited_by)
@@ -159,7 +188,7 @@ const words = (posts) => posts.map((p) => `${p.as}: ${p.message.replace(/^\[from
 let n = 0;
 const put = (thread, author, text) =>
   q.enqueueThreadMessage(runIn, { orgId: ORG, threadId: thread, author, id: `m${STAMP}_${++n}`, text });
-const pump = (agent, thread, pumper, over) => q.pumpThreadQueue(agent.deps(over), { orgId: ORG, threadId: thread, pumper });
+const pump = (agent, thread, pumper, over) => q.pumpThreadQueue(agent.deps({ ...over, _pumper: pumper }), { orgId: ORG, threadId: thread, pumper });
 const state = async (id) => (await admin`select state, error, tried_claims, next_attempt_at from chat_thread_queue where org_id = ${ORG} and id = ${id}`)[0];
 
 try {
@@ -187,6 +216,7 @@ try {
     const r = await pump(agent, thread, ALICE); // the OWNER's page runs it
     check("the owner's page runs a participant's message", r.outcome === "sent" && r.item.id === b.item.id, r);
     check("…and the agent receives the PARTICIPANT's identity, not the owner's", agent.posts.length === 1 && agent.posts[0].as === BOB, agent.posts);
+    check("…on a token signed for the participant (the session has an owner record)", agent.sends[0]?.signed === true && agent.posts[0].via === "token", agent.sends[0]);
     const [row] = await admin`select claim_id, token_seq, text from chat_thread_queue where org_id = ${ORG} and id = ${b.item.id}`;
     const claim = {
       org: ORG,
@@ -471,6 +501,124 @@ try {
       await admin`alter table chat_thread_queue_away rename to chat_thread_queue`;
     }
   }
+
+  // 9. A session with no owner record (older than drizzle/0022): the participant's own sign-in, never anyone else's.
+  {
+    // Legacy, but known to the agent: its own scope row anchors it in this workspace, so its gate infers the owner
+    // (lib/session-gate.ts readLegacyOwnershipIn). No agent_session_owners row.
+    await admin`insert into agent_session_scopes (session_id, org_id, principal_email) values (${SID_OLD}, ${ORG}, ${ALICE}) on conflict do nothing`;
+    const recorded = async (sid) => (await admin`select count(*)::int as n from agent_session_owners where session_id = ${sid}`)[0].n;
+    check("legacy: the session has no owner record", (await recorded(SID_OLD)) === 0 && !(await q.sessionOwnerRecorded(runIn, ORG, SID_OLD)));
+    check("…while a new session has one", await q.sessionOwnerRecorded(runIn, ORG, SID));
+    const agent = fakeAgent();
+    const thread = await newThread(ALICE, SID_OLD);
+
+    // Sent directly on enqueue when the chat is free: the route runs the queue on the sender's own request.
+    const b1 = await put(thread, BOB, "legacy: sent as I write it");
+    const r1 = await pump(agent, thread, BOB);
+    check("legacy: a participant's message, the chat free, is delivered on the participant's own sign-in", r1.outcome === "sent" && r1.item.id === b1.item.id && agent.posts.length === 1 && agent.posts[0].as === BOB && agent.posts[0].signIn === BOB && agent.posts[0].via === "sign-in", { r1, posts: agent.posts });
+    check("…and no token is minted for it", agent.sends.length === 1 && agent.sends[0].signed === false, agent.sends);
+
+    // Queued behind a turn, then the OWNER's page runs the queue: it leaves it for its author.
+    agent.ownerTurn();
+    const b2 = await put(thread, BOB, "legacy: queued behind a turn");
+    const busy = await pump(agent, thread, BOB);
+    check("legacy: queued while a turn runs", busy.outcome === "busy" && agent.posts.length === 1, busy);
+    agent.park();
+    const before = agent.sends.length;
+    const byOwner = await pump(agent, thread, ALICE);
+    const byOther = await pump(agent, thread, CAROL);
+    const b2s = await state(b2.item.id);
+    check("legacy: the owner's page running the queue does not send a participant's message", byOwner.outcome === "waiting-for-author" && byOwner.item.id === b2.item.id && byOther.outcome === "waiting-for-author", { byOwner, byOther });
+    check("…sends nothing at all, as anyone (no token, no sign-in), and leaves it queued", agent.sends.length === before && agent.posts.length === 1 && b2s.state === "queued", { sends: agent.sends.length, b2s });
+    const [held] = await admin`select turn_holder from chat_threads where id = ${thread}`;
+    check("…and does not hold the chat", held.turn_holder === null, held);
+    const r2 = await pump(agent, thread, BOB);
+    check("…its author's own page then sends it, on the author's own sign-in", r2.outcome === "sent" && r2.item.id === b2.item.id && agent.posts.at(-1)?.signIn === BOB && agent.posts.at(-1)?.as === BOB, { r2, last: agent.posts.at(-1) });
+    agent.park();
+
+    // Never silently lost: its author's page never comes back.
+    const b3 = await put(thread, BOB, "legacy: my page is closed");
+    const a3 = await put(thread, ALICE, "legacy: the owner's, behind it");
+    const w = await pump(agent, thread, ALICE);
+    check("legacy: an absent author's message holds the line only a bounded while", w.outcome === "waiting-for-author" && w.item.id === b3.item.id, w);
+    await admin`update chat_thread_queue set author_wait_since = now() - interval '1 hour' where org_id = ${ORG} and id = ${b3.item.id}`;
+    const r3 = await pump(agent, thread, ALICE);
+    const b3s = await state(b3.item.id);
+    check("…then it is failed with a reason, never sent as anyone else", b3s.state === "failed" && /only its sender's own page/.test(b3s.error ?? "") && !agent.posts.some((p) => p.message.includes("my page is closed")), b3s);
+    const told = await q.listThreadQueue(runIn, { orgId: ORG, threadId: thread, viewer: BOB });
+    check("…its author sees it and why", told.some((i) => i.id === b3.item.id && i.state === "failed" && i.error));
+    check("…and the owner's own message behind it runs on the owner's own sign-in", r3.outcome === "sent" && r3.item.id === a3.item.id && agent.posts.at(-1)?.as === ALICE && agent.posts.at(-1)?.signIn === ALICE, { r3, last: agent.posts.at(-1) });
+    agent.park();
+
+    // A legacy session the agent's gate cannot place: its own sign-in is refused there, and the author is told.
+    const tu = await newThread(ALICE, SID_UNPLACED);
+    const u = await put(tu, BOB, "legacy: a session nobody can place");
+    const ru = await pump(agent, tu, BOB);
+    const us = await state(u.item.id);
+    check("legacy, unplaced: refused at the gate, failed with a reason its author sees — not lost, not retried for ever", ru.outcome === "refused" && ru.failed && us.state === "failed" && /did not take the message \(404\)/.test(us.error ?? ""), { ru, us });
+
+    // A legacy session a colleague filed a thread on (mold_v1-293): the scope row names Alice, the thread names Mallory.
+    // No row of Alice's agrees, so the agent's rule names NO owner — not the thread's — and the participant's own
+    // sign-in is refused there; the message fails with a reason its author sees, and nobody is recorded as owner.
+    await admin`insert into agent_session_scopes (session_id, org_id, principal_email) values (${SID_FILED}, ${ORG}, ${ALICE}) on conflict do nothing`;
+    const tf = await newThread(MALLORY, SID_FILED);
+    const fi = await put(tf, BOB, "legacy: in a thread a colleague filed on someone else's session");
+    const rf = await pump(agent, tf, BOB);
+    const fs = await state(fi.item.id);
+    check("legacy, thread filed by a colleague: no owner is inferred from it, the participant's sign-in is refused, the author is told", rf.outcome === "refused" && rf.failed && fs.state === "failed" && /did not take the message \(404\)/.test(fs.error ?? "") && !agent.posts.some((p) => p.message.includes("a colleague filed")), { rf, fs });
+    const fo = await agentGateDb();
+    check("…and the agent's rule names no owner for that session (nothing for its guard to freeze)", (await readOwnership(fo, SID_FILED, ORG)) === null && (await recorded(SID_FILED)) === 0);
+
+    // The door would refuse a token for such a session anyway: why none is minted.
+    const tok = await put(thread, BOB, "legacy: what a token would meet");
+    await admin`update chat_thread_queue set state = 'sending', claim_id = 'c-old', token_seq = 0 where org_id = ${ORG} and id = ${tok.item.id}`;
+    const tokBody = q.fromLine(BOB, "legacy: what a token would meet") + (await import("../lib/queue-delivery-token.ts")).deliveryReference("c-old");
+    check("the door refuses a token on a session with no owner record", !(await door.checkPostInDb({ org: ORG, sid: SID_OLD, email: BOB, item: tok.item.id, claim: "c-old", seq: 1, message: tokBody, queue: "thread", thread })));
+    await admin`delete from chat_thread_queue where org_id = ${ORG} and id = ${tok.item.id}`;
+
+    check("nothing ever sent one person's message on another's sign-in", agent.notOwn === 0 && agent.posts.every((p) => p.via !== "sign-in" || p.signIn === p.as), agent.posts);
+    check("the queue wrote no owner record for the legacy session", (await recorded(SID_OLD)) === 0);
+
+    // Once the AGENT records the owner (its guard freezes its own inference the first time the session passes it), the
+    // session is a recorded one: the owner's page runs a participant's message on a token signed for them, as in 1.
+    await admin`insert into agent_session_owners (session_id, org_id, owner_email, owner_kind, visibility) values (${SID_OLD}, ${ORG}, ${ALICE}, 'person', 'owner')`;
+    const b5 = await put(thread, BOB, "recorded now");
+    const r5 = await pump(agent, thread, ALICE);
+    check("recorded: the owner's page runs a participant's message on a token signed for the participant (as #197)", r5.outcome === "sent" && r5.item.id === b5.item.id && agent.posts.at(-1)?.as === BOB && agent.posts.at(-1)?.via === "token" && agent.sends.at(-1)?.signed === true, { r5, last: agent.posts.at(-1) });
+  }
+
+  // 9b. The session the send goes to has no record though the one checked first did (the thread moved between the two
+  // reads): the author's own page only — and the bounded wait's clock starts on THAT path too, so it never holds the line.
+  {
+    const agent = fakeAgent();
+    const thread = await newThread();
+    const moved = () => {
+      let calls = 0;
+      return { ownerRecorded: async () => ++calls === 1 };
+    };
+    const m = await put(thread, BOB, "the session moved under it");
+    const w = await pump(agent, thread, ALICE, moved());
+    const ms = (await admin`select state, author_wait_since from chat_thread_queue where org_id = ${ORG} and id = ${m.item.id}`)[0];
+    check("moved to an unrecorded session: the owner's page leaves it for its author, nothing sent", w.outcome === "waiting-for-author" && agent.sends.length === 0 && ms.state === "queued", { w, ms });
+    check("…and its wait clock has started", ms.author_wait_since !== null, ms);
+    const [held] = await admin`select turn_holder from chat_threads where id = ${thread}`;
+    check("…the chat is not left held", held.turn_holder === null, held);
+    await admin`update chat_thread_queue set author_wait_since = now() - interval '1 hour' where org_id = ${ORG} and id = ${m.item.id}`;
+    const f = await pump(agent, thread, ALICE, moved());
+    const fs = await state(m.item.id);
+    check("…so once the wait is over it is failed with a reason its author sees, not held for ever", f.outcome === "refused" && f.failed && fs.state === "failed" && /only its sender's own page/.test(fs.error ?? "") && agent.sends.length === 0, { f, fs });
+  }
+
+  // 9a. A deployment that cannot sign is unchanged by the record: the author's own page, on a recorded session too.
+  {
+    const agent = fakeAgent();
+    const thread = await newThread();
+    const keyless = { singleUse: false, canSendAs: (who) => who === BOB };
+    await put(thread, BOB, "keyless, recorded session");
+    const r = await pump(agent, thread, BOB, keyless);
+    check("keyless, recorded session: sent on the author's own sign-in, never a token", r.outcome === "sent" && agent.sends[0]?.signed === false && agent.posts[0]?.signIn === BOB, { r, sends: agent.sends });
+  }
 } catch (e) {
   check(`the run completed (${String(e?.stack ?? e).slice(0, 300)})`, false);
 } finally {
@@ -478,7 +626,8 @@ try {
   await admin`delete from chat_thread_members where org_id = ${ORG}`.catch(() => {});
   await admin`delete from chat_threads where org_id = ${ORG}`.catch(() => {});
   await admin`delete from org_members where org_id = ${ORG}`.catch(() => {});
-  await admin`delete from agent_session_owners where session_id = ${SID}`.catch(() => {});
+  await admin`delete from agent_session_owners where session_id in (${SID}, ${SID_OLD}, ${SID_UNPLACED}, ${SID_FILED})`.catch(() => {});
+  await admin`delete from agent_session_scopes where session_id in (${SID_OLD}, ${SID_UNPLACED}, ${SID_FILED})`.catch(() => {});
   await closeDb().catch(() => {});
   await admin.end({ timeout: 5 });
   await app.end({ timeout: 5 });

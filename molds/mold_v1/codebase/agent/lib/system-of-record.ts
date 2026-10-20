@@ -64,6 +64,7 @@ import { checkOnly, prepareRecordWrite } from "./record-area-write.ts";
 import { enforced, enteredByOf, memberRole, recordEntityId } from "./record-area-store.ts";
 import { deleteRefusal, permissionsDeclared } from "./record-permissions.ts";
 import { writeOutcome } from "./record-lifecycle-store.ts";
+import { recordWorkflowBound } from "../../lib/record-workflow-moves.ts";
 import type { MoveCheck } from "./record-lifecycle.ts";
 import type { RecordRole } from "./record-areas.generated.ts";
 import { areaView, type AreaRow } from "./record-areas.ts";
@@ -1029,6 +1030,14 @@ export async function upsertCustomer(
     const actor = opts.actor ?? "agent";
     const lifecycleCx = await nestedLifecycleContext(org, parsedPatch, existing, actor);
     const { patch: validPatch, accountDelta, rowDeltas, outcomes } = applyCustomFieldsWithDelta(parsedPatch, existing, opts.declared, actor, lifecycleCx);
+    // A nested row's move in an area whose lifecycle runs a workflow is not made here: its step rules and its instance
+    // are written with the record in one transaction by that area's own door (lib/record-workflow-moves.ts), which this
+    // patch's several writes are not. Refused before anything is written.
+    const viaWorkflow = outcomes.filter((o) => recordWorkflowBound(o.area));
+    if (viaWorkflow.length) {
+      const v = areaView(viaWorkflow[0].area);
+      throw new Error(`Nothing was written. A ${v.noun}'s ${v.label(v.lifecycle!.field, "state").toLowerCase()} follows a workflow here, so it is moved on its own: on its screen, or with the tool that writes ${v.nouns}. Leave it out of this change.`);
+    }
     // Only what the patch names, each change applied in SQL onto what is stored at write time.
     await writeCustomerPatchToPostgres(db, validPatch, existing, org, { accountCustom: accountDelta, rows: rowDeltas });
     // Each nested row's lifecycle move (and, under "warn", the rule it broke) in the activity feed, as the routes note it.

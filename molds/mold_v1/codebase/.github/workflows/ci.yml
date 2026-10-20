@@ -382,9 +382,9 @@ jobs:
       # The engine's behaviour, ported from upstream's own tests to neutral fixtures (scripts/fixtures/workflows/):
       # validation (spec.json through Ajv, and the semantic validator), the matcher, init, the rules, guards and quorums,
       # balancing, relative and anchored assignment, reassignment, the due-date extension, cohorts, RBAC, the store, and the
-      # step rules rebuilt from upstream's route (lib/workflow-step-rules.ts). Nothing in the app imports the engine
-      # yet, and this fails if anything does.
-      - name: Workflow engine (validation, rules, assignment, step rules; nothing imports it yet)
+      # step rules rebuilt from upstream's route (lib/workflow-step-rules.ts). One module of the app imports the engine
+      # (lib/record-workflow-runtime.ts, phase 5), and this fails if any other does.
+      - name: Workflow engine (validation, rules, assignment, step rules; one runtime module imports it)
         if: always()
         run: npm run test:workflow-engine
 
@@ -392,10 +392,20 @@ jobs:
       # round-trips through its row and events; the store refuses a transaction that is not its workspace's before
       # sending anything and names its workspace in every statement; a stale revision, a missing instance and a second
       # attachment are the engine's conflict type with status 409 and nothing is sent after them; history is append-only
-      # and in order; the migration's row-level security, columns and journal entry; nothing calls the store yet.
+      # and in order; the migration's row-level security, columns and journal entry; only the write path calls the store.
       - name: Record workflow store (offline; the statements it sends, conflicts, history, the migration)
         if: always()
         run: npm run test:record-workflow-store
+
+      # A RECORD'S WORKFLOW ON ITS MOVES, OFFLINE (lib/record-workflow-runtime.ts, lib/record-workflow-moves.ts; phase 5):
+      # the default binds none and the write path reads nothing for it, enforce "off" never runs the engine; on the
+      # neutral fixture (scripts/fixtures/record-workflows/review.json) the directory from people data, an instance
+      # attached new and mid-lifecycle (dated from the feed, as provisioning), the step rules as checkMove's own
+      # (not_holder, step_inactive, step_transition, step_comment, step_evidence), four eyes, strict and warn, the step
+      # change through the step rules and the workflow's rules, legacy spellings and renamed keys.
+      - name: Record workflow runtime (offline; binding, directory, seeding, step rules, strict and warn)
+        if: always()
+        run: npm run test:record-workflow-runtime
 
       # A choice column's values live in one place, the zod enums in agent/lib/customer-schema.ts. The meanings base
       # code gives a value (defaults, what counts as attention), the Ops API's check and the MCP tools' text are all
@@ -1122,6 +1132,9 @@ jobs:
       # once with its reason and stopped, a copy racing the specialist's own result is delivered once.
       # Sharded (EVE_DETACH_SHARD=k/2: every second scenario of the script's SCENARIOS list); the two shards together are
       # every scenario, and the script fails on a scenario missing from that list.
+      # (mold_v1-286) No hand-over may beat its bound (fixed); "promptly after" scales with a no-op turn measured in the
+      # same scenario (EVE_DETACH_PACE_FACTOR, default 4) and never drops below today's milliseconds; a specialist that
+      # must still be working is held until released, not given a guessed duration; the sweep's tail read is counted.
       - name: Specialists report one at a time (eve patch, real eve runtime), shard ${{ matrix.shard }} of 2
         if: always()
         run: EVE_DETACH_SHARD=${{ matrix.shard }}/2 npm run test:specialist-detach
@@ -1770,6 +1783,23 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-workflow-store-db
+
+      # A RECORD'S WORKFLOW ON ITS MOVES (phase 5): the real routes and tools of all four areas, as app_rw with the
+      # policies failing closed, in copies under the neutral maker-checker fixture. strict: the step rules refuse with
+      # their sentences and write nothing; the holder's move changes the step in the record's own transaction; four eyes
+      # by {entered_by} and as the step holder; a supervisor acts for a reportee; attached mid-lifecycle from a legacy
+      # spelling, nothing rewritten; a stale revision is a 409 that keeps nothing; a body's entityId never borrows
+      # another record's workflow; two concurrent movers; one instance per implementation whichever door; a period moved
+      # outside the engine is re-synced; a task's service refusing, answering late, stalling, or its settling failing
+      # (the reservation kept, a second mover told it is busy, the next read settling it). warn: the move goes through
+      # with its warning, a feed line and an administrative step change. off: no instance, ever. Workspace B sees none
+      # of A's instances and attaches its own.
+      - name: Record workflow runtime (moves through the step rules, strict / warn / off, two workspaces), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-workflow-runtime-db
 
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()
