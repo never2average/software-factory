@@ -6,7 +6,7 @@ import {
   statusForStage,
 } from "@/lib/stages";
 import { recordTaskChanges } from "@/lib/task-activity";
-import { customDelta, directStatus, isRecursFromConflict } from "@/lib/custom";
+import { customDelta, directStatus, isRecursFromConflict, isWorkflowActionConflict } from "@/lib/custom";
 import type {
   AssignRule,
   ServiceContext,
@@ -124,6 +124,8 @@ async function writeCustom(sql: postgres.TransactionSql, orgId: string, taskId: 
     // drizzle/0042: a task has one next occurrence. A second one (two completions at once) is refused, and the whole
     // create with it: a 409 the app's write path takes as "already made" (agent/lib/task-recurrence-run.ts).
     if (isRecursFromConflict(error)) throw new Error("Conflict: the task already has its next occurrence");
+    // drizzle/0050: a workflow's agent action makes one task; a second delivery's is refused the same way.
+    if (isWorkflowActionConflict(error)) throw new Error("Conflict: this workflow action already has its task");
     throw error;
   }
   if (!row) throw new Error("Not found: Task not found");

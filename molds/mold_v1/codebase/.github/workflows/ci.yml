@@ -407,6 +407,14 @@ jobs:
         if: always()
         run: npm run test:record-workflow-runtime
 
+      # A RECORD'S WORKFLOW STEP ACTIONS, OFFLINE (lib/record-workflow-actions.ts; phase 6): email and agent actions
+      # build, a model-resolved email and attachments are refused; an action fires with its step change, once per entry
+      # of its step (the fired-once ledger on the instance); the notification and the task for the assistant in the
+      # profile's words; the deliverer imports no mail module.
+      - name: Record workflow step actions (offline; fired once per step entry, notification and task text, no email)
+        if: always()
+        run: npm run test:record-workflow-actions
+
       # A choice column's values live in one place, the zod enums in agent/lib/customer-schema.ts. The meanings base
       # code gives a value (defaults, what counts as attention), the Ops API's check and the MCP tools' text are all
       # read from it; a hand-made copy of each had drifted (mold_v1-251). The routes against a database are below.
@@ -1800,6 +1808,17 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-workflow-runtime-db
+
+      # STEP ACTIONS AGAINST A FAIL-CLOSED POSTGRES: fired in the step change's transaction, delivered after it (a
+      # notification to the step's holders, a task for the assistant through the task path), exactly once under a
+      # retried move, a rolled-back move, a re-entered step, two deliveries at once, a delivery that died and a failed
+      # attempt; the tasks' door; workspace B's actions its own.
+      - name: Record workflow step actions (fired once, delivered once, two workspaces), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-workflow-actions-db
 
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()

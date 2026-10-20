@@ -33,10 +33,14 @@ const list = (xs) => xs.map(quote).join(", ");
 export const WORKFLOW_ID = /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/;
 export const WORKFLOW_ID_MAX = 64;
 
-/** What this phase refuses, and why: each comes in a later phase (docs/WORKFLOW_ENGINE.md). */
+/**
+ * What the app refuses, and why (docs/WORKFLOW_ENGINE.md). Email and agent actions run (phase 6): an email becomes the
+ * app's own notification to the step's holders, an agent run a task for the assistant; nothing sends an email. What
+ * still cannot run: a branch a model would resolve, and an email's attachments.
+ */
 export const LATER = {
-  external: "email and agent actions are not run yet; they come in a later phase, as notifications and assistant tasks. Use internal actions only for now",
-  prompt: 'a "prompt" branch is resolved by a model, which comes in a later phase; give the deterministic branch instead ("query", or "value")',
+  prompt: 'a "prompt" branch is resolved by a model, which this app does not run; give the deterministic branch instead ("query", or "value")',
+  attachments: "an email action's attachments are generated or searched for, which this app does not do; the notification names the step and the record instead",
 };
 
 let structural = null;
@@ -72,7 +76,7 @@ function ajvMessage(e) {
   return e.message;
 }
 
-/** A `prompt` branch or an `external` action: what this phase cannot run. The first, in document order. */
+/** A `prompt` branch, or an email's attachments: what the app cannot run. The first, in document order. */
 function laterPhaseProblem(doc) {
   for (const [i, step] of doc.init.steps.entries()) {
     for (const k of ["assignee", "evidence_required", "comments_required"]) {
@@ -85,7 +89,15 @@ function laterPhaseProblem(doc) {
     for (const [k, expr] of Object.entries(rule.action?.internal?.set ?? {})) {
       if (isObj(expr) && "prompt" in expr) return { path: `diff[${i}].action.internal.set.${k}.prompt`, message: LATER.prompt };
     }
-    if (rule.action && "external" in rule.action) return { path: `diff[${i}].action.external`, message: LATER.external };
+    const email = rule.action?.external?.email;
+    if (isObj(email)) {
+      const at = `diff[${i}].action.external.email`;
+      if (isObj(email.recipients?.$or) && "prompt" in email.recipients.$or) return { path: `${at}.recipients.$or.prompt`, message: LATER.prompt };
+      for (const k of ["subject", "body"]) {
+        if (isObj(email[k]) && "prompt" in email[k]) return { path: `${at}.${k}.prompt`, message: LATER.prompt };
+      }
+      if ("attachments" in email) return { path: `${at}.attachments`, message: LATER.attachments };
+    }
   }
   return null;
 }

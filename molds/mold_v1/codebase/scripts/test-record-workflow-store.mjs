@@ -623,11 +623,13 @@ await check("the journal carries it at its own index, after every other entry, w
 
 section("8. Only the write path calls the store");
 
-await check("no file outside the store's tests and the record write path (lib/record-workflow-moves.ts) imports it", () => {
+await check("no file outside the store's tests, the record write path (lib/record-workflow-moves.ts) and the step actions' deliverer imports it", () => {
   const out = execFileSync("git", ["grep", "--untracked", "-l", "-E", "record-workflow-store(\\.ts)?[\"'`]", "--", "*.ts", "*.tsx", "*.mjs", "*.js", "*.cjs"], { cwd: ROOT, encoding: "utf8" });
   // Phase 5: every door that moves a record of an area running a workflow reaches the store through
-  // lib/record-workflow-moves.ts, in its own workspace-scoped transaction; nothing else names it.
-  const names = out.split("\n").filter(Boolean).filter((f) => !["lib/record-workflow-store.ts", "scripts/test-record-workflow-store.mjs", "scripts/test-record-workflow-store-db.mjs", "scripts/test-workflow-engine.mjs", "lib/record-workflow-moves.ts", "scripts/test-record-workflow-runtime.mjs", "scripts/lib/record-workflow-runtime-db-probe.mjs"].includes(f));
+  // lib/record-workflow-moves.ts, in its own workspace-scoped transaction. Phase 6: the step actions a move fired are
+  // delivered by lib/record-workflow-actions.ts, under the record's workflow lock, in the record's workspace (its tests
+  // read the instance back). Nothing else names it.
+  const names = out.split("\n").filter(Boolean).filter((f) => !["lib/record-workflow-store.ts", "scripts/test-record-workflow-store.mjs", "scripts/test-record-workflow-store-db.mjs", "scripts/test-workflow-engine.mjs", "lib/record-workflow-moves.ts", "scripts/test-record-workflow-runtime.mjs", "scripts/lib/record-workflow-runtime-db-probe.mjs", "lib/record-workflow-actions.ts", "scripts/test-record-workflow-actions.mjs", "scripts/lib/record-workflow-actions-db-probe.mjs"].includes(f));
   assert.deepEqual(names, []);
 });
 

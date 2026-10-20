@@ -25,6 +25,10 @@
     {
       "path": "/api/cron/deliver-queued",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/deliver-step-actions",
+      "schedule": "* * * * *"
     }
   ]
 }

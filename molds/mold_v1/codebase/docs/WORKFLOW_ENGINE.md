@@ -30,11 +30,11 @@ what it was. What follows, each its own change:
 | Phase | What |
 |---|---|
 | 1 | the engine core as a library, its step rules, tests, the sync (this) |
-| 2 | the deployment profile's schema for workflows: `records.workflows`, a lifecycle's `workflow`, each move's `step`, `workflow_states`, checked at build (docs/DEPLOYMENT_PROFILE.md "records.workflows"); email and agent actions and prompt branches refused until a later phase |
+| 2 | the deployment profile's schema for workflows: `records.workflows`, a lifecycle's `workflow`, each move's `step`, `workflow_states`, checked at build (docs/DEPLOYMENT_PROFILE.md "records.workflows"); prompt branches refused (and, until phase 6, email and agent actions) |
 | 3 | Postgres persistence: `record_workflow_instances` (with each instance's pinned definition) and `record_workflow_events`, with row-level security, and the store over them (see "Storage" below) |
 | 4 | people data: the directory, roles and reporting lines from the mold's own records |
 | 5 | runtime wiring: attaching a workflow to a record, a person's change through the step rules (this; "Runtime" below) |
-| 6 | step actions: the emails and agent runs the rules queue |
+| 6 | step actions: the emails and agent runs the rules queue, as the app's own notifications and tasks for the assistant (this; "Step actions" below) |
 | 7 | surfaces: the screens and the agent's tools |
 | 8 | a pilot on one pack |
 
@@ -165,8 +165,8 @@ field.
 `org_members` read in the write's transaction: owner and admin may do everything (`All`), engineers and members act on
 what they hold or created and on what their reportees hold (supervisors by `manager_email`).
 
-**Not in this phase.** Email and agent actions are refused at build and, defensively, at run (`RecordWorkflowRefused`):
-ticket 281 turns them into notifications and assistant tasks. Rules guarded on other records (cohorts) do not run.
+**Not in this phase.** Email and agent actions run from phase 6 ("Step actions" below). Rules guarded on other records
+(cohorts) do not run.
 Changing a step's holder or due date has no door yet (the step rules for both are in `lib/workflow-step-rules.ts`; the
 surfaces are ticket 282). The agent's tools take a move's
 comment but no evidence. `describeMoves` says which step a move changes and that only whoever holds it may make it;
@@ -175,6 +175,66 @@ the full screens are ticket 282.
 Tests: `npm run test:record-workflow-runtime` (offline) and `npm run test:record-workflow-runtime-db` (the real routes
 and tools, as app_rw, fail-closed, two workspaces: strict, warn and off), on the neutral fixture
 `scripts/fixtures/record-workflows/review.json`.
+
+## Step actions
+
+Phase 6 (`lib/record-workflow-actions.ts`, `takeStepActions` in `lib/record-workflow-runtime.ts`). A workflow's own
+rules may queue an email or an agent run when a step changes (the engine's `outbox`). **Nothing here sends an email.**
+
+| The workflow says | The app does |
+|---|---|
+| `external.email` | Its own notification (the desktop notifications a person turned on, the channel the chats use) to the step's holders and the people the action's `recipients` query names, each of them in the workspace's directory and still able to act in it. The text is the action's `subject` and `body` (the profile's words), else `The step "<title>" is waiting for you` and `The step "<title>" of the <noun> "<label>".`, the noun the profile's. With previews off, the product's name and nothing of the step or the record. |
+| `external.agent[]` | A task for the assistant, written through the task path (the task-workflow service, as a recurring task's next occurrence is): the action's `name` as its title, `For the assistant: <prompt>` and the step and record as its notes, the step's first holder as its assignee, whoever's move fired it as its author, `custom.workflow_action` its delivery id. |
+
+What still cannot run is refused at build (docs/DEPLOYMENT_PROFILE.md "records.workflows") and again before a move on a
+pinned definition (`unsupportedActions`): an email whose recipients, subject or body a model would write (a `prompt`,
+even beside a `query` or `value`), and attachments.
+
+**Fired once per entry of its step, with the step change.** `applyStepMove` runs the workflow's rules, then
+`takeStepActions` keeps what they queued as step actions, each keyed `<rule>:<step>:<entry>:<kind>[:<agent>]`, where the
+entry counts the step's state changes and the times the record placed it (seeded, re-synced). A key already in the
+fired-once ledger on the instance (`fired_actions`, kept in `engine_state` beside the engine's own `fired_once` for
+`once` rules, which is unchanged) is taken back with its `external_queued` row: a `$condn` rule that matches again at
+every later change while its step stays where it is fires once for that entry. The actions are saved on the instance
+(its `outbox`, `delivery.status: "pending"`) by the same store write as the step change, so a move that rolls back (a
+stale revision, a refusal) fired nothing, and a retried move that changes nothing runs no rule.
+
+**Delivered after it, once.** The door that made the change starts the delivery (`scheduleStepActions`, not awaited;
+`deliver` on `commitRecordWorkflow`, `reserveRecordMove`, `settleReservedMove`, `attachCreatedRecord`,
+`writeDeclaredPeriod`), and `/api/cron/deliver-step-actions` sweeps what it missed once a minute (CRON_SECRET, one
+scoped pass per workspace). The sweep takes only records with an action due now (a pending one whose next attempt has
+come, or a stale claim), the longest waiting first, and shares its 20 records a tick one per workspace in turn, so one
+workspace's backlog never keeps another's waiting. A create saves its new instance under the record's lock, so the
+delivery it schedules waits for its commit.
+
+1. claim, in a short transaction under the record's workflow lock (so after the step change committed): the due
+   actions become `processing`, saved by compare-and-swap;
+2. deliver each, nothing held, the claim renewed before each one after the first (a delivery that lost it to another
+   leaves that action to it), each within one minute (`ACTION_BUDGET_MS`, half a claim):
+   - the notification's tag is `step-action:<delivery id>` (a second showing replaces the first). The people it is done
+     with (shown to, or with nothing to show it on, or no longer able to act) are kept on the action (`reached`) when
+     it runs out of time or a check fails, so a later attempt shows it to the others only; out of time with people
+     done is progress, due again at once and not counted as a failed attempt;
+   - the task is looked for by `custom.workflow_action` first, so a retried delivery finds the task an earlier one
+     made, and the database keeps one task per action in a workspace (`todos_workflow_action_uidx`,
+     drizzle/0050_todos_workflow_action_unique.sql; the task-workflow service answers a second one 409, and the
+     deliverer takes the first as delivered). Its author is the mover and its assignee the step's first holder while
+     each can still act in the workspace; otherwise the author is `system` and there is no assignee;
+3. finish, after each action, under the lock: a delivered action leaves the instance (`external_delivered` in its
+   history, with what it reached); a failed one is pending again with a later attempt (30 s, doubling, at most an
+   hour), dead-lettered after 5 (`external_dead_lettered`). A claim older than two minutes belongs to a delivery that
+   died and is claimed again.
+
+Claim, renewal and finish save the instance, moving its revision on, but change nothing a move depends on. A task move,
+checked in one transaction and reserved in another, compares what it depends on (`moveBasisOf`: the steps, the record
+state, the reserved move, the fired actions; not the outbox or the delivery rows of its history), not the revision, so
+a delivery between the two never refuses it.
+
+Every read and write is in the record's workspace (`withOrgRls` in the web app, `withOrgDb` in the agent).
+
+Tests: `npm run test:record-workflow-actions` (offline) and `npm run test:record-workflow-actions-db` (the real routes
+and the tasks' door, as app_rw, fail-closed, two workspaces), on the review fixture with the actions of
+`scripts/fixtures/record-workflows/actions.json` added.
 
 ## Where it came from
 

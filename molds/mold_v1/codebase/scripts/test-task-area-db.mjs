@@ -81,14 +81,15 @@ try {
     try {
       const pushed = kit(["push", "--force", "--verbose"], scratchUrl);
       check("a database built from schema.ts has the column and the index", pushed.status === 0 && (await sdb`select 1 from pg_indexes where tablename = 'todos' and indexname = 'todos_custom_idx'`).length === 1, pushed.out?.slice(-300));
-      // 0042's generated column reads custom: as the live databases are before 0041, neither exists.
-      await sdb.unsafe('drop index "todos_recurs_from_uidx"; alter table "todos" drop column "recurs_from"; drop index "todos_custom_idx"; alter table "todos" drop column "custom"');
+      // 0042's and 0050's generated columns read custom: as the live databases are before 0041, none exists.
+      await sdb.unsafe('drop index "todos_workflow_action_uidx"; alter table "todos" drop column "workflow_action"; drop index "todos_recurs_from_uidx"; alter table "todos" drop column "recurs_from"; drop index "todos_custom_idx"; alter table "todos" drop column "custom"');
       const before = driftPlan(scratchUrl);
-      check("before 0041 the drift plan against schema.ts names the column and the index (and 0042's over it), and only them", !before.error && before.apply.length === 4 && before.apply.some((s) => /ADD COLUMN "custom" jsonb DEFAULT '\{\}'::jsonb NOT NULL/.test(s)) && before.apply.some((s) => /todos_custom_idx/.test(s)) && before.apply.filter((s) => /recurs_from/.test(s)).length === 2 && before.refused.length === 0, before.error ? before : { apply: before.apply, refused: before.refused });
-      const next = readFileSync(join(ROOT, "drizzle/0042_todos_recurs_from_unique.sql"), "utf8").split("--> statement-breakpoint").map((v) => v.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
+      check("before 0041 the drift plan against schema.ts names the column and the index (and 0042's and 0050's over it), and only them", !before.error && before.apply.length === 6 && before.apply.some((s) => /ADD COLUMN "custom" jsonb DEFAULT '\{\}'::jsonb NOT NULL/.test(s)) && before.apply.some((s) => /todos_custom_idx/.test(s)) && before.apply.filter((s) => /recurs_from/.test(s)).length === 2 && before.apply.filter((s) => /workflow_action/.test(s)).length === 2 && before.refused.length === 0, before.error ? before : { apply: before.apply, refused: before.refused });
+      const fileOf = (tag) => readFileSync(join(ROOT, `drizzle/${tag}.sql`), "utf8").split("--> statement-breakpoint").map((v) => v.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
+      const next = [...fileOf("0042_todos_recurs_from_unique"), ...fileOf("0050_todos_workflow_action_unique")];
       await sdb.begin(async (tx) => { for (const x of [...statements, ...next]) await tx.unsafe(x); });
       const after = driftPlan(scratchUrl);
-      check("after 0041 (and 0042) the drift dry run plans NOTHING to apply, and refuses nothing", !after.error && after.apply.length === 0 && after.refused.length === 0, after.error ? after : { apply: after.apply, refused: after.refused });
+      check("after 0041 (and 0042, 0050) the drift dry run plans NOTHING to apply, and refuses nothing", !after.error && after.apply.length === 0 && after.refused.length === 0, after.error ? after : { apply: after.apply, refused: after.refused });
     } finally {
       await sdb.end({ timeout: 2 });
       await admin.unsafe(`drop database if exists "${SCRATCH}" with (force)`).catch(() => {});

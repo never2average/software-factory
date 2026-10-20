@@ -137,7 +137,7 @@ async function patchDeclared(request: NextRequest, ctx: OrgContext, db: NonNulla
     // label, as they always have.
     const label = typeof raw.actor === "string" && raw.actor ? raw.actor : "web";
     const me = await callerEmail(request);
-    const r = await withOrgRls(ctx.orgId, (tx) => writeDeclaredPeriod(tx, ctx.orgId, { id, body: raw, actor: me ?? label, role: ctx.role }));
+    const r = await withOrgRls(ctx.orgId, (tx) => writeDeclaredPeriod(tx, ctx.orgId, { id, body: raw, actor: me ?? label, role: ctx.role, deliver: (org, fn) => withOrgRls(org, fn as never) }));
     if (!r.ok) {
       if (r.status === 404) return NextResponse.json({ error: "Cycle not found" }, { status: 404 });
       return NextResponse.json(r.conflict ?? { error: r.errors.join(" "), errors: r.errors }, { status: r.status });

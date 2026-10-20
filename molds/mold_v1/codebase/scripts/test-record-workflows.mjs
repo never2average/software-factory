@@ -57,9 +57,14 @@ const ok = (extra, flag) => {
 };
 const lastLine = (s) => s.trim().split("\n").at(-1);
 
-// The phase-1 fixtures, and the ones this phase can run (no email or agent action, no prompt branch).
+// The phase-1 fixtures, and the ones the app can run (no prompt branch: an agent action's own `prompt` is its
+// instructions, not a branch; no attachments).
 const FIXTURES = Object.fromEntries(readdirSync(WF).filter((f) => f.endsWith(".json") && f !== "people.json").map((f) => [f.replace(/\.json$/, ""), read(join(WF, f))]));
-const runnable = (doc) => !JSON.stringify(doc).includes('"prompt"') && !doc.diff.some((r) => "external" in r.action);
+const runnable = (doc) => {
+  const branches = structuredClone(doc);
+  for (const r of branches.diff) if (r.action?.external?.agent) delete r.action.external.agent;
+  return !JSON.stringify(branches).includes('"prompt"') && !JSON.stringify(branches).includes('"attachments"');
+};
 /** The two-person review without its escalation email: the rule whose only action is external is left out. */
 const review = (() => {
   const doc = structuredClone(FIXTURES["two-person-review"]);
@@ -130,10 +135,10 @@ check("a binding adds only the lifecycle's own keys: the emitted profile is the 
 });
 
 // --- 2. a neutral example compiles -----------------------------------------------------------------------------------
-check("every phase-1 fixture this phase can run is a valid records.workflows entry, all at once", () => {
+check("every phase-1 fixture the app can run is a valid records.workflows entry, all at once (email actions included)", () => {
   const ids = Object.keys(FIXTURES).filter((id) => runnable(FIXTURES[id]));
-  assert.deepEqual(ids, ["anchored-down", "cohort-wait", "due-extension-once", "escalate-up-one-level", "five-step-chain", "migrated-step", "multi-holder-chain", "self-and-supervisor-reassign"]);
-  ok([["50-x.json", { records: { workflows: { ...Object.fromEntries(ids.map((id) => [id, FIXTURES[id]])), "two-person-review": review } } }]]);
+  assert.deepEqual(ids, ["anchored-down", "cohort-wait", "due-extension-once", "escalate-up-one-level", "five-step-chain", "migrated-step", "multi-holder-chain", "quorum-two-of-three", "self-and-supervisor-reassign", "two-person-review"]);
+  ok([["50-x.json", { records: { workflows: Object.fromEntries(ids.map((id) => [id, FIXTURES[id]])) } }]]);
 });
 check("the two-person review bound to the deployments area compiles, with its steps and mid-lifecycle states", () => {
   const areas = ok([["50-x.json", bound()]], "--print-areas");
@@ -177,10 +182,13 @@ const BAD = [
   ["spec.json: a step state outside the engine's", W("w", minimal({ state: { default: "done" } })), 'records.workflows.w.init.steps[0].state.default: must be equal to one of the allowed values ("open", "completed", "rejected", "escalated")'],
   ["validator: a start step that does not exist", W("w", { ...minimal(), init: { start_id: "nope", steps: [{ id: "a", title: "A" }] } }), 'records.workflows.w.init.start_id: start_id "nope" is not a step id'],
   ["validator: an unsupported query operator", W("w", minimal({ assignee: { condition: { $or: { query: { role: { $size: 2 } } } } } })), 'records.workflows.w.init.steps[0].assignee.condition.$or.query.role.$size: unsupported query operator "$size" (engine supports: $eq $ne $gt $gte $lt $lte $in $nin $exists $regex $and $or $not $nor)'],
-  // What this phase cannot run: email and agent actions, prompt branches (each named by its path).
-  ["an email action (the phase-1 two-person review, unchanged)", W("two-person-review", FIXTURES["two-person-review"]), `records.workflows.two-person-review.diff[5].action.external: ${LATER.external}`],
-  ["an email beside an internal action (the phase-1 quorum, unchanged)", W("quorum", FIXTURES["quorum-two-of-three"]), `records.workflows.quorum.diff[0].action.external: ${LATER.external}`],
-  ["an agent action", W("w", minimal({}, { ...RULE, action: { external: { agent: [{ _id: "x", name: "x", prompt: "Look at it." }] } } })), `records.workflows.w.diff[0].action.external: ${LATER.external}`],
+  // What the app cannot run: prompt branches (each named by its path), an email's recipients, subject or body left to a
+  // model, its attachments. (Email and agent actions themselves build: below.)
+  ["an email whose recipients a model picks", W("w", minimal({}, { ...RULE, action: { external: { email: { recipients: { $or: { prompt: "Whoever should know." } } } } } })), `records.workflows.w.diff[0].action.external.email.recipients.$or.prompt: ${LATER.prompt}`],
+  ["an email's recipients, a prompt beside a query (still refused)", W("w", minimal({}, { ...RULE, action: { external: { email: { recipients: { $or: { query: { role: "lead" }, prompt: "A lead." } } } } } })), `records.workflows.w.diff[0].action.external.email.recipients.$or.prompt: ${LATER.prompt}`],
+  ["an email whose subject a model writes", W("w", minimal({}, { ...RULE, action: { external: { email: { recipients: { $or: { query: { role: "lead" } } }, subject: { prompt: "Sum it up." } } } } })), `records.workflows.w.diff[0].action.external.email.subject.prompt: ${LATER.prompt}`],
+  ["an email whose body a model writes, beside a value (still refused)", W("w", minimal({}, { ...RULE, action: { external: { email: { recipients: { $or: { query: { role: "lead" } } }, body: { value: "b", prompt: "Explain." } } } } })), `records.workflows.w.diff[0].action.external.email.body.prompt: ${LATER.prompt}`],
+  ["an email with attachments", W("w", minimal({}, { ...RULE, action: { external: { email: { recipients: { $or: { query: { role: "lead" } } }, attachments: { $search: "the latest report" } } } } })), `records.workflows.w.diff[0].action.external.email.attachments: ${LATER.attachments}`],
   ["a prompt deciding whether a rule applies (the phase-1 gateway branch, unchanged)", W("gateway", FIXTURES["gateway-branch"]), `records.workflows.gateway.diff[2].applicability_query.prompt: ${LATER.prompt}`],
   ["a prompt choosing who holds a step", W("w", minimal({ assignee: { condition: { $or: { prompt: "Whoever knows it best." } } } })), `records.workflows.w.init.steps[0].assignee.condition.$or.prompt: ${LATER.prompt}`],
   ["a prompt beside a query (the query would win; still refused)", W("w", minimal({ assignee: { condition: { $or: { query: { role: "lead" }, prompt: "A lead." } } } })), `records.workflows.w.init.steps[0].assignee.condition.$or.prompt: ${LATER.prompt}`],
@@ -208,9 +216,21 @@ for (const [what, profile, message] of BAD) {
   });
 }
 check("a refusal names the file that states the workflow, not the last file", () => {
-  const r = gen([["50-a.json", W("two-person-review", FIXTURES["two-person-review"])], ["51-b.json", { product: { tagline: "Another line." } }]]);
+  const r = gen([["50-a.json", W("gateway", FIXTURES["gateway-branch"])], ["51-b.json", { product: { tagline: "Another line." } }]]);
   assert.equal(r.rc, 1);
-  assert.equal(lastLine(r.err), `profiles/50-a.json: records.workflows.two-person-review.diff[5].action.external: ${LATER.external}`);
+  assert.equal(lastLine(r.err), `profiles/50-a.json: records.workflows.gateway.diff[2].applicability_query.prompt: ${LATER.prompt}`);
 });
+
+// Phase 6: email and agent actions build (the app turns them into its own notifications and tasks for the assistant).
+for (const [what, profile] of [
+  ["an email action (the phase-1 two-person review)", W("two-person-review", FIXTURES["two-person-review"])],
+  ["an email beside an internal action (the phase-1 quorum)", W("quorum", FIXTURES["quorum-two-of-three"])],
+  ["an agent action", W("w", minimal({}, { ...RULE, action: { external: { agent: [{ _id: "x", name: "x", prompt: "Look at it." }] } } }))],
+]) {
+  check(`built: ${what}`, () => {
+    const r = gen([["50-ok.json", profile]]);
+    assert.equal(r.rc, 0, r.err);
+  });
+}
 
 console.log(`${process.exitCode ? "FAILED" : "ok"}: ${passed} record-workflow checks passed`);

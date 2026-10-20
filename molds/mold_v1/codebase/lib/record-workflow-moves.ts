@@ -53,6 +53,7 @@ import { identitySnapshot } from "../agent/lib/people-directory.ts";
 import { RECORD_WORKFLOWS } from "./record-workflows.generated.ts";
 import { RecordWorkflowConflict, RecordWorkflowStore, isRecordWorkflowConflict, withRecordData, type ScopedDb } from "./record-workflow-store.ts";
 import { randomUUID } from "node:crypto";
+import { scheduleStepActions, type StepActionRunner } from "./record-workflow-actions.ts";
 import {
   administrativeOf,
   applyStepMove,
@@ -61,6 +62,9 @@ import {
   recordData,
   recordMoveOf,
   recordStateOf,
+  moveBasisOf,
+  recordWorkflowLockKey,
+  stepActionsOf,
   resyncInstance,
   seedInstance,
   setRecordMove,
@@ -74,6 +78,16 @@ import {
 } from "./record-workflow-runtime.ts";
 
 export { RecordWorkflowConflict, RecordWorkflowRefused, isRecordWorkflowConflict };
+export type { StepActionRunner };
+
+/**
+ * The step actions a saved instance holds undelivered (lib/record-workflow-actions.ts): delivered once the door's
+ * transaction commits. `deliver` is the door's own runner (withOrgRls, withOrgDb); without one the sweep delivers them.
+ */
+function deliverAfterCommit(instance: WorkflowInstance | null | undefined, orgId: string, areaId: RecordAreaId, deliver: StepActionRunner | undefined): void {
+  if (!deliver || !instance || !stepActionsOf(instance).some((a) => a.delivery.status === "pending")) return;
+  scheduleStepActions(orgId, areaId, instance.object.id, deliver);
+}
 
 /** The activity feed's entity type of each area (agent/lib/record-lifecycle-store.ts ActivityEntityType). */
 const FEED_TYPE: Record<RecordAreaId, string> = { tasks: "task", periods: "cycle", deployments: "deployment", implementations: "implementation" };
@@ -111,7 +125,7 @@ export function workflowRecordKey(areaId: RecordAreaId, row: Record<string, unkn
 
 /** Take the record's workflow lock (until the transaction ends). A door takes it BEFORE it reads the record. */
 export async function lockRecordWorkflow(tx: ScopedDb, orgId: string, areaId: RecordAreaId, key: string): Promise<void> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`record_workflow:${orgId}:${areaId}:${key}`}))`);
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${recordWorkflowLockKey(orgId, areaId, key)}))`);
 }
 
 /**
@@ -137,6 +151,8 @@ export interface RecordWorkflowSession {
   binding: WorkflowBinding;
   v: AreaView;
   orgId: string;
+  /** The door's transaction (the one the record is written in). */
+  tx: ScopedDb;
   store: RecordWorkflowStore;
   directory: ReturnType<typeof engineDirectory>["directory"];
   rbac: ReturnType<typeof engineDirectory>["rbac"];
@@ -147,6 +163,12 @@ export interface RecordWorkflowSession {
   stored: boolean;
   /** The stored revision read (0 when not stored). */
   revision: number;
+  /**
+   * What a move depends on in the stored instance as read (`moveBasisOf`; "" when not stored): a record written
+   * elsewhere compares it, not the revision, between its check and its reservation, so a step action's delivery (which
+   * saves the instance) never refuses a move.
+   */
+  basis: string;
   /** A move another mover reserved and has not settled yet (fresh): this session may not move the record. */
   busy: boolean;
   /** The record's state as read (the rules' reading of it). */
@@ -225,6 +247,7 @@ export async function openRecordWorkflow(
   let instance: WorkflowInstance | null = null;
   let stored = false;
   let revision = 0;
+  let basis = "";
   let busy = false;
   const state = input.before ? storedStateOf(v, input.before) : null;
   if (input.entityId && input.before) {
@@ -235,6 +258,7 @@ export async function openRecordWorkflow(
       instance = withRecordData(found, recordData(v, input.before));
       stored = true;
       revision = found.revision;
+      basis = moveBasisOf(found);
       const pending = recordMoveOf(instance);
       if (pending && now.getTime() - Date.parse(pending.at) < RECORD_MOVE_FRESH_MS) busy = true;
       else if (pending) await settleRecordMove({ binding, dsl, instance, directory, rbac, state, now });
@@ -254,7 +278,7 @@ export async function openRecordWorkflow(
   const comment = typeof input.comment === "string" ? input.comment : null;
   const evidence = typeof input.evidence === "string" ? input.evidence : null;
   const gate = instance ? stepGate({ dsl, instance, directory, rbac, actor, comment, evidence }) : undefined;
-  return { binding, v, orgId, store, directory, rbac, dsl, instance, stored, revision, busy, state, actor, comment, evidence, now, gate };
+  return { binding, v, orgId, tx, store, directory, rbac, dsl, instance, stored, revision, basis, busy, state, actor, comment, evidence, now, gate };
 }
 
 /** A move refused because another mover's reserved move is not settled yet (a 409 that changes nothing). */
@@ -276,7 +300,7 @@ export class RecordWorkflowBusy extends Error {
  */
 export async function commitRecordWorkflow(
   session: RecordWorkflowSession,
-  input: { entityId: string; created: boolean; check: MoveCheck | null; after: AreaRow },
+  input: { entityId: string; created: boolean; check: MoveCheck | null; after: AreaRow; deliver?: StepActionRunner },
 ): Promise<WorkflowInstance | null> {
   const { v, binding, store, directory, rbac, dsl, now } = session;
   if (!input.created && !input.check) return null;
@@ -298,8 +322,12 @@ export async function commitRecordWorkflow(
     await applyStepMove({ dsl, instance, directory, rbac, step, actor: session.actor, comment: session.comment, evidence: session.evidence, now, administrative: administrativeOf(input.check) });
   }
   setRecordState(instance, after);
+  // An instance stored for the first time (a create: no lock was taken before the record had its key) is saved under
+  // the record's lock, held to the end of this transaction, so its delivery's claim waits for the commit.
+  if (!session.stored) await lockRecordWorkflow(session.tx, session.orgId, binding.areaId, input.entityId);
   const saved = session.stored ? await store.update(instance) : await store.create(instance, dsl);
   if (!saved.ok) throw saved.conflict;
+  deliverAfterCommit(saved.instance, session.orgId, binding.areaId, input.deliver);
   return saved.instance;
 }
 
@@ -311,14 +339,15 @@ export interface ReservedMove {
 /**
  * Step (b) of a record written elsewhere (see the file's header), in its own short transaction. `opened` is the
  * session (a) read; `readRecord` reads the record on this transaction. Under the lock, the record and its instance must
- * be what (a) read: the same state, the same revision, no other move pending; otherwise RecordWorkflowConflict (or
- * RecordWorkflowBusy), and nothing is written. Then the move is recorded on the instance as pending and saved (an
+ * be what (a) read: the same state, the same workflow as a move reads it (`basis`: its steps, its record state, its
+ * reserved move, its fired actions; a step action's delivery, which moves the revision on, changes none of it), no other
+ * move pending; otherwise RecordWorkflowConflict (or RecordWorkflowBusy), and nothing is written. Then the move is recorded on the instance as pending and saved (an
  * instance not stored yet is attached with it).
  */
 export async function reserveRecordMove(
   tx: ScopedDb,
   opened: RecordWorkflowSession,
-  input: { entityId: string; check: MoveCheck | null; readRecord: () => Promise<AreaRow | null> },
+  input: { entityId: string; check: MoveCheck | null; readRecord: () => Promise<AreaRow | null>; deliver?: StepActionRunner },
   opts: { areas?: RecordAreas; workflows?: Record<string, unknown> } = {},
 ): Promise<ReservedMove> {
   const check = input.check;
@@ -329,7 +358,7 @@ export async function reserveRecordMove(
   const session = await openRecordWorkflow(tx, opened.orgId, opened.binding.areaId, { entityId: input.entityId, before, actor: opened.actor, comment: opened.comment, evidence: opened.evidence, now }, opts);
   if (!session || !session.instance) return { id: null };
   if (session.busy) throw new RecordWorkflowBusy();
-  if (session.state !== opened.state || session.stored !== opened.stored || session.revision !== opened.revision) {
+  if (session.state !== opened.state || session.stored !== opened.stored || session.basis !== opened.basis) {
     throw new RecordWorkflowConflict("stale_revision", session.instance.id, opened.revision, session.revision, `the record or its workflow changed since the move was checked (state "${opened.state}" → "${session.state}", revision ${opened.revision} → ${session.revision})`);
   }
   const step = check.transition?.step ?? null;
@@ -337,6 +366,8 @@ export async function reserveRecordMove(
   setRecordMove(session.instance, { id, from: check.from, to: check.to, step, actor: session.actor, comment: session.comment, evidence: session.evidence, administrative: administrativeOf(check), at: now.toISOString() });
   const saved = session.stored ? await session.store.update(session.instance) : await session.store.create(session.instance, session.dsl);
   if (!saved.ok) throw saved.conflict;
+  // Settling another mover's stale reservation (openRecordWorkflow) may have fired actions: delivered after this commit.
+  deliverAfterCommit(saved.instance, opened.orgId, opened.binding.areaId, input.deliver);
   return { id };
 }
 
@@ -349,7 +380,7 @@ export async function settleReservedMove(
   tx: ScopedDb,
   orgId: string,
   areaId: RecordAreaId,
-  input: { entityId: string; moveId: string; readRecord: () => Promise<AreaRow | null>; now?: Date },
+  input: { entityId: string; moveId: string; readRecord: () => Promise<AreaRow | null>; now?: Date; deliver?: StepActionRunner },
   opts: { areas?: RecordAreas; workflows?: Record<string, unknown> } = {},
 ): Promise<{ outcome: "applied" | "released" | "resynced" | "gone"; state: string | null }> {
   const areas = opts.areas ?? RECORD_AREAS;
@@ -369,6 +400,7 @@ export async function settleReservedMove(
   const outcome = await settleRecordMove({ binding, dsl, instance, directory, rbac, state, now: input.now ?? new Date() });
   const saved = await store.update(instance);
   if (!saved.ok) throw saved.conflict;
+  deliverAfterCommit(saved.instance, orgId, areaId, input.deliver);
   return { outcome: outcome === "none" ? "gone" : outcome, state };
 }
 
@@ -380,7 +412,7 @@ export async function attachCreatedRecord(
   tx: ScopedDb,
   orgId: string,
   areaId: RecordAreaId,
-  input: { entityId: string; actor: string; check: MoveCheck | null; comment?: string | null; evidence?: string | null; readRecord: () => Promise<AreaRow | null> },
+  input: { entityId: string; actor: string; check: MoveCheck | null; comment?: string | null; evidence?: string | null; readRecord: () => Promise<AreaRow | null>; deliver?: StepActionRunner },
   opts: { areas?: RecordAreas; workflows?: Record<string, unknown> } = {},
 ): Promise<WorkflowInstance | null> {
   const { row } = await lockedRead(tx, orgId, areaId, input.readRecord, input.entityId);
@@ -389,7 +421,7 @@ export async function attachCreatedRecord(
   if (!session) return null;
   const existing = await session.store.getByEntity(areaId, input.entityId, session.binding.workflowId);
   if (existing) return existing;
-  return commitRecordWorkflow(session, { entityId: input.entityId, created: true, check: input.check, after: row });
+  return commitRecordWorkflow(session, { entityId: input.entityId, created: true, check: input.check, after: row, deliver: input.deliver });
 }
 
 /** The 409 a door answers when the record's workflow changed under the move (nothing was written). */

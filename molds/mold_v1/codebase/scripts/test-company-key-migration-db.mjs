@@ -179,10 +179,11 @@ const LATER_COLUMNS = "- 'secondary_owner' - 'starter_key' - 'implementation_id'
 const ROW = `((to_jsonb(x) || jsonb_build_object('~owner', coalesce(to_jsonb(x)->>'account_owner', to_jsonb(x)->>'${LK.account_owner}', to_jsonb(x)->>'solution_owner', to_jsonb(x)->>'${LK.solution_owner}'))) - 'account_owner' - 'solution_owner' - '${LK.account_owner}' - '${LK.solution_owner}' ${LATER_COLUMNS})`;
 /**
  * Columns a later entry adds to ONE table, by table: 0041's todos.custom (a task's own fields, '{}' on every row) and
- * 0042's todos.recurs_from (generated from custom, null on every row here). Left out of that table's rows only:
+ * 0042's todos.recurs_from and 0050's todos.workflow_action (generated from custom, null on every row here). Left out
+ * of that table's rows only:
  * deployments.custom and implementation.custom (0017) are older, and stay counted.
  */
-const LATER_TABLE_COLUMNS = { todos: "- 'custom' - 'recurs_from'" };
+const LATER_TABLE_COLUMNS = { todos: "- 'custom' - 'recurs_from' - 'workflow_action'" };
 const rowOf = (t) => (LATER_TABLE_COLUMNS[t] ? `(${ROW} ${LATER_TABLE_COLUMNS[t]})` : ROW);
 const fingerprint = async (db) => {
   const out = {};

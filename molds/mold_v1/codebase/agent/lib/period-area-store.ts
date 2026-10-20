@@ -34,7 +34,7 @@ import { memberRole } from "./record-area-store.ts";
 import { periodRow, preparePeriodWrite } from "./period-area.ts";
 import { WORK_PERIODS, type WorkPeriods } from "./work-periods.ts";
 import { newPeriodWindow } from "./work-period-store.ts";
-import { commitRecordWorkflow, lockRecordWorkflow, openRecordWorkflow, recordWorkflowBound, takeEvidence } from "../../lib/record-workflow-moves.ts";
+import { commitRecordWorkflow, lockRecordWorkflow, openRecordWorkflow, recordWorkflowBound, takeEvidence, type StepActionRunner } from "../../lib/record-workflow-moves.ts";
 
 type Tx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert" | "update" | "delete" | "execute">;
 export type CycleRow = typeof cycles.$inferSelect;
@@ -60,7 +60,7 @@ export type PeriodWriteResult =
 export async function writeDeclaredPeriod(
   tx: Tx,
   orgId: string,
-  input: { id: string | null; body: Record<string, unknown>; actor: string; role?: RecordRole; now?: Date },
+  input: { id: string | null; body: Record<string, unknown>; actor: string; role?: RecordRole; now?: Date; deliver?: StepActionRunner },
   areas: RecordAreas = RECORD_AREAS,
   wp: WorkPeriods = WORK_PERIODS,
 ): Promise<PeriodWriteResult> {
@@ -124,7 +124,7 @@ export async function writeDeclaredPeriod(
   }
   const comment = typeof body.reason === "string" ? body.reason : null;
   if (prepared.lifecycle) await writeOutcome(tx, orgId, { type: "cycle", id: row.id }, input.actor, v, prepared.lifecycle, comment);
-  if (workflow) await commitRecordWorkflow(workflow, { entityId: row.id, created: !input.id, check: prepared.lifecycle, after: periodRow(row as unknown as Record<string, unknown>) });
+  if (workflow) await commitRecordWorkflow(workflow, { entityId: row.id, created: !input.id, check: prepared.lifecycle, after: periodRow(row as unknown as Record<string, unknown>), deliver: input.deliver });
   return { ok: true, row, before, changed, check: prepared.lifecycle, warnings: prepared.warnings };
 }
 

@@ -118,8 +118,9 @@ const OWN_KEY = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
 const TEMPLATE_DEFAULT = /^\{(today([+-][0-9]{1,3}d)?|me|account\.owner)\}$/;
 /** Not fields: the row's identity, its workspace, the own-field store, soft delete. */
 // recursFrom: todos.recurs_from, generated from custom.recurs_from (the link a next occurrence carries back, drizzle/0042):
-// never a field, and no area's own field may be called recurs_from.
-export const SYSTEM_KEYS = ["id", "orgId", "customerId", "implementationId", "displayName", "custom", "archivedAt", "recursFrom"];
+// never a field, and no area's own field may be called recurs_from. workflowAction: todos.workflow_action, generated from
+// custom.workflow_action (the record workflow's agent action a task was made from, drizzle/0050): the same.
+export const SYSTEM_KEYS = ["id", "orgId", "customerId", "implementationId", "displayName", "custom", "archivedAt", "recursFrom", "workflowAction"];
 /** Columns a write never sets: the database and the service stamp them. */
 export const READ_ONLY = { todos: ["doneAt", "createdBy", "createdAt", "updatedAt"], cycles: ["createdBy", "createdAt", "updatedAt"] };
 /** Pseudo-fields an area offers beside its own: the account a record hangs off. */

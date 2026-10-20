@@ -126,7 +126,7 @@ async function createDeclared(request: NextRequest, ctx: { orgId: string; role?:
     const raw = body as Record<string, unknown>;
     const me = await callerEmail(request);
     const actor = me ?? (typeof raw.createdBy === "string" && raw.createdBy ? raw.createdBy : "web");
-    const r = await withOrgRls(ctx.orgId, (tx) => writeDeclaredPeriod(tx, ctx.orgId, { id: null, body: raw, actor, role: ctx.role }));
+    const r = await withOrgRls(ctx.orgId, (tx) => writeDeclaredPeriod(tx, ctx.orgId, { id: null, body: raw, actor, role: ctx.role, deliver: (org, fn) => withOrgRls(org, fn as never) }));
     if (!r.ok) return NextResponse.json(r.conflict ?? { error: r.errors.join(" "), errors: r.errors }, { status: r.status });
     return NextResponse.json({ item: periodOut(r.row), ...(r.check && r.check.enforce === "warn" && !r.check.allowed ? { warnings: [warningOf(r.check)] } : {}) }, { status: 201 });
   } catch (e) {
