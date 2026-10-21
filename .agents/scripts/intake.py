@@ -93,7 +93,7 @@ def parse_brief(text):
     if m: h["processes"] = [x.strip() for x in re.split(r",|\band\b", m.group(1)) if x.strip()]
     m = re.search(r"\bproduct:\s*([a-z0-9_-]+)", t)
     if m: h["product_id"] = m.group(1)
-    m = re.search(r"\bpacks?:\s*([a-z0-9, -]+)", t)   # "packs: hfc-research, other-pack"
+    m = re.search(r"\bpacks?:\s*([a-z0-9_, -]+)", t)   # "packs: hfc-research, other-pack" (mold_v0 ids may have underscores)
     if m: h["packs"] = [x.strip() for x in m.group(1).split(",") if x.strip()]
     if re.search(r"\bno branding\b|\bunbranded\b|\bmold branding\b", t): h["no_branding"] = True
     m = re.search(r"\bbrand colou?r:\s*(#[0-9a-fA-F]{3,6})", text, re.I)
@@ -629,6 +629,18 @@ def self_test_single(n, fails):
         if r.returncode == 0 or "LIVE" not in r.stdout + r.stderr:
             fails.append(f"an answered base whose <base>-workflow is a LIVE project must be refused: rc={r.returncode} {(r.stdout + r.stderr).strip()[-200:]}")
         shutil.rmtree(os.path.join(A, "zz_eight"), ignore_errors=True)
+        # mold_v0-024: the brief's brand and packs reach a mold_v0 app's state, as a mold_v1 app's do
+        r = go("zz_brand", "Mold: mold_v0\nIt runs on its own server.\nDomain: brand.example.org\nBrand: Acme Ops\nBrand colour: #1F6F5C\n"); n += 1
+        b_ = (docs("zz_brand")["application"].get("surface") or {}).get("branding") or {} if not r.returncode else {}
+        if r.returncode or b_.get("product_name") != "Acme Ops" or b_.get("brand_color") != "#1F6F5C" or not b_.get("icon_svg"):
+            fails.append(f"a mold_v0 brief's brand lines must reach surface.branding: {(r.stdout + r.stderr).strip()[-300:]} {b_}")
+        os.makedirs(os.path.join(T, "packs", "notes_pack")); save(os.path.join(T, "packs", "notes_pack", "pack.json"), {"pack_id": "notes_pack", "mold_id": "mold_v0", "name": "N", "description": "d"})
+        r = go("zz_packed", "Mold: mold_v0\nIt runs on its own server.\nDomain: packed.example.org\nPacks: notes_pack\n"); n += 1
+        if r.returncode or docs("zz_packed")["application"].get("packs") != ["notes_pack"]:
+            fails.append(f"a mold_v0 brief's packs line (an id with an underscore) must reach application.packs: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_nopack", "Mold: mold_v0\nIt runs on its own server.\nPacks: not_there\n"); n += 1
+        if r.returncode == 0 or "not_there" not in (r.stdout + r.stderr) or os.path.exists(os.path.join(A, "zz_nopack", "application.json")):
+            fails.append(f"a mold_v0 brief naming a pack that does not exist must be refused, nothing written: rc={r.returncode}")
         r = go("zz_two", "Mold: mold_v0\nA product for a team.\n"); n += 1
         q = load(os.path.join(A, "zz_two", "questions.json")) if os.path.exists(os.path.join(A, "zz_two", "questions.json")) else {}
         if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["deploy_target"]:
@@ -783,6 +795,22 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     prod = pick_product(mold_id, hints, existing)
     app, infra, ds, di = single_service.shape_state(app_id, mold_id, ans["deploy_target"], prod, mold, ans, hints,
                                                     os.path.relpath(brief_path, ROOT), factory.get("defaults", {}), ROOT)
+    # Packs and the brand, from the brief or the product, as for mold_v1 (mold_v0-024): only where the mold takes them
+    # (mold.json not_needed says why not), so a brief cannot hand a mold an overlay it has no rules for.
+    nn = (single_service.manifest(mold_id, ROOT) or {}).get("not_needed") or {}
+    packs = hints.get("packs") or list(prod.get("packs") or [])
+    if packs and "packs" in nn: sys.exit(f"{app_id}: the brief names packs ({', '.join(packs)}), but {mold_id} takes none: {nn['packs']}. Nothing was written.")
+    for pid in packs:
+        if not os.path.exists(os.path.join(ROOT, "packs", pid, "pack.json")): sys.exit(f"the brief names pack '{pid}' but packs/{pid}/pack.json does not exist")
+    if packs: app["packs"] = packs
+    brand = {} if hints.get("no_branding") else dict(prod.get("brand") or {})
+    if (brand or any(hints.get(k) for k in ("brand_name", "brand_color", "brand_logo", "brand_tagline"))) and "brand" not in nn \
+            and os.path.isfile(os.path.join(ROOT, "molds", mold_id, "branding", "rules.json")):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from branding import normalize, name_problem
+        app["surface"] = {"branding": normalize(brand, hints.get("brand_name"), hints.get("brand_color"), hints.get("brand_logo"), hints.get("brand_tagline"))}
+        why = name_problem(app["surface"]["branding"]["product_name"], mold_id)
+        if why: sys.exit(f"{app_id}: {why}. Nothing was written.")
     ex_app, ex_inf, ex_ds, ex_di = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores", "datainfra"))
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]

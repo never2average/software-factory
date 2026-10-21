@@ -1307,10 +1307,10 @@
     },
     "packs": {
       "type": "array",
-      "description": "Packs applied to this application's build copy (packs/<pack_id>/): the application's own code — subagents, a root-instructions section, shared sandbox helpers — added to the mold WITHOUT forking it. .claude/scripts/packs.py",
+      "description": "Packs applied to this application's build copy (packs/<pack_id>/): the application's own code — subagents, a root-instructions section, shared sandbox helpers — added to the mold WITHOUT forking it. .claude/scripts/packs.py. Which ids and paths a pack may use is the mold's: mold_v1's are lowercase letters, digits and hyphens; a mold whose mold.json declares `packs` has its own (mold_v0: letters, digits and underscores, the pack's table prefix)",
       "items": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9-]{1,40}$"
+        "pattern": "^[a-z][a-z0-9_-]{1,40}$"
       }
     }
   }
