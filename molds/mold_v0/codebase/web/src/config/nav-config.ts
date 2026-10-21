@@ -1,4 +1,5 @@
 import { NavGroup } from '@/types';
+import { packAdminNav, packPortalNav } from './pack-nav.generated';
 
 /**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
@@ -41,7 +42,9 @@ export const adminNav: NavGroup[] = [
       { title: 'Key vault', url: '/admin/keys', icon: 'lock', shortcut: ['g', 'k'], items: [] },
       { title: 'Admins', url: '/admin/admins', icon: 'teams', items: [] }
     ]
-  }
+  },
+  // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own.
+  ...packAdminNav
 ];
 
 export const portalNav: NavGroup[] = [
@@ -79,5 +82,7 @@ export const portalNav: NavGroup[] = [
       { title: 'Billing', url: '/app/billing', icon: 'billing', shortcut: ['g', 'b'], items: [] },
       { title: 'Profile', url: '/app/profile', icon: 'account', items: [] }
     ]
-  }
+  },
+  // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own.
+  ...packPortalNav
 ];

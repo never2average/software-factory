@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { defaultSender } from "./profile.js";
 
 /**
  * Global platform settings (/admin/compute): knobs that used to be environment variables only. Each setting is keyed
@@ -69,7 +70,7 @@ export const SETTINGS: SettingDef[] = [
     help: "What an account earns, as a credit on its next Stripe invoice, when Octillion accepts a programming task it published to the library. The reviewer can change it on Accept." },
   { key: "EMAILS_ENABLED", group: "email", label: "Send emails", kind: "choice", default: "on", options: ["on", "off"],
     help: "Off: nothing is sent (each email is logged as skipped). The Resend key is in Key vault; the log is on Emails." },
-  { key: "EMAIL_FROM", group: "email", label: "From", kind: "text", format: "sender", default: "Octillion <hello@octillion.useimmaculate.com>",
+  { key: "EMAIL_FROM", group: "email", label: "From", kind: "text", format: "sender", default: defaultSender(), // the profile's sender (src/profile.ts)
     help: "The sender of every email, as Name <address>. The address's domain must be verified in Resend." },
   { key: "EMAIL_REPLY_TO", group: "email", label: "Reply-to", kind: "text", format: "emails", default: "",
     help: "Where replies go. Empty: to the From address." },

@@ -36,11 +36,35 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 
 ## Pack and record-area contract
 
-This is the seam the generalised shell exposes (mold_v0-038, record areas mold_v0-047). None of it exists in the
-pinned snapshot yet: today every tool, page and table is the product's own, and `mold.json` says packs are "not
-needed" for that reason. This section is the target the tickets build to.
+This is the seam the generalised shell exposes (mold_v0-038, record areas mold_v0-047). **The shell side is built
+(mold_v0-038)**; the product's own tools, pages and tables are still in the shell until mold_v0-039 moves them into
+its pack, and the factory side (`packs.py` for mold_v0) is mold_v0-024, so `mold.json` still says packs are "not
+needed". What 038 wired, in `molds/mold_v0/codebase`:
 
-**In the shell.** A pack is a directory the shell discovers at build time. `gen-packs.mjs` (new, mold_v0-038) reads every
+- `scripts/gen-packs.mjs` (`npm run gen:packs`, `npm run check:packs`; the smoke test fails on a stale registry) reads
+  every `packs/<id>/pack.json` and `profile.json` and writes `src/packs.generated.ts`, `src/pack-migrations.generated.ts`
+  (the ordered pack migration directories), `src/profile.generated.ts`, `web/src/config/pack-nav.generated.ts` and
+  `web/src/config/profile.generated.ts`. It refuses a pack whose SQL creates a table without row-level security or
+  outside its `<id>_` names, writes grants, policies, roles, functions or DO blocks, or whose code imports any shell
+  module but `src/pack-api.ts`, a database driver, or mentions `asPlatform`, `SET`/`RESET ROLE` or `set_config`.
+- `definePack` (`src/pack-api.ts`): **tools** register on the customer MCP server after the shell's (`src/packs.ts`),
+  each call run for the calling workspace under row-level security with its account permission; **routes** mount at
+  `/api/packs/<id>` (the portal's own session check, `edit` for changes, a CSRF header on cookie writes) and
+  `/api/admin/packs/<id>` (inside the admin router: platform admin, `need(permission)` on every change, the access
+  log); **migrations** run on `src/migrate.ts` after the shell's, recorded in `pack_schema_migrations`, each table
+  secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
+  `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
+  pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
+  data route. **jobKinds, recordAreas, credentials, schedules, onboarding** and profile **words** are declared and
+  validated and listed by `packRegistry()`; the run engine (041), record areas (047), credential vault (034),
+  scheduler (035) and checklist (011) wire them.
+- The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
+  the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
+  "Workspace".
+- `npm run test:packs` proves it with a fixture pack (`scripts/fixtures/packs/fixture_notes`) in a build copy, and that
+  with zero packs the MCP surface (`scripts/export-mcp-tools.ts --full`) is unchanged.
+
+**In the shell.** A pack is a directory the shell discovers at build time. `gen-packs.mjs` (mold_v0-038) reads every
 pack in the build copy and writes a generated registry the server and the console import; nothing in the shell names
 a pack. Each pack exports one `definePack({...})`:
 

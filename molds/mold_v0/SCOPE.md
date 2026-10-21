@@ -60,8 +60,9 @@ turns it into shell, or builds it where nothing exists yet.
   `api_keys` (`sql/schema.sql`). Per-call activity (method, tool, outcome, latency, never arguments or results) is
   `src/analytics.ts` (`mcp_events`). A second MCP server for platform staff is `src/admin-mcp.ts`. Per-client install
   guides come from `src/connect-catalog.ts`.
-- **Generalised by.** mold_v0-038 (the registry is generated from packs by `gen-packs.mjs`; the server name comes from
-  the profile), mold_v0-007 (keys header-only, named, revocable, expiring), mold_v0-013 (a built-in MCP OAuth server when
+- **Generalised by.** mold_v0-038 (done: pack tools register after the shell's from the registry `gen-packs.mjs`
+  generates, `src/packs.ts`; the server name comes from the profile; the shell's own 31 tools stay in `src/server.ts`
+  until mold_v0-039), mold_v0-007 (keys header-only, named, revocable, expiring), mold_v0-013 (a built-in MCP OAuth server when
   Clerk is off), mold_v0-010 (install guides from the profile, tool docs from the registry), mold_v0-018 (MCP rate
   limits).
 
@@ -149,7 +150,8 @@ status, finding fingerprint, evidence reference).
   components under `web/src/components/layout/` and `web/src/components/ui/`, and pages under `web/src/features/`. The
   API side is `src/app.ts` (`/api/app`) and `src/admin.ts` (`/api/admin`). Observability is `src/otel.ts`; product
   analytics `src/telemetry.ts`.
-- **Generalised by.** mold_v0-038 (navigation and pages from packs, the console title from the profile),
+- **Generalised by.** mold_v0-038 (done: pack pages in the sidebar and on a generic page, `web/src/app/{app,admin}/packs/`,
+  pack routes at `/api/packs/<id>` and `/api/admin/packs/<id>`, the console title from the profile),
   mold_v0-020 (the server target serves the console: the `Dockerfile` copies a `/web/out` the console's build never
   writes).
 
@@ -173,8 +175,9 @@ status, finding fingerprint, evidence reference).
 - **Today.** None: the product's name is in code (the MCP server name in `src/server.ts`, the email sender default in
   `src/settings.ts`, the console title in `web/src/app/layout.tsx`, `web/src/app/manifest.ts`, the icons under
   `web/src/app/`, the theme in `web/src/components/themes/`), and many environment names carry it.
-- **Generalised by.** mold_v0-038 (server name, email sender and console title from the profile; pack profile words,
-  such as "workspace" shown as "company"), mold_v0-024 (the factory's mold_v0 brand rules: name, colour and logo, the
+- **Generalised by.** mold_v0-038 (done: server name, email sender and console title from `profile.json` over a neutral
+  default, `src/profile.ts`; pack profile words, such as "workspace" shown as "company", are declared and validated, and
+  applied with mold_v0-045), mold_v0-024 (the factory's mold_v0 brand rules: name, colour and logo, the
   three-input brand every app gets before its first deploy), mold_v0-045 (neutral words and environment names, old
   names still accepted, with a vocabulary check).
 

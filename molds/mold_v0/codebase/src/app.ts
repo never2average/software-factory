@@ -370,6 +370,38 @@ async function billingUsage(s: Session) {
 
 // ---------- routes ----------
 
+/**
+ * The portal's sign-in check, shared by /api/app and the packs' /api/packs/<id> (src/pack-routes.ts): a Clerk session of
+ * a person in an account, which sets res.locals.session and runs the rest of the request under row-level security
+ * for that account (withTenant).
+ */
+export async function customerSession(req: Request, res: Response, next: NextFunction) {
+  if (!clerk.clerkEnabled()) return void res.status(503).json({ error: "Sign-in is not configured (CLERK_SECRET_KEY)" });
+  const c = await clerkSession(req);
+  if (!c) return void res.status(401).json({ error: "Sign in", sign_in_url: "/sign-in" });
+  const ms = (await clerk.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
+  // The session's active organization; without one, the person's oldest membership that is not suspended.
+  const m = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : ms.find((x) => !clerk.isSuspended(x));
+  if (!m) return void res.status(403).json({ error: "You are not in an Octillion account yet. Ask your admin to invite you.", code: "no_account" });
+  if (clerk.isSuspended(m)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
+  const org = await orgForClerk(m.organization!.id);
+  if (!org) return void res.status(403).json({ error: "This organization is not an Octillion account. Octillion is invite-only for now: ask your Octillion contact for an invitation.", code: "no_account" });
+  const user = await clerk.users.get(c.userId);
+  const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
+    accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };
+  if (!identified.has(c.userId)) {
+    identified.add(c.userId);
+    identifyPerson(c.userId, { email: s.email ?? undefined, name: clerk.displayName(user) ?? undefined, account: org.slug, account_name: org.name, role: s.accountRole });
+    capture({ distinctId: c.userId, orgSlug: org.slug }, "app_signed_in", { method: "clerk" });
+  }
+  res.locals.session = s;
+  res.locals.memberships = ms;
+  // Pack routes (src/pack-routes.ts) ask cookie-authenticated changes for a CSRF header.
+  res.locals.viaCookie = c.viaCookie;
+  // Row-level security (src/tenant-scope.ts): the rest of the request reaches this organization's rows only.
+  withTenant(org.orgId, () => next());
+}
+
 export function appRouter() {
   const r = express.Router();
 
@@ -379,30 +411,7 @@ export function appRouter() {
   const small = express.json({ limit: "16kb" });
   api.use((req, res, next) => (req.path === "/context/memories/import" || req.path === "/journeys/import" || (req.method === "POST" && (req.path === "/personas" || req.path === "/tasks")) ? next() : small(req, res, next)));
   api.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
-  api.use(async (req, res, next) => {
-    if (!clerk.clerkEnabled()) return void res.status(503).json({ error: "Sign-in is not configured (CLERK_SECRET_KEY)" });
-    const c = await clerkSession(req);
-    if (!c) return void res.status(401).json({ error: "Sign in", sign_in_url: "/sign-in" });
-    const ms = (await clerk.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
-    // The session's active organization; without one, the person's oldest membership that is not suspended.
-    const m = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : ms.find((x) => !clerk.isSuspended(x));
-    if (!m) return void res.status(403).json({ error: "You are not in an Octillion account yet. Ask your admin to invite you.", code: "no_account" });
-    if (clerk.isSuspended(m)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
-    const org = await orgForClerk(m.organization!.id);
-    if (!org) return void res.status(403).json({ error: "This organization is not an Octillion account. Octillion is invite-only for now: ask your Octillion contact for an invitation.", code: "no_account" });
-    const user = await clerk.users.get(c.userId);
-    const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
-      accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };
-    if (!identified.has(c.userId)) {
-      identified.add(c.userId);
-      identifyPerson(c.userId, { email: s.email ?? undefined, name: clerk.displayName(user) ?? undefined, account: org.slug, account_name: org.name, role: s.accountRole });
-      capture({ distinctId: c.userId, orgSlug: org.slug }, "app_signed_in", { method: "clerk" });
-    }
-    res.locals.session = s;
-    res.locals.memberships = ms;
-    // Row-level security (src/tenant-scope.ts): the rest of the request reaches this organization's rows only.
-    withTenant(org.orgId, () => next());
-  });
+  api.use(customerSession);
   const S = (res: Response) => res.locals.session as Session;
   /** Refuse unless the person's role has the permission: 403 in plain words, with a code and the role it needs. */
   const need = (res: Response, p: roles.AccountPermission) => {

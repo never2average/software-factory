@@ -77,6 +77,24 @@ export async function rlsCatalogProblems(db: Queryable): Promise<string[]> {
     else if (!s.on) problems.push(`${t}: row-level security is off`);
     else if (!s.policies && s.reach.length) problems.push(`${t}: reachable by ${TENANT_ROLE} with no policy`);
   }
+  // Every permissive policy for the role limits rows to the workspace it acts for (a pack's table included, mold_v0-038):
+  // a policy that does not name octillion_tenant_org() would open rows to every workspace. The one shell exception reads a
+  // population's agents through the population's own policy.
+  const policies = await db.query<{ tablename: string; policyname: string; qual: string | null; with_check: string | null }>(
+    `SELECT tablename, policyname, qual, with_check FROM pg_policies
+      WHERE schemaname = 'public' AND permissive = 'PERMISSIVE' AND ($1 = ANY (roles) OR 'public' = ANY (roles)) ORDER BY 1, 2`, [TENANT_ROLE]);
+  const scoped = (x: string | null) => x == null || x.includes("octillion_tenant_org()");
+  const PACK_RULE = "(org_id = octillion_tenant_org())";
+  for (const p of policies) {
+    // Only the shell's own policy names (0003_row_level_security, and the packs' helper in src/migrate.ts): another
+    // permissive policy could open rows to a fixed organization while still naming octillion_tenant_org().
+    if (!["tenant_isolation", "tenant_read", "tenant_write", "pack_tenant_isolation"].includes(p.policyname))
+      problems.push(`${p.tablename}: unexpected policy ${p.policyname} for ${TENANT_ROLE}`);
+    if (p.tablename === "developer_population_agents" && p.policyname === "tenant_read") continue;
+    if (!scoped(p.qual) || !scoped(p.with_check)) problems.push(`${p.tablename}: policy ${p.policyname} does not limit rows to the tenant's own organization`);
+    if (p.policyname === "pack_tenant_isolation" && (p.qual !== PACK_RULE || p.with_check !== PACK_RULE))
+      problems.push(`${p.tablename}: pack policy ${p.policyname} is not the workspace rule ${PACK_RULE}`);
+  }
   // Anything else the role can reach must be a known read-only platform table: a new table is closed until granted.
   for (const s of state) {
     if (tenant.has(s.relname) || !s.reach.length) continue;
@@ -95,6 +113,10 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
   const problems: string[] = [];
   let checked = 0;
   const tables = await tenantTables(db);
+  /** Pack workspace tables: the ones the shell's helper secured (src/migrate.ts shell_pack_tenant_table). */
+  const packTables = (await db.query<{ t: string }>(
+    "SELECT DISTINCT tablename AS t FROM pg_policies WHERE schemaname = 'public' AND policyname = 'pack_tenant_isolation' ORDER BY 1")).map((r) => r.t)
+    .filter((t) => /^[a-z_][a-z0-9_]*$/.test(t));
   const tag = `rls-probe-${randomBytes(4).toString("hex")}`;
   await db.transaction(async (tx) => {
     // Bounded: a probe must never hold locks or a pooled connection for long.
@@ -158,6 +180,8 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("api_keys: A issues itself a key", "INSERT INTO api_keys (org_id, label, key_prefix, key_hash) VALUES ($1, 'x', 'oct_x', $2)", [a, `${tag}-own`]);
     await refused("organizations: A changes its own account", "/* tenant: rls probe */ UPDATE organizations SET name = 'x' WHERE id = $1", [a]);
     for (const t of NO_ACCESS) await refused(`${t}: readable by a tenant query`, `SELECT 1 FROM ${t} LIMIT 1`);
+    // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
+    for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 
     await as(null);
     for (const t of ["products", "api_keys", "mcp_events", "organizations", "scenarios"]) {

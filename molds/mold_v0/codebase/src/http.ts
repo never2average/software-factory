@@ -9,6 +9,7 @@ import * as prospect from "./prospect.js";
 import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
 import { appRouter } from "./app.js";
+import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
@@ -155,6 +156,8 @@ export function createApp() {
   // The customer portal can start work too (approvals, re-runs): tick after any write there (Vercel only).
   app.use("/api/app", (req, _res, next) => { if (req.method !== "GET") _res.on("finish", () => serverlessTick()); next(); });
   app.use(appRouter());
+  // ---------- packs' customer routes: /api/packs/<id> (src/pack-routes.ts); with no pack routes nothing is mounted ----------
+  app.use("/api/packs", packAppRouter());
 
   // ---------- journey webhook: PostHog Workflows queues in-chat nudges (src/journeys.ts) ----------
   // The secret goes in an Authorization header, or in the path for webhook steps that cannot set headers.
@@ -631,6 +634,8 @@ export function createApp() {
     res.status(err.status ?? 400).json({ error: err.message, ...(problems ? { problems } : {}) });
   });
   admin.use("/onboarding", ob);
+  // Packs' admin routes: /api/admin/packs/<id>, behind the same admin guard, CSRF header and access log (src/pack-routes.ts).
+  admin.use("/packs", packAdminRouter());
   app.use("/api/admin", admin);
 
   // ---------- local preview of the widget (development only) ----------
