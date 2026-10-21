@@ -807,8 +807,28 @@ console.log("\n7e. A Stop before the reply said anything is said under that turn
   check(
     "every message is given the note stoppedNoteHosts chose for it (a user message included)",
     /stoppedNote=\{stoppedNoteAt\.get\(message\.id\)\}/.test(chat) &&
-      /stoppedNoteHosts\(viewMessages, stoppedNotes, \(m\) => messageRendersContent\(m, true, isProxiedChildApproval\)\)/.test(chat),
+      /stoppedNoteHosts\(renderedMessages, stoppedNotes, \(m\) => messageRendersContent\(m, true, isProxiedChildApproval\)\)/.test(chat),
   );
+  // mold_v1-296: the main agent's stop call is taken out of the thread (said on the specialist's card). A turn whose
+  // only visible part was that call renders nothing, so its "Stopped." note must go elsewhere: hosts are chosen over
+  // the messages AS RENDERED, and the composer fallback asks the same of them.
+  if (hosts) {
+    const { withoutStopCalls } = await import("../lib/specialist-relay.ts");
+    const renders = (m) => m.parts.some((p) => (p.type === "text" && p.text?.trim()) || p.type === "dynamic-tool");
+    const ask = { id: "turn_7:user", role: "user", metadata: { turnId: "turn_7" }, parts: [{ type: "text", text: "never mind" }] };
+    const stopOnly = {
+      id: "turn_7:assistant",
+      role: "assistant",
+      metadata: { turnId: "turn_7" },
+      parts: [{ type: "step-start" }, { type: "dynamic-tool", toolName: "stop_specialist", toolCallId: "c1", state: "input-available", input: { specialist: "Research", reason: "x" } }],
+    };
+    const placed = hosts(withoutStopCalls([ask, stopOnly]), new Map([["turn_7", "Stopped."]]), renders);
+    check("a stopped turn whose only part was the stop call: the note goes under the person's message, not the emptied reply", placed.get(ask.id) === "Stopped." && !placed.has(stopOnly.id), [...placed]);
+    check(
+      "…and the composer's fallback asks whether anything is on screen of the rendered messages too",
+      /const shown = renderedMessages\.some\(/.test(chat) && /const hosted = renderedMessages\.some\(/.test(chat),
+    );
+  }
   const msg = readFileSync("app/_components/agent-message.tsx", "utf8");
   check(
     "the host test is AgentMessage's own (the one that drops an empty message)",

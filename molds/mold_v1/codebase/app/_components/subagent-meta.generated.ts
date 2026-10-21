@@ -9,6 +9,8 @@ export interface SubagentToolMeta {
 export interface SubagentMeta {
   /** Display name: subagent.json "name", else the title-cased key. */
   readonly name: string;
+  /** The given name a pack or profile declares (subagent.json "givenName"), shown in place of the name above. */
+  readonly givenName?: string;
   /** One line for lists: subagent.json "summary", else the first sentence of the description. */
   readonly summary: string;
   readonly description: string;

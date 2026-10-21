@@ -191,6 +191,7 @@
     "test:eve-local-world-inline": "node scripts/test-eve-local-world-inline.mjs",
     "stress:specialist-together": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/stress-specialist-together.mjs",
     "test:specialist-handback-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-specialist-handback-db.mjs",
+    "test:specialist-stop": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-specialist-stop.mjs",
     "test:specialist-sweep": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-specialist-sweep.mjs",
     "test:specialist-sweep-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning --conditions=react-server scripts/test-specialist-sweep-db.mjs",
     "rig:specialist-handback": "node scripts/rig-specialist-handback.mjs",

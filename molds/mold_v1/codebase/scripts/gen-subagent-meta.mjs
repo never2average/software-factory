@@ -4,8 +4,10 @@
 //                                                profile's words: the text and tool names the model reads for them
 //   agent/lib/subagent-registry.generated.ts     keys, labels, extra data-room path templates (the agent + scripts)
 // A subagent may carry an optional `subagent.json` next to its agent.ts:
-//   { "name": "Display Name", "summary": "one line for the UI", "dataroomPaths": ["{folder:accounts}/{customer_id}/filings/**"] }
+//   { "name": "Display Name", "givenName": "Scout", "summary": "one line for the UI", "dataroomPaths": ["{folder:accounts}/{customer_id}/filings/**"] }
 // Without it the name is the title-cased key and the summary is the first sentence of the agent.ts description.
+// "givenName" (optional, mold_v1-295) is what a person and the main agent call the specialist (lib/specialist-names.ts);
+// without it the display name is used. Base specialists declare none.
 // See docs/SUBAGENT_PACKS.md. Re-run after changing any subagent:  npm run build:subagent-meta
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -153,8 +155,14 @@ for (const name of readdirSync(SUB).sort()) {
         .map((t) => ({ name: t, description: toolDescription(dir, t) }))
     : [];
   const description = extractDescription(read("agent.ts")) ?? "";
+  const givenName = typeof decl.givenName === "string" ? decl.givenName.trim() : "";
+  if (decl.givenName !== undefined && (!givenName || givenName.length > 32 || /[\n\r]/.test(givenName))) {
+    console.error(`agent/subagents/${name}/subagent.json: "givenName" must be a one-line name of 1 to 32 characters`);
+    process.exit(1);
+  }
   meta[name] = {
     name: typeof decl.name === "string" && decl.name.trim() ? decl.name.trim() : titleCase(name),
+    ...(givenName ? { givenName } : {}),
     summary: typeof decl.summary === "string" && decl.summary.trim() ? decl.summary.trim() : firstSentence(description),
     description,
     skillNames,
@@ -197,6 +205,16 @@ export const SUBAGENT_LABELS: Record<string, string> = ${JSON.stringify(
   2,
 )};
 
+/**
+ * The given name per subagent key, for those whose subagent.json declares one ("givenName"): what a person and the
+ * main agent call it (lib/specialist-names.ts). A specialist without one is called by its label above.
+ */
+export const SUBAGENT_GIVEN_NAMES: Record<string, string> = ${JSON.stringify(
+  Object.fromEntries(Object.entries(meta).filter(([, v]) => v.givenName).map(([k, v]) => [k, v.givenName])),
+  null,
+  2,
+)};
+
 /** One-line summary per subagent key. */
 export const SUBAGENT_SUMMARIES: Record<string, string> = ${JSON.stringify(
   Object.fromEntries(Object.entries(meta).map(([k, v]) => [k, v.summary])),
@@ -221,6 +239,8 @@ export interface SubagentToolMeta {
 export interface SubagentMeta {
   /** Display name: subagent.json "name", else the title-cased key. */
   readonly name: string;
+  /** The given name a pack or profile declares (subagent.json "givenName"), shown in place of the name above. */
+  readonly givenName?: string;
   /** One line for lists: subagent.json "summary", else the first sentence of the description. */
   readonly summary: string;
   readonly description: string;

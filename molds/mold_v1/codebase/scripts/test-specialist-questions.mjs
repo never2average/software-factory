@@ -183,6 +183,25 @@ console.log("\n5. Where the reply renders: on the specialist's card, never as a 
   check("a picked option reads as its label", option.get(rid)?.reply === "FY26");
   const unattributed = placeSpecialistAnswers({ messages: withResponses(project(UNPATCHED), answers), askers: specialistAskers(UNPATCHED), events: UNPATCHED });
   check("an unattributed reply is not placed: it renders as it did before", unattributed.size === 0);
+  // mold_v1-296: the same request as an APPROVAL beta asked (allow a write) is relayed plumbing, not a reply: on beta's
+  // card while beta works, never a row of the main thread; at the tail only when no card is on screen.
+  const asApproval = (msgs) =>
+    JSON.parse(JSON.stringify(msgs)).map((m) => ({
+      ...m,
+      parts: m.parts.map((p) =>
+        p.toolMetadata?.eve?.inputRequest?.requestId === rid
+          ? { ...p, toolName: "write_file", toolMetadata: { eve: { ...p.toolMetadata.eve, inputRequest: { ...p.toolMetadata.eve.inputRequest, options: [{ id: "approve", label: "Approve" }, { id: "deny", label: "Deny" }] }, inputResponse: { requestId: rid, optionId: "approve" } } } }
+          : p,
+      ),
+    }));
+  const approvedLive = placeSpecialistAnswers({ messages: asApproval(withResponses(project(live), answers)), askers, events: live });
+  check("an approval beta asked, answered while beta works: on beta's card, marked an approval, with its part", approvedLive.get(rid)?.where === "card" && approvedLive.get(rid)?.approval === true && approvedLive.get(rid)?.part?.toolName === "write_file", approvedLive.get(rid));
+  const approvedNoCard = placeSpecialistAnswers({
+    messages: asApproval(withResponses(project(live), answers)).map((m) => ({ ...m, parts: m.parts.filter((p) => !String(p.toolName ?? "").startsWith("eve:subagent:")) })),
+    askers,
+    events: live,
+  });
+  check("…with no card on screen, at the tail while beta works", approvedNoCard.get(rid)?.where === "tail");
 }
 
 console.log("\n6. A placed answer is not also in its message (the message neither shows it nor counts it)");
@@ -201,6 +220,19 @@ console.log("\n6. A placed answer is not also in its message (the message neithe
   check("nothing placed: the transcript is returned as it is", withoutPlacedAnswers(view, new Map()) === view);
   const inplace = new Map([[rid, { where: "inplace" }]]);
   check("an answer placed in place stays in its message", has(withoutPlacedAnswers(view, inplace)));
+  // mold_v1-296: eve relays a specialist's approval on the DELEGATION part itself (approval-requested, then answered).
+  // Placing that answer on the card must never take the card itself out of the thread.
+  const card = {
+    type: "dynamic-tool",
+    toolName: "eve:subagent:research",
+    toolCallId: "call_wait",
+    state: "input-available",
+    input: { message: "brief" },
+    toolMetadata: { eve: { inputRequest: { requestId: "req_open", prompt: "Publish?", options: [{ id: "approve", label: "Approve" }] }, inputResponse: { requestId: "req_open", optionId: "approve" } } },
+  };
+  const withCard = [{ id: "a1", role: "assistant", parts: [{ type: "text", text: "asked" }, card] }];
+  const kept = withoutPlacedAnswers(withCard, new Map([["req_open", { where: "card" }]]));
+  check("an answered approval carried on a delegation part: the delegation card stays in the thread", kept[0].parts.some((p) => p.toolCallId === "call_wait"), kept[0].parts);
 }
 
 console.log("\n7. Notes to a running specialist (mold_v1-235): where they show and how they read");
@@ -214,7 +246,8 @@ console.log("\n7. Notes to a running specialist (mold_v1-235): where they show a
   ];
   const live = ATTRIBUTED.slice(0, rest);
   const whileWorking = placeSteeringNotes({ notes, events: live, cards: delegationCards(project(live)) });
-  check("while beta works: its notes at the tail, named, with their state; a note for no delegation on this stream is dropped", whileWorking.length === 2 && whileWorking.every((n) => n.where === "tail" && n.name === "beta" && n.progress === "reports-later") && whileWorking[1].status === "pending", whileWorking);
+  // mold_v1-296: a note is a relay to the specialist, not a row of the main thread: on its card while it works too.
+  check("while beta works: its notes on its card, named, with their state; a note for no delegation on this stream is dropped", whileWorking.length === 2 && whileWorking.every((n) => n.where === "card" && n.name === "beta" && n.progress === "reports-later") && whileWorking[1].status === "pending", whileWorking);
   const after = placeSteeringNotes({ notes, events: ATTRIBUTED, cards: delegationCards(project(ATTRIBUTED)) });
   check("once beta has handed back: under its delegation card, finished", after.every((n) => n.where === "card" && n.progress === "finished"), after);
   check("no delegation card on screen: they stay at the tail", placeSteeringNotes({ notes, events: ATTRIBUTED, cards: new Set() }).every((n) => n.where === "tail"));

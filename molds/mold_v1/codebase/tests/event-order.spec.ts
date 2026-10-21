@@ -60,7 +60,7 @@ test("live: the orchestrator's next thinking streams BELOW the specialist card",
   expect(await layout(page)).toEqual(["thinking", "card", "thinking"]);
   // The block below the card is the one streaming, and it holds the NEW thinking.
   const card = page.locator('button[title="Open in Control Panel"]');
-  await expect(card).toContainText("Completed");
+  await expect(card.getByRole("img", { name: "Done", exact: true })).toBeVisible();
   const texts = await thinkingTexts(page);
   expect(texts[0]).toContain("ORCH-THINK-1");
   expect(texts[1]).toContain("ORCH-THINK-2");

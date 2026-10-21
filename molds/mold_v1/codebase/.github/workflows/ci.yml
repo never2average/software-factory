@@ -897,6 +897,13 @@ jobs:
         if: always()
         run: npm run test:specialist-sweep
 
+      # The main agent stops one of its own specialists (mold_v1-294): only the calling chat's own delegations can be
+      # named, the reason is delivered as the stopped delegation's result before eve's cancel, once under the sweep's
+      # ledger, and a run the cancel does not reach is ended by the sweep's backstop.
+      - name: The main agent's stop (scope, names, once)
+        if: always()
+        run: npm run test:specialist-stop
+
       # A parked approval survives a reload on purpose; one whose run has ENDED
       # must not, or it comes back as a live prompt and wedges the composer on a
       # chat that is already finished. Runs eve's own reducer over persisted

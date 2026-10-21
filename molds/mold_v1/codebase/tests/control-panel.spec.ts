@@ -137,6 +137,15 @@ const rail = (page: Page) => page.getByTestId("rail");
 const row = (page: Page, i: number) => rail(page).locator("li").filter({ has: page.locator("button") }).nth(i);
 const ORDER: Sid[] = ["FIN_A", "FIN_B", "FIN_C", "FIN_D", "FIN_E", "RUN", "PARK"];
 const rowOf = (page: Page, sid: Sid) => row(page, ORDER.indexOf(sid));
+/**
+ * A finished specialist's row with its details read: its call count, and its state as the row's one status mark, the
+ * check-mark icon named "Done" (mold_v1-297: no "done" word beside it).
+ */
+async function expectDoneRow(page: Page, sid: Sid, calls: string | RegExp, timeout?: number) {
+  await expect(rowOf(page, sid)).toContainText(calls, timeout === undefined ? undefined : { timeout });
+  await expect(rowOf(page, sid).getByRole("img", { name: "Done", exact: true })).toBeVisible();
+  expect(await rowOf(page, sid).innerText()).not.toMatch(/\bdone\b/i);
+}
 
 async function open(page: Page) {
   await page.goto("/preview/control-panel");
@@ -168,7 +177,7 @@ test("finished specialists wait for the conversation, a few at a time; running a
   }
   expect(most, "at most 3 finished specialists are read at once").toBeLessThanOrEqual(3);
   for (const sid of ["FIN_A", "FIN_C", "FIN_D", "FIN_E"] as Sid[]) {
-    await expect(rowOf(page, sid)).toContainText(sid === "FIN_A" ? "done · 3 calls" : "done · 2 calls", { timeout: 30_000 });
+    await expectDoneRow(page, sid, sid === "FIN_A" ? "3 calls" : "2 calls", 30_000);
   }
 });
 
@@ -178,7 +187,7 @@ test("the panel updates a bounded number of times while a large specialist is re
   await fakeAgent(page, { origin: server.origin, sids: ["FIN_A"] });
   await open(page);
   await page.getByTestId("mark-ready").click();
-  await expect(rowOf(page, "FIN_A")).toContainText("done · 3 calls", { timeout: 60_000 });
+  await expectDoneRow(page, "FIN_A", "3 calls", 60_000);
   await page.waitForTimeout(1_000);
   // Every render of the panel since the page loaded: its mount, the specialists attaching, and the reads.
   const renders = await page.evaluate(() => window.__cockpitRenders?.() ?? 0);
@@ -196,12 +205,12 @@ test("a stalled specialist is shown unavailable after the deadline, with Retry, 
   await open(page);
   await page.getByTestId("mark-ready").click();
   // A slow one (4 s to headers) is not a stalled one.
-  await expect(rowOf(page, "FIN_C")).toContainText("done · 2 calls", { timeout: 15_000 });
+  await expectDoneRow(page, "FIN_C", "2 calls", 15_000);
   await expect(rowOf(page, "FIN_B")).toContainText("details unavailable", { timeout: 30_000 });
   expect(agent.seen.filter((s) => s.sid === "FIN_B").length, "retried once before giving up").toBe(2);
   agent.unstallFinB();
   await rowOf(page, "FIN_B").getByRole("button", { name: "Retry" }).click();
-  await expect(rowOf(page, "FIN_B")).toContainText("done · 2 calls", { timeout: 10_000 });
+  await expectDoneRow(page, "FIN_B", "2 calls", 10_000);
 });
 
 test("a specialist whose transcript is still loading keeps its name and status, and the transcript's place shimmers (mold_v1-269)", async ({ page }) => {
@@ -213,8 +222,10 @@ test("a specialist whose transcript is still loading keeps its name and status, 
   const loading = rail(page).getByRole("status", { name: "Loading transcript" });
   await expect(loading).toBeVisible();
   // What is known stays: the specialist's name in the header, beside its status, and the brief it was given.
-  await expect(rail(page).getByTitle("Back to the Control Panel").first()).toContainText("Research/");
-  await expect(rail(page).getByText("Done", { exact: true })).toBeVisible();
+  // The name the chat gives it (mold_v1-295: no "<kind>/<codename>"), and its state as the header's icon (mold_v1-297).
+  await expect(rail(page).getByTitle("Back to the Control Panel").first()).toContainText(/Research( \d+)?/);
+  await expect(rail(page).getByRole("img", { name: "Done", exact: true }).first()).toBeVisible();
+  await expect(rail(page).getByText("Done", { exact: true })).toHaveCount(0);
   await expect(rail(page)).toContainText("BRIEF for call_fin_b");
   // What is not: transcript-shaped blocks, never the raw result text, and no bare "Loading…" sentence.
   expect(await loading.locator("[data-skeleton]").count()).toBeGreaterThanOrEqual(6);
@@ -244,7 +255,7 @@ test("a remount, and leaving for another chat and coming back, read nothing agai
   await open(page);
   await page.getByTestId("mark-ready").click();
   for (const sid of ["FIN_A", "FIN_C", "FIN_D", "FIN_E"] as Sid[]) {
-    await expect(rowOf(page, sid)).toContainText(/done · [23] calls/, { timeout: 60_000 });
+    await expectDoneRow(page, sid, /[23] calls/, 60_000);
   }
   const finished = () => agent.finished().filter((s) => s.sid !== "FIN_B").length;
   const settled = finished();
@@ -253,7 +264,7 @@ test("a remount, and leaving for another chat and coming back, read nothing agai
   await expect(rail(page).locator("li")).toHaveCount(7);
   await page.waitForTimeout(3_000);
   expect(finished(), "a remount makes no request for a finished specialist").toBe(settled);
-  await expect(rowOf(page, "FIN_D")).toContainText("done · 2 calls");
+  await expectDoneRow(page, "FIN_D", "2 calls");
 
   await page.getByTestId("switch-chat").click();
   await expect(page.getByTestId("other-chat")).toBeVisible();
@@ -262,7 +273,7 @@ test("a remount, and leaving for another chat and coming back, read nothing agai
   await expect(rail(page).locator("li")).toHaveCount(7);
   await page.waitForTimeout(3_000);
   expect(finished(), "leaving and coming back makes no request for a finished specialist").toBe(settled);
-  await expect(rowOf(page, "FIN_A")).toContainText("done · 3 calls");
+  await expectDoneRow(page, "FIN_A", "3 calls");
 });
 
 test("a saved copy per specialist: on the second page load the details are there from the copy (goal 0.5 s, measured), and no stream is read from event 0", async ({ page }) => {
@@ -292,7 +303,7 @@ test("a saved copy per specialist: on the second page load the details are there
     return route.fulfill({ status: 200, json: { ok: true } });
   });
   // In the page, from the first moment: when the rail's seven rows appear, and when each row first shows its details.
-  const DETAILS: Partial<Record<Sid, string>> = { FIN_A: "done · 3 calls", FIN_C: "done · 2 calls", FIN_D: "done · 2 calls", FIN_E: "done · 2 calls" };
+  const DETAILS: Partial<Record<Sid, string>> = { FIN_A: "3 calls", FIN_C: "2 calls", FIN_D: "2 calls", FIN_E: "2 calls" };
   await page.addInitScript(
     ({ order, details }) => {
       const w = window as unknown as { __copyTimes: { rows: number | null; details: Record<string, number> } };
