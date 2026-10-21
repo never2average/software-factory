@@ -27,6 +27,7 @@ import { freshSettings, settingText } from "./settings.js";
 import * as telemetry from "./telemetry.js";
 import * as clerk from "./clerk.js";
 import { accountRoleOf, type AccountRole } from "./account-roles.js";
+import { PROFILE } from "./profile.js";
 
 export const EMAIL_PROVIDER = "resend";
 export const EMAIL_KINDS = ["request_received", "request_alert", "request_declined", "request_approved", "submission_alert", "submission_accepted",
@@ -153,7 +154,7 @@ export function htmlOf(text: string): string {
 ${body}
 </div></body></html>`;
 }
-const SIGN = "— Octillion";
+const SIGN = `— ${PROFILE.email_sender_name}`; // the profile's sender name (src/profile.ts)
 const hello = (name?: string | null) => `Hi${name?.trim() ? ` ${name.trim().split(/\s+/)[0]}` : ""},`;
 const lines = (...parts: (string | null | false | undefined)[]) => parts.filter((p): p is string => typeof p === "string").join("\n\n");
 const money = (usd: number) => `$${usd.toFixed(usd % 1 ? 2 : 0)}`;

@@ -26,9 +26,17 @@ try {
     for (const r of s.applied) console.log(`applied  ${pad(r.version)}_${r.name}  ${new Date(r.applied_at).toISOString()}`);
     for (const m of s.pending) console.log(`pending  ${pad(m.version)}_${m.name}`);
     for (const c of s.conflicts) console.log(`CONFLICT ${c}`);
+    // Packs' own migrations (mold_v0-038), after the shell's.
+    for (const p of s.packs) {
+      for (const r of p.applied) console.log(`applied  pack ${p.pack} ${pad(r.version)}_${r.name}  ${new Date(r.applied_at).toISOString()}`);
+      for (const m of p.pending) console.log(`pending  pack ${p.pack} ${pad(m.version)}_${m.name}`);
+      for (const c of p.conflicts) console.log(`CONFLICT ${c}`);
+    }
     if (s.legacy) console.log("(no schema_migrations table yet: a database from before versioned migrations; 0001_baseline brings it in)");
-    if (process.argv.includes("--check") && (s.pending.length || s.conflicts.length)) {
-      console.error(`${s.pending.length} pending, ${s.conflicts.length} conflict(s)`);
+    const pending = s.pending.length + s.packs.reduce((n, p) => n + p.pending.length, 0);
+    const conflicts = s.conflicts.length + s.packs.reduce((n, p) => n + p.conflicts.length, 0);
+    if (process.argv.includes("--check") && (pending || conflicts)) {
+      console.error(`${pending} pending, ${conflicts} conflict(s)`);
       process.exitCode = 1;
     }
   } else {

@@ -1,0 +1,15 @@
+{
+  "id": "fixture_notes",
+  "name": "Fixture notes",
+  "version": "0.1.0",
+  "description": "A test fixture for the pack seam (scripts/packs-test.ts): one tool pair, one table, one page per area. Never shipped.",
+  "entry": "index.ts",
+  "migrations": "migrations",
+  "pages": [
+    { "id": "notes", "area": "app", "title": "Notes", "description": "This workspace's notes.", "data": "/notes",
+      "columns": [{ "key": "body", "label": "Note" }, { "key": "created_at", "label": "Added" }], "nav_group": "Notes" },
+    { "id": "all-notes", "area": "admin", "title": "Notes by workspace", "data": "/notes",
+      "columns": [{ "key": "org_id", "label": "Workspace" }, { "key": "notes", "label": "Notes" }] }
+  ],
+  "words": { "workspace": "team" }
+}

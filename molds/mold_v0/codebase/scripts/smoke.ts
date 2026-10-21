@@ -248,6 +248,12 @@ try {
     assert.deepEqual(committed, docsCorpus(), "src/docs-corpus.generated.json is stale: run npx tsx scripts/sync-docs-corpus.ts");
     assert.ok(committed.every((c: any) => (c.area === "customer") === c.href.startsWith("/app/docs/")), "customer chunks link to /app/docs, admin ones to /admin/docs");
   }
+  // The pack registry and the profile (scripts/gen-packs.mjs, mold_v0-038) are generated from packs/ and profile.json: current.
+  {
+    const { execFileSync } = await import("node:child_process");
+    try { execFileSync(process.execPath, ["scripts/gen-packs.mjs", "--check"], { cwd: new URL("..", import.meta.url).pathname, stdio: "pipe" }); }
+    catch (e) { assert.fail(`the pack registry or profile is stale: run npm run gen:packs\n${String((e as { stderr?: unknown }).stderr ?? e)}`); }
+  }
   console.log("tools:", tools.map((t) => t.name).join(", "));
   assert.equal(tools.length, 31); // 19 core (incl. browse_task_library, export_visibility_report) + 2 memory + 10 private-asset tools incl. publish_to_library
   assert.ok(tools.some((t) => t.name === "export_visibility_report" && t.annotations?.readOnlyHint && !t.annotations?.destructiveHint), "export_visibility_report is read-only");

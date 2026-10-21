@@ -3,6 +3,9 @@
 // description, read-only or not; prompts with their description). The smoke test fails when the file is stale.
 //   npx tsx scripts/export-mcp-tools.ts          write it
 //   npx tsx scripts/export-mcp-tools.ts --check  exit 1 if it differs from the server
+//   npx tsx scripts/export-mcp-tools.ts --full   print the whole surface to stdout instead (server name and version,
+//                                                every tool with its schemas, annotations and _meta, every prompt), for a
+//                                                before/after diff of a shell or pack change (mold_v0-038, 039)
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -36,7 +39,33 @@ export async function mcpCatalog() {
   };
 }
 
+/** Everything a client can see: the server's name and version, every tool in full, every prompt with its arguments. */
+export async function mcpSurface() {
+  const server = createServer({ orgId: 0, slug: "docs", name: "Docs" });
+  const client = new Client({ name: "surface-export", version: "1" });
+  const [c, s] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(s), client.connect(c)]);
+  const info = client.getServerVersion();
+  const { tools } = await client.listTools();
+  const { prompts } = await client.listPrompts().catch(() => ({ prompts: [] as unknown[] }));
+  const { resources } = await client.listResources().catch(() => ({ resources: [] as unknown[] }));
+  await client.close();
+  // The platform admins' MCP server (src/admin-mcp.ts), as an owner sees it.
+  const { createAdminServer } = await import("../src/admin-mcp.js");
+  const adminServer = createAdminServer({ actor: "surface-export", role: "owner", userId: null });
+  const adminClient = new Client({ name: "surface-export", version: "1" });
+  const [ac, as] = InMemoryTransport.createLinkedPair();
+  await Promise.all([adminServer.connect(as), adminClient.connect(ac)]);
+  const admin = { server: adminClient.getServerVersion(), tools: (await adminClient.listTools()).tools, prompts: (await adminClient.listPrompts()).prompts };
+  await adminClient.close();
+  return { server: info, tools, prompts, resources, admin };
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  if (process.argv.includes("--full")) {
+    process.stdout.write(`${JSON.stringify(await mcpSurface(), null, 2)}\n`);
+    process.exit(0);
+  }
   const json = `${JSON.stringify(await mcpCatalog(), null, 2)}\n`;
   if (process.argv.includes("--check")) {
     const ok = (() => { try { return readFileSync(OUT, "utf8") === json; } catch { return false; } })();
