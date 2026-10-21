@@ -48,5 +48,8 @@ for c in $old; do
   docker rm "$c" >/dev/null
 done
 echo "deployed: $(dc ps octillion --format '{{.Name}} {{.Status}}')"
+# The runner service (run sandboxes, mold_v0-055) runs the same image: recreated on it. Runs in flight keep their own
+# containers; the new runner tears them down when their runs end.
+dc up -d --no-deps runner || echo "the runner service did not restart (runs wait until it does)" >&2
 # Disk cleanup policy (old server images, build cache, test leftovers). Never fails the deploy.
 sh "$(dirname "$COMPOSE_FILE")/cleanup.sh" || echo "cleanup failed (deploy is fine)"

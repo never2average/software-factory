@@ -20,7 +20,8 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, constants, copyFileSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { globRegex, placeholders, type AgentWorkspaceConfig } from "./agent-workspace-config.js";
+import type { AgentWorkspaceConfig } from "./agent-workspace-config.js";
+import { globRegex, placeholders } from "./agent-workspace-paths.js";
 
 export class AgentRunError extends Error {
   /** "run": the configuration or the run's own doing (final); "infrastructure": the network or the machine (retried). */

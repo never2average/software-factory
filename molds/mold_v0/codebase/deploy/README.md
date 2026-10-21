@@ -8,6 +8,7 @@
 | `pg-backup` | nightly `pg_dump -Fc`, kept `BACKUP_KEEP_DAYS` (7) days in the `pg_backups` volume | – |
 | `clickhouse` 25.12 | raw JSONL transcripts + full-text search | internal only |
 | `octillion` | landing page, MCP, worker API, fleet, **inference gateway** `/gw/*` | via Caddy |
+| `runner` | run sandboxes (mold_v0-055, `src/run-fleet.ts`): a container per queued run from the `octillion` image, on the `runs` network; the only service with the Docker socket | – |
 | `caddy` | TLS (automatic Let's Encrypt for `DOMAIN`) | 80 / 443 |
 
 ```bash
