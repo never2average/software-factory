@@ -263,7 +263,8 @@ try {
       assert.equal((await http.req("DELETE", `/api/schedules/${gone[0].id}`, h(owner))).status, 204, "but can be removed");
       // A blocked account (no allowance) starts no scheduled run: the tick says why.
       await cancelAll();
-      await db.query("UPDATE organizations SET budget_override_usd = NULL WHERE id = $1", [B.orgId]);
+      // An allowance of $0 (the test world gives every workspace a default allowance, so NULL is no longer "none").
+      await db.query("UPDATE organizations SET budget_override_usd = 0 WHERE id = $1", [B.orgId]);
       const blocked = await sch.tickSchedules(at("2030-01-08T03:30:00Z"));
       assert.ok(blocked.fired >= 1);
       assert.deepEqual((await rowOf(B, "hourly_sweep")).last_runs, [], "B's due time started nothing");

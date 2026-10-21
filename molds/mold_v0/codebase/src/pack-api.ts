@@ -211,6 +211,13 @@ export const JobKindSchema = z.object({
   lease_seconds: z.number().int().min(15).max(3600).default(120),
   max_attempts: z.number().int().min(1).max(10).default(3),
   budget_usd: z.number().positive().max(10_000).default(5),
+  /**
+   * Limits per kind (mold_v0-018; src/run-limits.ts): runs of this kind one workspace may have running at once, and this
+   * kind's spend per workspace per calendar month. Absent, the platform's; never above the platform's (src/rate-limits.ts
+   * `runs`), as `budget_usd` is never above its ceiling.
+   */
+  concurrency_per_workspace: z.number().int().min(1).max(100).optional(),
+  month_budget_usd: z.number().positive().max(100_000).optional(),
   egress: z.array(host).max(50).default([]),
   /** The workspace store (mold_v0-033): check the workspace's snapshot out before the run, write it back after. */
   workspace: z.boolean().default(false),

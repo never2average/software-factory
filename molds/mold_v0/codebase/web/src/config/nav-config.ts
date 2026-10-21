@@ -1,5 +1,5 @@
 import { NavGroup } from '@/types';
-import { workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav } from './pack-nav.generated';
+import { workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
 
 /**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
@@ -45,7 +45,9 @@ export const adminNav: NavGroup[] = [
   },
   // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own; then their shared record areas (mold_v0-047).
   ...packAdminNav,
-  ...recordAdminNav
+  ...recordAdminNav,
+  // Usage in neutral words (mold_v0-008), when the build has a pack.
+  ...usageAdminNav
 ];
 
 export const portalNav: NavGroup[] = [
@@ -88,5 +90,6 @@ export const portalNav: NavGroup[] = [
   // and the Workspace group: Credentials (mold_v0-034), Schedules and Notices (mold_v0-035), each when the build has one.
   ...packPortalNav,
   ...recordPortalNav,
-  ...workspacePortalNav
+  ...workspacePortalNav,
+  ...usagePortalNav
 ];
