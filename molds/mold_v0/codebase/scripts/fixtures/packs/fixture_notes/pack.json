@@ -5,6 +5,7 @@
   "description": "A test fixture for the pack seam (scripts/packs-test.ts): one tool pair, one table, one page per area. Never shipped.",
   "entry": "index.ts",
   "migrations": "migrations",
+  "runner": "runner",
   "pages": [
     { "id": "notes", "area": "app", "title": "Notes", "description": "This workspace's notes.", "data": "/notes",
       "columns": [{ "key": "body", "label": "Note" }, { "key": "created_at", "label": "Added" }], "nav_group": "Notes" },
