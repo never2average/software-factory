@@ -477,15 +477,18 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   operation's routes for the workspace, which answer 404: `list` the area's `GET /api/data/:area` and
   `GET /api/records/:area` (and `list_records` no longer offers the area), `get` the record's, `create`/`update`/`move`
   their `/api/data` verbs and the matching `_batch` operations (`put` needs both), `get_metrics` the pack's metrics on
-  `/api/metrics`, `list_<runs>` the pack's runs in `GET /api/runs` (`<run>_status` with `get_<run>_results` its
-  `GET /api/runs/:id`); an excluded staff tool withholds its `/api/admin/data` and `/api/admin/records` route (and an
+  `/api/metrics`, `list_<runs>` the pack's runs in `GET /api/runs`, `<run>_status` a run's status and
+  `get_<run>_results` its results (and result counts) on `/api/runs`, `start_<kind>` scheduling the kind
+  (`POST /api/schedules`; the pack's own default schedules still fire); `DELETE` (no tool of its own) when every write
+  of the area (create, update, move) is withheld; an excluded staff tool withholds its `/api/admin/data` and `/api/admin/records` route (and an
   upstream catalog's sync). `gen-packs` leaves the area's Records entry and area tab (and the pack's runs tab) out of
   the sidebar. An `admin_only` tool stays usable by staff on the admin MCP. *The build knows the shell's names*:
   `src/shell-tools.ts` lists the customer MCP's, the record tools' and the admin MCP's own tool names (no imports;
   `src/server.ts` and `src/admin-mcp.ts` do not typecheck when their tools and the list differ), and `gen-packs` refuses
   a pack whose own or generated tool takes one. *Staff calls in the workspace's log*: a call of an `admin_only` tool is
-  written to that workspace's `mcp_events` (refusals and failures too) as `staff:<12 hex of sha256 of the admin
-  identity>` with client `admin-mcp`, never the identity itself (the admin access log names the person); the usage
+  written to that workspace's `mcp_events` (refusals and failures too) as `staff:<12 hex of an HMAC of the admin
+  identity, keyed with a server secret and the workspace>` with client `admin-mcp`, never the identity itself (a
+  guessed email cannot be checked, and one person reads differently in each workspace) (the admin access log names the person); the usage
   pages label it Staff and do not count it among the workspace's people (DAU, WAU, retention); product analytics and
   journeys ignore it. *Staff runs under the account's launch rules*: a run staff start for a workspace (`org.staff`)
   passes `checkAccountRun` (`src/limits.ts`: the account's allowance, its month's cap and the buffer Budget rules hold
@@ -513,9 +516,11 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   revoked or expired, and acts as its person with their **current** role in the workspace, read from Clerk on every
   call (30 seconds' cache, cleared when the shell changes a membership): a viewer's key is offered no write and is
   refused one; a removed or suspended member's keys stop working; Clerk unreachable fails closed. Rate limits: the key's
-  own, the member's (all their keys) and the workspace's (mold_v0-018); creating one counts against the workspace's
-  hourly key limit; a cookie-borne change needs `X-Pack-Request: 1`. Owners (the team permission) see every key of the
-  workspace on the same page, with whose it is, and revoke any (`revoked_by` keeps who). The tenant role still cannot
+  own, the member's (all their keys) and the workspace's (mold_v0-018); creating one counts against the hourly key
+  number per person (a bucket of its own, so no member can use up the one staff issue and rotate keys from; a request
+  refused for its name or expiry does not count; the 20-key cap is counted under a lock per person); a cookie-borne change needs `X-Pack-Request: 1`. Owners (the team permission) see every key of the
+  workspace on the same page, with whose it is, and revoke any (`revoked_by` keeps who, staff included). Staff revoke a
+  member key but never rotate one (409: a replacement would be an unscoped key). The tenant role still cannot
   write `api_keys` (`check:rls` probes un-revoking). **Migration path:** existing keys keep working exactly as before:
   the account's own keys (no person, no role limits; also in the deprecated URL until `OCTILLION_URL_KEYS=off`) and
   the older keys staff issued for a person (their person, no role, no expiry). To move a client: the person makes a

@@ -57,8 +57,9 @@ export async function createApiKey(orgId: number, label = "default", userId: str
 
 /**
  * Resolve an API key to its organization, or null if it is unknown, revoked or expired. A member key (mold_v0-007,
- * src/member-keys.ts) acts as its person with their current role in the workspace, read on every call (a member who
- * left, was removed or suspended is refused at once; a role change holds within Clerk's 30-second cache), and is
+ * src/member-keys.ts) acts as its person with their current role in the workspace, read on every call through Clerk's
+ * 30-second membership cache (cleared on the instance that changes a membership: a removal, suspension or role change
+ * made elsewhere, in Clerk or on another instance, holds within 30 seconds), and is
  * refused when it came in a URL (`inUrl`: the legacy /mcp/<key> path and the preview's ?key=): a member key is
  * header-only. Older keys (the account's own, and those staff issued for a person) resolve exactly as before.
  */

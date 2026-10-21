@@ -333,7 +333,7 @@ export function adminGeneratedTools(): GeneratedAdminTool[] {
           const ws: Workspace = { id: org.orgId, slug: org.slug, name: org.name, userId: null, role: null };
           const { workspaceRuns } = await import("./runs.js");
           const ctx: PackToolContext = { pack: t.pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(t.pack, org.orgId),
-            runs: declaredRuns(t.pack, workspaceRuns(t.pack, org.orgId, staffId(c.actor), org), org.orgId, { role: null, userId: null }) };
+            runs: declaredRuns(t.pack, workspaceRuns(t.pack, org.orgId, staffId(c.actor, org.orgId), org), org.orgId, { role: null, userId: null }) };
           const t0 = performance.now();
           try {
             const value = await withTenant(org.orgId, () => pt.handler(ws, args, ctx));

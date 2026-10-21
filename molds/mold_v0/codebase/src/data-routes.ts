@@ -50,7 +50,7 @@ const queryOf = (req: Request): RecordQuery => {
 };
 const keyOf = (req: Request) => String(req.params.key);
 /** The route of an operation a pack withholds (mold_v0-067) answers as one that does not exist. */
-const open = (op: GeneratedOp) => (req: Request, res: Response, next: NextFunction) =>
+const open = (op: GeneratedOp | "delete") => (req: Request, res: Response, next: NextFunction) =>
   (areaOpWithheld(String(req.params.area), op) ? void res.status(404).json({ error: "Not found" }) : next());
 const batchOpen = (door: "workspace" | "admin") => (req: Request, res: Response, next: NextFunction) => {
   const held = batchWithheld(body(req).operations, door);
@@ -85,7 +85,7 @@ export function dataAppRouter(): Router {
   }));
   r.put("/:area/:key", open("update"), answer(async (req, res) => dataApi.update(caller(res), String(req.params.area), keyOf(req), body(req))));
   r.post("/:area/:key/move", open("move"), answer(async (req, res) => dataApi.move(caller(res), String(req.params.area), keyOf(req), body(req).to)));
-  r.delete("/:area/:key", answer(async (req, res) => {
+  r.delete("/:area/:key", open("delete"), answer(async (req, res) => {
     if (!(await dataApi.delete(caller(res), String(req.params.area), keyOf(req)))) throw new PackError("Not found", 404);
   }));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));

@@ -62,7 +62,8 @@ export function runAppRouter(): Router {
     const runs = (await listRuns(org, { limit })).filter((x) => !packOpWithheld(x.pack, "list_runs"));
     const counts = runs.length ? await (await getDb()).query<{ run_id: string; status: string; n: number }>(
       "SELECT run_id, status, count(*)::int AS n FROM run_results WHERE org_id = $1 AND run_id = ANY ($2::text[]) GROUP BY 1, 2", [org, runs.map((x) => x.id)]) : [];
-    return { runs: runs.map((x) => ({ ...x, results: Object.fromEntries(counts.filter((c) => c.run_id === x.id).map((c) => [c.status, c.n])) })) };
+    // A pack that withholds its results tool (mold_v0-067) shows no result counts either.
+    return { runs: runs.map((x) => ({ ...x, results: packOpWithheld(x.pack, "run_results") ? {} : Object.fromEntries(counts.filter((c) => c.run_id === x.id).map((c) => [c.status, c.n])) })) };
   }));
   r.get("/:id", answer(async (req, res) => {
     const { getRun, runResults } = await import("./runs.js");
@@ -77,7 +78,10 @@ export function runAppRouter(): Router {
     const readable = (x: { area: string } | null) => !x || (() => { const a = findArea(x.area); return !!a && may(a, "read", actor(res)); })();
     const results = (await runResults(session(res).org, id)).filter((x) => readable(x.check)).slice(0, 2000)
       .map((x) => ({ ...x, asset: readable(x.asset) ? x.asset : null, source: readable(x.source) ? x.source : null }));
-    return { run, results };
+    // Each part as its tool (mold_v0-067): a withheld results tool withholds the results, a withheld status tool the
+    // run's status, cost and error (only which run it is stays, so the results have their run).
+    const shownRun = packOpWithheld(run.pack, "run_status") ? { id: run.id, pack: run.pack, kind: run.kind } : run;
+    return { run: shownRun, results: packOpWithheld(run.pack, "run_results") ? [] : results };
   }));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;

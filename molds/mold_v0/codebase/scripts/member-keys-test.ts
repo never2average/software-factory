@@ -223,14 +223,30 @@ try {
     } finally { delete process.env.OCTILLION_LIMIT_MCP_PER_MEMBER_PER_MINUTE; }
     process.env.OCTILLION_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE = "1";
     try {
-      const r = await make(memberB, { name: "over" });
-      assert.equal(r.status, 429, `key creation is limited per workspace: ${r.status}`);
+      const someone = await http.signIn(B.org, "viewer");
+      for (let i = 0; i < 3; i++) assert.equal((await make(someone, { name: " " })).status, 400, "a refused request does not count");
+      assert.equal((await make(someone, { name: "first" })).status, 201);
+      const r = await make(someone, { name: "over" });
+      assert.equal(r.status, 429, `key creation is limited per person: ${r.status}`);
+      // A member using up their count does not stop staff issuing the workspace's keys (its own bucket).
+      const staff = await http.adminToken("owner");
+      const issued = await call("POST", `/api/admin/onboarding/orgs/${B.org.slug}/keys`, staff, { label: "emergency" });
+      assert.equal(issued.status, 201, `staff still issue a key: ${issued.status} ${JSON.stringify(issued.body).slice(0, 200)}`);
     } finally { delete process.env.OCTILLION_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE; }
+    // Staff cannot rotate a member key into an unscoped one; they revoke it, and who did is kept.
+    const staff = await http.adminToken("owner");
+    const mk = await make(ownerB, { name: "leaked" });
+    const rot = await call("POST", `/api/admin/onboarding/orgs/${B.org.slug}/keys/${mk.body.id}/rotate`, staff, {});
+    assert.equal(rot.status, 409, `a member key is not rotated by staff: ${rot.status}`);
+    assert.equal((await db.query("SELECT 1 FROM api_keys WHERE org_id = $1 AND scoped = false AND user_id = $2", [B.org.orgId, claims(ownerB).sub])).length, 0, "no unscoped copy was made");
+    assert.equal((await call("POST", `/api/admin/onboarding/orgs/${B.org.slug}/keys/${mk.body.id}/revoke`, staff, {})).status, 204);
+    assert.equal((await rpc(bearer(mk.body.key), "tools/list")).status, 401, "revoked by staff: refused");
+    assert.match((await db.query<{ revoked_by: string }>("SELECT revoked_by FROM api_keys WHERE id = $1", [mk.body.id]))[0]!.revoked_by, /^staff:/);
     const viaCookie = await http.req("POST", "/api/keys", { cookie: `__session=${memberA}` }, { name: "csrf" });
     assert.equal(viaCookie.status, 403, "a cookie-borne change needs the X-Pack-Request header");
     const withHeader = await http.req("POST", "/api/keys", { cookie: `__session=${memberA}`, "x-pack-request": "1" }, { name: "csrf ok" });
     assert.equal(withHeader.status, 201, "with it, the change goes through");
-    console.log("✓ the member's rate limit counts all their keys; key creation is limited per workspace; cookie writes need the CSRF header");
+    console.log("✓ the member's rate limit counts all their keys; key creation is limited per person apart from staff's; staff revoke (never rotate) a member key; cookie writes need the CSRF header");
   }
   await http.close();
   console.log("member-keys: all checks passed");
