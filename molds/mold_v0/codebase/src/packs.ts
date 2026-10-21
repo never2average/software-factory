@@ -12,7 +12,8 @@ import { accountRefusal, canAccount } from "./account-roles.js";
 import { errorClass, jsonBytes, recordMcpEvent } from "./analytics.js";
 import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
-import { PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace } from "./pack-api.js";
+import { areaLinks, PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace, type WorkspaceRuns } from "./pack-api.js";
+import { mergePack, type DeclaredPack } from "./pack-manifest.js";
 import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
 import { currentTenant, withTenant } from "./tenant-scope.js";
@@ -22,13 +23,18 @@ export interface PackManifest {
   id: string;
   name: string;
   version: string;
-  entry: string;
+  /** The code entry; null for a pack that is its pack.json alone (mold_v0-057). */
+  entry: string | null;
   migrations: string | null;
   words: Record<string, string>;
   /** The pack's directory, relative to the codebase root (absolute in tests): where a run's programs are (mold_v0-041). */
   dir?: string;
 }
-export interface GeneratedPack { manifest: PackManifest; definition: unknown }
+/**
+ * One pack of the generated registry: its manifest, the definePack fields its pack.json declares (mold_v0-057; compiled
+ * by gen-packs through src/pack-manifest.ts) and its code entry's definePack export (absent for a pack.json alone).
+ */
+export interface GeneratedPack { manifest: PackManifest; declared?: unknown; definition?: unknown }
 export interface InstalledPack { id: string; manifest: PackManifest; definition: PackDefinition }
 
 /**
@@ -44,9 +50,12 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   const areaOwner = new Map<string, string>();
   for (const g of list) {
     const m = g.manifest;
-    const def = ((g.definition as { default?: unknown })?.default ?? g.definition) as PackDefinition;
-    try { validatePack(def); } catch (e) { problems.push((e as Error).message); continue; }
-    if (def.id !== m.id) { problems.push(`pack ${m.id}: its entry (${m.entry}) defines pack ${JSON.stringify(def.id)}; the ids must match`); continue; }
+    const code = ((g.definition as { default?: unknown })?.default ?? g.definition ?? null) as PackDefinition | null;
+    if (code && code.id !== m.id) { problems.push(`pack ${m.id}: its entry (${m.entry}) defines pack ${JSON.stringify(code.id)}; the ids must match`); continue; }
+    // Its pack.json's declarations, extended by its code (mold_v0-057), then checked as one definition.
+    let def: PackDefinition;
+    try { def = validatePack(mergePack(m.id, (g.declared ?? null) as DeclaredPack | null, code)); }
+    catch (e) { problems.push(e instanceof PackDefinitionError ? e.message : `pack ${m.id}: ${(e as Error).message}`); continue; }
     if (ids.has(m.id)) { problems.push(`pack ${m.id} is installed twice`); continue; }
     ids.add(m.id);
     if (def.migrations !== undefined && def.migrations !== m.migrations)
@@ -68,9 +77,23 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     const [what, arg] = st.done_when.split(":", 2);
     if (what === "tool" && arg && !toolOwner.has(arg)) problems.push(`pack ${p.id}: onboarding step ${st.id} names no tool ${arg} (not the shell's nor any pack's)`);
   }
-  // A link names an area some pack in this build declares.
-  for (const p of out) for (const a of p.definition.recordAreas ?? []) for (const l of a.links ?? [])
+  // A link or reference names an area some pack in this build declares; a shared (platform) area's rows are every
+  // workspace's, so they may refer only to shared areas, never to one workspace's records (mold_v0-057).
+  const scopeOf = new Map(out.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => [a.name, a.scope] as const)));
+  for (const p of out) for (const a of p.definition.recordAreas ?? []) for (const l of areaLinks(a)) {
     if (!areaOwner.has(l.area)) problems.push(`pack ${p.id}: record area ${a.name} links field ${l.field} to area ${l.area}, which no pack declares`);
+    else if (a.scope === "platform" && scopeOf.get(l.area) === "workspace")
+      problems.push(`pack ${p.id}: record area ${a.name} is shared (platform) and its field ${l.field} refers to ${l.area}, a workspace's own area: a shared area may refer to shared areas only`);
+  }
+  // A job kind's reference argument names an area of this build (mold_v0-057).
+  for (const p of out) for (const k of [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])]) for (const a of k.args ?? [])
+    if (a.type === "reference" && a.to && !areaOwner.has(a.to)) problems.push(`pack ${p.id}: job kind ${k.name}'s argument ${a.name} refers to area ${a.to}, which no pack declares`);
+  // The run-results mapping (mold_v0-061) names the record areas a result's check is in.
+  for (const p of out) for (const c of p.definition.runResults?.check ?? [])
+    if (!areaOwner.has(c)) problems.push(`pack ${p.id}: run_results.check names ${c}, which is not a record area of this build`);
+  // A metric (mold_v0-063) is over a record area of this build or the runs' results.
+  for (const p of out) for (const x of p.definition.metrics ?? [])
+    if (x.over !== "run_results" && !areaOwner.has(x.over)) problems.push(`pack ${p.id}: metric ${x.name} is over ${x.over}, which is neither a record area of this build nor run_results`);
   if (problems.length) throw new PackDefinitionError(`packs refused:\n  ${problems.join("\n  ")}`);
   return out;
 }
@@ -95,7 +118,7 @@ export function setPacksForTest(list: readonly GeneratedPack[] | null) { install
 /** Everything the packs declare, by kind: what is wired today and what later tickets pick up. */
 export function packRegistry() {
   const all = packs();
-  const flat = <K extends "jobKinds" | "recordAreas" | "credentials" | "schedules" | "onboarding">(k: K) =>
+  const flat = <K extends "jobKinds" | "agentJobKinds" | "recordAreas" | "credentials" | "schedules" | "onboarding" | "metrics">(k: K) =>
     all.flatMap((p) => (p.definition[k] ?? []).map((x) => ({ pack: p.id, ...(x as object) })));
   return {
     packs: all.map((p) => ({ id: p.id, name: p.manifest.name, version: p.manifest.version })),
@@ -105,6 +128,10 @@ export function packRegistry() {
     // Every kind is wired: recordAreas (src/record-areas.ts, mold_v0-047), jobKinds (src/runs.ts, mold_v0-041), credentials
     // (src/credentials.ts, mold_v0-034), onboarding (src/onboarding.ts, mold_v0-011), schedules (src/schedules.ts, mold_v0-035).
     jobKinds: flat("jobKinds"), recordAreas: flat("recordAreas"), credentials: flat("credentials"), schedules: flat("schedules"), onboarding: flat("onboarding"),
+    // Declared and validated (mold_v0-057), wired later: the agent-workspace runner (061), metrics and charts (063).
+    agentJobKinds: flat("agentJobKinds"), metrics: flat("metrics"),
+    repositories: all.flatMap((p) => Object.entries(p.definition.repositories ?? {}).map(([name, r]) => ({ pack: p.id, name, ...r }))),
+    runResults: all.filter((p) => p.definition.runResults).map((p) => ({ pack: p.id, ...p.definition.runResults })),
   };
 }
 
@@ -131,6 +158,26 @@ export function toToolResult(v: unknown): CallToolResult {
   return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }], ...(structured ? { structuredContent: structured } : {}) };
 }
 
+/**
+ * ctx.runs with the job kind's declared arguments enforced (mold_v0-057): when a kind declares `args`, a run's `scope`
+ * must be exactly those, each of its type (the record fields' checks, references resolved in the calling workspace). The
+ * run engine itself (src/runs.ts) is unchanged; a kind without `args` starts as before.
+ */
+export function declaredRuns(pack: string, runs: WorkspaceRuns, orgId?: number, actor?: { role: Workspace["role"]; userId: string | null }): WorkspaceRuns {
+  return {
+    ...runs,
+    async start(kind, input) {
+      const k = packs().find((p) => p.id === pack)?.definition.jobKinds?.find((x) => x.name === kind);
+      if (k?.args) {
+        const { checkArgs } = await import("./record-areas.js");
+        // As the caller: a reference argument resolves only to records they may read, in their own workspace.
+        input = { ...input, scope: await checkArgs(kind, k.args, input?.scope ?? {}, orgId ?? null, actor) };
+      }
+      return runs.start(kind, input);
+    },
+  };
+}
+
 /** What a tool call needs: its own `needs`, else nothing for a read-only tool and "edit" for anything else. */
 const toolNeeds = (t: PackTool) => t.needs ?? (t.annotations?.readOnlyHint ? undefined : "edit");
 
@@ -143,7 +190,8 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
     const ws = workspaceOf(org);
     // The run engine (src/runs.ts) reaches the gateway and much of the server: loaded on first use, not at start.
     const { workspaceRuns } = await import("./runs.js");
-    const ctx = { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId), runs: workspaceRuns(pack, org.orgId, org.userId ?? null, org) };
+    const ctx = { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId, { role: org.role ?? null, userId: org.userId ?? null }),
+      runs: declaredRuns(pack, workspaceRuns(pack, org.orgId, org.userId ?? null, org), org.orgId, { role: org.role ?? null, userId: org.userId ?? null }) };
     const value = await withTenant(org.orgId, () => t.handler(ws, args ?? {}, ctx));
     // The size cap and the call's record with its sizes (mold_v0-018, 008).
     const { capResult } = await import("./server.js");
