@@ -79,6 +79,12 @@ PAGE_WORDS = {"web": "the website", "api": "the assistant service", "workflow": 
 
 # ---- what to check: the board's healthChecks() (plugins/factory-board/hooks/board.ts) --------------------------------
 
+def _mold_manifest(mold_id):
+    """molds/<mold>/mold.json, or {} (mold_v1 has none)."""
+    try: return json.load(open(os.path.join(ROOT, "molds", str(mold_id or ""), "mold.json")))
+    except (OSError, ValueError): return {}
+
+
 def health_checks(application, infrastructure):
     if application.get("status") == "retired":
         return []
@@ -87,6 +93,15 @@ def health_checks(application, infrastructure):
     remote = infrastructure.get("vm_remote") or {}
     web = remote.get("production_url") if target == "vm_remote" else vercel.get("production_url")
     out = []
+    man = _mold_manifest(application.get("mold_id"))
+    if man.get("shape") == "single_service":      # mold_v0-style apps: each project's own health path (mold.json health_path)
+        path = "/" + str(man.get("health_path") or "/healthz").lstrip("/")
+        if web: out.append({"name": "web", "url": f"{web.rstrip('/')}{path}"})
+        if target != "vm_remote" and vercel.get("api_url"): out.append({"name": "api", "url": f"{vercel['api_url'].rstrip('/')}{path}"})
+        if target == "compose_remote" and not web:
+            cr = infrastructure.get("compose_remote") or {}
+            if cr.get("production_url"): out.append({"name": "web", "url": f"{cr['production_url'].rstrip('/')}{path}"})
+        return out
     if web:
         out.append({"name": "web", "url": f"{web.rstrip('/')}/api/ops/health"})
     if target == "vm_remote" and web:

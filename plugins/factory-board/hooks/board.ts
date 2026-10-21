@@ -66,6 +66,14 @@ export function healthChecks(application: Json, infrastructure: Json): Check[] {
   const remote = infrastructure.vm_remote ?? {}
   const web = target === 'vm_remote' ? remote.production_url : vercel.production_url
   const checks: Check[] = []
+  // A single-service mold's app (mold_v0: vercel.projects {api, web}, or compose_remote) answers on /healthz, as
+  // .claude/scripts/uptime.py checks it (the mold's health_path).
+  if (vercel.projects?.api || target === 'compose_remote') {
+    const site = target === 'compose_remote' ? (infrastructure.compose_remote ?? {}).production_url : web
+    if (site) checks.push({ name: 'web', url: `${site}/healthz`, status: 'pending' })
+    if (target !== 'compose_remote' && vercel.api_url) checks.push({ name: 'api', url: `${vercel.api_url}/healthz`, status: 'pending' })
+    return checks
+  }
   if (web) checks.push({ name: 'web', url: `${web}/api/ops/health`, status: 'pending' })
   if (target === 'vm_remote' && web) checks.push({ name: 'api', url: `${web}/eve/v1/health`, status: 'pending' })
   if (target !== 'vm_remote' && vercel.api_url) checks.push({ name: 'api', url: `${vercel.api_url}/eve/v1/health`, status: 'pending' })
