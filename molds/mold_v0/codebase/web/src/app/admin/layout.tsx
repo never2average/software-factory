@@ -6,10 +6,11 @@ import { SignOutButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { AdminRoleProvider, type AdminSession } from '@/features/admin/role';
 import type { Metadata } from 'next';
+import { profile } from '@/config/profile.generated';
 // Server-only: the internal docs index (titles and headings) goes to the Cmd+K bar of signed-in admins, never to /app.
 import { adminDocsNav } from '@/features/docs/admin-docs';
 
-export const metadata: Metadata = { title: { default: 'Admin', template: '%s | Octillion Admin' } };
+export const metadata: Metadata = { title: { default: 'Admin', template: `%s | ${profile.console_title} Admin` } };
 
 /** Octillion staff only: the API server decides who is a platform admin and their role (src/admin-roles.ts). */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

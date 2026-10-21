@@ -2,11 +2,12 @@ import { AreaShell } from '@/components/layout/area-shell';
 import { portalNav } from '@/config/nav-config';
 import { auth } from '@clerk/nextjs/server';
 import type { Metadata } from 'next';
+import { profile } from '@/config/profile.generated';
 import { serverApi } from '@/lib/server-api';
 import { NoOrganization } from '@/features/portal/no-organization';
 import { customerDocsNav } from '@/features/docs/customer-docs';
 
-export const metadata: Metadata = { title: { default: 'Account', template: '%s | Octillion' } };
+export const metadata: Metadata = { title: { default: 'Account', template: `%s | ${profile.console_title}` } };
 
 /** The customer portal works on the user's active Clerk organization (switchable in the sidebar). */
 export default async function PortalLayout({ children }: { children: React.ReactNode }) {

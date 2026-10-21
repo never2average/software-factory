@@ -16,6 +16,8 @@ COPY tsconfig.json ./
 COPY sql ./sql
 COPY src ./src
 COPY scripts ./scripts
+# Packs (mold_v0-038): their code is imported through src/packs.generated.ts, their migrations read at start.
+COPY packs ./packs
 COPY public ./public
 COPY --from=web /web/out ./web/out
 COPY harnesses ./harnesses

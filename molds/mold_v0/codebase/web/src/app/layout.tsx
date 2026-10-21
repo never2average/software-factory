@@ -1,4 +1,5 @@
 import Providers from '@/components/layout/providers';
+import { profile } from '@/config/profile.generated';
 import { Toaster } from '@/components/ui/sonner';
 import { fontVariables } from '@/components/themes/font.config';
 import { DEFAULT_THEME, THEMES } from '@/components/themes/theme.config';
@@ -18,9 +19,10 @@ const host = process.env.NEXT_PUBLIC_APP_URL ?? (process.env.VERCEL_PROJECT_PROD
 
 export const metadata: Metadata = {
   metadataBase: new URL(host),
-  applicationName: 'Octillion',
-  title: { default: 'Octillion', template: '%s | Octillion' },
-  description: 'Octillion: measure and improve how often AI coding agents pick your developer tool.',
+  // The profile's names (profile.json, scripts/gen-packs.mjs), never a product word in the code.
+  applicationName: profile.name,
+  title: { default: profile.console_title, template: `%s | ${profile.console_title}` },
+  description: profile.console_description,
   robots: { index: false, follow: false }
 };
 
