@@ -225,7 +225,7 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
   const charts = await usageCharts(s, range, users, p, byTool, budget, t.members);
   // Runs (mold_v0-008): their tool calls' people and cost, per run, kind and person, only when the period has any.
   const runUsage = await workspaceRunUsage(s.org, range.start, range.end, users);
-  const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id ? (id === s.user ? "You" : t.members.find((m) => m.user_id === id)?.email ?? "Former member") : "Connector key");
+  const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id?.startsWith("staff:") ? "Staff" : id ? (id === s.user ? "You" : t.members.find((m) => m.user_id === id)?.email ?? "Former member") : "Connector key");
   // Spend per person is for billing roles (as Spend by person below); everyone else sees their own line.
   const billing = roles.canAccount(s.accountRole, "billing");
   return {
@@ -312,7 +312,7 @@ async function usageCharts(s: Session, range: ReturnType<typeof reportRange>, us
   const simW = new Map(sims.map((r) => [r.week, r]));
   const calls = new Map(byTool.map((x) => [x.name, Number(x.calls)]));
   const who = new Map(members.map((m) => [m.user_id, m.email ?? m.name ?? null]));
-  const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id ? (id === s.user ? "You" : who.get(id) ?? "Former member") : "Connector key");
+  const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id?.startsWith("staff:") ? "Staff" : id ? (id === s.user ? "You" : who.get(id) ?? "Former member") : "Connector key");
   return {
     workflow: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, total: g.tools.length,
       used: g.tools.filter((x) => calls.get(x)).length, calls: g.tools.reduce((n, x) => n + (calls.get(x) ?? 0), 0) })),
@@ -406,7 +406,7 @@ async function billingUsage(s: Session) {
     // Members see only their own line; owners and billing managers see everyone, by email.
     by_person: byPerson.filter((p) => all || p.user_id === s.user).map((p) => {
       const who = people.find((x) => x.user_id === p.user_id);
-      return { ...p, label: p.user_id == null ? "Connector key" : p.user_id.startsWith("schedule:") ? "Schedule" : p.user_id === s.user ? "You" : who?.email ?? who?.name ?? "Former member" };
+      return { ...p, label: p.user_id == null ? "Connector key" : p.user_id.startsWith("schedule:") ? "Schedule" : p.user_id.startsWith("staff:") ? "Staff" : p.user_id === s.user ? "You" : who?.email ?? who?.name ?? "Former member" };
     }),
   };
 }

@@ -2,6 +2,7 @@
  * Per-organization MCP activity: which connector methods and tools each org calls, whether they worked and how long
  * they took. Never stores tool arguments or results. Recording is best effort and never blocks or fails a request.
  */
+import { createHash } from "node:crypto";
 import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { capture, identifyOrg, identifyPerson, posthogEnabled } from "./telemetry.js";
@@ -47,18 +48,26 @@ async function identifyUser(org: Org) {
 /** PostHog event names for the connector methods worth a funnel step; everything else stays in mcp_events only. */
 const PRODUCT_EVENTS: Record<string, string> = { initialize: "mcp_connected", "tools/list": "mcp_tools_listed", "resources/read": "mcp_dashboard_loaded", "prompts/get": "mcp_prompt_used" };
 
+/**
+ * How a staff member is named in a workspace's activity log (mold_v0-067): "staff:" and a pseudonym of their admin
+ * identity, never the identity itself (the workspace's people read their log; the admin access log names the person).
+ */
+export const staffId = (actor: string) => `staff:${createHash("sha256").update(`staff-actor:${actor}`).digest("hex").slice(0, 12)}`;
+
 export function recordMcpEvent(org: Org, e: McpEvent): void {
   getDb()
     .then((db) => db.query(
       `INSERT INTO mcp_events (org_id, method, name, client, ok, error, ms, user_id, client_name, client_version, error_class, req_bytes, res_bytes, key_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [org.orgId, e.method.slice(0, 80), e.name?.slice(0, 200) ?? null, e.client?.slice(0, 120) ?? null, e.ok ?? true,
-       e.error?.slice(0, 500) ?? null, e.ms == null ? null : Math.round(e.ms), org.userId ?? null,
+       e.error?.slice(0, 500) ?? null, e.ms == null ? null : Math.round(e.ms), org.userId ?? (org.staff ? staffId(org.staff) : null),
        org.client?.name?.slice(0, 80) ?? null, org.client?.version?.slice(0, 40) ?? null,
        e.ok === false ? (e.error_class ?? "error").slice(0, 40) : null,
        e.req_bytes == null ? null : Math.round(e.req_bytes), e.res_bytes == null ? null : Math.round(e.res_bytes), org.keyId ?? null],
     ))
     .catch((err) => console.error("mcp event record failed:", (err as Error).message));
+  // A staff call is in the workspace's own log only: it completes none of its people's journeys and is not product usage.
+  if (org.staff) return;
   // A successful tool call may complete a stage of a customer journey (src/playbooks.ts): sync shortly after.
   if (e.method === "tools/call" && e.ok !== false)
     void import("./playbooks.js").then((m) => m.scheduleSync({ orgId: org.orgId, slug: org.slug }, org.userId)).catch(() => {});
