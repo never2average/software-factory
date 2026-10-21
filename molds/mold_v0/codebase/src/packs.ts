@@ -97,8 +97,8 @@ export function packRegistry() {
     tools: all.flatMap((p) => (p.definition.tools ?? []).map((t) => ({ pack: p.id, name: t.name }))),
     routes: all.flatMap((p) => (p.definition.routes ?? []).map((r) => ({ pack: p.id, scope: r.scope, method: r.method, path: r.path }))),
     words: Object.fromEntries(all.map((p) => [p.id, p.manifest.words])),
-    // recordAreas (src/record-areas.ts, mold_v0-047) and jobKinds (src/runs.ts, mold_v0-041) are wired. Declared and
-    // validated, not wired yet: credential vault 034, scheduler 035, onboarding 011.
+    // recordAreas (src/record-areas.ts, mold_v0-047), jobKinds (src/runs.ts, mold_v0-041) and credentials (src/credentials.ts,
+    // mold_v0-034) are wired. Declared and validated, not wired yet: scheduler 035, onboarding 011.
     jobKinds: flat("jobKinds"), recordAreas: flat("recordAreas"), credentials: flat("credentials"), schedules: flat("schedules"), onboarding: flat("onboarding"),
   };
 }

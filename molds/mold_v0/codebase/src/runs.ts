@@ -27,6 +27,8 @@ import { packs } from "./packs.js";
 import { findArea } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
 import { acquireLease, commitStaged, endAttempt, removeObjects, renewLease } from "./workspace-store.js";
+import { redactJson, redactText } from "./credential-redact.js";
+import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
 
 export type JobKind = z.output<typeof JobKindSchema> & { pack: string };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -281,6 +283,19 @@ async function leased(q: Queryable, runId: string, leaseToken: unknown, lock = f
 /** The running run behind a lease token (the workspace store's checkout and stage, src/workspace-store.ts). */
 export const leasedRun = (runId: string, leaseToken: string) => asPlatform(async () => leased(await getDb(), runId, leaseToken));
 
+/**
+ * The workspace credentials a running run receives (mold_v0-034; src/credentials.ts): only for the lease holder, only
+ * the fields its kind names, only the values of the run row's own workspace bound to what the run targets. The run's
+ * events record which names were delivered and which were missing, never a value.
+ */
+export async function runCredentialsForLease(runId: string, leaseToken: string): Promise<RunCredentials> {
+  const r = await leasedRun(runId, leaseToken);
+  const out = await runCredentials(r);
+  if (r.spec?.credentials?.length)
+    await event(r.id, r.org_id, r.attempt, "credentials", { delivered: out.credentials.map((c) => c.name), missing: out.missing });
+  return out;
+}
+
 /** Renew the lease. `cancel` is true once the run is cancelled or past its deadline: the runner stops and completes. */
 export async function heartbeatRun(runId: string, leaseToken: string): Promise<{ lease_expires_at: string; cancel: boolean; reason: string | null }> {
   return asPlatform(async () => {
@@ -312,7 +327,9 @@ export async function appendRunEvents(runId: string, leaseToken: string, events:
       if (typeof type !== "string" || !EVENT_TYPE.test(type)) throw new PackError("each event needs a type: lowercase letters, digits, . _ : -", 400);
       if (Buffer.byteLength(JSON.stringify(data)) > 16 * 1024) throw new PackError("an event's data is at most 16 KB", 413);
     }
-    for (const e of events as { type: string; data?: unknown }[]) await event(r.id, r.org_id, r.attempt, e.type, (e.data ?? {}) as Record<string, unknown>, db);
+    // A value the run received never lands in its events, whatever the program printed (mold_v0-034).
+    const secrets = await runSecrets(r);
+    for (const e of events as { type: string; data?: unknown }[]) await event(r.id, r.org_id, r.attempt, e.type, redactJson((e.data ?? {}) as Record<string, unknown>, secrets), db);
     return { appended: events.length };
   });
 }
@@ -383,8 +400,15 @@ export async function completeRun(runId: string, leaseToken: string, c: Completi
   return complete(runId, leaseToken, c);
 }
 
-async function complete(runId: string, leaseToken: string, c: Completion): Promise<RunView> {
-  if (c?.outcome !== "succeeded" && c?.outcome !== "failed") throw new PackError("outcome: succeeded or failed", 400);
+async function complete(runId: string, leaseToken: string, c0: Completion): Promise<RunView> {
+  if (c0?.outcome !== "succeeded" && c0?.outcome !== "failed") throw new PackError("outcome: succeeded or failed", 400);
+  // Nor in its results or its error (mold_v0-034): redacted before they are checked and written.
+  const secrets = await asPlatform(async () => {
+    const [x] = await (await getDb()).query<RunRow>(`/* tenant: by run id, for its own credentials */ SELECT ${COLS} FROM runs WHERE id = $1`, [String(runId)]);
+    return x ? runSecrets(x) : [];
+  });
+  const c: Completion = secrets.length ? { ...c0, error: c0.error === undefined ? undefined : redactText(String(c0.error), secrets),
+    results: Array.isArray(c0.results) ? redactJson(c0.results, secrets) : c0.results } : c0;
   const usage = await asPlatform(() => runGatewayUsage(String(runId)));
   const gone: string[] = [];
   const r = await asPlatform(async () => (await getDb()).transaction(async (tx) => {

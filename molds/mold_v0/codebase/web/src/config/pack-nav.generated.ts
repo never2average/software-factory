@@ -40,3 +40,6 @@ export const recordPortalNav: NavGroup[] = [];
 
 /** The /admin sidebar's Records group: the platform-scope areas staff maintain. */
 export const recordAdminNav: NavGroup[] = [];
+
+/** The /app sidebar's Credentials page (mold_v0-034): when any pack declares a credential field. */
+export const credentialPortalNav: NavGroup[] = [];

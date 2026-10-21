@@ -1,5 +1,5 @@
 import { NavGroup } from '@/types';
-import { packAdminNav, packPortalNav, recordAdminNav, recordPortalNav } from './pack-nav.generated';
+import { credentialPortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav } from './pack-nav.generated';
 
 /**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
@@ -84,7 +84,9 @@ export const portalNav: NavGroup[] = [
       { title: 'Profile', url: '/app/profile', icon: 'account', items: [] }
     ]
   },
-  // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own; then their record areas (mold_v0-047).
+  // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own; then their record areas (mold_v0-047)
+  // and, when a pack declares a credential field, the workspace's Credentials page (mold_v0-034).
   ...packPortalNav,
-  ...recordPortalNav
+  ...recordPortalNav,
+  ...credentialPortalNav
 ];
