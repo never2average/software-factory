@@ -12,9 +12,13 @@
  *                /api/admin/packs/<id> (platform admins, need(permission) on every change)
  *   migrations   wired (from pack.json): applied after the shell's, in pack order, on the versioned runner
  *                (src/migrate.ts); every pack table ships with row-level security or the build refuses it
- *   jobKinds, recordAreas, credentials, schedules, onboarding
- *                declared and validated here, listed by packRegistry(); wired by later tickets (run engine
- *                mold_v0-041, record areas 047, credential vault 034, scheduler 035, onboarding checklist 011)
+ *   recordAreas  wired (mold_v0-047): each area gets a list page and a detail page in the console, and the MCP tools
+ *                list_records and get_record, with no pack code (src/record-areas.ts); its rows live in the shell's
+ *                platform_records (platform scope: read-only to customers) or workspace_records (workspace scope,
+ *                row-level security); a handler reaches them through ctx.records
+ *   credentials, schedules, onboarding
+ *                declared and validated here, listed by packRegistry(); wired by later tickets (credential vault 034,
+ *                scheduler 035, onboarding checklist 011)
  *
  * A pack never imports another shell module (the build refuses it: scripts/gen-packs.mjs), so everything it may use
  * is here: the definition helpers, zod, and the context each handler receives (its workspace and a database handle
@@ -42,7 +46,39 @@ export interface PackDb {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 
-export interface PackToolContext { pack: string; workspace: Workspace; db: PackDb }
+/** One record of a record area (mold_v0-047): its key, a title, and the fields the area declares. */
+export interface RecordRow {
+  area: string;
+  key: string;
+  title: string | null;
+  data: Record<string, unknown>;
+  /** A platform area's version label (the source it was indexed from); null for workspace areas. */
+  version: string | null;
+  updated_at: string;
+}
+export interface RecordPage { records: RecordRow[]; next: string | null }
+export interface RecordInput { title?: string | null; data: Record<string, unknown>; version?: string | null }
+
+/**
+ * Records as one workspace sees them: every platform area (read only) and the workspace's own rows of every
+ * workspace area. `put` and `delete` reach only this pack's own workspace areas, in this workspace; an asset area's
+ * title and data are sealed with the workspace's data key at rest.
+ */
+export interface WorkspaceRecords {
+  list(area: string, opts?: { limit?: number; after?: string }): Promise<RecordPage>;
+  get(area: string, key: string): Promise<RecordRow | null>;
+  put(area: string, key: string, value: RecordInput): Promise<RecordRow>;
+  delete(area: string, key: string): Promise<boolean>;
+}
+/** Records as platform staff see them: platform areas only; `put` and `delete` reach this pack's own platform areas. */
+export interface PlatformRecords {
+  list(area: string, opts?: { limit?: number; after?: string }): Promise<RecordPage>;
+  get(area: string, key: string): Promise<RecordRow | null>;
+  put(area: string, key: string, value: RecordInput): Promise<RecordRow>;
+  delete(area: string, key: string): Promise<boolean>;
+}
+
+export interface PackToolContext { pack: string; workspace: Workspace; db: PackDb; records: WorkspaceRecords }
 
 /** What a tool may return: any JSON value (shown as structured content and text), or a full MCP tool result. */
 export type PackToolResult = unknown;
@@ -73,11 +109,11 @@ export type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
 
 interface RouteBase { method: HttpMethod; path: string }
 export interface WorkspaceRouteContext {
-  pack: string; workspace: Workspace; db: PackDb;
+  pack: string; workspace: Workspace; db: PackDb; records: WorkspaceRecords;
   params: Record<string, string>; query: Record<string, unknown>; body: unknown;
 }
 export interface AdminRouteContext {
-  pack: string; admin: { actor: string; role: PlatformRole }; db: PackDb;
+  pack: string; admin: { actor: string; role: PlatformRole }; db: PackDb; records: PlatformRecords;
   params: Record<string, string>; query: Record<string, unknown>; body: unknown;
 }
 /** /api/packs/<id><path>: a signed-in person of the workspace. A change (not GET) needs "edit" unless `needs` says otherwise. */
@@ -117,17 +153,26 @@ export const JobKindSchema = z.object({
   validator: z.string().min(1).optional(),
 }).strict();
 
-const field = z.object({ name, label: z.string().min(1), type: z.enum(["text", "number", "date", "boolean", "json", "link"]).default("text") }).strict();
-/** A record area (wired by mold_v0-047). */
+const field = z.object({ name, label: z.string().min(1).max(80), type: z.enum(["text", "number", "date", "boolean", "json", "link"]).default("text") }).strict();
+/**
+ * A record area (wired by mold_v0-047; molds/mold_v0/MOLD.md "Pack and record-area contract"). Area names are unique
+ * across every pack in a build (they are the `area` of the MCP tools and the path of the console pages). A `link`
+ * names a field whose value is the key (or a list of keys) of records in another area.
+ */
 export const RecordAreaSchema = z.object({
   name,
-  label: z.string().min(1),
+  label: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
   role: z.enum(["source", "check", "asset"]),
   scope: z.enum(["platform", "workspace"]),
-  fields: z.array(field).min(1),
-  list_columns: z.array(name).optional(),
+  fields: z.array(field).min(1).max(60),
+  list_columns: z.array(name).max(8).optional(),
   links: z.array(z.object({ field: name, area: name }).strict()).optional(),
-}).strict().refine((a) => !(a.role === "asset" && a.scope === "platform"), "an asset area holds a workspace's private data: workspace scope only");
+}).strict()
+  .refine((a) => !(a.role === "asset" && a.scope === "platform"), "an asset area holds a workspace's private data: workspace scope only")
+  .refine((a) => new Set(a.fields.map((f) => f.name)).size === a.fields.length, "a field is declared twice")
+  .refine((a) => (a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c)), "list_columns must name declared fields")
+  .refine((a) => (a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field)), "a link's field must be a declared field");
 
 /** A credential field a workspace gives (wired by mold_v0-034): only its name ever reaches a run's definition. */
 export const CredentialSchema = z.object({

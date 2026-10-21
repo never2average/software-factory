@@ -51,7 +51,8 @@ export default definePack({
       if (!gone.length) throw new PackError("no such note", 404);
     } },
   ],
-  // Declared and validated today; the run engine, record areas, credential vault, scheduler and checklist wire them later.
+  // recordAreas is wired (mold_v0-047): this area gets list_records/get_record and the console's Records pages. The others
+  // are declared and validated today; the run engine, credential vault, scheduler and checklist wire them.
   jobKinds: [{ name: "fixture_summary", runner: "workspace-harness", token_lifetime_seconds: 3600, budget_usd: 1, egress: ["api.example.com"] }],
   recordAreas: [{ name: "fixture_notes", label: "Notes", role: "asset", scope: "workspace", fields: [{ name: "body", label: "Note", type: "text" }] }],
   credentials: [{ name: "fixture_token", label: "Fixture token", bound_to: "workspace", deliver_as: { env: "FIXTURE_TOKEN" } }],

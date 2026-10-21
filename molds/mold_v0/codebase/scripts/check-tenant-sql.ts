@@ -12,7 +12,9 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scenarios", "product_research", "org_task_sets",
-  "org_harnesses", "transcript_events", "gateway_usage", "mcp_events", "worker_tokens", "api_keys", "library_submissions", "visibility_reports"];
+  "org_harnesses", "transcript_events", "gateway_usage", "mcp_events", "worker_tokens", "api_keys", "library_submissions", "visibility_reports",
+  // mold_v0-047 record areas
+  "workspace_records"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

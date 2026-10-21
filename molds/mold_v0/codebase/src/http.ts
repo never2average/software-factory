@@ -10,6 +10,7 @@ import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
 import { appRouter } from "./app.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
+import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
@@ -158,6 +159,8 @@ export function createApp() {
   app.use(appRouter());
   // ---------- packs' customer routes: /api/packs/<id> (src/pack-routes.ts); with no pack routes nothing is mounted ----------
   app.use("/api/packs", packAppRouter());
+  // ---------- record areas' list and detail data: /api/records (src/record-areas.ts); with no area nothing is mounted ----------
+  app.use("/api/records", recordAppRouter());
 
   // ---------- journey webhook: PostHog Workflows queues in-chat nudges (src/journeys.ts) ----------
   // The secret goes in an Authorization header, or in the path for webhook steps that cannot set headers.
@@ -636,6 +639,7 @@ export function createApp() {
   admin.use("/onboarding", ob);
   // Packs' admin routes: /api/admin/packs/<id>, behind the same admin guard, CSRF header and access log (src/pack-routes.ts).
   admin.use("/packs", packAdminRouter());
+  admin.use("/records", recordAdminRouter());
   app.use("/api/admin", admin);
 
   // ---------- local preview of the widget (development only) ----------

@@ -85,7 +85,8 @@ const A = (await createOrg(`Pack A ${stamp}`)).org, B = (await createOrg(`Pack B
   assert.equal(ca.getServerVersion()?.name, "fixture-desk", "the MCP server's name is the profile's");
   const names = (await ca.listTools()).tools.map((t) => t.name);
   assert.deepEqual(names.slice(0, TOOL_NAMES.length).sort(), [...TOOL_NAMES].sort(), "the shell's tools come first, unchanged");
-  assert.deepEqual(names.slice(TOOL_NAMES.length), ["add_note", "list_notes", "count_every_note"], "then the pack's, in its order");
+  assert.deepEqual(names.slice(TOOL_NAMES.length), ["add_note", "list_notes", "count_every_note", "list_records", "get_record"],
+    "then the pack's, in its order, then the record areas' tools (the pack declares an area, mold_v0-047)");
   const call = async (c: Client, name: string, args: Record<string, unknown> = {}) => (await c.callTool({ name, arguments: args })) as { isError?: boolean; structuredContent?: any; content: { text: string }[] };
   assert.ok(!(await call(ca, "add_note", { body: `alpha ${stamp}` })).isError);
   assert.ok(!(await call(cb, "add_note", { body: `beta ${stamp}` })).isError);
