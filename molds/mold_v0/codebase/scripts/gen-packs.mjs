@@ -525,11 +525,13 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, entries] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
+const { checkViews, viewsOf, tabRoles, tabLabel, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
 const out = {};
+const loaded = [];
 for (const [id, json, file] of entries) {
   let declared;
   try { declared = compileDeclarations(json); }
@@ -539,6 +541,7 @@ for (const [id, json, file] of entries) {
     if (file) { const m = await import(pathToFileURL(file).href); code = m.default?.default ?? m.default ?? null; }
     const def = validatePack(mergePack(id, declared, code));
     if (def.id !== id) throw new Error(\`its entry defines pack \${JSON.stringify(def.id)}; the ids must match\`);
+    loaded.push({ id, definition: def });
     out[id] = { declared, areas: (def.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
       credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
       onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
@@ -548,16 +551,31 @@ for (const [id, json, file] of entries) {
       kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null })) };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 3000) }; }
 }
-process.stdout.write("\\n" + MARK + " " + JSON.stringify(out) + "\\n");
+// Metrics, charts and tabs across the build (mold_v0-063, 058): checked together once every pack loaded.
+let views = { problems: [], metrics: [], charts: [], tabs: [] };
+if (loaded.length === entries.length) {
+  const b = viewsOf(loaded, pages);
+  const problems = checkViews(b);
+  const over = (m) => b.areas.find((a) => a.name === m.over) ?? m.over;
+  views = { problems,
+    metrics: b.metrics.map((m) => ({ pack: m.pack, name: m.name, label: m.label, unit: metricUnit(m, over(m)), roles: metricRoles(m, b.areas) })),
+    charts: b.charts.map((c) => ({ pack: c.pack, name: c.name, title: c.title, description: c.description ?? null, type: c.type, metrics: c.metrics, palette: c.palette })),
+    tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b) })) };
+}
+process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views }) + "\\n");
 `);
     // The packs' pack.json files go in a file (an argument is limited to 128 KiB); the answer comes back on a line marked
     // with a one-time word, so nothing a pack's entry prints while it loads can stand in for it.
     const input = path.join(dir, "input.json"), mark = `PACK_DEFINITIONS_${randomBytes(12).toString("hex")}`;
-    writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)])]));
+    writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
+      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
+      Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)]))]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
-    const got = JSON.parse(line.slice(mark.length + 1));
+    const { packs: got, views } = JSON.parse(line.slice(mark.length + 1));
+    for (const pr of views.problems) fail("packs", pr);
+    packViews = views;
     const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [] };
     for (const [id, v] of Object.entries(got)) {
       if (v.json !== undefined) { for (const pr of v.json) fail(`packs/${id}/pack.json`, pr); got[id] = empty; }
@@ -571,6 +589,8 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify(out) + "\\n");
     rmSync(dir, { recursive: true, force: true });
   }
 }
+/** The build's metrics, charts and tabs (mold_v0-063, 058), as checked across every pack by src/metric-spec.ts. */
+let packViews = { problems: [], metrics: [], charts: [], tabs: [] };
 const defsByPack = readDefinitions();
 const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
 /** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
@@ -605,9 +625,7 @@ const workspaceItems = [
   // The run-results mapping (mold_v0-061) names the record areas a result's check is in.
   for (const p of packs) for (const c of defsByPack[p.id]?.resultChecks ?? [])
     if (!owner.has(c)) fail(`packs/${p.id}`, `run_results.check names ${c}, which is not a record area of this build`);
-  // A metric (mold_v0-063) is over a record area of this build or the runs' results.
-  for (const p of packs) for (const x of defsByPack[p.id]?.metrics ?? [])
-    if (x.over !== "run_results" && !owner.has(x.over)) fail(`packs/${p.id}`, `metric ${x.name} is over ${x.over}, which is neither a record area of this build nor run_results`);
+  // Metrics, charts and tabs were checked across the build with the definitions (src/metric-spec.ts checkViews).
 }
 refuse();
 
@@ -673,10 +691,47 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   (packs.length ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */\n" +
     `export const usagePortalNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
-    : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n"));
+    : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
+  viewsModule());
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, ...p }) => p)(profile))} as const;\n`);
+
+/**
+ * The packs' metrics, charts and tabs for the console (mold_v0-063, 058): what each chart shows, and the declared tabs
+ * as the /app sidebar (exactly those, in order, grouped) with each tab's page. With no tabs the sidebar is the shell's.
+ */
+function viewsModule() {
+  const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile" };
+  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", page: "page" };
+  const tabs = packViews.tabs.map((t) => ({
+    pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
+    url: SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
+    ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null, timeline_by: t.timeline_by ?? "updated" } : {}),
+    charts: t.charts ?? [],
+  }));
+  const groups = [];
+  for (const t of tabs) {
+    const label = packViews.tabs.find((x) => x.pack === t.pack && x.id === t.id).group ?? "";
+    // A group is one sidebar section: tabs of several packs naming it join it, in order of first appearance.
+    let g = groups.find((x) => x.label === label);
+    if (!g) { g = { label, items: [] }; groups.push(g); }
+    g.items.push({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles });
+  }
+  return "\n/** A metric a pack declares (mold_v0-063): the console asks /api/metrics for its numbers. */\n" +
+    "export interface PackMetricSpec {\n  pack: string;\n  name: string;\n  label: string;\n  unit: 'count' | 'number' | 'usd' | 'percent' | 'days' | 'hours';\n  roles: string[];\n}\n" +
+    `export const packMetrics: PackMetricSpec[] = ${json(packViews.metrics)};\n\n` +
+    "/** A chart of a pack's metrics (mold_v0-063), drawn by web/src/features/tabs/charts.tsx. */\n" +
+    "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +
+    `export const packCharts: PackChartSpec[] = ${json(packViews.charts)};\n\n` +
+    "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
+    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page';\n" +
+    "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
+    "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n}\n" +
+    `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
+    "/** The /app sidebar when packs declare tabs: exactly those, in order (empty: the shell's own sidebar). */\n" +
+    `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;
+}
 
 let stale = 0;
 for (const [file, text] of files) {
@@ -689,4 +744,4 @@ for (const [file, text] of files) {
 }
 if (CHECK && stale) { console.error(`gen-packs: ${stale} generated file(s) differ from the packs and profile: run npm run gen:packs`); process.exit(1); }
 console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((p) => p.id).join(", ")})` : ""}, ${allPages.length} page(s), ${recordAreas.length} record area(s), ${credentialFields.length} credential(s), ${onboardingSteps.length} onboarding step(s), ` +
-  `${packs.filter((p) => p.manifest.migrations).length} with migrations; profile "${profile.name}"${CHECK ? "; generated files are current" : ""}`);
+  `${packs.filter((p) => p.manifest.migrations).length} with migrations${packViews.metrics.length + packViews.charts.length + packViews.tabs.length ? `, ${packViews.metrics.length} metric(s), ${packViews.charts.length} chart(s), ${packViews.tabs.length} tab(s)` : ""}; profile "${profile.name}"${CHECK ? "; generated files are current" : ""}`);

@@ -50,7 +50,7 @@ try {
     for (const [what, bad] of [
       ["an unknown field type", variant((j) => { j.record_areas[0].fields[0].type = "enumm"; })],
       ["an unknown key", variant((j) => { j.tables = []; })],
-      ["a reserved key (tabs, mold_v0-058)", variant((j) => { j.tabs = []; })],
+      ["a reserved key (mcp, mold_v0-060)", variant((j) => { j.mcp = {}; })],
       ["a field name that is not a plain word", variant((j) => { j.record_areas[0].fields[0].name = "x; DROP TABLE"; })],
       ["an enum value with markup", variant((j) => { j.record_areas[0].fields[1].options = ["<img src=x onerror=alert(1)>"]; })],
       ["a role that does not exist", variant((j) => { j.record_areas[2].permissions.create = ["admin"]; })],
@@ -96,8 +96,8 @@ try {
     refused("an enum value with markup", tryPack(variant((j) => { j.record_areas[2].fields[0].options[0] = "<script>alert(1)</script>"; })), /fields\[0\]\.options\[0\]: Invalid input|a choice value/);
     refused("a reference to an area no pack declares", tryPack(variant((j) => { j.record_areas[2].fields[2].to = "nowhere"; })), /record area tracker_findings links field app to area nowhere, which no pack declares/);
     refused("a shared area referring to a workspace's area", tryPack(variant((j) => { j.record_areas[0].fields.push({ name: "app", label: "App", type: "reference", to: "tracker_apps" }); })), /tracker_policies is shared \(platform\) and its field app refers to tracker_apps, a workspace's own area/);
-    refused("a reserved key (tabs, mold_v0-058)", tryPack(variant((j) => { j.tabs = [{ area: "tracker_findings" }]; })), /pack\.json: tabs: tabs come with mold_v0-058/);
-    refused("charts before mold_v0-063", tryPack(variant((j) => { j.charts = []; })), /charts: charts come with mold_v0-063/);
+    refused("a reserved key (mcp, mold_v0-060)", tryPack(variant((j) => { j.mcp = { tools: [] }; })), /pack\.json: mcp: MCP settings come with mold_v0-060/);
+    refused("a tab with an unknown kind", tryPack(variant((j) => { j.tabs = [{ id: "x", kind: "dashboard" }]; })), /tabs\[0\]\.kind: Invalid option/);
     refused("an unknown key", tryPack(variant((j) => { j.tables = []; })), /unknown field tables/);
     refused("a harness kind with no program", tryPack(variant((j) => { j.job_kinds[0].runner = "workspace-harness"; })), /job_kinds\[0\]\.entry/);
     refused("a harness kind whose program is not in the pack", tryPack(variant((j) => { j.job_kinds[0] = { name: "kx", runner: "workspace-harness", entry: "run.mjs" }; j.schedules = []; j.onboarding = [j.onboarding[0]]; })), /job kind kx: run\.mjs is not a file of the pack/);
@@ -105,7 +105,7 @@ try {
     refused("a schedule of an undeclared kind", tryPack(variant((j) => { j.schedules[0].job_kind = "nope"; })), /schedule nightly_scan names job kind nope/);
     refused("a credential bound to a non-asset area", tryPack(variant((j) => { j.credentials[0].area = "tracker_findings"; })), /credential tracker_token is bound to area tracker_findings, which is not one of this pack's asset areas/);
     refused("an argument of an unknown type", tryPack(variant((j) => { j.job_kinds[0].args[1].type = "integer"; })), /job_kinds\[0\]\.args\[1\]\.type: Invalid option/);
-    refused("a metric over nothing", tryPack(variant((j) => { j.metrics[0].over = "nowhere"; })), /metric open_by_severity is over nowhere, which is neither a record area of this build nor run_results/);
+    refused("a metric over nothing", tryPack(variant((j) => { j.metrics[0].over = "nowhere"; })), /metric open_by_severity is over nowhere, which is neither a record area of this build nor run_results or runs/);
     refused("an area reading from an undeclared repository", tryPack(variant((j) => { j.record_areas[1].repository = "nowhere"; })), /record area tracker_apps reads from repository nowhere, which this pack does not declare/);
     refused("a repository with no kind", tryPack(variant((j) => { delete j.repositories.tracker_ledger.kind; })), /repositories\.tracker_ledger\.kind/);
     refused("a run-results mapping naming no area", tryPack(variant((j) => { j.run_results.check = ["nowhere"]; })), /run_results\.check names nowhere, which is not a record area of this build/);

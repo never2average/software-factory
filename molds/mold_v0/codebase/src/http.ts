@@ -16,6 +16,7 @@ import { credentialAppRouter } from "./credential-routes.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
+import { metricAppRouter, runAppRouter } from "./view-routes.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
@@ -177,6 +178,9 @@ export function createApp() {
   // ---------- schedules per workspace and due-date notices: /api/schedules, /api/notices (src/schedule-routes.ts); with no job kind or due area nothing is mounted ----------
   app.use("/api/schedules", scheduleAppRouter());
   app.use("/api/notices", noticeAppRouter());
+  // ---------- metrics and the runs the console's tabs read: /api/metrics, /api/runs (src/view-routes.ts); with no metric or job kind nothing is mounted ----------
+  app.use("/api/metrics", metricAppRouter());
+  app.use("/api/runs", runAppRouter());
 
   // ---------- journey webhook: PostHog Workflows queues in-chat nudges (src/journeys.ts) ----------
   // The secret goes in an Authorization header, or in the path for webhook steps that cannot set headers.

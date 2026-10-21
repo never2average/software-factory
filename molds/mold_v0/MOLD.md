@@ -277,7 +277,7 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
   by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a
   JSON Schema validator over it). Beside the manifest keys it takes `record_areas`, `job_kinds`, `credentials`,
-  `schedules`, `onboarding`, `metrics`, `repositories` and `run_results`; `gen-packs` validates every pack.json with it
+  `schedules`, `onboarding`, `metrics`, `charts`, `tabs`, `repositories` and `run_results`; `gen-packs` validates every pack.json with it
   (each refusal names its path: `packs/<id>/pack.json: record_areas[2].lifecycle.initial: …`) and compiles the
   declarations into the `definePack` fields they stand for, carried in `src/packs.generated.ts` as `declared` (no import
   for a pack with no entry). `src/packs.ts` merges them with the code entry's definition when there is one
@@ -318,10 +318,10 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
     the engine); the run engine applies a harness kind's limits (above). A schedule may name an agent-workspace kind
     (validated, and its `scope` may give only the kind's `args`) and the scheduler starts it as any kind. A schedule's scope values are not yet type-checked against `args` (the scheduler
     starts runs through the engine, not through `declaredRuns`).
-  - **Credentials, schedules, onboarding** as in `definePack`; **metrics** (mold_v0-063: a name, a label, `over` an area
-    or `run_results`, the rest kept for 063); **repositories** (mold_v0-059: below; an area names one with
-    `repository`, checked) and **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas,
-    checked). Reserved, refused with the ticket that brings them: `tabs` (058), `mcp` (060), `charts` (063).
+  - **Credentials, schedules, onboarding** as in `definePack`; **metrics**, **charts** and **tabs** (below, mold_v0-063 and
+    058); **repositories** (mold_v0-059: below; an area names one with `repository`, checked) and
+    **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas, checked). Reserved, refused with
+    the ticket that brings it: `mcp` (060).
   - `npm run test:declarative-packs` proves it with `scripts/fixtures/packs/fixture_tracker` (a pack.json, no code) and
     two workspaces; `npm run test:packs` typechecks a build copy with it.
   - **Not covered yet:** a shared library and each workspace's state of it are two areas (one platform, one
@@ -367,6 +367,52 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   runs the second app's own declaration through the generic adapters). **Not covered:** an http_api area cannot be
   the target of a reference; a sealed area's filter is capped at 5000 rows; DNS rebinding is closed by connecting to the
   checked address, but an `egress` host's own redirects are refused rather than followed.
+- **Metrics and charts** (mold_v0-063, built; `src/metrics.ts`, `src/metric-spec.ts`, `src/view-routes.ts`): pack.json
+  `metrics` are computed on the server for one workspace: over a record area (its shared rows, or the workspace's own),
+  the workspace's `run_results` or its `runs`; `measure` count, sum or average of a number field, rate (the share of rows
+  meeting `rate.where`), or duration (`from` to `to`, each a date field, `created`, `updated`, `started`, `ended` or
+  `state:<value>`, as average, median, p90 or max, in days or hours); `where` conditions (eq, ne, in, not_in, lt, lte,
+  gt, gte against a number, a date or today/now with +/- days, empty, not_empty); `group_by` a single-valued field (an
+  enum's options in order, a reference named by its record's title, run results by check, asset, source, status or
+  `detail.<word>`) or `{due: <date field>}` (overdue, due soon, later, no date); `by_time` a series of the last N days,
+  weeks (from Monday) or months (UTC), by group for an enum of at most 8 options, a boolean, a status or a kind; `limit`
+  groups (at most 50, flagged `more`); `roles`. One aggregate query each, inside `withTenant` with `org_id` named, field
+  names and values only as bound parameters, a group limit, a time window and a 5 s statement timeout on Postgres
+  (PGlite, the embedded database of tests and one-machine runs, ignores statement timeouts); at most 30 metrics a
+  request, 4 at a time. A sealed area's rows (an asset area, or `sealed: true`, mold_v0-066) are opened one by one and evaluated by the same rules in code,
+  over its newest 5,000 rows and at most 32 MB of them, read once per request (`partial` when cut). A span that ends
+  before it starts (a state entered again since) is not a duration. A person reads a metric when their role may read
+  its area and is in its `roles` (an API key: no role limits); a run-results metric needs every check and asset area's
+  read permission; a referenced record is named (title or key) only for those who may read its area ("Restricted"
+  otherwise), and `/api/runs/:id` leaves out results whose check, and names no asset or source, the person may not
+  read. When a record is created or moved the store stamps when
+  it entered the state (`$state_at` in the row's data: never a field, never writable, carried over on writes), which is
+  what `state:<value>` reads (time to fix). `charts` (`number` tiles, `bar`, `stacked_bar`, `line`, `area`, `table`;
+  no donut, never two y-axes, `palette` categorical or ordinal) are checked against their metrics' shapes and units at
+  build and drawn by the console (`web/src/features/tabs/charts.tsx`: colour tokens `--viz-*` in
+  `web/src/styles/theme.css`, validated for colour-blind separation in light and dark, a legend for two series or more,
+  a tooltip, an accessible summary and a table view per chart). `GET /api/metrics?names=` (signed-in people of the
+  workspace; a refusal per metric) and `GET /api/runs`, `/api/runs/:id` (the workspace's runs and results, read only)
+  are mounted only when the build has a metric or a job kind. `npm run test:metrics` proves it with two fixture packs
+  (`fixture_vulns`: open by severity, found vs fixed per week, by application, control and regulator, against the
+  fix-by date, time to fix; `fixture_adoption`: pick rate overall, per week, per task and per agent, runs, spend) and
+  two workspaces, every number checked against the fixture rows, the code path equal to SQL, 20,000 rows bounded.
+  **Not covered:** a metric across two areas (a join), a cumulative series, time zones other than UTC, state times of
+  records moved before 063 (they have none: such rows are left out of a duration), texture fills for print.
+- **Console tabs** (mold_v0-058, built): pack.json `tabs` is the /app sidebar: when any pack declares tabs the sidebar is
+  exactly those, in order, grouped by `group` (a group shared by packs is one section); with none it is the shell's own,
+  unchanged (`npm run test:console-tabs` compares the zero-pack and the no-tab sidebars with snapshots taken before 058).
+  Kinds: `overview` (charts), `area` (a record area's `views`: table, board by a single-choice enum, the lifecycle's
+  field by default, timeline by a date field or updated, detail; its charts above), `runs`, `reports` (finished runs and
+  their results), and the shell's own pages `credentials`, `usage`, `schedules`, `notices`, `setup`, `billing`,
+  `profile`, or one of the pack's `page`s. `label` in the app's words (an area tab defaults to the area's label), `icon`
+  from a fixed set (`TAB_ICONS`). Each tab is shown to `roles` narrowed by what it shows (an area's read permission;
+  for an overview, the roles that may read one of its metrics; a build refuses a tab no role could see); the server
+  refuses the data whatever the sidebar shows. Tab pages render at `/app/packs/<pack>/<tab>` through the existing pack
+  page route (no new route). Boards and timelines show up to 200 records; a board by a workspace area's lifecycle field
+  offers each card the moves its state allows (a menu, no drag), through the data API's move (`POST
+  /api/data/:area/:key/move`, the record store's roles and transitions; the move stamps the state's time). `npm run test:console-tabs` checks the sidebar, the tab pages, a rendered overview and board in a headless
+  browser (when the machine has one) and the build copy's typecheck.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per

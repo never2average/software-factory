@@ -1,0 +1,282 @@
+{
+ "portalNav": [
+  {
+   "label": "Get started",
+   "items": [
+    {
+     "title": "Setup & training",
+     "url": "/app",
+     "icon": "rocket",
+     "shortcut": [
+      "g",
+      "s"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Insights",
+   "items": [
+    {
+     "title": "Usage",
+     "url": "/app/usage",
+     "icon": "chartLine",
+     "shortcut": [
+      "g",
+      "u"
+     ],
+     "items": []
+    },
+    {
+     "title": "Pick rate",
+     "url": "/app/pick-rate",
+     "icon": "trendingUp",
+     "shortcut": [
+      "g",
+      "v"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Context",
+   "items": [
+    {
+     "title": "Company",
+     "url": "/app/context/company",
+     "icon": "building",
+     "shortcut": [
+      "g",
+      "c"
+     ],
+     "items": []
+    },
+    {
+     "title": "Users",
+     "url": "/app/context/users",
+     "icon": "teams",
+     "items": []
+    },
+    {
+     "title": "Products",
+     "url": "/app/context/products",
+     "icon": "product",
+     "shortcut": [
+      "g",
+      "p"
+     ],
+     "items": []
+    },
+    {
+     "title": "Journeys",
+     "url": "/app/journeys",
+     "icon": "route",
+     "shortcut": [
+      "g",
+      "j"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Private data",
+   "items": [
+    {
+     "title": "Developer personas",
+     "url": "/app/personas",
+     "icon": "userPen",
+     "shortcut": [
+      "g",
+      "d"
+     ],
+     "items": []
+    },
+    {
+     "title": "Programming tasks",
+     "url": "/app/tasks",
+     "icon": "kanban",
+     "shortcut": [
+      "g",
+      "t"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Operational",
+   "items": [
+    {
+     "title": "Billing",
+     "url": "/app/billing",
+     "icon": "billing",
+     "shortcut": [
+      "g",
+      "b"
+     ],
+     "items": []
+    },
+    {
+     "title": "Profile",
+     "url": "/app/profile",
+     "icon": "account",
+     "items": []
+    }
+   ]
+  }
+ ],
+ "adminNav": [
+  {
+   "label": "Onboarding",
+   "items": [
+    {
+     "title": "Overview",
+     "url": "/admin",
+     "icon": "dashboard",
+     "shortcut": [
+      "g",
+      "o"
+     ],
+     "items": []
+    },
+    {
+     "title": "Access requests",
+     "url": "/admin/requests",
+     "icon": "inbox",
+     "shortcut": [
+      "g",
+      "r"
+     ],
+     "items": []
+    },
+    {
+     "title": "Accounts",
+     "url": "/admin/accounts",
+     "icon": "building",
+     "shortcut": [
+      "g",
+      "a"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Engagement",
+   "items": [
+    {
+     "title": "Journeys",
+     "url": "/admin/journeys",
+     "icon": "route",
+     "shortcut": [
+      "g",
+      "j"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Insights",
+   "items": [
+    {
+     "title": "Analytics",
+     "url": "/admin/analytics",
+     "icon": "chartBar",
+     "shortcut": [
+      "g",
+      "n"
+     ],
+     "items": []
+    },
+    {
+     "title": "Health",
+     "url": "/admin/health",
+     "icon": "gauge",
+     "shortcut": [
+      "g",
+      "h"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Library",
+   "items": [
+    {
+     "title": "Personas",
+     "url": "/admin/personas",
+     "icon": "userPen",
+     "shortcut": [
+      "g",
+      "p"
+     ],
+     "items": []
+    },
+    {
+     "title": "Tasks",
+     "url": "/admin/tasks",
+     "icon": "kanban",
+     "shortcut": [
+      "g",
+      "t"
+     ],
+     "items": []
+    }
+   ]
+  },
+  {
+   "label": "Operations",
+   "items": [
+    {
+     "title": "Compute",
+     "url": "/admin/compute",
+     "icon": "adjustments",
+     "shortcut": [
+      "g",
+      "c"
+     ],
+     "items": []
+    },
+    {
+     "title": "FinOps",
+     "url": "/admin/finops",
+     "icon": "trendingUp",
+     "items": []
+    },
+    {
+     "title": "Harness mix",
+     "url": "/admin/agents",
+     "icon": "code",
+     "items": []
+    },
+    {
+     "title": "Agent configuration",
+     "url": "/admin/configuration",
+     "icon": "settings",
+     "items": []
+    },
+    {
+     "title": "Key vault",
+     "url": "/admin/keys",
+     "icon": "lock",
+     "shortcut": [
+      "g",
+      "k"
+     ],
+     "items": []
+    },
+    {
+     "title": "Admins",
+     "url": "/admin/admins",
+     "icon": "teams",
+     "items": []
+    }
+   ]
+  }
+ ]
+}
