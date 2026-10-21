@@ -269,7 +269,45 @@
       "credentials": [
         "tracker_token"
       ],
-      "workspace": true
+      "workspace": true,
+      "agent": {
+        "repository": "https://git.example.com/agents/tracker-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "strip": [
+          ".claude/settings.local.json"
+        ],
+        "command": [
+          "node",
+          "scan.mjs",
+          "--app",
+          "{app}",
+          "--depth",
+          "{depth}"
+        ],
+        "args": {
+          "app": {
+            "from": "scope.app"
+          },
+          "depth": {
+            "from": "scope.depth",
+            "default": "1",
+            "pattern": "[1-5]"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "findings"
+        ],
+        "record": [
+          "sessions/*.json"
+        ],
+        "timeout_seconds": 1200
+      }
     }
   ],
   "credentials": [

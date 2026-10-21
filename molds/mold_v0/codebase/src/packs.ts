@@ -169,7 +169,8 @@ export function declaredRuns(pack: string, runs: WorkspaceRuns, orgId?: number, 
   return {
     ...runs,
     async start(kind, input) {
-      const k = packs().find((p) => p.id === pack)?.definition.jobKinds?.find((x) => x.name === kind);
+      const def = packs().find((p) => p.id === pack)?.definition;
+      const k = [...(def?.jobKinds ?? []), ...(def?.agentJobKinds ?? [])].find((x) => x.name === kind);
       if (k?.args) {
         const { checkArgs } = await import("./record-areas.js");
         // As the caller: a reference argument resolves only to records they may read, in their own workspace.
