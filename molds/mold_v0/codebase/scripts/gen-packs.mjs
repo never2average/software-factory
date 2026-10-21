@@ -489,7 +489,14 @@ if (existsSync(PROFILE_FILE)) {
     for (const [k, v] of Object.entries(pf)) {
       if (k === "$comment") continue;
       if (k === "limits") { const bad = limitsProblem(v); if (bad) fail(rel(PROFILE_FILE), `limits: ${bad}`); else profile.limits = v; continue; }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits)`);
+      // The customer MCP server's own version and instructions (mold_v0-060), optional: absent, the shell's.
+      if (k === "mcp_server_version") { if (typeof v !== "string" || !/^\d{1,6}\.\d{1,6}\.\d{1,6}([-+][0-9A-Za-z.-]{1,40})?$/.test(v)) fail(rel(PROFILE_FILE), "mcp_server_version: a version like 1.2.3"); else profile[k] = v; continue; }
+      if (k === "mcp_instructions") {
+        if (typeof v !== "string" || !v.trim() || v.length > 4000 || /[\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}]/u.test(v)) fail(rel(PROFILE_FILE), "mcp_instructions: plain text of up to 4000 characters");
+        else profile[k] = v;
+        continue;
+      }
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, mcp_server_version, mcp_instructions)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -525,7 +532,7 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
@@ -541,7 +548,7 @@ for (const [id, json, file] of entries) {
     if (file) { const m = await import(pathToFileURL(file).href); code = m.default?.default ?? m.default ?? null; }
     const def = validatePack(mergePack(id, declared, code));
     if (def.id !== id) throw new Error(\`its entry defines pack \${JSON.stringify(def.id)}; the ids must match\`);
-    loaded.push({ id, definition: def });
+    loaded.push({ id, name: json.name, words: json.words ?? {}, definition: def });
     out[id] = { declared, areas: (def.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
       credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
       onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
@@ -562,19 +569,25 @@ if (loaded.length === entries.length) {
     charts: b.charts.map((c) => ({ pack: c.pack, name: c.name, title: c.title, description: c.description ?? null, type: c.type, metrics: c.metrics, palette: c.palette })),
     tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b) })) };
 }
-process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views }) + "\\n");
+// The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts), across the build's packs: each
+// pack's mcp settings name real tools, names fit, no two take one name. (The shell's own names are checked at start.)
+const { generateCatalog } = await import(pathToFileURL(catalogApi).href);
+const mcp = { problems: loaded.length === entries.length ? generateCatalog(loaded).problems : [] };
+process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mcp }) + "\\n");
 `);
     // The packs' pack.json files go in a file (an argument is limited to 128 KiB); the answer comes back on a line marked
     // with a one-time word, so nothing a pack's entry prints while it loads can stand in for it.
     const input = path.join(dir, "input.json"), mark = `PACK_DEFINITIONS_${randomBytes(12).toString("hex")}`;
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
       packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
-      Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)]))]));
+      Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
+      path.join(ROOT, "src", "mcp-catalog.ts")]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
-    const { packs: got, views } = JSON.parse(line.slice(mark.length + 1));
+    const { packs: got, views, mcp } = JSON.parse(line.slice(mark.length + 1));
     for (const pr of views.problems) fail("packs", pr);
+    for (const pr of mcp.problems) fail("packs", pr);
     packViews = views;
     const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [] };
     for (const [id, v] of Object.entries(got)) {

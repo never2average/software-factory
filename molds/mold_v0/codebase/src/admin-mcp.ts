@@ -38,6 +38,8 @@ import * as contributions from "./contributions.js";
 import { computeSummary } from "./compute.js";
 import { platformAnalytics } from "./insights.js";
 import { listSettings } from "./settings.js";
+import { adminGeneratedTools, generatedAdminInstructions } from "./mcp-tools.js";
+import { reserveAdminTools } from "./packs.js";
 
 /** Who is calling: the name changes are logged under (their email, or the token's X-Admin-Actor label) and their role. */
 export interface AdminCaller { actor: string; role: PlatformRole; userId: string | null; ip?: string }
@@ -313,12 +315,14 @@ export const ADMIN_TOOLS = {
 
 export type AdminToolName = keyof typeof ADMIN_TOOLS;
 export const ADMIN_TOOL_NAMES = Object.keys(ADMIN_TOOLS) as AdminToolName[];
+// The tools generated from the packs (mold_v0-060, src/mcp-tools.ts) come after these and may not take one of their names.
+reserveAdminTools(ADMIN_TOOL_NAMES);
 
 /** For the panel's Connect page: each tool, the least role that may call it, and whether it changes something. */
-export const adminToolList = () => ADMIN_TOOL_NAMES.map((name) => {
+export const adminToolList = () => [...ADMIN_TOOL_NAMES.map((name) => {
   const t: AdminTool = ADMIN_TOOLS[name];
   return { name, title: t.title, needs: PERMISSIONS[t.needs], needs_label: ROLE_LABELS[PERMISSIONS[t.needs]], changes: t.needs !== "read", destructive: !!t.destructive };
-});
+}), ...adminGeneratedTools().map((t) => ({ name: t.name, title: t.title, needs: PERMISSIONS[t.needs], needs_label: ROLE_LABELS[PERMISSIONS[t.needs]], changes: t.needs !== "read", destructive: !!t.destructive }))];
 
 /** Belt and braces on top of the reshaping above: anything shaped like a secret is masked before it leaves. */
 const SECRETISH = /\b(oct_|ogw_|sk-|sk_live_|sk_test_|whsec_)[A-Za-z0-9_-]{8,}/g;
@@ -334,7 +338,10 @@ function audit(c: AdminCaller, name: string, status: number) {
 
 /** Run one tool as the caller: the role check, the call (in the caller's admin context, so log() records the role), the audit. */
 export async function runAdminTool(c: AdminCaller, name: AdminToolName, args: Args): Promise<CallToolResult> {
-  const t: AdminTool = ADMIN_TOOLS[name];
+  return runAdminToolWith(c, name, ADMIN_TOOLS[name], args);
+}
+/** As runAdminTool, for a tool given whole: the generated ones (mold_v0-060) run through the same role check and audit. */
+export async function runAdminToolWith(c: AdminCaller, name: string, t: AdminTool, args: Args): Promise<CallToolResult> {
   const changes = t.needs !== "read";
   if (!can(c.role, t.needs)) {
     audit(c, name, 403);
@@ -355,7 +362,7 @@ export async function runAdminTool(c: AdminCaller, name: AdminToolName, args: Ar
     const e = err as Error & { status?: number; code?: unknown };
     const status = typeof e.status === "number" ? e.status : 500;
     // As on /api/admin: the admin sees what went wrong (a bad id, Stripe or Clerk refusing), never a database's raw text.
-    const known = e instanceof onboarding.AdminError || /Clerk|Stripe|Setting|Role|Journey|Playbook/.test(e.constructor?.name ?? "") || status < 500;
+    const known = e instanceof onboarding.AdminError || /Clerk|Stripe|Setting|Role|Journey|Playbook|PackError/.test(e.constructor?.name ?? "") || status < 500;
     const message = typeof e.code === "string" && /^[0-9A-Z]{5}$/.test(e.code) ? `The request could not be completed (database error ${e.code}).`
       : known ? e.message : "Internal error";
     if (!known) console.error(`admin mcp ${name}:`, e);
@@ -461,7 +468,7 @@ export function createAdminServer(c: AdminCaller): McpServer {
         "list_settings, key_vault_status, library_stats. Changes (each needs a role; refusals name it): approve/decline_access_request, " +
         "set_account_allowance, allow_prepaid_plans, create_plan (dry_run first), archive_plan, set_plan_experiment, update_setting, cancel_simulation. " +
         "Skills (prompts, slash commands): ops_review, triage_requests, account_review, finops_digest, pricing_experiment, cost_check. " +
-        `Confirm with the user before any change. This connection is ${c.actor}, role ${ROLE_LABELS[c.role]}.` },
+        `Confirm with the user before any change. This connection is ${c.actor}, role ${ROLE_LABELS[c.role]}.` + generatedAdminInstructions() },
   );
   for (const name of ADMIN_TOOL_NAMES) {
     const t: AdminTool = ADMIN_TOOLS[name];
@@ -473,6 +480,16 @@ export function createAdminServer(c: AdminCaller): McpServer {
       annotations: { readOnlyHint: read, destructiveHint: !!t.destructive, idempotentHint: read || name === "set_account_allowance" || name === "allow_prepaid_plans" || name === "update_setting",
                      openWorldHint: ["approve_access_request", "decline_access_request", "create_plan", "archive_plan", "set_plan_experiment"].includes(name) },
     }, (args: Args) => runAdminTool(c, name, args));
+  }
+  // The tools generated from the packs (mold_v0-060): shared records for staff, and the customer tools a pack made admin-only.
+  for (const g of adminGeneratedTools()) {
+    const t: AdminTool = { title: g.title, description: g.description, needs: g.needs, destructive: g.destructive, input: g.input, run: (a, caller) => g.run(a, caller), summary: g.summary };
+    server.registerTool(g.name, {
+      title: g.title,
+      description: g.needs === "read" ? g.description : `${g.description} Needs the ${ROLE_LABELS[PERMISSIONS[g.needs]]} role.`,
+      inputSchema: g.input,
+      annotations: g.annotations,
+    }, (args: Args) => runAdminToolWith(c, g.name, t, args));
   }
   for (const [name, sk] of Object.entries(ADMIN_SKILLS))
     server.registerPrompt(name, { title: sk.title, description: sk.description, argsSchema: sk.args }, (a: any) => say(sk.text(a)));
