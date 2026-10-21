@@ -118,7 +118,10 @@ try {
     assert.ok(!started.isError, `with the account's launches open, staff start it: ${text(started)}`);
     const runId = started.structuredContent.run.id as string;
     const [run] = await db.query<{ requested_by: string }>("SELECT requested_by FROM runs WHERE id = $1", [runId]);
-    assert.equal(run!.requested_by, staffId("ops@platform.example"), "the run is attributed to staff, under a pseudonym");
+    assert.equal(run!.requested_by, staffId("ops@platform.example", A.org.orgId), "the run is attributed to staff, under a pseudonym");
+    const { createHash } = await import("node:crypto");
+    assert.notEqual(staffId("ops@platform.example", A.org.orgId), staffId("ops@platform.example", B.org.orgId), "a different one in each workspace");
+    assert.ok(!staffId("ops@platform.example", A.org.orgId).includes(createHash("sha256").update("staff-actor:ops@platform.example").digest("hex").slice(0, 12)), "keyed: a guessed email cannot be checked");
     console.log("✓ a run staff start for a workspace passes the account's launch rules (refused while its launches are held back, started when open)");
 
     // 2. The calls above, a cancel and a failure are in A's own log, under the staff pseudonym; B's log has nothing.
@@ -133,7 +136,7 @@ try {
     assert.ok(rows.every((r) => r.org_id === A.org.orgId), "only A's log has the staff calls");
     assert.deepEqual(rows.map((r) => [r.name, r.ok]), [["review_start_review_pass", false], ["review_start_review_pass", true], ["review_cancel_review", true], ["review_cancel_review", false]],
       `every staff call for A, refused and failed ones included: ${JSON.stringify(rows)}`);
-    assert.ok(rows.every((r) => r.user_id === staffId("ops@platform.example") && r.client_name === "admin-mcp" && r.key_id === null), "as staff, never a member or a key");
+    assert.ok(rows.every((r) => r.user_id === staffId("ops@platform.example", A.org.orgId) && r.client_name === "admin-mcp" && r.key_id === null), "as staff, never a member or a key");
     assert.ok(!JSON.stringify(await db.query("SELECT * FROM mcp_events WHERE org_id = $1", [A.org.orgId])).includes("ops@platform.example"), "the staff member's identity is not in the workspace's log");
     assert.equal(await countB(), beforeB, "B's log is untouched");
     const { workspaceUsageReport } = await import("../src/usage-report.js");
@@ -150,7 +153,7 @@ try {
   // ---------- 4. withheld tools withhold their routes too ----------
   {
     const MCP = { prefix: "review", rename: { review_list_review_notes: "review_notes" },
-      exclude: ["review_list_review_items", "review_create_review_notes", "review_get_metrics", "review_admin_delete_review_guides"],
+      exclude: ["review_list_review_items", "review_create_review_notes", "review_get_metrics", "review_admin_delete_review_guides", "review_get_review_results", "review_start_review_pass"],
       admin_only: ["review_update_review_notes", "review_list_reviews", "review_cancel_review"] };
     setPacksForTest([declared("fixture_tracker"), declared("fixture_review", MCP)]);
     const http = await startHttp();
@@ -187,8 +190,21 @@ try {
     // The pack's runs, whose list tool is admin_only, are not listed for the workspace; another pack's are.
     const { startRun } = await import("../src/runs.js");
     await withTenant(A.org.orgId, () => startRun(A.org.orgId, "fixture_review", "review_pass", { scope: { item: "item-a" } }));
+    const rid = (await db.query<{ id: string }>("SELECT id FROM runs WHERE org_id = $1 AND pack = 'fixture_review' ORDER BY created_at DESC LIMIT 1", [A.org.orgId]))[0]!.id;
+    await db.query("INSERT INTO run_results (run_id, org_id, check_area, check_key, status) VALUES ($1, $2, 'review_notes', 'n1', 'fail')", [rid, A.org.orgId]);
     const runs = await expect("runs list", "GET", "/api/runs", 200);
     assert.ok(!runs.body.runs.some((r: any) => r.pack === "fixture_review"), "the withheld pack's runs are not listed");
+    const one = await expect("a run whose status tool is kept", "GET", `/api/runs/${rid}`, 200);
+    assert.equal(one.body.run.status, "queued", "its status is shown");
+    assert.deepEqual(one.body.results, [], "its results, whose tool is excluded, are not");
+    // Deletes: no tool of their own; kept while any write of the area is, withheld when every write is.
+    await expect("delete while a write (move) is kept", "DELETE", "/api/data/review_items/item-b", 204);
+    const { areaOpWithheld, batchWithheld } = await import("../src/mcp-withheld.js");
+    assert.equal(areaOpWithheld("review_notes", "delete"), false, "notes keep their move: deletes stay");
+    assert.equal(batchWithheld([{ op: "constructor", area: "review_notes" }, { op: "__proto__", area: "x" }], "workspace"), null, "an op named like a built-in needs nothing (no crash)");
+    assert.notEqual((await call("POST", "/api/data/_batch", ownerA, { operations: [{ op: "constructor", area: "review_notes", key: "n1" }] })).status, 500, "and answers without a server error");
+    // A kind whose start tool is withheld cannot be scheduled by the workspace.
+    await expect("scheduling a withheld kind", "POST", "/api/schedules", 404, { pack: "fixture_review", job_kind: "review_pass", name: "nightly", cron: "0 3 * * *" });
     // Staff routes of an excluded staff tool, for a platform owner.
     const staff = await http.adminToken("owner");
     await expect("staff create", "POST", "/api/admin/data/review_guides", 201, { key: "g1", data: { summary: "one" } }, staff);
@@ -212,6 +228,11 @@ try {
     const upd = await operator.call("review_update_review_notes", { workspace: A.org.slug, key: "n1", data: { body: "by staff", item: "item-a" } });
     assert.ok(!upd.isError, `staff update through the admin MCP: ${text(upd)}`);
     await operator.client.close();
+    // With every write of an area withheld, its deletes are too.
+    setPacksForTest([declared("fixture_tracker"), declared("fixture_review", { ...MCP, admin_only: [...MCP.admin_only, "review_move_review_notes"] })]);
+    assert.equal(areaOpWithheld("review_notes", "delete"), true, "no write of notes left to the workspace: no delete either");
+    await expect("delete with every write withheld", "DELETE", "/api/data/review_notes/n1", 404);
+    await expect("a batch delete there", "POST", "/api/data/_batch", 404, { operations: [{ op: "delete", area: "review_notes", key: "n1" }] });
     await http.close();
     // gen-packs leaves the withheld area out of the sidebar (Records and tabs), and keeps the rest.
     const pdir = path.join(TMP, "withheld-packs");

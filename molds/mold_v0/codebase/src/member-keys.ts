@@ -17,7 +17,7 @@
  *   POST /api/keys               {name, expires_in_days?}: a new key for you, answered once with each client's setup
  *   POST /api/keys/:id/revoke    one of your own keys; an owner any key of the workspace
  * A change riding the session cookie carries X-Pack-Request: 1 (CSRF, as the data API). Key creation shares the
- * workspace's hourly key limit (src/rate-limits.ts endpointLimit "key").
+ * shell's hourly key number per person (src/rate-limits.ts endpointLimit "key", its own bucket, apart from staff's).
  */
 import { createHash, randomBytes } from "node:crypto";
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
@@ -84,17 +84,21 @@ export async function workspaceKeys(orgId: number): Promise<KeyRow[]> {
 /** Make a member key for `userId` in workspace `orgId`. The key is returned once; only its hash is stored. */
 export async function createMemberKey(orgId: number, userId: string, input: { name?: unknown; expires_in_days?: unknown }): Promise<{ key: string; row: KeyRow }> {
   const name = nameOf(input.name), days = daysOf(input.expires_in_days);
-  const db = await getDb();
-  const [{ n }] = await db.query<{ n: number }>(
-    "SELECT count(*)::int AS n FROM api_keys WHERE org_id = $1 AND user_id = $2 AND scoped AND revoked_at IS NULL AND expires_at > now()", [orgId, userId]);
-  if (n >= MAX_KEYS_PER_MEMBER) throw new KeyError(`You have ${n} live keys (at most ${MAX_KEYS_PER_MEMBER}): revoke one you no longer use first`, 409);
   const key = `${KEY_PREFIX}${randomBytes(24).toString("base64url")}`;
   // The tenant role may not write keys (sql/migrations/0003): written by the platform, for the session's own person in
-  // the session's own workspace, never from the request.
-  const [r] = await asPlatform(async () => (await getDb()).query<Raw>(
-    `/* platform: a member key for the session's person, in the session's workspace */ INSERT INTO api_keys (org_id, label, key_prefix, key_hash, user_id, scoped, expires_at)
-     VALUES ($1, $2, $3, $4, $5, true, now() + make_interval(days => $6)) RETURNING ${COLS}`,
-    [orgId, name, key.slice(0, KEY_PREFIX.length + 6), sha256(key), userId, days]));
+  // the session's own workspace, never from the request. The live count and the insert hold one lock per person, so
+  // requests at once cannot pass the cap together.
+  const r = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`member-keys:${orgId}:${userId}`]);
+    const [{ n }] = await tx.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM api_keys WHERE org_id = $1 AND user_id = $2 AND scoped AND revoked_at IS NULL AND expires_at > now()", [orgId, userId]);
+    if (n >= MAX_KEYS_PER_MEMBER) throw new KeyError(`You have ${n} live keys (at most ${MAX_KEYS_PER_MEMBER}): revoke one you no longer use first`, 409);
+    const [x] = await tx.query<Raw>(
+      `/* platform: a member key for the session's person, in the session's workspace */ INSERT INTO api_keys (org_id, label, key_prefix, key_hash, user_id, scoped, expires_at)
+       VALUES ($1, $2, $3, $4, $5, true, now() + make_interval(days => $6)) RETURNING ${COLS}`,
+      [orgId, name, key.slice(0, KEY_PREFIX.length + 6), sha256(key), userId, days]);
+    return x;
+  }));
   return { key, row: row(r!) };
 }
 
@@ -153,8 +157,13 @@ export function memberKeyAppRouter(publicUrl: string): Router {
     const all = (await workspaceKeys(s.org)).map((k) => ({ ...k, owner_label: k.user_id ? (k.user_id === me ? "You" : names.get(k.user_id) ?? "Former member") : "Workspace key" }));
     return { me, can_manage_all: true, expiry_days: KEY_EXPIRY_DAYS, keys: mine, all };
   }));
-  r.post("/", (req, res, next) => { try { person(res); next(); } catch (e) { answer(() => { throw e; })(req, res, next); } },
-    endpointLimit("key", (_req, res) => (res.locals.session as Session).slug) as express.RequestHandler,
+  // A request that would be refused anyway is refused before it counts; the count is the person's own (in the shell's
+  // hourly key number), apart from the workspace's bucket staff issue and rotate keys from, so no member can use it up.
+  r.post("/", (req, res, next) => {
+    try { person(res); const b = (req.body ?? {}) as Record<string, unknown>; nameOf(b.name); daysOf(b.expires_in_days); next(); }
+    catch (e) { answer(() => { throw e; })(req, res, next); }
+  },
+    endpointLimit("key", (_req, res) => `member:${(res.locals.session as Session).slug}:${(res.locals.session as Session).user}`) as express.RequestHandler,
     answer(async (req, res) => {
       const s = S(res);
       const { key, row: k } = await createMemberKey(s.org, person(res), (req.body ?? {}) as Record<string, unknown>);
