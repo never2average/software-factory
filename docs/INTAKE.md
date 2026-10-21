@@ -115,6 +115,118 @@ three `GATEWAY_*` names are optional and never asked for: set them on `<project>
 or the reasoning effort; absent, the mold defaults apply. Brief hints: `ai gateway` / `vercel's gateway` select the
 gateway; `cloudflare workers ai` the default.
 
+## mold_v0: the brief's pack sections
+
+A new mold_v0 app is **a brief + a generated pack.json + a brand** (mold_v0-062). Besides the lines every mold_v0 brief
+has (`Mold: mold_v0`, where it runs, `Domain:`, `Product name:`, `Brand:`, `Brand colour:`), a brief may declare the
+app's own pack in the `## ` sections below. `intake.py` turns them, deterministically and with no model call
+(`.claude/scripts/lib/brief_pack.py`), into:
+
+- `packs/<pack_id>/files/packs/<pack_id>/pack.json`: the shell's declarative pack, checked against
+  `molds/mold_v0/codebase/packs/pack.schema.json` (a Python check of the subset of JSON Schema it uses), the
+  cross-checks the shell's build makes (areas, references, lifecycles, permissions, metrics against their areas,
+  charts against their metrics' shapes, tabs, schedules, credentials, onboarding), and the codebase's own zod check
+  when its `node_modules` are installed; then `packs.py check <pack_id> --mold mold_v0`;
+- `packs/<pack_id>/pack.json`: the factory's manifest, with an `intake` record (the brief and its hash, the hash of
+  the pack.json intake wrote, the answers, the defaults it applied, the brief's `## MCP` lines);
+- `application.json` `packs: [<pack_id>]`.
+
+`Pack: <id>` names the pack (the whole value must be `^[a-z][a-z0-9_]{1,30}$`, also its table prefix; anything else is refused, never shortened); without it the app id is the pack id. A `packs/<id>/` that already holds files intake did not write (no manifest, or a manifest without an `intake` record, or one made for another app) is refused.
+Only those section names are read (any other `## ` heading is prose), and their text is never read for the prose
+hints above: a field labelled "Vercel project" does not move the app to Vercel. Inside a section, only `### ` entries
+and `- ` bullets; anything else is an error with its line number. `|` separates the parts of a line (`\|` for a
+literal one). Names are lowercase letters, digits and `_` (2 to 63); tab ids use `-`.
+
+| Section | Each entry |
+|---|---|
+| `## Records` | `### <area>: <Label>`, then bullets: `role: source\|check\|asset`, `scope: workspace\|platform`, `description: …`, `field <name>: <Label> \| <type> \| required \| multiple \| help <text>`, `columns: a, b`, `lifecycle: <enum field>`, `initial: <state>`, `transition: <from>, <from> -> <to> \| <Label> \| roles owner` (from may be `*`), `due: <date field> within 7 days \| notify owner`, `sealed: yes\|no`, `who can read\|create\|update\|move\|delete: member, owner` |
+| `## Metrics` | `- <name>: <Label> \| count <area>` (or `sum <area>.<field>`, `average <area>.<field>`, `rate <area>`, `duration <area>`; `<area>` may be `run_results` or `runs`), then any of `\| where <field> in a, b and <field> < today`, `\| matching <conditions>` (a rate's numerator), `\| group by <field>`, `\| group by due <date field> soon 7`, `\| per week of created last 8` (day, week or month; `created`, `updated`, a date field or `state:<state>`), `\| from created to state:fixed as median in days`, `\| limit 10`, `\| unit usd`, `\| roles owner` |
+| `## Charts` | `- <name>: <Title> \| number\|bar\|stacked_bar\|line\|area\|table \| <metric>, <metric> \| ordinal` |
+| `## Tabs` | `- <id>: <Label> \| <kind> [<area or page>] \| icon shield \| group Audit \| views table, board, timeline, detail \| board by <field> \| timeline by <field> \| charts a, b \| roles owner, billing` (kinds: overview, area, runs, reports, credentials, usage, schedules, notices, setup, billing, profile, page) |
+| `## Jobs` (or `## Audits`) | `### <kind>: <Label>`, then: `repository: https://…`, `commit: <full 40-character id>`, `command: node audit.mjs --app {app}` (an argument list, never a shell line), `arg <name>: <Label> \| <type> \| required \| from scope.app \| pattern … \| default …`, `validate: node validate.mjs`, `setup: npm ci`, `write back: findings`, `results: out/results.json`, `record: sessions/*.json`, `strip: .claude/settings.local.json`, `env NAME: {gateway.token}`, `credentials: a, b`, `egress: api.example.com`, `providers: anthropic`, `timeout: 20 minutes`, `token lifetime: 1 hour`, `budget: 2`, `month budget: 50`, `concurrency: 2`, `attempts: 3`, `on unresolved: reject\|drop\|downgrade`. Jobs run on the built-in agent-workspace runner; a program of the pack's own (workspace-harness) is code, written by hand. |
+| `## Credentials` | `- <name>: <Label> \| workspace` (or `asset <area>`, `environment <asset area> [prod, staging]`) `\| env NAME` (or `file <name>`) `\| help …` |
+| `## Schedules` | `- <name>: <Label> \| <job> \| 0 3 * * * \| over <asset area> [keys a, b] \| environment prod \| off` (cron in UTC, at most every 5 minutes) |
+| `## Onboarding` | `- <id>: <Label> \| record <area>` (or `run <job>`, `credential <name>`, `tool <name>`, `connected`, `first call`, `workspace`) `\| help …` |
+| `## Words` | `- run: audit` (the shell's word on the left) |
+| `## MCP` | `- <setting>: <value>`. The shell reserves pack.json `mcp` until mold_v0-060, so these lines are kept in the manifest's `intake.mcp` and the MCP server is the platform's own (named by the brand). |
+
+Field types: `text [max 500]`, `number [0..10]`, `date`, `boolean`, `json`, `link`, `person`, `file`,
+`enum low, high` or `enum open=Open, wont_fix=Won't fix` (values: letters, digits, spaces and `_ . : / ( ) & -`),
+`reference <area>`.
+
+**Asked, never guessed** (questions.json, with options and a suggested answer; the intake subagent asks them):
+a missing `## Records`, `## Jobs`, `## Credentials` or `## Schedules` (confirm none), `## Tabs`, `## Charts` (with
+no `## Metrics` either) or `## Onboarding` (generated from the declarations, or none); an area's `role` and `scope`
+(an asset is always a workspace's own: the platform has no shared asset area); a field's or a job argument's type; a lifecycle with no
+transitions (free, or none); a job's repository, commit, command, validate command and write back (no default: a pin
+is never guessed, and a commit given for one repository is asked again when the brief names another); what a credential belongs to; the brand name when the brief, the product and the app have none.
+Answers are recorded with the pack, so a re-run asks nothing again.
+
+**Defaults that change no permission** follow these rules and are printed (`default: …`) and recorded
+(`intake.defaults`): a label from its name; a lifecycle starts in its field's first option; a job argument comes from
+the run's `scope.<name>`; a credential reaches a run as the variable of its name in capitals; an area's permissions
+are the platform's defaults (read: every role; write: the roles with edit) unless the brief narrows them; `## Metrics`
+without `## Charts` draws each metric by its shape; a job's results name the pack's check areas (`run_results`);
+version 0.1.0; a job runs on the built-in agent-workspace runner. An answer is one plain line: it sets the one thing asked, never anything else.
+
+**Refused, with the brief's line:** a viewer that writes or moves; a shared (platform) area anyone but staff writes;
+an unknown role; a branch, tag or short id as a commit; a repository that is not `https://`; the shell's own run
+variables (`PATH`, `HOME`, `RUN_*`, proxies, `NODE_OPTIONS`, `LD_*`), as a job's `env` or a credential's variable (its default name included); a control or text-direction character; a
+second copy of a section.
+
+**Re-runs and edits.** The same brief gives the same bytes, and an unchanged file is not rewritten. intake rewrites
+only the pack.json it wrote itself: when the file's sha256 is not the one it recorded, it asks `pack.overwrite.<hash>`
+(keep, the default: the brief's version goes to `packs/<pack_id>/pack.draft.json`, outside what is applied; or
+replace). The answer holds for that edit only. A pack intake did not make (no `intake` record, such as a pack with
+code) is never touched.
+
+A short example, the shape of a vulnerability desk (the full one is in `.claude/scripts/lib/brief_pack_selftest.py`):
+
+```
+Mold: mold_v0
+It runs on its own server.
+Domain: vulns.example.org
+Brand: Vuln Desk
+Pack: vuln_desk
+
+## Records
+### audit_apps: Applications
+- role: asset
+- field url: Address | text | required
+
+### audit_findings: Vulnerabilities
+- role: check
+- scope: workspace
+- field severity: Severity | enum low, medium, high, critical | required
+- field state: State | enum open, fixed, accepted
+- field app: Application | reference audit_apps | required
+- lifecycle: state
+- transition: open -> fixed | Mark fixed
+- transition: open -> accepted | Accept the risk | roles owner
+
+## Metrics
+- open_by_severity: Open by severity | count audit_findings | where state = open | group by severity
+
+## Charts
+- severity: Open by severity | bar | open_by_severity
+
+## Jobs
+### audit_scan: Audit an application
+- repository: https://git.example.com/agents/audit-agent.git
+- commit: 0123456789abcdef0123456789abcdef01234567
+- arg app: Application | reference audit_apps | required
+- command: node audit.mjs --app {app}
+- validate: node validate.mjs
+- write back: findings
+- credentials: audit_token
+
+## Credentials
+- audit_token: Application token | asset audit_apps | env AUDIT_TOKEN
+```
+
+Without `## Tabs`, `## Schedules` or `## Onboarding` this asks three questions (generated tabs, no schedules,
+generated onboarding are the suggested answers).
+
 ## What intake decides without asking
 
 | Field | Rule |
