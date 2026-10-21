@@ -671,6 +671,21 @@
                   "additionalProperties": false
                 }
               },
+              "unresolved_references": {
+                "default": "reject",
+                "type": "string",
+                "enum": [
+                  "reject",
+                  "drop",
+                  "downgrade"
+                ]
+              },
+              "max_unresolved": {
+                "default": 100,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5000
+              },
               "runner": {
                 "type": "string",
                 "const": "workspace-harness"
@@ -764,8 +779,9 @@
                 }
               },
               "workspace": {
-                "default": false,
-                "type": "boolean"
+                "default": true,
+                "type": "boolean",
+                "const": true
               },
               "credentials": {
                 "default": [],
@@ -871,14 +887,195 @@
                   "additionalProperties": false
                 }
               },
+              "unresolved_references": {
+                "default": "reject",
+                "type": "string",
+                "enum": [
+                  "reject",
+                  "drop",
+                  "downgrade"
+                ]
+              },
+              "max_unresolved": {
+                "default": 100,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5000
+              },
               "runner": {
                 "type": "string",
                 "const": "agent-workspace"
+              },
+              "agent": {
+                "type": "object",
+                "properties": {
+                  "repository": {
+                    "type": "string",
+                    "maxLength": 300,
+                    "pattern": "^(https:\\/\\/[A-Za-z0-9.-]+(:443)?\\/[A-Za-z0-9._~\\/-]+|file:\\/\\/\\/[A-Za-z0-9._~\\/-]+)$"
+                  },
+                  "commit": {
+                    "type": "string",
+                    "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                  },
+                  "strip": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    }
+                  },
+                  "setup": {
+                    "type": "object",
+                    "properties": {
+                      "command": {
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      },
+                      "timeout_seconds": {
+                        "default": 600,
+                        "type": "integer",
+                        "minimum": 10,
+                        "maximum": 86400
+                      }
+                    },
+                    "required": [
+                      "command"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "command": {
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  },
+                  "args": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{0,39}$"
+                    },
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string",
+                          "pattern": "^((scope|targets)(\\.[A-Za-z0-9_-]{1,64}){1,4}|run\\.(id|attempt|kind))$"
+                        },
+                        "pattern": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "default": {
+                          "type": "string",
+                          "maxLength": 200
+                        }
+                      },
+                      "required": [
+                        "from"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "env": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Z][A-Z0-9_]{1,62}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 1000
+                    }
+                  },
+                  "validate": {
+                    "type": "object",
+                    "properties": {
+                      "command": {
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      },
+                      "timeout_seconds": {
+                        "default": 600,
+                        "type": "integer",
+                        "minimum": 10,
+                        "maximum": 86400
+                      }
+                    },
+                    "required": [
+                      "command"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "write_back": {
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    }
+                  },
+                  "results": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  },
+                  "record": {
+                    "default": [],
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    }
+                  },
+                  "timeout_seconds": {
+                    "default": 3600,
+                    "type": "integer",
+                    "minimum": 10,
+                    "maximum": 86400
+                  }
+                },
+                "required": [
+                  "repository",
+                  "commit",
+                  "command",
+                  "validate",
+                  "write_back"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
               "name",
-              "runner"
+              "runner",
+              "agent"
             ],
             "additionalProperties": false
           }

@@ -22,16 +22,19 @@
 import { createHash, randomBytes } from "node:crypto";
 import { getDb, type Queryable } from "./db.js";
 import { brokerRunCredentials, revokeRunTokens, runGatewayUsage } from "./gateway.js";
-import { JobKindSchema, PackError, z, type RunResultRow, type RunView, type WorkspaceRuns } from "./pack-api.js";
+import { AgentJobKindSchema, JobKindSchema, PackError, z, type RunResultRow, type RunView, type WorkspaceCommitContext, type WorkspaceFile, type WorkspaceRuns } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { findArea } from "./record-areas.js";
-import { asPlatform } from "./tenant-scope.js";
-import { acquireLease, commitStaged, endAttempt, removeObjects, renewLease } from "./workspace-store.js";
+import { asPlatform, withTenant } from "./tenant-scope.js";
+import { acquireLease, commitStaged, endAttempt, latestSnapshot, openSnapshot, removeObjects, renewLease } from "./workspace-store.js";
+import { EMPTY_MANIFEST_SHA256, readBundle } from "./workspace-bundle.js";
+import type { Secret } from "./credential-redact.js";
 import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
 import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
 
-export type JobKind = z.output<typeof JobKindSchema> & { pack: string };
+/** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
+export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 let cache: { from: unknown; kinds: JobKind[] } | null = null;
@@ -39,7 +42,10 @@ let cache: { from: unknown; kinds: JobKind[] } | null = null;
 export function jobKinds(): JobKind[] {
   const list = packs();
   if (cache?.from === list) return cache.kinds;
-  cache = { from: list, kinds: list.flatMap((p) => (p.definition.jobKinds ?? []).map((k) => ({ ...JobKindSchema.parse(k), pack: p.id }))) };
+  cache = { from: list, kinds: list.flatMap((p) => [
+    ...(p.definition.jobKinds ?? []).map((k): JobKind => ({ ...JobKindSchema.parse(k), pack: p.id })),
+    ...(p.definition.agentJobKinds ?? []).map((k): JobKind => ({ ...AgentJobKindSchema.parse(k), pack: p.id })),
+  ]) };
   return cache.kinds;
 }
 export const findKind = (pack: string, name: string) => jobKinds().find((k) => k.pack === pack && k.name === name) ?? null;
@@ -175,7 +181,8 @@ export interface Claim {
   lease_seconds: number;
   lease_expires_at: string;
   deadline_at: string;
-  gateway: { expires_at: string; env: Record<string, string>; providers: Record<string, { base_url: string }>; gateway_url: string };
+  /** `token`: the run's gateway token itself (also in `env`), for an agent-workspace kind's declared variables (mold_v0-061). */
+  gateway: { expires_at: string; env: Record<string, string>; providers: Record<string, { base_url: string }>; gateway_url: string; token: string | null };
   /** Hosts the run's egress proxy allows: the gateway's (when it is a public HTTPS host) and the kind's. */
   egress: { hosts: string[] };
 }
@@ -278,7 +285,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}
   return {
     run: { ...view(row), org_id: row.org_id, spec: row.spec },
     lease_token: lease, lease_seconds: row.lease_seconds, lease_expires_at: iso(row.lease_expires_at)!, deadline_at: iso(row.deadline_at)!,
-    gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url },
+    gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url, token: gateway.token ?? null },
     egress: { hosts: runEgressHosts(row.egress ?? [], gateway.gateway_url) },
   };
 }
@@ -366,17 +373,37 @@ const refOf = (v: unknown, what: string): Ref | null => {
   return { area: r.area, key: r.key };
 };
 
+/** What happened to a result that named a record the run's workspace does not have (mold_v0-065). */
+export interface Unresolved {
+  check: Ref; asset: Ref | null; source: Ref | null; status: string; finding_fingerprint: string | null;
+  missing: ("check" | "asset" | "source")[]; action: "dropped" | "downgraded"; reason?: string;
+}
+type CheckedResult = { check: Ref; asset: Ref | null; source: Ref | null; status: string; fp: string | null; ev: string | null; detail: Record<string, unknown> };
+
 /**
  * A result's references, checked before anything is written: the check, asset and source each name a declared area
  * of that role and a record that exists for this run's workspace (its own rows of a workspace area, or a shared row).
  * An asset is always the workspace's own: a run can never point a finding at another workspace's records.
+ *
+ * A result's identity (mold_v0-065) is check x asset x source x finding fingerprint: several findings on one triple
+ * stay separate rows when their fingerprints differ; the same identity twice is refused (a run that cannot tell two
+ * findings apart must fold them itself). A reference to a record that does not exist is handled as the kind says
+ * (`unresolved_references`): "reject" refuses the run's results; "drop" leaves the result out; "downgrade" clears a
+ * missing asset or source (kept, as written, in detail.unresolved) and drops a result whose check is missing. More
+ * than `max_unresolved` such results refuse the run's results whatever the mode. A reference to an area that is not
+ * declared or not of its role is always refused: that is the pack's mistake, never the data's.
  */
-async function checkResults(q: Queryable, orgId: number, results: unknown[]) {
+async function checkResults(q: Queryable | null, orgId: number, results: unknown[], kind: { unresolved_references?: string; max_unresolved?: number } = {}) {
   if (results.length > 5000) throw new PackError("at most 5000 results per run", 413);
+  const mode = kind.unresolved_references === "drop" || kind.unresolved_references === "downgrade" ? kind.unresolved_references : "reject";
+  const maxUnresolved = kind.max_unresolved ?? 100;
   const exists = new Map<string, boolean>();
-  const has = async (want: "check" | "asset" | "source", ref: Ref) => {
+  /** Does the record exist for this run's workspace? A wrong area or role throws whatever the mode. */
+  const has = async (want: "check" | "asset" | "source", ref: Ref): Promise<boolean> => {
     const area = findArea(ref.area);
     if (!area || area.role !== want) throw new PackError(`result: ${ref.area} is not a ${want} area`, 400);
+    // No database (the dry pass before a workspace hook): everything but existence is checked.
+    if (!q) return true;
     const id = `${ref.area}\u0000${ref.key}`;
     if (!exists.has(id)) {
       const rows = area.scope === "platform"
@@ -384,57 +411,190 @@ async function checkResults(q: Queryable, orgId: number, results: unknown[]) {
         : await q.query("SELECT 1 FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4", [orgId, area.pack, area.name, ref.key]);
       exists.set(id, rows.length > 0);
     }
-    if (!exists.get(id)) throw new PackError(`result: no ${want} record ${ref.key} in ${ref.area}${area.scope === "workspace" ? " for this run's workspace" : ""}`, 400);
+    if (!exists.get(id) && mode === "reject")
+      throw new PackError(`result: no ${want} record ${ref.key} in ${ref.area}${area.scope === "workspace" ? " for this run's workspace" : ""}`, 400);
+    return exists.get(id)!;
   };
-  const out = [];
-  const seen = new Set<string>();
-  for (const raw of results) {
+  const notes: { at: number; u: Unresolved }[] = [];
+  const kept: { at: number; row: CheckedResult; id: string; downgraded: boolean; note: (action: Unresolved["action"], reason?: string) => void }[] = [];
+  for (const [at, raw] of results.entries()) {
     const x = raw as Record<string, unknown>;
-    const check = refOf(x?.check, "check"), asset = refOf(x?.asset, "asset"), source = refOf(x?.source, "source");
+    const check = refOf(x?.check, "check");
+    let asset = refOf(x?.asset, "asset"), source = refOf(x?.source, "source");
     if (!check) throw new PackError("each result names its check {area, key}", 400);
     if (typeof x.status !== "string" || !STATUSES.has(x.status)) throw new PackError("result status: pass, fail, error, not_applicable or unknown", 400);
     const fp = x.finding_fingerprint ?? null, ev = x.evidence_ref ?? null;
     if (fp !== null && (typeof fp !== "string" || !FINGERPRINT.test(fp))) throw new PackError("finding_fingerprint: 1-160 letters, digits, : _ . - /", 400);
     if (ev !== null && (typeof ev !== "string" || ev.length > 500 || /[\u0000-\u001f]/.test(ev))) throw new PackError("evidence_ref: up to 500 characters", 400);
-    const detail = jsonObject(x.detail, "detail");
+    let detail = jsonObject(x.detail, "detail");
     if (Buffer.byteLength(JSON.stringify(detail)) > 16 * 1024) throw new PackError("a result's detail is at most 16 KB", 413);
-    const id = JSON.stringify([check.area, check.key, asset?.area ?? "", asset?.key ?? "", source?.area ?? "", source?.key ?? ""]);
-    if (seen.has(id)) throw new PackError(`result: check ${check.key} x ${asset?.key ?? "no asset"} x ${source?.key ?? "no source"} is listed twice`, 400);
-    seen.add(id);
-    await has("check", check);
-    if (asset) await has("asset", asset);
-    if (source) await has("source", source);
-    out.push({ check, asset, source, status: x.status, fp, ev, detail });
+    const missing: Unresolved["missing"] = [];
+    if (!(await has("check", check))) missing.push("check");
+    if (asset && !(await has("asset", asset))) missing.push("asset");
+    if (source && !(await has("source", source))) missing.push("source");
+    const note = (action: Unresolved["action"], reason?: string) => notes.push({ at, u: { check, asset: refOf(x.asset, "asset"), source: refOf(x.source, "source"), status: x.status as string,
+      finding_fingerprint: fp as string | null, missing, action, ...(reason ? { reason } : {}) } });
+    let downgraded = false;
+    if (missing.length) {
+      if (mode === "drop" || missing.includes("check")) { note("dropped"); continue; }
+      // downgrade: the missing references are cleared; what the run wrote is kept in the result's detail.
+      detail = { ...detail, unresolved: Object.fromEntries(missing.map((m) => [m, m === "asset" ? asset : source])) };
+      if (missing.includes("asset")) asset = null;
+      if (missing.includes("source")) source = null;
+      if (Buffer.byteLength(JSON.stringify(detail)) > 16 * 1024) { note("dropped", "detail too large once downgraded"); continue; }
+      downgraded = true;
+    }
+    const id = JSON.stringify([check.area, check.key, asset?.area ?? "", asset?.key ?? "", source?.area ?? "", source?.key ?? "", fp ?? ""]);
+    kept.push({ at, row: { check, asset, source, status: x.status, fp: fp as string | null, ev: ev as string | null, detail }, id, downgraded, note });
   }
-  return out;
+  // Identity, whatever the order: results as written first (the same one twice is refused), then the downgraded ones
+  // (one that became the same as another result is dropped, and said so).
+  const seen = new Set<string>();
+  const out: { at: number; row: CheckedResult }[] = [];
+  for (const k of [...kept.filter((k) => !k.downgraded), ...kept.filter((k) => k.downgraded)]) {
+    if (seen.has(k.id)) {
+      if (k.downgraded) { k.note("dropped", "the same as another result once downgraded"); continue; }
+      const r = k.row;
+      throw new PackError(`result: check ${r.check.key} x ${r.asset?.key ?? "no asset"} x ${r.source?.key ?? "no source"}${r.fp ? ` x finding ${r.fp}` : ""} is listed twice`, 400);
+    }
+    seen.add(k.id);
+    if (k.downgraded) k.note("downgraded");
+    out.push({ at: k.at, row: k.row });
+  }
+  const unresolved = notes.sort((x, y) => x.at - y.at).map((n) => n.u);
+  if (unresolved.length > maxUnresolved)
+    throw new PackError(`results: ${unresolved.length} name records that do not exist for this run's workspace (this kind accepts at most ${maxUnresolved})`, 400);
+  return { rows: out.sort((x, y) => x.at - y.at).map((o) => o.row), unresolved };
 }
+
+/** A pack whose areas read the workspace store's files (mold_v0-059): the shell re-indexes them after each commit. */
+const indexesFiles = (pack: string) => Object.values(packs().find((p) => p.id === pack)?.definition.repositories ?? {}).some((r) => (r as { kind?: string })?.kind === "workspace_files");
+/** A run whose pack indexes its workspace after each commit (mold_v0-064; the shell's own index, mold_v0-059). */
+const withHook = (r: RunRow | null) => !!r?.spec?.workspace && (typeof packs().find((p) => p.id === r.pack)?.definition.onWorkspaceCommit === "function" || indexesFiles(r.pack));
 
 /** End the current attempt (the lease holder only). Returns the run as it now stands. */
 export async function completeRun(runId: string, leaseToken: string, c: Completion): Promise<RunView> {
   return complete(runId, leaseToken, c);
 }
 
+/** How long a pack's onWorkspaceCommit hook may take (mold_v0-064). */
+const hookSeconds = () => Math.min(Math.max(Number(process.env.OCTILLION_WORKSPACE_HOOK_SECONDS ?? 120) || 120, 1), 1800);
+
+/**
+ * mold_v0-064: a succeeded workspace run of a pack with onWorkspaceCommit. Its snapshot is committed first, in its own
+ * transaction (the run still running, its lease and its store's lease extended for the hook); then the hook indexes the
+ * committed files for the run's own workspace; then the completion checks the results (which may name what the hook
+ * indexed). Returns the run when the commit itself ended the attempt (a conflict), else what the completion needs.
+ */
+async function commitThenHook(runId: string, leaseToken: string, secrets: Secret[], cost: number): Promise<{ done: RunRow; gone: string[] } | { committed: boolean; hookError: string | null }> {
+  const gone: string[] = [];
+  const first = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
+    const run = await leased(tx, runId, leaseToken, true);
+    if (run.cancel_requested_at) return { skip: true as const };
+    const wb = await commitStaged(tx, run);
+    if (wb === "conflict") {
+      const status = run.attempt < run.max_attempts ? "queued" : "failed", kind = "infrastructure";
+      const error = "the workspace changed after this run checked it out: retried from a fresh checkout";
+      const [u] = await tx.query<RunRow>(
+        `/* tenant: the leased run, by id */ UPDATE runs SET status = $2, error_kind = $3, error = $4, cost_usd = $5, ended_at = CASE WHEN $2 = 'queued' THEN NULL ELSE now() END,
+                worker_id = NULL, lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now() WHERE id = $1 RETURNING ${COLS}`, [run.id, status, kind, error, cost]);
+      await event(run.id, run.org_id, run.attempt, status === "queued" ? "retry" : status, { error_kind: kind, error }, tx);
+      await revokeRunTokens(run.id, tx); gone.push(...(await endAttempt(tx, run.id)));
+      return { done: u as RunRow };
+    }
+    if (wb) await event(run.id, run.org_id, run.attempt, "workspace_written", wb, tx);
+    // The hook's time on top of the leases: neither the run nor its store is taken over while it indexes.
+    await tx.query(`/* tenant: the leased run, by id */ UPDATE runs SET lease_expires_at = now() + make_interval(secs => lease_seconds + $2) WHERE id = $1`, [run.id, hookSeconds() + 30]);
+    await tx.query(`/* tenant: the leased run's own store lease */ UPDATE workspace_leases SET expires_at = now() + make_interval(secs => $2) WHERE run_id = $1`, [run.id, run.lease_seconds + hookSeconds() + 30]);
+    return { run, wb };
+  }));
+  if ("skip" in first) return { committed: false, hookError: null };
+  if ("done" in first && first.done) return { done: first.done, gone };
+  const { run, wb } = first;
+  if (!wb) return { committed: false, hookError: null }; // nothing staged: no snapshot to hand the hook
+  const def = packs().find((p) => p.id === run.pack)?.definition;
+  const hook = def?.onWorkspaceCommit;
+  const index = indexesFiles(run.pack);
+  if (!hook && !index) return { committed: true, hookError: null };
+  try {
+    const snap = await asPlatform(async () => latestSnapshot(await getDb(), run.org_id, run.pack));
+    // No version yet (a first run that wrote an empty workspace): the empty workspace, version 0.
+    const files: WorkspaceFile[] = snap ? readBundle(await openSnapshot(snap)).files.map((f) => ({ path: f.path, size: f.body.length, sha256: snap.manifest[f.path]!.sha256, body: f.body })) : [];
+    // The shell's own index first (mold_v0-059): the areas fed by the workspace's files, for the run's own workspace,
+    // all-or-nothing; then the pack's hook sees them indexed. A refused index fails the run as a failed hook does.
+    if (index) {
+      const { indexWorkspaceFiles } = await import("./data-repositories.js");
+      const reports = await indexWorkspaceFiles(run.org_id, run.pack, files);
+      await event(run.id, run.org_id, run.attempt, "workspace_indexed", { version: snap?.version ?? 0, repositories: reports.map((x) => ({ repository: x.repository, areas: x.areas })) });
+    }
+    if (!hook) return { committed: true, hookError: null };
+    // The run's own workspace, from the run row: the hook's records, database and files are that workspace's only.
+    const [org] = await asPlatform(async () => (await getDb()).query<{ slug: string; name: string | null }>("SELECT slug, name FROM organizations WHERE id = $1", [run.org_id]));
+    const { workspaceDb } = await import("./packs.js");
+    const { workspaceRecords } = await import("./record-areas.js");
+    // Handles that stop working when the hook's time is up: a hook still going after it cannot write on.
+    let live = true;
+    const alive = <T>(f: () => T): T => { if (!live) throw new Error("the workspace hook's time is up: refused"); return f(); };
+    const db = workspaceDb(run.org_id), recs = workspaceRecords(run.pack, run.org_id);
+    const ctx: WorkspaceCommitContext = {
+      pack: run.pack, workspace: { id: run.org_id, slug: org?.slug ?? "", name: org?.name ?? null, userId: null, role: null },
+      db: { query: (sql, params) => alive(() => db.query(sql, params)) },
+      records: { list: (a, o) => alive(() => recs.list(a, o)), get: (a, k) => alive(() => recs.get(a, k)), put: (a, k, v) => alive(() => recs.put(a, k, v)),
+        move: (a, k, t) => alive(() => recs.move(a, k, t)), delete: (a, k) => alive(() => recs.delete(a, k)), batch: (ops) => alive(() => recs.batch(ops)) },
+      run: { id: run.id, kind: run.kind, attempt: run.attempt, scope: run.scope ?? {}, targets: run.targets ?? {} },
+      snapshot: { version: snap?.version ?? 0, changed: !wb.unchanged, manifest_sha256: snap?.manifest_sha256 ?? EMPTY_MANIFEST_SHA256 },
+    };
+    let timer: NodeJS.Timeout | undefined;
+    await withTenant(run.org_id, () => Promise.race([
+      Promise.resolve().then(() => hook(ctx, files)),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`it took longer than ${hookSeconds()} s`)), hookSeconds() * 1000); }),
+    ])).finally(() => { clearTimeout(timer); live = false; });
+    await event(run.id, run.org_id, run.attempt, "workspace_hook", { version: snap?.version ?? 0, files: files.length });
+    return { committed: true, hookError: null };
+  } catch (e) {
+    const msg = redactText(String((e as Error)?.message ?? e).slice(0, 1000), secrets);
+    await event(run.id, run.org_id, run.attempt, "workspace_hook_failed", { error: msg, snapshot: "kept: it is committed and passed the run's validation" });
+    return { committed: true, hookError: msg };
+  }
+}
+
 async function complete(runId: string, leaseToken: string, c0: Completion): Promise<RunView> {
   if (c0?.outcome !== "succeeded" && c0?.outcome !== "failed") throw new PackError("outcome: succeeded or failed", 400);
   // Nor in its results or its error (mold_v0-034): redacted before they are checked and written.
-  const secrets = await asPlatform(async () => {
-    const [x] = await (await getDb()).query<RunRow>(`/* tenant: by run id, for its own credentials */ SELECT ${COLS} FROM runs WHERE id = $1`, [String(runId)]);
-    return x ? runSecrets(x) : [];
-  });
+  const runRow = await asPlatform(async () =>
+    (await (await getDb()).query<RunRow>(`/* tenant: by run id, for its own credentials */ SELECT ${COLS} FROM runs WHERE id = $1`, [String(runId)]))[0] ?? null);
+  const secrets = runRow ? await runSecrets(runRow) : [];
   const c: Completion = secrets.length ? { ...c0, error: c0.error === undefined ? undefined : redactText(String(c0.error), secrets),
     results: Array.isArray(c0.results) ? redactJson(c0.results, secrets) : c0.results } : c0;
   const usage = await asPlatform(() => runGatewayUsage(String(runId)));
   const gone: string[] = [];
+  // mold_v0-064: a pack that indexes its workspace gets the committed snapshot before the results are checked.
+  let hooked: { committed: boolean; hookError: string | null } | null = null;
+  if (c.outcome === "succeeded" && withHook(runRow)) {
+    // Everything about the results but whether their records exist is checked before anything is committed: only an
+    // unresolved reference (which the hook may resolve) can still refuse them after the snapshot commits.
+    await checkResults(null, runRow!.org_id, Array.isArray(c.results) ? c.results : [], runRow!.spec ?? {});
+    const h = await commitThenHook(String(runId), leaseToken, secrets, usage.cost_usd);
+    if ("done" in h) { await removeObjects(h.gone); return view(h.done); }
+    hooked = h;
+  }
   const r = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
     const run = await leased(tx, runId, leaseToken, true);
     // The attempt's end, in this transaction: its tokens revoked, its store lease released, its uncommitted stage discarded.
     const endOfAttempt = async () => { await revokeRunTokens(run.id, tx); gone.push(...(await endAttempt(tx, run.id))); };
     let status: RunView["status"], kind: string | null = null, error: string | null = null;
+    let resultSummary: Record<string, number> | null = null;
     if (run.cancel_requested_at) { status = "cancelled"; kind = "cancelled"; error = "cancelled"; }
+    else if (c.outcome === "succeeded" && hooked?.hookError) {
+      // The hook failed: the results are not accepted. The snapshot stays committed (it passed the run's validation);
+      // the next run's commit calls the hook again.
+      status = "failed"; kind = "run"; error = `the pack's workspace hook (onWorkspaceCommit) failed: ${hooked.hookError}`.slice(0, 2000);
+    }
     else if (c.outcome === "succeeded") {
-      const results = await checkResults(tx, run.org_id, Array.isArray(c.results) ? c.results : []);
-      // The workspace's write-back (mold_v0-033): the staged snapshot becomes the next version now, with the results.
-      const wb = run.spec?.workspace ? await commitStaged(tx, run) : null;
+      const { rows: results, unresolved } = await checkResults(tx, run.org_id, Array.isArray(c.results) ? c.results : [], run.spec ?? {});
+      // The workspace's write-back (mold_v0-033): the staged snapshot becomes the next version now, with the results
+      // (already committed, before the results were checked, when the pack has a workspace hook: mold_v0-064).
+      const wb = run.spec?.workspace && !hooked ? await commitStaged(tx, run) : null;
       if (wb === "conflict") {
         status = run.attempt < run.max_attempts ? "queued" : "failed"; kind = "infrastructure";
         error = "the workspace changed after this run checked it out: retried from a fresh checkout";
@@ -452,6 +612,11 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
           [run.id, run.org_id, x.check.area, x.check.key, x.asset?.area ?? null, x.asset?.key ?? null, x.source?.area ?? null, x.source?.key ?? null,
            x.status, x.fp, x.ev, JSON.stringify(x.detail)]);
+      // Every result left out or downgraded is said so (mold_v0-065), with its status: a dropped failure is visible.
+      for (const u of unresolved.slice(0, 500)) await event(run.id, run.org_id, run.attempt, "result_unresolved", u as unknown as Record<string, unknown>, tx);
+      if (unresolved.length) resultSummary = { results: results.length, unresolved: unresolved.length,
+        dropped: unresolved.filter((u) => u.action === "dropped").length, downgraded: unresolved.filter((u) => u.action === "downgraded").length,
+        dropped_not_passing: unresolved.filter((u) => u.action === "dropped" && u.status !== "pass" && u.status !== "not_applicable").length };
       status = "succeeded";
     } else {
       kind = ["infrastructure", "run", "validation", "timeout"].includes(String(c.error_kind)) ? String(c.error_kind) : "run";
@@ -463,7 +628,7 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
               ended_at = CASE WHEN $2 = 'queued' THEN NULL ELSE now() END,
               worker_id = NULL, lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now()
         WHERE id = $1 RETURNING ${COLS}`, [run.id, status, kind, error, usage.cost_usd]);
-    await event(run.id, run.org_id, run.attempt, status === "queued" ? "retry" : status, { error_kind: kind, error, cost_usd: usage.cost_usd }, tx);
+    await event(run.id, run.org_id, run.attempt, status === "queued" ? "retry" : status, { error_kind: kind, error, cost_usd: usage.cost_usd, ...(resultSummary ?? {}) }, tx);
     await endOfAttempt();
     return u!;
   }));

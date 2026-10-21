@@ -32,8 +32,10 @@
  *                (src/schedules.ts) starts due runs through the run engine; a missed tick runs at most once
  *   recordAreas  `due` (mold_v0-035): a workspace check area may name a date field; a daily check posts an in-app
  *                notice and emails the workspace's owners about records due within `within_days`
- *   agentJobKinds, metrics   declared and validated (mold_v0-057); wired by the agent-workspace runner (061) and the
- *                metrics and charts (063)
+ *   agentJobKinds wired (mold_v0-061): the agent-workspace runner (src/agent-workspace.ts): an agent repository at a
+ *                pinned commit, a declared command, validation and write-back; runs like jobKinds (ctx.runs.start)
+ *   onWorkspaceCommit  wired (mold_v0-064): called after a workspace run's snapshot commits, before its results are checked
+ *   metrics      declared and validated (mold_v0-057); wired by the metrics and charts (063)
  *   repositories wired (mold_v0-059; src/data-repositories.ts): where an area's rows come from, through one adapter
  *                interface: the shell's tables (the default), the workspace store's files (indexed after a commit), an
  *                upstream catalog at a pinned commit (indexed by platform staff), an external HTTP API (read live).
@@ -54,6 +56,7 @@ import { z } from "zod";
 import type { AccountPermission, AccountRole } from "./account-roles.js";
 import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.js";
 import { parseCron } from "./cron.js";
+import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
 
 export { z };
 
@@ -162,6 +165,22 @@ export interface WorkspaceRuns {
   cancel(id: string): Promise<RunView>;
 }
 
+/** One file of a committed workspace snapshot (mold_v0-064): its path in the workspace, its bytes, checked against its sha256. */
+export interface WorkspaceFile { path: string; size: number; sha256: string; body: Uint8Array }
+/**
+ * What a pack's onWorkspaceCommit hook (mold_v0-064) receives besides the files: the run's own workspace (from the run
+ * row, never from the run's output), its records and database handle (that workspace only, as a tool's), and the run.
+ */
+export interface WorkspaceCommitContext {
+  pack: string;
+  workspace: Workspace;
+  db: PackDb;
+  records: WorkspaceRecords;
+  run: { id: string; kind: string; attempt: number; scope: Record<string, unknown>; targets: Record<string, unknown> };
+  /** The snapshot's version, and whether this run changed it (false: the run wrote back the version it checked out). */
+  snapshot: { version: number; changed: boolean; manifest_sha256: string };
+}
+
 export interface PackToolContext { pack: string; workspace: Workspace; db: PackDb; records: WorkspaceRecords; runs: WorkspaceRuns }
 
 /** What a tool may return: any JSON value (shown as structured content and text), or a full MCP tool result. */
@@ -237,19 +256,6 @@ const envName = z.string().regex(/^[A-Z][A-Z0-9_]{1,62}$/, "an environment varia
 const host = z.string().regex(/^(\*\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\.[a-z0-9-]+)+$/i, "a host name (HTTPS on port 443; a host allows its subdomains too)");
 const packFile = z.string().regex(/^[a-z0-9_\-][a-z0-9_\-/.]*\.m?js$/i, "a .js or .mjs file inside the pack").refine((p) => !p.split("/").includes(".."), "a file inside the pack");
 
-/**
- * A run kind (wired by mold_v0-041; src/runs.ts, src/run-harness.ts): what runs, for how long, at what cost, reaching
- * which hosts. A run of it gets a gateway token for `providers` that lives `token_lifetime_seconds` (the attempt's
- * deadline: the token never expires before the run is stopped), a lease it renews by heartbeat every
- * `lease_seconds / 3`, up to `max_attempts` attempts when the infrastructure fails, and a spend limit `budget_usd`
- * across all its attempts, enforced by the gateway.
- *   runner     "workspace-harness": the harness checks the workspace out (when `workspace`), runs `entry` with node in
- *              it, then `validator` (exit 0 means valid), and writes the workspace back only then (mold_v0-033)
- *   entry      the run's program, a file inside the pack; exit 0 done, 75 an infrastructure failure (retried), else failed.
- *              Put it under the pack's runner directory (pack.json `runner`, mold_v0-054) when it starts processes or
- *              needs more of node than server code may import: scripts/gen-packs.mjs holds runner code to its own rules
- *   egress     the hosts the run may reach besides the gateway, through the run's egress proxy
- */
 // ---------- record fields, lifecycles and permissions (mold_v0-047, typed by mold_v0-057) ----------
 
 /** The account roles (src/account-roles.ts), in order: what a declaration may name in permissions and transitions. */
@@ -343,6 +349,32 @@ export const PermissionsSchema = z.object({
 }).strict();
 export type RecordAction = keyof z.output<typeof PermissionsSchema>;
 
+/**
+ * A run kind (wired by mold_v0-041; src/runs.ts, src/run-harness.ts): what runs, for how long, at what cost, reaching
+ * which hosts. A run of it gets a gateway token for `providers` that lives `token_lifetime_seconds` (the attempt's
+ * deadline: the token never expires before the run is stopped), a lease it renews by heartbeat every
+ * `lease_seconds / 3`, up to `max_attempts` attempts when the infrastructure fails, and a spend limit `budget_usd`
+ * across all its attempts, enforced by the gateway.
+ *   runner     "workspace-harness": the harness checks the workspace out (when `workspace`), runs `entry` with node in
+ *              it, then `validator` (exit 0 means valid), and writes the workspace back only then (mold_v0-033)
+ *   entry      the run's program, a file inside the pack; exit 0 done, 75 an infrastructure failure (retried), else failed.
+ *              Put it under the pack's runner directory (pack.json `runner`, mold_v0-054) when it starts processes or
+ *              needs more of node than server code may import: scripts/gen-packs.mjs holds runner code to its own rules
+ *   egress     the hosts the run may reach besides the gateway, through the run's egress proxy
+ *
+ * Or `runner: "agent-workspace"` (mold_v0-061; src/agent-workspace.ts): no program of the pack's own, but an agent
+ * repository at a pinned commit, configured by `agent` (src/agent-workspace-config.ts: plain JSON, the same in a
+ * pack.json): fetched at exactly that commit, the workspace's files restored into it, run with the declared command as
+ * the run's user, validated, and written back only when the validation exits 0. Its runs always use the workspace store.
+ *
+ * Both take `unresolved_references` (mold_v0-065): what the engine does with a result that names a record that does not
+ * exist for the run's workspace. "reject" (the default): the whole run's results are refused and the run fails.
+ * "drop": that result is left out. "downgrade": the missing asset or source reference is cleared and kept, as written,
+ * in the result's detail (`unresolved`); a missing check cannot be cleared, so that result is left out. Each one is
+ * reported in the run's events (`result_unresolved`), with the result's status, and counted in its "succeeded" event;
+ * more than `max_unresolved` of them (default 100) and the run's results are refused as with "reject". A reference to
+ * an area that is not declared, or not of the role it is used in, is a mistake in the pack: always refused.
+ */
 const jobKindBase = {
   name,
   label: z.string().min(1).max(80).optional(),
@@ -373,6 +405,8 @@ const jobKindBase = {
    * when a pack's code starts the run (src/packs.ts declaredRuns). Absent: the scope is free, as before.
    */
   args: z.array(field).max(30).optional(),
+  unresolved_references: z.enum(["reject", "drop", "downgrade"]).default("reject"),
+  max_unresolved: z.number().int().min(0).max(5000).default(100),
 };
 export const JobKindSchema = z.object({
   ...jobKindBase,
@@ -386,14 +420,28 @@ export const JobKindSchema = z.object({
 /**
  * A job kind for the built-in agent-workspace runner (mold_v0-061: an agent repository at a pinned commit, a declared
  * command, validation and write-back). Declared and validated here (mold_v0-057) with everything but the runner's own
- * settings, which 061 adds; a pack.json may declare one with no program of its own. The run engine does not take it
- * yet (it is not in `jobKinds`, so ctx.runs.start refuses it and no runner claims it): 061 wires it.
+ * settings, which 061 adds (`agent`, src/agent-workspace-config.ts); a pack.json may declare one with no program of its
+ * own. Wired by mold_v0-061: the run engine takes them beside `jobKinds` (src/runs.ts jobKinds) and the harness runs
+ * them (src/run-harness.ts, src/agent-workspace.ts).
  */
 export const AgentJobKindSchema = z.object({
   ...jobKindBase,
   runner: z.literal("agent-workspace"),
-}).strict()
-  .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice");
+  /** Always true: the agent's write-back paths are the workspace (src/workspace-store.ts). */
+  workspace: z.literal(true).default(true),
+  agent: AgentWorkspaceSchema,
+}).strict().superRefine((k, ctx) => {
+  if (new Set((k.args ?? []).map((a) => a.name)).size !== (k.args ?? []).length) ctx.addIssue({ code: "custom", message: "an argument is declared twice", path: ["args"] });
+  if (k.agent.timeout_seconds > k.token_lifetime_seconds)
+    ctx.addIssue({ code: "custom", message: "agent.timeout_seconds is longer than token_lifetime_seconds (the run's deadline)", path: ["agent", "timeout_seconds"] });
+  for (const [name, v] of Object.entries(k.agent.env)) for (const p of placeholders(v)) {
+    const m = GATEWAY_PLACEHOLDER.exec(p);
+    if (m && !k.providers.length) ctx.addIssue({ code: "custom", message: `{${p}} needs a gateway provider (providers)`, path: ["agent", "env", name] });
+    if (m?.[2] && !k.providers.includes(m[2])) ctx.addIssue({ code: "custom", message: `{${p}}: ${m[2]} is not one of the kind's providers`, path: ["agent", "env", name] });
+  }
+  for (const name of Object.keys(k.agent.env)) if (RESERVED_ENV.test(name))
+    ctx.addIssue({ code: "custom", message: `${name} is set by the shell for every run (PATH, HOME, RUN_*, proxy and loader settings)`, path: ["agent", "env", name] });
+});
 
 /**
  * A record area (wired by mold_v0-047; molds/mold_v0/MOLD.md "Pack and record-area contract"). Area names are unique
@@ -719,6 +767,16 @@ export interface PackDefinition {
   /** How a run's output becomes run_results rows (mold_v0-061; declared and validated since 057). */
   runResults?: z.input<typeof RunResultsSchema>;
   /**
+   * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
+   * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
+   * (its records, through ctx.records), so the results may name what the index made. Called with every file of the
+   * committed snapshot, also when the run changed nothing (an index can always catch up). Runs for the run's own
+   * workspace only, under row-level security, within OCTILLION_WORKSPACE_HOOK_SECONDS (120). If it throws or runs out
+   * of time the run fails ("run") and its results are not written; the snapshot stays committed (it passed the run's
+   * validation), and the next run's commit calls the hook again. Writes it made before failing are not undone.
+   */
+  onWorkspaceCommit?: (ctx: WorkspaceCommitContext, files: WorkspaceFile[]) => void | Promise<void>;
+  /**
    * Migrations are declared in pack.json (`migrations`, a directory of NNNN_name.sql inside the pack) so the build can
    * check them without running the pack: this field, when given, must name the same directory.
    */
@@ -737,6 +795,9 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   const at = (what: string) => `pack ${JSON.stringify(p?.id)}: ${what}`;
   if (!p || typeof p !== "object") throw new PackDefinitionError("definePack: expected an object");
   if (typeof p.id !== "string" || !/^[a-z][a-z0-9_]{1,30}$/.test(p.id)) problems.push(at("id must be 2-31 lowercase letters, digits or _, starting with a letter"));
+  if (p.onWorkspaceCommit !== undefined && typeof p.onWorkspaceCommit !== "function") problems.push(at("onWorkspaceCommit must be a function (ctx, files)"));
+  if (p.onWorkspaceCommit && !(p.agentJobKinds ?? []).length && !(p.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace))
+    problems.push(at("onWorkspaceCommit is called after a workspace run commits: declare a job kind with workspace: true (or agent-workspace)"));
   const tools = p.tools ?? [], routes = p.routes ?? [];
   const seenTools = new Set<string>();
   for (const t of tools) {

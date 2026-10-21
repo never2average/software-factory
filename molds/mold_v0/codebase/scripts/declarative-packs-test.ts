@@ -307,13 +307,17 @@ export default definePack({ id: "fx_mixed",
     console.log("✓ schema drift: a stored row that no longer fits is named on read, never silently passed; the next write must fit");
   }
 
-  // Job kinds: an agent-workspace kind is declared, not run (mold_v0-061); a harness kind's declared args are checked on start.
+  // Job kinds: an agent-workspace kind declared in pack.json runs like any kind (mold_v0-061), its declared args checked
+  // on start as a harness kind's are.
   {
     const ext = definePack({ id: "fixture_tracker", jobKinds: [{ name: "tracker_local", runner: "workspace-harness", entry: "run.mjs",
       args: [{ name: "app", label: "Application", type: "reference", to: "tracker_apps", required: true }, { name: "depth", label: "Depth", type: "number", min: 1, max: 5 }] }] });
     setPacksForTest([{ manifest, declared, definition: ext }]);
     const runs = declaredRuns("fixture_tracker", workspaceRuns("fixture_tracker", A.orgId, null), A.orgId);
-    await assert.rejects(runs.start("tracker_scan", { scope: { app: "web" } }), /has no job kind "tracker_scan"/, "the run engine does not take an agent-workspace kind before 061");
+    await assert.rejects(runs.start("tracker_scan", { scope: { app: "web", depth: 9 } }), /field depth of job kind tracker_scan's arguments must be a number from 1 up to 5/);
+    const scan = await withTenant(A.orgId, () => runs.start("tracker_scan", { scope: { app: "web" } }));
+    assert.equal(scan.status, "queued", "the run engine takes an agent-workspace kind declared in pack.json (mold_v0-061)");
+    await withTenant(A.orgId, () => workspaceRuns("fixture_tracker", A.orgId, null).cancel(scan.id));
     await assert.rejects(runs.start("tracker_local", { scope: { app: "web", depth: 9 } }), /field depth of job kind tracker_local's arguments must be a number from 1 up to 5/);
     await assert.rejects(runs.start("tracker_local", { scope: { app: "b-only-key" } }), /no tracker_apps record b-only-key in this workspace/, "a reference argument resolves in the run's workspace only");
     await assert.rejects(runs.start("tracker_local", { scope: {} }), /field app of job kind tracker_local's arguments is required/);
@@ -321,7 +325,7 @@ export default definePack({ id: "fx_mixed",
     const run = await withTenant(A.orgId, () => runs.start("tracker_local", { scope: { app: "web", depth: 2 } }));
     assert.deepEqual([run.status, run.scope], ["queued", { app: "web", depth: 2 }], "good arguments start the run");
     setPacksForTest([{ manifest, declared, definition: null }]);
-    console.log("✓ job kinds: an agent-workspace kind is declared and listed but not run before 061; declared arguments are checked when a run starts");
+    console.log("✓ job kinds: an agent-workspace kind declared in pack.json is taken by the run engine (061); declared arguments are checked when a run starts");
   }
   await db.close();
   console.log("DECLARATIVE PACKS TEST PASS");
