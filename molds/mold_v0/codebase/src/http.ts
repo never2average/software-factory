@@ -11,6 +11,7 @@ import * as mail from "./email.js";
 import { appRouter } from "./app.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
+import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
 import { credentialAppRouter } from "./credential-routes.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
@@ -166,6 +167,8 @@ export function createApp() {
   app.use("/api/packs", packAppRouter());
   // ---------- record areas' list and detail data: /api/records (src/record-areas.ts); with no area nothing is mounted ----------
   app.use("/api/records", recordAppRouter());
+  // ---------- the generic data API: /api/data (src/data-routes.ts, mold_v0-059); with no area nothing is mounted ----------
+  app.use("/api/data", dataAppRouter());
   // ---------- the workspace credential vault: /api/credentials (src/credential-routes.ts); with no field nothing is mounted ----------
   app.use("/api/credentials", credentialAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
@@ -721,6 +724,7 @@ export function createApp() {
   // Packs' admin routes: /api/admin/packs/<id>, behind the same admin guard, CSRF header and access log (src/pack-routes.ts).
   admin.use("/packs", packAdminRouter());
   admin.use("/records", recordAdminRouter());
+  admin.use("/data", dataAdminRouter());
   app.use("/api/admin", admin);
 
   // ---------- local preview of the widget (development only) ----------

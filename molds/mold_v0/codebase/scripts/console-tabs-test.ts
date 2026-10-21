@@ -96,7 +96,7 @@ createRoot(document.getElementById('root')!).render(
   <div className='grid border-t border-l lg:grid-cols-2' style={{ width: 1180 }}>
     {tab.charts.map((n) => <div key={n} data-chart={n}><ChartCell chart={chart(n)} results={results as never} width={540} /></div>)}
     <div data-table='severity'><ChartCell chart={{ ...chart('severity'), type: 'table' }} results={results as never} width={540} /></div>
-    <div data-board='1' style={{ gridColumn: '1 / -1' }}><BoardColumns area={area} by='state' detail data={records} /></div>
+    <div data-board='1' style={{ gridColumn: '1 / -1' }}><BoardColumns area={area} by='state' detail data={records} role='member' onMove={() => {}} /></div>
   </div>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
 `);
@@ -228,6 +228,8 @@ try {
       assert.match(render.board, /Open<\/span>.*Triaged<\/span>.*Fixed<\/span>.*Risk accepted<\/span>.*Reopened<\/span>/s, "the board's columns: the lifecycle's states, in order");
       assert.match(render.board, /Open<\/span><span[^>]*>2<\/span>/, "two open");
       assert.match(render.board, /href="\/app\/records\/audit_findings\/f7"/, "a card opens the record (the detail view)");
+      const menu = /<select aria-label="Move Outdated TLS"[^>]*>(.*?)<\/select>/s.exec(render.board)?.[1] ?? "";
+      assert.deepEqual([...menu.matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]), ["", "triaged", "fixed"], "an open card's moves for a member: Triage, Mark fixed (accepting the risk is the owner's)");
       console.log("✓ rendered in a headless browser: the overview's 8 charts (tiles, ordinal severity bars, found vs fixed lines with a legend, stacked severity per week with 2px gaps), tokens only, each with a summary and a table view; the board by state");
     }
   }

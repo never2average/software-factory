@@ -302,6 +302,12 @@ try {
     assert.equal((await getJ("/api/metrics", ma)).status, 400, "names are required");
     assert.equal((await getJ(`/api/metrics?names=${"m,".repeat(40)}x`, ma)).status, 400, "at most 30 at once");
     assert.equal((await getJ("/api/metrics?names=open_findings'%3B--", ma)).status, 400, "names are plain words");
+    // A board's move goes through the generic data API (mold_v0-059), which stamps the state's time like any move.
+    const mv = await http.req("POST", "/api/data/audit_findings/f4/move", { authorization: `Bearer ${ma}`, "X-Pack-Request": "1" }, { to: "triaged" });
+    assert.equal(mv.status, 200, `a member moves a record from the board: ${await mv.clone().text()}`);
+    const f4 = (await db.query<{ data: any }>("SELECT data FROM workspace_records WHERE org_id = $1 AND area = 'audit_findings' AND key = 'f4'", [A.orgId]))[0]!.data;
+    assert.ok(f4.state === "triaged" && f4.$state_at.triaged && f4.$state_at.open, "moved through the data API, its state time stamped, the earlier ones kept");
+    assert.equal((await http.req("POST", "/api/data/audit_findings/f4/move", { authorization: `Bearer ${va}`, "X-Pack-Request": "1" }, { to: "fixed" })).status, 403, "a viewer may not move");
     const runsA = await getJ("/api/runs", ma);
     assert.deepEqual(runsA.body.runs.map((r: any) => r.id).sort(), [`run_a1_${STAMP}`, `run_a2_${STAMP}`, `run_a3_${STAMP}`].sort(), "A's runs only");
     assert.deepEqual(runsA.body.runs.find((r: any) => r.id === `run_a2_${STAMP}`).results, { pass: 1, fail: 1, not_applicable: 1 }, "each run's results by status");

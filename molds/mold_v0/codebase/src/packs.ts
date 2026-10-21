@@ -86,6 +86,10 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     else if (a.scope === "platform" && scopeOf.get(l.area) === "workspace")
       problems.push(`pack ${p.id}: record area ${a.name} is shared (platform) and its field ${l.field} refers to ${l.area}, a workspace's own area: a shared area may refer to shared areas only`);
   }
+  // A reference is checked on write against stored rows: never into an area read live from an API (mold_v0-059).
+  const liveAreas = new Set(out.flatMap((p) => (p.definition.recordAreas ?? []).filter((a) => a.repository && (p.definition.repositories?.[a.repository] as { kind?: string } | undefined)?.kind === "http_api").map((a) => a.name)));
+  for (const p of out) for (const a of p.definition.recordAreas ?? []) for (const f of a.fields ?? [])
+    if (f.type === "reference" && f.to && liveAreas.has(f.to)) problems.push(`pack ${p.id}: record area ${a.name}'s field ${f.name} refers to ${f.to}, which is read live from an API: refer to it with a link instead`);
   // A job kind's reference argument names an area of this build (mold_v0-057).
   for (const p of out) for (const k of [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])]) for (const a of k.args ?? [])
     if (a.type === "reference" && a.to && !areaOwner.has(a.to)) problems.push(`pack ${p.id}: job kind ${k.name}'s argument ${a.name} refers to area ${a.to}, which no pack declares`);

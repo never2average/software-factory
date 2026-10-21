@@ -29,7 +29,25 @@ export function RecordLink({ area, r, detail }: { area: RecordAreaSpec; r: Recor
 }
 
 /** A board: a column per option of `by` (in declared order; a stored value no longer an option gets its own), a card per record. */
-export function BoardColumns({ area, by, detail, data }: { area: RecordAreaSpec; by: string; detail: boolean; data: Page }) {
+/**
+ * The moves a record in state `from` may make along the area's lifecycle, for `role` (null: not known, every move the
+ * lifecycle declares; the server's record store checks the role, the transition and the area's move permission anyway).
+ */
+export function movesFrom(area: RecordAreaSpec, from: string, role: string | null) {
+  const lc = area.lifecycle;
+  if (!lc) return [];
+  return lc.transitions.filter((t) => (t.from === '*' || t.from.includes(from)) && t.to !== from && (!role || !t.roles || t.roles.includes(role)))
+    .map((t) => ({ to: t.to, label: t.label ?? optionLabel(area.fields.find((f) => f.name === lc.field), t.to) }))
+    .filter((t, i, all) => all.findIndex((x) => x.to === t.to) === i);
+}
+
+/**
+ * A board. With `onMove` (a workspace area whose board is by its lifecycle field), each card offers the moves its state
+ * allows, as a labelled menu (keyboard and screen-reader friendly, no drag needed), through the record store's move.
+ */
+export function BoardColumns({ area, by, detail, data, onMove, role = null }: {
+  area: RecordAreaSpec; by: string; detail: boolean; data: Page; onMove?: (key: string, to: string) => void; role?: string | null;
+}) {
   const f = area.fields.find((x) => x.name === by);
   const states = (f?.options ?? []).map((o) => (typeof o === 'string' ? o : o.value));
   const initial = area.lifecycle?.field === by ? area.lifecycle.initial : null;
@@ -53,6 +71,13 @@ export function BoardColumns({ area, by, detail, data }: { area: RecordAreaSpec;
                 {rows.map((r) => (
                   <li key={r.key} className='bg-background rounded-md border p-2 text-sm'>
                     <RecordLink area={area} r={r} detail={detail} />
+                    {onMove && movesFrom(area, s, role).length > 0 && (
+                      <select aria-label={`Move ${r.title || r.key}`} className='border-input bg-background mt-2 block w-full rounded-md border px-2 py-1 text-xs'
+                        value='' onChange={(e) => { if (e.target.value) onMove(r.key, e.target.value); }}>
+                        <option value=''>Move to…</option>
+                        {movesFrom(area, s, role).map((m) => <option key={m.to} value={m.to}>{m.label}</option>)}
+                      </select>
+                    )}
                     {cols.length > 0 && (
                       <dl className='text-muted-foreground mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-xs'>
                         {cols.map((c) => show(area, c, r.data[c]) && (

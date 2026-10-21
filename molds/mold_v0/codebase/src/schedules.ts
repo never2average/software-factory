@@ -25,7 +25,7 @@
  */
 import { CronError, countBetween, latestAtOrBefore, nextAfter, parseCron } from "./cron.js";
 import { getDb } from "./db.js";
-import { PackError, ScheduleSchema, z } from "./pack-api.js";
+import { PackError, RECORD_KEY, ScheduleSchema, z } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { findArea, recordAreas, type RecordArea } from "./record-areas.js";
 import { findKind, jobKinds, startRun } from "./runs.js";
@@ -143,7 +143,7 @@ export async function listSchedules(orgId: number, now = clock()): Promise<Sched
     `SELECT ${COLS} FROM workspace_schedules WHERE org_id = $1 ORDER BY pack, is_default DESC, name`, [orgId])).map(view));
 }
 
-const KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const KEY = RECORD_KEY;
 const NAME = /^[a-z][a-z0-9_]{1,62}$/;
 const ENV = /^[a-z][a-z0-9_-]{0,39}$/;
 
