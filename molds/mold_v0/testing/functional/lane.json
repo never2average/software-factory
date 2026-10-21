@@ -1,9 +1,10 @@
 {
   "lane": "functional",
   "order": 10,
-  "summary": "The product's own checks, run exactly as the product runs them: its typecheck (server, orchestrator, web), its end-to-end smoke test on an embedded throwaway Postgres (every MCP tool, the worker API, scoring, API-key auth, the landing page and access requests, ending in its per-tool tenant-isolation sweep: every MCP tool called as a second organisation with every identifier of the first), and its MCP connector check against the deployed address.",
+  "summary": "The product's own checks, run exactly as the product runs them: its typecheck (server, orchestrator, web), its migration test (versioned migrations on embedded throwaway databases: a schema-on-boot database upgrades to the same schema with its rows, each migration applies once, and edited, missing or out-of-order files are refused), its end-to-end smoke test on an embedded throwaway Postgres (every MCP tool, the worker API, scoring, API-key auth, the landing page and access requests, ending in its per-tool tenant-isolation sweep: every MCP tool called as a second organisation with every identifier of the first), and its MCP connector check against the deployed address.",
   "not_covered": [
     "The smoke test runs on this machine against an embedded Postgres, not against the deployed database: it proves the code, and the deployed stack is graded by the mcp.check row and the deploy's own health step.",
+    "test:migrations upgrades from older versions of sql/schema.sql taken from git history; this repository's history holds one version of that file (the product's earlier history is not here), so that part of the test has nothing to run and is skipped by the product's own rule. Its other proofs run in full.",
     "mcp.check calls the read-only tools only (the product's own scripts/mcp-check.ts): it never launches a simulation or spends inference.",
     "Signed-in pages (/admin, /app) behind the product's own sign-in provider are not driven by any row here."
   ],
@@ -15,19 +16,37 @@
       "timeout_s": 900,
       "requires": [
         {
-          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
           "path": "{codebase}/node_modules/.bin/tsc"
         },
         {
-          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
           "path": "{codebase}/orchestrator/node_modules"
         },
         {
-          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
           "path": "{codebase}/web/node_modules"
         }
       ],
       "why": "The product's own `npm run typecheck`: a type error in the server, the orchestrator or the web console."
+    },
+    {
+      "name": "test:migrations",
+      "run": "env -u DATABASE_URL -u MIGRATIONS_PG_URL npm run --silent test:migrations",
+      "cwd": "codebase",
+      "timeout_s": 900,
+      "requires": [
+        {
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/node_modules/.bin/tsx"
+        }
+      ],
+      "expect": {
+        "stdout": [
+          "migrations on pglite: .*each migration once"
+        ]
+      },
+      "why": "The product's own `npm run test:migrations` (mold_v0-031), on embedded throwaway databases only (MIGRATIONS_PG_URL unset, so no real Postgres is touched)."
     },
     {
       "name": "smoke",
@@ -36,7 +55,7 @@
       "timeout_s": 2400,
       "requires": [
         {
-          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
           "path": "{codebase}/node_modules/.bin/tsx"
         }
       ],
@@ -55,7 +74,7 @@
       "timeout_s": 300,
       "requires": [
         {
-          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
           "path": "{codebase}/node_modules/.bin/tsx"
         },
         {

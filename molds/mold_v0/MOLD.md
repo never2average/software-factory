@@ -1,24 +1,26 @@
 # mold_v0
 
-**Status:** work in progress. Pinned as a verbatim snapshot of the operator's existing MCP product, by the operator's decision (2026-10-20): *clone first, generalise after*.
+**Status:** work in progress. Started as a verbatim snapshot of the operator's existing MCP product, by the operator's decision (2026-10-20): *clone first, generalise after*. **Authored in this repository since the fork point below** (operator decision D1, 2026-10-20; mold_v0-040).
 
-**Pinned:** see `state/factory.json` (`molds[mold_v0].pinned_commit`). The source's address is the machine's own, in `state/factory.local.json` (`mold_sources.mold_v0`). Refresh with `python3 .claude/scripts/mold.py refresh mold_v0`; verify with `mold.py check mold_v0`.
+**Source: in-tree.** `molds/mold_v0/codebase` is edited here, by pull request to this repository like any other file. The fork point is factory commit `e8d836532cb7` (the last refresh, which took in the product's hardening, mold_v0-031), a snapshot of the product at `7399bd4c3611` (snapshot 2026-10-21). Both are recorded in [mold.json](mold.json) (`source`: `in_tree`, `since`, `forked_from`) and in `state/factory.json` (`molds[mold_v0].source.in_tree`, `in_tree_since`). Nothing is fetched from the product's repository again: `mold.py refresh mold_v0` refuses, `mold.py fetch mold_v0` writes nothing, and `mold.py check mold_v0` reports "in-tree since e8d836532cb7", the last commit that changed the codebase and any uncommitted change under it. An app's `mold_commit` is the last commit of this repository that changed the codebase (the fork point reads as `7399bd4`, the same files), so `mint` shows a redeploy due after each merged change.
 
-## A recorded exception
+## Two recorded exceptions
 
-Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 starts as the opposite, a working product copied as it is, so the factory can reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives in the snapshot today and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets), and the product's own tools, pages, record areas and tables move into the pack `octillion`. Until then, an app minted from mold_v0 inherits the product's code.
+**Edited in place (mold_v0-040).** AGENTS.md says a mold's codebase is never edited in place and base-code changes go to the mold's source by pull request. mold_v0 is the one exception: its source is this repository. A change to the shell is a pull request here that touches `molds/mold_v0/codebase`; the deploy gate then reads this repository's checks for the commit being deployed (below). mold_v1 keeps the rule unchanged: its snapshot is only ever written by `mold.py fetch|refresh` from its own source, and nothing in this exception reads or writes it.
+
+**A product, not yet a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 starts as the opposite, a working product copied as it is, so the factory can reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives in the snapshot today and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets), and the product's own tools, pages, record areas and tables move into the pack `octillion`. Until then, an app minted from mold_v0 inherits the product's code.
 
 ## What is in it today
 
 - A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`, tools in `src/server.ts`), per-organisation API keys (hashed), Clerk sign-in, client install guides, onboarding, usage analytics, billing and email.
 - An agent-run engine: a job queue (`src/worker.ts`, `/api/worker`), an autoscaler that launches one sandboxed orchestrator per job (`src/autoscaler.ts`, `orchestrator/`), pinned coding-agent harnesses (`harnesses/registry.json`), an inference gateway with per-session tokens and cost metering (`src/gateway.ts`, `src/usage.ts`), a versioned key vault and per-organisation data keys (`src/keyvault.ts`, `src/orgcrypto.ts`), transcripts and an off-machine archive.
 - A web console in `web/` (Next.js): `/admin` for platform staff, `/app` for an account's people.
-- Postgres (schema applied on boot, `sql/schema.sql`), plus optional analytics and archive stores.
+- Postgres with versioned migrations (`sql/migrations/NNNN_*.sql`, `src/migrate.ts`, `npm run db:migrate`; proven by `npm run test:migrations`) and row-level security on every tenant table (`sql/migrations/0003_row_level_security.sql`, `src/rls.ts`; proven by `npm run check:rls`), plus optional analytics and archive stores.
 - Two ways to run: its own server (Docker Compose with HTTPS) and Vercel.
 
-## Before anything built on it is sold (ticket mold_v0-031)
+## Hardening (ticket mold_v0-031, done)
 
-API keys out of URLs, OAuth token audience checked, Origin validated on the MCP endpoint, no static admin token, database row-level security proven on every deploy, and versioned migrations.
+API keys out of URLs, OAuth token audience checked, Origin validated on the MCP endpoint, no static admin token, database row-level security proven on every deploy, and versioned migrations: all in the codebase since the fork point. The factory's side of it is mold_v0-051 (intake, the deploy's RLS check, the lanes; below).
 
 ## Decisions
 
@@ -27,9 +29,9 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).
 - Generalisation (2026-10-20): mold_v0 becomes an **agent-run shell** (tenancy, an MCP front door, a run engine with sandboxed
   harness runs, an inference gateway with metering, vaults, storage, record areas, schedules, a console), with each product's own
-  surface in a pack. The shell is authored **in this repository** (operator decision): after one last refresh that takes in the
-  product's hardening (mold_v0-031), `molds/mold_v0/codebase` stops being a snapshot and is edited here, a second recorded exception
-  to "never edit a mold in place" (mold_v0-040). The product's own features become the pack `octillion`; the second app's is its own
+  surface in a pack. The shell is authored **in this repository** (operator decision D1): after one last refresh that took in the
+  product's hardening (mold_v0-031, factory commit `e8d836532cb7`), `molds/mold_v0/codebase` stopped being a snapshot and is edited
+  here, a recorded exception to "never edit a mold in place" (mold_v0-040; see "Two recorded exceptions"). The product's own features become the pack `octillion`; the second app's is its own
   pack. Backlog: mold_v0-038 to 050.
 
 ## Pack and record-area contract
@@ -86,10 +88,10 @@ the build copy. A pack file that would replace a shell file is refused, as for m
 ## How the factory runs it
 
 mold_v0 is a **single-service mold**: [mold.json](mold.json) says so, and every factory script hands such an app to
-`.claude/scripts/lib/single_service.py` before any mold_v1 path. Until mold_v0-040 the snapshot is never edited: what the factory needs
+`.claude/scripts/lib/single_service.py` before any mold_v1 path. A deploy never changes the codebase: what the factory needs
 (the compose project's default name, the service it builds, its port, the env names it requires or accepts, the
-health check) is read from the product's own `deploy/docker-compose.prod.yml`, `deploy/bootstrap.sh` and `Dockerfile`
-each time.
+health check, the row-level security check) is read from the codebase's own `deploy/docker-compose.prod.yml`,
+`deploy/bootstrap.sh`, `Dockerfile` and `package.json` each time.
 
 **Mint.** `mint.py new <app> --brief briefs/<app>.md` (the brief says `Mold: mold_v0`) runs the same ten stations as any
 app. *packs*, *brand*, *workspaces* and *package* are "not needed", each with the reason in mold.json: no pack mechanism
@@ -99,8 +101,28 @@ and `reuse-keys` refuse a mold_v0 app.
 **Intake.** The same four state files and schemas. It asks only where the app runs, unless the brief says ("its own
 server", or "Vercel"), and takes the domain from the brief (`Domain: app.example.com`). Fields only this shape uses:
 `infrastructure.compose_remote` (target `compose_remote`), `postgres.exposure: "compose_network"` and
-`blob.provider: "none"`. `postgres.rls` is `"off"`: the product scopes tenant rows in its queries, which its tenant-SQL
-check guards; proving row-level security on every deploy is mold_v0-031.
+`blob.provider: "none"`. `postgres.rls` is `"fail_closed"` (mold_v0-051): the product puts every tenant table under
+row-level security for a per-database tenant role, and a query with no organisation set sees no tenant rows. Intake
+writes it from [mold.json](mold.json) `rls` only while the codebase's `package.json` has that check (`check:rls`);
+without it, `"off"`. Tenant rows are also scoped in the queries themselves, which the tenant-SQL check guards.
+
+**Row-level security on every deploy (mold_v0-051).** After the health checks, each deploy runs the product's own
+`npm run check:rls` (its catalog check, then a live two-organisation probe inside a transaction that is always rolled
+back) against the **deployed** database, and writes the verdict to `datastores.postgres.rls_verified`; a check that
+fails or cannot run is a failed health check, so the deploy goes back to what served before.
+`provision.py <app> --verify-rls` runs it again and records it. What each target honestly proves:
+
+- *Its own server:* the check runs in a one-off container of the new release's image with the server's env file, as
+  the product's own `deploy/rolling-deploy.sh` does: the same code, database and login the serving containers use.
+  Recorded `running_app: "enforced"`.
+- *Vercel:* nothing can run inside the function, so the check runs on the factory machine (from the same codebase the
+  deploy just uploaded; it needs the codebase's dependencies installed) against the api
+  project's production `DATABASE_URL`, read back and never shown, right after the deployment that reads it was built.
+  It proves the database the function uses. The function's own probe (`/healthz` `rls_probe`, run by the product's cron
+  at most hourly) is read and recorded as it said: `"ok"` is `enforced`, `"failed"` fails the deploy, and `"not run"`
+  (a fresh deployment) is `unmeasured`, never `enforced`. `factory.py validate` accepts `unmeasured` for this mold only,
+  because the database proof is there and the product refuses tenant queries in a process whose start-up catalog check
+  fails (the product's own guarantee, which the factory reads in its code but does not observe).
 
 **Its own server** (target `compose_remote`; a deploy that comes up but fails its health checks switches back to the
 release that served before, by itself): `provision.py <app> --set-remote host=<address> domain=<name>`,
@@ -174,14 +196,31 @@ web stage, and the console's `next build` writes no static export (it is a serve
 open question, not the Vercel one.
 
 **Lanes** (`molds/mold_v0/testing/`, run by `lanes.py` as for any mold): *functional* runs the product's
-`npm run typecheck`, `npm run smoke` (embedded throwaway Postgres; it must reach its per-tool tenant-isolation sweep) and
-`npm run mcp:check` against the deployed address; *context* runs `npm run check:tenant-sql`. *load*, *accessibility* and
+`npm run typecheck`, `npm run test:migrations` (embedded throwaway databases only; `MIGRATIONS_PG_URL` unset), `npm run
+smoke` (embedded throwaway Postgres; it must reach its per-tool tenant-isolation sweep) and `npm run mcp:check` against
+the deployed address; *context* runs `npm run check:tenant-sql` and `npm run check:rls` on a throwaway embedded
+database (the deployed database is proven by the deploy itself, above). `test:migrations` also upgrades from older
+versions of `sql/schema.sql` found in git history; this repository holds one version of that file, so that part has
+nothing to run here (the lane says so). *load*, *accessibility* and
 *responsiveness* have no harness in the product and are recorded `skipped`, never `pass`. The MCP check needs an
 organisation of the app's own: `provision.py <app> --lane-key --dry-run`, then `--lane-key --yes` once the operator
 says yes. It runs the product's `scripts/create-org.ts` and keeps the connector address in a private file outside
 the repository (mode 600, never shown).
 
-**Known before the first deploy (mold_v0-029).** The snapshot now commits `web/package-lock.json` (refreshed to
-4ec6634), so the server deploy's preflight no longer refuses for it and the console project can install exactly. The
-product's repository has no CI workflow, so the factory's CI gate refuses its deploys unless the operator chooses
-`--allow-unverified-mold "<reason>"`.
+**The CI gate (mold_v0-040).** `provision.py`'s release gate (`lib/deploy_gate.py`) reads, for an in-tree mold, **this
+repository's** checks for the commit being deployed: HEAD of the checkout the deploy runs from, and only when
+`molds/mold_v0/codebase` on disk is exactly that commit (no tracked change, no untracked file, and no ignored file the
+deploy would carry other than mold.json's `source_excludes`, such as `node_modules` and `.env`). Then:
+
+- once mold_v0-001 names the shell's own workflow in [mold.json](mold.json) (`source.ci.workflow`), that workflow's run
+  for the commit must have passed with every job it defines, the same rules as mold_v1's `ci.yml`;
+- until then, **every** check run and commit status GitHub reports for that commit must have passed, and there must be
+  at least one. None of them tests the shell yet, so a green verdict says only "this repository's checks passed for
+  this commit", and the recorded verdict says exactly what was read.
+
+Today this repository runs no workflow, so the verdict is *missing* and a mold_v0 deploy needs
+`--allow-unverified-mold "<reason>"` (recorded in `infrastructure.json` `deploy_gate.override`). A check that failed, one
+still running, GitHub not answering, no GitHub `origin`, or an uncommitted change refuses as for any mold.
+
+**Known before the first deploy (mold_v0-029).** The codebase commits `web/package-lock.json`, so the server deploy's
+preflight no longer refuses for it and the console project can install exactly.

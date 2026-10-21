@@ -3,7 +3,8 @@
 
 A mold opts in with molds/<mold_id>/mold.json ("shape": "single_service"); today that is mold_v0, the operator's MCP
 product pinned as it is. Everything else in the factory keeps its mold_v1 paths: each caller asks `manifest(mold_id)`
-first and hands over here only when it answers. The mold's codebase is a verbatim snapshot and is never edited: what
+first and hands over here only when it answers. The factory never edits the mold's codebase while it deploys (mold_v0's is
+authored in this repository since mold_v0-040, by pull request like any other file; lib/intree.py): what
 the factory needs from it (the compose project's default name, the service that is built, the env names it requires
 or accepts, the port, the health check) is READ from its own files at plan time (compose_facts).
 
@@ -67,6 +68,19 @@ answered its health checks or switches `current` back to the release that served
               otherwise the server goes back to the release that served before (up.sh --back --drop), by itself
    keep       every release but the serving and the previous one removed
 
+ROW-LEVEL SECURITY (mold_v0-051). When mold.json declares "rls" and the codebase's package.json has that script (mold_v0
+since mold_v0-031: `npm run check:rls`, the product's catalog check plus a live two-organisation probe inside a
+transaction that is rolled back), intake writes datastores.postgres.rls = its mode ("fail_closed"), and every deploy
+runs the script against the DEPLOYED database after the health checks: compose_remote in a one-off container of the
+new release's image with the server's env file (as the product's own rolling-deploy.sh does); vercel on this machine,
+with the api project's production DATABASE_URL (read back, never shown), right after the deployment that reads it was
+built. A check that fails, or cannot run, is a failed health check (the server, or both projects, go back to what
+served before). The result is written to datastores.postgres.rls_verified (at, backend, mode, source, and in
+running_app_detail what was read); `provision.py <app> --verify-rls` reads it again. What this proves: the database the
+app is configured with has the product's policies and no organisation reaches another's rows. What it does not: it runs
+nothing inside a Vercel function; there the function's own probe (/healthz rls_probe, run by the product's cron at most
+hourly) is read and recorded as said, and "not run" is recorded as unmeasured, never as enforced.
+
 The database is the stack's own Postgres container on the compose network (no published port). Its password and the
 app's keys exist only in the env file on the server. State records names, the release, the health verdict and the
 address; never a value.
@@ -112,6 +126,69 @@ def applies(app, root=None):
     return bool(isinstance(app, dict) and manifest(app.get("mold_id"), root))
 
 def codebase(mold_id, root=None): return os.path.join(root or ROOT, "molds", mold_id, "codebase")
+
+def rls_spec(cb, man):
+    """mold.json "rls" when the codebase's package.json really has that script (else None: the app asks for no RLS)."""
+    spec = (man or {}).get("rls")
+    if not isinstance(spec, dict) or not spec.get("script") or spec.get("mode") not in ("on", "fail_closed"): return None
+    try: scripts = (json.load(open(os.path.join(cb, "package.json"))).get("scripts") or {})
+    except (OSError, ValueError): return None
+    return dict(spec, pass_text=spec.get("pass") or "RLS CHECK PASS") if spec["script"] in scripts else None
+
+def rls_said(out, spec):
+    """The product's own verdict line from the check's output (its PASS or FAIL line), else its last lines; redacted."""
+    lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
+    hit = [l for l in lines if re.search(r"RLS CHECK (PASS|FAIL)", l)]
+    return VR.redact(" | ".join(hit[-1:] or lines[-3:]))[:400]
+
+def rls_passed(rc, out, spec): return rc == 0 and bool(spec) and spec["pass_text"] in (out or "")
+
+RLS_SOURCE = "check:rls"      # rls_verified.source starts with this for a single-service app (factory.py reads it)
+def record_rls(adir, spec, passed, said, how, running, detail, save_fn=None):
+    """datastores.postgres.rls_verified for a single-service app, from the product's own check (module docstring):
+    the mode is the spec's only when the check passed; what was read, and where, is said in source and the detail."""
+    p = os.path.join(adir, "datastores.json")
+    try: ds = load(p)
+    except (OSError, ValueError): return None
+    pg = ds.setdefault("postgres", {})
+    ev = {"at": now(), "backend": pg.get("provider") or "", "mode": spec["mode"] if passed else "off",
+          "source": (f"{RLS_SOURCE} (npm run {spec['script']}, the product's own: catalog + live probe, rolled back), {how}"
+                     + ("" if passed else f"; FAILED: {said}"))[:600],
+          "running_app": running if passed else "not_enforced", "running_app_detail": f"{detail} Check said: {said}"[:600]}
+    pg["rls_verified"] = ev
+    (save_fn or save)(p, ds)
+    return ev
+
+def rls_local(cb, db_url, spec, timeout=300):
+    """The product's check on THIS machine against one database (Vercel: the api project's). -> (exit, output)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("PGLITE_DIR", "CLICKHOUSE_URL", "MIGRATIONS_PG_URL")}
+    env["DATABASE_URL"] = db_url
+    try: r = subprocess.run(["npm", "run", "--silent", spec["script"]], cwd=cb, env=env, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e: return 124, f"the check could not run: {type(e).__name__}"
+    return r.returncode, VR.redact(((r.stdout or "") + "\n" + (r.stderr or "")).replace(db_url, "<database>"))
+
+def rls_tools_missing(cb, spec):
+    """Why the check cannot run from this machine (Vercel), or None."""
+    if spec and not os.path.exists(os.path.join(cb, "node_modules", ".bin", "tsx")):
+        return (f"the product's row-level security check runs from this machine against the app's database, and needs the mold's "
+                f"dependencies installed first: npm --prefix {os.path.relpath(cb, ROOT) if cb.startswith(ROOT + os.sep) else cb} ci")
+    return None
+
+def rls_vercel(P, cb, api, spec, health_doc, rls_run=None):
+    """Vercel: the check against the api project's production database, and the function's own probe as /healthz said
+    it. -> (passed, said, running_app, detail). Raises Stop when the database address cannot be read back."""
+    import agent_result as AR
+    vals = P.pull_env(cb, api, required=False); url = vals.get("DATABASE_URL")
+    if not url or url == "[SENSITIVE]": raise Stop(f"DATABASE_URL could not be read back from {api}, so row-level security could not be checked")
+    AR.forbid(url)
+    rc, out = (rls_run or rls_local)(cb, url, spec)
+    passed, said = rls_passed(rc, out, spec), rls_said(out, spec)
+    probe = (health_doc or {}).get("rls_probe") if isinstance(health_doc, dict) else None
+    if passed and probe == "failed": passed, said = False, f"{said}; but the function's own probe says failed (/healthz rls_probe)"
+    running = "enforced" if probe == "ok" else "not_enforced" if probe == "failed" else "unmeasured"
+    detail = (f"ran on the factory machine against {api}'s production DATABASE_URL, right after the deployment that reads it was built; "
+              f"the function's own probe (/healthz rls_probe, run by the product's cron at most hourly) said {probe or 'nothing'!r}.")
+    return passed, said, running, detail
 
 REF = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}")
 def parse_compose(text):
@@ -182,7 +259,7 @@ def compose_facts(cb, man):
             "app_reads_required": svc["required_reads"], "config": dict(c.get("config") or {}), "minted": minted,
             "mint": c.get("mint", ""), "publishers": sorted(n for n, s in P["services"].items() if s["ports"] and not s["profiles"]),
             "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)), "dockerfile_sources": dockerfile_sources(dtext),
-            "excludes": list(c.get("source_excludes") or [])}
+            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man)}
 
 def missing_build_inputs(cb, F):
     """Files the image build copies that the snapshot does not have: the build would stop on the server."""
@@ -193,15 +270,22 @@ def _glob(cb, pattern):
     p = os.path.join(cb, pattern)
     return glob.glob(p) if any(ch in pattern for ch in "*?[") else ([p] if os.path.exists(p) else [])
 
+def _codebase_fix(mold_id, what):
+    """Where a change to the mold's own files is made: this repository for an in-tree mold, its source otherwise."""
+    import intree
+    try: it = intree.is_in_tree(mold_id, ROOT)
+    except intree.Unreadable: it = True
+    if it: return f"That is a change to molds/{mold_id}/codebase in this repository ({what}), by pull request; a deploy never makes it"
+    return (f"That is a change to the mold's source, by pull request there ({what}), then `python3 .claude/scripts/mold.py refresh {mold_id}`; "
+            f"the factory never edits a snapshot")
+
 def preflight(cb, F, S):
     """Plain sentences for what stops a deploy before any server is contacted; [] when none."""
     bad = []
     gone = missing_build_inputs(cb, F)
     if gone:
-        bad.append(f"the image build copies {', '.join(gone)}, which the mold's snapshot does not contain (its own .gitignore keeps it out of "
-                   f"the repository), so `docker compose build` would stop on the server. That is a change to the mold's source, by pull "
-                   f"request there (commit the file), then `python3 .claude/scripts/mold.py refresh {S['mold_id']}`; the factory never "
-                   f"edits a snapshot")
+        bad.append(f"the image build copies {', '.join(gone)}, which the mold's codebase does not contain (its own .gitignore keeps it out of "
+                   f"the repository), so `docker compose build` would stop on the server. " + _codebase_fix(S["mold_id"], "commit the file"))
     nobody = [n for n in F["required"] if n not in F["config"] and n not in F["minted"]]
     if nobody:
         bad.append(f"{F['file']} requires {', '.join(nobody)}, which neither state ({', '.join(F['config']) or 'nothing'}) nor the mold's "
@@ -237,7 +321,7 @@ def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defa
     man = manifest(mold_id, root); F = compose_facts(codebase(mold_id, root), man); d = defaults or {}
     user, derived, optional = secret_names(F, target, console_facts(codebase(mold_id, root), man) if target == "vercel" else None)
     app = {"$schema": "../app_id/application.schema.json", "app_id": app_id, "mold_id": mold_id,
-           "mold_commit": (mold.get("source") or {}).get("commit", ""), "status": "planned", "brief": brief_rel,
+           "mold_commit": mold_commit(mold_id, root) or (mold.get("source") or {}).get("commit", ""), "status": "planned", "brief": brief_rel,
            "product_id": prod["product_id"], "service_surface": [],
            "testing": {l: {"status": "pending"} for l in ("load", "context", "functional", "accessibility", "responsiveness")}}
     if hints.get("customer_id"): app["customer_id"] = hints["customer_id"]
@@ -258,10 +342,12 @@ def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defa
         infra["vercel"] = {"team": d.get("vercel_team", "your-vercel-team"), "project": base, "projects": vercel_projects(base)}
         if dom: infra["vercel"]["custom_domain"] = dom
         pg = {"provider": "neon", "exposure": "managed_provider", "admin_url_ref": "DATABASE_URL_UNPOOLED", "pooling": "transaction"}
-    # rls "off": the product scopes tenant rows in its queries (its tenant-SQL check guards that), not with row-level
-    # security; proving RLS on every deploy is ticket mold_v0-031. "off" is measured and recorded, never claimed.
+    # rls: what the mold's own check proves (mold.json "rls", mold_v0-051: "fail_closed" since the product's mold_v0-031),
+    # only while the codebase has that check; "off" otherwise (tenant rows scoped in queries, its tenant-SQL check).
+    # Either way the deploy measures it and records the evidence (rls_verified); it is never claimed unmeasured.
+    spec = rls_spec(codebase(mold_id, root), man)
     ds = {"$schema": "../app_id/datastores.schema.json",
-          "postgres": dict(pg, scope="fresh", rls="off", tenancy="multi_org", url_ref="DATABASE_URL"),
+          "postgres": dict(pg, scope="fresh", rls=spec["mode"] if spec else "off", tenancy="multi_org", url_ref="DATABASE_URL"),
           "blob": {"provider": "none"}, "cache": {"provider": "none"}}
     di = {"$schema": "../app_id/datainfra.schema.json",
           "dataroom": {"spec": "none (mold_v0 has no data room)", "top_level": [], "system_of_record": "postgres"},
@@ -529,10 +615,19 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
         {"id": "health", "title": f"on the server: {F['service']} {'healthy' if F['healthcheck'] else 'running'}, not root, only {', '.join(F['publishers']) or 'nothing'} publishing ports",
          "argv": ssh(g(f"bash {S['factory_dir']}/health.sh")), "timeout": 120},
         {"id": "public", "title": f"from here: {S['url']}{S['health_path']} answers 200 with ok", "argv": None, "timeout": PUBLIC_WAIT_S},
+    ] + ([
+        {"id": "rls", "title": f"row-level security on the deployed database: the product's own `npm run {F['rls']['script']}` in a one-off "
+                               f"container of the new release, with the server's env file (catalog + live probe, rolled back)",
+         "argv": ssh(rls_cmd(S, F)), "timeout": 300},
+    ] if F.get("rls") else []) + [
         {"id": "keep", "title": "every release but the serving and the previous one removed", "argv": ssh(g(f"bash {S['factory_dir']}/keep.sh")), "timeout": 300},
         {"id": "back", "title": "ONLY if the health step or the public read fails: back to the release that served before (up.sh --back --drop)",
          "argv": ssh(g(f"bash {S['factory_dir']}/up.sh --back --drop")), "timeout": UP_WAIT_S * 2 + 600},
     ]
+
+def rls_cmd(S, F):
+    return (f"{S['sudo']}docker compose -p {shlex.quote(S['project'])} -f {S['current']}/{S['compose_file']} --env-file {shlex.quote(S['env_file'])} "
+            f"run --rm -T --no-deps {shlex.quote(F['service'])} npm run --silent {shlex.quote(F['rls']['script'])}")
 
 def print_plan(S, F, steps, say=print):
     say(f"{S['app_id']}: deploy plan for its own server (compose project {S['project']}, never {F['default_project']!r}); nothing is contacted by this --dry-run")
@@ -688,7 +783,12 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
             public = (read_public or _read_public)(url)
             if str(public[0]) == "200": break
             wait(10)
-        bad = health_verdict(F, kv, public)
+        bad = health_verdict(F, kv, public); rls = None
+        if not bad and F.get("rls"):
+            r = run("rls", check=False); out = (r.stdout or "") + "\n" + (r.stderr or "")
+            rls = {"passed": rls_passed(r.returncode, out, F["rls"]), "said": rls_said(out, F["rls"]), "exit": r.returncode}
+            if not rls["passed"]: bad.append(f"the product's row-level security check failed on the deployed database (exit {r.returncode}): {rls['said'] or 'no output'}")
+            else: say(f"    {rls['said']}")
         if bad:
             # The release came up but does not serve: back to the one that served before, by itself (as on Vercel).
             rb = run("back", check=False); bk = _kv(rb.stdout)
@@ -700,7 +800,7 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
         run("keep", check=False)
         return {"release": release, "facts": facts,
                 "health": {"app": kv.get("APP_STATE", ""), "uid": kv.get("APP_UID", ""), "published": kv.get("PUBLISHED", ""),
-                           "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}}
+                           "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}, "rls": rls}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -722,6 +822,12 @@ def revert(adir, app, reason, save_fn=save):
     save_fn(os.path.join(adir, "application.json"), app)
 
 def mold_commit(mold_id, root=None):
+    """What an app built now records as its mold_commit: an in-tree mold's version in this repository (lib/intree.py),
+    else the pin in state/factory.json."""
+    import intree
+    try: v = intree.version(mold_id, root or ROOT)
+    except intree.Unreadable: v = None
+    if v: return v
     for m in load(os.path.join(root or ROOT, "state", "factory.json")).get("molds", []):
         if m.get("mold_id") == mold_id: return (m.get("source") or {}).get("commit", "")
     return ""
@@ -1158,7 +1264,7 @@ def _rollback_said(rec, names):
 
 def _stop_text(e): return str(e.code if isinstance(e, SystemExit) and e.code is not None else e)
 
-def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page):
+def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None):
     """The two-project deploy: the api project first, then the console pointed at its address; health on both; when
     anything after the first deploy fails, both projects go back to what served before. Raises Stop with the reason."""
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
@@ -1166,6 +1272,8 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     ipath = os.path.join(adir, "infrastructure.json")
     pre = console_preflight(K)
     if pre: raise Stop("The console project cannot be deployed from the mold's snapshot as it is; nothing was created:\n  - " + "\n  - ".join(pre))
+    why = rls_tools_missing(cb, F.get("rls"))
+    if why: raise Stop(f"{why}. Nothing was created or deployed.")
     refuse_project(app_id, infra, P, root)
     # the values only the operator holds, BEFORE any project is created or renamed: a project that does not exist yet
     # holds no names, so every name it must hold is missing. Exit 3 (needs_human) through provision.py; not reverted.
@@ -1216,6 +1324,11 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         res = P._read_health(api_url + man["health_path"]); v["health"] = {"api": str(res[0]) if res[0] else "no answer"}
         if not _healthy(res): raise Stop(f"{api} deployed to {api_url}, but {man['health_path']} answered {_said(res)}")
         say(f"  {api}: {api_url}{man['health_path']} answered 200 ok")
+        rls = None
+        if F.get("rls"):
+            rls = rls_vercel(P, cb, api, F["rls"], res[1], rls_run)
+            if not rls[0]: raise Stop(f"{api}: the product's row-level security check failed on its database: {rls[1] or 'no output'}")
+            say(f"  {api}: {rls[1]}")
         if P.pull_env(cb, web, required=False).get(K["api_env"]) != api_url:
             P._set_env(K["api_env"], api_url, cb, project=web); say(f"  {web}: {K['api_env']} set to the API's address {api_url}")
         out = P.vercel_deploy(f"vercel deploy --prod --yes --project {web}{scope}", os.path.join(build, K["dir"]), f"{web} deploy")
@@ -1236,6 +1349,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     infra["deployed_at"] = now(); app["status"] = "stamped" if app.get("status") in (None, "planned", "reverted") else app["status"]; app.pop("revert", None)
     app["mold_commit"] = mold_commit(app["mold_id"], root) or app.get("mold_commit", "")
     save(ipath, infra); save(os.path.join(adir, "application.json"), app)
+    if rls: record_rls(adir, F["rls"], True, rls[1], "by provision.py --deploy", rls[2], rls[3])
     say(f"{app_id}: deployed. The console {url} ({web}; {K['proxied_health']} reaches the API, {', '.join(f'{p} {c}' for p, c in h['pages'].items())}); "
         f"the API {api_url} ({api}; {man['health_path']} 200 ok)"); return 0
 
@@ -1265,7 +1379,9 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
         for n in missing:
             say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
         say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
-    if pre: say("  - the mold's snapshot cannot run as two projects as it is (see 'not ready' above): a change to the mold's source, then mold.py refresh"); return 1
+    if pre: say("  - the mold's codebase cannot run as two projects as it is (see 'not ready' above). " + _codebase_fix(app["mold_id"], "see above")); return 1
+    why = rls_tools_missing(cb, F.get("rls"))
+    if why: say(f"  - {why}"); return 1
     pg = os.path.isfile(os.path.join(cb, "node_modules", "pg", "package.json"))
     if "DATABASE_URL" not in present["api"] and not pg:
         say(f"  - install the mold's dependencies first (the database emptiness check uses its own `pg` client): npm --prefix {os.path.relpath(cb, root or ROOT)} ci"); return 1
@@ -1292,6 +1408,35 @@ def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None, adir=N
 # ---------------------------------------------------------------------------------------------------------
 # provision.py hands over here
 # ---------------------------------------------------------------------------------------------------------
+def verify_rls(app_id, app, infra, adir, P, say=print, root=None, runner=None, rls_run=None):
+    """`--verify-rls`: the product's row-level security check against the deployed database again, recorded (read-only:
+    the probe's rows are rolled back). Exit 0 passed, 1 not."""
+    man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); spec = F.get("rls")
+    if not spec:
+        say(f"{app_id}: {app['mold_id']} declares no row-level security check (mold.json \"rls\" with a script its package.json has), "
+            f"so there is nothing to verify; its rows are scoped in its queries (the lanes' tenant-SQL check)."); return 0
+    t = infra.get("target")
+    if t == "compose_remote":
+        S = settings(app_id, app, infra, root)
+        if not (infra.get("compose_remote") or {}).get("production_url"): raise Stop(f"{app_id} is not deployed yet; deploy it first.")
+        _ready_to_contact(S, app_id)
+        r = (runner or VR.real_runner)({"id": "rls", "argv": VR.ssh_argv(S, rls_cmd(S, F)), "timeout": 300}, None)
+        out = (r.stdout or "") + "\n" + (r.stderr or ""); passed, said = rls_passed(r.returncode, out, spec), rls_said(out, spec)
+        how, running, detail = ("by provision.py --verify-rls in a one-off container of the serving release", "enforced",
+                                "ran in a one-off container of the serving release's image, with the env file its containers read.")
+    else:
+        v = infra.get("vercel") or {}
+        if not v.get("api_url"): raise Stop(f"{app_id} is not deployed yet; deploy it first.")
+        why = rls_tools_missing(cb, spec)
+        if why: raise Stop(why)
+        res = P._read_health(v["api_url"] + man["health_path"])
+        passed, said, running, detail = rls_vercel(P, cb, vercel_projects(vercel_project(infra))["api"], spec, res[1], rls_run)
+        how = "by provision.py --verify-rls"
+    record_rls(adir, spec, passed, said, how, running, detail)
+    say(f"{app_id}: row-level security {'proven' if passed else 'NOT proven'} on the deployed database: {said or 'no output'} "
+        f"(recorded in state/application/{app_id}/datastores.json postgres.rls_verified)")
+    return 0 if passed else 1
+
 def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
     """Everything provision.py does for a single-service application. Returns the exit code."""
     t = infra.get("target"); dry = "--dry-run" in a
@@ -1318,7 +1463,8 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
                 try: return vercel_deploy(app_id, app, infra, adir, P, say=say, root=root)
                 except NeedsHuman: raise                      # nothing was tried, so nothing is reverted
                 except Stop as e: revert(adir, app, str(e)); raise
-            for f in ("--rollback", "--smoke", "--verify-db", "--verify-rls"):
+            if "--verify-rls" in a: return verify_rls(app_id, app, infra, adir, P, say=say, root=root)
+            for f in ("--rollback", "--smoke", "--verify-db"):
                 if f in a: raise Stop(f"{app_id}: {f} belongs to mold_v1's three-project deploy; this app's --deploy checks both of its projects and rolls both back itself, and its lanes do the rest.")
             return vercel_check(app_id, app, infra, P, say=say, root=root)
         # compose_remote
@@ -1326,8 +1472,9 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
             i = a.index("--set-remote"); set_remote(app_id, adir, [x for x in a[i + 1:] if "=" in x and not x.startswith("-")], say=say); return 0
         S = settings(app_id, app, infra, root); man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man)
         if "--remote-key" in a: VR.remote_key(S, say=say); return 0
+        if "--verify-rls" in a: return verify_rls(app_id, app, infra, adir, P, say=say, root=root)
         for flag, instead in (("--deploy", "--deploy-remote"), ("--rollback", "--rollback-remote"), ("--verify-db", "--deploy-remote"),
-                              ("--smoke", "--deploy-remote (its health step)"), ("--verify-rls", "the lanes (its tenant-SQL check; RLS is ticket mold_v0-031)"),
+                              ("--smoke", "--deploy-remote (its health step)"),
                               ("--workspace-remote", "the app's own admin console or --lane-key")):
             if flag in a and not (flag == "--deploy" and "--deploy-remote" in a) and not (flag == "--rollback" and "--rollback-remote" in a):
                 say(f"{app_id}: {flag} is not for this app (its own compose stack). Use: python3 .claude/scripts/provision.py {app_id} {instead}"); return 1
@@ -1351,6 +1498,9 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
         try: res = deploy(S, F, cb, say=say)
         except Stop as e: revert(adir, app, str(e)); raise
         record(adir, app, infra, S, res, mold_commit(app["mold_id"], root))
+        if res.get("rls"):
+            record_rls(adir, F["rls"], True, res["rls"]["said"], f"by provision.py --deploy-remote in a one-off container of release {res['release']}",
+                       "enforced", "ran in a one-off container of the serving release's image, with the env file its containers read (the same database and login).")
         say(f"{app_id}: deployed release {res['release']} to {S['url']}; health {S['health_path']} answered 200 ok. Next: python3 .claude/scripts/lanes.py {app_id}")
         return 0
     except Stop as e:
