@@ -262,12 +262,16 @@ export async function gatewayHandler(req: Request, res: Response) {
 
   if (t.kind === "run") {
     // A run (mold_v0-041): only while it is running and not asked to stop, within its budget across every attempt.
-    const [run] = await db.query<{ status: string; cancel_requested_at: Date | null; budget_usd: number }>(
-      "/* tenant: the run this gateway token was minted for */ SELECT status, cancel_requested_at, budget_usd FROM runs WHERE id = $1", [t.run_id]);
+    const [run] = await db.query<{ status: string; cancel_requested_at: Date | null; budget_usd: number; org_id: number; pack: string; kind: string; spec: Record<string, unknown> | null }>(
+      "/* tenant: the run this gateway token was minted for */ SELECT status, cancel_requested_at, budget_usd, org_id, pack, kind, spec FROM runs WHERE id = $1", [t.run_id]);
     if (!run || run.status !== "running" || run.cancel_requested_at) return gwError(res, 401, "authentication_error", "This run is not running");
     const u = await runGatewayUsage(t.run_id!);
-    if (u.cost_usd >= Number(run.budget_usd) || u.tokens >= RUN_MAX_TOKENS())
-      return gwError(res, 429, "octillion_budget_exceeded", "This run's gateway budget is used up");
+    if (u.tokens >= RUN_MAX_TOKENS()) return gwError(res, 429, "octillion_budget_exceeded", "This run's gateway budget is used up");
+    // Its budget (never above today's ceiling), its kind's month budget in the workspace and the account's allowance,
+    // all live (mold_v0-018, 053; src/run-limits.ts): many small runs cannot spend past what one could.
+    const { runSpendRefusal } = await import("./run-limits.js");
+    const refusal = await runSpendRefusal({ ...run, spec: run.spec as never }, u.cost_usd);
+    if (refusal) return gwError(res, 429, "octillion_budget_exceeded", refusal);
   } else {
     const [used] = await db.query<{ requests: number; tokens: number; cost: number }>(
       "/* tenant: by the gateway token's own hash (budget of that token) */ SELECT coalesce(sum(requests), 0) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens, coalesce(sum(cost_usd), 0) AS cost FROM gateway_usage WHERE token_hash = $1", [hash]);

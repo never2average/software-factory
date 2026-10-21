@@ -440,13 +440,42 @@ for (const p of packs) {
 // One pack's table prefix may not be another's (pack "a" would own "a_b_…", pack "a_b"'s tables).
 for (const a of packs) for (const b of packs) if (a !== b && `${b.id}_`.startsWith(`${a.id}_`)) fail(`packs/${b.id}`, `its id starts with pack ${a.id}'s table prefix ${a.id}_`);
 
+/**
+ * The profile's optional `limits` (mold_v0-018, src/rate-limits.ts): sections mcp, endpoints and runs of positive
+ * numbers, and plans.<plan name> with the same sections. Only the names the shell knows; checked here so a typo fails
+ * the build rather than silently keeping a default.
+ */
+const LIMIT_KEYS = {
+  mcp: ["per_key_per_minute", "per_member_per_minute", "per_workspace_per_minute", "per_ip_per_minute", "concurrent_per_workspace", "max_request_bytes", "max_response_bytes"],
+  endpoints: ["signup_per_hour_per_ip", "invites_per_hour_per_workspace", "keys_per_hour_per_workspace"],
+  runs: ["budget_usd_max", "concurrency_per_workspace", "kind_month_budget_usd", "live_per_workspace"],
+};
+function limitsProblem(v, plans = true) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
+  for (const [section, body] of Object.entries(v)) {
+    if (section === "plans" && plans) {
+      if (!body || typeof body !== "object" || Array.isArray(body)) return "plans must be an object of plan name -> limits";
+      for (const [name, p] of Object.entries(body)) { const bad = limitsProblem(p, false); if (bad) return `plans.${name}: ${bad}`; }
+      continue;
+    }
+    if (!LIMIT_KEYS[section]) return `unknown section ${section} (known: ${Object.keys(LIMIT_KEYS).join(", ")}${plans ? ", plans" : ""})`;
+    if (!body || typeof body !== "object" || Array.isArray(body)) return `${section} must be an object`;
+    for (const [k, n] of Object.entries(body)) {
+      if (!LIMIT_KEYS[section].includes(k)) return `${section}.${k} is not a limit (known: ${LIMIT_KEYS[section].join(", ")})`;
+      if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return `${section}.${k} must be a positive number`;
+    }
+  }
+  return null;
+}
+
 let profile = { ...DEFAULT_PROFILE };
 if (existsSync(PROFILE_FILE)) {
   const pf = readJson(PROFILE_FILE, rel(PROFILE_FILE));
   if (pf && typeof pf === "object" && !Array.isArray(pf)) {
     for (const [k, v] of Object.entries(pf)) {
       if (k === "$comment") continue;
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")})`);
+      if (k === "limits") { const bad = limitsProblem(v); if (bad) fail(rel(PROFILE_FILE), `limits: ${bad}`); else profile.limits = v; continue; }
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -568,10 +597,16 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** The /app sidebar's Credentials page (mold_v0-034): when any pack declares a credential field. */\n" +
   `export const credentialPortalNav: NavGroup[] = ${json(credentialFields.length ? [{ label: "Workspace", items: [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] }] : [])};\n\n` +
   "/** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */\n" +
-  `export const packOnboardingSteps = ${onboardingSteps.length};\n`);
+  `export const packOnboardingSteps = ${onboardingSteps.length};\n` +
+  // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
+  // tools or runs. With zero packs the sidebar is the shell's own.
+  (packs.length ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */\n" +
+    `export const usagePortalNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
+    `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
+    : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n"));
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
-  `export const profile = ${json(profile)} as const;\n`);
+  `export const profile = ${json((({ limits: _l, ...p }) => p)(profile))} as const;\n`);
 
 let stale = 0;
 for (const [file, text] of files) {

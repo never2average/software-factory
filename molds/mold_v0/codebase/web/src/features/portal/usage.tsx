@@ -13,6 +13,7 @@ import { num, usd } from '@/lib/octillion-format';
 import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
 import { MultiSelectFilter, type FilterOption } from '@/components/layout/multi-select-filter';
 import { Icons } from '@/components/icons';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, useOrgLoad } from './shared';
 
 interface Week { week: string; partial: boolean }
@@ -26,6 +27,13 @@ interface Usage {
   spend: { month_usd: number; budget_usd: number; filtered?: boolean };
   /** The cards' sparklines: people, simulations and finished sessions per day of the period; model spend per day this month. */
   series?: { days: string[]; people: number[]; simulations: number[]; completed: number[]; month_days: string[]; spend: number[] };
+  /** The period's runs (mold_v0-008; src/usage-report.ts workspaceRunUsage): present only when there are any. */
+  run_usage?: {
+    runs: number; cost_usd: number; tool_calls: number; requests: number; tokens: number;
+    by_kind: { pack: string; kind: string; runs: number; succeeded: number; failed: number; tool_calls: number; requests: number; cost_usd: number }[];
+    by_person: { user_id: string | null; label: string; runs: number; tool_calls: number; cost_usd: number }[];
+    recent: { id: string; kind: string; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[];
+  };
   /** The grid's series (src/app.ts usageCharts). */
   charts?: {
     workflow: { id: string; label: string; used: number; total: number; calls: number }[];
@@ -222,7 +230,48 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
           <RankBars data={(c?.recent ?? []).filter((r) => r.scored > 0).map((r) => ({ name: r.name, value: r.hit_pct ?? 0 }))}
             color='var(--chart-2)' format={(v) => `${v}%`} label='Hit rate' empty='No scored simulations in this period.' />
         </Box>
+        {u.run_usage && <RunUsage r={u.run_usage} />}
       </div>
     </div>
+  );
+}
+
+/** Runs in the period (mold_v0-008): shown only when there are any, so a workspace without runs sees the page as before. */
+function RunUsage({ r }: { r: NonNullable<Usage['run_usage']> }) {
+  return (
+    <>
+      <div className='grid lg:grid-cols-2'>
+        <Box title='Runs by kind' description={`${num(r.runs)} runs in this period: ${usd(r.cost_usd)} of model spend, ${num(r.tool_calls)} tool calls, ${num(r.requests)} model requests.`}>
+          <RankBars data={r.by_kind.map((k) => ({ name: k.kind, value: k.cost_usd }))} label='Model spend' color='var(--chart-3)' format={usd} mono empty='No run spend in this period.' />
+        </Box>
+        <Box title='Runs by person' description='Model spend on the runs each person started in this period.'>
+          <RankBars data={r.by_person.map((p) => ({ name: p.label, value: p.cost_usd }))} label='Model spend' color='var(--chart-3)' format={usd} empty='No run spend in this period.' />
+        </Box>
+      </div>
+      <Box title='Recent runs' description='The latest runs in this period, with their tool calls and model spend.'>
+        <RunTable rows={r.recent} />
+      </Box>
+    </>
+  );
+}
+
+/** The latest runs, one row each (shared with the neutral Activity page). */
+export function RunTable({ rows, run = 'Run' }: { rows: { id: string; kind: string; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[]; run?: string }) {
+  if (!rows.length) return <Empty>No runs in this period.</Empty>;
+  return (
+    <Table>
+      <TableHeader><TableRow><TableHead>{run}</TableHead><TableHead>Status</TableHead><TableHead>Started by</TableHead><TableHead className='text-right'>Tool calls</TableHead>
+        <TableHead className='text-right'>Model requests</TableHead><TableHead className='text-right'>Spend</TableHead></TableRow></TableHeader>
+      <TableBody>
+        {rows.map((x) => (
+          <TableRow key={x.id}>
+            <TableCell className='font-mono text-xs'>{x.kind}<div className='text-muted-foreground'>{shortDay(x.created_at.slice(0, 10))}</div></TableCell>
+            <TableCell>{x.status}</TableCell><TableCell>{x.by}</TableCell>
+            <TableCell className='text-right tabular-nums'>{num(x.tool_calls)}</TableCell><TableCell className='text-right tabular-nums'>{num(x.requests)}</TableCell>
+            <TableCell className='text-right tabular-nums'>{usd(x.cost_usd)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
