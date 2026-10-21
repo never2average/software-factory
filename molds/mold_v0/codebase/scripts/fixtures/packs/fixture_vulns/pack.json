@@ -1,0 +1,705 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_vulns",
+  "name": "Fixture vulnerabilities",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-063, 058; scripts/metrics-test.ts, scripts/console-tabs-test.ts): a vulnerability-style set of metrics, charts and tabs from pack.json alone. Never shipped.",
+  "words": {
+    "run": "audit"
+  },
+  "record_areas": [
+    {
+      "name": "audit_controls",
+      "label": "Controls",
+      "role": "source",
+      "scope": "platform",
+      "list_columns": [
+        "regulator",
+        "summary"
+      ],
+      "fields": [
+        {
+          "name": "regulator",
+          "label": "Regulator",
+          "type": "enum",
+          "options": [
+            {
+              "value": "central_bank",
+              "label": "Central bank"
+            },
+            {
+              "value": "securities",
+              "label": "Securities regulator"
+            },
+            {
+              "value": "privacy",
+              "label": "Data protection"
+            }
+          ]
+        },
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "max_length": 500
+        }
+      ]
+    },
+    {
+      "name": "audit_apps",
+      "label": "Applications",
+      "role": "asset",
+      "scope": "workspace",
+      "list_columns": [
+        "url",
+        "environment"
+      ],
+      "fields": [
+        {
+          "name": "url",
+          "label": "Address",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "environment",
+          "label": "Environment",
+          "type": "enum",
+          "options": [
+            {
+              "value": "prod",
+              "label": "Production"
+            },
+            {
+              "value": "staging",
+              "label": "Staging"
+            }
+          ]
+        }
+      ],
+      "permissions": {
+        "read": [
+          "member",
+          "billing",
+          "owner"
+        ]
+      }
+    },
+    {
+      "name": "audit_findings",
+      "label": "Vulnerabilities",
+      "role": "check",
+      "scope": "workspace",
+      "list_columns": [
+        "severity",
+        "state",
+        "app",
+        "due"
+      ],
+      "fields": [
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "required": true,
+          "options": [
+            {
+              "value": "low",
+              "label": "Low"
+            },
+            {
+              "value": "medium",
+              "label": "Medium"
+            },
+            {
+              "value": "high",
+              "label": "High"
+            },
+            {
+              "value": "critical",
+              "label": "Critical"
+            }
+          ]
+        },
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            {
+              "value": "open",
+              "label": "Open"
+            },
+            {
+              "value": "triaged",
+              "label": "Triaged"
+            },
+            {
+              "value": "fixed",
+              "label": "Fixed"
+            },
+            {
+              "value": "accepted",
+              "label": "Risk accepted"
+            },
+            {
+              "value": "reopened",
+              "label": "Reopened"
+            }
+          ]
+        },
+        {
+          "name": "app",
+          "label": "Application",
+          "type": "reference",
+          "to": "audit_apps",
+          "required": true
+        },
+        {
+          "name": "control",
+          "label": "Control",
+          "type": "reference",
+          "to": "audit_controls"
+        },
+        {
+          "name": "regulator",
+          "label": "Regulator",
+          "type": "enum",
+          "options": [
+            {
+              "value": "central_bank",
+              "label": "Central bank"
+            },
+            {
+              "value": "securities",
+              "label": "Securities regulator"
+            },
+            {
+              "value": "privacy",
+              "label": "Data protection"
+            }
+          ]
+        },
+        {
+          "name": "due",
+          "label": "Fix by",
+          "type": "date"
+        },
+        {
+          "name": "cvss",
+          "label": "CVSS",
+          "type": "number",
+          "min": 0,
+          "max": 10
+        }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "open",
+        "transitions": [
+          {
+            "from": [
+              "open"
+            ],
+            "to": "triaged",
+            "label": "Triage"
+          },
+          {
+            "from": [
+              "open",
+              "triaged",
+              "reopened"
+            ],
+            "to": "fixed",
+            "label": "Mark fixed"
+          },
+          {
+            "from": [
+              "open",
+              "triaged"
+            ],
+            "to": "accepted",
+            "label": "Accept the risk",
+            "roles": [
+              "owner"
+            ]
+          },
+          {
+            "from": [
+              "fixed",
+              "accepted"
+            ],
+            "to": "reopened",
+            "label": "Reopen"
+          }
+        ]
+      },
+      "due": {
+        "field": "due",
+        "within_days": 7
+      }
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "audit_scan",
+      "label": "Audit an application",
+      "runner": "agent-workspace",
+      "args": [
+        {
+          "name": "app",
+          "label": "Application",
+          "type": "reference",
+          "to": "audit_apps",
+          "required": true
+        }
+      ],
+      "credentials": [
+        "audit_token"
+      ]
+    }
+  ],
+  "credentials": [
+    {
+      "name": "audit_token",
+      "label": "Application token",
+      "bound_to": "asset",
+      "area": "audit_apps",
+      "deliver_as": {
+        "env": "AUDIT_TOKEN"
+      }
+    }
+  ],
+  "run_results": {
+    "check": [
+      "audit_findings"
+    ]
+  },
+  "metrics": [
+    {
+      "name": "open_findings",
+      "label": "Open vulnerabilities",
+      "over": "audit_findings",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "overdue_findings",
+      "label": "Overdue",
+      "over": "audit_findings",
+      "description": "Open past their fix-by date",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        },
+        {
+          "field": "due",
+          "op": "lt",
+          "value": "today"
+        }
+      ]
+    },
+    {
+      "name": "open_by_severity",
+      "label": "Open by severity",
+      "over": "audit_findings",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        }
+      ],
+      "group_by": "severity"
+    },
+    {
+      "name": "opened_per_week",
+      "label": "Found",
+      "over": "audit_findings",
+      "by_time": {
+        "at": "created",
+        "every": "week",
+        "last": 8
+      }
+    },
+    {
+      "name": "fixed_per_week",
+      "label": "Fixed",
+      "over": "audit_findings",
+      "by_time": {
+        "at": "state:fixed",
+        "every": "week",
+        "last": 8
+      }
+    },
+    {
+      "name": "open_by_app",
+      "label": "Open by application",
+      "over": "audit_findings",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        }
+      ],
+      "group_by": "app",
+      "limit": 10
+    },
+    {
+      "name": "open_by_control",
+      "label": "Open by control",
+      "over": "audit_findings",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        }
+      ],
+      "group_by": "control",
+      "limit": 20
+    },
+    {
+      "name": "open_by_regulator",
+      "label": "Open by regulator",
+      "over": "audit_findings",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        }
+      ],
+      "group_by": "regulator"
+    },
+    {
+      "name": "open_due_status",
+      "label": "Open against their fix-by date",
+      "over": "audit_findings",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        }
+      ],
+      "group_by": {
+        "due": "due",
+        "soon_days": 7
+      }
+    },
+    {
+      "name": "time_to_fix",
+      "label": "Average time to fix",
+      "over": "audit_findings",
+      "measure": "duration",
+      "duration": {
+        "from": "created",
+        "to": "state:fixed"
+      },
+      "where": [
+        {
+          "field": "state",
+          "op": "eq",
+          "value": "fixed"
+        }
+      ]
+    },
+    {
+      "name": "median_fix_by_severity",
+      "label": "Median time to fix",
+      "over": "audit_findings",
+      "measure": "duration",
+      "duration": {
+        "from": "created",
+        "to": "state:fixed",
+        "stat": "median"
+      },
+      "where": [
+        {
+          "field": "state",
+          "op": "eq",
+          "value": "fixed"
+        }
+      ],
+      "group_by": "severity"
+    },
+    {
+      "name": "fix_rate",
+      "label": "Fixed",
+      "over": "audit_findings",
+      "description": "Share of all vulnerabilities fixed",
+      "measure": "rate",
+      "rate": {
+        "where": [
+          {
+            "field": "state",
+            "op": "eq",
+            "value": "fixed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "found_weekly_by_severity",
+      "label": "Found by severity",
+      "over": "audit_findings",
+      "by_time": {
+        "at": "created",
+        "every": "week",
+        "last": 8
+      },
+      "group_by": "severity"
+    },
+    {
+      "name": "mean_cvss_open",
+      "label": "Average CVSS of open ones",
+      "over": "audit_findings",
+      "measure": "average",
+      "field": "cvss",
+      "where": [
+        {
+          "field": "state",
+          "op": "in",
+          "value": [
+            "open",
+            "triaged",
+            "reopened"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "apps_by_environment",
+      "label": "Applications by environment",
+      "over": "audit_apps",
+      "group_by": "environment"
+    }
+  ],
+  "charts": [
+    {
+      "name": "headline",
+      "title": "Where things stand",
+      "type": "number",
+      "metrics": [
+        "open_findings",
+        "overdue_findings",
+        "time_to_fix",
+        "fix_rate"
+      ]
+    },
+    {
+      "name": "severity",
+      "title": "Open vulnerabilities by severity",
+      "type": "bar",
+      "metrics": [
+        "open_by_severity"
+      ],
+      "palette": "ordinal"
+    },
+    {
+      "name": "open_vs_fixed",
+      "title": "Found and fixed per week",
+      "type": "line",
+      "metrics": [
+        "opened_per_week",
+        "fixed_per_week"
+      ]
+    },
+    {
+      "name": "due",
+      "title": "Open against their fix-by date",
+      "type": "bar",
+      "metrics": [
+        "open_due_status"
+      ]
+    },
+    {
+      "name": "by_app",
+      "title": "Open by application",
+      "type": "bar",
+      "metrics": [
+        "open_by_app"
+      ]
+    },
+    {
+      "name": "by_regulator",
+      "title": "Open by regulator",
+      "type": "bar",
+      "metrics": [
+        "open_by_regulator"
+      ]
+    },
+    {
+      "name": "by_control",
+      "title": "Open by control",
+      "type": "table",
+      "metrics": [
+        "open_by_control"
+      ]
+    },
+    {
+      "name": "fix_time",
+      "title": "Median days to fix, by severity",
+      "type": "bar",
+      "metrics": [
+        "median_fix_by_severity"
+      ],
+      "palette": "ordinal"
+    },
+    {
+      "name": "weekly_severity",
+      "title": "Found per week, by severity",
+      "type": "stacked_bar",
+      "metrics": [
+        "found_weekly_by_severity"
+      ],
+      "palette": "ordinal"
+    },
+    {
+      "name": "environments",
+      "title": "Applications by environment",
+      "type": "bar",
+      "metrics": [
+        "apps_by_environment"
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "id": "overview",
+      "kind": "overview",
+      "label": "Overview",
+      "icon": "dashboard",
+      "group": "Audit",
+      "charts": [
+        "headline",
+        "severity",
+        "open_vs_fixed",
+        "due",
+        "by_app",
+        "by_regulator",
+        "fix_time",
+        "weekly_severity"
+      ]
+    },
+    {
+      "id": "vulnerabilities",
+      "kind": "area",
+      "area": "audit_findings",
+      "icon": "shield",
+      "group": "Audit",
+      "views": [
+        "table",
+        "board",
+        "timeline",
+        "detail"
+      ],
+      "timeline_by": "due",
+      "charts": [
+        "severity",
+        "due"
+      ]
+    },
+    {
+      "id": "applications",
+      "kind": "area",
+      "area": "audit_apps",
+      "icon": "building",
+      "group": "Audit",
+      "charts": [
+        "environments"
+      ]
+    },
+    {
+      "id": "controls",
+      "kind": "area",
+      "area": "audit_controls",
+      "icon": "book",
+      "group": "Audit",
+      "charts": [
+        "by_control"
+      ]
+    },
+    {
+      "id": "audits",
+      "kind": "runs",
+      "label": "Audits",
+      "icon": "play",
+      "group": "Audit"
+    },
+    {
+      "id": "reports",
+      "kind": "reports",
+      "label": "Reports",
+      "group": "Audit"
+    },
+    {
+      "id": "credentials",
+      "kind": "credentials",
+      "label": "Application tokens",
+      "group": "Workspace",
+      "roles": [
+        "owner",
+        "billing",
+        "member"
+      ]
+    },
+    {
+      "id": "notices",
+      "kind": "notices",
+      "label": "Due soon",
+      "group": "Workspace"
+    },
+    {
+      "id": "activity",
+      "kind": "usage",
+      "group": "Workspace"
+    },
+    {
+      "id": "billing",
+      "kind": "billing",
+      "group": "Workspace",
+      "roles": [
+        "owner",
+        "billing"
+      ]
+    }
+  ]
+}

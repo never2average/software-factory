@@ -14,6 +14,7 @@ import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { areaLinks, PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace, type WorkspaceRuns } from "./pack-api.js";
 import { mergePack, type DeclaredPack } from "./pack-manifest.js";
+import { checkViews, viewsOf } from "./metric-spec.js";
 import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
 import { currentTenant, withTenant } from "./tenant-scope.js";
@@ -91,9 +92,8 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   // The run-results mapping (mold_v0-061) names the record areas a result's check is in.
   for (const p of out) for (const c of p.definition.runResults?.check ?? [])
     if (!areaOwner.has(c)) problems.push(`pack ${p.id}: run_results.check names ${c}, which is not a record area of this build`);
-  // A metric (mold_v0-063) is over a record area of this build or the runs' results.
-  for (const p of out) for (const x of p.definition.metrics ?? [])
-    if (x.over !== "run_results" && !areaOwner.has(x.over)) problems.push(`pack ${p.id}: metric ${x.name} is over ${x.over}, which is neither a record area of this build nor run_results`);
+  // Metrics, charts and tabs (mold_v0-063, 058): what each names across the build (areas, fields, states, job kinds).
+  if (!problems.length) problems.push(...checkViews(viewsOf(out)));
   if (problems.length) throw new PackDefinitionError(`packs refused:\n  ${problems.join("\n  ")}`);
   return out;
 }
@@ -118,7 +118,7 @@ export function setPacksForTest(list: readonly GeneratedPack[] | null) { install
 /** Everything the packs declare, by kind: what is wired today and what later tickets pick up. */
 export function packRegistry() {
   const all = packs();
-  const flat = <K extends "jobKinds" | "agentJobKinds" | "recordAreas" | "credentials" | "schedules" | "onboarding" | "metrics">(k: K) =>
+  const flat = <K extends "jobKinds" | "agentJobKinds" | "recordAreas" | "credentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs">(k: K) =>
     all.flatMap((p) => (p.definition[k] ?? []).map((x) => ({ pack: p.id, ...(x as object) })));
   return {
     packs: all.map((p) => ({ id: p.id, name: p.manifest.name, version: p.manifest.version })),
@@ -128,8 +128,10 @@ export function packRegistry() {
     // Every kind is wired: recordAreas (src/record-areas.ts, mold_v0-047), jobKinds (src/runs.ts, mold_v0-041), credentials
     // (src/credentials.ts, mold_v0-034), onboarding (src/onboarding.ts, mold_v0-011), schedules (src/schedules.ts, mold_v0-035).
     jobKinds: flat("jobKinds"), recordAreas: flat("recordAreas"), credentials: flat("credentials"), schedules: flat("schedules"), onboarding: flat("onboarding"),
-    // Declared and validated (mold_v0-057), wired later: the agent-workspace runner (061), metrics and charts (063).
-    agentJobKinds: flat("agentJobKinds"), metrics: flat("metrics"),
+    // Metrics and charts (src/metrics.ts, mold_v0-063), the console's tabs (mold_v0-058).
+    metrics: flat("metrics"), charts: flat("charts"), tabs: flat("tabs"),
+    // Declared and validated (mold_v0-057), wired later: the agent-workspace runner (061).
+    agentJobKinds: flat("agentJobKinds"),
     repositories: all.flatMap((p) => Object.entries(p.definition.repositories ?? {}).map(([name, r]) => ({ pack: p.id, name, ...r }))),
     runResults: all.filter((p) => p.definition.runResults).map((p) => ({ pack: p.id, ...p.definition.runResults })),
   };

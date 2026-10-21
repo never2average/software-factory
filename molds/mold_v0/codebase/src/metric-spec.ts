@@ -1,0 +1,316 @@
+/**
+ * Metrics, charts and console tabs across a build (mold_v0-063, mold_v0-058; molds/mold_v0/MOLD.md "Pack and record-area
+ * contract"): what each declaration names, checked against every pack's areas, fields, states and job kinds. Pure (no
+ * database), so the server (src/packs.ts installPacks), the build (scripts/gen-packs.mjs) and the metric engine
+ * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
+ */
+import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
+import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, TabSchema, z, type Chart, type Metric, type Tab } from "./pack-api.js";
+
+export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
+export type SpecMetric = Metric & { pack: string };
+export type SpecChart = Chart & { pack: string };
+export type SpecTab = Tab & { pack: string };
+
+/** What a metric may be over besides a record area: the workspace's run results and its runs. */
+export const RUN_SOURCES = ["run_results", "runs"] as const;
+export type RunSource = (typeof RUN_SOURCES)[number];
+
+/** A column a metric reads, as the engine sees it. */
+export interface Column {
+  /** text: compared as text; enum: one of `options`; number; time: a point in time; boolean; person and reference as text. */
+  type: "text" | "enum" | "number" | "time" | "boolean" | "person" | "reference";
+  multiple: boolean;
+  options?: string[];
+  labels?: Record<string, string>;
+  /** A reference's area (group labels are its records' titles). */
+  to?: string;
+  /** Where it is: a field of the record's data, a column of the row, a run result's detail key, or a state's time. */
+  at: { data: string } | { column: string } | { detail: string } | { state: string };
+}
+
+const RUN_RESULT_STATUSES = ["pass", "fail", "error", "not_applicable", "unknown"];
+const RUN_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"];
+const RUN_ERRORS = ["infrastructure", "run", "validation", "timeout", "cancelled"];
+const STATUS_LABELS: Record<string, string> = {
+  pass: "Pass", fail: "Fail", error: "Error", not_applicable: "Not applicable", unknown: "Unknown", queued: "Queued", running: "Running",
+  succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", infrastructure: "Infrastructure", run: "Run", validation: "Validation", timeout: "Timeout",
+};
+const labelsOf = (vals: string[]) => Object.fromEntries(vals.map((v) => [v, STATUS_LABELS[v] ?? v]));
+
+/** The columns a run source offers, by name. */
+const RUN_COLUMNS: Record<RunSource, Record<string, Column>> = {
+  run_results: {
+    status: { type: "enum", multiple: false, options: RUN_RESULT_STATUSES, labels: labelsOf(RUN_RESULT_STATUSES), at: { column: "status" } },
+    check: { type: "reference", multiple: false, at: { column: "check" } },
+    asset: { type: "reference", multiple: false, at: { column: "asset" } },
+    source: { type: "reference", multiple: false, at: { column: "source" } },
+    check_area: { type: "text", multiple: false, at: { column: "check_area" } },
+    created: { type: "time", multiple: false, at: { column: "created_at" } },
+  },
+  runs: {
+    status: { type: "enum", multiple: false, options: RUN_STATUSES, labels: labelsOf(RUN_STATUSES), at: { column: "status" } },
+    kind: { type: "text", multiple: false, at: { column: "kind" } },
+    error_kind: { type: "enum", multiple: false, options: RUN_ERRORS, labels: labelsOf(RUN_ERRORS), at: { column: "error_kind" } },
+    cost_usd: { type: "number", multiple: false, at: { column: "cost_usd" } },
+    created: { type: "time", multiple: false, at: { column: "created_at" } },
+    started: { type: "time", multiple: false, at: { column: "started_at" } },
+    ended: { type: "time", multiple: false, at: { column: "ended_at" } },
+  },
+};
+
+/** The column `name` names in what a metric is over (an area or a run source), or a reason it names none. */
+export function columnOf(over: SpecArea | RunSource, name: string): Column | string {
+  if (typeof over === "string") {
+    if (over === "run_results" && name.startsWith("detail.")) return { type: "text", multiple: false, at: { detail: name.slice(7) } };
+    return RUN_COLUMNS[over][name] ?? `${over} has no column ${name} (it has ${Object.keys(RUN_COLUMNS[over]).join(", ")}${over === "run_results" ? ", detail.<word>" : ""})`;
+  }
+  if (name === "created" || name === "updated") {
+    if (over.fields.some((f) => f.name === name)) return `area ${over.name} has a field named ${name}: it hides the row's own ${name} time`;
+    return { type: "time", multiple: false, at: { column: `${name}_at` } };
+  }
+  if (name.startsWith("detail.")) return `detail.<word> is for run_results; area ${over.name} has fields`;
+  const f = over.fields.find((x) => x.name === name);
+  if (!f) return `area ${over.name} has no field ${name}`;
+  const t = f.type;
+  const multiple = !!f.multiple || t === "link";
+  if (t === "enum") {
+    const options = optionValues(f);
+    return { type: "enum", multiple, options, labels: Object.fromEntries((f.options ?? []).map((o) => (typeof o === "string" ? [o, o] : [o.value, o.label ?? o.value]))), at: { data: f.name } };
+  }
+  if (t === "date") return { type: "time", multiple: false, at: { data: f.name } };
+  if (t === "number" || t === "boolean" || t === "person" || t === "text") return { type: t, multiple, at: { data: f.name } };
+  if (t === "reference" || t === "link") return { type: "reference", multiple, to: f.to ?? over.links?.find((l) => l.field === f.name)?.area, at: { data: f.name } };
+  return `field ${name} of area ${over.name} is ${t}: a metric reads text, enum, number, date, boolean, person and reference fields`;
+}
+
+/** A point in time (by_time.at, duration.from/to, a timeline): a time column, or state:<value> of a lifecycle. */
+export function pointOf(over: SpecArea | RunSource, p: string): Column | string {
+  if (p.startsWith("state:")) {
+    const v = p.slice(6);
+    if (typeof over === "string") return `state:<value> is for a record area with a lifecycle; ${over} has none`;
+    if (!over.lifecycle) return `area ${over.name} has no lifecycle, so it has no state times (${p})`;
+    const f = over.fields.find((x) => x.name === over.lifecycle!.field);
+    if (!f || !optionValues(f).includes(v)) return `${p}: ${v} is not a state of area ${over.name}`;
+    if (over.scope !== "workspace") return `${p}: a shared area's records have no states`;
+    return { type: "time", multiple: false, at: { state: v } };
+  }
+  const c = columnOf(over, p);
+  if (typeof c === "string") return c;
+  if (c.type !== "time") return `${p} is not a date or a time`;
+  return c;
+}
+
+/** Who may read an area's records (its declared `read`, the platform's own otherwise): src/record-areas.ts allowedRoles. */
+export const areaReadRoles = (a: SpecArea): AccountRole[] => ACCOUNT_ROLES.filter((r) => (a.permissions?.read ?? DECLARABLE_ROLES).includes(r) && canAccount(r, "read"));
+/** Who may read a metric: its `roles`, narrowed by its area's read permission (run sources: every role). */
+export function metricRoles(m: SpecMetric, areas: readonly SpecArea[]): AccountRole[] {
+  const area = areas.find((a) => a.name === m.over);
+  const base: readonly AccountRole[] = area ? areaReadRoles(area) : ACCOUNT_ROLES.filter((r) => canAccount(r, "read"));
+  return base.filter((r) => !m.roles || m.roles.includes(r));
+}
+
+/** How the console shows a metric's numbers. */
+export function metricUnit(m: Metric, over: SpecArea | RunSource | null): "count" | "number" | "usd" | "percent" | "days" | "hours" {
+  if (m.unit) return m.unit;
+  if (m.measure === "count") return "count";
+  if (m.measure === "rate") return "percent";
+  if (m.measure === "duration") return m.duration!.unit;
+  if (over === "runs" && m.field === "cost_usd") return "usd";
+  return "number";
+}
+
+/** The shape of a metric's answer: one value, a value per group, a series (per group), for the charts' checks. */
+const shapeOf = (m: Metric) => (m.by_time ? (m.group_by ? "series_by_group" : "series") : m.group_by ? "groups" : "single");
+const groupKey = (m: Metric) => JSON.stringify(m.group_by ?? null);
+/** Series share their buckets when they share `every` and `last` (each may read its own point in time). */
+const timeKey = (m: Metric) => JSON.stringify(m.by_time ? [m.by_time.every, m.by_time.last] : null);
+
+export interface BuildViews {
+  areas: readonly SpecArea[];
+  metrics: readonly SpecMetric[];
+  charts: readonly SpecChart[];
+  tabs: readonly SpecTab[];
+  /** What else the build has: job kinds (runs, reports, schedules tabs), credential fields, due-date areas, pages per pack. */
+  jobKinds: number;
+  harnessKinds: number;
+  credentials: number;
+  dueAreas: number;
+  pages?: Record<string, string[]>;
+}
+
+/** Every problem with the build's metrics, charts and tabs, each naming its pack. Empty when they are sound. */
+export function checkViews(b: BuildViews): string[] {
+  const problems: string[] = [];
+  const at = (pack: string, what: string) => problems.push(`pack ${pack}: ${what}`);
+  const area = (n: string) => b.areas.find((a) => a.name === n) ?? null;
+  const overOf = (m: SpecMetric): SpecArea | RunSource | null => ((RUN_SOURCES as readonly string[]).includes(m.over) ? (m.over as RunSource) : area(m.over));
+
+  // ---------- metrics ----------
+  const metricOwner = new Map<string, string>();
+  for (const m of b.metrics) {
+    const p = m.pack, w = `metric ${m.name}`;
+    if (metricOwner.has(m.name)) at(p, `${w} is already pack ${metricOwner.get(m.name)}'s (metric names are unique in a build)`);
+    else metricOwner.set(m.name, p);
+    const over = overOf(m);
+    if (!over) { at(p, `${w} is over ${m.over}, which is neither a record area of this build nor run_results or runs`); continue; }
+    const col = (name: string, why: string) => { const c = columnOf(over, name); if (typeof c === "string") { at(p, `${w}: ${why}: ${c}`); return null; } return c; };
+    const conditions = (list: NonNullable<z.output<typeof MetricSchema>["where"]>, why: string) => {
+      for (const c of list) {
+        const k = col(c.field, why);
+        if (!k) continue;
+        const vals = c.value === undefined ? [] : Array.isArray(c.value) ? c.value : [c.value];
+        if (["lt", "lte", "gt", "gte"].includes(c.op)) {
+          if (k.type !== "number" && k.type !== "time") at(p, `${w}: ${why}: ${c.op} compares numbers or dates; ${c.field} is ${k.type}`);
+          else if (k.type === "number" && typeof c.value !== "number") at(p, `${w}: ${why}: ${c.field} is a number: compare it with a number`);
+          else if (k.type === "time" && typeof c.value !== "string") at(p, `${w}: ${why}: ${c.field} is a date: compare it with a date, today or now`);
+          continue;
+        }
+        if (c.op === "empty" || c.op === "not_empty") continue;
+        if (k.type === "time" || k.type === "number") { at(p, `${w}: ${why}: ${c.field} is a ${k.type === "time" ? "date" : "number"}: use lt, lte, gt or gte`); continue; }
+        if (k.multiple && (c.op === "ne" || c.op === "not_in")) at(p, `${w}: ${why}: ${c.field} holds a list: use eq or in (it holds the value), empty or not_empty`);
+        if (k.type === "boolean" && vals.some((v) => typeof v !== "boolean")) at(p, `${w}: ${why}: ${c.field} is true or false`);
+        if (k.type !== "boolean" && vals.some((v) => typeof v !== "string")) at(p, `${w}: ${why}: ${c.field} is compared with words`);
+        if (k.type === "enum") for (const v of vals) if (typeof v === "string" && !k.options!.includes(v)) at(p, `${w}: ${why}: ${v} is not one of ${c.field}'s options (${k.options!.join(", ")})`);
+      }
+    };
+    conditions(m.where ?? [], "where");
+    if (m.rate) conditions(m.rate.where, "rate.where");
+    if (m.field !== undefined) { const k = col(m.field, `the ${m.measure} of ${m.field}`); if (k && k.type !== "number") at(p, `${w}: a ${m.measure} reads a number field; ${m.field} is ${k.type}`); }
+    if (m.duration) for (const end of [m.duration.from, m.duration.to]) { const c = pointOf(over, end); if (typeof c === "string") at(p, `${w}: duration: ${c}`); }
+    if (m.by_time) { const c = pointOf(over, m.by_time.at); if (typeof c === "string") at(p, `${w}: by_time.at: ${c}`); }
+    if (m.group_by !== undefined) {
+      if (typeof m.group_by === "object") {
+        const c = typeof over === "string" ? `due dates are a record area's` : (() => { const k = columnOf(over, m.group_by.due); return typeof k === "string" ? k : k.type !== "time" || !("data" in k.at) ? `${m.group_by.due} is not a date field` : null; })();
+        if (c) at(p, `${w}: group_by.due: ${c}`);
+      } else {
+        const k = col(m.group_by, "group_by");
+        if (k) {
+          if (k.multiple) at(p, `${w}: group_by: ${m.group_by} holds a list: group by a single-valued field`);
+          else if (k.type === "time" || k.type === "number") at(p, `${w}: group_by: ${m.group_by} is a ${k.type === "time" ? "date" : "number"}: group by a word field (use by_time for dates)`);
+          else if (m.by_time && !(k.type === "boolean" || (k.type === "enum" && k.options!.length <= 8) || (typeof over === "string" && m.group_by === "kind")))
+            at(p, `${w}: a series grouped by ${m.group_by} could have many groups: group a series by an enum of at most 8 options, a true/false field, a status or a kind`);
+        }
+      }
+    }
+  }
+
+  // ---------- charts: each form takes the shapes it can draw, on one axis ----------
+  const metric = (n: string) => b.metrics.find((m) => m.name === n) ?? null;
+  for (const c of b.charts) {
+    const p = c.pack, w = `chart ${c.name} (${c.type})`;
+    const ms = c.metrics.map(metric).filter((m): m is SpecMetric => !!m);
+    if (ms.length !== c.metrics.length) continue; // named by validatePack
+    const shapes = ms.map(shapeOf);
+    const units = new Set(ms.map((m) => metricUnit(m, overOf(m))));
+    const same = (k: (m: Metric) => string) => new Set(ms.map(k)).size === 1;
+    if (c.type !== "number" && c.type !== "table" && units.size > 1) at(p, `${w} would need two y-axes (${[...units].join(" and ")}): show each in its own chart`);
+    switch (c.type) {
+      case "number":
+        if (shapes.some((s) => s !== "single")) at(p, `${w}: a number tile shows one value per metric: drop group_by and by_time`);
+        if (ms.length > 4) at(p, `${w}: at most 4 tiles in a row`);
+        break;
+      case "bar":
+        if (ms.length !== 1) at(p, `${w}: a bar chart shows one metric (several: stacked_bar, or a table)`);
+        else if (shapes[0] !== "groups" && shapes[0] !== "series") at(p, `${w}: a bar chart shows a metric by group or by time (a group over time: stacked_bar; one value: number)`);
+        break;
+      case "stacked_bar":
+        if (ms.length === 1 ? shapes[0] !== "series_by_group" : !(ms.length <= 6 && shapes.every((s) => s === "groups") && same(groupKey)))
+          at(p, `${w}: a stacked bar shows one metric with group_by and by_time, or 2 to 6 metrics with the same group_by`);
+        if (ms.some((m) => m.measure !== "count" && m.measure !== "sum")) at(p, `${w}: stacked parts must add up to a whole: counts or sums only`);
+        break;
+      case "line": case "area":
+        if (ms.length === 1 ? !shapes[0]!.startsWith("series") : !(ms.length <= 4 && shapes.every((s) => s === "series") && same(timeKey)))
+          at(p, `${w}: a ${c.type} chart shows 1 to 4 metrics over the same time buckets (by_time with the same every and last), or one with by_time and group_by`);
+        break;
+      case "table":
+        if (!same((m) => `${shapeOf(m)} ${groupKey(m)} ${timeKey(m)}`)) at(p, `${w}: a table's metrics share their grouping (the same group_by and by_time)`);
+        break;
+    }
+    if (c.palette === "ordinal") {
+      const g = ms.length === 1 && typeof ms[0]!.group_by === "string" ? columnOf(overOf(ms[0]!)!, ms[0]!.group_by) : null;
+      if (!g || typeof g === "string" || g.type !== "enum") at(p, `${w}: an ordinal palette colours the ordered options of one metric's enum group_by`);
+      else if (g.options!.length > 5) at(p, `${w}: an ordinal palette has 5 steps; ${ms[0]!.group_by} has ${g.options!.length} options (use categorical, or a table)`);
+    }
+  }
+
+  // ---------- tabs ----------
+  const chart = (pack: string, n: string) => b.charts.find((c) => c.pack === pack && c.name === n) ?? null;
+  for (const t of b.tabs) {
+    const p = t.pack, w = `tab ${t.id}`;
+    if (b.tabs.some((x) => x !== t && x.pack === p && x.id === t.id)) at(p, `${w} is declared twice`);
+    if ((b.pages?.[p] ?? []).includes(t.id)) at(p, `${w}: its id is also a page of the pack (both would be /app/packs/${p}/${t.id})`);
+    if (t.kind === "area") {
+      const a = area(t.area!);
+      if (!a) { at(p, `${w} shows area ${t.area}, which no pack declares`); continue; }
+      const views = t.views ?? ["table", "detail"];
+      if (views.includes("board")) {
+        const by = t.board_by ?? a.lifecycle?.field;
+        const f = by ? a.fields.find((x) => x.name === by) : null;
+        if (!by) at(p, `${w}: a board needs board_by (an enum field) when area ${a.name} has no lifecycle`);
+        else if (!f || f.type !== "enum" || f.multiple) at(p, `${w}: board_by ${by} must name a single-choice enum field of area ${a.name}`);
+      }
+      if (views.includes("timeline")) {
+        const c = pointOf(a, t.timeline_by ?? "updated");
+        if (typeof c === "string") at(p, `${w}: timeline_by: ${c}`);
+        else if (!("data" in c.at) && (t.timeline_by ?? "updated") !== "updated") at(p, `${w}: timeline_by: a timeline orders records by one of their date fields or by updated`);
+      }
+    }
+    if (t.kind === "runs" || t.kind === "reports") { if (!b.jobKinds) at(p, `${w}: the build has no job kind, so there are no runs to show`); }
+    if (t.kind === "schedules" && !b.harnessKinds) at(p, `${w}: the build schedules no job kind, so it has no Schedules page`);
+    if (t.kind === "credentials" && !b.credentials) at(p, `${w}: the build declares no credential field, so it has no Credentials page`);
+    if (t.kind === "notices" && !b.dueAreas) at(p, `${w}: the build has no due dates, so it has no Notices page`);
+    if (t.kind === "page" && b.pages && !(b.pages[p] ?? []).includes(t.page!)) at(p, `${w}: the pack has no app page ${t.page}`);
+    if (tabRoles(t, b).length === 0) at(p, `${w}: no role may read what it shows (its roles, its area's read permission or its metrics' roles leave none)`);
+    for (const n of t.charts ?? []) if (!chart(p, n)) at(p, `${w} shows chart ${n}, which the pack does not declare`);
+  }
+  // Tabs from several packs make one sidebar: an id is a page path per pack, a label must not repeat in a group.
+  const seen = new Map<string, string>();
+  for (const t of b.tabs) {
+    const k = `${t.group ?? ""}\u0000${tabLabel(t, b)}`;
+    if (seen.has(k)) at(t.pack, `tab ${t.id}: the sidebar already has "${tabLabel(t, b)}"${t.group ? ` in ${t.group}` : ""} (tab ${seen.get(k)})`);
+    else seen.set(k, `${t.pack}/${t.id}`);
+  }
+  return problems;
+}
+
+/** The shell's word for each tab kind (a tab's label when it gives none and shows no area). */
+export const TAB_KIND_LABELS: Record<Tab["kind"], string> = {
+  overview: "Overview", area: "Records", runs: "Runs", reports: "Reports", credentials: "Credentials", usage: "Activity", schedules: "Schedules",
+  notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", page: "Page",
+};
+export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.kind === "area" ? b.areas.find((a) => a.name === t.area)?.label : undefined) ?? TAB_KIND_LABELS[t.kind];
+
+/**
+ * Who sees a tab: its `roles` (every role when absent), narrowed by what it shows. An area tab: the area's read
+ * permission. An overview: the roles that may read at least one of its charts' metrics. The shell's pages keep their own
+ * rules (credentials and schedules show every member what they may see, as today).
+ */
+export function tabRoles(t: Tab & { pack: string }, b: Pick<BuildViews, "areas" | "metrics" | "charts">): AccountRole[] {
+  let roles: AccountRole[] = ACCOUNT_ROLES.filter((r) => !t.roles || t.roles.includes(r));
+  if (t.kind === "area") {
+    const a = b.areas.find((x) => x.name === t.area);
+    roles = a ? roles.filter((r) => areaReadRoles(a).includes(r)) : [];
+  }
+  if (t.kind === "overview") {
+    const readable = new Set((t.charts ?? []).flatMap((n) => b.charts.find((c) => c.pack === t.pack && c.name === n)?.metrics ?? [])
+      .flatMap((n) => { const m = b.metrics.find((x) => x.name === n); return m ? metricRoles(m, b.areas) : []; }));
+    roles = roles.filter((r) => readable.has(r));
+  }
+  return roles;
+}
+
+/** A build's views from its installed packs' definitions (validated), for checkViews and the engine. */
+export function viewsOf(packs: readonly { id: string; definition: { recordAreas?: unknown[]; metrics?: unknown[]; charts?: unknown[]; tabs?: unknown[]; jobKinds?: unknown[]; agentJobKinds?: unknown[]; credentials?: unknown[] } }[], pages?: Record<string, string[]>): BuildViews {
+  const flat = <T>(k: "recordAreas" | "metrics" | "charts" | "tabs", schema: z.ZodType<T>) =>
+    packs.flatMap((p) => (p.definition[k] ?? []).map((x) => ({ ...(schema.parse(x) as object), pack: p.id }) as T & { pack: string }));
+  const areas = flat("recordAreas", RecordAreaSchema) as SpecArea[];
+  return {
+    areas, metrics: flat("metrics", MetricSchema) as SpecMetric[], charts: flat("charts", ChartSchema) as SpecChart[], tabs: flat("tabs", TabSchema) as SpecTab[],
+    jobKinds: packs.reduce((n, p) => n + (p.definition.jobKinds?.length ?? 0) + (p.definition.agentJobKinds?.length ?? 0), 0),
+    harnessKinds: packs.reduce((n, p) => n + (p.definition.jobKinds?.length ?? 0), 0),
+    credentials: packs.reduce((n, p) => n + (p.definition.credentials?.length ?? 0), 0),
+    dueAreas: areas.filter((a) => a.due).length,
+    ...(pages ? { pages } : {}),
+  };
+}
