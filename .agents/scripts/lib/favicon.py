@@ -705,55 +705,65 @@ def version(files):
     for k in sorted(files): h.update(k.encode()); h.update(files[k])
     return h.hexdigest()[:8]
 
-def write_set(build_dir, files):
+def placed(rel, dirs=None):
+    """Where a file of the set lives in a mold whose web app is not at its root: dirs maps the set's top folders ("app",
+    "public") to the mold's (mold_v0: web/src/app, web/public; molds/<mold>/branding/rules.json "favicon"). None: as named."""
+    if not dirs: return rel
+    top, _, rest = rel.partition("/")
+    return f"{dirs[top].rstrip('/')}/{rest}" if top in dirs else rel
+
+def write_set(build_dir, files, dirs=None):
     """Write the set into a build copy. A stale app/icon.svg (the base64-wrapped raster of an earlier build) is removed."""
     for rel, data in files.items():
-        p = os.path.join(build_dir, rel); os.makedirs(os.path.dirname(p), exist_ok=True)
+        p = os.path.join(build_dir, placed(rel, dirs)); os.makedirs(os.path.dirname(p), exist_ok=True)
         if os.path.lexists(p): os.remove(p)           # never write through a hard link into the mold
         open(p, "wb").write(data)
-    stale = os.path.join(build_dir, ICON_SVG)
+    stale = os.path.join(build_dir, placed(ICON_SVG, dirs))
     if ICON_SVG not in files and os.path.lexists(stale): os.remove(stale)
     return sorted(files)
 
-def check_set(build_dir, expect_svg=None):
+def check_set(build_dir, expect_svg=None, dirs=None):
     """Problems with the favicon set in a build copy, as plain sentences ([] when it is right).
-    expect_svg: True/False when the caller knows whether this brand ships a vector icon; None to accept either."""
+    expect_svg: True/False when the caller knows whether this brand ships a vector icon; None to accept either.
+    dirs: as placed(); the sentences then name the mold's own paths."""
     bad = []
+    ICO_, PNG_DIMS_, ICON_SVG_ = placed(ICO, dirs), {placed(k, dirs): v for k, v in PNG_DIMS.items()}, placed(ICON_SVG, dirs)
+    APPLE_PNG_, MASK512_ = placed(APPLE_PNG, dirs), placed(MASK512, dirs)
     def read(rel):
         p = os.path.join(build_dir, rel)
         if not os.path.isfile(p): bad.append(f"{rel} is missing"); return None
         data = open(p, "rb").read()
         if len(data) > MAX_ICON_BYTES: bad.append(f"{rel} is {len(data) // 1024} KB; an icon must stay under {MAX_ICON_BYTES // 1024} KB")
         return data
-    data = read(ICO)
+    data = read(ICO_)
     if data:
         try:
             got = {}
             for w, h, body in ico_entries(data):
                 if body[:8] == PNG_SIG:
                     pw, ph, _ = png_info(body)
-                    if (pw, ph) != (w, h): bad.append(f"{ICO}: the {w}x{h} entry holds a {pw}x{ph} image")
+                    if (pw, ph) != (w, h): bad.append(f"{ICO_}: the {w}x{h} entry holds a {pw}x{ph} image")
                 got[w] = h
             miss = [s for s in ICO_SIZES if got.get(s) != s]
-            if miss: bad.append(f"{ICO} has no {', '.join(f'{s}x{s}' for s in miss)} image (it holds {', '.join(f'{w}x{h}' for w, h in sorted(got.items())) or 'none'})")
-        except (ValueError, struct.error) as e: bad.append(f"{ICO} is not a valid ICO: {e}")
-    for rel, size in PNG_DIMS.items():
+            if miss: bad.append(f"{ICO_} has no {', '.join(f'{s}x{s}' for s in miss)} image (it holds {', '.join(f'{w}x{h}' for w, h in sorted(got.items())) or 'none'})")
+        except (ValueError, struct.error) as e: bad.append(f"{ICO_} is not a valid ICO: {e}")
+    for rel, size in PNG_DIMS_.items():
         data = read(rel)
         if not data: continue
         try: w, h, alpha = png_info(data)
         except (ValueError, struct.error): bad.append(f"{rel} is not a PNG"); continue
         if (w, h) != (size, size): bad.append(f"{rel} is {w}x{h}, not {size}x{size}")
-        if rel in (APPLE_PNG, MASK512) and alpha:
+        if rel in (APPLE_PNG_, MASK512_) and alpha:
             try: solid_ = is_opaque(png_decode(data))
             except (ValueError, zlib.error): solid_ = False
-            if not solid_: bad.append(f"{rel} has transparent pixels; {'iOS paints them black' if rel == APPLE_PNG else 'a maskable icon must fill its square'}")
-    p = os.path.join(build_dir, ICON_SVG)
+            if not solid_: bad.append(f"{rel} has transparent pixels; {'iOS paints them black' if rel == APPLE_PNG_ else 'a maskable icon must fill its square'}")
+    p = os.path.join(build_dir, ICON_SVG_)
     if os.path.isfile(p):
         svg = open(p, encoding="utf-8", errors="replace").read()
-        if "<image" in svg or "base64" in svg: bad.append(f"{ICON_SVG} wraps a raster image as base64; a raster logo ships as PNG and ICO only")
-        if len(svg.encode()) > MAX_ICON_BYTES: bad.append(f"{ICON_SVG} is {len(svg.encode()) // 1024} KB; an icon must stay under {MAX_ICON_BYTES // 1024} KB")
-        if expect_svg is False: bad.append(f"{ICON_SVG} exists, but this brand's mark is not a vector: it must not ship")
-    elif expect_svg: bad.append(f"{ICON_SVG} is missing (this brand's mark is a vector)")
+        if "<image" in svg or "base64" in svg: bad.append(f"{ICON_SVG_} wraps a raster image as base64; a raster logo ships as PNG and ICO only")
+        if len(svg.encode()) > MAX_ICON_BYTES: bad.append(f"{ICON_SVG_} is {len(svg.encode()) // 1024} KB; an icon must stay under {MAX_ICON_BYTES // 1024} KB")
+        if expect_svg is False: bad.append(f"{ICON_SVG_} exists, but this brand's mark is not a vector: it must not ship")
+    elif expect_svg: bad.append(f"{ICON_SVG_} is missing (this brand's mark is a vector)")
     return bad
 
 def manifest_icons_ts(v):
