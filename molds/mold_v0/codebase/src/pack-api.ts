@@ -24,9 +24,9 @@
  *                sealed with the workspace's data key; a run of a job kind that names the field in `credentials`
  *                receives it (an environment variable, or a file in a private directory) for the asset and environment
  *                the run targets. Pack code on the server never sees a value: no handler context carries one
- *   schedules, onboarding
- *                declared and validated here, listed by packRegistry(); wired by later tickets (scheduler 035,
- *                onboarding checklist 011)
+ *   onboarding   wired (mold_v0-011): the /app Setup page's pack checklist (src/onboarding.ts, /api/onboarding); each
+ *                step's done_when is read for the calling workspace only, from its own events and rows
+ *   schedules    declared and validated here, listed by packRegistry(); wired by the scheduler (035)
  *
  * A pack never imports another shell module (the build refuses it: scripts/gen-packs.mjs), so everything it may use
  * is here: the definition helpers, zod, and the context each handler receives (its workspace and a database handle
@@ -280,8 +280,19 @@ export const ScheduleSchema = z.object({
   scope: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
-/** An onboarding checklist step (wired by mold_v0-011): ticked off by an event the shell records. */
-export const OnboardingStepSchema = z.object({ id: name, label: z.string().min(1), help: z.string().optional(), done_when: z.string().min(1) }).strict();
+/**
+ * When an onboarding step is done (mold_v0-011; src/onboarding.ts), read for one workspace from what really happened
+ * in it: "workspace" (it exists), "connected" (an MCP client connected), "first_call" (any tool call succeeded),
+ * "tool:<name>" (that tool's call succeeded: a shell tool, list_records/get_record, or any pack's), "credential:<name>"
+ * (a value of this pack's credential field is set), "record:<area>" (a record of this pack's workspace-scope area
+ * exists), "run:<kind>" (a run of this pack's job kind succeeded).
+ */
+export const ONBOARDING_CONDITION = /^(workspace|connected|first_call|(tool|credential|record|run):[a-z][a-z0-9_]{0,63})$/;
+/** An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events. */
+export const OnboardingStepSchema = z.object({
+  id: name, label: z.string().min(1).max(120), help: z.string().max(500).optional(),
+  done_when: z.string().regex(ONBOARDING_CONDITION, "done_when: workspace, connected, first_call, tool:<name>, credential:<name>, record:<area> or run:<kind>"),
+}).strict();
 
 export interface PackDefinition {
   id: string;
@@ -368,6 +379,19 @@ export function validatePack(p: PackDefinition): PackDefinition {
   }
   for (const k of p.jobKinds ?? []) for (const n of (k as { credentials?: unknown[] })?.credentials ?? [])
     if (typeof n === "string" && !creds.has(n)) problems.push(at(`job kind ${k.name} names credential ${n}, which this pack does not declare`));
+  // Onboarding (mold_v0-011): a step's condition names this pack's own kind, credential or workspace-scope area. (A tool
+  // may be any pack's or the shell's: src/packs.ts installPacks checks it against the whole build.)
+  for (const st of p.onboarding ?? []) {
+    const [what, arg] = String(st?.done_when ?? "").split(":", 2);
+    if (!arg) continue;
+    if (what === "run" && !kinds.has(arg)) problems.push(at(`onboarding step ${st.id} names job kind ${arg}, which this pack does not declare`));
+    if (what === "credential" && !creds.has(arg)) problems.push(at(`onboarding step ${st.id} names credential ${arg}, which this pack does not declare`));
+    if (what === "record") {
+      const a = (p.recordAreas ?? []).find((x) => x?.name === arg);
+      if (!a) problems.push(at(`onboarding step ${st.id} names record area ${arg}, which this pack does not declare`));
+      else if (a.scope !== "workspace") problems.push(at(`onboarding step ${st.id}: record:${arg} must name a workspace-scope area (a shared area says nothing about one workspace)`));
+    }
+  }
   if (problems.length) throw new PackDefinitionError(problems.join("\n"));
   return p;
 }
