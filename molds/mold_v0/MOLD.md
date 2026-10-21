@@ -98,6 +98,67 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   run applies the account's launch rules for a signed-in person (`src/limits.ts` `checkRun`) and a per-workspace cap
   on runs queued or running (`runs.live_per_workspace`, 20; below). **Not wired yet:** no process runs runs in
   a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one).
+- **The agent-workspace runner** (mold_v0-061, built; `src/agent-workspace.ts`, its configuration
+  `src/agent-workspace-config.ts`, carried out by `src/run-harness.ts`): a job kind with `runner: "agent-workspace"` has no
+  program of the pack's own but an `agent` object, plain JSON (the same in pack.json `job_kinds` or `definePack({
+  agentJobKinds })`): `repository` (https; a `file:///` mirror only on a runner told to accept one), `commit` (the full
+  id: never a branch, tag or short id), `strip`, an optional `setup` command, `command` (an argument list, never a shell
+  line) with `{placeholders}` filled from declared `args` (each from `scope.*`, `targets.*` or `run.id|attempt|kind`,
+  with a `default` and a `pattern`; a value never starts with `-`), `env` (names it declares, values that may hold
+  `{gateway.token}`, `{gateway.<provider>.base_url}`, `{gateway.url}`: so `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`
+  style names come from the run's own gateway token; the shell's own names are refused), `validate` (a command),
+  `write_back` (the checkout's paths that are the workspace), `results` (a JSON list in the checkout, else
+  `<RUN_OUT>/results.json`), `record` (files whose path, size, sha256 and, for small JSON, content are recorded in the
+  run's events: a session summary, usage) and `timeout_seconds` (at most the kind's token lifetime). A run: the
+  repository is fetched **at exactly the pin** (by commit id into a repository with no refs, the machine's git
+  configuration ignored, no redirect followed, only its own protocol, objects checked on receipt, no hooks; the commit's
+  tree checked out and `.git` removed; a pin the repository lacks fails the run, not retried); the `strip` paths go; the
+  workspace store's latest snapshot (033) is unpacked where only the runner can read it and its files under the
+  write-back paths are laid over the checkout (never through a link the checkout holds); `setup` runs with the run's
+  egress and no credential or token; the credentials (034) are delivered (variable, or a 0400 file on tmpfs); the
+  command runs as the run's user (054) with its time limit (past it every process of that user is killed: "timeout");
+  the agent's transcript files are recorded; once every process of the run's user is gone (checked in `/proc`), the
+  write-back paths are copied out (regular files with one name, opened without following a link, within the store's
+  file and byte limits; a link or special file is left out and named in `workspace_skipped`; stripped paths again
+  removed), with the snapshot's files outside them carried over; `validate` runs, with no credential and no gateway
+  token, **on a copy of the pinned tree as it stood before the agent ran** (after `setup`) with exactly those files laid
+  over it, so an agent that rewrites its validator or a dependency changes nothing; only when it exits 0 is that same
+  set staged; a value of a credential or the gateway token anywhere in it refuses the write-back. The runner fetches
+  outside the run's proxy, so the repository's host is never an address or a local name, and only one of
+  `OCTILLION_AGENT_REPO_HOSTS` when the operator lists them. Results are read from a plain file only (never a link or a
+  pipe). Everything the run prints, its stderr and results are redacted of its credentials and its gateway token.
+  Egress is the run's proxy allowlist (the kind's `egress`), as for every run: enforced for programs that use the proxy
+  settings, not for one that connects directly until runs are placed in sandbox VMs. `npm run test:agent-runner`
+  proves it offline with a fixture agent repository (`scripts/fixtures/agent-repo`) in a local git repository: the pin
+  (a branch named like it, the branch's tip, a missing commit, a redirect), validation gating, the time limit, redaction,
+  links, egress, two workspaces, and what the adversarial review found (a rewritten validator, a pipe for results, a
+  stripped path written into the workspace, the size limit). **Not covered:** no cache of fetched repositories (each
+  run fetches its pin; the pinned tree is copied twice per run, its dependencies included); no size limit on the fetch
+  itself; the
+  agent's own image (tools like a coding agent's CLI) is the runner machine's, not declared per kind; `setup` needs
+  the package registry in the kind's `egress`.
+- **After a workspace commit** (mold_v0-064, built; `definePack({ onWorkspaceCommit(ctx, files) })`, code packs only):
+  when a run of a pack with the hook and a workspace kind succeeds, its snapshot is committed first (in its own
+  transaction, the run's and the store's leases extended by the hook's time), then the hook gets every file of the
+  committed snapshot (path, size, sha256, bytes) and `ctx` (the run's own workspace from the run row, its `records` and
+  `db` under row-level security, the run, the snapshot's version and whether this run changed it), then the results are
+  checked, so they may name what the hook indexed. It is called also when the run changed nothing, so an index can catch
+  up. If it throws or passes `OCTILLION_WORKSPACE_HOOK_SECONDS` (120) the run fails (`run`), its results are not written,
+  and **the snapshot stays committed** (it passed the run's validation; `workspace_hook_failed` says so); the next run's
+  commit calls the hook again. Its own writes before failing are not undone; past its time its `records` and `db`
+  refuse every further call. The results are checked for everything but their records' existence before the commit
+  (a duplicate, a wrong area or role refuse them with nothing committed); only an unresolved reference, which the hook
+  may resolve, can still refuse them after it, and then (as when the run is cancelled during the hook) the snapshot
+  stays committed. `npm run test:workspace-hook`.
+- **Run results' identity and unresolved references** (mold_v0-065, built; `src/runs.ts` `checkResults`,
+  `sql/migrations/0010_run_results_identity.sql`): a result is check x asset x source x **finding fingerprint**, so
+  several findings on one triple are separate rows; the same identity twice is still refused, by the code and the
+  unique index. A kind's `unresolved_references` says what a result naming a record the run's workspace lacks does:
+  `reject` (default: the run's results are refused), `drop` (left out), `downgrade` (a missing asset or source is
+  cleared and kept as written in `detail.unresolved`; a missing check is dropped; two results that become the same are
+  one row). Each is a `result_unresolved` event with its status, counted in the `succeeded` event (`dropped`,
+  `downgraded`, `dropped_not_passing`); more than `max_unresolved` (100) refuses the results; an undeclared area or a
+  wrong role is refused whatever the mode. `npm run test:run-results`.
 - **Run spend in the month figures** (mold_v0-053, built; `src/run-spend.ts`): a run's cost is GREATEST(its recorded
   cost, its live gateway total), in the month and on the day it was queued, by the member who started it. It counts
   wherever session spend did: the account's month figure (`orgMonthSpendUsd`, so Billing, the usage alert email, the
@@ -252,11 +313,10 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   - **Schema drift**: a row read under a changed declaration keeps its stored values, drops fields no longer declared
     from what is shown, and names every field that no longer fits in `drift`; the next write must fit.
   - **Job kinds**: `runner: "workspace-harness"` (a program of the pack, as before) or `"agent-workspace"` (mold_v0-061:
-    declared with its limits, `args`, `credentials` and the run limits (`budget_usd`, `concurrency_per_workspace`, `month_budget_usd`), listed as `agentJobKinds`, not taken by the run
-    engine until 061). `args` are typed like fields and checked when a pack's code starts a run (`declaredRuns`, outside
+    declared with its limits, `args`, `credentials`, the run limits (`budget_usd`, `concurrency_per_workspace`, `month_budget_usd`)
+    and its `agent` configuration, listed as `agentJobKinds` and run by the engine like any kind: "The agent-workspace runner" below). `args` are typed like fields and checked when a pack's code starts a run (`declaredRuns`, outside
     the engine); the run engine applies a harness kind's limits (above). A schedule may name an agent-workspace kind
-    (validated, and its `scope` may give only the kind's `args`); until 061 the scheduler records it as "not in this
-    build" rather than starting it. A schedule's scope values are not yet type-checked against `args` (the scheduler
+    (validated, and its `scope` may give only the kind's `args`) and the scheduler starts it as any kind. A schedule's scope values are not yet type-checked against `args` (the scheduler
     starts runs through the engine, not through `declaredRuns`).
   - **Credentials, schedules, onboarding** as in `definePack`; **metrics**, **charts** and **tabs** (below, mold_v0-063 and
     058); **repositories** (mold_v0-059: a `kind` and its settings; an area names one with `repository`, checked) and
@@ -356,7 +416,8 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 |---|---|---|
 | `tools` | MCP tools: name, input and output schemas, annotations, a handler that receives the calling workspace first | the tool registry behind `/mcp` (today hand-written in `src/server.ts`) |
 | `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
-| `jobKinds` (`job_kinds`) | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
+| `jobKinds` (`job_kinds`) | run kinds: the runner (`workspace-harness`: its `entry` and `validator` programs in the pack; or `agent-workspace`: an agent repository at a pinned commit with a declared command, validation and write-back), the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store, what an unresolved result reference does | the run engine (mold_v0-041; agent-workspace mold_v0-061; results mold_v0-065) |
+| `onWorkspaceCommit` (code only) | a hook given the files of each committed workspace snapshot, before the run's results are checked | `src/runs.ts` (mold_v0-064) |
 | `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
 | `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
