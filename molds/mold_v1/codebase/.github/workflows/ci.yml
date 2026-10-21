@@ -1392,6 +1392,13 @@ jobs:
       # what the factory's functional lane runs): with only cards.spec.ts here, a starter-apps spec stale since the
       # refresh rework and a domain-forms spec stale since the neutral default words failed nowhere but in the lane
       # (mold_v1-214/215). Every preview page is compiled once first (tests/warm-previews.ts).
+      # The suite's global setup compiles the sign-in routes by OPTIONS, never a GET: a GET runs the availability
+      # route, which asks the hub and remembers the answer for a minute, so a slow first compile stored "direct" and
+      # failed the hub specs (mold_v1-292). Runs the real setup against a stub server that records each method.
+      - name: Preview warm-up compiles the sign-in routes without running them
+        if: always()
+        run: npm run test:warm-previews
+
       - name: Every auth-free preview spec, work periods in each mode (team, individual, off) among them
         if: always()
         run: npm run test:cards

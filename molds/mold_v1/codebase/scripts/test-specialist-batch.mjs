@@ -44,6 +44,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /* ---- the app ------------------------------------------------------------------------------------------------- */
 
 const APP = mkdtempSync(join(tmpdir(), "eve-specialist-batch-"));
+// Its own empty `.git`, as a real app in its repository has: `eve dev` searches upward for one to find the root it
+// watches, and a stray one in the temporary directory (left by anything else on the machine) made it watch all of
+// it, re-reading thousands of entries whenever anything there changed (mold_v1-286, mold_v1-292).
+mkdirSync(join(APP, ".git"));
 const files = {
   "package.json": JSON.stringify({ name: "eve-specialist-batch", private: true, type: "module" }),
   "agent/model.ts": [
