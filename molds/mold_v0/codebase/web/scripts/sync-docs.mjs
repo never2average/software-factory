@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bundles the internal docs (../docs/**/*.md, outside web/) into src/content/admin-docs.generated.ts, so /admin/docs
+// Bundles the internal docs (../docs/**/*.md and a host pack's ../packs/<id>/docs/**/*.md, outside web/) into src/content/admin-docs.generated.ts, so /admin/docs
 // renders them from the build itself: Vercel builds from web/ and may not have the repo's other folders. Runs before
 // `next dev` and `next build`; when ../docs is missing (a web/-only checkout) it keeps the committed file as it is.
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -19,9 +19,17 @@ const walk = (dir) => readdirSync(dir).sort().flatMap((name) => {
   const p = join(dir, name);
   return statSync(p).isDirectory() ? walk(p) : name.endsWith('.md') ? [p] : [];
 });
+// A host pack's own docs (mold_v0-039: ../packs/<id>/docs, for packs whose pack.json has `host`) join the shell's, as if
+// in the same folder: one list in the same order a single folder would give.
+const packsDir = join(web, '..', 'packs');
+const roots = [src, ...(existsSync(packsDir) ? readdirSync(packsDir).sort().map((id) => join(packsDir, id)).filter((d) => {
+  try { return Boolean(JSON.parse(readFileSync(join(d, 'pack.json'), 'utf8')).host) && existsSync(join(d, 'docs')); } catch { return false; }
+}).map((d) => join(d, 'docs')) : [])];
+const bySegments = (a, b) => { const x = a.split('/'), y = b.split('/'); for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return x.length - y.length; };
+const files = roots.flatMap((root) => walk(root).map((file) => ({ file, rel: relative(root, file).split(sep).join('/') }))).sort((a, b) => bySegments(a.rel, b.rel));
 
-const docs = walk(src).map((file) => {
-  const path = relative(src, file).split(sep).join('/');
+const docs = files.map(({ file, rel }) => {
+  const path = rel;
   const body = readFileSync(file, 'utf8');
   const title = body.match(/^#\s+(.+)$/m)?.[1].trim() ?? path;
   // The first paragraph after the title, as plain text: the index's one-line summary.

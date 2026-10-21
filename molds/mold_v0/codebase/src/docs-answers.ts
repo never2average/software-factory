@@ -1,6 +1,6 @@
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
-import { askModel, askModelStream } from "./prospect.js";
+import { askModel, askModelStream } from "./ask-model.js";
 import { settingNumber } from "./settings.js";
 import { asData } from "../orchestrator/core/text-guard.js";
 import corpus from "./docs-corpus.generated.json" with { type: "json" };
@@ -13,7 +13,7 @@ import corpus from "./docs-corpus.generated.json" with { type: "json" };
  *               the customer guide (/app/docs) and the internal docs (/admin/docs), cut at h2/h3 into chunks.
  *               POST /api/app/docs/answer searches the customer chunks only; /api/admin/onboarding/docs/answer both.
  *   retrieval   BM25 over the chunks (title and heading count twice), the best chunk per section, top SOURCES.
- *   model       askModel (src/prospect.ts): GLM 5.3 Flash on Cloudflare Workers AI first, then Claude, then OpenAI;
+ *   model       askModel (src/ask-model.ts): GLM 5.3 Flash on Cloudflare Workers AI first, then Claude, then OpenAI;
  *               keys from the vault only; tokens recorded in gateway_model_usage like other server-side calls. The
  *               excerpts and the question are data (asData); the answer is cut to plain markdown with no links, and
  *               citations of excerpts it wasn't given are dropped.

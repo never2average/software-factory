@@ -5,7 +5,8 @@ import { randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
 import { useCredential } from "./keyvault.js";
 import { scheduledAgents, variantsOf } from "./agents.js";
-import { getPopulation } from "./populations.js";
+import { currentPopulation } from "./agent-mix.js";
+import { hosts } from "./host.js";
 import { JOB_POD_CAPACITY, jobState, orchestratorBusy, setCurrentCodeHash, staleOrchestratorIds } from "./fleet.js";
 import { BOAT } from "../orchestrator/core/config.js";
 import { freshSettings, setting, settingNumber } from "./settings.js";
@@ -94,7 +95,7 @@ export function desiredOrchestrators(d: Demand, podCapacity: number): number {
 export async function computeDemand(freshSince?: Date): Promise<Demand> {
   const db = await getDb();
   let agents: string[] = [];
-  try { agents = scheduledAgents(await getPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)]); }
+  try { agents = scheduledAgents(await currentPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)]); }
   catch { /* no population: count everything */ }
   const claimable = "(agent_id IS NULL OR cardinality($1::text[]) = 0 OR agent_id = ANY($1))";
   const [s] = await db.query<{ sessions: number; queued: number; unclaimable: number; fresh: number }>(
@@ -119,7 +120,7 @@ export interface JobDemand { id: string; kind: "simulation" | "research"; sessio
 export async function computeJobDemand(): Promise<JobDemand[]> {
   const db = await getDb();
   let agents: string[] = [];
-  try { agents = scheduledAgents(await getPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)]); }
+  try { agents = scheduledAgents(await currentPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)]); }
   catch { /* no population: count everything */ }
   const research = await db.query<{ id: string }>(
     `/* tenant: internal: autoscaler job demand across all orgs, ids go to the orchestrator only */ SELECT id FROM product_research WHERE status = 'queued'
@@ -177,8 +178,8 @@ export class Autoscaler {
     const loop = async () => {
       try { await this.tick(); } catch (e) { this.log(`tick failed: ${(e as Error).message}`); }
       // History retention (autoscaler_ticks 14 days, compute_events 90), never inside a tick. Vercel prunes from its cron.
-      // Loss reasons (src/reasons.ts) queued while no drain ran, or due for a retry. Never inside a tick.
-      void import("./reasons.js").then((r) => r.kickReasons()).catch(() => {});
+      // A host pack's queued background work (src/host.ts; the product's loss reasons), never inside a tick.
+      for (const h of hosts()) { try { h.background?.tick?.(); } catch (e) { this.log(`host ${h.id} tick failed: ${(e as Error).message}`); } }
       if (Date.now() - prunedAt > 6 * 3600_000) {
         prunedAt = Date.now();
         await pruneComputeHistory().catch((e) => this.log(`prune failed: ${(e as Error).message}`));

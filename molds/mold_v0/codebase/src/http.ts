@@ -1,11 +1,7 @@
-import { researchSearch } from "./websearch.js";
+import "./hosts.js";
 import { canActAsOrchestrator, canActOnSession, resolveWorkerToken, type WorkerAuth } from "./workerauth.js";
 import path from "node:path";
-import { contextForAI } from "./context.js";
 import { platformAnalytics, platformErrors } from "./insights.js";
-import * as journeys from "./journeys.js";
-import * as playbooks from "./playbooks.js";
-import * as prospect from "./prospect.js";
 import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
 import { appRouter } from "./app.js";
@@ -20,7 +16,7 @@ import { metricAppRouter, runAppRouter } from "./view-routes.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
-import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
+import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
 import { mountInstallPages } from "./install-pages.js";
 import * as roles from "./admin-roles.js";
@@ -29,7 +25,9 @@ const { need } = roles;
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer, runTool, TOOL_NAMES, WIDGET_HTML, type ToolName } from "./server.js";
+import { createServer } from "./server.js";
+import { hosts, hostToolNames } from "./host.js";
+import { PROFILE } from "./profile.js";
 import { connectorEvents, recordMcpEvent } from "./analytics.js";
 import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
 import { bearer, cronSecretOk, headerCredential, isWorkerToken, resolveKey, resolveUserToken, urlKeysAllowed, type Org } from "./auth.js";
@@ -46,15 +44,11 @@ const serverlessTick = (force = false) => { if (process.env.VERCEL) telemetry.ke
 import { startArchiver, stopArchiver } from "./archive.js";
 import { storageEnabled } from "./storage.js";
 import { brokerOrchestratorCredentials, brokerSessionCredentials, gatewayHandler } from "./gateway.js";
-import * as research from "./research.js";
 import { usageReport } from "./usage.js";
 import * as kv from "./keyvault.js";
 import { importEnvKeysOnce } from "./keyvault-env.js";
-import * as populations from "./populations.js";
 import * as onboarding from "./admin.js";
-import * as reasons from "./reasons.js";
-import * as library from "./library.js";
-import * as contributions from "./contributions.js";
+import * as platformKeys from "./platform-keys.js";
 import { computeSummary } from "./compute.js";
 import * as spend from "./spend.js";
 import * as spendUsage from "./spend-usage.js";
@@ -63,7 +57,7 @@ import * as jobs from "./compute-jobs.js";
 import * as actions from "./compute-actions.js";
 import * as ticks from "./autoscaler-ticks.js";
 import { pruneComputeHistory } from "./autoscaler-ticks.js";
-import { freshSettings, SettingError } from "./settings.js";
+import { freshSettings, listSettings, settingGroups, SettingError } from "./settings.js";
 import { answerDocs, sseStart, streamDocsAnswer } from "./docs-answers.js";
 import { freshPlatformHarnesses } from "./harnesses.js";
 
@@ -73,6 +67,14 @@ const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://${HOST}:${PORT}`).replace(
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 /** The admin panel (/admin) and customer portal (/app): the Next.js app in web/, built to static files (npm run web:build). */
 const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "web", "out");
+
+/** The server's root page when no host pack brings a landing page: the profile's name, how to connect, where to sign in. */
+const neutralRoot = () => {
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(PROFILE.name)}</title>` +
+    `<meta name="description" content="${esc(PROFILE.short_description)}"><style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#111;background:#fff}a{color:#2563eb}</style></head>` +
+    `<body><main><h1>${esc(PROFILE.name)}</h1><p>${esc(PROFILE.console_description)}</p><p><a href="/install">Connect an MCP client</a> · <a href="/app">Sign in</a></p></main></body></html>`;
+};
 
 /** Set on SIGTERM/SIGINT: the process is finishing in-flight requests and will exit. */
 let draining = false;
@@ -108,6 +110,10 @@ export function createApp() {
     setHeaders: (res, file) => { if (file.includes(`${path.sep}_next${path.sep}static${path.sep}`)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable"); },
   }));
   app.use(express.static(PUBLIC_DIR, { extensions: ["html"], maxAge: "5m" }));
+  // A host pack's own public files (src/host.ts publicDir; the product's landing page and downloads), after the shell's.
+  for (const h of hosts()) if (h.publicDir) app.use(express.static(h.publicDir, { extensions: ["html"], maxAge: "5m" }));
+  // With no landing page of a host pack's, the root says what this server is, in the profile's words (mold_v0-039).
+  if (!hosts().some((h) => h.publicDir)) app.get("/", (_req, res) => void res.type("html").set("Cache-Control", "public, max-age=300").send(neutralRoot()));
   // Global settings (src/settings.ts) and admin-added harnesses (src/harnesses.ts, merged into registry()) are read
   // synchronously from caches: load them, and keep them at most 30s old.
   app.use((_req, _res, next) => void Promise.all([freshSettings(), freshPlatformHarnesses()]).then(() => next()));
@@ -119,14 +125,14 @@ export function createApp() {
     if (!cronSecretOk(req.headers.authorization)) return void res.status(401).json({ error: "unauthorized" });
     const tick = await kickAutoscaler();
     const pruned = await pruneComputeHistory().catch((e) => ({ error: (e as Error).message }));
-    // Loss reasons queued while nothing drained them (src/reasons.ts): a short batch, within the daily cap.
-    const reasons = await (await import("./reasons.js")).drainReasons(30).catch((e) => ({ error: (e as Error).message }));
+    // A host pack's queued work (src/host.ts background.cron; the product's loss reasons): a short batch.
+    const host = Object.assign({}, ...(await Promise.all(hosts().map(async (h) => (h.background?.cron ? await h.background.cron().catch((e) => ({ error: (e as Error).message })) : {}) as object))));
     // Row-level security, proven on the live database (src/rls.ts): Vercel has no release step to run check:rls in.
     const rls = await probeFromCron(getDb);
     // The packs' schedules and the daily due-date check (mold_v0-035, src/schedules.ts): a server ticks them from its own
     // loop (startScheduler); on Vercel this cron entry is the tick. Nothing is read with no job kind and no due area.
     const schedules = await schedulerTick().catch((e) => ({ error: (e as Error).message }));
-    res.json({ tick, pruned, reasons, rls, schedules });
+    res.json({ tick, pruned, ...host, rls, schedules });
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
@@ -148,8 +154,8 @@ export function createApp() {
       [email, company, productUrl || null, message || null, name || null, role || null, teamSize || null, agents, Object.keys(source).length ? JSON.stringify(source) : null,
        docsUrl || null, competitors || null, goal || null, timeline || null, heardFrom || null, subindustry || null],
     );
-    // Background research on the company for whoever reviews the request (src/prospect.ts); kept alive on Vercel.
-    telemetry.keepAlive(prospect.researchRequest(row.id));
+    // A host pack's own follow-up (src/host.ts onAccessRequest; the product researches the company); kept alive on Vercel.
+    for (const h of hosts()) if (h.onAccessRequest) telemetry.keepAlive(h.onAccessRequest(row.id));
     // Email after the write, never in its way (src/email.ts): "we got it" to them, an alert to the operator.
     mail.fire(mail.requestReceived({ id: row.id, email, company, name: name || null, product_url: productUrl || null, message: message || null }));
     telemetry.capture({ distinctId: email.toLowerCase() }, "access_requested", { has_product_url: Boolean(productUrl), has_message: Boolean(message) });
@@ -157,7 +163,7 @@ export function createApp() {
     if (hook)
       fetch(hook, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: `New Octillion access request: ${company} <${email}> ${productUrl}\n${message}` }),
+        body: JSON.stringify({ text: `New ${PROFILE.name} access request: ${company} <${email}> ${productUrl}\n${message}` }),
         signal: AbortSignal.timeout(5000),
       }).catch((err) => console.error("access-request webhook failed:", err.message));
     res.status(201).json({ ok: true });
@@ -186,15 +192,8 @@ export function createApp() {
   app.use("/api/metrics", metricAppRouter());
   app.use("/api/runs", runAppRouter());
 
-  // ---------- journey webhook: PostHog Workflows queues in-chat nudges (src/journeys.ts) ----------
-  // The secret goes in an Authorization header, or in the path for webhook steps that cannot set headers.
-  const nudgeHook = async (req: Request, res: Response, secret: string | null) => {
-    if (!journeys.journeySecretOk(secret)) return void res.status(401).json({ error: "Invalid journey secret" });
-    try { res.status(201).json(await journeys.receiveNudge(req.body ?? {})); }
-    catch (e) { const err = e as journeys.JourneyError; if (!(err instanceof journeys.JourneyError)) throw e; res.status(err.status).json({ error: err.message }); }
-  };
-  app.post("/api/journeys/nudges", express.json({ limit: "32kb" }), (req, res) => nudgeHook(req, res, bearer(req.headers.authorization)));
-  app.post("/api/journeys/nudges/:secret", express.json({ limit: "32kb" }), (req, res) => nudgeHook(req, res, String(req.params.secret)));
+  // ---------- a host pack's public routes (src/host.ts; the product's journeys webhook) ----------
+  for (const h of hosts()) h.routes?.public?.(app);
 
   // ---------- OAuth discovery (Clerk is the authorization server; src/clerk.ts) ----------
   // MCP clients (Claude, ChatGPT, Claude Code, Cursor) find Clerk from the 401 below, register (CIMD or DCR) and sign
@@ -209,7 +208,7 @@ export function createApp() {
   const resourceMetadata = (_req: Request, res: Response) => {
     const as = oauthServer();
     if (!as) return void res.status(404).json({ error: "OAuth is not configured" });
-    res.json({ resource: mcpAudience(), authorization_servers: [as], bearer_methods_supported: ["header"], scopes_supported: ["profile", "email"], resource_name: "Octillion" });
+    res.json({ resource: mcpAudience(), authorization_servers: [as], bearer_methods_supported: ["header"], scopes_supported: ["profile", "email"], resource_name: PROFILE.name });
   };
   app.get(["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"], resourceMetadata);
   // For clients that only look for authorization-server metadata on the resource's own origin (older MCP spec).
@@ -300,19 +299,21 @@ export function createApp() {
     res.locals.org = org.slug;
     transcripts().warm(); // a user is here: have transcript search awake by the time they ask for evidence
     for (const e of connectorEvents(req.body, req.get("user-agent"))) recordMcpEvent(org, e);
-    const server = createServer(org, await contextForAI(org).catch(() => ""));
+    // A host pack's context for this caller (src/host.ts mcp.context; the account's and the person's), after the instructions.
+    const context = (await Promise.all(hosts().map((h) => h.mcp?.context?.(org).catch(() => "") ?? ""))).join("");
+    const server = createServer(org, context);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => { transport.close(); server.close(); });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   };
   const wwwAuthenticate = () => oauthServer()
-    ? `Bearer error="unauthorized", error_description="Sign in to Octillion", resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`
+    ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name}", resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`
     : 'Bearer realm="octillion"';
   const unauthorized = (res: Response) =>
     res.status(401).set("WWW-Authenticate", wwwAuthenticate()).json({
       jsonrpc: "2.0", id: null,
-      error: { code: -32001, message: `Sign in to Octillion (or send a valid API key). Request access at ${PUBLIC_URL}` },
+      error: { code: -32001, message: `Sign in to ${PROFILE.name} (or send a valid API key). Request access at ${PUBLIC_URL}` },
     });
   // One log line per legacy URL key per process and hour: enough to know who to move, without a line per request.
   const urlKeySeen = new Map<string, number>();
@@ -356,6 +357,7 @@ export function createApp() {
   // The admin panel as MCP (src/admin-mcp.ts): platform admins only, each tool with its route's permission. Before
   // /api/admin below, whose session guard would refuse OAuth access tokens.
   mountAdminMcp(app, PUBLIC_URL);
+  adminTools(); // a host pack's admin tool that clashes with the shell's, or names no tool to follow, fails the start
 
   // ---------- orchestrator worker API: the fleet token, or a job token bound to one job (src/workerauth.ts) ----------
   const worker = express.Router();
@@ -420,54 +422,8 @@ export function createApp() {
   });
   // The global plan (every orchestrator, every job) is for the fleet only.
   worker.get("/fleet", async (_req, res) => (jobOnly(res) ? forbidden(res) : void res.json(await fleetStatus())));
-  // Product onboarding research (docs/onboarding.md).
-  worker.post("/research/claim", async (req, res) => {
-    const { worker_id, limit, research_id } = req.body ?? {};
-    if (typeof worker_id !== "string" || !worker_id) return void res.status(400).json({ error: "worker_id is required" });
-    const job = jobOnly(res);
-    if (job && !job.jobId.startsWith("rsh_")) return void res.json({ jobs: [] });
-    const rid = job ? job.jobId : typeof research_id === "string" && research_id ? research_id : undefined;
-    res.json({ jobs: await research.claimResearch(worker_id, limit, rid) });
-  });
-  // Research routes: a job token may act only on its own research.
-  worker.use("/research/:id", (req, res, next) => {
-    const job = jobOnly(res);
-    return !job || job.jobId === String(req.params.id) ? next() : forbidden(res);
-  });
-  worker.post("/research/:id/progress", async (req, res) => {
-    await research.researchProgress(String(req.params.id), String(req.body?.stage ?? "working"), req.body?.note);
-    res.status(204).end();
-  });
-  worker.post("/research/:id/validate", async (req, res) => void res.json(await research.validateResearchJob(String(req.params.id), req.body?.result)));
-  worker.post("/research/:id/complete", async (req, res) => {
-    try { res.json(await research.completeResearch(String(req.params.id), req.body ?? {})); }
-    catch (e) {
-      const err = e as Error & { status?: number; issues?: string[] };
-      if (err.status === 422) return void res.status(422).json({ error: err.message, issues: err.issues });
-      throw e;
-    }
-  });
-  // Web and package search for research (src/websearch.ts): runs here so the search keys never reach the sandbox.
-  worker.post("/research/:id/search", async (req, res) => {
-    try { res.json(await researchSearch(String(req.params.id), req.body ?? {})); }
-    catch (e) {
-      const err = e as Error & { status?: number };
-      res.status(err.status && err.status >= 400 && err.status < 600 ? err.status : 502).json({ error: err.message });
-    }
-  });
-  // The shared libraries are Octillion's IP: research (the fleet, or a research job's own token) reads them, a run's job token does not.
-  worker.use("/library", (_req, res, next) => {
-    const job = jobOnly(res);
-    return !job || job.jobId.startsWith("rsh_") ? next() : forbidden(res);
-  });
-  worker.get("/library/profiles", async (req, res) => {
-    const q = req.query as Record<string, string | undefined>;
-    res.json(await research.libraryProfiles({ query: q.query, limit: q.limit ? Number(q.limit) : undefined }));
-  });
-  worker.get("/library/tasks", async (req, res) => {
-    const q = req.query as Record<string, string | undefined>;
-    res.json(await research.libraryTasks({ query: q.query, category: q.category, language: q.language, platform: q.platform, limit: q.limit ? Number(q.limit) : undefined }));
-  });
+  // A host pack's worker routes (src/host.ts; the product's research jobs and shared libraries), behind the same token.
+  for (const h of hosts()) h.routes?.worker?.(worker, { jobOf: (res) => jobOnly(res)?.jobId ?? null, forbidden });
 
   // Credential broker: the orchestrator holds no provider keys; it asks per orchestrator and per session.
   worker.post("/orchestrator/credentials", async (req, res) => {
@@ -522,23 +478,8 @@ export function createApp() {
          FROM gateway_usage ORDER BY last_at DESC LIMIT 500`);
     res.json({ usage: rows });
   });
-  // Developer populations: the coding-agent mix per population (shares, pauses, sandbox unit).
-  admin.get("/populations", async (_req, res) => void res.json({ populations: await populations.listPopulations() }));
-  admin.get("/populations/:slug", async (req, res) => void res.json(await populations.getPopulation(String(req.params.slug))));
-  admin.post("/populations", need("harnesses"), async (req, res) => {
-    const { slug, name, from, description } = req.body ?? {};
-    if (typeof slug !== "string" || typeof name !== "string") return void res.status(400).json({ error: "slug and name are required" });
-    res.status(201).json(await populations.createPopulation(slug, name, { from, description }));
-  });
-  admin.patch("/populations/:slug", need("harnesses"), async (req, res) => void res.json(await populations.updatePopulation(String(req.params.slug), req.body ?? {})));
-  admin.put("/populations/:slug/agents/:agent", need("harnesses"), async (req, res) => {
-    const slug = String(req.params.slug), agent = decodeURIComponent(String(req.params.agent));
-    const { market_share, paused, paused_reason, notes } = req.body ?? {};
-    if (market_share !== undefined) await populations.setShare(slug, agent, Number(market_share), notes);
-    if (paused !== undefined) await populations.setPaused(slug, agent, Boolean(paused), paused_reason);
-    res.json(await populations.getPopulation(slug));
-  });
-  admin.post("/populations/:slug/default", need("harnesses"), async (req, res) => void res.json(await populations.setDefaultPopulation(String(req.params.slug))));
+  // A host pack's admin routes (src/host.ts; the product's developer populations), behind the same guard and log.
+  for (const h of hosts()) h.routes?.admin?.(admin, { need, actor: adminActor });
   admin.get("/autoscaler", async (_req, res) => void res.json(await autoscalerStatus()));
   // Admin tokens for scripts (src/admin-tokens.ts): owners list, mint and revoke them. Minting, and changing who is an
   // admin, need a signed-in owner (signedIn), never a token: a leaked token cannot renew itself or make its holder an owner.
@@ -566,13 +507,6 @@ export function createApp() {
   ob.get("/requests", async (req, res) => void res.json({ requests: await onboarding.listRequests(req.query.status ? String(req.query.status) : undefined) }));
   ob.post("/requests/:id/approve", need("requests"), async (req, res) => void res.status(201).json(await onboarding.approveRequest(adminActor(req, res), Number(req.params.id), req.body ?? {})));
   ob.post("/requests/:id/decline", need("requests"), async (req, res) => done(res, await onboarding.declineRequest(adminActor(req, res), Number(req.params.id), req.body?.reason)));
-  // Research the company: the quick pass now (it also queues the deep pass on the research harness).
-  ob.post("/requests/:id/research", need("requests"), async (req, res) => {
-    const id = Number(req.params.id);
-    await onboarding.requestExists(id);
-    await prospect.researchRequest(id);
-    res.json({ ok: true, deep: await prospect.queueDeepResearch(id, { manual: true }) });
-  });
   ob.post("/requests/:id/reopen", need("requests"), async (req, res) => done(res, await onboarding.reopenRequest(adminActor(req, res), Number(req.params.id))));
   ob.get("/orgs", async (_req, res) => void res.json(await onboarding.listOrgs()));
   ob.post("/orgs", need("requests"), async (req, res) => void res.status(201).json(await onboarding.createAccount(adminActor(req, res), req.body ?? {})));
@@ -604,38 +538,16 @@ export function createApp() {
   ob.get("/usage", usageAdminRoute());
   // Every failure in the period, paged: ?kind=tool|session|onboarding&offset&limit, plus the /analytics filters.
   ob.get("/analytics/errors", async (req, res) => void res.json(await platformErrors(req.query)));
-  // Customer journeys (src/playbooks.ts): the use-case pipelines on /app Setup. Admins write them, promote the ones
-  // customers see, and order them; adoption = accounts that started / finished each.
-  ob.get("/playbooks", async (_req, res) => void res.json({ playbooks: await playbooks.templatesWithAdoption(), tools: TOOL_NAMES }));
-  ob.post("/playbooks", need("library"), async (req, res) => void res.status(201).json({ id: await playbooks.createTemplate(adminActor(req, res), req.body ?? {}, TOOL_NAMES) }));
-  ob.put("/playbooks/:id", need("library"), async (req, res) => { await playbooks.updateTemplate(adminActor(req, res), String(req.params.id), req.body ?? {}, TOOL_NAMES); res.status(204).end(); });
-  ob.post("/playbooks/:id/promote", need("library"), async (req, res) => { await playbooks.setPromoted(adminActor(req, res), String(req.params.id), req.body?.promoted !== false); res.status(204).end(); });
-  ob.post("/playbooks/reorder", need("library"), async (req, res) => { await playbooks.reorder(adminActor(req, res), req.body?.ids); res.status(204).end(); });
-  ob.delete("/playbooks/:id", need("delete"), async (req, res) => { await playbooks.deleteTemplate(String(req.params.id)); res.status(204).end(); });
-  // Journeys: what PostHog Workflows queued for the in-chat channel, and nudges sent by hand.
-  ob.get("/journeys", async (_req, res) => void res.json(await journeys.adminView()));
-  ob.post("/journeys/nudges", need("journeys"), async (req, res) => void res.status(201).json(await journeys.sendFromAdmin(adminActor(req, res), req.body ?? {})));
-  ob.delete("/journeys/nudges/:id", need("journeys"), async (req, res) => { await journeys.adminDelete(adminActor(req, res), Number(req.params.id)); res.status(204).end(); });
-  // Shared libraries (src/library.ts): personas and the task library. Edits stamp edited_at, which the vault sync respects.
-  ob.get("/personas", async (_req, res) => void res.json(await library.listPersonas()));
-  ob.post("/personas", need("library"), async (req, res) => void res.status(201).json(await library.createPersona(adminActor(req, res), req.body ?? {})));
-  ob.post("/personas/active", need("library"), async (req, res) => void res.json(await library.setPersonasActive(adminActor(req, res), req.body?.slugs, req.body?.active)));
-  ob.patch("/personas/:slug", need("library"), async (req, res) => void res.json(await library.updatePersona(adminActor(req, res), slug(req), req.body ?? {})));
-  ob.get("/tasks", async (req, res) => void res.json(await library.listTasks(req.query)));
-  ob.post("/tasks", need("library"), async (req, res) => void res.status(201).json(await library.createTask(adminActor(req, res), req.body ?? {})));
-  ob.post("/tasks/active", need("library"), async (req, res) => void res.json(await library.setTasksActive(adminActor(req, res), req.body?.ids, req.body?.active)));
-  ob.post("/tasks/harnesses", need("library"), async (req, res) => void res.json(await library.setTasksHarnesses(adminActor(req, res), req.body?.ids, req.body?.harnesses)));
-  ob.patch("/tasks/:id", need("library"), async (req, res) => void res.json(await library.updateTask(adminActor(req, res), Number(req.params.id), req.body ?? {})));
-  // Library contributions from accounts (src/contributions.ts): review on /admin/personas and /admin/tasks (Submissions).
-  ob.get("/submissions", async (req, res) => void res.json(await contributions.listSubmissions(req.query)));
-  ob.post("/submissions/:id/accept", need("library"), async (req, res) => void res.json(await contributions.accept(adminActor(req, res), String(req.params.id), req.body ?? {})));
-  ob.post("/submissions/:id/decline", need("library"), async (req, res) => void res.json(await contributions.decline(adminActor(req, res), String(req.params.id), req.body?.reason)));
-  ob.post("/submissions/:id/retry-credit", need("library"), async (req, res) => void res.json(await contributions.retryCredit(adminActor(req, res), String(req.params.id))));
-  // Global compute settings (src/settings.ts) and the default population's agent mix.
-  ob.get("/compute", async (_req, res) => void res.json(await library.compute()));
-  ob.put("/compute/settings", need("compute"), async (req, res) => void res.json(await library.saveSettings(adminActor(req, res), req.body?.values)));
-  // Loss reasons (src/reasons.ts): the queue and today's cap. Past losses are queued by every drain, no button.
-  ob.get("/compute/reasons", async (_req, res) => void res.json(await reasons.reasonsStatus()));
+  // A host pack's console routes (src/host.ts; the product's journeys, libraries, agent mix and settings, loss reasons),
+  // behind the same guard, log and permission check (roles.assertGuarded below covers them).
+  for (const h of hosts()) h.routes?.onboarding?.(ob, { need, actor: adminActor });
+  // Agent configuration and the Compute page's Limits table read and save global settings here; a host pack's own routes
+  // (above: the product adds its agent mix to the answer) answer first when it has them.
+  ob.get("/compute", async (_req, res) => void res.json({ groups: settingGroups(), settings: await listSettings() }));
+  ob.put("/compute/settings", need("compute"), async (req, res) => {
+    await platformKeys.saveSettingValues(adminActor(req, res), req.body?.values);
+    res.json({ groups: settingGroups(), settings: await listSettings() });
+  });
   // The Compute page (src/compute.ts): verdict, tick freshness, tiles, limits, environment. Read only; ?fresh=1 asks boat again.
   ob.get("/compute/summary", async (req, res) => void res.json(await computeSummary({ fresh: req.query.fresh === "1" })));
   // Its record tables (src/compute-records.ts): sessions and orchestrators with their peeks, and which agents can run. Read only.
@@ -665,14 +577,8 @@ export function createApp() {
   // cancel a queued or running session (its orchestrator stops the sandbox at the next heartbeat).
   ob.post("/compute/tick", need("compute"), async (req, res) => void res.json(await actions.runTick(adminActor(req, res))));
   ob.post("/compute/sessions/:id/cancel", need("compute"), async (req, res) => void res.json(await actions.cancelSession(adminActor(req, res), String(req.params.id))));
-  // Admin-added harnesses (src/harnesses.ts): variants of a registry.json CLI; a new one joins the mix at weight 0, off.
-  ob.get("/compute/harnesses", async (_req, res) => void res.json(await library.listHarnesses()));
-  ob.post("/compute/harnesses", need("harnesses"), async (req, res) => void res.status(201).json(await library.addHarness(adminActor(req, res), req.body ?? {})));
-  ob.patch("/compute/harnesses/:id", need("harnesses"), async (req, res) => void res.json(await library.editHarness(adminActor(req, res), decodeURIComponent(String(req.params.id)), req.body ?? {})));
-  ob.delete("/compute/harnesses/:id", need("delete"), async (req, res) => void res.json(await library.deleteHarness(adminActor(req, res), decodeURIComponent(String(req.params.id)))));
-  ob.put("/compute/agents/:agent", need("harnesses"), async (req, res) => void res.json(await library.setAgent(adminActor(req, res), decodeURIComponent(String(req.params.agent)), req.body ?? {})));
   // Model keys on /admin/compute: the key vault (src/keyvault.ts). A secret is posted once; only its hint comes back.
-  ob.get("/compute/keys", async (_req, res) => void res.json(await library.modelKeys()));
+  ob.get("/compute/keys", async (_req, res) => void res.json(await platformKeys.modelKeys()));
   // Emails (src/email.ts): the log and its last 24 hours; a test email to an address typed in.
   ob.get("/emails", async (req, res) => void res.json(await mail.emailLog(req.query)));
   ob.post("/emails/test", need("email"), async (req, res) => {
@@ -681,11 +587,11 @@ export function createApp() {
     onboarding.log(adminActor(req, res), "email.test", null, { status: r.status, to_domain: mail.domainOf(String(req.body.to)) });
     res.status(201).json(r);
   });
-  ob.get("/compute/sandbox", async (_req, res) => void res.json(await library.sandboxProvider()));
-  ob.post("/compute/keys", need("keys"), async (req, res) => void res.status(201).json(await library.addModelKey(adminActor(req, res), req.body ?? {})));
-  ob.post("/compute/keys/:id/enabled", need("keys"), async (req, res) => done(res, await library.setModelKeyEnabled(adminActor(req, res), Number(req.params.id), req.body?.enabled)));
-  ob.delete("/compute/keys/:id", need("keys"), async (req, res) => done(res, await library.deleteModelKey(adminActor(req, res), Number(req.params.id))));
-  ob.post("/compute/providers/:slug/enabled", need("keys"), async (req, res) => done(res, await library.setProviderEnabled(adminActor(req, res), slug(req), req.body?.enabled)));
+  ob.get("/compute/sandbox", async (_req, res) => void res.json(await platformKeys.sandboxProvider()));
+  ob.post("/compute/keys", need("keys"), async (req, res) => void res.status(201).json(await platformKeys.addModelKey(adminActor(req, res), req.body ?? {})));
+  ob.post("/compute/keys/:id/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setModelKeyEnabled(adminActor(req, res), Number(req.params.id), req.body?.enabled)));
+  ob.delete("/compute/keys/:id", need("keys"), async (req, res) => done(res, await platformKeys.deleteModelKey(adminActor(req, res), Number(req.params.id))));
+  ob.post("/compute/providers/:slug/enabled", need("keys"), async (req, res) => done(res, await platformKeys.setProviderEnabled(adminActor(req, res), slug(req), req.body?.enabled)));
   // Admins and their roles (src/admin-roles.ts; Clerk user metadata): everyone reads, owners change.
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });
   // The Connect page (/admin/connect): the admin MCP URL and which tools each role may call.
@@ -721,7 +627,8 @@ export function createApp() {
   roles.assertGuarded(ob, "/api/admin/onboarding");
   // Clerk / Stripe failures are the admin's to see (a bad key, a rate limit), not a generic 500.
   ob.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
-    if (!(err instanceof onboarding.AdminError || err instanceof roles.AdminRoleError || err instanceof journeys.JourneyError || err instanceof playbooks.PlaybookError || err instanceof SettingError || err instanceof ClerkError || err instanceof StripeError)) return next(err);
+    const hostError = hosts().some((h) => (h.routes?.onboardingErrors ?? []).some((C) => err instanceof C));
+    if (!(err instanceof onboarding.AdminError || err instanceof roles.AdminRoleError || hostError || err instanceof SettingError || err instanceof ClerkError || err instanceof StripeError)) return next(err);
     // A plan config's problems come as a list too (by path), for the JSON editor.
     const problems = (err as { problems?: string[] }).problems;
     res.status(err.status ?? 400).json({ error: err.message, ...(problems ? { problems } : {}) });
@@ -734,8 +641,10 @@ export function createApp() {
   app.use("/api/admin", admin);
 
   // ---------- local preview of the widget (development only) ----------
-  if (process.env.OCTILLION_PREVIEW === "1") {
-    const isTool = (n: string): n is ToolName => (TOOL_NAMES as string[]).includes(n);
+  const previewHost = hosts().find((h) => h.mcp?.runTool && h.mcp.widgetHtml);
+  if (process.env.OCTILLION_PREVIEW === "1" && previewHost) {
+    const runTool = previewHost.mcp!.runTool!, WIDGET_HTML = previewHost.mcp!.widgetHtml!;
+    const isTool = (n: string) => hostToolNames().includes(n);
     const keyOf = (req: Request) => String(req.query.key ?? req.body?.key ?? "");
     app.post("/preview/api/tool", express.json(), async (req, res) => {
       const org = await resolveKey(keyOf(req));
@@ -772,7 +681,7 @@ export function createApp() {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const db = await getDb();
   const server = createApp().listen(PORT, HOST, () => {
-    console.error(`octillion (${db.kind}, transcripts in ${transcripts().kind}) listening on http://${HOST}:${PORT}`);
+    console.error(`${PROFILE.mcp_server_name} (${db.kind}, transcripts in ${transcripts().kind}) listening on http://${HOST}:${PORT}`);
     console.error(`  landing page  ${PUBLIC_URL}/`);
     console.error(`  MCP endpoint  ${PUBLIC_URL}/mcp   (sign in, or send Authorization: Bearer <api key>)`);
     console.error(`  worker API    ${PUBLIC_URL}/api/worker/*${process.env.OCTILLION_WORKER_TOKEN ? "" : "   (disabled: set OCTILLION_WORKER_TOKEN)"}`);

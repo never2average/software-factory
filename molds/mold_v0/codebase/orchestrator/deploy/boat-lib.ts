@@ -272,7 +272,7 @@ EnvironmentFile=${HOME}/orchestrator.env
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/var/lib/${SERVICE_USER}
 NoNewPrivileges=true
-ExecStart=${HOME}/app/orchestrator/node_modules/.bin/tsx orchestrator/pi-octillion/main.ts
+ExecStart=${HOME}/app/orchestrator/node_modules/.bin/tsx orchestrator/main.ts
 Restart=on-failure
 RestartSec=10
 KillSignal=SIGTERM

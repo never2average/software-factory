@@ -8,11 +8,11 @@
 
 **Edited in place (mold_v0-040).** AGENTS.md says a mold's codebase is never edited in place and base-code changes go to the mold's source by pull request. mold_v0 is the one exception: its source is this repository. A change to the shell is a pull request here that touches `molds/mold_v0/codebase`; the deploy gate then reads this repository's checks for the commit being deployed (below). mold_v1 keeps the rule unchanged: its snapshot is only ever written by `mold.py fetch|refresh` from its own source, and nothing in this exception reads or writes it.
 
-**A product, not yet a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 starts as the opposite, a working product copied as it is, so the factory can reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives in the snapshot today and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets), and the product's own tools, pages, record areas and tables move into the pack `octillion`. Until then, an app minted from mold_v0 inherits the product's code.
+**A product, being made a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 started as the opposite, a working product copied as it is, so the factory could reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets). Since mold_v0-039 the product's own surface (its 31 MCP tools, widget and slash commands, its domain modules, its routes, console pages, landing page, docs, orchestrator extension, client skill and operator scripts) is the factory's **host pack `octillion`** (`packs/octillion/`, git-ignored like every pack: "Host packs" below), and an app minted from mold_v0 with no packs gets a neutral shell. What still carries the product in the shell: its tables in the base schema (mold_v0-049), the session engine that reads them (the job queue, the autoscaler's jobs, the Compute and Accounts pages), and words and environment names (mold_v0-045).
 
 ## What is in it today
 
-- A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`, tools in `src/server.ts`), per-organisation API keys (hashed), Clerk sign-in, client install guides, onboarding, usage analytics, billing and email.
+- A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`: the host packs' tools, then every pack's, `src/server.ts`), per-organisation API keys (hashed), Clerk sign-in, client install guides, onboarding, usage analytics, billing and email.
 - An agent-run engine: a job queue (`src/worker.ts`, `/api/worker`), an autoscaler that launches one sandboxed orchestrator per job (`src/autoscaler.ts`, `orchestrator/`), pinned coding-agent harnesses (`harnesses/registry.json`), an inference gateway with per-session tokens and cost metering (`src/gateway.ts`, `src/usage.ts`), a versioned key vault and per-organisation data keys (`src/keyvault.ts`, `src/orgcrypto.ts`), transcripts and an off-machine archive.
 - A web console in `web/` (Next.js): `/admin` for platform staff, `/app` for an account's people.
 - Postgres with versioned migrations (`sql/migrations/NNNN_*.sql`, `src/migrate.ts`, `npm run db:migrate`; proven by `npm run test:migrations`) and row-level security on every tenant table (`sql/migrations/0003_row_level_security.sql`, `src/rls.ts`; proven by `npm run check:rls`), plus optional analytics and archive stores.
@@ -36,9 +36,9 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 
 ## Pack and record-area contract
 
-This is the seam the generalised shell exposes (mold_v0-038, record areas mold_v0-047). **The shell side is built
-(mold_v0-038)**; the product's own tools, pages and tables are still in the shell until mold_v0-039 moves them into
-its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold_v0 app's packs under the rules in
+This is the seam the generalised shell exposes (mold_v0-038, record areas mold_v0-047, host packs mold_v0-039). **The
+shell side is built**; the product's own surface is the host pack `octillion` since mold_v0-039 (its tables stay in the
+base schema until mold_v0-049). The factory side is built too (mold_v0-024): `packs.py` applies a mold_v0 app's packs under the rules in
 [mold.json](mold.json) `packs` (see "In the factory" below). What 038 wired, in `molds/mold_v0/codebase`:
 
 - `scripts/gen-packs.mjs` (`npm run gen:packs`, `npm run check:packs`; the smoke test fails on a stale registry) reads
@@ -338,8 +338,8 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   `pack-nav.generated.ts`); with zero packs it asks nothing and the page is unchanged. `npm run test:onboarding` proves
   it with two workspaces (everything B does ticks none of A's steps). **Not covered:** the end-to-end browser walk of
   the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
-  shell yet, and the product's own setup steps (`src/app.ts`) stay as they are until mold_v0-039 moves them into the
-  `octillion` pack.
+  shell yet. The product's own setup steps and tool groups are its host pack's Setup route (mold_v0-039, below); the
+  shell's own Setup page asks for joining, a connection, the tools and a first call, in the profile's words.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
   by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a
@@ -555,9 +555,68 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   and its spend counting is the limits tickets', 053/008/018); the run engine's per-workspace cap is a count then an
   insert, so concurrent firings can pass it slightly; a schedule fires at the resolution of the tick (every 5 minutes on
   Vercel).
-- The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
-  the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
-  "Workspace".
+- **Host packs** (mold_v0-039, built; `src/host.ts`, `src/pack-host.ts`, `src/hosts.ts`; the console's
+  `web/src/features/packs/host-web.ts`; `orchestrator/main.ts`). A product whose surface is more than declarations and
+  pack tools (the shell's first product, `octillion`) is a **host pack**: its pack.json names `host.entry` (a module whose
+  default export is `defineHost({...})`), optionally `host.scripts` (its operator scripts) and `host.profile` (its names).
+  Only a pack the build's `profile.json` lists in `host_packs` may be one: the factory writes that list for the packs an
+  app names that `mold.json` `packs.host_packs` allows (`packs.py`); gen-packs refuses `host` from any other pack.
+  *What a host entry wires, at the shell's fixed points* (with no host pack, each point does what it did, minus the
+  product): the customer MCP server's instructions (when the profile has none), resources, tools (before every pack's)
+  and prompts (after them), and the caller's context appended to the instructions (`src/server.ts`, `src/http.ts`);
+  admin MCP tools placed after a named shell tool, the admin server's instructions listing the reads it ends up with
+  (`src/admin-mcp.ts`); routes at the product's own paths: public ones (a webhook), the portal's `/api/app/*` mounted
+  **before** the shell's (so its own Setup and Usage replace the shell's neutral ones), its larger request bodies, its
+  error classes and its fields on `/api/app/billing`, `/api/admin/*`, `/api/admin/onboarding/*` (inside the shell's
+  admin guard, access log and `assertGuarded`: every change names its permission) and `/api/worker/*` (behind the worker
+  token, with the calling job's id); the session engine's hooks: scoring a completed session, extending a simulation's
+  batch, the agent mix the autoscaler, fleet and Compute page schedule by (`src/agent-mix.ts`: else every registry agent
+  at its registry weight); background work on the Vercel cron (its result in the cron's answer), the autoscaler's loop
+  and after each successful tool call (`src/analytics.ts`); a new access request; global settings in groups placed after
+  a shell group (`src/settings.ts` `settingGroups`, `allSettings`; a setting may go before a named one); its public
+  files served after the shell's (else the root page is the shell's own, in the profile's words); the widget preview.
+  *Its console* is `web/src/packs/<id>/`: `index.ts` (pages for `/app`, `/admin` and the site's root, by path; its
+  landing page, the public pages' layout and metadata), `nav.ts` (sidebar transforms that put its entries among the
+  shell's, and the shell features it enables: `tips`, `journeys`, `research`; kept apart from the pages so the sidebar's
+  bundle never carries them), `routes.json` (the URLs its pages keep: next.config
+  rewrites each, from `src/config/pack-routes.generated.json`, to `app/{app,admin}/host/[pack]/[...path]` or
+  `app/(site)/host/[pack]/[...path]`, so `/app/pick-rate` stays `/app/pick-rate`; and its redirects) and `guide.ts` (its
+  customer guide, which replaces the shell's short one at /app/docs; pure TS, as the docs corpus reads it). Its docs
+  (`packs/<id>/docs/*.md`) join the shell's `docs/` as one folder on /admin/docs and in the docs answers' corpus.
+  *Its orchestrator* is `orchestrator/packs/<id>/main.ts`, which `orchestrator/main.ts` runs (else the deterministic
+  worker); it is uploaded to orchestrator sandboxes with the rest of `orchestrator/` (its `test/` is not).
+  *Its scripts* run with `npm run pack:run -- <script>` (`scripts/pack-script.ts`); `npm run smoke` runs the shell's
+  smoke test and then each host pack's `smoke.ts`, and `npm run mcp:check` runs a host pack's `mcp-check.ts` when it has
+  one (else the shell's, which lists tools, prompts and resources and reads each resource).
+  *The boundary* (`scripts/gen-packs.mjs`): a host pack's server code may import its own files, `src/pack-api.ts`,
+  `src/pack-host.ts` and the server's packages, nothing else of the shell (the import graph is resolved as for every
+  pack); it may leave a workspace's scope and read the environment (it is the product's reviewed code, in the server's
+  process, not a sandbox: the text bans it keeps are the record tables, `SESSION AUTHORIZATION`, `eval` and
+  `createRequire`), and it may carry Python data tools and, under `public/`, a `.zip` download. Its scripts are never
+  loaded by its server code (refused). Its console code imports its own files, the console's shared code
+  (`@/components`, `@/lib`, `@/hooks`, `@/types`, `@/config`, `@/features`, `@/styles`) and the console's packages, and
+  reads no server environment; its orchestrator code imports the orchestrator's own files only. Console or
+  orchestrator code of a pack that is not a host pack of the build is refused. `src/pack-host.ts` names, by module,
+  every shell service a host pack reaches (the database and tenant scope, sealing, settings, telemetry, the result
+  shaping of `src/server.ts`, the admin console's helpers, billing and limits, a few email and harness functions,
+  the session engine's shared SQL, the one-model call `src/ask-model.ts`, transcripts, the orchestrator's text guard):
+  adding a name is a change to the shell's contract and is reviewed as one. Nothing in the shell imports a pack: the
+  host list is imported only by the processes' entries (`src/http.ts`, `src/stdio.ts`, `api/index.ts` through it, and
+  the scripts that need the product), so no shell module's own imports reach pack code.
+  **Not covered:** the product's tables and the session engine's SQL over them stay in the shell until mold_v0-049, and
+  so do the admin MCP's job tools named for them (`list_simulations`, `get_simulation`, `cancel_simulation`) and the
+  admin skills' mentions of them; with zero packs admin-added harnesses cannot be managed in the console (their routes
+  add to the product's developer population, so they are the host pack's);
+  the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
+  console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
+  contribution credits on Billing; an access request's product fields), the default icons and Open Graph image are the
+  first product's, and environment names keep their `OCTILLION_` prefix (mold_v0-045); the shell features a host
+  pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its `nav.ts` names them; a dropped host pack's console and orchestrator folders are not
+  pruned from a reused build copy (gen-packs then refuses the build, which the deploy rebuilds from scratch anyway).
+- The profile (`profile.json` over a host pack's own profile over a neutral default, `src/profile.ts`) names the MCP
+  server, the email sender and the console title. The codebase's `profile.json` names nothing since mold_v0-039: the
+  shell is "Workspace", a build with the host pack `octillion` "Octillion" (its pack.json `host.profile`), a branded app
+  its brand's.
 - `npm run test:packs` proves it with a fixture pack (`scripts/fixtures/packs/fixture_notes`) in a build copy, and that
   with zero packs the MCP surface (`scripts/export-mcp-tools.ts --full`) is unchanged.
 
@@ -596,9 +655,12 @@ use that build copy, never `molds/mold_v0/codebase`. The rules are this mold's o
 `packs` (a mold without that block, mold_v1, keeps the rules built into `packs.py`): a pack id is the shell's own
 (`^[a-z][a-z0-9_]{1,30}$`, also its table prefix), a pack may add files only under `packs/{pack}/` with `{pack}` its own id
 (its `pack.json`, entry, migrations and run programs; its console pages render through the shell's generic page and need
-no files of their own) and must add `packs/{pack}/pack.json` (no hidden or `node_modules` folder, which `gen-packs.mjs` does not read, and no
-link), the support test is `scripts/gen-packs.mjs`, the generator
-`node scripts/gen-packs.mjs` and the check `node scripts/gen-packs.mjs --check` (`packs.py verify`). A pack file that would
+no files of their own), and a host pack (mold_v0-039; `host_packs` in mold.json, written into the build's profile.json
+by `packs.py`) also under `web/src/packs/{pack}/` and `orchestrator/packs/{pack}/` (gen-packs refuses those folders for
+any other pack); every pack must add `packs/{pack}/pack.json` (no hidden or `node_modules` folder, which `gen-packs.mjs` does not read, and no
+link), the support test is `scripts/gen-packs.mjs`, the generators `node scripts/gen-packs.mjs` and what depends on the
+packs' surface (the console's tool list, the docs corpus, the internal docs), and the checks `node scripts/gen-packs.mjs
+--check` and the same `--check` of the tool list and the corpus (`packs.py verify`). A pack file that would
 replace a codebase file is refused, as for mold_v1, and a pack folder left in a build copy by an earlier apply for a pack
 the app no longer names is pruned. `build_copy` in mold.json says what the copy leaves out (the server deploy's own
 excludes) and which installed `node_modules` folders it links (never written).
@@ -609,9 +671,9 @@ name, and the descriptions from the brand's own tagline, else the shell's neutra
 with a character the profile cannot carry is refused at `set` and intake; the sender address is kept, a mail-domain
 setting) and re-runs `gen-packs.mjs`, writes the favicon set to
 `web/src/app` and `web/public` and points the web manifest at it, and sets the console theme's brand tokens (primary, its
-foreground, ring) from the colour, its neutrals kept; `check` proves each. It rewrites no source code, so until
-mold_v0-039 moves the product's pages into its pack, the landing page and some console text still carry the product's
-own words.
+foreground, ring) from the colour, its neutrals kept; `check` proves each. It rewrites no source code: since mold_v0-039
+the console's own text names the build by the profile (its sidebar mark is the build's `icon.svg`), and a product's
+landing page and pages are its host pack's. The codebase's default icons are still the first product's (mold_v0-045).
 
 **Deploy and lanes from the build copy.** An app with packs or a brand is deployed from `build/<app_id>/`, made afresh
 from the codebase for every deploy before anything is created or contacted (`lib/single_service.py` `build_source`:

@@ -27,82 +27,6 @@
       "u"
      ],
      "items": []
-    },
-    {
-     "title": "Pick rate",
-     "url": "/app/pick-rate",
-     "icon": "trendingUp",
-     "shortcut": [
-      "g",
-      "v"
-     ],
-     "items": []
-    }
-   ]
-  },
-  {
-   "label": "Context",
-   "items": [
-    {
-     "title": "Company",
-     "url": "/app/context/company",
-     "icon": "building",
-     "shortcut": [
-      "g",
-      "c"
-     ],
-     "items": []
-    },
-    {
-     "title": "Users",
-     "url": "/app/context/users",
-     "icon": "teams",
-     "items": []
-    },
-    {
-     "title": "Products",
-     "url": "/app/context/products",
-     "icon": "product",
-     "shortcut": [
-      "g",
-      "p"
-     ],
-     "items": []
-    },
-    {
-     "title": "Journeys",
-     "url": "/app/journeys",
-     "icon": "route",
-     "shortcut": [
-      "g",
-      "j"
-     ],
-     "items": []
-    }
-   ]
-  },
-  {
-   "label": "Private data",
-   "items": [
-    {
-     "title": "Developer personas",
-     "url": "/app/personas",
-     "icon": "userPen",
-     "shortcut": [
-      "g",
-      "d"
-     ],
-     "items": []
-    },
-    {
-     "title": "Programming tasks",
-     "url": "/app/tasks",
-     "icon": "kanban",
-     "shortcut": [
-      "g",
-      "t"
-     ],
-     "items": []
     }
    ]
   },
@@ -207,21 +131,6 @@
    ]
   },
   {
-   "label": "Engagement",
-   "items": [
-    {
-     "title": "Journeys",
-     "url": "/admin/journeys",
-     "icon": "route",
-     "shortcut": [
-      "g",
-      "j"
-     ],
-     "items": []
-    }
-   ]
-  },
-  {
    "label": "Insights",
    "items": [
     {
@@ -247,31 +156,6 @@
    ]
   },
   {
-   "label": "Library",
-   "items": [
-    {
-     "title": "Personas",
-     "url": "/admin/personas",
-     "icon": "userPen",
-     "shortcut": [
-      "g",
-      "p"
-     ],
-     "items": []
-    },
-    {
-     "title": "Tasks",
-     "url": "/admin/tasks",
-     "icon": "kanban",
-     "shortcut": [
-      "g",
-      "t"
-     ],
-     "items": []
-    }
-   ]
-  },
-  {
    "label": "Operations",
    "items": [
     {
@@ -288,12 +172,6 @@
      "title": "FinOps",
      "url": "/admin/finops",
      "icon": "trendingUp",
-     "items": []
-    },
-    {
-     "title": "Harness mix",
-     "url": "/admin/agents",
-     "icon": "code",
      "items": []
     },
     {

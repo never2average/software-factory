@@ -41,6 +41,30 @@
       "pattern": "^[a-z0-9_\\-/]+$"
     },
     "upstream": {},
+    "host": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "type": "string",
+          "pattern": "^[a-z0-9_\\-/]+\\.ts$"
+        },
+        "scripts": {
+          "type": "string",
+          "pattern": "^[a-z0-9_\\-/]+$"
+        },
+        "profile": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "entry"
+      ],
+      "additionalProperties": false
+    },
     "pages": {
       "type": "array",
       "items": {

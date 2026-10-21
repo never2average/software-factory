@@ -18,7 +18,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 try {
   const { getDb } = await import("../src/db.js");
   const db = await getDb();
-  const { TOOL_NAMES } = await import("../src/server.js");
+  const TOOL_NAMES = ["shell_tool"]; // a tool of this build the shell reserves (a host pack's, src/host.ts)
   const { setPacksForTest, installPacks } = await import("../src/packs.js");
   const { definePack, defineTool, z } = await import("../src/pack-api.js");
   const ob = await import("../src/onboarding.js");

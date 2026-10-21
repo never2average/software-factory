@@ -1,6 +1,6 @@
 /**
  * The admin MCP server (/admin/mcp, also /api/admin/mcp): the /admin panel's reads and a few safe changes as tools, so
- * Octillion staff can ask Claude Code, Cursor or Claude Desktop "what is waiting on me?" or "approve request 42".
+ * platform staff can ask Claude Code, Cursor or Claude Desktop "what is waiting on me?" or "approve request 42".
  * The customer server (src/server.ts, /mcp) is one account's; this one is every account's, so only platform admins
  * connect, and each tool needs the same permission (src/admin-roles.ts) as the HTTP route it mirrors: a viewer reads
  * everything, changes need support, operator or owner exactly as on the panel.
@@ -29,15 +29,15 @@ import { adminContext, can, platformRoleFor, refusal, ROLE_LABELS, PERMISSIONS, 
 import { clerkEnabled, frontendApi, mcpAudience, mcpAudiences, verifyOAuthToken } from "./clerk.js";
 import { getDb } from "./db.js";
 import * as onboarding from "./admin.js";
-import * as library from "./library.js";
+import { modelKeys, saveSettingValues } from "./platform-keys.js";
+import { hosts, type HostAdminTool } from "./host.js";
 import * as records from "./compute-records.js";
 import * as jobs from "./compute-jobs.js";
 import * as actions from "./compute-actions.js";
 import * as spend from "./spend.js";
-import * as contributions from "./contributions.js";
 import { computeSummary } from "./compute.js";
 import { platformAnalytics } from "./insights.js";
-import { listSettings } from "./settings.js";
+import { listSettings, settingGroups } from "./settings.js";
 import { adminGeneratedTools, generatedAdminInstructions } from "./mcp-tools.js";
 import { reserveAdminTools } from "./packs.js";
 
@@ -80,7 +80,7 @@ const accountRow = (o: onboarding.AdminOrg) => ({
 export const ADMIN_TOOLS = {
   list_accounts: {
     title: "Accounts", needs: "read",
-    description: "Every customer account across Octillion: funnel stage and next step, people, tool calls and errors in 7 days, model spend this month against its allowance, plan, and what needs attention. Filter with q (name or slug) or attention_only.",
+    description: `Every customer account across ${PROFILE.name}: funnel stage and next step, people, tool calls and errors in 7 days, model spend this month against its allowance, plan, and what needs attention. Filter with q (name or slug) or attention_only.`,
     input: { q: z.string().optional().describe("Part of the account name or slug"), attention_only: z.boolean().optional().describe("Only accounts with something needing attention"),
              limit: z.number().int().min(1).max(500).optional().describe("Default 100") },
     run: async (a) => {
@@ -166,7 +166,7 @@ export const ADMIN_TOOLS = {
   model_spend: {
     title: "Model spend", needs: "read",
     description: "FinOps › Spend: metered model spend by account, model and provider for a period (sessions and orchestrators). With account (a slug, or 'shared'), that account's breakdown.",
-    input: { ...range, account: z.string().optional().describe("Account slug, or 'shared' for Octillion's own spend"), include_daily: daily },
+    input: { ...range, account: z.string().optional().describe(`Account slug, or 'shared' for ${PROFILE.name}'s own spend`), include_daily: daily },
     run: async (a) => maybeDaily(a.account ? await spend.accountSpend(String(a.account), a) : await spend.spendReport(a), a),
     summary: (d, a) => (a.account ? `Spend for ${a.account}: ${usd(d.totals?.total_usd ?? d.spent_usd)}.` : `Total ${usd(d.totals.total_usd)} (sessions ${usd(d.totals.session_usd)}, orchestrators ${usd(d.totals.orchestrator_usd)}) across ${d.accounts.length} account(s).`),
   },
@@ -183,7 +183,9 @@ export const ADMIN_TOOLS = {
   list_settings: {
     title: "Platform settings", needs: "read",
     description: "Global settings (Compute › Settings and Agent configuration): each key with its value in force, where it comes from (set on /admin, the environment, or the default), limits and who last changed it. Change one with update_setting.",
-    input: { group: z.enum(["models", "runs", "capacity", "research", "reasons", "library", "email"]).optional() },
+    // The groups of this build's settings (src/settings.ts: the shell's and its host packs'), read when the server is built.
+    // The docs answers' group is changed on the console only.
+    get input() { return { group: z.enum(settingGroups().map((g) => g.id).filter((g) => g !== "docs") as [string, ...string[]]).optional() }; },
     run: async (a) => {
       const all = await listSettings();
       return { settings: all.filter((s) => !a.group || s.group === a.group).map((s) => pick(s, ["key", "group", "label", "help", "kind", "value", "default", "source", "options", "min", "max", "updated_at", "updated_by"])) };
@@ -195,27 +197,11 @@ export const ADMIN_TOOLS = {
     description: "Model and sandbox provider keys: each provider (mode, enabled, keys, last use) and each credential's hint, label, priority, enabled and uses. Never a secret.",
     input: {},
     run: async () => {
-      const k = await library.modelKeys();
+      const k = await modelKeys();
       return { unlocked: k.unlocked, providers: k.providers,
         credentials: k.credentials.map((c: any) => pick(c, ["id", "provider", "label", "hint", "priority", "enabled", "uses", "last_used_at", "created_at", "rotated_at", "project_id", "client_email"])) };
     },
     summary: (d) => `${d.unlocked ? "Unlocked" : "LOCKED (OCTILLION_VAULT_KEY unset)"}; ${d.providers.length} provider(s), ${d.credentials.length} key(s), ${d.providers.filter((p: any) => p.enabled && !p.enabled_keys).length} enabled provider(s) without a key.`,
-  },
-  library_stats: {
-    title: "Library", needs: "read",
-    description: "The shared library: personas (active, by source), programming tasks (total, active, by language and category) and contributions from accounts waiting for review.",
-    input: {},
-    run: async () => {
-      const [{ personas }, tasks, pSubs, tSubs] = await Promise.all([library.listPersonas(), library.listTasks({ limit: 1 }),
-        contributions.listSubmissions({ kind: "persona", status: "submitted" }), contributions.listSubmissions({ kind: "task", status: "submitted" })]);
-      const bySource = (xs: any[]) => xs.reduce((m: Record<string, number>, x) => ({ ...m, [x.source ?? "unknown"]: (m[x.source ?? "unknown"] ?? 0) + 1 }), {});
-      return {
-        personas: { total: personas.length, active: personas.filter((p: any) => p.active).length, by_source: bySource(personas) },
-        tasks: { total: tasks.all, active: tasks.active, languages: tasks.languages.slice(0, 15), categories: tasks.categories.slice(0, 15) },
-        submissions: { persona: pSubs.counts, task: tSubs.counts, waiting: n(pSubs.counts.submitted) + n(tSubs.counts.submitted) },
-      };
-    },
-    summary: (d) => `${d.personas.active}/${d.personas.total} persona(s) active, ${d.tasks.active}/${d.tasks.total} task(s) active, ${d.submissions.waiting} submission(s) waiting.`,
   },
 
   // ---------- changes ----------
@@ -290,7 +276,7 @@ export const ADMIN_TOOLS = {
     description: "Change one global setting (list_settings shows the keys, limits and current values). value null resets it to the environment or default. Every server picks it up within 30 seconds.",
     input: { key: z.string().describe("Setting key, e.g. OCTILLION_MAX_RUN_SESSIONS"), value: z.union([z.string(), z.number(), z.null()]).describe("New value, or null to reset") },
     run: async (a, c) => {
-      await library.saveSettings(c.actor, { [String(a.key)]: a.value });
+      await saveSettingValues(c.actor, { [String(a.key)]: a.value });
       const s = (await listSettings()).find((x) => x.key === a.key)!;
       return pick(s, ["key", "label", "value", "source", "updated_at", "updated_by"]);
     },
@@ -313,14 +299,30 @@ export const ADMIN_TOOLS = {
   },
 } satisfies Record<string, AdminTool>;
 
-export type AdminToolName = keyof typeof ADMIN_TOOLS;
-export const ADMIN_TOOL_NAMES = Object.keys(ADMIN_TOOLS) as AdminToolName[];
+export type AdminToolName = string;
+/**
+ * The admin MCP's own tools in the order clients list them: the shell's, with each host pack's (src/host.ts, mold_v0-039)
+ * after the shell tool it names (else after the shell's reads).
+ */
+export function adminTools(): Record<string, AdminTool> {
+  const out: [string, AdminTool][] = Object.entries(ADMIN_TOOLS as Record<string, AdminTool>);
+  for (const h of hosts()) for (const [name, t] of Object.entries(h.adminMcp?.tools ?? {})) {
+    if (out.some(([n]) => n === name)) throw new Error(`host pack ${h.id}: admin tool ${name} is already the shell's`);
+    let lastRead = -1;
+    out.forEach(([, x], i) => { if (x.needs === "read") lastRead = i; });
+    const at = t.after ? out.findIndex(([n]) => n === t.after) : lastRead;
+    if (t.after && at < 0) throw new Error(`host pack ${h.id}: admin tool ${name} comes after ${t.after}, which is no admin tool`);
+    const { after: _a, ...tool } = t as HostAdminTool;
+    out.splice(at + 1, 0, [name, tool]);
+  }
+  return Object.fromEntries(out);
+}
+export const adminToolNames = (): string[] => Object.keys(adminTools());
 // The tools generated from the packs (mold_v0-060, src/mcp-tools.ts) come after these and may not take one of their names.
-reserveAdminTools(ADMIN_TOOL_NAMES);
+reserveAdminTools(adminToolNames);
 
 /** For the panel's Connect page: each tool, the least role that may call it, and whether it changes something. */
-export const adminToolList = () => [...ADMIN_TOOL_NAMES.map((name) => {
-  const t: AdminTool = ADMIN_TOOLS[name];
+export const adminToolList = () => [...Object.entries(adminTools()).map(([name, t]) => {
   return { name, title: t.title, needs: PERMISSIONS[t.needs], needs_label: ROLE_LABELS[PERMISSIONS[t.needs]], changes: t.needs !== "read", destructive: !!t.destructive };
 }), ...adminGeneratedTools().map((t) => ({ name: t.name, title: t.title, needs: PERMISSIONS[t.needs], needs_label: ROLE_LABELS[PERMISSIONS[t.needs]], changes: t.needs !== "read", destructive: !!t.destructive }))];
 
@@ -338,7 +340,9 @@ function audit(c: AdminCaller, name: string, status: number) {
 
 /** Run one tool as the caller: the role check, the call (in the caller's admin context, so log() records the role), the audit. */
 export async function runAdminTool(c: AdminCaller, name: AdminToolName, args: Args): Promise<CallToolResult> {
-  return runAdminToolWith(c, name, ADMIN_TOOLS[name], args);
+  const t = adminTools()[name];
+  if (!t) return { isError: true, content: [{ type: "text", text: `No admin tool ${name}` }] };
+  return runAdminToolWith(c, name, t, args);
 }
 /** As runAdminTool, for a tool given whole: the generated ones (mold_v0-060) run through the same role check and audit. */
 export async function runAdminToolWith(c: AdminCaller, name: string, t: AdminTool, args: Args): Promise<CallToolResult> {
@@ -386,7 +390,7 @@ export const ADMIN_SKILLS = {
     description: "Health, stuck or failed runs, waiting access requests and accounts needing attention, in one short report with next steps.",
     args: {},
     text: () => [
-      "Do Octillion's daily operations review.",
+      `Do ${PROFILE.name}'s daily operations review.`,
       "1. health_summary with failures: true. 2. list_simulations with state 'failed' since '24h', then state 'active'. 3. list_access_requests with status 'pending'. 4. list_accounts with attention_only: true.",
       "Write a short report: **Health** (verdict, orchestrators, anything degraded), **Failures** (grouped by reason, with counts and the fix the data points to), " +
       "**Runs** (active ones and any stuck: queued or booting a long time), **Access requests** (who is waiting and for how long), **Accounts** (what needs attention and why). " +
@@ -410,7 +414,7 @@ export const ADMIN_SKILLS = {
     description: "One account end to end: stage, people, usage, spend against its allowance, plan and runs, what is wrong and the next step.",
     args: { account: z.string().describe("Account slug or name (list_accounts finds it)") },
     text: ({ account }: { account?: string }) => [
-      `Review the Octillion account "${account ?? ""}".`,
+      `Review the ${PROFILE.name} account "${account ?? ""}".`,
       "1. list_accounts with q set to it to find the slug if needed, then get_account. 2. model_spend with account set to the slug. 3. list_simulations with since '7d' and pick this account's runs.",
       "Write: **Where they are** (stage, next step, people and who is active), **Usage** (tool calls, runs and their outcomes, errors), **Money** (model spend this month against the allowance, plan, " +
       "subscription state), **Problems** (anything blocking or wrong, with evidence), **Next step** (one concrete action for us, one for them). " + CONFIRM,
@@ -423,7 +427,7 @@ export const ADMIN_SKILLS = {
     text: ({ from, to }: { from?: string; to?: string }) => {
       const r = JSON.stringify({ ...(from ? { from } : {}), ...(to ? { to } : {}) });
       return [
-        `Write Octillion's FinOps digest for ${from || to ? `${from ?? "…"} to ${to ?? "today"}` : "this month"}.`,
+        `Write ${PROFILE.name}'s FinOps digest for ${from || to ? `${from ?? "…"} to ${to ?? "today"}` : "this month"}.`,
         `1. finops_revenue ${r}. 2. finops_plans ${r}. 3. finops_experiments ${r}. 4. model_spend ${r}.`,
         "Write: **Revenue** (MRR now, collected, paying accounts, gross margin, the accounts that moved it), **Plans** (subscribers and MRR per plan), " +
         "**Experiments** (per running experiment: each variant's shown, subscribed, conversion with its interval, lift vs control and whether it is significant yet; say plainly when it is too early), " +
@@ -448,7 +452,7 @@ export const ADMIN_SKILLS = {
     description: "Where model spend goes and whether anything is off: by provider and account, unpriced usage, and accounts near their allowance.",
     args: { from: z.string().optional().describe("First day, YYYY-MM-DD"), to: z.string().optional().describe("Last day, YYYY-MM-DD") },
     text: ({ from, to }: { from?: string; to?: string }) => [
-      `Check Octillion's model costs${from || to ? ` for ${from ?? "…"} to ${to ?? "today"}` : " this month"}.`,
+      `Check ${PROFILE.name}'s model costs${from || to ? ` for ${from ?? "…"} to ${to ?? "today"}` : " this month"}.`,
       `1. model_spend ${JSON.stringify({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}. 2. list_accounts. 3. analytics_overview for the same days.`,
       "Write: total spend and its split (sessions vs orchestrators, by provider and model), the top accounts and their spend against allowance, unpriced requests (spend is understated: name the models), " +
       "and anything unusual (a day or account far above the rest). End with concrete fixes (a price row, an allowance, a setting), each naming the tool. " + CONFIRM,
@@ -460,18 +464,17 @@ export const ADMIN_SKILLS = {
 export const adminSkillList = () => Object.entries(ADMIN_SKILLS).map(([name, s]) => ({ name, title: s.title, description: s.description, args: Object.keys(s.args) }));
 
 export function createAdminServer(c: AdminCaller): McpServer {
+  const tools = adminTools();
   const server = new McpServer(
     { name: `${PROFILE.mcp_server_name}-admin`, version: "1.0.0" },
     { instructions:
-        "Octillion's admin panel across every customer account, for Octillion staff. Reads: list_accounts, get_account, list_access_requests, " +
-        "health_summary, list_simulations, get_simulation, finops_revenue, finops_plans, finops_experiments, model_spend, analytics_overview, " +
-        "list_settings, key_vault_status, library_stats. Changes (each needs a role; refusals name it): approve/decline_access_request, " +
+        `${PROFILE.name}'s admin panel across every customer account, for ${PROFILE.name} staff. Reads: ${Object.entries(tools).filter(([, t]) => t.needs === "read").map(([n]) => n).join(", ")}. ` +
+        "Changes (each needs a role; refusals name it): approve/decline_access_request, " +
         "set_account_allowance, allow_prepaid_plans, create_plan (dry_run first), archive_plan, set_plan_experiment, update_setting, cancel_simulation. " +
         "Skills (prompts, slash commands): ops_review, triage_requests, account_review, finops_digest, pricing_experiment, cost_check. " +
         `Confirm with the user before any change. This connection is ${c.actor}, role ${ROLE_LABELS[c.role]}.` + generatedAdminInstructions() },
   );
-  for (const name of ADMIN_TOOL_NAMES) {
-    const t: AdminTool = ADMIN_TOOLS[name];
+  for (const [name, t] of Object.entries(tools)) {
     const read = t.needs === "read";
     server.registerTool(name, {
       title: t.title,
@@ -509,12 +512,12 @@ export const adminMcpResource = (p: string = ADMIN_MCP_PATHS[0]) => `${mcpAudien
 /** The caller for a bearer token: a Clerk OAuth access token of a platform admin, or an admin token (its role). */
 export async function adminCallerFor(req: Request): Promise<{ caller: AdminCaller } | { status: 401 | 403; message: string }> {
   const t = bearer(req.headers.authorization);
-  if (!t) return { status: 401, message: "Sign in to Octillion as a platform admin" };
+  if (!t) return { status: 401, message: `Sign in to ${PROFILE.name} as a platform admin` };
   const tok = await resolveAdminToken(t);
   if (tok) return { caller: { actor: `token:${tok.label}`, role: tok.role, userId: null } };
   // Issued for the admin MCP (either path): a token naming the customer /mcp is refused here, as an admin one is on /mcp.
   const claims = await verifyOAuthToken(t, mcpAudiences().flatMap((a) => ADMIN_MCP_PATHS.map((p) => `${a.replace(/\/mcp$/, "")}${p}`)));
-  if (!claims) return { status: 401, message: "Sign in to Octillion as a platform admin (send a Clerk OAuth access token)" };
+  if (!claims) return { status: 401, message: `Sign in to ${PROFILE.name} as a platform admin (send a Clerk OAuth access token)` };
   const { email, role } = await platformRoleFor(claims.userId).catch(() => ({ email: null, role: null }));
   if (!role) return { status: 403, message: `${email ?? "This account"} is not a platform admin. Ask an Owner on /admin/admins.` };
   return { caller: { actor: email ?? claims.userId, role, userId: claims.userId } };
@@ -527,11 +530,11 @@ export function mountAdminMcp(app: Express, publicUrl: string) {
   for (const p of ADMIN_MCP_PATHS) app.get(`/.well-known/oauth-protected-resource${p}`, (_req, res) => {
     const as = oauthServer();
     if (!as) return void res.status(404).json({ error: "OAuth is not configured" });
-    res.json({ resource: adminMcpResource(p), authorization_servers: [as], bearer_methods_supported: ["header"], scopes_supported: ["profile", "email"], resource_name: "Octillion admin" });
+    res.json({ resource: adminMcpResource(p), authorization_servers: [as], bearer_methods_supported: ["header"], scopes_supported: ["profile", "email"], resource_name: `${PROFILE.name} admin` });
   });
   const refuse = (res: Response, p: string, status: 401 | 403, message: string) => {
     if (status === 401) res.set("WWW-Authenticate", oauthServer()
-      ? `Bearer error="unauthorized", error_description="Sign in to Octillion as a platform admin", resource_metadata="${publicUrl}/.well-known/oauth-protected-resource${p}"`
+      ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name} as a platform admin", resource_metadata="${publicUrl}/.well-known/oauth-protected-resource${p}"`
       : 'Bearer realm="octillion-admin"');
     res.status(status).json({ jsonrpc: "2.0", id: null, error: { code: -32001, message } });
   };

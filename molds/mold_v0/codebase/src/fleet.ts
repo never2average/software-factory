@@ -8,7 +8,7 @@ export function claimIds(agentId: string): string[] {
   const spec = findAgent(agentId);
   return [...new Set([agentId, ...(spec ? variantsOf(spec).map((v) => v.id) : [])])];
 }
-import { getPopulation } from "./populations.js";
+import { currentPopulation } from "./agent-mix.js";
 
 /**
  * Global pod fleet across horizontally scaled orchestrators.
@@ -32,7 +32,7 @@ export interface AgentShare { agent_id: string; harness: string; model: string; 
 
 /** One pod group per scheduled agent (harness + model) of the default developer population, weighted by its sandboxes. */
 export async function agentShares(): Promise<AgentShare[]> {
-  return scheduledAgents(await getPopulation())
+  return scheduledAgents(await currentPopulation())
     .map((a) => ({ agent_id: a.id, harness: a.harness, model: a.model, weight: a.weight, image: a.image?.docker, version: a.harness_version }))
     .sort((a, b) => b.weight - a.weight || a.agent_id.localeCompare(b.agent_id));
 }

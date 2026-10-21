@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: { default: 'Account', template: `%s |
 export default async function PortalLayout({ children }: { children: React.ReactNode }) {
   const { orgId } = await auth.protect();
   if (!orgId) {
-    // Octillion staff with no customer account of their own get a way into the admin panel from here.
+    // Platform staff with no customer account of their own get a way into the admin panel from here.
     const s = await serverApi<{ is_platform_admin: boolean }>('/admin/session').catch(() => null);
     return <NoOrganization platformAdmin={!!s?.body?.is_platform_admin} />;
   }

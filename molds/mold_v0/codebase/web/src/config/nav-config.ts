@@ -1,48 +1,40 @@
 import { NavGroup } from '@/types';
 import { workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
+import { withHostAdminNav, withHostPortalNav } from '@/features/packs/host-nav';
 
 /**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
- * /admin: Octillion staff across every account. /app: one account's people (account admins see management controls).
+ * /admin: platform staff across every account. /app: one account's people (account admins see management controls).
+ * A host pack (mold_v0-039) puts its own entries among these (withHost*Nav); the declarative packs' come after.
  */
 export const adminNav: NavGroup[] = [
-  {
-    label: 'Onboarding',
-    items: [
-      { title: 'Overview', url: '/admin', icon: 'dashboard', shortcut: ['g', 'o'], items: [] },
-      { title: 'Access requests', url: '/admin/requests', icon: 'inbox', shortcut: ['g', 'r'], items: [] },
-      { title: 'Accounts', url: '/admin/accounts', icon: 'building', shortcut: ['g', 'a'], items: [] }
-    ]
-  },
-  {
-    label: 'Engagement',
-    items: [{ title: 'Journeys', url: '/admin/journeys', icon: 'route', shortcut: ['g', 'j'], items: [] }]
-  },
-  {
-    label: 'Insights',
-    items: [
-      { title: 'Analytics', url: '/admin/analytics', icon: 'chartBar', shortcut: ['g', 'n'], items: [] },
-      { title: 'Health', url: '/admin/health', icon: 'gauge', shortcut: ['g', 'h'], items: [] }
-    ]
-  },
-  {
-    label: 'Library',
-    items: [
-      { title: 'Personas', url: '/admin/personas', icon: 'userPen', shortcut: ['g', 'p'], items: [] },
-      { title: 'Tasks', url: '/admin/tasks', icon: 'kanban', shortcut: ['g', 't'], items: [] }
-    ]
-  },
-  {
-    label: 'Operations',
-    items: [
-      { title: 'Compute', url: '/admin/compute', icon: 'adjustments', shortcut: ['g', 'c'], items: [] },
-      { title: 'FinOps', url: '/admin/finops', icon: 'trendingUp', items: [] },
-      { title: 'Harness mix', url: '/admin/agents', icon: 'code', items: [] },
-      { title: 'Agent configuration', url: '/admin/configuration', icon: 'settings', items: [] },
-      { title: 'Key vault', url: '/admin/keys', icon: 'lock', shortcut: ['g', 'k'], items: [] },
-      { title: 'Admins', url: '/admin/admins', icon: 'teams', items: [] }
-    ]
-  },
+  ...withHostAdminNav([
+    {
+      label: 'Onboarding',
+      items: [
+        { title: 'Overview', url: '/admin', icon: 'dashboard', shortcut: ['g', 'o'], items: [] },
+        { title: 'Access requests', url: '/admin/requests', icon: 'inbox', shortcut: ['g', 'r'], items: [] },
+        { title: 'Accounts', url: '/admin/accounts', icon: 'building', shortcut: ['g', 'a'], items: [] }
+      ]
+    },
+    {
+      label: 'Insights',
+      items: [
+        { title: 'Analytics', url: '/admin/analytics', icon: 'chartBar', shortcut: ['g', 'n'], items: [] },
+        { title: 'Health', url: '/admin/health', icon: 'gauge', shortcut: ['g', 'h'], items: [] }
+      ]
+    },
+    {
+      label: 'Operations',
+      items: [
+        { title: 'Compute', url: '/admin/compute', icon: 'adjustments', shortcut: ['g', 'c'], items: [] },
+        { title: 'FinOps', url: '/admin/finops', icon: 'trendingUp', items: [] },
+        { title: 'Agent configuration', url: '/admin/configuration', icon: 'settings', items: [] },
+        { title: 'Key vault', url: '/admin/keys', icon: 'lock', shortcut: ['g', 'k'], items: [] },
+        { title: 'Admins', url: '/admin/admins', icon: 'teams', items: [] }
+      ]
+    }
+  ]),
   // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own; then their shared record areas (mold_v0-047).
   ...packAdminNav,
   ...recordAdminNav,
@@ -50,43 +42,27 @@ export const adminNav: NavGroup[] = [
   ...usageAdminNav
 ];
 
-/** The shell's own /app sidebar, with what the packs add after it. */
+/** The shell's own /app sidebar (with a host pack's entries among its own), and what the declarative packs add after it. */
 const shellPortalNav: NavGroup[] = [
-  {
-    label: 'Get started',
-    items: [{ title: 'Setup & training', url: '/app', icon: 'rocket', shortcut: ['g', 's'], items: [] }]
-  },
-  {
-    label: 'Insights',
-    items: [
-      { title: 'Usage', url: '/app/usage', icon: 'chartLine', shortcut: ['g', 'u'], items: [] },
-      { title: 'Pick rate', url: '/app/pick-rate', icon: 'trendingUp', shortcut: ['g', 'v'], items: [] }
-    ]
-  },
-  {
-    label: 'Context',
-    items: [
-      { title: 'Company', url: '/app/context/company', icon: 'building', shortcut: ['g', 'c'], items: [] },
-      { title: 'Users', url: '/app/context/users', icon: 'teams', items: [] },
-      { title: 'Products', url: '/app/context/products', icon: 'product', shortcut: ['g', 'p'], items: [] },
-      { title: 'Journeys', url: '/app/journeys', icon: 'route', shortcut: ['g', 'j'], items: [] }
-    ]
-  },
-  {
-    // What simulations run with: the account's own developers and tasks (Octillion-curated ones shown by name only).
-    label: 'Private data',
-    items: [
-      { title: 'Developer personas', url: '/app/personas', icon: 'userPen', shortcut: ['g', 'd'], items: [] },
-      { title: 'Programming tasks', url: '/app/tasks', icon: 'kanban', shortcut: ['g', 't'], items: [] }
-    ]
-  },
-  {
-    label: 'Operational',
-    items: [
-      { title: 'Billing', url: '/app/billing', icon: 'billing', shortcut: ['g', 'b'], items: [] },
-      { title: 'Profile', url: '/app/profile', icon: 'account', items: [] }
-    ]
-  },
+  ...withHostPortalNav([
+    {
+      label: 'Get started',
+      items: [{ title: 'Setup & training', url: '/app', icon: 'rocket', shortcut: ['g', 's'], items: [] }]
+    },
+    {
+      label: 'Insights',
+      items: [
+        { title: 'Usage', url: '/app/usage', icon: 'chartLine', shortcut: ['g', 'u'], items: [] }
+      ]
+    },
+    {
+      label: 'Operational',
+      items: [
+        { title: 'Billing', url: '/app/billing', icon: 'billing', shortcut: ['g', 'b'], items: [] },
+        { title: 'Profile', url: '/app/profile', icon: 'account', items: [] }
+      ]
+    }
+  ]),
   // The packs' pages (scripts/gen-packs.mjs, mold_v0-038), after the shell's own; then their record areas (mold_v0-047)
   // and the Workspace group: Credentials (mold_v0-034), Schedules and Notices (mold_v0-035), each when the build has one.
   ...packPortalNav,
