@@ -6,33 +6,27 @@
  *   Clerk user public_metadata.platform_role  viewer, support, operator or owner (src/admin-roles.ts), set on /admin/admins
  *   OCTILLION_PLATFORM_ADMINS  comma-separated addresses or *@domain entries, owners; Clerk must have verified the address
  *   (public_metadata.platform_admin = true, the old flag, also means owner)
- *   OCTILLION_ADMIN_TOKEN      still accepted as a bearer token (owner), for scripts and the key vault / population APIs
+ *   admin tokens (adm_…)       for scripts: minted per purpose with a role and an expiry, revocable (src/admin-tokens.ts).
+ *                              The old static OCTILLION_ADMIN_TOKEN is no longer accepted.
  *
  * Requests authenticated by Clerk's session cookie that change something must carry `X-Octillion-Admin: 1`, which a
  * cross-site form cannot send, so the cookie cannot be ridden (CSRF). Bearer-token requests need no extra header.
  */
-import { createHash, timingSafeEqual } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { bearer } from "./auth.js";
 import { clerkEnabled } from "./clerk.js";
 import { adminContext, PERMISSIONS, permissionsOf, platformRoleFor, ROLE_LABELS, type PlatformRole } from "./admin-roles.js";
 import { clerkSession } from "./session.js";
-
-/** OCTILLION_ADMIN_TOKEN, compared in constant time (also the admin MCP's, src/admin-mcp.ts). */
-export function adminTokenOk(t: string | null) {
-  const want = process.env.OCTILLION_ADMIN_TOKEN;
-  if (!want || !t) return false;
-  const h = (x: string) => createHash("sha256").update(x).digest();
-  return timingSafeEqual(h(t), h(want));
-}
+import { resolveAdminToken } from "./admin-tokens.js";
 
 /**
- * Guards /api/admin/*: the admin token (owner), or a Clerk session of anyone with a platform role (plus the CSRF header
+ * Guards /api/admin/*: an admin token (with the role it was minted for), or a Clerk session of anyone with a platform role (plus the CSRF header
  * on cookie writes). Sets res.locals.adminRole for need() and runs the rest of the request with the role in adminContext.
  */
 export async function requirePlatformAdmin(req: Request, res: Response, next: NextFunction) {
   const go = (role: PlatformRole) => { res.locals.adminRole = role; adminContext.run({ role }, () => next()); };
-  if (adminTokenOk(bearer(req.headers.authorization))) return go("owner");
+  const tok = await resolveAdminToken(bearer(req.headers.authorization));
+  if (tok) { res.locals.adminActor = `token:${tok.label}`; return go(tok.role); }
   const s = await clerkSession(req);
   if (!s) return void res.status(401).json({ error: "Sign in as a platform admin", sign_in_url: "/sign-in" });
   const { email, role } = await platformRoleFor(s.userId).catch(() => ({ email: null, role: null }));
@@ -43,7 +37,7 @@ export async function requirePlatformAdmin(req: Request, res: Response, next: Ne
   go(role);
 }
 
-/** The name admin changes are logged under: the signed-in email, else the X-Admin-Actor label sent with the token. */
+/** The name admin changes are logged under: the signed-in email or token:<label>, else the X-Admin-Actor label. */
 export const adminActor = (req: Request, res: Response) =>
   (res.locals.adminActor as string | undefined) ?? (String(req.get("x-admin-actor") ?? "admin").trim().slice(0, 80) || "admin");
 

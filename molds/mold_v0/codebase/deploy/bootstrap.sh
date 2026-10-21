@@ -11,10 +11,11 @@ put() { grep -q "^$1=" .env || echo "$1=$2" >> .env; }
 put POSTGRES_PASSWORD "$(gen 48 40)"
 put CLICKHOUSE_PASSWORD "$(gen 48 40)"
 put OCTILLION_VAULT_KEY "$(openssl rand -base64 32)"
-put OCTILLION_ADMIN_TOKEN "adm_$(gen 48 40)"
 put OCTILLION_WORKER_TOKEN "wrk_$(gen 48 40)"
 put DOMAIN "${DOMAIN:-localhost}"
 put PUBLIC_URL "${PUBLIC_URL:-https://${DOMAIN:-localhost}}"
 chmod 600 .env
 echo "deploy/.env ready ($(grep -c = .env) values). Set DOMAIN/PUBLIC_URL for your host, then:"
 echo "  docker compose -f docker-compose.prod.yml --env-file .env up -d --build"
+echo "Admin API access for scripts: mint a scoped, expiring token (there is no static admin token):"
+echo "  docker compose -f docker-compose.prod.yml --env-file .env exec octillion npm run admin:token -- create --label <purpose> --role <viewer|support|operator|owner>"

@@ -62,7 +62,7 @@ export const config = {
 
 /**
  * A product's tasks as they read: the scenarios row with what it leaves empty filled from its library task. A task
- * from Octillion's library is a link (library_task_id), never a copy (schema.sql, 2026-10-20): its title, prompt,
+ * from Octillion's library is a link (library_task_id), never a copy (sql/migrations/0001_baseline.sql, 2026-10-20): its title, prompt,
  * repo, language and tags come from library_tasks unless the product has its own (an edit, or research's adaptation).
  * Use `${SCENARIO_ROWS} sc` wherever scenarios are read; write to `scenarios` itself. List every scenarios column here.
  */
@@ -335,7 +335,17 @@ export interface RunInput {
   samples?: number;                                         // representative (default): sessions per scenario, mixed by adoption
   /** Adaptive sampling cap per scenario. Default (no `samples` given): config.maxSamples(). `samples` alone = a fixed-size run. */
   max_samples?: number;
+  /**
+   * How the agents work (sql/migrations/0001_baseline.sql, exec_mode): 'plan' (default) plans first and implements once the simulated
+   * developer approves; 'direct' executes straight away; 'both' runs every session in each mode, paired, to compare.
+   */
+  execution?: Execution;
 }
+
+export type Execution = "plan" | "direct" | "both";
+export type ExecMode = "plan" | "direct";
+/** A run's arms, in a fixed order (plan first). */
+export const execModes = (e: Execution | undefined): ExecMode[] => (e === "both" ? ["plan", "direct"] : e === "direct" ? ["direct"] : ["plan"]);
 
 /**
  * The welcome a client gets when the user has not asked for anything specific yet (MCP has no connect-time message a
@@ -497,8 +507,10 @@ export async function runSimulation(org: Org, input: RunInput) {
   const explicit = Boolean(input.agents?.length || input.models?.length);
   // Representative runs size their first batch from the grid (agents.ts planFirstBatch): the smallest samples per
   // problem x persona that give every harness a session and every major harness every problem. `samples` overrides.
+  // Each execution mode is a full arm of the run: a comparison run is two paired runs under one session limit.
+  const modes = execModes(input.execution);
   const batchPlan = !explicit && input.samples === undefined
-    ? planFirstBatch(scenarios.length, profileIds.length, schedulingShares(pop), { maxSessions })
+    ? planFirstBatch(scenarios.length, profileIds.length, schedulingShares(pop), { maxSessions: Math.floor(maxSessions / modes.length) })
     : null;
   const samples = input.samples ?? batchPlan?.samples ?? config.defaultSamples();
   const repeats = input.repeats ?? 3;
@@ -507,7 +519,7 @@ export async function runSimulation(org: Org, input: RunInput) {
   const maxSamples = explicit ? null
     : input.max_samples !== undefined ? Math.max(1, Math.trunc(input.max_samples))
     : input.samples === undefined ? config.maxSamples() : null;
-  let plan: { scenarioId: number; profileId: number | null; agent: AgentSpec; attempt: number }[];
+  let plan: { scenarioId: number; profileId: number | null; agent: AgentSpec; attempt: number; mode?: ExecMode }[];
   if (explicit) {
     // A slot agent's model_variants (e.g. pi on GPT) are selectable by id too.
     let chosen = [...new Map(enabled.flatMap((a) => [a, ...variantsOf(a)]).map((a) => [a.id, a])).values()];
@@ -532,8 +544,10 @@ export async function runSimulation(org: Org, input: RunInput) {
       { floor: 1, groups: slots.map((s) => s.scenarioId) });
     plan = slots.flatMap((slot, si) => cells[si]!.map((a, i) => ({ ...slot, agent: drawVariant(a), attempt: i + 1 })));
   }
+  // Paired arms: the same task, persona, agent and attempt once per mode.
+  plan = plan.flatMap((x) => modes.map((mode) => ({ ...x, mode })));
   if (plan.length > maxSessions)
-    throw new LimitError(`This simulation needs ${plan.length} agent sessions (${scenarios.length} scenarios x ${profileIds.length} profiles x ${explicit ? "agents x repeats" : `${samples} samples`}); ` +
+    throw new LimitError(`This simulation needs ${plan.length} agent sessions (${scenarios.length} scenarios x ${profileIds.length} profiles x ${explicit ? "agents x repeats" : `${samples} samples`}${modes.length > 1 ? " x 2 execution modes" : ""}); ` +
       `the limit per run is ${maxSessions}. Use fewer scenarios, profiles, agents, repeats or samples.` +
       (maxSessions < config.maxSessionsPerRun() ? ` ${askAdmins(personal.admins, false)}` : ""), 400,
       { code: "run_sessions", set_by: maxSessions < config.maxSessionsPerRun() ? "account" : undefined });
@@ -552,17 +566,17 @@ export async function runSimulation(org: Org, input: RunInput) {
       if (Number(n) >= personal.max_runs) throw runsAtOnceError(Number(n), personal.max_runs, personal.runs_set_by, personal.admins);
     }
     await tx.query(
-      `INSERT INTO simulations (id, org_id, product_id, name, models, harness, repeats, profile_ids, mode, agent_ids, population_id, max_samples, research_id, created_by, private, prompts)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, (SELECT research->>'research_id' FROM products WHERE id = $3), $13, $14, $15)`,
+      `INSERT INTO simulations (id, org_id, product_id, name, models, harness, repeats, profile_ids, mode, agent_ids, population_id, max_samples, research_id, created_by, private, prompts, exec_modes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, (SELECT research->>'research_id' FROM products WHERE id = $3), $13, $14, $15, $16)`,
       [id, org.orgId, p.id, name, [...new Set(used.map((a) => a.model))], [...new Set(used.map((a) => a.harness))].join(", "),
        explicit ? repeats : samples, profiles.map((x) => x.id), explicit ? "explicit" : "representative", used.map((a) => a.id), pop.id, maxSamples, org.userId ?? null, isPrivate,
-       JSON.stringify(prompts)],
+       JSON.stringify(prompts), modes],
     );
     for (const x of plan)
       await tx.query(
-        `INSERT INTO agent_sessions (id, simulation_id, org_id, product_id, scenario_id, model, harness, agent_id, attempt, profile_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [randomId("ses_"), id, org.orgId, p.id, x.scenarioId, x.agent.model, x.agent.harness, x.agent.id, x.attempt, x.profileId],
+        `INSERT INTO agent_sessions (id, simulation_id, org_id, product_id, scenario_id, model, harness, agent_id, attempt, profile_id, exec_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [randomId("ses_"), id, org.orgId, p.id, x.scenarioId, x.agent.model, x.agent.harness, x.agent.id, x.attempt, x.profileId, x.mode ?? "plan"],
       );
   });
   // What is left for the launcher (connector keys: the account's), and what this run is likely to cost (Budget rules).
@@ -608,34 +622,44 @@ export async function extendAdaptive(simulationId: string): Promise<number> {
     [simulationId])).map((r) => Number(r.scenario_id)));
   return db.transaction(async (tx) => {
     const [sim] = await tx.query<{ id: string; org_id: number; product_id: number; mode: string; status: string; max_samples: number | null;
-                                   population_id: number | null; profile_ids: number[] | null }>(
-      "SELECT id, org_id, product_id, mode, status, max_samples, population_id, profile_ids FROM simulations WHERE id = $1 FOR UPDATE", [simulationId]);
+                                   population_id: number | null; profile_ids: number[] | null; exec_modes: ExecMode[] }>(
+      "SELECT id, org_id, product_id, mode, status, max_samples, population_id, profile_ids, exec_modes FROM simulations WHERE id = $1 FOR UPDATE", [simulationId]);
     if (!sim || sim.mode !== "representative" || !sim.max_samples || sim.status === "cancelled") return 0;
     const [open] = await tx.query<{ n: number }>("/* tenant: internal: adaptive sampling of a finished session's simulation */ SELECT count(*) AS n FROM agent_sessions WHERE simulation_id = $1 AND status IN ('queued', 'running')", [simulationId]);
     if (Number(open.n) > 0) return 0; // a batch is still in flight (or another completion already extended the run)
-    const rows = await tx.query<{ scenario_id: number; attempts: number; n: number; hits: number }>(
-      `/* tenant: internal: adaptive sampling of a finished session's simulation */ SELECT s.scenario_id, count(*) AS attempts, count(*) FILTER (WHERE s.verdict IS NOT NULL) AS n,
+    // Per task and execution mode. With two modes the arms stay paired: a task samples on until BOTH arms have
+    // settled (its margin is the wider arm's), and each extra sample runs once in every mode.
+    const armRows = await tx.query<{ scenario_id: number; exec_mode: ExecMode; attempts: number; n: number; hits: number }>(
+      `/* tenant: internal: adaptive sampling of a finished session's simulation */ SELECT s.scenario_id, s.exec_mode, count(*) AS attempts, count(*) FILTER (WHERE s.verdict IS NOT NULL) AS n,
               count(*) FILTER (WHERE s.verdict IS NOT NULL AND ${HIT}) AS hits
          FROM agent_sessions s JOIN ${SCENARIO_ROWS} sc ON sc.id = s.scenario_id
-        WHERE s.simulation_id = $1 GROUP BY s.scenario_id ORDER BY s.scenario_id`, [simulationId]);
-    let room = maxSessions - rows.reduce((t, r) => t + Number(r.attempts), 0);
+        WHERE s.simulation_id = $1 GROUP BY s.scenario_id, s.exec_mode ORDER BY s.scenario_id, s.exec_mode`, [simulationId]);
+    const modes: ExecMode[] = sim.exec_modes?.length ? sim.exec_modes : ["direct"];
+    const rows = [...new Set(armRows.map((r) => Number(r.scenario_id)))].map((scenario_id) => {
+      const arms = armRows.filter((r) => Number(r.scenario_id) === scenario_id).map((r) => {
+        const n = Number(r.n), hits = Number(r.hits), ci = wilson(hits, n);
+        return { mode: r.exec_mode, attempts: Number(r.attempts), n, hits, margin: ci ? (ci[1] - ci[0]) / 2 : 1 };
+      });
+      return { scenario_id, arms, attempts: Math.max(...arms.map((a) => a.attempts)), n: arms.reduce((t, a) => t + a.n, 0), hits: arms.reduce((t, a) => t + a.hits, 0),
+               margin: Math.max(...arms.map((a) => a.margin)), settled: arms.length === modes.length && arms.every((a) => a.n >= config.samplingMin() && a.margin <= config.samplingMargin()) };
+    });
+    let room = maxSessions - armRows.reduce((t, r) => t + Number(r.attempts), 0);
     const decisions: Record<string, unknown> = {};
     const more: { scenarioId: number; from: number; count: number }[] = [];
     for (const r of rows) {
-      const attempts = Number(r.attempts), n = Number(r.n), hits = Number(r.hits);
-      const ci = wilson(hits, n);
-      const margin = ci ? (ci[1] - ci[0]) / 2 : 1;
-      const settled = n >= config.samplingMin() && margin <= config.samplingMargin();
-      const want = settled || attempts >= sim.max_samples || stop ? 0 : Math.max(0, Math.min(config.samplingBatch(), sim.max_samples - attempts, room));
-      room -= want;
+      const { attempts, n, hits, margin, settled } = r;
+      const want = settled || attempts >= sim.max_samples || stop ? 0
+        : Math.max(0, Math.min(config.samplingBatch(), sim.max_samples - attempts, Math.floor(room / modes.length)));
+      room -= want * modes.length;
       decisions[String(r.scenario_id)] = {
         attempts, scored: n, hits, margin: Math.round(margin * 100) / 100,
+        ...(modes.length > 1 ? { by_mode: Object.fromEntries(r.arms.map((a) => [a.mode, { attempts: a.attempts, scored: a.n, hits: a.hits, margin: Math.round(a.margin * 100) / 100 }])) } : {}),
         status: settled ? "settled" : attempts >= sim.max_samples ? "cap reached" : stop ? stopped : want ? "sampling more" : "stopped: run limit",
       };
       if (want) more.push({ scenarioId: Number(r.scenario_id), from: attempts, count: want });
     }
     await tx.query("/* tenant: internal: adaptive sampling of a finished session's simulation */ UPDATE simulations SET sampling = $2 WHERE id = $1", [simulationId, JSON.stringify(decisions)]);
-    const total = more.reduce((t, m) => t + m.count, 0);
+    const total = more.reduce((t, m) => t + m.count, 0) * modes.length;
     if (!total) return 0;
     // Top-ups are dealt the same way: each scenario's batch gets a near-proportional share of the weighted mix.
     // top-ups: by usage share only, within each task's harness preference
@@ -644,11 +668,12 @@ export async function extendAdaptive(simulationId: string): Promise<number> {
     for (const [mi, m] of more.entries())
       for (let i = 0; i < m.count; i++) {
         const agent = drawVariant(cells[mi]![i]!);
-        await tx.query(
-          `INSERT INTO agent_sessions (id, simulation_id, org_id, product_id, scenario_id, model, harness, agent_id, attempt, profile_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [randomId("ses_"), simulationId, sim.org_id, sim.product_id, m.scenarioId, agent.model, agent.harness, agent.id,
-           m.from + i + 1, profileIds[(m.from + i) % profileIds.length]]);
+        for (const mode of modes)
+          await tx.query(
+            `INSERT INTO agent_sessions (id, simulation_id, org_id, product_id, scenario_id, model, harness, agent_id, attempt, profile_id, exec_mode)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [randomId("ses_"), simulationId, sim.org_id, sim.product_id, m.scenarioId, agent.model, agent.harness, agent.id,
+             m.from + i + 1, profileIds[(m.from + i) % profileIds.length], mode]);
       }
     await tx.query("/* tenant: internal: adaptive sampling of a finished session's simulation */ UPDATE simulations SET status = 'running', finished_at = NULL WHERE id = $1 AND status <> 'cancelled'", [simulationId]);
     return total;
@@ -685,7 +710,7 @@ export async function getSimulation(org: Org, simulationId: string) {
   const sessions = await db.query<any>(
     `SELECT s.id, s.scenario_id, sc.title AS scenario, sc.expectation, s.model, s.attempt, s.status, s.verdict, s.winner,
             s.agent_id, s.started_at, s.ended_at, s.events, s.user_turns, s.cost_usd, s.error_message, dp.name AS profile,
-            s.completed_reason, (s.metadata->>'agent_turns')::int AS agent_turns,
+            s.completed_reason, (s.metadata->>'agent_turns')::int AS agent_turns, s.exec_mode,
             CASE WHEN s.verdict IS NULL THEN NULL ELSE ${HIT} END AS hit
        FROM agent_sessions s JOIN ${SCENARIO_ROWS} sc ON sc.id = s.scenario_id LEFT JOIN developer_profiles dp ON dp.id = s.profile_id
       WHERE s.simulation_id = $1 AND s.org_id = $2 ORDER BY sc.id, s.model, s.attempt`,
@@ -730,6 +755,14 @@ export async function getSimulation(org: Org, simulationId: string) {
     by_model: sim.models.map((model: string) => ({ model, ...summarize(sessions.filter((s) => s.model === model)) })),
     by_agent: agentIds.map((id) => ({ agent_id: id, label: agentLabel(id), ...summarize(sessions.filter((s) => (s.agent_id ?? s.model) === id)) })),
     by_profile: [...by((s) => s.profile ?? "")].filter(([k]) => k).map(([profile, xs]) => ({ profile, ...summarize(xs) })),
+    // Execution modes (sql/migrations/0001_baseline.sql exec_mode): plan-then-execute and/or direct, each with its own pick rate per agent.
+    // With both, the sessions are paired, so the same agents on the same tasks compare mode against mode.
+    by_mode: (["plan", "direct"] as const).filter((m) => sessions.some((s) => s.exec_mode === m)).map((mode) => {
+      const xs = sessions.filter((s) => s.exec_mode === mode);
+      return { mode, ...summarize(xs),
+               by_agent: agentIds.filter((id) => xs.some((x) => (x.agent_id ?? x.model) === id))
+                 .map((id) => ({ agent_id: id, label: agentLabel(id), ...summarize(xs.filter((x) => (x.agent_id ?? x.model) === id)) })) };
+    }),
     matrix,
     sessions,
   };

@@ -1,5 +1,6 @@
 import { getDb, type Queryable } from "./db.js";
 import { registry, type Population } from "./agents.js";
+import { asPlatform } from "./tenant-scope.js";
 
 /**
  * Developer populations in Postgres: which coding agents (harness x model) a population of developers uses, and in
@@ -19,6 +20,8 @@ let seeded: Promise<void> | undefined;
 
 /** Create the default population from the registry seed if no population exists yet. */
 export function ensureDefaultPopulation(): Promise<void> {
+  // Seeds the shared default population (src/tenant-scope.ts).
+  return asPlatform(() => {
   seeded ??= (async () => {
     const db = await getDb();
     const [{ n }] = await db.query<{ n: number }>("SELECT count(*) AS n FROM developer_populations");
@@ -43,6 +46,7 @@ export function ensureDefaultPopulation(): Promise<void> {
     });
   })().catch((e) => { seeded = undefined; throw e; });
   return seeded;
+});
 }
 
 /** `orgId`: a customer's view: public populations plus that organization's own mixes, never another org's. */

@@ -6,15 +6,17 @@ gets you from invite to your first report.
 
 ## 1. Connect
 
-Your invite contains a personal link like `https://octillion.useimmaculate.com/mcp/oct_…`. It is your login: anyone
-with it can use your account, so keep it private.
+Your invite gives you the connector URL `https://octillion.useimmaculate.com/mcp`, and either a sign-in invitation or a
+personal API key (`oct_…`). A key is your login: anyone with it can use your account, so keep it private. Your client
+sends it in a header, `Authorization: Bearer <key>`; it never goes in the URL. (Old links with the key in the URL,
+`…/mcp/oct_…`, still work for now but are being retired: move to the header.)
 
 | Client | How to connect | What you see |
 |---|---|---|
-| Claude (web or desktop) | Settings, Connectors, Add custom connector, paste the link | An interactive dashboard under each answer |
-| ChatGPT | Turn on developer mode, add a custom connector with the link | The same dashboard |
-| Claude Code | Put `{"mcpServers": {"octillion": {"type": "http", "url": "<your link>"}}}` in `.mcp.json` | Text answers |
-| Cursor and other IDEs | Paste the link into the MCP settings and switch the Octillion tools on; ask in Agent chat | Text answers |
+| Claude (web or desktop) | Settings, Connectors, Add custom connector, paste the URL and sign in (these apps cannot send a key) | An interactive dashboard under each answer |
+| ChatGPT | Turn on developer mode, add a custom connector with the URL and sign in (OAuth) | The same dashboard |
+| Claude Code | `claude mcp add --transport http octillion <URL> --header "Authorization: Bearer <key>"` | Text answers |
+| Cursor and other IDEs | Add the URL with a `headers` entry (`"Authorization": "Bearer <key>"`) in the MCP settings and switch the Octillion tools on; ask in Agent chat | Text answers |
 
 Then type: **"Get me started with Octillion."** The first tool, `get_started`, answers with your next step.
 

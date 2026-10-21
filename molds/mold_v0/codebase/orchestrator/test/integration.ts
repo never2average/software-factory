@@ -45,7 +45,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 // Spawn tsx directly: `npx` exits on SIGTERM without forwarding it, orphaning the real process (seen in this rig).
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
 const WORKER_TOKEN = `wt_${randomBytes(16).toString("hex")}`;
-const ADMIN_TOKEN = `adm_${randomBytes(16).toString("hex")}`;
+let ADMIN_TOKEN = ""; // minted below with npm run admin:token (no static admin token)
 const VAULT_KEY = randomBytes(32).toString("base64");
 const CANARY = `sk-ant-canary-${randomBytes(12).toString("hex")}`;
 const ORCH_ID = `itest-${randomBytes(3).toString("hex")}`;
@@ -150,7 +150,7 @@ const fakeVendor = http.createServer((req, res) => {
 const serverEnv: NodeJS.ProcessEnv = {
   PATH: process.env.PATH, HOME: process.env.HOME,
   PGLITE_DIR: path.join(tmp, "pglite"), HOST: "0.0.0.0", PORT: String(PORT), PUBLIC_URL: `http://${BRIDGE}:${PORT}`,
-  OCTILLION_WORKER_TOKEN: WORKER_TOKEN, OCTILLION_VAULT_KEY: VAULT_KEY, OCTILLION_ADMIN_TOKEN: ADMIN_TOKEN,
+  OCTILLION_WORKER_TOKEN: WORKER_TOKEN, OCTILLION_VAULT_KEY: VAULT_KEY,
   ORCHESTRATOR_PROVIDER: "anthropic", ORCHESTRATOR_MODEL: "claude-opus-5-5", // hermetic: Pi talks to the fake Anthropic upstream
   OCTILLION_REGISTRY: path.join(tmp, "registry.json"),
 };
@@ -195,6 +195,7 @@ async function main() {
   log(`fake Anthropic vendor on 0.0.0.0:${UP_PORT}`);
 
   // Vault + org: CLI tools on the same PGlite dir, before the server opens it (PGlite is single-process).
+  ADMIN_TOKEN = JSON.parse(run(TSX, ["scripts/admin-token.ts", "create", "--label", "itest", "--role", "owner", "--days", "1", "--json"])).token;
   const orgOut = run(TSX, ["scripts/create-org.ts", "Left Pad Inc", "leftpad"]);
   const orgKey = /API key \(shown once\): (\S+)/.exec(orgOut)?.[1];
   if (!orgKey) throw new Error(`could not parse org key from: ${orgOut.slice(0, 300)}`);

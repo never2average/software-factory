@@ -28,7 +28,7 @@ const SITE_PORT = Number(process.env.PTEST_SITE_PORT ?? 3408);
 const LLM_PORT = Number(process.env.PTEST_LLM_PORT ?? 3409);
 const BASE = `http://127.0.0.1:${PORT}`;
 const WORKER_TOKEN = `wt_${randomBytes(16).toString("hex")}`;
-const ADMIN_TOKEN = `adm_${randomBytes(16).toString("hex")}`;
+let ADMIN_TOKEN = ""; // minted below with npm run admin:token (no static admin token)
 const CANARY = `sk-openai-canary-${randomBytes(8).toString("hex")}`;
 const tmp = mkdtempSync(path.join(tmpdir(), "octillion-ptest-"));
 const log = (...a: unknown[]) => console.log(`[ptest ${new Date().toISOString().slice(11, 19)}]`, ...a);
@@ -115,7 +115,7 @@ const llm = http.createServer((req, res) => {
 
 const serverEnv: NodeJS.ProcessEnv = {
   PATH: process.env.PATH, HOME: process.env.HOME, PGLITE_DIR: path.join(tmp, "pglite"), HOST: "127.0.0.1", PORT: String(PORT),
-  PUBLIC_URL: BASE, OCTILLION_WORKER_TOKEN: WORKER_TOKEN, OCTILLION_ADMIN_TOKEN: ADMIN_TOKEN, OCTILLION_VAULT_KEY: randomBytes(32).toString("base64"),
+  PUBLIC_URL: BASE, OCTILLION_WORKER_TOKEN: WORKER_TOKEN, OCTILLION_VAULT_KEY: randomBytes(32).toString("base64"),
 };
 let server: ChildProcess | null = null, orch: ChildProcess | null = null;
 const adm = async (p: string, init: RequestInit = {}) => {
@@ -131,6 +131,7 @@ async function main() {
     if (r.status !== 0) throw new Error(`${args.join(" ")}: ${(r.stderr || r.stdout).slice(-600)}`);
     return r.stdout;
   };
+  ADMIN_TOKEN = JSON.parse(run(["scripts/admin-token.ts", "create", "--label", "ptest", "--role", "owner", "--days", "1", "--json"])).token;
   run(["scripts/keyvault.ts", "provider", "openai", "--upstream", `http://127.0.0.1:${LLM_PORT}`]);
   run(["scripts/keyvault.ts", "set", "openai", "--label", "ptest"], CANARY);
   server = spawn(TSX, ["src/http.ts"], { cwd: ROOT, env: serverEnv, stdio: ["ignore", openSync(path.join(tmp, "server.log"), "a"), openSync(path.join(tmp, "server.log"), "a")] });

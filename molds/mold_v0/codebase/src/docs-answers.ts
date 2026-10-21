@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { asPlatform } from "./tenant-scope.js";
 import { askModel, askModelStream } from "./prospect.js";
 import { settingNumber } from "./settings.js";
 import { asData } from "../orchestrator/core/text-guard.js";
@@ -181,6 +182,8 @@ async function prepare(area: DocsArea, question: unknown, who: { userKey: string
  * it, then the cleaned answer. Same retrieval, limits and counting as answerDocs. Never throws for a model failure.
  */
 export async function streamDocsAnswer(area: DocsArea, question: unknown, who: { userKey: string; orgId?: number | null }, send: (e: DocsStreamEvent) => void) {
+  // Docs answers are platform metering: the daily cap counts everyone, whoever asks (src/tenant-scope.ts).
+  return asPlatform(async () => {
   const p = await prepare(area, question, who);
   send({ type: "sources", sources: p.sources });
   if (p.reason) return send({ type: "done", answer: null, covered: null, model: null, reason: p.reason });
@@ -196,6 +199,7 @@ export async function streamDocsAnswer(area: DocsArea, question: unknown, who: {
     await db.query("UPDATE docs_answers SET answered = false WHERE id = $1", [p.row]).catch(() => {});
     send({ type: "done", answer: null, covered: null, model: null, reason: "unavailable" });
   }
+});
 }
 
 /**
@@ -203,6 +207,8 @@ export async function streamDocsAnswer(area: DocsArea, question: unknown, who: {
  * per-person limit; `orgId` the account, when there is one. Never throws for a model failure.
  */
 export async function answerDocs(area: DocsArea, question: unknown, who: { userKey: string; orgId?: number | null }): Promise<DocsAnswer> {
+  // Docs answers are platform metering: the daily cap counts everyone, whoever asks (src/tenant-scope.ts).
+  return asPlatform(async () => {
   const q = typeof question === "string" ? question.replace(/\s+/g, " ").trim() : "";
   if (q.length < 3) throw new DocsAnswerError("Ask a question of a few words");
   if (q.length > MAX_QUESTION) throw new DocsAnswerError(`Ask in at most ${MAX_QUESTION} characters`);
@@ -227,4 +233,5 @@ export async function answerDocs(area: DocsArea, question: unknown, who: { userK
     await db.query("UPDATE docs_answers SET answered = false WHERE id = $1", [row.id]).catch(() => {});
     return none("unavailable");
   }
+});
 }

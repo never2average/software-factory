@@ -14,7 +14,7 @@
 import { egressPolicy } from "./egress.js";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import { acpAdapter, getAdapter, type HarnessAdapter, type TurnDigest } from "../harnesses/adapters.js";
+import { acpAdapter, getAdapter, PLAN_FIRST, type HarnessAdapter, type TurnDigest } from "../harnesses/adapters.js";
 import { CFG } from "./config.js";
 import { CREDENTIALS_MODE, redact, sessionCredentials, sessionCredsExpiring, type SessionCreds } from "./credentials.js";
 import { harnessCredentials, withCredentialSetup, providersFromEnv, CRED_SPECS } from "../harnesses/credentials.js";
@@ -62,6 +62,12 @@ export interface Job {
   environment?: SessionEnvironment | null;
   /** A private run: the agent's network is locked down to the gateway, registries and the task's git host. */
   private?: boolean;
+  /**
+   * How the agent works (server sql/migrations/0001_baseline.sql exec_mode). "plan": its first run is a plan (the CLI's plan mode, or
+   * PLAN_FIRST appended where it has none) and the developer approves before it implements. "direct" (or absent, an
+   * older server): it implements straight away.
+   */
+  exec_mode?: "plan" | "direct";
 }
 
 /** What the orchestrator sees after a harness run. Contains no Octillion ids. */
@@ -82,6 +88,11 @@ export interface TurnReport {
   agent_turns_left: number;
   /** Deterministic done check on the workspace diff (null while a run is still going). */
   workspace: { done: boolean; reason: string; changed_files: string[] } | null;
+  /**
+   * "plan": the agent was asked to plan first and has not been approved yet; its last message is the plan, and the
+   * developer's reply is the go-ahead. "execute": every other run.
+   */
+  phase: "plan" | "execute";
   /** True when a reply is possible: run ended cleanly, the harness gave a resumable id, turns left, session alive. */
   can_reply: boolean;
   /** Not done yet and the agent can be resumed: the developer must reply (finish_session is refused). */
@@ -92,6 +103,11 @@ export interface TurnReport {
 
 export type CompletedReason = "done" | "turn_cap" | "time_cap" | "agent_gave_up" | "error";
 
+const PLAN_APPROVALS = [
+  "Looks good, go ahead and implement it.",
+  "Plan makes sense. Go ahead.",
+  "Sounds good, go ahead and build it.",
+];
 const NUDGES_AFTER_QUESTION = [
   "Yes, go ahead and make the change.",
   "Your call. Please go ahead and implement it.",
@@ -104,7 +120,8 @@ const NUDGES = [
 ];
 
 /** Deterministic, neutral developer nudge (never names a product): used when no LLM developer is available. */
-export function defaultNudge(r: Pick<TurnReport, "last_assistant_text">, n: number): string {
+export function defaultNudge(r: Pick<TurnReport, "last_assistant_text"> & { phase?: TurnReport["phase"] }, n: number): string {
+  if (r.phase === "plan") return PLAN_APPROVALS[n % PLAN_APPROVALS.length]!;
   const t = r.last_assistant_text.trim();
   const asked = /\?\s*$/.test(t) || /\b(should i|shall i|do you want|would you like|want me to|let me know)\b/i.test(t);
   const list = asked ? NUDGES_AFTER_QUESTION : NUDGES;
@@ -185,6 +202,12 @@ export class WorkerSession {
   nudges = 0;
   /** Consecutive resumed runs that changed nothing in the workspace while not done. */
   noProgressRuns = 0;
+  /** Plan-then-execute: how the plan was asked for (the CLI's plan mode, or PLAN_FIRST in the task); null = direct. */
+  planMode: "native" | "prompted" | null = null;
+  /** The plan the agent proposed (its first run's last message), kept for the session's metadata. */
+  planText: string | null = null;
+  /** Whether the first run left the workspace untouched, i.e. the agent planned and waited as asked. */
+  planWaited: boolean | null = null;
   /** The run was stopped at the agent-turn cap (its non-zero exit is not a failure). */
   capStopped = false;
   completedReason: CompletedReason | null = null;
@@ -253,7 +276,14 @@ export class WorkerSession {
         log(`[${job.session_id}] environment ${e.editor}/${e.language ?? "-"}: ${e.present.length} present, ${e.installed.length} installed, ${e.failed.length} failed in ${e.seconds}s; ${e.wiring}`);
       }
       log(`[${job.session_id}] ${s.handle} started ${adapter.id}/${job.model}${s.adapter !== adapter ? " over ACP (Zed)" : ""} in ${s.sandbox.id}${job.repo_url ? ` repo=${job.repo_url}` : ` template=${s.template}`}`);
-      await s.launch(job.prompt, null);
+      // Plan-then-execute needs a second run to implement: a harness that cannot resume works directly (the session's
+      // metadata says so, and the server records the mode it actually ran in).
+      if (job.exec_mode === "plan" && !s.adapter.canResume) log(`[${job.session_id}] ${s.adapter.id} cannot resume; running directly instead of plan-then-execute`);
+      if (job.exec_mode === "plan" && s.adapter.canResume) {
+        s.planMode = s.adapter.planArgv ? "native" : "prompted";
+        s.sink.push({ type: "exec_mode", mode: "plan", plan: s.planMode });
+        await s.launch(s.planMode === "prompted" ? `${job.prompt}\n\n${PLAN_FIRST}` : job.prompt, null, true);
+      } else await s.launch(job.prompt, null);
     } catch (e) {
       s.startError = String(e instanceof Error ? e.message : e);
       log(`[${job.session_id}] start failed:`, s.startError);
@@ -273,15 +303,16 @@ export class WorkerSession {
     return this.adapter.id === "claude-code" ? CFG.claudeBin : this.adapter.id === "codex" ? CFG.codexBin : undefined;
   }
 
-  /** Start one harness run. `resumeId` null = first launch. */
-  private async launch(input: string, resumeId: string | null): Promise<void> {
+  /** Start one harness run. `resumeId` null = first launch; `plan` = the first launch in the CLI's plan mode. */
+  private async launch(input: string, resumeId: string | null, plan = false): Promise<void> {
     const sb = this.sandbox!;
     const turnsLeft = Math.max(1, this.maxAgentTurns - this.agentTurns);
     const o = { model: this.job.model, workdir: sb.workdir, maxBudgetUsd: CFG.maxBudgetUsd, maxTurns: turnsLeft, bin: this.argvBin() };
     // Session tokens are short-lived: refetch before a run when close to expiry (e.g. a late resume).
     if (!this.creds || sessionCredsExpiring(this.creds)) this.creds = await sessionCredentials(this.job.session_id);
     const hc = harnessCredentials(this.adapter, this.creds.providers, this.job.model);
-    const base = resumeId ? this.adapter.resumeArgv({ ...o, sessionId: resumeId }) : this.adapter.launchArgv(o);
+    const base = resumeId ? this.adapter.resumeArgv({ ...o, sessionId: resumeId })
+      : plan && this.adapter.planArgv ? this.adapter.planArgv(o) : this.adapter.launchArgv(o);
     const argv = withCredentialSetup(base, hc.setup, hc.argv);
     const run = ++this.runs;
     const digest = this.adapter.newDigest();
@@ -326,6 +357,10 @@ export class WorkerSession {
       if (d.capped) this.capStopped = true;
       if (d.sessionId) this.resumeId = d.sessionId;
       await this.checkProgress(run);
+      if (this.planMode && run === 1) {
+        this.planText = d.lastText.slice(0, 6000) || null;
+        this.planWaited = !this.progress?.done;
+      }
       const r = { exit, digest: d };
       this.last = r;
       this.current = null;
@@ -363,6 +398,9 @@ export class WorkerSession {
     const { exit, digest } = this.last;
     if (exit.error) return exit.error;
     if (this.capStopped) return null; // stopped by us at the agent-turn cap (SIGTERM / error_max_turns)
+    // A plan-mode run that produced its plan ended where it should, even if the CLI reports the unapproved
+    // plan-exit as an error: the developer's go-ahead resumes it.
+    if (this.runs === 1 && this.planMode === "native" && this.planText && !exit.error) return null;
     if (digest.error) return digest.error;
     if (exit.code !== 0) return `Exit code ${exit.code}${exit.signal ? ` (${exit.signal})` : ""}: ${this.stderrTail.slice(-500)}`;
     return null;
@@ -404,6 +442,7 @@ export class WorkerSession {
       agent_turns_used: this.agentTurns,
       agent_turns_left: agentLeft,
       workspace: p ? { done: p.done, reason: p.reason, changed_files: p.changed_files.slice(0, 15) } : null,
+      phase: this.planMode && this.userTurns === 0 && !this.done ? "plan" : "execute",
       can_reply: canReply,
       must_continue: canReply && !this.done,
       stop_reason: stop ?? (failure ? "harness failed"
@@ -434,7 +473,7 @@ export class WorkerSession {
     if (!r.can_reply) throw new Error(`cannot reply: ${r.stop_reason ?? "not resumable"}; call finish_session`);
     this.userTurns++;
     if (!this.done) this.nudges++;
-    this.sink.push({ type: "simulated_user", turn: this.userTurns, content: reply });
+    this.sink.push({ type: "simulated_user", turn: this.userTurns, content: reply, ...(r.phase === "plan" ? { phase: "plan_approval" } : {}) });
     await this.launch(reply, this.resumeId);
     return { run: this.runs, user_turns_left: this.maxUserTurns - this.userTurns };
   }
@@ -491,6 +530,8 @@ export class WorkerSession {
           harness_runs: this.runs, simulated_user_turns: this.userTurns, max_user_turns: this.maxUserTurns,
           agent_turns: this.agentTurns, max_agent_turns: this.maxAgentTurns, developer_nudges: this.nudges,
           completed_reason: reason, done_reason: this.progress?.reason ?? null, changed_files: this.progress?.changed_files.length ?? 0,
+          exec_mode: this.planMode ? "plan" : "direct",
+          ...(this.planMode ? { plan_mode: this.planMode, plan_waited: this.planWaited, plan_text: this.planText } : {}),
           ...(this.template ? { workspace_template: this.template } : {}),
           events: this.sink.count,
           ...(hint.status ? { orchestrator_status: hint.status } : {}),

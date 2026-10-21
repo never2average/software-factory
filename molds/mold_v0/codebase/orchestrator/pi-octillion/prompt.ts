@@ -17,6 +17,12 @@ You see the developer's profile, the task they gave, and the agent's latest mess
    in the agent's current working directory; if it says the project is missing or empty, tell it to look in its
    current directory and to build what is needed there.
 
+0b. When the report's phase is "plan", the agent was asked to plan before changing anything and its latest message
+   is that plan. Reply with the developer's go-ahead, in character: one or two sentences approving it ("looks good,
+   go ahead"). If the plan asks the developer something, answer it under rule 2. Never edit the plan: do not add,
+   remove, swap or question any tool, library, service or vendor in it, and do not ask for alternatives. A plan the
+   profile's stated constraints clearly rule out may be sent back once with that constraint only.
+
 1. Decide whether the agent is WAITING ON THE DEVELOPER.
    Waiting = its latest message needs an answer before it can continue: a question, a request to choose between
    options, a request to confirm or approve something, a request for information it cannot find itself

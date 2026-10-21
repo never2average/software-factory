@@ -49,18 +49,19 @@ footer{border-top:1px solid var(--line);margin-top:56px;padding:24px 0;color:var
 </div></header>
 <main class="wrap">
   <h1>Connect Octillion</h1>
-  <p class="lead">Octillion is the APO (Agentic Preference Optimization) platform, and it lives inside Claude and ChatGPT. Add it as a connector with your private URL, install the skill, and ask it to onboard your product.</p>
+  <p class="lead">Octillion is the APO (Agentic Preference Optimization) platform, and it lives inside Claude and ChatGPT. Add it as a connector, sign in, install the skill, and ask it to onboard your product.</p>
 
   <div class="card">
     <strong>Your connector URL</strong>
-    <p class="muted" style="margin:6px 0 10px">We send it to you when your access is approved. It looks like this and contains your secret key, so keep it private:</p>
-    <pre>https://octillion.useimmaculate.com/mcp/oct_…your-key…</pre>
+    <p class="muted" style="margin:6px 0 10px">It is the same for everyone and has no secret in it: you sign in with your work email when your client asks (accept your invitation email first).</p>
+    <pre>https://octillion.useimmaculate.com/mcp</pre>
+    <p class="muted" style="margin:10px 0 0">If you were given an API key (<code>oct_…</code>) instead, your client sends it as a header, <code>Authorization: Bearer &lt;key&gt;</code>, never in the URL. Claude and ChatGPT cannot send a header: ask for a sign-in invitation to use them. Per-client setup is on <a href="/app">your setup page</a>.</p>
   </div>
 
   <h2>Claude (web &amp; desktop)</h2>
   <ol>
     <li>Open <strong>Settings → Connectors</strong>. On Team and Enterprise plans an owner adds it under <strong>Organization settings → Connectors</strong>.</li>
-    <li>Click <strong>Add custom connector</strong>, name it <code>Octillion</code>, paste your connector URL and save. No OAuth fields are needed.</li>
+    <li>Click <strong>Add custom connector</strong>, name it <code>Octillion</code>, paste the connector URL and save, then click <strong>Connect</strong> and sign in.</li>
     <li>In a chat, enable Octillion from the tools menu. Results show up as an interactive dashboard.</li>
     <li>Optional but recommended: install the <a href="#skill">Octillion skill</a> so Claude knows the workflow and reads results carefully.</li>
   </ol>
@@ -68,7 +69,7 @@ footer{border-top:1px solid var(--line);margin-top:56px;padding:24px 0;color:var
   <h2>ChatGPT (web &amp; desktop)</h2>
   <ol>
     <li>Open <strong>Plugins → +</strong> and choose <strong>Add custom MCP server</strong>. On older workspaces this lives under <strong>Settings → Apps &amp; Connectors</strong> with <strong>Developer mode</strong> turned on. Business, Enterprise and Edu workspaces may need an admin to allow custom MCP servers.</li>
-    <li>Name it <code>Octillion</code>, paste your connector URL, choose <strong>No authentication</strong> and save it as a plugin.</li>
+    <li>Name it <code>Octillion</code>, paste the connector URL, choose <strong>OAuth</strong>, save it as a plugin and sign in.</li>
     <li>In a chat, add Octillion from the <strong>+</strong> menu. ChatGPT renders the same dashboard.</li>
   </ol>
 

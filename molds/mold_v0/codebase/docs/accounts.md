@@ -68,7 +68,26 @@ How Octillion uses it:
 - **Connectors (`/mcp`):** the plain URL `$PUBLIC_URL/mcp`. The client finds Clerk from the 401 (`resource_metadata` in
   `WWW-Authenticate`, `/.well-known/oauth-protected-resource`, CORS-open), signs the person in and sends a Clerk OAuth
   access token (opaque `oat_…` or a JWT); Octillion verifies it and uses the person's oldest membership that is not
-  suspended. Existing `oct_` keys keep working on `/mcp/<key>` and as a bearer header.
+  suspended. Existing `oct_` keys work in a header (`Authorization: Bearer`, or
+  `X-API-Key`). Keys in the URL (`/mcp/<key>`) are deprecated: served with a `Deprecation` header and logged by key prefix
+  while `OCTILLION_URL_KEYS` is `allow` (the default), refused with `OCTILLION_URL_KEYS=off`; new keys are never
+  issued as URLs.
+- **Origin:** browsers send an `Origin` header; on every MCP endpoint a request whose Origin is not `PUBLIC_URL`'s (or
+  a `CLERK_MCP_AUDIENCE` origin, or one listed in `OCTILLION_MCP_ALLOWED_ORIGINS`, comma-separated) is refused with a
+  403 and logged (`mcp origin refused … origin="…"`, once a minute per origin); the `/mcp` access line shows any Origin a
+  served request carried. Claude Code, Cursor and the SDKs send none; Claude's and ChatGPT's connectors call from their
+  servers and are expected to send none (check the access lines after deploying). Allowing an origin passes this check
+  only: no CORS headers are sent. A server on loopback with no `PUBLIC_URL` also refuses a `Host` that is not
+  localhost.
+- **OAuth token audience:** a JWT access token must come from the Clerk instance (`iss` is its Frontend API), always.
+  Its audience (a JWT's `aud`; for an opaque token, an audience field in Clerk's verify response) must name this
+  server's `/mcp` (`$PUBLIC_URL/mcp`, or one of the URIs `CLERK_MCP_AUDIENCE` lists, comma-separated); the admin MCP
+  takes only tokens naming `/admin/mcp` or `/api/admin/mcp`. `OCTILLION_OAUTH_AUDIENCE`: `auto` (default) refuses a
+  token that names another audience and accepts one that names none, logging it (`oauth audience missing …`, once per
+  client per 10 minutes, claims only), because Clerk does not document putting the resource in its tokens; `enforce`
+  also refuses tokens with no audience (turn it on once the logs show Clerk's tokens carry it); `report` refuses
+  nothing and logs mismatches. An `aud` that is not an http(s) address, or that is the client id or the issuer, names no
+  resource and counts as none. Behind a Clerk proxy URL, set `CLERK_FRONTEND_API_URL` to it (the tokens' issuer).
 - **Suspending someone:** Clerk memberships have no deactivated state, so suspension is the membership's
   `public_metadata.suspended = true`; Octillion refuses suspended members on `/mcp` and `/api/app` (at once for changes
   made through Octillion, within 30 seconds for changes made in the Clerk dashboard). Removing a member deletes the
@@ -148,7 +167,11 @@ offered (password, Google, Microsoft, GitHub, enterprise SSO) is set in the Cler
 is a platform admin when their **verified** primary email matches `OCTILLION_PLATFORM_ADMINS` (comma-separated
 addresses or `*@company.com` domains), or their Clerk `public_metadata.platform_admin` is `true`. Removing an entry
 ends that admin's access on their next request. `GET /admin/session` tells the UI who is signed in and whether they
-are a platform admin. `OCTILLION_ADMIN_TOKEN` still works as a bearer token for scripts.
+are a platform admin. Scripts use admin tokens (`npm run admin:token`, src/admin-tokens.ts): one per purpose,
+with a role and an expiry, revocable; the old static `OCTILLION_ADMIN_TOKEN` is no longer accepted. A token acts with its role but can never mint tokens or add, promote
+or remove admins (those need a signed-in owner). On a VM, mint inside the app container; on Vercel, run
+`npm run admin:token` from a checkout with the production `DATABASE_URL` in the environment (it never prints the
+URL), or, signed in as an owner, `POST /api/admin/tokens {label, role, days}`.
 
 ## Analytics
 

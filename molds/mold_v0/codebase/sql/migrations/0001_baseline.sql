@@ -1195,3 +1195,14 @@ CREATE TABLE IF NOT EXISTS docs_answers (
 );
 CREATE INDEX IF NOT EXISTS docs_answers_at ON docs_answers (at);
 CREATE INDEX IF NOT EXISTS docs_answers_user ON docs_answers (user_key, at);
+
+-- Execution mode (2026-10-20): how each coding agent is driven. 'plan' (the default for new runs): the agent first
+-- plans in its own plan mode (or, for harnesses without one, is asked to plan and wait), the simulated developer
+-- approves the plan in character, then it implements. 'direct': the agent is told to do the task and executes
+-- straight away (every session before this date). A run's exec_modes lists its arms; with both, every session is
+-- paired (same task, persona, agent and attempt in each mode), so pick rates compare mode against mode.
+ALTER TABLE simulations ADD COLUMN IF NOT EXISTS exec_modes TEXT[] NOT NULL DEFAULT '{direct}';
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS exec_mode TEXT NOT NULL DEFAULT 'direct';
+DO $$ BEGIN
+  ALTER TABLE agent_sessions ADD CONSTRAINT agent_sessions_exec_mode CHECK (exec_mode IN ('plan', 'direct'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

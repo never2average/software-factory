@@ -211,7 +211,7 @@ export async function computeReport(q: { from?: unknown; to?: unknown } = {}, no
 // ====================================================================== Data & storage
 
 /**
- * The app's tables (sql/schema.sql): a plain label, the created timestamp new rows are counted by, the last-write
+ * The app's tables (sql/migrations/0001_baseline.sql): a plain label, the created timestamp new rows are counted by, the last-write
  * timestamp (default: created), and how a row belongs to an account. Every count is exact (count(*)).
  */
 interface TableDef { table: string; label: string; created?: string; written?: string; org?: string; from?: string; where?: string }

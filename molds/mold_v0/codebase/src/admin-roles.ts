@@ -8,8 +8,8 @@
  *   owner     + the key vault, test emails, admins and their roles, plans in Stripe, and anything destructive
  *
  * The role lives in Clerk (user public_metadata.platform_role), so there is no table. Owner also covers the old ways
- * in: public_metadata.platform_admin = true, an address OCTILLION_PLATFORM_ADMINS lists, and the OCTILLION_ADMIN_TOKEN
- * bearer. Owners manage everyone else's role on /admin/admins.
+ * in: public_metadata.platform_admin = true and an address OCTILLION_PLATFORM_ADMINS lists. Admin tokens (adm_…,
+ * src/admin-tokens.ts) carry the role they were minted for. Owners manage everyone else's role on /admin/admins.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { NextFunction, Request, Response, Router } from "express";

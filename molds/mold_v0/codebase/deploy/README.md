@@ -34,8 +34,12 @@ Orchestrators need only `OCTILLION_URL=https://$DOMAIN` and `OCTILLION_WORKER_TO
 - **`OCTILLION_VAULT_KEY`** decrypts the vault. Back it up offline; losing it means re-entering every provider key.
 - **Rotating the master key:** set the old value as `OCTILLION_VAULT_KEY_PREVIOUS`, set a new `OCTILLION_VAULT_KEY`,
   restart, run `keyvault rekey`, then drop the previous key.
-- **Admin access:** the admin API is `/api/admin/keyvault/*` with `Authorization: Bearer $OCTILLION_ADMIN_TOKEN`.
-  Expose it only to operators. Put Caddy IP-allowlisting in front if the host is shared.
+- **Admin access:** platform admins sign in with Clerk. Scripts use an admin token minted for one purpose, with the
+  least role it needs and an expiry (30 days by default, 90 at most): `npm run admin:token -- create --label <purpose>
+  --role <viewer|support|operator|owner>` inside the app container (`list`, `revoke <id>` too; owners can also do it on
+  `/api/admin/tokens`). Send it as `Authorization: Bearer adm_…`. There is no static admin token: an old
+  `OCTILLION_ADMIN_TOKEN` in `.env` opens nothing (the server says so at start); remove it. Put Caddy IP-allowlisting
+  in front if the host is shared.
 
 **Restore**
 ```bash

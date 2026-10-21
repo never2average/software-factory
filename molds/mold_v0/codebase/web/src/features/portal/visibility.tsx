@@ -23,6 +23,8 @@ export interface Visibility {
   by_agent: (Rate & { key: string; name: string })[];
   by_harness: (Rate & { key: string; name: string })[];
   by_model: (Rate & { key: string; name: string })[];
+  /** Plan then execute vs direct execution (exec_mode), overall and per agent. */
+  by_mode: (Rate & { mode: 'plan' | 'direct'; name: string; agents: (Rate & { key: string; name: string })[] })[];
   competitors: { name: string; sessions: number; share_pct: number }[];
   cloud: { name: string; weight: number; mentioned: number; chosen: number; installed: number; kind: 'tracked' | 'untracked' }[];
   head_to_head: { name: string; won: number; lost: number }[];
@@ -53,6 +55,39 @@ const clip = (v: string, n = 22) => (v.length > n ? `${v.slice(0, n - 1)}…` : 
 
 interface BarRow { name: string; value: number; end: string; tip: ReactNode }
 /** Ranked horizontal bars in the order given, a value label at each bar's end and a tooltip with the counts. */
+const PLAN = 'var(--chart-2)', DIRECT = 'var(--chart-3)';
+
+/** Plan then execute vs direct, side by side: all agents first, then each agent seen in either mode. */
+function ModeBars({ modes, print }: { modes: Visibility['by_mode']; print?: boolean }) {
+  const plan = modes.find((m) => m.mode === 'plan'), direct = modes.find((m) => m.mode === 'direct');
+  if (!plan && !direct) return <Empty>No scored sessions in this period.</Empty>;
+  const keys = [...new Set([...(plan?.agents ?? []), ...(direct?.agents ?? [])].map((a) => a.key))];
+  const row = (name: string, p?: Rate, d?: Rate) => ({ name, plan: p?.pick_pct ?? null, direct: d?.pick_pct ?? null, pn: p?.scored ?? 0, dn: d?.scored ?? 0 });
+  const rows = [row('All agents', plan, direct),
+    ...keys.map((k) => { const p = plan?.agents.find((a) => a.key === k), d = direct?.agents.find((a) => a.key === k); return row((p ?? d)!.name, p, d); })];
+  return (
+    <>
+      {!(plan && direct) && <p className='text-muted-foreground mb-2 text-xs'>Only {plan ? 'plan → execute' : 'direct'} sessions in this period. Run with execution “both” to compare.</p>}
+      <ChartContainer config={{ plan: { label: 'Plan → execute', color: PLAN }, direct: { label: 'Direct', color: DIRECT } } satisfies ChartConfig}
+        className='aspect-auto w-full' style={{ height: Math.max(140, rows.length * 44 + 40) }}>
+        <BarChart data={rows} layout='vertical' margin={{ left: 0, right: 48, top: 0, bottom: 0 }} barGap={2}>
+          <XAxis type='number' hide domain={[0, 100]} />
+          <YAxis type='category' dataKey='name' width={136} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} tickFormatter={(v: string) => clip(v)} />
+          <ChartTooltip cursor={false} content={<ChartTooltipContent formatter={(_v, name, item) => (
+            <Tip>{tipRow(name === 'plan' ? 'Plan → execute' : 'Direct', `${pct(item.payload[name as 'plan' | 'direct'])} (n=${num(name === 'plan' ? item.payload.pn : item.payload.dn)})`)}</Tip>)} />} />
+          <ChartLegend content={<ChartLegendContent />} />
+          {plan && <Bar dataKey='plan' fill='var(--color-plan)' radius={4} barSize={12} minPointSize={2} isAnimationActive={!print}>
+            <LabelList dataKey='plan' position='right' fontSize={11} fill='var(--muted-foreground)' formatter={(x: unknown) => pct(x as number | null)} />
+          </Bar>}
+          {direct && <Bar dataKey='direct' fill='var(--color-direct)' radius={4} barSize={12} minPointSize={2} isAnimationActive={!print}>
+            <LabelList dataKey='direct' position='right' fontSize={11} fill='var(--muted-foreground)' formatter={(x: unknown) => pct(x as number | null)} />
+          </Bar>}
+        </BarChart>
+      </ChartContainer>
+    </>
+  );
+}
+
 function Bars({ rows, color, label, empty, max }: { rows: BarRow[]; color: string; label: string; empty: string; max?: number }) {
   if (!rows.length) return <Empty>{empty}</Empty>;
   return (
@@ -95,6 +130,7 @@ export const SECTIONS = [
   { id: 'by_agent', label: 'Pick rate by agent' },
   { id: 'by_harness', label: 'Pick rate by harness' },
   { id: 'by_model', label: 'Pick rate by model' },
+  { id: 'by_mode', label: 'Plan → execute vs direct' },
   { id: 'competitors', label: 'Competitor share' },
   { id: 'cloud', label: 'Competitor word cloud (list)' },
   { id: 'by_task', label: 'Pick rate by task' },
@@ -147,6 +183,11 @@ export function VisibilitySection({ v, sections, after, print }: { v: Visibility
     by_agent: dimBox('agent', v?.by_agent ?? []),
     by_harness: dimBox('harness', v?.by_harness ?? []),
     by_model: dimBox('model', v?.by_model ?? []),
+    by_mode: (
+      <Box title='Plan → execute vs direct' description='Picked on tasks you should win when agents plan first and implement once approved, vs when they implement straight away.'>
+        <ModeBars modes={v?.by_mode ?? []} print={print} />
+      </Box>
+    ),
     competitors: (
       <Box title='Competitor share' description="When an agent didn't pick you, the tool it picked instead, as a share of those sessions.">
         <Bars rows={(v?.competitors ?? []).slice(0, 10).map((c) => ({ name: c.name, value: c.share_pct, end: `${c.share_pct}%`,

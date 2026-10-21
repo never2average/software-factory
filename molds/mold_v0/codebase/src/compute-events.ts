@@ -2,7 +2,7 @@ import { getDb } from "./db.js";
 import { LAUNCH_ERROR } from "./error-classes.js";
 
 /**
- * Compute history (sql/schema.sql `compute_events`): what the autoscaler did to sandboxes, read by the admin Compute
+ * Compute history (sql/migrations/0001_baseline.sql `compute_events`): what the autoscaler did to sandboxes, read by the admin Compute
  * page. Failed launches and reaps are also on their orchestrator_sandboxes row; worker, orphan and image-builder
  * deletes have no row, so this is the only place they are kept. Writing is best effort: a failed insert is logged and
  * never fails the tick or the launch that caused it.

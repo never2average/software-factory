@@ -93,7 +93,7 @@ export function createOctillionExtension(reg: OctillionRegistry, opts: { allowCl
     pi.registerTool(defineTool({
       name: "wait_for_turn",
       label: "Wait for turn",
-      description: "Wait until the sub-agent's current run ends, then return its last message, the commands it ran, files it touched, exit status, the workspace done check (workspace.done), agent_turns_left, can_reply and must_continue.",
+      description: "Wait until the sub-agent's current run ends, then return its last message, the commands it ran, files it touched, exit status, the workspace done check (workspace.done), agent_turns_left, can_reply, must_continue and phase (plan: its last message is the plan it was asked for, awaiting the go-ahead).",
       parameters: Type.Object({ session: Type.String() }),
       executionMode: "sequential",
       async execute(_id, p, signal) {

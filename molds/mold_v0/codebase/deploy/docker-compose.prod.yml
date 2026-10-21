@@ -138,7 +138,6 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_APP_PASSWORD:-${CLICKHOUSE_PASSWORD}}
       CLICKHOUSE_DATABASE: octillion
       OCTILLION_VAULT_KEY: ${OCTILLION_VAULT_KEY:?run bootstrap.sh}
-      OCTILLION_ADMIN_TOKEN: ${OCTILLION_ADMIN_TOKEN:?run bootstrap.sh}
       OCTILLION_WORKER_TOKEN: ${OCTILLION_WORKER_TOKEN:?run bootstrap.sh}
       # The orchestrators' brain (Pi), handed out by the credential broker; switch here, not per orchestrator.
       ORCHESTRATOR_PROVIDER: ${ORCHESTRATOR_PROVIDER:-openai}
@@ -148,6 +147,8 @@ services:
       VAULT_TOKEN: ${VAULT_TOKEN:-}
       # On-demand orchestrators (src/autoscaler.ts). OCTILLION_AUTOSCALE=off is the kill switch.
       OCTILLION_AUTOSCALE: ${OCTILLION_AUTOSCALE:-on}
+      # Connector API keys in the URL (/mcp/oct_...): allow (deprecated, logged) or off (src/auth.ts urlKeysAllowed).
+      OCTILLION_URL_KEYS: ${OCTILLION_URL_KEYS:-allow}
       # Object storage (src/storage.ts, docs/storage.md): the same R2 bucket as the off-site database backups holds the
       # trace and research archive (src/archive.ts) and run reports. Unset R2_BUCKET = archive off.
       R2_BUCKET: ${R2_BUCKET:-}
@@ -185,6 +186,7 @@ services:
       CLERK_JWT_KEY: ${CLERK_JWT_KEY:-}
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
       CLERK_MCP_AUDIENCE: ${CLERK_MCP_AUDIENCE:-}
+      OCTILLION_OAUTH_AUDIENCE: ${OCTILLION_OAUTH_AUDIENCE:-auto}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SPEND_METER: ${STRIPE_SPEND_METER:-}
       OCTILLION_REQUIRE_SUBSCRIPTION: ${OCTILLION_REQUIRE_SUBSCRIPTION:-}

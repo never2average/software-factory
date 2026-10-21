@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { asPlatform } from "./tenant-scope.js";
 
 /**
  * Per-model inference usage and cost. The gateway calls recordModelUsage() once per request with the model the
@@ -39,6 +40,8 @@ export async function costOf(model: string, m: Pick<Metered, "input" | "cached" 
 }
 
 export async function recordModelUsage(provider: string, model: string, consumer: "session" | "orchestrator", m: Metered) {
+  // Platform metering (gateway_model_usage), whoever's call it was (src/tenant-scope.ts).
+  return asPlatform(async () => {
   const cost = await costOf(model, m);
   const db = await getDb();
   await db.query(
@@ -53,6 +56,7 @@ export async function recordModelUsage(provider: string, model: string, consumer
     [provider, model || "unknown", consumer, m.requests, m.errors, m.input, m.cached, m.output, cost ?? 0, cost != null],
   );
   if (cost) await maybeAlert(model).catch((e) => console.error("usage alert failed:", (e as Error).message));
+});
 }
 
 async function maybeAlert(model: string) {

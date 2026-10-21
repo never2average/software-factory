@@ -1,5 +1,6 @@
 import { mintJobWorkerToken, revokeSandboxWorkerTokens } from "./workerauth.js";
 import { hostname } from "node:os";
+import { asPlatform } from "./tenant-scope.js";
 import { randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
 import { useCredential } from "./keyvault.js";
@@ -470,6 +471,8 @@ let lastKick = 0;
  * from kickAutoscaler means this is false, or the kick was debounced. */
 export const kickConfigured = (): boolean => AUTOSCALE.enabled() && /^https:\/\//.test(AUTOSCALE.publicUrl()) && !!env.OCTILLION_WORKER_TOKEN;
 export async function kickAutoscaler(opts: { force?: boolean } = {}): Promise<TickState | null> {
+  // Cross-tenant by design: demand across every organization (src/tenant-scope.ts).
+  return asPlatform(async () => {
   if (!kickConfigured()) return null;
   if (!opts.force && Date.now() - lastKick < 10_000) return null;
   lastKick = Date.now();
@@ -485,6 +488,7 @@ export async function kickAutoscaler(opts: { force?: boolean } = {}): Promise<Ti
   }
   await singleton.settle();
   return st;
+});
 }
 
 /**
@@ -521,6 +525,8 @@ export function startAutoscaler(): Autoscaler {
 
 /** For get_simulation / get_onboarding: what capacity is doing for queued work. */
 export async function capacityStatus(): Promise<{ autoscale: "on" | "off"; booting: number; running: number; message: string }> {
+  // Cross-tenant by design: capacity across every organization (src/tenant-scope.ts).
+  return asPlatform(async () => {
   const db = await getDb();
   const [c] = await db.query<{ booting: number; running: number }>(
     "SELECT count(*) FILTER (WHERE state = 'booting') AS booting, count(*) FILTER (WHERE state = 'running') AS running FROM orchestrator_sandboxes WHERE state <> 'deleted'");
@@ -531,6 +537,7 @@ export async function capacityStatus(): Promise<{ autoscale: "on" | "off"; booti
     : autoscale === "off" ? "waiting for an orchestrator (autoscaling is off)"
     : booting > 0 ? "starting orchestrator…" : "starting orchestrator… (queued for the next autoscaler tick)";
   return { autoscale, booting, running, message };
+});
 }
 
 /** Admin / fleet:status view. */

@@ -27,7 +27,7 @@ out({ type: "turn.started" });
 cmd("ls -la");
 switch (state.mode) {
   case "plan_then_code": // plans and asks first; implements once the developer says go
-    if (state.runs === 1) msg("Plan: add a validation module for POST /orders and wire it into the route. Should I proceed?");
+    if (state.runs === 1) msg(`Plan: add a validation module for POST /orders and wire it into the route.${/go-ahead/.test(input) ? " (waiting for your go-ahead)" : ""} Should I proceed?`);
     else { write("src/validate.ts", "export const validate = (b: unknown) => !!b;\n"); msg("Implemented validation in src/validate.ts."); }
     break;
   case "docs_then_code": // first run only writes notes (not done), second writes code

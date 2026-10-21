@@ -7,8 +7,8 @@
  *
  * Auth is the customer /mcp's: Clerk is the OAuth server (the 401 points at this resource's protected-resource
  * metadata), the access token names a Clerk user, and that user's platform role (Clerk public_metadata.platform_role,
- * or OCTILLION_PLATFORM_ADMINS) is checked on every request. OCTILLION_ADMIN_TOKEN as a bearer is an owner, as on
- * /api/admin. Session tokens and account API keys are refused.
+ * or OCTILLION_PLATFORM_ADMINS) is checked on every request. An admin token (src/admin-tokens.ts) acts with the role it
+ * was minted for, as on /api/admin. Session tokens and account API keys are refused.
  *
  * Audit: every call is a row in admin_access_log (method MCP, path /admin/mcp/<tool>), like every /api/admin request;
  * every change also writes an admin log line (src/admin.ts log, with the caller's role) as the panel's routes do.
@@ -23,9 +23,9 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { fitPayload } from "./server.js";
 import { bearer } from "./auth.js";
-import { adminTokenOk } from "./admin-auth.js";
+import { resolveAdminToken } from "./admin-tokens.js";
 import { adminContext, can, platformRoleFor, refusal, ROLE_LABELS, PERMISSIONS, type Permission, type PlatformRole } from "./admin-roles.js";
-import { clerkEnabled, frontendApi, mcpAudience, verifyOAuthToken } from "./clerk.js";
+import { clerkEnabled, frontendApi, mcpAudience, mcpAudiences, verifyOAuthToken } from "./clerk.js";
 import { getDb } from "./db.js";
 import * as onboarding from "./admin.js";
 import * as library from "./library.js";
@@ -328,7 +328,7 @@ const redact = (v: any): any => typeof v === "string" ? v.replace(SECRETISH, (m,
 /** One row per call in admin_access_log, like every /api/admin request (never the arguments). */
 function audit(c: AdminCaller, name: string, status: number) {
   void getDb().then((db) => db.query("INSERT INTO admin_access_log (actor, method, path, status, ip) VALUES ($1, $2, $3, $4, $5)",
-    [c.actor.replace(/[^\w.@ -]/g, "").slice(0, 80) || "admin", "MCP", `/admin/mcp/${name}`, status, (c.ip ?? "").slice(0, 64)])).catch(() => {});
+    [c.actor.replace(/[^\w.@ :-]/g, "").slice(0, 80) || "admin", "MCP", `/admin/mcp/${name}`, status, (c.ip ?? "").slice(0, 64)])).catch(() => {});
 }
 
 /** Run one tool as the caller: the role check, the call (in the caller's admin context, so log() records the role), the audit. */
@@ -488,12 +488,14 @@ export const ADMIN_MCP_PATHS = ["/admin/mcp", "/api/admin/mcp"] as const;
  */
 export const adminMcpResource = (p: string = ADMIN_MCP_PATHS[0]) => `${mcpAudience().replace(/\/mcp$/, "")}${p}`;
 
-/** The caller for a bearer token: a Clerk OAuth access token of a platform admin, or the admin token (owner). */
+/** The caller for a bearer token: a Clerk OAuth access token of a platform admin, or an admin token (its role). */
 export async function adminCallerFor(req: Request): Promise<{ caller: AdminCaller } | { status: 401 | 403; message: string }> {
   const t = bearer(req.headers.authorization);
   if (!t) return { status: 401, message: "Sign in to Octillion as a platform admin" };
-  if (adminTokenOk(t)) return { caller: { actor: String(req.get("x-admin-actor") ?? "admin-token").trim().slice(0, 80) || "admin-token", role: "owner", userId: null } };
-  const claims = await verifyOAuthToken(t);
+  const tok = await resolveAdminToken(t);
+  if (tok) return { caller: { actor: `token:${tok.label}`, role: tok.role, userId: null } };
+  // Issued for the admin MCP (either path): a token naming the customer /mcp is refused here, as an admin one is on /mcp.
+  const claims = await verifyOAuthToken(t, mcpAudiences().flatMap((a) => ADMIN_MCP_PATHS.map((p) => `${a.replace(/\/mcp$/, "")}${p}`)));
   if (!claims) return { status: 401, message: "Sign in to Octillion as a platform admin (send a Clerk OAuth access token)" };
   const { email, role } = await platformRoleFor(claims.userId).catch(() => ({ email: null, role: null }));
   if (!role) return { status: 403, message: `${email ?? "This account"} is not a platform admin. Ask an Owner on /admin/admins.` };

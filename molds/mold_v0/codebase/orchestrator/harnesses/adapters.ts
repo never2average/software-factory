@@ -60,6 +60,12 @@ export interface HarnessAdapter {
   /** Is the key this harness needs present? */
   hasKey(keys: ApiKeys): boolean;
   launchArgv(o: ArgvOptions): string[];
+  /**
+   * First launch in the CLI's own plan mode (read-only: it explores and proposes a plan, then stops), for sessions run
+   * plan-then-execute (Job.exec_mode "plan"). Resumes always use resumeArgv, i.e. normal execution. Harnesses without
+   * a headless plan mode leave it out and get PLAN_FIRST appended to the task instead.
+   */
+  planArgv?(o: ArgvOptions): string[];
   resumeArgv(o: ArgvOptions & { sessionId: string }): string[];
   newDigest(): DigestBuilder;
 }
@@ -68,6 +74,12 @@ export interface DigestBuilder {
   observe(ev: Record<string, any>): void;
   result(): TurnDigest;
 }
+
+/**
+ * Plan-then-execute for a harness without a headless plan mode: appended to the task, so the agent plans and waits
+ * for the developer's go-ahead before changing anything. Neutral: it names no tool and asks for no particular plan.
+ */
+export const PLAN_FIRST = "Before you change anything, look through the project and write up your plan for this, then stop and wait for my go-ahead.";
 
 const QUIET_ENV = { DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", NO_COLOR: "1", CI: "1" };
 const MAX_ITEMS = 40;
@@ -97,6 +109,16 @@ const claudeCode: HarnessAdapter = {
     ...(o.maxBudgetUsd ? ["--max-budget-usd", o.maxBudgetUsd] : []),
     ...(o.maxTurns ? ["--max-turns", String(o.maxTurns)] : []),
   ],
+  // Plan mode (claude --permission-mode plan): read-only tools only; the plan arrives in ExitPlanMode, which a print
+  // run cannot approve, so the run ends there. The resume (resumeArgv) bypasses permissions again and implements.
+  planArgv: (o) => [
+    o.bin ?? "claude", "-p",
+    "--output-format", "stream-json", "--verbose",
+    "--model", o.model,
+    "--permission-mode", "plan",
+    ...(o.maxBudgetUsd ? ["--max-budget-usd", o.maxBudgetUsd] : []),
+    ...(o.maxTurns ? ["--max-turns", String(o.maxTurns)] : []),
+  ],
   resumeArgv: (o) => [
     o.bin ?? "claude", "-p",
     "--resume", o.sessionId,
@@ -109,6 +131,7 @@ const claudeCode: HarnessAdapter = {
   newDigest() {
     const d: TurnDigest = { lastText: "", commands: [], files: [], sessionId: null, error: null };
     let resultText: string | null = null;
+    let plan: string | null = null;
     return {
       observe(ev) {
         if (typeof ev.session_id === "string" && (ev.type === "system" || !d.sessionId)) d.sessionId = ev.session_id;
@@ -116,6 +139,8 @@ const claudeCode: HarnessAdapter = {
           const texts: string[] = [];
           for (const c of ev.message.content) {
             if (c?.type === "text" && typeof c.text === "string") texts.push(c.text);
+            // Plan mode: the plan itself is ExitPlanMode's input, not text.
+            if (c?.type === "tool_use" && c.name === "ExitPlanMode" && typeof c.input?.plan === "string") plan = c.input.plan;
             if (c?.type === "tool_use") {
               const inp = c.input ?? {};
               if (typeof inp.command === "string") pushUnique(d.commands, inp.command);
@@ -130,7 +155,10 @@ const claudeCode: HarnessAdapter = {
           else if (ev.is_error) d.error = String(ev.result ?? ev.subtype ?? "claude error").slice(0, 1000);
         }
       },
-      result: () => ({ ...d, lastText: resultText ?? d.lastText }),
+      result: () => {
+        const said = resultText ?? d.lastText;
+        return { ...d, lastText: plan && !said.includes(plan.slice(0, 200)) ? `${plan}\n\n${said}`.trim() : said };
+      },
     };
   },
 };
@@ -313,6 +341,8 @@ const cursor: HarnessAdapter = {
   hasKey: (k) => !!envKey(k, null, "CURSOR_API_KEY"),
   // The prompt is a positional argument; `--` keeps a prompt starting with "-" from being parsed as a flag.
   launchArgv: (o) => promptAsLastArg([o.bin ?? "cursor-agent", "-p", "--output-format", "stream-json", "--force", "--trust", "--model", o.model || "auto", "--"]),
+  // cursor-agent --mode plan: read-only, proposes a plan and stops; the resume runs in the default (agent) mode.
+  planArgv: (o) => promptAsLastArg([o.bin ?? "cursor-agent", "-p", "--output-format", "stream-json", "--trust", "--mode", "plan", "--model", o.model || "auto", "--"]),
   resumeArgv: (o) => promptAsLastArg([o.bin ?? "cursor-agent", "-p", "--output-format", "stream-json", "--force", "--trust", "--model", o.model || "auto", "--resume", o.sessionId, "--"]),
   newDigest() {
     const d = newDigestState();

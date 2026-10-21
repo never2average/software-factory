@@ -4,7 +4,7 @@ import { decisionIssues, named } from "./research.js";
 /**
  * A library task in the words of a developer working on this product's kind of codebase, written when a run starts
  * (queries.ts runSimulation) and kept on that run (simulations.prompts): never on the product, whose rows only link
- * to the library task (schema.sql, 2026-10-20). One prompt per task and persona the run uses (key `<scenario id>` or
+ * to the library task (sql/migrations/0001_baseline.sql, 2026-10-20). One prompt per task and persona the run uses (key `<scenario id>` or
  * `<scenario id>:<persona slug>`), so every agent and sample of the run gets the same words.
  *
  *   input   the library task (title, prompt), the workspace it runs in (template, language, platform), the product's

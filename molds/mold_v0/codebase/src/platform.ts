@@ -1,7 +1,7 @@
 /**
  * Where a task's user-facing code runs, so results can be split by platform ("Firebase wins mobile tasks, not web
  * ones"). Stored on scenarios and library tasks; derived from the starter template, else the language, else the text.
- * sql/schema.sql backfills existing rows with the same rules (PLATFORM_SQL); keep the two in step.
+ * sql/migrations/0001_baseline.sql backfills existing rows with the same rules (PLATFORM_SQL); keep the two in step.
  */
 export const PLATFORMS = ["web", "mobile", "backend", "desktop", "cli", "data", "other"] as const;
 export type Platform = (typeof PLATFORMS)[number];

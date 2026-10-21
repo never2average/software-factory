@@ -2,7 +2,7 @@ import { getDb } from "./db.js";
 import type { TickState } from "./autoscaler.js";
 
 /**
- * The autoscaler's history (sql/schema.sql `autoscaler_ticks`, docs/compute-and-traces-spec.md §2.4, §2.5), read by
+ * The autoscaler's history (sql/migrations/0001_baseline.sql `autoscaler_ticks`, docs/compute-and-traces-spec.md §2.4, §2.5), read by
  * the Compute page's Activity chart and Autoscaler decisions log. Only the leader writes, after its tick: a row for a
  * tick that acted (launched, reaped, or its note or error changed since the last row), and otherwise a sample row
  * (acted = false) once the last row is a minute old. That is about 1,440 samples a day plus the acting ticks. Writing
