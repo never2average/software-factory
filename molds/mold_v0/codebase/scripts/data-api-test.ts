@@ -137,7 +137,7 @@ try {
       assert.deepEqual(await fkeys({ key: { in: ["f02", "f05", "nope"] } }), ["f02", "f05"], "keys in");
       assert.deepEqual(await fkeys({ owner: "user_a" }), ["f01"], "a person");
       assert.deepEqual(await fkeys({ title: { exists: false }, score: { gt: 8 } }), ["f01", "f02"], "the title");
-      assert.deepEqual(await fkeys({ key: { prefix: "f" } }, "-score"), ["f02", "f01", "f06", "f04", "f07", "f03", "f05"], "sort descending, ties by key");
+      assert.deepEqual(await fkeys({ key: { prefix: "f" } }, "-score"), ["f02", "f01", "f06", "f07", "f04", "f03", "f05"], "sort descending, ties by key descending");
       assert.deepEqual(await fkeys({ key: { prefix: "f" } }, "due"), ["f03", "f07", "f02", "f01", "f06", "f05", "f04"], "sort by a date, no value first");
       assert.deepEqual(await fkeys({ key: { prefix: "f" } }, "-key"), ["f07", "f06", "f05", "f04", "f03", "f02", "f01"], "by key, descending");
       // Paging: every row exactly once, in order, for each sort.
@@ -158,7 +158,8 @@ try {
         [{ filter: { nope: 1 } }, /no field "nope"/], [{ filter: { score: { near: 1 } } }, /not one of eq, ne/], [{ filter: { score: "high" } }, /not a value field score takes/],
         [{ filter: "{not json" }, /filter must be a JSON object/], [{ filter: { tags: { in: ["web"] } } }, /in is for single-value fields/], [{ filter: { severity: { gt: "a" } } }, /only number, date and text fields are ordered/],
         [{ sort: "nope" }, /no field "nope"/], [{ limit: "0" }, /limit is 1 to 200/], [{ limit: "500" }, /limit is 1 to 200/], [{ after: "~garbage" }, /next value of the previous page/],
-        [{ filter: { summary: null } }, /exists/], [{ filter: Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`f${i}`, 1])) }, /no field|at most 20/],
+        [{ filter: { summary: null } }, /exists/], [{ filter: { updated_at: { exists: true } } }, /every record has a updated_at/],
+        [{ sort: "-score", after: `~${Buffer.from(JSON.stringify(["-score", "garbage", "f01"])).toString("base64url")}` }, /next value of the previous page/], [{ filter: Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`f${i}`, 1])) }, /no field|at most 20/],
       ] as const) {
         const x = await list(memberA, "tasks", q as Record<string, unknown>);
         assert.equal(x.status, 400, `${JSON.stringify(q)}: 400`);
@@ -167,6 +168,12 @@ try {
       const sorted = await list(memberA, "tasks", { sort: "-score", limit: "1" });
       assert.equal((await list(memberA, "tasks", { sort: "due", after: sorted.body.next })).status, 400, "a cursor of another sort is refused");
       assert.equal((await list(memberA, "tasks", { after: sorted.body.next })).status, 400, "and under the default order");
+      assert.ok(!Buffer.from(sorted.body.next.slice(1), "base64url").toString().includes("10"), "a sorted cursor carries the key, not the row's value");
+      // A cursor whose row is gone: 409, start again.
+      await call("POST", "/api/data/tasks", memberA, { key: "gone1", data: { summary: "zzz to go", score: 1000 } });
+      const g = await list(memberA, "tasks", { sort: "-score", limit: "1" });
+      await call("DELETE", "/api/data/tasks/gone1", ownerA);
+      assert.equal((await list(memberA, "tasks", { sort: "-score", after: g.body.next })).status, 409, "the cursor's row is gone: 409");
       console.log("✓ filters (eq, ne, in, ranges, dates, contains, list contains, exists, keys, title, person), sorts (any field, key, title, updated_at; asc and desc) and cursor paging: every row once, in order; bad queries 400");
 
       // ---------- 3. two workspaces through every route ----------
@@ -176,11 +183,13 @@ try {
       assert.equal(bF01.body.record.data.summary, "B web secret", "the same key is B's own record in B");
       assert.ok(!JSON.stringify(await list(memberA, "tasks", { filter: { summary: { contains: "secret" } } })).includes("B web secret"), "A's search never finds B's");
       assert.deepEqual(await keys({ filter: { score: { gte: 100 } } }), [], "A cannot reach B's score 100 by a range");
-      // A cursor made in A walks B's own rows only.
+      // A cursor made in A walks B's own rows only: its row is read again in B (gone there: 409; there: B's own value).
       const aPage = await list(memberA, "tasks", { sort: "-score", limit: "1" });
+      assert.equal((await list(memberB, "tasks", { sort: "-score", after: aPage.body.next })).status, 409, "A's cursor names a row B does not have: 409");
       const bAll = (await list(memberB, "tasks", { sort: "-score", limit: "200" })).body.records.map((x: any) => x.key);
-      const viaCursor = (await list(memberB, "tasks", { sort: "-score", after: aPage.body.next, limit: "200" })).body.records.map((x: any) => x.key);
-      assert.ok(viaCursor.every((k: string) => bAll.includes(k)), "A's cursor in B lists B's rows only");
+      const f01Cursor = `~${Buffer.from(JSON.stringify(["-score", "f01"])).toString("base64url")}`;
+      const viaCursor = (await list(memberB, "tasks", { sort: "-score", after: f01Cursor, limit: "200" })).body.records.map((x: any) => x.key);
+      assert.deepEqual(viaCursor, bAll.slice(bAll.indexOf("f01") + 1), "a cursor on a key both have starts after B's own f01");
       assert.deepEqual((await keys({ sort: "-updated_at", limit: 200 }, memberB)).sort(), [...bAll].sort(), "B's list is B's whatever the sort");
       for (const [m, p, b] of [["GET", "/api/data/tasks/f02", undefined], ["PUT", "/api/data/tasks/f02", { data: { summary: "hijack" } }], ["POST", "/api/data/tasks/f02/move", { to: "doing" }], ["DELETE", "/api/data/tasks/f02", undefined]] as const)
         assert.equal((await call(m, p, m === "DELETE" ? ownerB : memberB, b)).status, 404, `B ${m} ${p}: 404 (A's record is not there for B)`);

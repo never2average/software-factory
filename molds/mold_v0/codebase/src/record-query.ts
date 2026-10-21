@@ -10,9 +10,11 @@
  *            area read live from an API. The same conditions and order, on the opened rows.
  *
  * Paging is by cursor. With the default order (by key) `next` is the last key, as it was before 059. With another order
- * it is "~" + base64url(JSON [sort, value, key]): a record key never starts with "~", so the two never mix, and a key
- * holding ( or ) (mold_v0-066) travels inside the JSON, never as cursor syntax. A cursor names its own sort and is
- * refused under another.
+ * it is "~" + base64url(JSON [sort, key]): a record key never starts with "~", so the two never mix, and a key holding
+ * ( or ) (mold_v0-066) travels inside the JSON, never as cursor syntax. A cursor names its own sort and is refused
+ * under another. It carries no value of the row: the row's sort value is read again, in the caller's own scope, when
+ * the next page is asked for (so no sealed value ever travels in a URL, and a cursor cannot be forged into a value);
+ * a row that is gone by then is a 409 (start again).
  */
 import { optionValues, PackError, RECORD_KEY, type RecordQuery, type RecordRow } from "./pack-api.js";
 
@@ -26,30 +28,31 @@ export interface QField { name: string; type: string; multiple?: boolean; option
 type Target = "key" | "title" | "updated_at" | "field";
 export interface Cond { target: Target; name: string; field?: QField; op: Op; value: unknown }
 export interface SortSpec { target: Target; name: string; field?: QField; desc: boolean; text: string }
-export interface Parsed { limit: number; conds: Cond[]; sort: SortSpec; after: { v: string | null; k: string } | null }
+export interface Parsed { limit: number; conds: Cond[]; sort: SortSpec; after: { k: string } | null }
 
 const bad = (m: string) => new PackError(m, 400);
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-/** The cursor for a row under `sort`: its key (the default order) or "~" + base64url([sort, value, key]). */
-export function cursorOf(sort: SortSpec, sortValue: string | null, key: string): string {
+/** The cursor for a row under `sort`: its key (the default order) or "~" + base64url([sort, key]). */
+export function cursorOf(sort: SortSpec, key: string): string {
   if (sort.target === "key" && !sort.desc) return key;
-  return `~${Buffer.from(JSON.stringify([sort.text, sortValue, key]), "utf8").toString("base64url")}`;
+  return `~${Buffer.from(JSON.stringify([sort.text, key]), "utf8").toString("base64url")}`;
 }
+export const goneCursor = () => new PackError("the record the previous page ended at is gone (deleted, or no longer in this list): start the list again", 409);
 function readCursor(after: unknown, sort: SortSpec): Parsed["after"] {
   if (after === undefined || after === null || after === "") return null;
   if (typeof after !== "string" || after.length > 2000) throw bad("after is the next value of the previous page");
   if (!after.startsWith("~")) {
     if (!RECORD_KEY.test(after)) throw bad("after is the next value of the previous page");
     if (!(sort.target === "key" && !sort.desc)) throw bad("after: this cursor is for the order by key; ask again with the same sort");
-    return { v: null, k: after };
+    return { k: after };
   }
   let x: unknown;
   try { x = JSON.parse(Buffer.from(after.slice(1), "base64url").toString("utf8")); } catch { throw bad("after is the next value of the previous page"); }
-  if (!Array.isArray(x) || x.length !== 3 || typeof x[0] !== "string" || !(x[1] === null || typeof x[1] === "string") || typeof x[2] !== "string" || !RECORD_KEY.test(x[2]) || (x[1] ?? "").length > 1_000)
+  if (!Array.isArray(x) || x.length !== 2 || typeof x[0] !== "string" || typeof x[1] !== "string" || !RECORD_KEY.test(x[1]))
     throw bad("after is the next value of the previous page");
   if (x[0] !== sort.text) throw bad("after: this cursor is for another sort; ask again with the same sort");
-  return { v: x[1], k: x[2] };
+  return { k: x[1] };
 }
 
 const SPECIAL: Record<string, Target> = { key: "key", title: "title", updated_at: "updated_at" };
@@ -108,7 +111,11 @@ export function parseQuery(fields: readonly QField[], q: RecordQuery | undefined
 function checkCond(c: Cond, fits: (f: QField, v: unknown) => boolean, fitsOne: (f: QField, v: unknown) => boolean): Cond {
   const where = `filter ${c.name} ${c.op}`;
   const str = (v: unknown, max = 500) => { if (typeof v !== "string" || v.length > max || v.includes("\u0000")) throw bad(`${where}: give text (up to ${max} characters)`); return v; };
-  if (c.op === "exists") { if (typeof c.value !== "boolean") throw bad(`${where}: true or false`); return c; }
+  if (c.op === "exists") {
+    if (c.target === "updated_at" || c.target === "key") throw bad(`${where}: every record has a ${c.target}`);
+    if (typeof c.value !== "boolean") throw bad(`${where}: true or false`);
+    return c;
+  }
   if (c.value === null || c.value === undefined) throw bad(`${where}: give a value (for "no value", use {"exists": false})`);
   if (c.target === "key") {
     if (["contains"].includes(c.op)) throw bad(`${where}: a key takes eq, ne, in, prefix, lt, lte, gt, gte or exists`);
@@ -161,10 +168,11 @@ export const readsContent = (p: Parsed) => p.sort.target !== "key" || p.conds.so
 // ---------- the SQL engine ----------
 
 /**
- * The conditions, order and cursor as SQL over a record table, with `params` already holding the caller's own scope
- * (`base`: the area, and the workspace's id). Returns the WHERE additions, the ORDER BY, and the sort value's text.
+ * The conditions, order and cursor as SQL over a record table, with `params` already holding the caller's own scope:
+ * `scope` is that scope's own conditions over `table` (the area, and the workspace's id). The cursor's row is read
+ * again inside that scope for its sort value. Returns the WHERE additions and the ORDER BY.
  */
-export function sqlParts(p: Parsed, params: unknown[]): { where: string[]; order: string; sortValue: string } {
+export function sqlParts(p: Parsed, params: unknown[], scope: { table: string; where: string[] } = { table: "", where: [] }): { where: string[]; order: string } {
   const $ = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const where: string[] = [];
   const fieldExpr = (name: string) => `COALESCE(data -> ${$(name)}, 'null'::jsonb)`;
@@ -212,11 +220,14 @@ export function sqlParts(p: Parsed, params: unknown[]): { where: string[]; order
   const dir = s.desc ? "DESC" : "ASC", cmp = s.desc ? "<" : ">";
   if (s.target === "key") {
     if (p.after) where.push(`key ${cmp} ${$(p.after.k)}`);
-    return { where, order: `key ${dir}`, sortValue: "NULL::text" };
+    return { where, order: `key ${dir}` };
   }
-  const [expr, cast] = s.target === "title" ? ["COALESCE(title, '')", "text"] : s.target === "updated_at" ? ["updated_at", "timestamptz"] : [fieldExpr(s.name), "jsonb"];
-  if (p.after) where.push(`(${expr}, key) ${cmp} (${$(p.after.v ?? (cast === "jsonb" ? "null" : ""))}::${cast}, ${$(p.after.k)})`);
-  return { where, order: `${expr} ${dir}, key ${dir}`, sortValue: `(${expr})::text` };
+  const expr = s.target === "title" ? "COALESCE(title, '')" : s.target === "updated_at" ? "updated_at" : fieldExpr(s.name);
+  if (p.after) {
+    const k = $(p.after.k);
+    where.push(`(${expr}, key) ${cmp} ((SELECT ${expr} FROM ${scope.table} c WHERE ${[...scope.where, `c.key = ${k}`].join(" AND ")}), ${k})`);
+  }
+  return { where, order: `${expr} ${dir}, key ${dir}` };
 }
 
 // ---------- the memory engine ----------
@@ -239,12 +250,6 @@ const same = (a: unknown, b: unknown) => compareValues(a, b) === 0 && rank(a) ==
 function sortValueOf(s: SortSpec, r: RecordRow): unknown {
   return s.target === "key" ? r.key : s.target === "title" ? r.title ?? "" : s.target === "updated_at" ? r.updated_at : r.data[s.name] ?? null;
 }
-/** The text a cursor carries for a row's sort value (what the SQL engine's ::text gives, for the same engine only). */
-const sortText = (s: SortSpec, r: RecordRow): string | null => {
-  const v = sortValueOf(s, r);
-  return s.target === "field" ? JSON.stringify(v ?? null) : String(v);
-};
-
 function matches(c: Cond, r: RecordRow): boolean {
   const v: unknown = c.target === "key" ? r.key : c.target === "title" ? r.title : c.target === "updated_at" ? r.updated_at : r.data[c.name] ?? null;
   switch (c.op) {
@@ -274,23 +279,14 @@ export function pageInMemory(p: Parsed, rows: RecordRow[]): { records: RecordRow
   };
   let list = rows.filter((r) => p.conds.every((c) => matches(c, r))).sort(cmp);
   if (p.after) {
-    const at = { key: p.after.k, title: null, data: {}, area: "", version: null, updated_at: "" } as RecordRow;
-    const v = p.after.v;
-    const after = (r: RecordRow) => {
-      let d: number;
-      if (s.target === "key") d = cmpKey(r.key, at.key);
-      else {
-        const rv = sortValueOf(s, r);
-        const cv = s.target === "field" ? (() => { try { return JSON.parse(v ?? "null"); } catch { return null; } })() : v ?? "";
-        d = (s.target === "field" ? compareValues(rv, cv) : cmpKey(String(rv), String(cv))) || cmpKey(r.key, at.key);
-      }
-      return s.desc ? d < 0 : d > 0;
-    };
-    list = list.filter(after);
+    // The cursor's row, read again from the caller's own rows: its sort value is the page's start.
+    const at = rows.find((r) => r.key === p.after!.k);
+    if (!at) throw goneCursor();
+    list = list.filter((r) => cmp(r, at) > 0);
   }
   const page = list.slice(0, p.limit);
   const last = page.at(-1);
-  return { records: page, next: list.length > p.limit && last ? cursorOf(s, s.target === "key" ? null : sortText(s, last), last.key) : null };
+  return { records: page, next: list.length > p.limit && last ? cursorOf(s, last.key) : null };
 }
 
 /** The options of an enum field (re-exported for the record store's checks). */

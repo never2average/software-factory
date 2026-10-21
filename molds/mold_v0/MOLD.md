@@ -319,15 +319,54 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
     (validated, and its `scope` may give only the kind's `args`) and the scheduler starts it as any kind. A schedule's scope values are not yet type-checked against `args` (the scheduler
     starts runs through the engine, not through `declaredRuns`).
   - **Credentials, schedules, onboarding** as in `definePack`; **metrics** (mold_v0-063: a name, a label, `over` an area
-    or `run_results`, the rest kept for 063); **repositories** (mold_v0-059: a `kind` and its settings; an area names one
-    with `repository`, checked) and **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas,
+    or `run_results`, the rest kept for 063); **repositories** (mold_v0-059: below; an area names one with
+    `repository`, checked) and **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas,
     checked). Reserved, refused with the ticket that brings them: `tabs` (058), `mcp` (060), `charts` (063).
   - `npm run test:declarative-packs` proves it with `scripts/fixtures/packs/fixture_tracker` (a pack.json, no code) and
     two workspaces; `npm run test:packs` typechecks a build copy with it.
-  - **Not covered yet:** no generic write door (REST/MCP create, update, move) for a pack with no code: that is the
-    generic data API (059), built on the same store functions. A shared library and each workspace's state of it are two
-    areas today (one platform, one workspace, the second's rows keyed by the first's keys and linked to them); a declared
-    "library + per-workspace state" pairing is an extension point for 059 (one area name, two scopes).
+  - **Not covered yet:** a shared library and each workspace's state of it are two areas (one platform, one
+    workspace, the second's rows keyed by the first's keys and linked to them); a declared "library + per-workspace
+    state" pairing (one area name, two scopes) is still an extension point.
+- **Sealed areas, keys, batch writes** (mold_v0-066, built; `src/record-areas.ts`): `sealed: true` on any workspace
+  area (an asset area always is; refused on a shared area, and with `due`, whose dates are read in the database) seals
+  every record's title and data with the workspace's data key; a sealed write is refused (503) while the key vault is
+  locked (for asset areas too: they were stored in the clear in that case before). A filter or sort over a sealed area
+  opens the workspace's own rows (at most 5000) and runs in memory, never in the database. Record keys may hold ( and )
+  (`RECORD_KEY` in `src/pack-api.ts`, shared by schedules and credentials); a key travels inside a sorted page's cursor
+  as JSON in base64url, never as cursor syntax, and URLs carry it raw or percent-encoded. `records.batch(ops)` (put,
+  create, update, move, delete) runs as one transaction: every query of the batch (reference checks included) runs on
+  it, so later operations see earlier ones, and any refusal or database error leaves nothing (the refusal names the
+  operation). `npm run test:record-batch`.
+- **The generic data API and data repositories** (mold_v0-059, built; `src/data-api.ts`, `src/data-routes.ts`,
+  `src/record-query.ts`, `src/data-repositories.ts`, `sql/migrations/0011_data_repositories.sql`). For every declared
+  area, with no pack code: `GET/POST /api/data/:area` (list with `filter` as JSON `{field: value | {op: value}}`, ops
+  eq ne in lt lte gt gte contains prefix exists; `sort` a field, key, title or updated_at, `-` for descending; `limit`
+  and cursor `after`; create), `GET/PUT/DELETE /api/data/:area/:key`, `POST /api/data/:area/:key/move`,
+  `POST /api/data/_batch`, behind the portal session and the CSRF header on cookie writes; `/api/admin/data` for staff
+  (shared areas only: read, `library` to write, `delete` to delete; `/_repositories` and an upstream catalog's
+  `/_repositories/:pack/:name/sync`). Every route calls the record store's functions (the same as `ctx.records`), so
+  permissions, fields, references, lifecycles, sealing and isolation are applied once; filters and sorts are ANDed
+  after the workspace's own scope, with field names and values as parameters. `DATA_API_OPERATIONS` lists the
+  functions for 060's MCP tools; no MCP tool is added here. **Repositories** (one adapter interface, `ADAPTERS`):
+  `shell_tables` (the default), `workspace_files` (a path template, one row per identity of a JSON-lines or JSON file,
+  `append_only` keeping the last; or a dir template, one row per folder with its `files` (globs too) read into the
+  fields of their names; `never_read` drops values; read only; re-indexed into the workspace's rows by the run engine
+  after each commit, before the pack's own `onWorkspaceCommit` and the results), `upstream_catalog` (fetched at the
+  pinned commit only, by git with redirects, hooks, credential helpers and every protocol but https off, or GitHub's raw
+  files and tree at the commit; indexed by staff) and `http_api` (read live with the workspace's credential field in a
+  header, https to its `egress` hosts only, the address resolved once, checked against private ranges and used for the
+  connection, no redirects, 5 MB, 15 s). Rows come from a pack's `loaders` (code), else a declared `map` (`from`,
+  `each`, `key`/`title` templates, `fields` value paths, `where`) or the kind's default (fields by name or camelCase).
+  An index is idempotent (each row's `fingerprint`, keyed with the workspace's key for a sealed area, and its `source`
+  are stored with it), one transaction, and prunes only rows it wrote; a row written or changed by hand is kept (and
+  counted as `kept_by_hand`), never overwritten or pruned, unless staff force the index. For an upstream catalog an
+  empty result over existing rows, or a prune of more than `prune.max_fraction` (0.5) of its rows, is refused unless
+  staff force it; a workspace's committed files are the truth (no such guard). A sorted page's cursor is the sort and
+  the last key only: the row's sort value is read again in the caller's scope (a row gone by then: 409). `npm run test:data-api`,
+  `npm run test:data-repositories` (a local git repository, never the network; `SECOND_APP_DECLARATION=<file>` also
+  runs the second app's own declaration through the generic adapters). **Not covered:** an http_api area cannot be
+  the target of a reference; a sealed area's filter is capped at 5000 rows; DNS rebinding is closed by connecting to the
+  checked address, but an `egress` host's own redirects are refused rather than followed.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per

@@ -74,9 +74,9 @@ try {
     // The cursor's encoding round-trips any key: the JSON inside base64url, never cursor syntax.
     const s = { target: "field" as const, name: "score", desc: false, text: "score" };
     for (const k of ["a(b)", "x)(y:z", "t(1)(a)", "7.(2)-_:"]) {
-      const c = cursorOf(s, JSON.stringify(1), k);
+      const c = cursorOf(s, k);
       assert.match(c, /^~[A-Za-z0-9_-]+$/, "the cursor is URL-safe");
-      assert.deepEqual(JSON.parse(Buffer.from(c.slice(1), "base64url").toString()), ["score", "1", k], `${k} round-trips`);
+      assert.deepEqual(JSON.parse(Buffer.from(c.slice(1), "base64url").toString()), ["score", k], `${k} round-trips (the cursor carries no value of the row)`);
     }
     assert.ok(RECORD_KEY.test("alpha:7(2)(b)"));
     assert.ok(ScheduleSchema.safeParse({ name: "nightly", job_kind: "k1", cron: "0 2 * * *", assets: { area: "applications", keys: ["web(1)"] } }).success, "a schedule's asset keys may hold ( and )");

@@ -85,7 +85,7 @@ const repositoryOrThrow = (pack: string, name: string) => {
 
 /** Files at one version, read only: an upstream at its pin, or a workspace's snapshot. */
 export interface FileSource { version: string | null; describe: string; read(rel: string): Promise<string | null>; list(dir?: string): Promise<string[]>; close(): Promise<void> }
-const SAFE_REL = /^(?!\/)[A-Za-z0-9._/@+-]{1,500}$/;
+const SAFE_REL = /^(?!\/)[A-Za-z0-9._/@+()-]{1,500}$/;
 const safeRel = (rel: string) => {
   if (typeof rel !== "string" || !SAFE_REL.test(rel) || rel.split("/").some((s) => s === ".." || s === "." || s === "")) throw new PackError(`not a path inside the repository: ${JSON.stringify(String(rel).slice(0, 120))}`, 400);
   return rel;
@@ -100,8 +100,9 @@ export function filesSource(files: { path: string; body: Uint8Array | string }[]
   const all = [...map.keys()].sort();
   return {
     version, describe: `the workspace's files (${map.size})`,
-    read: async (rel) => map.get(safeRel(rel)) ?? null,
-    list: async (dir) => (dir === undefined ? all : all.filter((p) => p.startsWith(`${safeRel(dir).replace(/\/$/, "")}/`))),
+    // A lookup in the snapshot's own files: a path the snapshot holds, whatever its characters; nothing else.
+    read: async (rel) => (typeof rel === "string" ? map.get(rel) ?? null : null),
+    list: async (dir) => (dir === undefined ? all : all.filter((p) => p.startsWith(`${String(dir).replace(/\/$/, "")}/`))),
     close: async () => {},
   };
 }
@@ -210,7 +211,7 @@ type Doc = unknown;
 /** A value of a document: "a.b" in the item, "$.a" from the document's root, "@name" a path placeholder, "@file" its path. */
 function valueAt(expr: string, ctx: { item: Doc; root: Doc; vars: Record<string, string> }): unknown {
   if (!VALUE_PATH.test(expr)) throw new PackError(`not a value path: ${expr}`, 400);
-  if (expr.startsWith("@")) return ctx.vars[expr.slice(1)];
+  if (expr.startsWith("@")) return Object.hasOwn(ctx.vars, expr.slice(1)) ? ctx.vars[expr.slice(1)] : undefined;
   const [from, p] = expr.startsWith("$.") ? [ctx.root, expr.slice(2)] : [ctx.item, expr];
   let v: unknown = from;
   for (const part of p.split(".")) {
@@ -260,7 +261,7 @@ function dropNeverRead(rules: string[] | undefined, fileKey: string, fileName: s
       continue;
     }
     const m = /^(\S+) ([A-Za-z_][A-Za-z0-9_]*(?:\[\])?(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[\])?)*)$/.exec(rule);
-    if (!m) throw new PackError(`never_read: ${JSON.stringify(rule.slice(0, 80))} is "<file> <path>" or "any ENC[...] value"`, 400);
+    if (!m || /(__proto__|constructor|prototype)/.test(rule)) throw new PackError(`never_read: ${JSON.stringify(rule.slice(0, 80))} is "<file> <path>" or "any ENC[...] value"`, 400);
     if (m[1] !== fileKey && m[1] !== fileName) continue;
     const parts = m[2]!.split(".");
     const drop = (x: unknown, i: number): void => {
@@ -309,9 +310,12 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
   if (s.kind !== "workspace_files" && s.kind !== "upstream_catalog") throw new PackError(`repository ${name} (${s.kind}) is not indexed`, 400);
   const loader = packs().find((p) => p.id === pack)?.definition.loaders?.[name];
   const out = new Map<string, Desired[]>(r.areas.map((a) => [a.name, []]));
+  // A refusal never quotes a value of a document that feeds a sealed area (it may reach a run's error, unsealed).
+  const quiet = r.areas.some((a) => isSealedArea(a));
+  const shown = (v: unknown) => (quiet ? "a value" : JSON.stringify(String(v).slice(0, 80)));
   const push = (area: string, d: { key: unknown; title?: unknown; data: unknown }, where: string) => {
     if (!out.has(area)) throw new PackError(`${where}: area ${area} does not read from repository ${name}`, 422);
-    if (typeof d.key !== "string" || !RECORD_KEY.test(d.key)) throw new PackError(`${where}: ${JSON.stringify(String(d.key).slice(0, 80))} cannot be a record key (1-200 letters, digits, . _ : ( ) -)`, 422);
+    if (typeof d.key !== "string" || !RECORD_KEY.test(d.key)) throw new PackError(`${where}: ${shown(d.key)} cannot be a record key (1-200 letters, digits, . _ : ( ) -)`, 422);
     if (!d.data || typeof d.data !== "object" || Array.isArray(d.data)) throw new PackError(`${where}: a row's data is an object`, 422);
     const title = d.title === undefined || d.title === null ? null : String(d.title).slice(0, 500);
     out.get(area)!.push({ key: d.key, title, data: Object.fromEntries(Object.entries(d.data as Record<string, unknown>).filter(([, v]) => v !== undefined)), version: s.kind === "upstream_catalog" ? src.version : null });
@@ -321,7 +325,7 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
       areas: r.areas.map((a) => ({ name: a.name, role: a.role, fields: a.fields.map((f) => f.name) })), read: (p) => src.read(p), list: (d) => src.list(d) };
     let rows: RepositoryRows;
     try { rows = await loader(input); }
-    catch (e) { throw e instanceof PackError ? e : new PackError(`the loader of ${name} refused: ${String((e as Error).message).slice(0, 500)}`, 422); }
+    catch (e) { throw e instanceof PackError ? e : new PackError(`the loader of ${name} refused${quiet ? "" : `: ${String((e as Error).message).slice(0, 500)}`}`, 422); }
     if (!rows || typeof rows !== "object") throw new PackError(`the loader of ${name} returned no rows by area`, 422);
     for (const [area, list] of Object.entries(rows)) {
       if (!Array.isArray(list)) throw new PackError(`the loader of ${name}: ${area} is not a list of rows`, 422);
@@ -368,7 +372,7 @@ export async function repositoryRows(pack: string, name: string, src: FileSource
             if (typeof key !== "string") continue; // a line with no identity (another kind of entry) is not a row
             const t = m?.title ? fillTemplate(m.title, ctx) : valueAt("title", ctx);
             // Append-only: the last line of an identity is its state. Otherwise an identity twice is a mistake.
-            if (rows.has(key) && !s.append_only) throw new PackError(`${p}: ${key} appears twice (declare append_only when the last one wins)`, 422);
+            if (rows.has(key) && !s.append_only) throw new PackError(`${p}: ${quiet ? "a key" : key} appears twice (declare append_only when the last one wins)`, 422);
             rows.set(key, { d: { key, title: typeof t === "string" && t ? t : key, data: Object.fromEntries(a.fields.map((f) => [f.name, fieldValue(f.name, m?.fields, ctx)])) }, at: p });
           }
         }
@@ -477,14 +481,18 @@ export async function applyIndex(orgId: number | null, pack: string, repo: { nam
       fingerprints.set(`${area.name}\u0000${d.key}`, fp);
       const m = marks.get(d.key);
       if (m && m.source === repo.name && m.fingerprint === fp) { c.unchanged++; continue; }
+      // A row written or changed by hand (no source) is the hand's: kept, and counted, unless staff force the index.
+      if (m && m.source === null && !opts.force) { c.kept_by_hand++; continue; }
       puts.push({ op: "put", area: area.name, key: d.key, title: d.title, data, version: d.version });
       if (m) c.updated++; else c.created++;
     }
     const gone = ours.filter((m) => !keys.has(m.key));
-    c.kept_by_hand = [...marks.values()].filter((m) => m.source === null && !keys.has(m.key)).length;
-    if (!desired.length && ours.length && !prune.allow_empty && !opts.force)
+    c.kept_by_hand += [...marks.values()].filter((m) => m.source === null && !keys.has(m.key)).length;
+    // The guards are an upstream's (a fetch that came back short): a workspace's committed files are the truth.
+    const guarded = repo.settings.kind === "upstream_catalog" && !opts.force;
+    if (guarded && !desired.length && ours.length && !prune.allow_empty)
       throw new PackError(`area ${area.name}: the index of ${repo.name} produced no rows over ${ours.length} it wrote before; refused rather than emptying it`, 409);
-    if (gone.length && ours.length >= 10 && gone.length > maxFraction * ours.length && !opts.force)
+    if (guarded && gone.length && gone.length > maxFraction * ours.length)
       throw new PackError(`area ${area.name}: the index of ${repo.name} would remove ${gone.length} of its ${ours.length} rows (more than ${Math.round(maxFraction * 100)}%); refused (staff may force it)`, 409);
     for (const m of gone) deletes.push({ op: "delete", area: area.name, key: m.key });
     c.deleted = gone.length;
@@ -492,7 +500,7 @@ export async function applyIndex(orgId: number | null, pack: string, repo: { nam
   }
   // Deletes after every put, in the reverse order: nothing written refers to a row removed in the same index.
   const ops = [...puts, ...deletes.reverse()];
-  if (ops.length) await writeFromRepository(orgId, pack, repo.name, ops, fingerprints);
+  if (ops.length) await writeFromRepository(orgId, pack, repo.name, ops, fingerprints, !!opts.force);
   return { pack, repository: repo.name, kind: repo.settings.kind, version: opts.version ?? null, source: opts.describe ?? "", written: ops.length > 0, areas: counts };
 }
 const refersTo = (a: RecordArea, b: RecordArea) => a.fields.some((f) => f.type === "reference" && f.to === b.name);
@@ -542,12 +550,15 @@ export async function indexWorkspaceFiles(orgId: number, pack: string, files?: {
 
 // ---------- an external HTTP API, read live ----------
 
-const PRIVATE4 = [/^0\./, /^10\./, /^127\./, /^169\.254\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, /^(22[4-9]|2[3-5]\d)\./, /^255\./];
-export const isPrivateAddress = (ip: string) => {
-  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
-  if (isIP(v4) === 4) return PRIVATE4.some((r) => r.test(v4));
-  const x = ip.toLowerCase();
-  return x === "::" || x === "::1" || /^f[cd]/.test(x) || /^fe[89ab]/.test(x) || /^ff/.test(x);
+const PRIVATE4 = [/^0\./, /^10\./, /^127\./, /^169\.254\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./, /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
+  /^192\.0\.0\./, /^192\.0\.2\./, /^198\.1[89]\./, /^198\.51\.100\./, /^203\.0\.113\./, /^(22[4-9]|2[3-5]\d)\./, /^255\./];
+/** Not a public unicast address: private, loopback, link-local, shared, documentation, benchmark, multicast, and IPv6's ways of carrying an IPv4 address. */
+export const isPrivateAddress = (raw: string) => {
+  const ip = raw.toLowerCase();
+  const mapped = /^(::ffff:|::ffff:0:|::|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+  if (mapped) return true; // IPv4 inside IPv6 (mapped, compatible, NAT64): refused outright
+  if (isIP(ip) === 4) return PRIVATE4.some((r) => r.test(ip));
+  return ip === "::" || ip === "::1" || /^f[cd]/.test(ip) || /^fe[89a-f]/.test(ip) || /^ff/.test(ip) || /^2002:/.test(ip) || /^64:ff9b:/.test(ip) || /^2001:db8:/.test(ip) || /^::ffff:/.test(ip);
 };
 type Resolver = (host: string) => Promise<{ address: string; family: number }[]>;
 let resolver: Resolver = (host) => new Promise((ok, no) => dnsLookup(host, { all: true }, (e, a) => (e ? no(e) : ok(a))));
@@ -567,6 +578,8 @@ export async function apiGet(url: string, egress: readonly string[], headers: Re
   try { u = new URL(url); } catch { throw new PackError("the API address is not a URL", 502); }
   if (u.protocol !== "https:" && !(u.protocol === "http:" && allowPrivate())) throw new PackError("an API repository is reached over https only", 502);
   const host = u.hostname.toLowerCase();
+  // HTTPS on port 443 only (the egress rule); another port only with the test switch.
+  if (u.port && u.port !== "443" && !allowPrivate()) throw new PackError("an API repository is reached on port 443 only", 502);
   if (!allowedHost(host, egress)) throw new PackError(`the API host ${host} is not in the repository's egress list: refused`, 502);
   let addrs: { address: string; family: number }[];
   try { addrs = await resolver(host); } catch { throw new PackError(`the API host ${host} could not be resolved`, 502); }
@@ -591,6 +604,9 @@ export async function apiGet(url: string, egress: readonly string[], headers: Re
       res.on("error", () => reject(new PackError("the API's answer broke off", 502)));
     });
     req.on("timeout", () => { req.destroy(); reject(new PackError("the API did not answer in 15 s", 504)); });
+    // A whole-request deadline too (the socket timeout is per idle period: a dripping answer would hold it).
+    const deadline = setTimeout(() => { req.destroy(); reject(new PackError("the API did not answer in 30 s", 504)); }, 30_000);
+    req.on("close", () => clearTimeout(deadline));
     req.on("error", (e) => reject(e instanceof PackError ? e : new PackError("the API could not be reached", 502)));
     req.end();
   });
