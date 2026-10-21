@@ -4,6 +4,12 @@
   intake.py <brief.md> --app <app_id> [--mold mold_v1] [--answers answers.json] [--ask]
   intake.py --self-test [app_id]   re-run on a temp copy of a deployed app; nothing it did not write is dropped
 
+A mold_v0 brief with pack sections (## Records, ## Tabs, ## Metrics, ## Charts, ## Jobs, ## Credentials, ## Schedules,
+## Onboarding, ## Words, ## MCP; docs/INTAKE.md "mold_v0: the brief's pack sections") also gets a draft declarative pack,
+packs/<pack_id>/ (lib/brief_pack.py): validated against the mold's pack.schema.json and the build's cross-checks, then
+`packs.py check <pack> --mold mold_v0`. What the sections leave open joins questions.json; a pack.json a person edited
+is never overwritten (keep / replace is asked).
+
 Without --ask (the subagent path) it never prompts: it drafts what it can, writes
 state/application/<app_id>/questions.json for anything unresolved, and exits 2.
 The intake subagent asks the user, writes answers.json, re-runs with --answers.
@@ -18,7 +24,7 @@ from factory_local import load_factory, live_projects
 import legacy
 import asr
 import single_service   # a mold that ships as one service with its own compose stack (mold_v0-028)
-import json, os, re, sys, datetime, subprocess
+import json, os, re, shutil, sys, datetime, subprocess
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ST = os.path.join(ROOT, "state"); TODAY = datetime.date.today().isoformat()
 def load(p): return json.load(open(p))
@@ -681,6 +687,8 @@ def self_test(app_id="onfinance_hfc"):
     if q[4]({}, {}, {}) != asr.DEFAULT_MODEL or q[4]({}, {"asr_model_unknown": "x"}, {}) is not None or q[4]({}, {}, {"existing_asr": {"model": "@cf/openai/whisper"}}) != "@cf/openai/whisper":
         fails.append("asr_model resolves: default today's model; an unknown brief model is asked; the app's own earlier choice is kept")
     n, _ = self_test_single(n, fails)
+    import brief_pack_selftest   # mold_v0-062: a brief's pack sections -> packs/<id>/ (lib/brief_pack_selftest.py)
+    n, _ = brief_pack_selftest.run(n, fails)
     if fails: sys.exit("intake self-test FAILED:\n  " + "\n  ".join(fails))
     src = os.path.join(ST, "application", app_id)
     if not os.path.exists(os.path.join(src, "answers.json")): sys.exit(f"self-test needs a deployed app with answers.json; {app_id} has none "
@@ -838,7 +846,151 @@ def taken_projects(app_id):
             out.setdefault(x, f"already {o}'s project")
     return out
 
-def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, answers_path, ask):
+# ---- a mold_v0 brief's pack sections -> packs/<pack_id>/ (mold_v0-062) -------------------------------------------
+# A new mold_v0 app is a brief + a generated pack.json + a brand. The brief's `## Records`, `## Tabs`, `## Metrics`,
+# `## Charts`, `## Jobs`, `## Credentials`, `## Schedules`, `## Onboarding`, `## Words` and `## MCP` sections (format:
+# docs/INTAKE.md "mold_v0: the brief's pack sections"; parser: lib/brief_pack.py) become a declarative pack:
+#   packs/<pack_id>/pack.json                         the factory's manifest (packs.py), with what intake recorded
+#   packs/<pack_id>/files/packs/<pack_id>/pack.json   the shell's pack.json, valid against packs/pack.schema.json
+# What the brief leaves open is a question in questions.json, never a guess. A pack.json someone edited after intake
+# wrote it (its sha256 is not the one intake recorded) is never overwritten: intake asks keep or replace, and keeps a
+# draft of the brief's version beside it. A pack intake did not make (no `intake` record) is never touched.
+def _pack_brand_known(hints, mold_id, existing):
+    """Read-only: does the app already have a brand (the brief, the product it will get, or its own state)?"""
+    if hints.get("brand_name") or hints.get("no_branding"): return True
+    if (((existing.get("application") or {}).get("surface") or {}).get("branding") or {}).get("product_name"): return True
+    prods = [p for p in load(os.path.join(ST, "products.json"))["products"] if p["mold_id"] == mold_id]
+    want = hints.get("product_id") or (existing.get("application") or {}).get("product_id") or \
+           (re.sub(r"[^a-z0-9]+", "_", hints["product_name"].lower()).strip("_") if hints.get("product_name") else None)
+    p = next((x for x in prods if x["product_id"] == want), None)   # only a product the brief or the app names: never a default product's brand
+    return bool((p or {}).get("brand"))
+
+def pack_plan(app_id, mold_id, hints, text, brief_path, answers, existing):
+    """The draft pack from the brief: {pack_id, pack, pending, used, defaults, ...}. Exits 2 on a brief it cannot read."""
+    import brief_pack as BP
+    nn = (single_service.manifest(mold_id, ROOT) or {}).get("not_needed") or {}
+    if "packs" in nn: sys.exit(f"{app_id}: the brief declares a pack, but {mold_id} takes none: {nn['packs']}. Nothing was written.")
+    raw = [m.group(1) for m in re.finditer(r"^\s*packs?:\s*(.*?)\s*$", BP.prose(text), re.I | re.M)]
+    named = [x.strip() for r_ in raw for x in r_.split(",") if x.strip()]
+    for x in named:
+        if not BP.PACK_ID.fullmatch(x):   # the whole value, never a prefix a looser pattern read
+            sys.exit(f"{app_id}: `Pack: {x}` cannot be a pack id ({BP.PACK_ID.pattern}: it is also the pack's table prefix). Nothing was written.")
+    if len(named) > 1: sys.exit(f"{app_id}: the brief declares a pack and names {len(named)} packs ({', '.join(named)}); name the one it declares with `Pack: <id>`. Nothing was written.")
+    pid = named[0] if named else app_id
+    if not BP.PACK_ID.fullmatch(pid):   # checked BEFORE it is ever part of a path
+        sys.exit(f"{app_id}: {pid!r} cannot be a pack id ({BP.PACK_ID.pattern}: it is also the pack's table prefix); add a line `Pack: <id>` to the brief. Nothing was written.")
+    pdir = os.path.join(ROOT, "packs", pid); man_p = os.path.join(pdir, "pack.json")
+    man = load(man_p) if os.path.isfile(man_p) else None
+    if man is None and os.path.isdir(pdir) and os.listdir(pdir):
+        sys.exit(f"{app_id}: packs/{pid}/ already holds files and no manifest, so it is not intake's to fill. Name this brief's pack with another "
+                 f"`Pack: <id>` line, or move packs/{pid}/ away. Nothing was written.")
+    if man is not None and not isinstance(man.get("intake"), dict):
+        sys.exit(f"{app_id}: packs/{pid}/ is a pack made by hand (intake did not write it), so intake will not touch it. Name the pack this brief "
+                 f"declares with another `Pack: <id>` line, or take the pack sections out of the brief to use packs/{pid} as it is. Nothing was written.")
+    rec = (man or {}).get("intake") or {}
+    if man is not None and rec.get("app_id") != app_id:
+        sys.exit(f"{app_id}: packs/{pid}/ was made by intake for {rec.get('app_id') or 'no recorded app'}; give this app's pack its own `Pack: <id>`. Nothing was written.")
+    eff = dict(rec.get("answers") or {}); eff.update({k: v for k, v in answers.items() if k.startswith("pack.")})
+    try: spec, c = BP.parse(text)
+    except BP.BriefError as x:
+        print(f"{os.path.relpath(brief_path, ROOT)}: the brief's pack sections cannot be read (format: docs/INTAKE.md, \"mold_v0: the brief's pack sections\"). Nothing was written.")
+        for p in x.problems: print(f"  {p}")
+        sys.exit(2)
+    name = (hints.get("product_name") or hints.get("brand_name") or pid.replace("_", " ").title())[:80]
+    ctx = {"pack_id": pid, "name": name, "description": f"{name}: a declarative pack made by intake from {os.path.relpath(brief_path, ROOT)} (mold_v0-062)."[:1000]}
+    try: pack, pending, used, defaults = BP.draft(spec, c, eff, ctx)
+    except BP.BriefError as x:
+        print(f"{app_id}: an answer does not fit. Nothing was written."); [print(f"  {p}") for p in x.problems]; sys.exit(2)
+    schema = load(os.path.join(ROOT, "molds", mold_id, "codebase", "packs", "pack.schema.json"))
+    mcp = spec.get("mcp")
+    if mcp and not BP.mcp_reserved(schema): BP.apply_mcp(pack, mcp, defaults)   # pack.json `mcp` (mold_v0-060, 068)
+    return {"BP": BP, "pack_id": pid, "dir": pdir, "manifest": man, "record": rec, "pack": pack, "pending": pending, "used": used, "defaults": defaults,
+            "spec": spec, "c": c, "schema": schema, "name": name, "description": ctx["description"], "mcp": mcp, "answers": eff}
+
+def _brief_line(problem, pack, c):
+    """The brief line a validation problem comes from, when it can be told."""
+    m = re.match(r"pack\.json\.(record_areas|job_kinds|metrics|charts|tabs|credentials|schedules|onboarding)\[(\d+)\]", problem)
+    kind = {"record_areas": "area", "job_kinds": "job", "metrics": "metric", "charts": "chart", "tabs": "tab", "credentials": "credential", "schedules": "schedule", "onboarding": "step"}
+    if m:
+        it = (pack.get(m.group(1)) or [{}])[int(m.group(2))] if int(m.group(2)) < len(pack.get(m.group(1)) or []) else {}
+        return c.lines.get((kind[m.group(1)], it.get("id") or it.get("name")))
+    m = re.match(r"(record area|job kind|metric|chart|tab|credential|schedule|onboarding step) (\S+)", problem)
+    if m: return c.lines.get(({"record area": "area", "job kind": "job", "onboarding step": "step"}.get(m.group(1), m.group(1)), m.group(2)))
+    return None
+
+def write_pack(app_id, mold_id, plan, brief_path, text, answers):
+    """Validate the draft and write packs/<pack_id>/ (only what changed), then `packs.py check`. -> pack_id, or a pending
+    question (the edit guard). Exits 1 when the draft fails validation or the check, with nothing written."""
+    BP, pid, pack, c = plan["BP"], plan["pack_id"], plan["pack"], plan["c"]
+    problems, how = BP.validate(pack, plan["schema"], os.path.join(ROOT, "molds", mold_id, "codebase"))
+    if problems:
+        print(f"{app_id}: the pack drafted from the brief does not pass its checks ({'; '.join(how)}). Nothing was written.")
+        for p in problems:
+            n = _brief_line(p, pack, c); print(f"  {p}" + (f"  (brief line {n})" if n else ""))
+        sys.exit(1)
+    shell_dir = os.path.join(plan["dir"], "files", "packs", pid); shell_p = os.path.join(shell_dir, "pack.json")
+    new = BP.dumps(pack).encode(); rec = plan["record"]
+    cur = open(shell_p, "rb").read() if os.path.isfile(shell_p) else None
+    write, kept = True, rec.get("kept_sha256")
+    if cur is not None and cur != new:
+        h = BP.sha(cur)
+        if h != rec.get("pack_json_sha256"):
+            # Someone edited the pack.json intake wrote (or intake's record of it is gone): never overwritten without a yes.
+            qid = f"pack.overwrite.{h[:12]}"; a = answers.get(qid)
+            if a == "replace": kept = None
+            elif a == "keep" or h == kept: write, kept = False, h
+            else:
+                return {"id": qid, "path": f"packs/{pid}/files/packs/{pid}/pack.json", "question":
+                        f"packs/{pid}/files/packs/{pid}/pack.json was changed by hand after intake wrote it, and the brief now says something else. "
+                        f"keep = keep the hand-edited file as it is (the brief's version is saved beside it as packs/{pid}/pack.draft.json to compare); "
+                        f"replace = overwrite the hand edits with the brief's version.", "options": ["keep", "replace"], "suggested": "keep",
+                        "why": "the file's contents are not what intake last wrote"}
+    draft_p = os.path.join(plan["dir"], "pack.draft.json"); man_p = os.path.join(plan["dir"], "pack.json")
+    # What is there now, so a pack that `packs.py check` then refuses leaves packs/ exactly as it was.
+    made_dir = not os.path.isdir(plan["dir"])
+    before = {f: (open(f, "rb").read() if os.path.isfile(f) else None) for f in (shell_p, draft_p, man_p)}
+    def undo():
+        for f, b in before.items():
+            if b is None and os.path.isfile(f): os.remove(f)
+            elif b is not None and open(f, "rb").read() != b: open(f, "wb").write(b)
+        if made_dir: shutil.rmtree(plan["dir"], ignore_errors=True)
+    os.makedirs(shell_dir, exist_ok=True)
+    if write:
+        if cur != new: open(shell_p, "wb").write(new)
+        if os.path.exists(draft_p): os.remove(draft_p)
+        written = BP.sha(new)
+    else:
+        if not os.path.isfile(draft_p) or open(draft_p, "rb").read() != new: open(draft_p, "wb").write(new)
+        written = rec.get("pack_json_sha256")
+        try: p2, _ = BP.validate(load(shell_p), plan["schema"])
+        except ValueError as x: p2 = [f"it is not valid JSON ({x})"]
+        print(f"note: packs/{pid}/files/packs/{pid}/pack.json was edited by hand and is kept as it is; the brief's version is packs/{pid}/pack.draft.json"
+              + (f". The edited file does not pass the checks: {'; '.join(p2[:5])}" if p2 else ""))
+    man = dict(plan["manifest"] or {})
+    man.update({"pack_id": pid, "mold_id": mold_id})
+    man.setdefault("name", plan["name"]); man.setdefault("description", plan["description"])
+    intake = {"generated_by": BP.GENERATOR, "app_id": app_id, "brief": os.path.relpath(brief_path, ROOT), "brief_sha256": BP.sha(text),
+              "pack_json_sha256": written, "answers": dict(sorted(plan["used"].items())), "defaults": plan["defaults"], "checked_with": how}
+    if kept: intake["kept_sha256"] = kept
+    if plan["mcp"] and "mcp" not in pack:
+        intake["mcp"] = plan["mcp"]
+        print(f"note: {mold_id} reserves pack.json `mcp` until mold_v0-060, so the brief's ## MCP lines are kept in packs/{pid}/pack.json (intake.mcp), not in the shell's pack.json")
+    man["intake"] = intake
+    mtext = BP.dumps(man).encode()
+    if not os.path.isfile(os.path.join(plan["dir"], "pack.json")) or open(os.path.join(plan["dir"], "pack.json"), "rb").read() != mtext:
+        open(os.path.join(plan["dir"], "pack.json"), "wb").write(mtext)
+    r = subprocess.run([sys.executable, os.path.join(ROOT, ".claude", "scripts", "packs.py"), "check", pid, "--mold", mold_id], capture_output=True, text=True)
+    if r.returncode:
+        undo()
+        sys.exit(f"{app_id}: packs.py check {pid} --mold {mold_id} refused the pack, so nothing was written: {(r.stdout + r.stderr).strip()[-600:]}")
+    counts = ", ".join(f"{len(pack.get(k) or [])} {w}" for k, w in (("record_areas", "areas"), ("job_kinds", "jobs"), ("metrics", "metrics"), ("charts", "charts"),
+                                                                    ("tabs", "tabs"), ("credentials", "credentials"), ("schedules", "schedules"), ("onboarding", "steps")))
+    print(f"pack: packs/{pid}/ ({counts}); {'written' if write and cur != new else 'unchanged' if write else 'kept as edited'}; checked with {', '.join(how)}; packs.py check clean")
+    for d_ in plan["defaults"]: print(f"  default: {d_}")
+    return pid
+
+
+def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, answers_path, ask, text=None):
     d = factory.get("defaults", {})
     ex_inf = existing.get("infrastructure", {})
     ctx = {"app_id": app_id, "existing_target": ex_inf.get("target") if ex_inf.get("target") in single_service.TARGETS else None,
@@ -855,18 +1007,51 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
         q = {"id": qid, "path": path, "question": prompt, "options": options, "suggested": "compose_remote" if qid == "deploy_target" else None}
         if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both a server of its own and Vercel"
         pending.append(q)
-    if ask and pending:
-        for q in pending:
-            v = input(f"{q['question']} [{'/'.join(q['options'] or [])}] (default: {q['suggested']}): ").strip() or q["suggested"]
+    # The brief's pack sections (mold_v0-062): their open points join the same questions; the brand is asked with them.
+    pk, extra = None, {}
+    with_pack = text is not None and __import__("brief_pack").has_sections(text)
+    def plan_pack():
+        nonlocal pk, extra
+        if not with_pack: return []
+        pk = pack_plan(app_id, mold_id, hints, text, brief_path, answers, existing)
+        qs = list(pk["pending"]); extra = dict(pk["used"])
+        known = (((existing.get("application") or {}).get("surface") or {}).get("branding") or {}).get("product_name")
+        if "brand_name" in answers: hints["brand_name"] = extra["brand_name"] = str(answers["brand_name"]).strip()
+        elif not hints.get("brand_name") and not hints.get("no_branding") and known:
+            hints["brand_name"] = known   # the brand the app already has: a re-run never drops it back to the mold's default
+        elif not _pack_brand_known(hints, mold_id, existing):
+            qs.append({"id": "brand_name", "path": "application.surface.branding.product_name", "question":
+                       "What is the app called, as its users will see it (the console's title, the MCP server's name, the emails' sender)? "
+                       "The colour and logo can be set later with branding.py.", "options": None, "suggested": pk["name"],
+                       "why": "a mold_v0 app is a brief, a pack and a brand; the brief names no brand"})
+        return qs
+    pending += plan_pack()
+    def ask_all(qs):
+        for q in qs:
+            try: v = input(f"{q['question']} [{'/'.join(q['options'] or [])}] (default: {q['suggested']}): ").strip() or q["suggested"]
+            except EOFError: sys.exit("no answer (the input closed); nothing was written.")
+            if v in (None, ""): sys.exit(f"{q['id']} needs an answer; nothing was written.")
             if q["options"] and v not in q["options"]: sys.exit(f"{v!r} is not one of {', '.join(q['options'])}; nothing was written.")
-            resolved[q["id"]] = v
-        pending = []
-    if pending:
+            if q["id"].startswith("pack.") or q["id"] == "brand_name": answers[q["id"]] = v
+            else: resolved[q["id"]] = v
+    rounds = 0
+    while ask and pending and rounds < 10:   # a pack answer can open the next question (a job's repository, then its commit)
+        ask_all(pending); rounds += 1
+        pending = plan_pack()
+    def stop(qs):
         save(qfile, {"app_id": app_id, "mold_id": mold_id, "brief": os.path.relpath(brief_path, ROOT), "hints": hints,
-                     "answers": dict(resolved), "pending": pending, "optional": [], "generated": TODAY})
-        print(f"{len(pending)} question(s) pending -> {os.path.relpath(qfile, ROOT)}")
-        for q in pending: print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] else "") + (f"  ({q['why']})" if q.get("why") else ""))
+                     "answers": {**resolved, **extra}, "pending": qs, "optional": [], "generated": TODAY})
+        print(f"{len(qs)} question(s) pending -> {os.path.relpath(qfile, ROOT)}")
+        for q in qs: print(f"  - {q['id']}: {q['question']}" + (f"  options={q['options']}" if q["options"] else "") + (f"  suggested={q['suggested']}" if q["suggested"] else "") + (f"  ({q['why']})" if q.get("why") else ""))
         sys.exit(2)
+    if pending: stop(pending)
+    if pk:
+        got = write_pack(app_id, mold_id, pk, brief_path, text, answers)
+        if isinstance(got, dict):
+            if ask:
+                ask_all([got]); got = write_pack(app_id, mold_id, pk, brief_path, text, answers)
+            if isinstance(got, dict): stop([got])
+        hints["packs"] = [got]
     if resolved["deploy_target"] == "vercel":
         # One project is one environment namespace: never a LIVE project, never one another app deploys to (provision.py
         # refuses both at deploy time too). The app has TWO, <name>-api and <name> (mold_v0-029): a base whose either name
@@ -892,7 +1077,7 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     for name, obj in (("application", app), ("infrastructure", infra), ("datastores", ds), ("datainfra", di)):
         save(os.path.join(outdir, f"{name}.json"), obj)
     if os.path.exists(qfile): os.remove(qfile)
-    save(os.path.join(outdir, "answers.json"), resolved)
+    save(os.path.join(outdir, "answers.json"), {**resolved, **extra})
     raw = load(os.path.join(ST, "factory.json"))     # the repository's file, never the merged view (see main)
     if app_id not in raw.setdefault("applications", []): raw["applications"].append(app_id); save(os.path.join(ST, "factory.json"), raw)
     P = load(os.path.join(ST, "products.json"))
@@ -914,6 +1099,10 @@ def main(a):
     def opt(k, d=None): return opts[opts.index(k)+1] if k in opts else d
     app_id = opt("--app") or re.sub(r"[^a-z0-9_]+","_", os.path.basename(brief_path).split(".")[0].lower())
     text = open(brief_path).read(); hints = parse_brief(text)
+    import brief_pack
+    if brief_pack.has_sections(text):   # the mold comes from the prose, never from a line inside a pack section
+        hints["mold_id"] = parse_brief(brief_pack.prose(text)).get("mold_id")
+        if not hints["mold_id"]: hints.pop("mold_id")
     factory = load_factory(ST); d = factory.get("defaults", {})
     mold_id = opt("--mold") or hints.get("mold_id") or "mold_v1"
     known = [m.get("mold_id") for m in factory.get("molds", [])]
@@ -923,7 +1112,15 @@ def main(a):
     outdir = os.path.join(ST, "application", app_id); os.makedirs(outdir, exist_ok=True)
     existing = {n: load(os.path.join(outdir, f"{n}.json")) for n in ("application","infrastructure","datastores","datainfra") if os.path.exists(os.path.join(outdir, f"{n}.json"))}
     if single_service.manifest(mold_id, ROOT):
-        return main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, opt("--answers"), "--ask" in opts)
+        if brief_pack.has_sections(text):
+            # The pack sections are data for the pack, never prose hints: a field labelled "Vercel project" or a help text
+            # naming a domain must not move where the app runs (mold_v0-062).
+            hints = parse_brief(brief_pack.prose(text)); hints["mold_id"] = mold_id
+        try: return main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, opt("--answers"), "--ask" in opts, text=text)
+        except BaseException:
+            # A refusal (or a failure) writes nothing: leave no empty app folder behind (factory.py validate counts it as an app missing its files).
+            if not existing and os.path.isdir(outdir) and not os.listdir(outdir): os.rmdir(outdir)
+            raise
     prod = pick_product(mold_id, hints, existing)
     ctx = {"app_id": app_id, "product": prod, "first_app": not [x for x in prod.get("app_ids", []) if x != app_id],
            "suffix": app_id[len(prod["product_id"])+1:] if app_id.startswith(prod["product_id"]+"_") else app_id,
