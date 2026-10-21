@@ -903,7 +903,7 @@ def pack_plan(app_id, mold_id, hints, text, brief_path, answers, existing):
         print(f"{app_id}: an answer does not fit. Nothing was written."); [print(f"  {p}") for p in x.problems]; sys.exit(2)
     schema = load(os.path.join(ROOT, "molds", mold_id, "codebase", "packs", "pack.schema.json"))
     mcp = spec.get("mcp")
-    if mcp and not BP.mcp_reserved(schema): pack["mcp"] = mcp
+    if mcp and not BP.mcp_reserved(schema): BP.apply_mcp(pack, mcp, defaults)   # pack.json `mcp` (mold_v0-060, 068)
     return {"BP": BP, "pack_id": pid, "dir": pdir, "manifest": man, "record": rec, "pack": pack, "pending": pending, "used": used, "defaults": defaults,
             "spec": spec, "c": c, "schema": schema, "name": name, "description": ctx["description"], "mcp": mcp, "answers": eff}
 
