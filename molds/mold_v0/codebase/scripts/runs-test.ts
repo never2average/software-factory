@@ -68,6 +68,7 @@ try {
     { name: "costly", runner: "workspace-harness", entry: "ok.mjs", providers: ["anthropic"], budget_usd: 0.1 },
     { name: "probe_one", runner: "workspace-harness", entry: "egress.mjs", egress: ["one.allowed.example"] },
     { name: "probe_two", runner: "workspace-harness", entry: "egress.mjs", egress: ["*.two.example"] },
+    { name: "isolation", runner: "workspace-harness", entry: "isolation.mjs" },
   ];
   const fixture = definePack({
     id: "fixture_runs",
@@ -117,7 +118,7 @@ try {
   const runOne = async (kinds: string[], opts: Parameters<typeof harness.runWorkspaceHarness>[2] = {}) => {
     const c = await client.claim(kinds);
     assert.ok(c, `a run of ${kinds.join(", ")} to claim`);
-    return { claim: c!, view: await harness.runWorkspaceHarness(client, c!, { egress: "off", ...opts }) };
+    return { claim: c!, view: await harness.runWorkspaceHarness(client, c!, { allowSameUser: true, egress: "off", ...opts }) };
   };
   const row = async (id: string) => (await db.query<any>("SELECT * FROM runs WHERE id = $1", [id]))[0];
   const eventsOf = async (id: string) => db.query<{ type: string; data: any; attempt: number }>("SELECT type, data, attempt FROM run_events WHERE run_id = $1 ORDER BY id", [id]);
@@ -142,7 +143,7 @@ try {
       assert.equal(tokenRefusal(tok, at(3 * 3600 + 59 * 60)), null, "usable 3 h 59 min into the run");
       assert.equal(tokenRefusal({ ...tok!, expires_at: at(90 * 60) }, at(3 * 3600 + 59 * 60)), "expired", "a session-lifetime token (90 min) would have expired mid-run");
       assert.equal(tokenRefusal(tok, at(4 * 3600 + 60)), "expired", "and it does expire after the deadline");
-      const view = await harness.runWorkspaceHarness(client, claim, { egress: "off" });
+      const view = await harness.runWorkspaceHarness(client, claim, { allowSameUser: true, egress: "off" });
       assert.equal(view?.status, "succeeded", `succeeded: ${JSON.stringify(view)}`);
       const ev = await eventsOf(claim.run.id);
       assert.deepEqual(ev.filter((e) => ["queued", "claimed", "succeeded"].includes(e.type)).map((e) => e.type), ["queued", "claimed", "succeeded"], "lifecycle events");
@@ -199,7 +200,7 @@ try {
       const s = await start(ca, "slow");
       const claim = (await client.claim(["fixture_runs/slow"]))!;
       const beats: { cancel: boolean }[] = [];
-      const running = harness.runWorkspaceHarness(client, claim, { egress: "off", onHeartbeat: (h) => beats.push(h) });
+      const running = harness.runWorkspaceHarness(client, claim, { allowSameUser: true, egress: "off", onHeartbeat: (h) => beats.push(h) });
       await sleep(1500);
       const tokenBefore = claim.gateway.env.ANTHROPIC_API_KEY!;
       const gw = () => fetch(`${http.base}/gw/anthropic/v1/messages`, { method: "POST", headers: { "x-api-key": tokenBefore, "content-type": "application/json" }, body: "{}" });
@@ -227,7 +228,7 @@ try {
       await assert.rejects(runs.heartbeatRun(r.id, c1.lease_token), /lease is not yours/, "the old lease cannot heartbeat");
       await assert.rejects(runs.appendRunEvents(r.id, c1.lease_token, [{ type: "x" }]), /lease is not yours/, "nor write events");
       await assert.rejects(runs.completeRun(r.id, c1.lease_token, { outcome: "succeeded", results: [] }), /lease is not yours/, "nor complete it");
-      const done = await harness.runWorkspaceHarness(client, c2, { egress: "off" });
+      const done = await harness.runWorkspaceHarness(client, c2, { allowSameUser: true, egress: "off" });
       assert.equal(done?.status, "succeeded", "the new attempt completes");
       await assert.rejects(runs.completeRun(r.id, c2.lease_token, { outcome: "failed" }), /lease is not yours/, "a run completes once");
       // Two claims at the same moment for one queued run: exactly one gets it.
@@ -290,6 +291,9 @@ try {
       await bad([{ check: { area: "run_checks", key: "c1" }, asset: { area: "run_apps", key: "app-b" }, status: "fail" }], /no asset record app-b in run_apps for this run's workspace/);
       await bad([{ check: { area: "run_apps", key: "app-a" }, status: "pass" }], /run_apps is not a check area/);
       await bad([{ check: { area: "run_checks", key: "c1" }, status: "maybe" }], /result status/);
+      // The review's case: a result listed twice used to break the unique index and leave the run "running".
+      const twice = { check: { area: "run_checks", key: "c1" }, asset: { area: "run_apps", key: "app-a" }, status: "pass" };
+      await bad([twice, twice], /listed twice/);
       // B's run with B's own asset is fine; A cannot see it.
       const rb = await start(cb, "plain", { targets: { asset: "app-b" } });
       assert.equal((await runOne(["fixture_runs/plain"])).view?.status, "succeeded");
@@ -313,13 +317,54 @@ try {
       assert.equal(ch.run.id, rh.id);
       assert.equal((await post(`/${rh.id}/heartbeat`, {}, { authorization: `Bearer ${W}` })).status, 409, "no lease token: refused");
       assert.equal((await post(`/${rh.id}/heartbeat`, {}, { authorization: `Bearer ${W}`, "x-run-lease": "orl_forged" })).status, 409, "a forged lease: refused");
-      const vh = await harness.runWorkspaceHarness(viaHttp, ch, { egress: "off" });
+      const vh = await harness.runWorkspaceHarness(viaHttp, ch, { allowSameUser: true, egress: "off" });
       assert.equal(vh?.status, "succeeded", "a run carried out over the worker API");
       assert.equal((await db.query("SELECT 1 FROM run_results WHERE run_id = $1", [rh.id])).length, 1);
+      // A workspace cannot fill the queue: at most OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE runs queued or running.
+      process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE = "3";
+      for (let i = 0; i < 3; i++) await start(cb, "failing");
+      const over = await cb.call("fixture_start_run", { kind: "failing" });
+      assert.ok(over.isError && /already has 3 runs/.test(over.content[0]!.text), `the per-workspace cap: ${over.content[0]?.text}`);
+      assert.ok(!(await ca.call("fixture_start_run", { kind: "failing" })).isError, "another workspace is not held to it");
+      delete process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE;
+      while (await client.claim(["fixture_runs/failing"]).then(async (c) => c && (await harness.runWorkspaceHarness(client, c, { allowSameUser: true, egress: "off" }), true))) { /* drain */ }
       // Deleting a workspace takes its runs.
       await db.query("DELETE FROM organizations WHERE id = $1", [B.orgId]);
       assert.equal((await db.query("SELECT 1 FROM runs WHERE org_id = $1", [B.orgId])).length, 0, "a deleted workspace's runs go with it");
+      console.log("✓ a run listing a result twice fails cleanly (not stuck); one workspace cannot queue more than its cap");
       console.log(`✓ workspaces: results cannot name another workspace's records; runs are each workspace's own (probe ${probe.checked} checks); worker API: fleet token + lease token, a run over HTTP`);
+    }
+    // ---------- 11. isolation: the run's programs as a user of their own ----------
+    {
+      const r = await start(ca, "isolation");
+      const c = (await client.claim(["fixture_runs/isolation"]))!;
+      await assert.rejects(harness.runWorkspaceHarness(client, c, { egress: "off" }), /only as a dedicated user/, "the harness refuses to run a program as its own user unless told");
+      await assert.rejects(harness.drainRuns(client, { egress: "off" }), /only as a dedicated user/, "a runner loop refuses before claiming anything");
+      const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      const probe = async (opts: Parameters<typeof harness.runWorkspaceHarness>[2]) => {
+        await db.query("UPDATE runs SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [r.id]);
+        const cc = (await client.claim(["fixture_runs/isolation"]))!;
+        assert.equal(cc.run.id, r.id);
+        const v = await harness.runWorkspaceHarness(client, cc, { egress: "off", ...opts });
+        const e = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'isolation' ORDER BY id DESC LIMIT 1", [r.id]))[0]!.data;
+        return { v, e };
+      };
+      // Same user (what the review showed): the program reads the runner's environment and leaves a process behind.
+      // (/proc/<pid>/environ is the environment the runner started with: on a server, its database URL and vault key.)
+      const same = await probe({ allowSameUser: true });
+      assert.ok(Array.isArray(same.e.environ) && same.e.environ.includes("PATH"), "as the runner's own user, /proc/<runner>/environ is readable (why the harness refuses it by default)");
+      const leftover = same.e.grandchild as number;
+      assert.ok(alive(leftover), "and a process in its own session outlives the run");
+      process.kill(leftover, "SIGKILL");
+      await db.query("UPDATE runs SET status = 'queued', ended_at = NULL WHERE id = $1", [r.id]);
+      if (process.getuid?.() === 0) {
+        const iso = await probe({ runAs: { uid: 65534, gid: 65534 } });
+        assert.equal(iso.v?.status, "succeeded", JSON.stringify(iso.v));
+        assert.equal(iso.e.uid, 65534, "the program ran as the run's user");
+        assert.equal(iso.e.environ, "EACCES", "it cannot read the runner's environment");
+        assert.ok(!alive(iso.e.grandchild), "and nothing it started outlives the run");
+        console.log("✓ isolation: as a separate user the program cannot read the runner's environment and leaves nothing running; the harness refuses to run as its own user unless told");
+      } else console.log("- isolation as a separate user: skipped (needs a runner started as root); the default refusal is checked");
     }
   } finally {
     await ca.close(); await cb.close();

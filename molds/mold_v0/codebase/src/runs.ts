@@ -26,7 +26,7 @@ import { JobKindSchema, PackError, z, type RunResultRow, type RunView, type Work
 import { packs } from "./packs.js";
 import { findArea } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
-import { acquireLease, commitStaged, discardStaged, releaseLease, renewLease } from "./workspace-store.js";
+import { acquireLease, commitStaged, endAttempt, removeObjects, renewLease } from "./workspace-store.js";
 
 export type JobKind = z.output<typeof JobKindSchema> & { pack: string };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -71,11 +71,27 @@ const jsonObject = (v: unknown, what: string) => {
 
 // ---------- the workspace's side: start, read, cancel ----------
 
-/** Queue a run of `pack`'s job kind for workspace `orgId` (the caller's own workspace, from its session). */
-export async function startRun(orgId: number, pack: string, kind: string, input: { scope?: unknown; targets?: unknown } = {}, requestedBy: string | null = null): Promise<RunView> {
+/** Runs a workspace may have queued or running at once (every kind): one workspace cannot fill the queue. */
+const MAX_LIVE = () => Number(process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE ?? 20);
+
+/**
+ * Queue a run of `pack`'s job kind for workspace `orgId` (the caller's own workspace, from its session). When the
+ * caller is a signed-in person (`org.userId`), the account's own launch rules apply first (src/limits.ts checkRun:
+ * a viewer cannot launch, a blocked member or account cannot, the account's allowance and concurrency).
+ */
+export async function startRun(orgId: number, pack: string, kind: string, input: { scope?: unknown; targets?: unknown } = {}, requestedBy: string | null = null,
+                               org?: import("./auth.js").Org): Promise<RunView> {
   const k = findKind(pack, kind);
   if (!k) throw new PackError(`pack ${pack} has no job kind ${JSON.stringify(String(kind).slice(0, 64))}`, 404);
   const scope = jsonObject(input.scope, "scope"), targets = jsonObject(input.targets, "targets");
+  if (org?.userId) {
+    const { checkRun, LimitError } = await import("./limits.js");
+    try { await asPlatform(() => checkRun(org)); }
+    catch (e) { if (e instanceof LimitError) throw new PackError(e.message, (e as { status?: number }).status ?? 403); throw e; }
+  }
+  const [{ n }] = await asPlatform(async () => (await getDb()).query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM runs WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]));
+  if (n >= MAX_LIVE()) throw new PackError(`this workspace already has ${n} runs queued or running (at most ${MAX_LIVE()}): wait for some to finish`, 429);
   const id = `run_${randomBytes(12).toString("base64url")}`;
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
   const [r] = await asPlatform(async () => (await getDb()).query<RunRow>(
@@ -127,8 +143,8 @@ export async function cancelRun(orgId: number, id: string, by: string | null = n
 }
 
 /** ctx.runs: this pack's runs for one workspace. */
-export const workspaceRuns = (pack: string, orgId: number, requestedBy: string | null = null): WorkspaceRuns => ({
-  start: (kind, input) => startRun(orgId, pack, kind, input ?? {}, requestedBy),
+export const workspaceRuns = (pack: string, orgId: number, requestedBy: string | null = null, org?: import("./auth.js").Org): WorkspaceRuns => ({
+  start: (kind, input) => startRun(orgId, pack, kind, input ?? {}, requestedBy, org),
   get: async (id) => { const r = await getRun(orgId, id); return r && r.pack === pack ? r : null; },
   list: (opts) => listRuns(orgId, { pack, limit: opts?.limit }),
   results: async (id) => { const r = await getRun(orgId, id); if (!r || r.pack !== pack) throw new PackError("no such run", 404); return runResults(orgId, id); },
@@ -170,8 +186,8 @@ export function runEgressHosts(kindHosts: string[], gatewayUrl: string): string[
  * infrastructure may be at fault and attempts remain; else failed. A run past its deadline (its token expired) fails.
  */
 export async function sweepRuns(): Promise<{ requeued: number; failed: number; cancelled: number }> {
-  return asPlatform(async () => {
-    const db = await getDb();
+  const gone: string[] = [];
+  const out = await asPlatform(async () => (await getDb()).transaction(async (db) => {
     const rows = await db.query<{ id: string; org_id: number; attempt: number; status: string; error_kind: string | null }>(
       `/* tenant: platform sweep of lapsed leases, every workspace */ UPDATE runs SET
           status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
@@ -184,19 +200,16 @@ export async function sweepRuns(): Promise<{ requeued: number; failed: number; c
           worker_id = NULL, lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now()
         WHERE status = 'running' AND lease_expires_at < now()
         RETURNING id, org_id, attempt, status, error_kind`);
+    // In the same transaction as the status change: no later attempt can be claimed before its tokens and lease are gone.
     for (const r of rows) {
-      await revokeRunTokens(r.id);
-      await releaseWorkspace(r.id);
-      await event(r.id, r.org_id, r.attempt, r.status === "queued" ? "retry" : r.status, { reason: "lease lapsed", error_kind: r.error_kind });
+      await revokeRunTokens(r.id, db);
+      gone.push(...(await endAttempt(db, r.id)));
+      await event(r.id, r.org_id, r.attempt, r.status === "queued" ? "retry" : r.status, { reason: "lease lapsed", error_kind: r.error_kind }, db);
     }
     return { requeued: rows.filter((r) => r.status === "queued").length, failed: rows.filter((r) => r.status === "failed").length, cancelled: rows.filter((r) => r.status === "cancelled").length };
-  });
-}
-
-/** The workspace store (mold_v0-033): when an attempt ends, its lease goes and any stage it did not commit is discarded. */
-async function releaseWorkspace(runId: string): Promise<void> {
-  await discardStaged(runId);
-  await releaseLease(runId);
+  }));
+  await removeObjects(gone);
+  return out;
 }
 
 /**
@@ -206,14 +219,22 @@ async function releaseWorkspace(runId: string): Promise<void> {
 export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}): Promise<Claim | null> {
   if (typeof workerId !== "string" || !/^[A-Za-z0-9._:-]{1,100}$/.test(workerId)) throw new PackError("worker_id: 1-100 letters, digits, . _ : -", 400);
   await sweepRuns();
-  const kinds = (opts.kinds ?? []).filter((k) => typeof k === "string").slice(0, 50);
+  // Only kinds this build has (a run of a kind it lacks waits for a build that has it), and only those asked for.
+  const known = jobKinds().map((k) => `${k.pack}/${k.name}`);
+  const asked = (opts.kinds ?? []).filter((k) => typeof k === "string").slice(0, 50);
+  const kinds = asked.length ? known.filter((k) => asked.includes(k)) : known;
+  if (!kinds.length) return null;
   const lease = `orl_${randomBytes(24).toString("base64url")}`;
   const row = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
     const candidates = await tx.query<{ id: string; org_id: number; pack: string; kind: string; workspace: boolean; lease_seconds: number }>(
       `/* tenant: platform claim across workspaces (the workspace comes from the row) */ SELECT id, org_id, pack, kind,
               coalesce((spec->>'workspace')::boolean, false) AS workspace, lease_seconds FROM runs
-        WHERE status = 'queued' AND ($1::text[] IS NULL OR pack || '/' || kind = ANY ($1::text[]))
-        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds.length ? kinds : null]);
+        WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[])
+          -- One writer per workspace store: a run whose store another live run holds is not even a candidate, so a
+          -- workspace with many queued runs never hides other workspaces' runs behind its own.
+          AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
+                   WHERE l.org_id = runs.org_id AND l.store = runs.pack AND l.expires_at > now() AND l.run_id <> runs.id))
+        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds]);
     for (const c of candidates) {
       if (!findKind(c.pack, c.kind)) continue; // a kind this build no longer has: left queued for a build that has it
       // One writer per workspace store (mold_v0-033): while another run of this workspace and pack holds the store's
@@ -335,6 +356,7 @@ async function checkResults(q: Queryable, orgId: number, results: unknown[]) {
     if (!exists.get(id)) throw new PackError(`result: no ${want} record ${ref.key} in ${ref.area}${area.scope === "workspace" ? " for this run's workspace" : ""}`, 400);
   };
   const out = [];
+  const seen = new Set<string>();
   for (const raw of results) {
     const x = raw as Record<string, unknown>;
     const check = refOf(x?.check, "check"), asset = refOf(x?.asset, "asset"), source = refOf(x?.source, "source");
@@ -345,6 +367,9 @@ async function checkResults(q: Queryable, orgId: number, results: unknown[]) {
     if (ev !== null && (typeof ev !== "string" || ev.length > 500 || /[\u0000-\u001f]/.test(ev))) throw new PackError("evidence_ref: up to 500 characters", 400);
     const detail = jsonObject(x.detail, "detail");
     if (Buffer.byteLength(JSON.stringify(detail)) > 16 * 1024) throw new PackError("a result's detail is at most 16 KB", 413);
+    const id = JSON.stringify([check.area, check.key, asset?.area ?? "", asset?.key ?? "", source?.area ?? "", source?.key ?? ""]);
+    if (seen.has(id)) throw new PackError(`result: check ${check.key} x ${asset?.key ?? "no asset"} x ${source?.key ?? "no source"} is listed twice`, 400);
+    seen.add(id);
     await has("check", check);
     if (asset) await has("asset", asset);
     if (source) await has("source", source);
@@ -361,8 +386,11 @@ export async function completeRun(runId: string, leaseToken: string, c: Completi
 async function complete(runId: string, leaseToken: string, c: Completion): Promise<RunView> {
   if (c?.outcome !== "succeeded" && c?.outcome !== "failed") throw new PackError("outcome: succeeded or failed", 400);
   const usage = await asPlatform(() => runGatewayUsage(String(runId)));
+  const gone: string[] = [];
   const r = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
     const run = await leased(tx, runId, leaseToken, true);
+    // The attempt's end, in this transaction: its tokens revoked, its store lease released, its uncommitted stage discarded.
+    const endOfAttempt = async () => { await revokeRunTokens(run.id, tx); gone.push(...(await endAttempt(tx, run.id))); };
     let status: RunView["status"], kind: string | null = null, error: string | null = null;
     if (run.cancel_requested_at) { status = "cancelled"; kind = "cancelled"; error = "cancelled"; }
     else if (c.outcome === "succeeded") {
@@ -376,6 +404,7 @@ async function complete(runId: string, leaseToken: string, c: Completion): Promi
           `/* tenant: the leased run, by id */ UPDATE runs SET status = $2, error_kind = $3, error = $4, cost_usd = $5, ended_at = CASE WHEN $2 = 'queued' THEN NULL ELSE now() END,
                   worker_id = NULL, lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now() WHERE id = $1 RETURNING ${COLS}`, [run.id, status, kind, error, usage.cost_usd]);
         await event(run.id, run.org_id, run.attempt, status === "queued" ? "retry" : status, { error_kind: kind, error }, tx);
+        await endOfAttempt();
         return u!;
       }
       if (wb) await event(run.id, run.org_id, run.attempt, "workspace_written", wb, tx);
@@ -397,9 +426,9 @@ async function complete(runId: string, leaseToken: string, c: Completion): Promi
               worker_id = NULL, lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now()
         WHERE id = $1 RETURNING ${COLS}`, [run.id, status, kind, error, usage.cost_usd]);
     await event(run.id, run.org_id, run.attempt, status === "queued" ? "retry" : status, { error_kind: kind, error, cost_usd: usage.cost_usd }, tx);
+    await endOfAttempt();
     return u!;
   }));
-  await asPlatform(() => revokeRunTokens(r.id));
-  await releaseWorkspace(r.id);
+  await removeObjects(gone);
   return view(r);
 }

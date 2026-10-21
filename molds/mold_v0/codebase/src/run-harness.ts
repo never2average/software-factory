@@ -5,9 +5,12 @@
  *   1. claim       POST /api/worker/runs/claim (the fleet token) or claimRun() in-process: the run, its frozen job kind,
  *                  a lease token, a deadline, gateway env for the kind's providers, and the egress allowlist
  *   2. workspace   (kinds with workspace: true) check the workspace's latest snapshot out into an empty directory
- *   3. run         the kind's entry, a program in the pack, with node, in that directory, with an environment built from
+ *   3. run         the kind's entry, a program in (the run's own copy of) the pack, with node, in that directory, as a
+ *                  user kept for runs (runAs / OCTILLION_RUN_UID; never the runner's), with an environment built from
  *                  nothing: PATH, a private HOME, RUN_* (id, attempt, scope, targets, the output directory) and the
- *                  gateway env. Never the server's own environment (database URL, vault key, provider keys).
+ *                  gateway env. Never the runner's own environment (database URL, vault key, worker token), which the
+ *                  separate user cannot read either (/proc/<runner>/environ). When it ends, every process of that user
+ *                  is killed. Without a separate user the harness refuses to run, unless told (allowSameUser, tests).
  *                  Its stdout lines are events (a JSON line {"event": "<type>", ...} is that event; anything else "log").
  *                  Exit 0: done. Exit 75: an infrastructure failure (the engine retries while attempts remain). Else failed.
  *   4. heartbeat   every lease_seconds / 3; on cancel=true (cancelled, or past the deadline) the program is stopped
@@ -25,9 +28,9 @@
  * (setupScript in orchestrator/core/egress.ts: nftables/iptables by the agent's uid) closes that path, and runs are
  * not yet placed in sandbox VMs (this harness runs the program as a child process of the runner).
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createSocket } from "node:dgram";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, chownSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -128,7 +131,21 @@ export async function startRunProxy(hosts: string[], dir: string): Promise<RunPr
 // ---------- one run ----------
 
 export interface HarnessOptions {
-  /** Where a pack's files are (src/packs.ts packDir by default). */
+  /**
+   * The user the run's programs run as (and only they): a uid and gid kept for runs, never the runner's own. Then a
+   * program cannot read the runner's memory or environment (/proc/<runner>/environ is the runner's), its scratch is its
+   * own (mode 0700), and when the run ends every process of that user is killed, so nothing it started outlives it or
+   * touches the workspace while it is written back. Needs a runner started as root. One run at a time per user.
+   * Default: OCTILLION_RUN_UID / OCTILLION_RUN_GID.
+   */
+  runAs?: { uid: number; gid: number };
+  /**
+   * Run the programs as the runner's own user, without the protection above (offline tests only). A program can then
+   * read the runner's environment (its worker token; on the server, the vault key and database address) and start
+   * processes that outlive the run. Refused unless set: the harness will not run a program unisolated by default.
+   */
+  allowSameUser?: boolean;
+  /** Where a pack's files are (src/packs.ts packDir by default). The run gets its own copy. */
   packDir?: (pack: string) => string;
   /** "proxy" (default): the run's egress proxy; "off": none (tests without network rules only). */
   egress?: "proxy" | "off";
@@ -140,18 +157,74 @@ export interface HarnessOptions {
   onProxyLog?: (log: string) => void;
 }
 
+export class HarnessConfigError extends Error {}
+/** The isolation a runner uses: a dedicated user, or (tests) an explicit opt-out. Throws when neither. */
+export function runIsolation(opts: HarnessOptions): { uid: number; gid: number } | null {
+  const env = process.env.OCTILLION_RUN_UID ? { uid: Number(process.env.OCTILLION_RUN_UID), gid: Number(process.env.OCTILLION_RUN_GID ?? process.env.OCTILLION_RUN_UID) } : null;
+  const as = opts.runAs ?? env;
+  if (as) {
+    if (!Number.isSafeInteger(as.uid) || !Number.isSafeInteger(as.gid) || as.uid <= 0 || as.gid <= 0) throw new HarnessConfigError("runAs: a uid and gid other than root");
+    if (process.getuid?.() !== 0) throw new HarnessConfigError("runAs needs a runner started as root (to switch to the run's user)");
+    if (as.uid === process.getuid?.()) throw new HarnessConfigError("runAs: the run's user must not be the runner's");
+    return as;
+  }
+  if (opts.allowSameUser) return null;
+  throw new HarnessConfigError("the workspace harness runs programs only as a dedicated user (runAs, OCTILLION_RUN_UID): set one, or allowSameUser in offline tests");
+}
+
 const INFRA_EXIT = 75;
 const inside = (root: string, rel: string) => {
   const p = path.resolve(root, rel);
   if (p !== root && !p.startsWith(root + path.sep)) throw new Error(`${rel} is outside the pack`);
   return p;
 };
+const chownTree = (dir: string, uid: number, gid: number) => {
+  chownSync(dir, uid, gid);
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isSymbolicLink()) continue;
+    if (e.isDirectory()) chownTree(p, uid, gid); else chownSync(p, uid, gid);
+  }
+};
+/** Every process of the run's user, gone (kill -KILL -1 as that user signals all of its processes but itself). */
+const killUser = (as: { uid: number; gid: number }) => { spawnSync("/bin/kill", ["-KILL", "-1"], { uid: as.uid, gid: as.gid, stdio: "ignore", timeout: 10_000 }); };
+
+/** A program of the run, in its own process group; resolves with its exit code once it and its group are gone. */
+function runProgram(file: string, args: string[], o: { cwd: string; env: Record<string, string>; as: { uid: number; gid: number } | null;
+  onStdout?: (line: string) => void; onStderr?: (text: string) => void; holder: { child: ChildProcess | null }; timeoutMs?: number }): Promise<number | null> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [file, ...args], { cwd: o.cwd, env: o.env, stdio: ["ignore", "pipe", "pipe"], detached: true,
+      ...(o.as ? { uid: o.as.uid, gid: o.as.gid } : {}) });
+    o.holder.child = child;
+    let buf = "", done = false;
+    const finish = (c: number | null) => {
+      if (done) return; done = true;
+      clearTimeout(t);
+      killGroup(child, "SIGKILL"); // nothing the program left running in its group may touch the workspace after it ends
+      if (buf.trim()) o.onStdout?.(buf);
+      // Its output streams may be held open by a process outside its group: do not wait on them.
+      child.stdout?.destroy(); child.stderr?.destroy();
+      resolve(c);
+    };
+    const t = o.timeoutMs ? setTimeout(() => { killGroup(child, "SIGKILL"); }, o.timeoutMs) : setTimeout(() => {}, 0);
+    child.stdout!.on("data", (d: Buffer) => {
+      buf += d.toString("utf8");
+      const lines = buf.split("\n"); buf = lines.pop() ?? "";
+      for (const l of lines) if (l.trim()) o.onStdout?.(l);
+    });
+    child.stderr!.on("data", (d: Buffer) => o.onStderr?.(d.toString("utf8")));
+    child.on("error", () => finish(INFRA_EXIT));
+    // "exit", not "close": a grandchild holding stdout open must not keep the run waiting.
+    child.on("exit", (c, sig) => setTimeout(() => finish(c ?? (sig ? 128 : null)), 200));
+  });
+}
 
 /** Carry out one claimed run, from checkout to completion. Never throws for the run's own failures: it completes them. */
 export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, opts: HarnessOptions = {}): Promise<RunView | null> {
+  const as = runIsolation(opts);
   const run = claim.run, spec = run.spec, lease = claim.lease_token;
   const scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `run-${run.id.slice(4, 12)}-`));
-  const work = path.join(scratch, "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home");
+  const work = path.join(scratch, "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home"), pack = path.join(scratch, "pack");
   for (const d of [work, out, home]) mkdirSync(d, { recursive: true });
   let proxy: RunProxy | null = null;
   const proc: { child: ChildProcess | null } = { child: null };
@@ -168,10 +241,10 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     await flush();
     try { return await client.complete(run.id, lease, c); }
     catch (e) {
-      const status = (e as { status?: number }).status;
+      const status = (e as { status?: number }).status ?? 0;
       if (status === 409) return null;
-      // Results the engine refuses (a record that is not there, a reference to another workspace's): the run failed.
-      if (status === 400 && c.outcome === "succeeded")
+      // Results the engine refuses (a record that is not there, another workspace's, listed twice, too many): the run failed.
+      if (status >= 400 && status < 500 && c.outcome === "succeeded")
         return client.complete(run.id, lease, { outcome: "failed", error_kind: "run", error: `results refused: ${(e as Error).message}`.slice(0, 2000) });
       throw e;
     }
@@ -180,6 +253,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     stopped ??= why;
     const c = proc.child;
     if (c && c.exitCode === null) { killGroup(c, "SIGTERM"); setTimeout(() => { if (c.exitCode === null) killGroup(c, "SIGKILL"); }, 3000).unref(); }
+    if (as) setTimeout(() => killUser(as), 3000).unref();
   };
   const beat = setInterval(async () => {
     try {
@@ -193,14 +267,18 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   }, Math.max(1000, (claim.lease_seconds * 1000) / 3));
   const deadline = setTimeout(() => stop("deadline"), Math.max(0, new Date(claim.deadline_at).getTime() - Date.now()));
   try {
-    let pdir: string, entry: string, validator: string | null;
+    let entry: string, validator: string | null;
     try {
-      pdir = path.resolve((opts.packDir ?? (await import("./packs.js")).packDir)(run.pack));
-      entry = inside(pdir, spec.entry);
-      validator = spec.validator ? inside(pdir, spec.validator) : null;
+      // The run gets its own copy of the pack's files (the pack directory itself may be unreadable to the run's user).
+      const pdir = path.resolve((opts.packDir ?? (await import("./packs.js")).packDir)(run.pack));
+      inside(pdir, spec.entry); if (spec.validator) inside(pdir, spec.validator);
+      cpSync(pdir, pack, { recursive: true, dereference: false, filter: (src) => !lstatSync(src).isSymbolicLink() });
+      entry = inside(pack, spec.entry);
+      validator = spec.validator ? inside(pack, spec.validator) : null;
       if (!existsSync(entry)) throw new Error(`the kind's entry ${spec.entry} is not in the pack`);
       if (spec.workspace) await client.checkout(run.id, lease, work);
       if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"));
+      if (as) { chownTree(pack, as.uid, as.gid); for (const d of [work, out, home]) chownTree(d, as.uid, as.gid); chmodSync(scratch, 0o711); }
     } catch (e) {
       return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` });
     }
@@ -210,35 +288,22 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
       ...claim.gateway.env, ...(proxy?.env ?? {}),
     };
-    const code = await new Promise<number | null>((resolve) => {
-      // Its own process group, so a stop (and the end of the run) takes whatever it started with it.
-      const child = spawn(process.execPath, [entry], { cwd: work, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-      proc.child = child;
-      let buf = "";
-      child.stdout!.on("data", (d: Buffer) => {
-        buf += d.toString("utf8");
-        const lines = buf.split("\n"); buf = lines.pop() ?? "";
-        for (const l of lines) if (l.trim() && pending.length < 5000) pending.push(lineEvent(l));
-      });
-      let err = "";
-      child.stderr!.on("data", (d: Buffer) => { err = (err + d.toString("utf8")).slice(-4000); });
-      child.on("error", () => resolve(INFRA_EXIT));
-      child.on("close", (c) => {
-        killGroup(child, "SIGKILL"); // nothing the program left running may touch the workspace after it ends
-        if (buf.trim()) pending.push(lineEvent(buf)); if (err.trim()) pending.push({ type: "stderr", data: { tail: err.slice(-2000) } }); resolve(c);
-      });
-    });
+    let err = "";
+    const code = await runProgram(entry, [], { cwd: work, env, as, holder: proc,
+      onStdout: (l) => { if (pending.length < 5000) pending.push(lineEvent(l)); }, onStderr: (t) => { err = (err + t).slice(-4000); } });
+    if (as) killUser(as); // whatever the program started, in any group or session, ends with it
+    if (err.trim()) pending.push({ type: "stderr", data: { tail: err.slice(-2000) } });
     if (stopped === "lease") return null;
     if (stopped === "cancelled") return await complete({ outcome: "failed", error_kind: "run", error: "cancelled" });
     if (stopped === "deadline") return await complete({ outcome: "failed", error_kind: "timeout", error: "the run reached its deadline" });
     if (code === INFRA_EXIT) return await complete({ outcome: "failed", error_kind: "infrastructure", error: "the run reported an infrastructure failure (exit 75)" });
     if (code !== 0) return await complete({ outcome: "failed", error_kind: "run", error: `the run exited with ${code}` });
     if (validator) {
-      const v = await new Promise<number | null>((resolve) => {
-        const p = spawn(process.execPath, [validator!, work, out], { cwd: work, env: { PATH: env.PATH!, HOME: home, LANG: "C.UTF-8", RUN_ID: run.id }, stdio: "ignore" });
-        const t = setTimeout(() => p.kill("SIGKILL"), 600_000);
-        p.on("error", () => resolve(null)); p.on("close", (c) => { clearTimeout(t); resolve(c); });
-      });
+      const v = await runProgram(validator, [work, out], { cwd: work, env: { PATH: env.PATH!, HOME: home, LANG: "C.UTF-8", RUN_ID: run.id }, as, holder: proc,
+        timeoutMs: Math.min(600_000, Math.max(1000, new Date(claim.deadline_at).getTime() - Date.now())) });
+      if (as) killUser(as);
+      if (stopped === "lease") return null;
+      if (stopped) return await complete({ outcome: "failed", error_kind: stopped === "deadline" ? "timeout" : "run", error: stopped === "deadline" ? "the run reached its deadline" : "cancelled" });
       if (v !== 0) return await complete({ outcome: "failed", error_kind: "validation", error: `validation exited with ${v}: the workspace is not written back` });
     }
     let results: unknown[] = [];
@@ -253,12 +318,13 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         const status = (e as { status?: number }).status;
         if (status === 409) return null;
         // A workspace the run left unpackable (a symbolic link, a special file, too big) is the run's failure, not the infrastructure's.
-        return await complete({ outcome: "failed", error_kind: status === 400 ? "run" : "infrastructure", error: `write back: ${(e as Error).message}` });
+        return await complete({ outcome: "failed", error_kind: status === 400 || status === 413 ? "run" : "infrastructure", error: `write back: ${(e as Error).message}` });
       }
     }
     return await complete({ outcome: "succeeded", results });
   } finally {
     clearInterval(beat); clearTimeout(deadline);
+    if (as) killUser(as);
     proxy?.stop();
     if (proxy && opts.onProxyLog) { try { opts.onProxyLog(readFileSync(proxy.log, "utf8")); } catch { opts.onProxyLog(""); } }
     rmSync(scratch, { recursive: true, force: true });
@@ -280,13 +346,18 @@ function lineEvent(line: string): { type: string; data?: Record<string, unknown>
   return { type: "log", data: { line: l.slice(0, 2000) } };
 }
 
-/** Claim and carry out runs until none is left (a runner process; scripts/run-worker.ts). Returns how many ran. */
+/**
+ * Claim and carry out runs until none is left (the loop a runner process would run; no such process is deployed yet).
+ * One run's failure to complete (the engine unreachable) never stops the loop: that run's lease lapses and it is retried.
+ */
 export async function drainRuns(client: RunnerClient, opts: HarnessOptions & { kinds?: string[]; max?: number } = {}): Promise<number> {
+  runIsolation(opts); // refuse before claiming anything
   let n = 0;
   for (; n < (opts.max ?? Infinity); n++) {
     const c = await client.claim(opts.kinds);
     if (!c) break;
-    await runWorkspaceHarness(client, c, opts);
+    try { await runWorkspaceHarness(client, c, opts); }
+    catch (e) { console.error(`run ${c.run.id}: ${(e as Error).message}`); }
   }
   return n;
 }

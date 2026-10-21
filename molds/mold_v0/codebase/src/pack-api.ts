@@ -168,8 +168,12 @@ export class PackError extends Error {
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "lowercase letters, digits and _, starting with a letter");
 const envName = z.string().regex(/^[A-Z][A-Z0-9_]{1,62}$/, "an environment variable name");
-/** A host a run may reach: HTTPS on port 443 only (the egress proxy's rule); "*.example.com" also allows its subdomains. */
-const host = z.string().regex(/^(\*\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\.[a-z0-9-]+)+$/i, "a host name (HTTPS on port 443; *.example.com for its subdomains)");
+/**
+ * A host a run may reach: HTTPS on port 443 only. The egress proxy (orchestrator/core/egress.ts, shared with the
+ * sandboxes) allows a listed host and every subdomain of it, so "api.example.com" also allows "x.api.example.com";
+ * "*.example.com" is accepted and means "example.com" and its subdomains.
+ */
+const host = z.string().regex(/^(\*\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\.[a-z0-9-]+)+$/i, "a host name (HTTPS on port 443; a host allows its subdomains too)");
 const packFile = z.string().regex(/^[a-z0-9_\-][a-z0-9_\-/.]*\.m?js$/i, "a .js or .mjs file inside the pack").refine((p) => !p.split("/").includes(".."), "a file inside the pack");
 
 /**
@@ -215,6 +219,7 @@ export const RecordAreaSchema = z.object({
   list_columns: z.array(name).max(8).optional(),
   links: z.array(z.object({ field: name, area: name }).strict()).optional(),
 }).strict()
+  .refine((a) => a.name !== "areas", "areas is reserved (the list of areas at /api/records/areas)")
   .refine((a) => !(a.role === "asset" && a.scope === "platform"), "an asset area holds a workspace's private data: workspace scope only")
   .refine((a) => new Set(a.fields.map((f) => f.name)).size === a.fields.length, "a field is declared twice")
   .refine((a) => (a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c)), "list_columns must name declared fields")

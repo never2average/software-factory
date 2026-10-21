@@ -39,7 +39,7 @@ try {
   const kind = (name: string, extra: Record<string, unknown>) => ({ name, runner: "workspace-harness", workspace: true, lease_seconds: 15, entry: "notes.mjs", validator: "accept.mjs", ...extra });
   const fixture = definePack({
     id: "fixture_store",
-    jobKinds: [kind("notes", {}), kind("notes_rejected", { validator: "reject.mjs" }), kind("notes_failing", { entry: "fail.mjs" }), kind("notes_stateless", { workspace: false })] as never,
+    jobKinds: [kind("notes", {}), kind("notes_rejected", { validator: "reject.mjs" }), kind("notes_failing", { entry: "fail.mjs" }), kind("notes_stateless", { workspace: false }), kind("notes_same", { entry: "noop.mjs", validator: undefined })] as never,
     tools: [defineTool({ name: "fixture_note_run", description: "Start a notes run (test).", inputSchema: { kind: z.string(), text: z.string().optional(), link: z.string().optional() },
       handler: async (_ws, { kind: k, text, link }, { runs: r }) => r.start(k, { targets: { text, link } }) })],
   });
@@ -54,7 +54,7 @@ try {
   const runNext = async (kinds = ["fixture_store/notes"]) => {
     const c = await client.claim(kinds);
     assert.ok(c, "a run to claim");
-    return { claim: c!, view: await harness.runWorkspaceHarness(client, c!, { egress: "off" }) };
+    return { claim: c!, view: await harness.runWorkspaceHarness(client, c!, { allowSameUser: true, egress: "off" }) };
   };
   const latest = (o: number) => store.latestSnapshot(db, o, "fixture_store");
   const seen = async (runId: string) => (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'seen' ORDER BY id DESC LIMIT 1", [runId]))[0]?.data;
@@ -109,6 +109,12 @@ try {
       assert.deepEqual([after.version, after.manifest_sha256], [before.version, before.manifest_sha256], "the version is unchanged");
       assert.equal(await objects(), n0, "no object was left behind");
       assert.equal((await db.query("SELECT 1 FROM workspace_snapshots WHERE org_id = $1 AND status = 'staged'", [A.orgId])).length, 0, "no stage is left");
+      // A run that changes nothing: no new version, and its staged object is removed (the review's orphan).
+      await start(ca, "notes_same");
+      const same = await runNext(["fixture_store/notes_same"]);
+      assert.equal(same.view?.status, "succeeded");
+      assert.equal((await latest(A.orgId))!.version, before.version, "an unchanged workspace makes no version");
+      assert.equal(await objects(), n0, "and leaves no object behind");
       // A run that does not use the store leaves it alone too.
       await start(ca, "notes_stateless", { text: "stateless" });
       assert.equal((await runNext(["fixture_store/notes_stateless"])).view?.status, "succeeded");
@@ -125,7 +131,7 @@ try {
       const rb = await start(cb, "notes", { text: `B1 ${STAMP}` });
       const cB = (await client.claim(["fixture_store/notes"]))!;
       assert.equal(cB.run.id, rb.id, "B's run is not held up by A's lease");
-      assert.equal((await harness.runWorkspaceHarness(client, cB, { egress: "off" }))?.status, "succeeded");
+      assert.equal((await harness.runWorkspaceHarness(client, cB, { allowSameUser: true, egress: "off" }))?.status, "succeeded");
       assert.equal((await latest(B.orgId))!.version, 1);
       assert.equal((await runs.getRun(A.orgId, r4.id))?.status, "queued");
       // The first run's runner dies: its lease lapses, the waiting run takes the store, the old runner cannot write.
@@ -138,12 +144,26 @@ try {
       writeFileSync(path.join(dir, "ws", "notes.txt"), "stale writer\n");
       await assert.rejects(client.stage(c3.run.id, c3.lease_token, path.join(dir, "ws")), /lease is not yours/, "the old runner cannot stage");
       await assert.rejects(runs.completeRun(r3.id, c3.lease_token, { outcome: "succeeded", results: [] }), /lease is not yours/, "nor complete");
-      assert.equal((await harness.runWorkspaceHarness(client, c4, { egress: "off" }))?.status, "succeeded");
-      for (let i = 0; i < 2; i++) { const c = await client.claim(["fixture_store/notes"]); if (c) await harness.runWorkspaceHarness(client, c, { egress: "off" }); }
+      assert.equal((await harness.runWorkspaceHarness(client, c4, { allowSameUser: true, egress: "off" }))?.status, "succeeded");
+      for (let i = 0; i < 2; i++) { const c = await client.claim(["fixture_store/notes"]); if (c) await harness.runWorkspaceHarness(client, c, { allowSameUser: true, egress: "off" }); }
       assert.deepEqual([(await runs.getRun(A.orgId, r3.id))?.status, (await runs.getRun(A.orgId, r4.id))?.status], ["succeeded", "succeeded"], "both runs finish, one after the other");
       const notes = (await seen(r4.id)).notes as string;
       assert.ok(!notes.includes("stale writer"), "the lapsed runner's write never landed");
       assert.equal((await latest(A.orgId))!.version, 4, "versions 3 and 4, one per run");
+      // The review's case: one workspace's many waiting runs never hide another workspace's run.
+      const held = await start(ca, "notes", { text: "holder" });
+      const ch = (await client.claim(["fixture_store/notes"]))!;
+      assert.equal(ch.run.id, held.id);
+      process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE = "40";
+      const waiting = [];
+      for (let i = 0; i < 25; i++) waiting.push((await start(ca, "notes", { text: `w${i}` })).id);
+      delete process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE;
+      const other = await start(cb, "notes", { text: "B behind A's queue" });
+      const cOther = (await client.claim())!;
+      assert.equal(cOther?.run.id, other.id, "B's run is claimed past 25 of A's waiting runs");
+      await runs.completeRun(cOther.run.id, cOther.lease_token, { outcome: "failed", error_kind: "run", error: "test" });
+      await runs.completeRun(ch.run.id, ch.lease_token, { outcome: "failed", error_kind: "run", error: "test" });
+      await db.query("UPDATE runs SET status = 'cancelled', ended_at = now() WHERE id = ANY ($1::text[]) AND status = 'queued'", [waiting]);
       console.log("✓ one writer per workspace store: a second run waits for the lease; another workspace's run does not; a lapsed runner cannot write");
     }
 
@@ -225,7 +245,7 @@ try {
       const c = (await viaHttp.claim(["fixture_store/notes"]))!;
       const get = (lease: string) => http.req("GET", `/api/worker/runs/${c.run.id}/workspace`, { authorization: `Bearer ${W}`, "x-run-lease": lease });
       assert.equal((await get("orl_forged")).status, 409, "the lease token is required");
-      const v = await harness.runWorkspaceHarness(viaHttp, c, { egress: "off" });
+      const v = await harness.runWorkspaceHarness(viaHttp, c, { allowSameUser: true, egress: "off" });
       assert.equal(v?.status, "succeeded", `over HTTP: ${JSON.stringify(v)}`);
       assert.ok((await seen(c.run.id)).notes.includes("A1"), "checked out over HTTP");
       const lastA = (await latest(A.orgId))!;

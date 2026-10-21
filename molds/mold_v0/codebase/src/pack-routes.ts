@@ -57,7 +57,7 @@ export function packAppRouter(): Router {
         if (needs && !canAccount(s.accountRole, needs)) throw new PackError(accountRefusal(needs).message, 403);
         const workspace = { id: s.org, slug: s.slug, name: null, userId: s.user, role: s.accountRole };
         const { workspaceRuns } = await import("./runs.js");
-        return route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), records: workspaceRecords(p.id, s.org), runs: workspaceRuns(p.id, s.org, s.user),
+        return route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), records: workspaceRecords(p.id, s.org), runs: workspaceRuns(p.id, s.org, s.user, { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole }),
           params: params(req), query: query(req), body: req.body });
       }));
     }
