@@ -56,7 +56,9 @@ export function packAppRouter(): Router {
         const s = res.locals.session as Session;
         if (needs && !canAccount(s.accountRole, needs)) throw new PackError(accountRefusal(needs).message, 403);
         const workspace = { id: s.org, slug: s.slug, name: null, userId: s.user, role: s.accountRole };
-        return route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), records: workspaceRecords(p.id, s.org), params: params(req), query: query(req), body: req.body });
+        const { workspaceRuns } = await import("./runs.js");
+        return route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), records: workspaceRecords(p.id, s.org), runs: workspaceRuns(p.id, s.org, s.user),
+          params: params(req), query: query(req), body: req.body });
       }));
     }
     r.use(`/${p.id}`, pr);

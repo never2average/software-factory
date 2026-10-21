@@ -16,6 +16,9 @@
  *                list_records and get_record, with no pack code (src/record-areas.ts); its rows live in the shell's
  *                platform_records (platform scope: read-only to customers) or workspace_records (workspace scope,
  *                row-level security); a handler reaches them through ctx.records
+ *   jobKinds     wired (mold_v0-041): ctx.runs.start(kind, ...) queues a run of the pack's own kind for the calling
+ *                workspace; a runner claims it (src/runs.ts, /api/worker/runs) and the workspace harness runs it
+ *                (src/run-harness.ts); results become run_results rows checked against the record areas
  *   credentials, schedules, onboarding
  *                declared and validated here, listed by packRegistry(); wired by later tickets (credential vault 034,
  *                scheduler 035, onboarding checklist 011)
@@ -78,7 +81,33 @@ export interface PlatformRecords {
   delete(area: string, key: string): Promise<boolean>;
 }
 
-export interface PackToolContext { pack: string; workspace: Workspace; db: PackDb; records: WorkspaceRecords }
+/** A run of a job kind (mold_v0-041), as its workspace sees it. */
+export interface RunView {
+  id: string; pack: string; kind: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  attempt: number; max_attempts: number;
+  scope: Record<string, unknown>; targets: Record<string, unknown>;
+  cost_usd: number; budget_usd: number;
+  error_kind: string | null; error: string | null;
+  cancel_requested: boolean;
+  created_at: string; started_at: string | null; ended_at: string | null;
+}
+/** One finding of a run: a check record x an asset record (x a source record), with its status. */
+export interface RunResultRow {
+  check: { area: string; key: string }; asset: { area: string; key: string } | null; source: { area: string; key: string } | null;
+  status: "pass" | "fail" | "error" | "not_applicable" | "unknown";
+  finding_fingerprint: string | null; evidence_ref: string | null; detail: Record<string, unknown>;
+}
+/** Runs of this pack's job kinds, for the calling workspace only (the workspace comes from the caller, never input). */
+export interface WorkspaceRuns {
+  start(kind: string, input?: { scope?: Record<string, unknown>; targets?: Record<string, unknown> }): Promise<RunView>;
+  get(id: string): Promise<RunView | null>;
+  list(opts?: { limit?: number }): Promise<RunView[]>;
+  results(id: string): Promise<RunResultRow[]>;
+  cancel(id: string): Promise<RunView>;
+}
+
+export interface PackToolContext { pack: string; workspace: Workspace; db: PackDb; records: WorkspaceRecords; runs: WorkspaceRuns }
 
 /** What a tool may return: any JSON value (shown as structured content and text), or a full MCP tool result. */
 export type PackToolResult = unknown;
@@ -109,7 +138,7 @@ export type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
 
 interface RouteBase { method: HttpMethod; path: string }
 export interface WorkspaceRouteContext {
-  pack: string; workspace: Workspace; db: PackDb; records: WorkspaceRecords;
+  pack: string; workspace: Workspace; db: PackDb; records: WorkspaceRecords; runs: WorkspaceRuns;
   params: Record<string, string>; query: Record<string, unknown>; body: unknown;
 }
 export interface AdminRouteContext {
@@ -139,18 +168,35 @@ export class PackError extends Error {
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "lowercase letters, digits and _, starting with a letter");
 const envName = z.string().regex(/^[A-Z][A-Z0-9_]{1,62}$/, "an environment variable name");
-const host = z.string().regex(/^(\*\.)?[a-z0-9.-]+(:\d+)?$/i, "a host name");
+/** A host a run may reach: HTTPS on port 443 only (the egress proxy's rule); "*.example.com" also allows its subdomains. */
+const host = z.string().regex(/^(\*\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\.[a-z0-9-]+)+$/i, "a host name (HTTPS on port 443; *.example.com for its subdomains)");
+const packFile = z.string().regex(/^[a-z0-9_\-][a-z0-9_\-/.]*\.m?js$/i, "a .js or .mjs file inside the pack").refine((p) => !p.split("/").includes(".."), "a file inside the pack");
 
-/** A run kind (wired by mold_v0-041): what runs, in which image, for how long, reaching which hosts. */
+/**
+ * A run kind (wired by mold_v0-041; src/runs.ts, src/run-harness.ts): what runs, for how long, at what cost, reaching
+ * which hosts. A run of it gets a gateway token for `providers` that lives `token_lifetime_seconds` (the attempt's
+ * deadline: the token never expires before the run is stopped), a lease it renews by heartbeat every
+ * `lease_seconds / 3`, up to `max_attempts` attempts when the infrastructure fails, and a spend limit `budget_usd`
+ * across all its attempts, enforced by the gateway.
+ *   runner     "workspace-harness": the harness checks the workspace out (when `workspace`), runs `entry` with node in
+ *              it, then `validator` (exit 0 means valid), and writes the workspace back only then (mold_v0-033)
+ *   entry      the run's program, a file inside the pack; exit 0 done, 75 an infrastructure failure (retried), else failed
+ *   egress     the hosts the run may reach besides the gateway, through the run's egress proxy
+ */
 export const JobKindSchema = z.object({
   name,
-  runner: z.string().min(1),
+  runner: z.literal("workspace-harness"),
   image: z.string().min(1).optional(),
-  token_lifetime_seconds: z.number().int().min(60).max(24 * 3600).optional(),
-  budget_usd: z.number().positive().optional(),
-  egress: z.array(host).default([]),
-  /** The result validator: a module path inside the pack (run by the engine once it exists). */
-  validator: z.string().min(1).optional(),
+  entry: packFile,
+  validator: packFile.optional(),
+  providers: z.array(z.string().regex(/^[a-z][a-z0-9_-]{1,40}$/, "a gateway provider slug")).max(8).default([]),
+  token_lifetime_seconds: z.number().int().min(60).max(24 * 3600).default(3600),
+  lease_seconds: z.number().int().min(15).max(3600).default(120),
+  max_attempts: z.number().int().min(1).max(10).default(3),
+  budget_usd: z.number().positive().max(10_000).default(5),
+  egress: z.array(host).max(50).default([]),
+  /** The workspace store (mold_v0-033): check the workspace's snapshot out before the run, write it back after. */
+  workspace: z.boolean().default(false),
 }).strict();
 
 const field = z.object({ name, label: z.string().min(1).max(80), type: z.enum(["text", "number", "date", "boolean", "json", "link"]).default("text") }).strict();
