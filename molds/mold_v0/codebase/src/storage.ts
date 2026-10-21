@@ -1,5 +1,7 @@
 import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname as pathDirname, join as pathJoin, relative as pathRelative, resolve as pathResolve, sep as pathSep } from "node:path";
 
 /**
  * Off-machine object storage: one private Cloudflare R2 bucket (R2_BUCKET, today `octillion-backup`) with one prefix per
@@ -11,6 +13,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
  *   reports/org-<id>/<simulation>/<stamp>.{pdf,html}    run reports (reports.ts), kept
  *   diffs/org-<id>/<simulation>/<session>.diff.gz  reserved: workspace diffs
  *   exports/org-<id>/...                           reserved: customer data exports
+ *   workspaces/org-<id>/<store>/<snapshot>.wse     workspace snapshots, sealed with the org's data key (mold_v0-033)
  *   ops/...                                        internal one-offs
  *
  * Customer data always sits under its org's prefix, so access can be scoped per org by construction. The org id (not
@@ -42,11 +45,12 @@ const month = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).
 export const stamp = (d = new Date()) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z").replace(/^(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
 
 export const keys = {
-  orgPrefix: (kind: "transcripts" | "research" | "reports" | "diffs" | "exports", orgId: number) => `${kind}/org-${Math.trunc(orgId)}/`,
+  orgPrefix: (kind: "transcripts" | "research" | "reports" | "diffs" | "exports" | "workspaces", orgId: number) => `${kind}/org-${Math.trunc(orgId)}/`,
   transcript: (orgId: number, sessionId: string, endedAt: Date) => `transcripts/org-${Math.trunc(orgId)}/${month(endedAt)}/${safe(sessionId)}.jsonl.gz`,
   research: (orgId: number, researchId: string) => `research/org-${Math.trunc(orgId)}/${safe(researchId)}.json`,
   report: (orgId: number, simulationId: string, at: Date, ext: "pdf" | "html") => `reports/org-${Math.trunc(orgId)}/${safe(simulationId)}/${stamp(at)}.${ext}`,
   diff: (orgId: number, simulationId: string, sessionId: string) => `diffs/org-${Math.trunc(orgId)}/${safe(simulationId)}/${safe(sessionId)}.diff.gz`,
+  workspace: (orgId: number, store: string, snapshotId: number) => `workspaces/org-${Math.trunc(orgId)}/${safe(store)}/${Math.trunc(snapshotId)}.wse`,
 };
 
 export async function putObject(key: string, body: Buffer | string, contentType: string, meta: Record<string, string> = {}): Promise<void> {
@@ -89,4 +93,58 @@ export async function signedUrl(key: string, seconds = 3600, filename?: string):
   return getSignedUrl(s3(), new GetObjectCommand({ Bucket: bucket(), Key: key,
     ...(filename ? { ResponseContentDisposition: `attachment; filename="${filename.replace(/["\\]/g, "")}"` } : {}) }),
     { expiresIn: Math.min(Math.max(60, seconds), 7 * 24 * 3600) });
+}
+
+// ---------- one interface over R2 or a local directory (mold_v0-033) ----------
+
+/**
+ * The object store a feature that must work offline uses (the workspace store, mold_v0-033): the bucket above when R2
+ * is configured, else a local directory when OCTILLION_STORAGE_DIR is set (one machine, tests). Same keys, same layout.
+ * Neither configured: it refuses, rather than keep data somewhere nobody chose.
+ */
+export interface ObjectStore {
+  kind: "r2" | "local";
+  put(key: string, body: Buffer, contentType: string): Promise<void>;
+  get(key: string): Promise<Buffer | null>;
+  list(prefix: string): Promise<string[]>;
+  remove(keys: string[]): Promise<void>;
+}
+
+const localDir = () => (env.OCTILLION_STORAGE_DIR ? pathResolve(env.OCTILLION_STORAGE_DIR) : null);
+const localPath = (root: string, key: string) => {
+  if (!/^[A-Za-z0-9._\-/]+$/.test(key) || key.split("/").some((x) => !x || x === "." || x === "..")) throw new Error(`unsafe storage key: ${key.slice(0, 80)}`);
+  return pathJoin(root, key);
+};
+
+export function objectStore(): ObjectStore {
+  if (storageEnabled()) return {
+    kind: "r2",
+    put: (key, body, type) => putObject(key, body, type),
+    get: (key) => getObject(key),
+    list: async (prefix) => (await listKeys(prefix)).map((o) => o.key),
+    remove: (list) => deleteKeys(list),
+  };
+  const root = localDir();
+  if (!root) throw new Error("no object store: configure R2 (R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) or OCTILLION_STORAGE_DIR");
+  return {
+    kind: "local",
+    put: async (key, body) => { const p = localPath(root, key); await mkdir(pathDirname(p), { recursive: true }); await writeFile(p, body, { mode: 0o600 }); },
+    get: async (key) => { try { return await readFile(localPath(root, key)); } catch (e) { if ((e as { code?: string }).code === "ENOENT") return null; throw e; } },
+    list: async (prefix) => {
+      const base = localPath(root, prefix.replace(/\/$/, ""));
+      const out: string[] = [];
+      const walk = async (dir: string): Promise<void> => {
+        let entries;
+        try { entries = await readdir(dir, { withFileTypes: true }); } catch (e) { if ((e as { code?: string }).code === "ENOENT") return; throw e; }
+        for (const e of entries) {
+          const p = pathJoin(dir, e.name);
+          if (e.isDirectory()) await walk(p);
+          else if (e.isFile()) out.push(pathRelative(root, p).split(pathSep).join("/"));
+        }
+      };
+      await walk(base);
+      return out.sort();
+    },
+    remove: async (list) => { for (const k of list) await rm(localPath(root, k), { force: true }); },
+  };
 }

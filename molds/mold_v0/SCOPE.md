@@ -76,9 +76,9 @@ turns it into shell, or builds it where nothing exists yet.
   allowlist, opt-in today: private runs on the sandbox runner only), and `orchestrator/worker.ts` is the deterministic worker. Harnesses are pinned in
   `harnesses/registry.json`, adapted by `orchestrator/harnesses/adapters.ts`, built by `orchestrator/images/`. The
   admin Compute page reads `src/compute*.ts`; failure classes are `src/error-classes.ts`.
-- **Generalised by.** mold_v0-041 (a generic `runs` and `run_results` model beside the session queue, a
+- **Generalised by.** mold_v0-041, **built** (a generic `runs` and `run_results` model beside the session queue, a
   workspace-harness runner, per-kind token lifetime and budget, cost per run from gateway usage, the per-run egress
-  allowlist under test), mold_v0-018 (concurrency per workspace and run budget per run kind). Run kinds come from
+  allowlist under test; `src/runs.ts`, `src/run-harness.ts`, `/api/worker/runs`), mold_v0-018 (concurrency per workspace and run budget per run kind). Run kinds come from
   packs (mold_v0-038).
 
 ### Inference gateway and metering
@@ -87,8 +87,8 @@ turns it into shell, or builds it where nothing exists yet.
   (`gateway_tokens`), the credential broker, session and org budgets. Providers include `src/vertex.ts`. Each request
   is priced by `src/usage.ts` from `model_prices` into `gateway_usage` and `gateway_model_usage`; model spend for
   admins is `src/spend.ts` and `src/spend-usage.ts`; per-account budgets and throughput are `src/limits.ts`.
-- **Generalised by.** mold_v0-041 (token lifetime per run kind, so a long run's token does not expire mid-run; cost per
-  run), mold_v0-008 (usage pages per run, member and workspace, in neutral words).
+- **Generalised by.** mold_v0-041, **built** (token lifetime per run kind, so a long run's token does not expire
+  mid-run; cost per run; a run's budget across its attempts), mold_v0-008 (usage pages per run, member and workspace, in neutral words).
 
 ### Vaults, including per-workspace credentials
 
@@ -107,9 +107,9 @@ turns it into shell, or builds it where nothing exists yet.
   `src/archive.ts` copies finished traces and research there. Raw transcripts are `src/transcripts.ts` (ClickHouse,
   or `transcript_events` in Postgres for local runs). `src/db.ts` is the query interface over Postgres or an embedded
   one for tests. A run's working files live and die with its sandbox.
-- **Generalised by.** mold_v0-033 (a workspace store: versioned per-workspace snapshots with a sha256 manifest,
-  sealed with the workspace data key, checked out before a run, written back only when the run's validation passes, one
-  writer per workspace under a lease).
+- **Generalised by.** mold_v0-033, **built** (a workspace store: versioned per-workspace snapshots with a sha256
+  manifest, sealed with the workspace data key, checked out before a run, written back only when the run's validation
+  passes, one writer per workspace under a lease; `src/workspace-store.ts`, `src/storage.ts` `objectStore()`).
 
 ### Record areas
 
@@ -129,9 +129,9 @@ status, finding fingerprint, evidence reference).
   private rows (`src/library.ts`, `src/private.ts`, sealed by `src/orgcrypto.ts`), seeded from `vault/` by
   `src/vault.ts`. The console already has a generic table and side peek (`web/src/components/layout/record-view.tsx`,
   `record-filters.tsx`).
-- **Generalised by.** mold_v0-047 (the shell's record areas: a pack declares one and gets a list page, a detail page and
-  MCP list/get with no extra code; workspace scope under row-level security; platform scope read-only to customers),
-  mold_v0-039 (personas and tasks leave the shell for the `octillion` pack), mold_v0-048 (the second app's areas, on
+- **Generalised by.** mold_v0-047, **built** (the shell's record areas: a pack declares one and gets a list page, a
+  detail page and MCP list/get with no extra code; workspace scope under row-level security; platform scope read-only
+  to customers; `src/record-areas.ts`, `platform_records`, `workspace_records`), mold_v0-039 (personas and tasks leave the shell for the `octillion` pack), mold_v0-048 (the second app's areas, on
   this contract).
 
 ### Schedules and notifications

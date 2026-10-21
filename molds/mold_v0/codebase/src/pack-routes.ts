@@ -19,6 +19,7 @@ import { customerSession, type Session } from "./app.js";
 import { getDb } from "./db.js";
 import { PackError, type AdminRoute, type PackDb, type WorkspaceRoute } from "./pack-api.js";
 import { packs, workspaceDb } from "./packs.js";
+import { platformRecords, workspaceRecords } from "./record-areas.js";
 
 const params = (req: Request) => Object.fromEntries(Object.entries(req.params ?? {}).map(([k, v]) => [k, String(v)]));
 const query = (req: Request) => ({ ...(req.query as Record<string, unknown>) });
@@ -55,7 +56,9 @@ export function packAppRouter(): Router {
         const s = res.locals.session as Session;
         if (needs && !canAccount(s.accountRole, needs)) throw new PackError(accountRefusal(needs).message, 403);
         const workspace = { id: s.org, slug: s.slug, name: null, userId: s.user, role: s.accountRole };
-        return route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), params: params(req), query: query(req), body: req.body });
+        const { workspaceRuns } = await import("./runs.js");
+        return route.handler({ pack: p.id, workspace, db: workspaceDb(s.org), records: workspaceRecords(p.id, s.org), runs: workspaceRuns(p.id, s.org, s.user, { orgId: s.org, slug: s.slug, name: "", userId: s.user ?? undefined, role: s.accountRole }),
+          params: params(req), query: query(req), body: req.body });
       }));
     }
     r.use(`/${p.id}`, pr);
@@ -78,7 +81,7 @@ export function packAdminRouter(): Router {
       const guard = need(route.needs ?? "read");
       pr[route.method](route.path, guard, answer(async (req, res) => route.handler({
         pack: p.id, admin: { actor: String(res.locals.adminActor ?? "admin"), role: res.locals.adminRole as PlatformRole },
-        db: platformDb, params: params(req), query: query(req), body: req.body,
+        db: platformDb, records: platformRecords(p.id), params: params(req), query: query(req), body: req.body,
       })));
     }
     // The same rule the shell's own admin routers follow: no change without need(permission).

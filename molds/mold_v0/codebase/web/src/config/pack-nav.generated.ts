@@ -19,3 +19,24 @@ export const packPortalNav: NavGroup[] = [];
 
 /** Sidebar groups the packs add to /admin (after the shell's own). */
 export const packAdminNav: NavGroup[] = [];
+
+/** A record area a pack declares (mold_v0-047): the shell's generic list and detail pages (app/{app,admin}/records/[area]). */
+export interface RecordAreaSpec {
+  pack: string;
+  name: string;
+  label: string;
+  description: string | null;
+  role: 'source' | 'check' | 'asset';
+  scope: 'platform' | 'workspace';
+  fields: { name: string; label: string; type: string }[];
+  list_columns: string[];
+  links: { field: string; area: string }[];
+}
+
+export const recordAreas: RecordAreaSpec[] = [];
+
+/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */
+export const recordPortalNav: NavGroup[] = [];
+
+/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */
+export const recordAdminNav: NavGroup[] = [];

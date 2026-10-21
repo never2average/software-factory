@@ -40,13 +40,58 @@ const GATEWAY_ENV: Record<string, (base: string, token: string) => Record<string
   dashscope: (b, t) => ({ DASHSCOPE_BASE_URL: `${b}/compatible-mode/v1`, DASHSCOPE_API_KEY: t }),
 };
 
-async function mintToken(kind: "session" | "orchestrator", providers: string[], expiresAt: Date, ref: { sessionId?: string; orchestratorId?: string }) {
+async function mintToken(kind: "session" | "orchestrator" | "run", providers: string[], expiresAt: Date, ref: { sessionId?: string; orchestratorId?: string; runId?: string }) {
   const token = `ogw_${randomBytes(24).toString("base64url")}`;
   await (await getDb()).query(
-    `INSERT INTO gateway_tokens (token_hash, kind, session_id, orchestrator_id, providers, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-    [sha256(token), kind, ref.sessionId ?? null, ref.orchestratorId ?? null, providers, expiresAt],
+    `INSERT INTO gateway_tokens (token_hash, kind, session_id, orchestrator_id, run_id, providers, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [sha256(token), kind, ref.sessionId ?? null, ref.orchestratorId ?? null, ref.runId ?? null, providers, expiresAt],
   );
   return token;
+}
+
+/** Why a token is refused at `now`, or null when it is usable (its expiry and revocation; the run's state is checked apart). */
+export function tokenRefusal(t: { expires_at: Date | string; revoked_at: Date | string | null } | undefined, now = new Date()): string | null {
+  if (!t) return "unknown";
+  if (t.revoked_at) return "revoked";
+  if (new Date(t.expires_at).getTime() <= now.getTime()) return "expired";
+  return null;
+}
+
+/** A run's ceiling on metered tokens, a backstop for models without a price (its budget in dollars is the real limit). */
+const RUN_MAX_TOKENS = () => Number(process.env.OCTILLION_RUN_MAX_TOKENS ?? 200_000_000);
+
+/**
+ * Gateway access for one attempt of a run (mold_v0-041; src/runs.ts claimRun): one token for the job kind's providers,
+ * living until the attempt's deadline (the kind's token_lifetime_seconds, so a four-hour run's token outlives the run),
+ * revoked when the attempt ends. Gateway-mode providers only: a run never receives a real vendor key.
+ */
+export async function brokerRunCredentials(runId: string, providers: string[], expiresAt: Date) {
+  const rows = await Promise.all(providers.map((slug) => getProvider(slug)));
+  const usable = rows.filter((p): p is ProviderRow => !!p && p.enabled && p.mode === "gateway");
+  const missing = providers.filter((slug) => !usable.some((p) => p.slug === slug));
+  if (missing.length) throw Object.assign(new Error(`No gateway provider ${missing.join(", ")} for this run (enabled, in gateway mode)`), { status: 424, code: "missing_provider" });
+  const token = usable.length ? await mintToken("run", usable.map((p) => p.slug), expiresAt, { runId }) : null;
+  const env: Record<string, string> = {};
+  const out: Record<string, { base_url: string }> = {};
+  for (const p of usable) {
+    const base = `${PUBLIC_URL()}/gw/${p.slug}`;
+    out[p.slug] = { base_url: base };
+    Object.assign(env, GATEWAY_ENV[p.slug]?.(base, token!) ?? Object.fromEntries(p.env_vars.map((v) => [v, token!])));
+  }
+  return { expires_at: expiresAt.toISOString(), providers: out, env, token, gateway_url: PUBLIC_URL() };
+}
+
+/** Revoke a run's gateway tokens; `q` is the transaction that ends the attempt (so a later attempt's token is never touched). */
+export async function revokeRunTokens(runId: string, q?: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }) {
+  await (q ?? (await getDb())).query("UPDATE gateway_tokens SET revoked_at = now() WHERE run_id = $1 AND revoked_at IS NULL", [runId]);
+}
+
+/** Gateway-metered usage of a run, every attempt summed: its cost is the run's cost. */
+export async function runGatewayUsage(runId: string) {
+  const [u] = await (await getDb()).query<{ requests: number; tokens: number; cost_usd: number }>(
+    "/* tenant: by run id, a run of the caller's workspace or the runner's leased run */ SELECT coalesce(sum(requests), 0) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens, coalesce(sum(cost_usd), 0) AS cost_usd FROM gateway_usage WHERE run_id = $1",
+    [runId]);
+  return { requests: Number(u?.requests ?? 0), tokens: Number(u?.tokens ?? 0), cost_usd: Number(u?.cost_usd ?? 0) };
 }
 
 /** Credentials for one running agent session: gateway providers get a scoped token, direct ones the real key. */
@@ -206,19 +251,29 @@ export async function gatewayHandler(req: Request, res: Response) {
   if (!token) return gwError(res, 401, "authentication_error", "Missing Octillion gateway token");
   const db = await getDb();
   const hash = sha256(token);
-  const [t] = await db.query<{ kind: string; session_id: string | null; orchestrator_id: string | null; providers: string[]; expires_at: Date; revoked_at: Date | null }>(
-    "SELECT kind, session_id, orchestrator_id, providers, expires_at, revoked_at FROM gateway_tokens WHERE token_hash = $1", [hash]);
-  if (!t || t.revoked_at || new Date(t.expires_at) < new Date()) return gwError(res, 401, "authentication_error", "Gateway token is invalid, expired or revoked");
+  const [t] = await db.query<{ kind: string; session_id: string | null; orchestrator_id: string | null; run_id: string | null; providers: string[]; expires_at: Date; revoked_at: Date | null }>(
+    "SELECT kind, session_id, orchestrator_id, run_id, providers, expires_at, revoked_at FROM gateway_tokens WHERE token_hash = $1", [hash]);
+  if (!t || tokenRefusal(t)) return gwError(res, 401, "authentication_error", "Gateway token is invalid, expired or revoked");
   if (!t.providers.includes(slug)) return gwError(res, 403, "permission_error", `Token is not allowed to use ${slug}`);
   // Some CLIs (Codex) probe a WebSocket transport first; refuse fast so they fall back to HTTP immediately.
   if (req.headers.upgrade) return gwError(res, 426, "invalid_request_error", "WebSocket is not supported by the Octillion gateway; use HTTP");
   let p: ProviderRow | null = await getProvider(slug);
   if (!p?.enabled || p.mode !== "gateway" || (!p.upstream_url && p.backend !== "vertex")) return gwError(res, 404, "not_found_error", `No gateway provider ${slug}`);
 
-  const [used] = await db.query<{ requests: number; tokens: number; cost: number }>(
-    "/* tenant: by the gateway token's own hash (budget of that token) */ SELECT coalesce(sum(requests), 0) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens, coalesce(sum(cost_usd), 0) AS cost FROM gateway_usage WHERE token_hash = $1", [hash]);
-  if (Number(used.requests) >= MAX_REQUESTS() || Number(used.tokens) >= MAX_TOKENS() || Number(used.cost) >= MAX_COST_USD())
-    return gwError(res, 429, "octillion_budget_exceeded", "This session's gateway budget is used up");
+  if (t.kind === "run") {
+    // A run (mold_v0-041): only while it is running and not asked to stop, within its budget across every attempt.
+    const [run] = await db.query<{ status: string; cancel_requested_at: Date | null; budget_usd: number }>(
+      "/* tenant: the run this gateway token was minted for */ SELECT status, cancel_requested_at, budget_usd FROM runs WHERE id = $1", [t.run_id]);
+    if (!run || run.status !== "running" || run.cancel_requested_at) return gwError(res, 401, "authentication_error", "This run is not running");
+    const u = await runGatewayUsage(t.run_id!);
+    if (u.cost_usd >= Number(run.budget_usd) || u.tokens >= RUN_MAX_TOKENS())
+      return gwError(res, 429, "octillion_budget_exceeded", "This run's gateway budget is used up");
+  } else {
+    const [used] = await db.query<{ requests: number; tokens: number; cost: number }>(
+      "/* tenant: by the gateway token's own hash (budget of that token) */ SELECT coalesce(sum(requests), 0) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens, coalesce(sum(cost_usd), 0) AS cost FROM gateway_usage WHERE token_hash = $1", [hash]);
+    if (Number(used.requests) >= MAX_REQUESTS() || Number(used.tokens) >= MAX_TOKENS() || Number(used.cost) >= MAX_COST_USD())
+      return gwError(res, 429, "octillion_budget_exceeded", "This session's gateway budget is used up");
+  }
 
   let cred: { id: number; secret: string };
   // Vertex signs in with a service-account key (the Vertex AI provider's, or the provider's own "vertex" key, or
@@ -334,19 +389,19 @@ export async function gatewayHandler(req: Request, res: Response) {
   }
 }
 
-async function record(hash: string, provider: string, t: { kind: string; session_id: string | null; orchestrator_id: string | null },
+async function record(hash: string, provider: string, t: { kind: string; session_id: string | null; orchestrator_id: string | null; run_id: string | null },
                       u: { requests: number; errors: number; input: number; cached: number; output: number; bytes: number; model: string }) {
   await recordModelUsage(provider, u.model || "unknown", t.kind === "orchestrator" ? "orchestrator" : "session",
                          { requests: u.requests, errors: u.errors, input: u.input, cached: u.cached, output: u.output })
     .catch((e) => console.error("model usage record failed:", (e as Error).message));
   const cost = (await costOf(u.model || "unknown", u).catch(() => null)) ?? 0;
   await (await getDb()).query(
-    `/* tenant: internal: metering for the gateway token's own session/orchestrator */ INSERT INTO gateway_usage (token_hash, provider, session_id, orchestrator_id, requests, errors, input_tokens, output_tokens, bytes, cost_usd, last_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+    `/* tenant: internal: metering for the gateway token's own session/orchestrator/run */ INSERT INTO gateway_usage (token_hash, provider, session_id, orchestrator_id, run_id, requests, errors, input_tokens, output_tokens, bytes, cost_usd, last_at)
+     VALUES ($1, $2, $3, $4, $11, $5, $6, $7, $8, $9, $10, now())
      ON CONFLICT (token_hash, provider) DO UPDATE SET requests = gateway_usage.requests + excluded.requests,
        errors = gateway_usage.errors + excluded.errors, input_tokens = gateway_usage.input_tokens + excluded.input_tokens,
        output_tokens = gateway_usage.output_tokens + excluded.output_tokens, bytes = gateway_usage.bytes + excluded.bytes,
        cost_usd = gateway_usage.cost_usd + excluded.cost_usd, last_at = now()`,
-    [hash, provider, t.session_id, t.orchestrator_id, u.requests, u.errors, u.input, u.output, u.bytes, cost],
+    [hash, provider, t.session_id, t.orchestrator_id, u.requests, u.errors, u.input, u.output, u.bytes, cost, t.run_id ?? null],
   ).catch((e) => console.error("gateway usage record failed:", e.message));
 }

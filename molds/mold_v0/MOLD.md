@@ -55,9 +55,66 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
   `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
   pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
-  data route. **jobKinds, recordAreas, credentials, schedules, onboarding** and profile **words** are declared and
-  validated and listed by `packRegistry()`; the run engine (041), record areas (047), credential vault (034),
-  scheduler (035) and checklist (011) wire them.
+  data route. **credentials, schedules, onboarding** and profile **words** are declared and validated and listed by
+  `packRegistry()`; the credential vault (034), scheduler (035) and checklist (011) wire them.
+- **recordAreas** (mold_v0-047, built): a pack declares areas in `definePack` and writes no record code. Their rows
+  live in two shell tables (`sql/migrations/0004_record_areas.sql`): `platform_records` (platform scope: the tenant
+  role may only `SELECT` it, so customers cannot write it whatever the code does; staff write it at
+  `/api/admin/records` with `library`, or a pack's admin route through `ctx.records`) and `workspace_records`
+  (workspace scope: `org_id` under the `tenant_isolation` policy; an `asset` area's title and data are sealed with the
+  workspace data key). `src/record-areas.ts` adds `list_records` and `get_record` to the customer MCP server when at
+  least one area exists (none with zero packs, so the surface is unchanged); `src/record-routes.ts` serves
+  `/api/records` (signed-in people of the workspace, read only) to the console's generic pages
+  (`web/src/app/{app,admin}/records/[area]` and `[area]/[key]`); `gen-packs` loads each pack's definition once (through
+  tsx) to write the areas and a Records sidebar group into `pack-nav.generated.ts`. Area names are unique in a build
+  and links must name a declared area (both refused at build and at start). Handlers get `ctx.records`: reads of every
+  platform area and the workspace's own rows; writes only to the pack's own workspace areas (admin routes: its own
+  platform areas). `check:rls` probes both tables; `npm run test:record-areas` proves it with two workspaces.
+- **jobKinds** (mold_v0-041, built): the generic run engine, beside the product's session queue (which it does not
+  change). `sql/migrations/0005_runs.sql` adds `runs`, `run_events` and `run_results` (each `org_id` under
+  `tenant_isolation`; the tenant role may only read them) and a `run` gateway token kind (`gateway_tokens.run_id`,
+  `gateway_usage.run_id`). A pack's handler queues a run of its own kind for the calling workspace with
+  `ctx.runs.start(kind, {scope, targets})` (also `get`, `list`, `results`, `cancel`); the kind's limits are frozen into
+  the run. `src/runs.ts`: claim (`FOR UPDATE SKIP LOCKED`, a lease token stored as a hash, a deadline = now + the kind's
+  `token_lifetime_seconds`), heartbeat (renews the lease; answers cancel at a cancel or the deadline), events, complete
+  (results checked: each names a check-role record, optionally an asset-role record of the run's own workspace and a
+  source-role record), retry on an infrastructure failure while attempts remain, a sweep of lapsed leases, cancel
+  (a running run's gateway tokens are revoked at once). Every step after the claim needs the current attempt's lease
+  token. `src/run-routes.ts` serves it to runners at `/api/worker/runs` (the fleet token, then `X-Run-Lease`).
+  `src/run-harness.ts` is the "workspace-harness" runner contract (claim, workspace checkout, the kind's `entry` with
+  node in an environment built from nothing but `RUN_*` and the gateway's variables, heartbeat, the kind's `validator`,
+  write-back, complete) with an in-process and an HTTP client. The gateway (`src/gateway.ts`) gives a run one token for
+  the kind's providers that lives until the attempt's deadline, refuses it once the run is not running or its cost
+  (summed from `gateway_usage.run_id` across attempts) reaches the kind's `budget_usd`, and the run's cost is that sum.
+  Egress: the harness starts the sandboxes' own egress proxy (`orchestrator/core/egress.ts`) with the run's list (the
+  kind's `egress` plus the gateway's public host; a listed host includes its subdomains, the proxy's rule) and gives the
+  program its proxy settings: **enforced** for every connection through the proxy; **not enforced** for a program that
+  ignores proxy settings, which only the sandbox VM's uid firewall stops, and runs are not yet placed in sandbox VMs.
+  The harness runs a kind's programs only as a user kept for runs (`runAs`, `OCTILLION_RUN_UID`; a runner started as
+  root), never the runner's own: the program cannot read the runner's environment through `/proc`, gets its own copy
+  of the pack and a private scratch, and every process of that user is killed when the run ends (one run at a time per
+  such user). It refuses to run a program as its own user unless told (`allowSameUser`, the offline tests). Starting a
+  run applies the account's launch rules for a signed-in person (`src/limits.ts` `checkRun`) and a per-workspace cap
+  on runs queued or running (`OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE`, 20). **Not wired yet:** no process runs runs in
+  a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one); a run's gateway spend is
+  limited by its kind's budget but is not yet counted in the account's month figures or spend pages (they read
+  sessions); and `gen-packs` holds a pack's run programs to the server-code import rules (a program that needs
+  `node:child_process` is refused today).
+  `npm run test:runs` proves the lifecycle offline with fixture kinds (`scripts/fixtures/runs/`).
+- **The workspace store** (mold_v0-033, built): a job kind with `workspace: true` gets versioned snapshots of its
+  workspace's files that outlive a run, one store per workspace and pack (`sql/migrations/0006_workspace_store.sql`,
+  `src/workspace-store.ts`, `src/workspace-bundle.ts`). Its claim takes the store's lease (`workspace_leases`, renewed
+  by the heartbeat): one writer per workspace store, a second run waits in the queue. The harness checks the latest
+  snapshot out before the program runs (each file checked against the sha256 manifest), and writes the directory back
+  only when the program and the validator exited 0: it is staged, and becomes the next version inside the run's
+  completion as succeeded; any other end discards it. Objects live in the product's storage (`src/storage.ts`
+  `objectStore()`: the R2 bucket, or `OCTILLION_STORAGE_DIR` on one machine and in tests) under
+  `workspaces/org-<id>/<store>/`, sealed with the workspace's data key (`src/orgcrypto.ts` `sealBytes`, refused while
+  the vault is locked) and bound by AES-GCM additional data to their workspace, store, row and manifest. A runner names
+  a run and its lease token, never a workspace (`GET`/`PUT /api/worker/runs/:id/workspace`); packing never follows a
+  link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots. **Not wired yet:**
+  no customer-facing read of a snapshot's files (an evidence viewer), and no retention of old versions (all are kept).
+  `npm run test:workspace-store` proves it with two workspaces.
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
@@ -72,7 +129,7 @@ a pack. Each pack exports one `definePack({...})`:
 |---|---|---|
 | `tools` | MCP tools: name, input and output schemas, annotations, a handler that receives the calling workspace first | the tool registry behind `/mcp` (today hand-written in `src/server.ts`) |
 | `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
-| `jobKinds` | run kinds: the harness or runner, the image, token lifetime, budget, egress allowlist, a result validator | the run engine (mold_v0-041) |
+| `jobKinds` | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
 | `recordAreas` | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), fields, list columns and links to other areas | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047) |
 | `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034); only names reach a run's definition |
 | `schedules` | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
