@@ -68,7 +68,32 @@
           "to": "adopt_products",
           "required": true
         }
-      ]
+      ],
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "simulate.mjs",
+          "--product",
+          "{product}"
+        ],
+        "args": {
+          "product": {
+            "from": "scope.product"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "findings"
+        ],
+        "timeout_seconds": 1200
+      }
     }
   ],
   "run_results": {
