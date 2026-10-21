@@ -46,7 +46,8 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   (the ordered pack migration directories), `src/profile.generated.ts`, `web/src/config/pack-nav.generated.ts` and
   `web/src/config/profile.generated.ts`. It refuses a pack whose SQL creates a table without row-level security or
   outside its `<id>_` names, writes grants, policies, roles, functions or DO blocks, or whose code imports any shell
-  module but `src/pack-api.ts`, a database driver, or mentions `asPlatform`, `SET`/`RESET ROLE` or `set_config`.
+  module but `src/pack-api.ts`, a database driver, or mentions `asPlatform`, `SET`/`RESET ROLE` or `set_config`
+  (run programs under the pack's `runner` directory have their own rules: the runner boundary, mold_v0-054, below).
 - `definePack` (`src/pack-api.ts`): **tools** register on the customer MCP server after the shell's (`src/packs.ts`),
   each call run for the calling workspace under row-level security with its account permission; **routes** mount at
   `/api/packs/<id>` (the portal's own session check, `edit` for changes, a CSRF header on cookie writes) and
@@ -98,8 +99,19 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   on runs queued or running (`OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE`, 20). **Not wired yet:** no process runs runs in
   a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one); a run's gateway spend is
   limited by its kind's budget but is not yet counted in the account's month figures or spend pages (they read
-  sessions); and `gen-packs` holds a pack's run programs to the server-code import rules (a program that needs
-  `node:child_process` is refused today).
+  sessions).
+- **The runner boundary** (mold_v0-054, built): a pack's code is of two kinds, told apart by pack.json `runner` (a
+  directory inside the pack). *Server code* (everything else: the entry, tools, routes, loaded into the server) keeps
+  the strict rules above and may neither import a process API nor the runner's files. *Runner code* (under `runner`:
+  a job kind's programs, run by the harness with node as the run's own user) may also import `node:child_process`,
+  `node:fs`, `node:os`, streams and the other node built-ins a program needs, imports only its own runner files (never
+  `src/pack-api.ts`, the pack's server code or any shell module, and no package), is `.js`/`.mjs` only, and is held to
+  the same text bans (`asPlatform`, `SET`/`RESET ROLE`, `set_config`, the tenant setting, `require`/`createRequire`, a
+  computed import, `eval`). The entry may not sit in the runner directory, and no pack may carry a symbolic link. The
+  processes a program starts run as the run's user and die with the run (`npm run test:runs`, section 12); the import
+  rules keep the runner's code reviewable, while what isolates it at run time is the run user and an environment built
+  from nothing. `npm run test:packs` proves both boundaries (a program with `child_process` passes under `runner` and is
+  refused outside it, and 19 ways across the boundary are refused).
   `npm run test:runs` proves the lifecycle offline with fixture kinds (`scripts/fixtures/runs/`).
 - **The workspace store** (mold_v0-033, built): a job kind with `workspace: true` gets versioned snapshots of its
   workspace's files that outlive a run, one store per workspace and pack (`sql/migrations/0006_workspace_store.sql`,

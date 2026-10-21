@@ -4,7 +4,9 @@
 //
 // 1. Zero packs: the generated registry is current and empty, and the shell's surface has no pack in it.
 // 2. The build refuses packs that would get past the seam (scripts/gen-packs.mjs): SQL without row-level security, outside
-//    the pack's names or writing policies and grants; code importing the shell or leaving the workspace's scope.
+//    the pack's names or writing policies and grants; code importing the shell or leaving the workspace's scope; and
+//    the runner boundary (mold_v0-054): run programs under pack.json `runner` may start processes, server code may not
+//    and may not import them, runner code reaches no shell module; no symbolic links.
 // 3. definePack and the registry refuse bad definitions (an admin change without a permission, a shell tool's name).
 // 4. A build copy with the fixture pack (scripts/fixtures/packs/fixture_notes) and a fixture profile: gen-packs there,
 //    then scripts/packs-fixture-check.ts there (tool, page and migrated table reachable, RLS, routes, profile), and
@@ -87,6 +89,43 @@ try {
     refused("a module loader", tryPack("pk", { "index.ts": `import { definePack } from "$API";\nconst mod = process.getBuiltinModule("node:module");\nexport default definePack({ id: "pk" });\n` }), /module loader/);
     refused("globalThis", tryPack("pk", { "index.ts": `import { definePack } from "$API";\nconst g = globalThis;\nexport default definePack({ id: "pk" });\n` }), /globalThis/);
     refused("an unknown pack.json field", tryPack("pk", {}, { tables: [] }), /unknown field tables/);
+    // The runner boundary (mold_v0-054): a run program under pack.json `runner` may start processes and use the file
+    // system; the server code may not, and may not import it; runner code reaches no shell module, pack-api included.
+    {
+      const R = { runner: "runner" };
+      const spawnProg = `import { spawnSync } from "node:child_process";\nimport { writeFileSync } from "node:fs";\nimport { helper } from "./lib/helper.mjs";\nwriteFileSync("out.txt", String(spawnSync("/bin/true").status) + helper());\n`;
+      const okRunner = tryPack("pk", { "runner/run.mjs": spawnProg, "runner/lib/helper.mjs": "export const helper = () => 'x';\n" }, R);
+      assert.equal(okRunner.status, 0, `runner code may start processes: ${okRunner.stderr}`);
+      refused("the same program outside the runner directory", tryPack("pk", { "tools/run.mjs": spawnProg, "tools/lib/helper.mjs": "export const helper = () => 'x';\n" }, R), /imports node:child_process: not allowed in a pack's server code/);
+      refused("child_process in a pack with no runner directory", tryPack("pk", { "run.mjs": `import { spawn } from "node:child_process";\n` }), /imports node:child_process: not allowed/);
+      refused("server code importing the runner's", tryPack("pk", { "index.ts": `import { definePack } from "$API";\nimport "./runner/run.mjs";\nexport default definePack({ id: "pk" });\n`, "runner/run.mjs": spawnProg.replace(/import \{ helper[^\n]*\n/, "").replace(" + helper()", "") }, R), /server code may not import the runner's code/);
+      refused("runner code importing the server's", tryPack("pk", { "runner/run.mjs": `import x from "../index.ts";\n` }, R), /runner code may import its own runner files and node's built-ins only/);
+      refused("runner code importing the pack API", tryPack("pk", { "runner/run.mjs": `import { z } from "../../../src/pack-api.js";\n` }, R), /runner code may import its own runner files/);
+      refused("runner code importing a shell module", tryPack("pk", { "runner/run.mjs": `import { getDb } from "${path.relative(path.join(tmp, "x", "pk", "runner"), path.join(ROOT, "src", "db.js")).split(path.sep).join("/")}";\n` }, R), /runner code may import its own runner files/);
+      refused("runner code importing a database driver", tryPack("pk", { "runner/run.mjs": `import pg from "pg";\n` }, R), /imports pg: not allowed in runner code/);
+      refused("runner code importing a package", tryPack("pk", { "runner/run.mjs": `import { z } from "zod";\n` }, R), /imports zod: not allowed in runner code/);
+      refused("asPlatform in runner code", tryPack("pk", { "runner/run.mjs": `// asPlatform\n` }, R), /asPlatform/);
+      refused("SET ROLE in runner code", tryPack("pk", { "runner/run.mjs": `import { spawnSync } from "node:child_process";\nspawnSync("psql", ["-c", "SET ROLE postgres"]);\n` }, R), /SET\/RESET ROLE/);
+      refused("set_config in runner code", tryPack("pk", { "runner/run.mjs": `const q = "select set_config('x', '1', false)";\n` }, R), /set_config/);
+      refused("the tenant setting in runner code", tryPack("pk", { "runner/run.mjs": `const s = "octillion.org_id";\n` }, R), /the tenant setting/);
+      refused("createRequire in runner code", tryPack("pk", { "runner/run.mjs": `import { createRequire } from "node:module";\n` }, R), /module loader|imports node:module/);
+      refused("a computed import in runner code", tryPack("pk", { "runner/run.mjs": `const m = await import("node:" + "child_process");\n` }, R), /dynamic import of anything but one string literal/);
+      refused("TypeScript in the runner directory", tryPack("pk", { "runner/run.ts": `export const x = 1;\n` }, R), /a \.js or \.mjs file/);
+      refused("the entry inside the runner directory", tryPack("pk", { "runner/index.ts": "export default 1;\n" }, { runner: "runner", entry: "runner/index.ts" }), /inside the runner directory/);
+      refused("a runner directory that is not there", tryPack("pk", {}, R), /runner directory runner does not exist/);
+      refused("a runner directory outside the pack", tryPack("pk", { "runner/x.mjs": "" }, { runner: "../elsewhere" }), /runner must be a directory inside the pack/);
+      const linked = (() => {
+        const dir = path.join(tmp, `refuse-link`), pdir = path.join(dir, "pk");
+        mkdirSync(path.join(pdir, "runner"), { recursive: true });
+        const api = path.relative(pdir, API).split(path.sep).join("/");
+        writeFileSync(path.join(pdir, "pack.json"), JSON.stringify({ id: "pk", name: "Test", version: "1", entry: "index.ts", runner: "runner" }));
+        writeFileSync(path.join(pdir, "index.ts"), `import { definePack } from "${api}";\nexport default definePack({ id: "pk" });\n`);
+        symlinkSync(path.join(ROOT, "src", "db.ts"), path.join(pdir, "runner", "db.mjs"));
+        return gen(["--packs", dir, "--out", path.join(dir, "out")]);
+      })();
+      refused("a symbolic link in a pack", linked, /a symbolic link/);
+      console.log("✓ the runner boundary: run programs under the runner directory may start processes; server code may not, nor import them; runner code reaches no shell module and never leaves the workspace's scope");
+    }
     refused("a page in no area", tryPack("pk", {}, { pages: [{ id: "x", area: "elsewhere", title: "X", data: "/x" }] }), /area must be/);
     console.log(`✓ gen-packs refuses ${n - 1} kinds of pack that would get past the seam, and passes a good one`);
     // No profile.json: the neutral default, no product's names.
