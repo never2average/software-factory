@@ -47,8 +47,19 @@ export async function renewLease(runId: string, seconds: number): Promise<void> 
   await asPlatform(async () => (await getDb()).query(
     "/* tenant: the leased run's own store lease */ UPDATE workspace_leases SET expires_at = now() + make_interval(secs => $2) WHERE run_id = $1", [runId, seconds]));
 }
-export async function releaseLease(runId: string): Promise<void> {
-  await asPlatform(async () => (await getDb()).query("/* tenant: the ending run's own store lease */ DELETE FROM workspace_leases WHERE run_id = $1", [runId]));
+/**
+ * The end of an attempt, inside the transaction that ends it (src/runs.ts complete and sweep): its store lease goes and
+ * every stage it did not commit is discarded, before any later attempt can be claimed. Returns the discarded objects'
+ * keys, removed after the transaction commits (removeObjects).
+ */
+export async function endAttempt(tx: Queryable, runId: string): Promise<string[]> {
+  await tx.query("/* tenant: the ending run's own store lease */ DELETE FROM workspace_leases WHERE run_id = $1", [runId]);
+  const rows = await tx.query<{ object_key: string }>(
+    "/* tenant: the ending run's own staged snapshots, by run id */ UPDATE workspace_snapshots SET status = 'discarded' WHERE run_id = $1 AND status = 'staged' RETURNING object_key", [runId]);
+  return rows.map((r) => r.object_key).filter(Boolean);
+}
+export async function removeObjects(list: string[]): Promise<void> {
+  if (list.length) await objectStore().remove(list).catch((e) => console.error(`workspace store: could not remove ${list.length} discarded object(s): ${(e as Error).message}`));
 }
 const holdsLease = async (q: Queryable, orgId: number, store: string, runId: string) =>
   (await q.query<{ base_version: number | null }>("SELECT base_version FROM workspace_leases WHERE org_id = $1 AND store = $2 AND run_id = $3 AND expires_at > now()",
@@ -150,10 +161,8 @@ export async function commitStaged(tx: Queryable, run: { id: string; org_id: num
   if (!s || !s.object_key) return null;
   const latest = await latestSnapshot(tx, run.org_id, s.store);
   if ((latest?.version ?? 0) !== s.base_version) return "conflict";
-  if ((latest?.manifest_sha256 ?? EMPTY_MANIFEST_SHA256) === s.manifest_sha256) {
-    await tx.query("UPDATE workspace_snapshots SET status = 'discarded' WHERE org_id = $1 AND id = $2", [run.org_id, s.id]);
-    return { version: s.base_version, unchanged: true };
-  }
+  // Nothing changed: no new version; the stage stays staged and is discarded (with its object) as the attempt ends.
+  if ((latest?.manifest_sha256 ?? EMPTY_MANIFEST_SHA256) === s.manifest_sha256) return { version: s.base_version, unchanged: true };
   await tx.query("UPDATE workspace_snapshots SET status = 'committed', version = $3, committed_at = now() WHERE org_id = $1 AND id = $2",
     [run.org_id, s.id, s.base_version + 1]);
   return { version: s.base_version + 1, unchanged: false };
@@ -165,8 +174,7 @@ export async function discardStaged(runId: string): Promise<number> {
     const db = await getDb();
     const rows = await db.query<{ id: number; object_key: string }>(
       "/* tenant: the run's own staged snapshots, by run id */ UPDATE workspace_snapshots SET status = 'discarded' WHERE run_id = $1 AND status = 'staged' RETURNING id, object_key", [runId]);
-    const gone = rows.map((r) => r.object_key).filter(Boolean);
-    if (gone.length) await objectStore().remove(gone).catch((e) => console.error(`workspace store: could not remove ${gone.length} discarded object(s): ${(e as Error).message}`));
+    await removeObjects(rows.map((r) => r.object_key).filter(Boolean));
     return rows.length;
   });
 }

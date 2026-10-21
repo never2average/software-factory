@@ -81,8 +81,9 @@ export async function brokerRunCredentials(runId: string, providers: string[], e
   return { expires_at: expiresAt.toISOString(), providers: out, env, token, gateway_url: PUBLIC_URL() };
 }
 
-export async function revokeRunTokens(runId: string) {
-  await (await getDb()).query("UPDATE gateway_tokens SET revoked_at = now() WHERE run_id = $1 AND revoked_at IS NULL", [runId]);
+/** Revoke a run's gateway tokens; `q` is the transaction that ends the attempt (so a later attempt's token is never touched). */
+export async function revokeRunTokens(runId: string, q?: { query: (sql: string, params?: unknown[]) => Promise<unknown[]> }) {
+  await (q ?? (await getDb())).query("UPDATE gateway_tokens SET revoked_at = now() WHERE run_id = $1 AND revoked_at IS NULL", [runId]);
 }
 
 /** Gateway-metered usage of a run, every attempt summed: its cost is the run's cost. */

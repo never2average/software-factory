@@ -87,11 +87,19 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   the kind's providers that lives until the attempt's deadline, refuses it once the run is not running or its cost
   (summed from `gateway_usage.run_id` across attempts) reaches the kind's `budget_usd`, and the run's cost is that sum.
   Egress: the harness starts the sandboxes' own egress proxy (`orchestrator/core/egress.ts`) with the run's list (the
-  kind's `egress` plus the gateway's public host) and gives the program its proxy settings: **enforced** for every
-  connection through the proxy; **not enforced** for a program that ignores proxy settings, which only the sandbox VM's
-  uid firewall stops, and runs are not yet placed in sandbox VMs. **Not wired yet:** no process runs runs in a deployed
-  app (no runner is launched by the autoscaler; `drainRuns` is there for one), and `gen-packs` holds a pack's run
-  programs to the server-code import rules (a program that needs `node:child_process` is refused today).
+  kind's `egress` plus the gateway's public host; a listed host includes its subdomains, the proxy's rule) and gives the
+  program its proxy settings: **enforced** for every connection through the proxy; **not enforced** for a program that
+  ignores proxy settings, which only the sandbox VM's uid firewall stops, and runs are not yet placed in sandbox VMs.
+  The harness runs a kind's programs only as a user kept for runs (`runAs`, `OCTILLION_RUN_UID`; a runner started as
+  root), never the runner's own: the program cannot read the runner's environment through `/proc`, gets its own copy
+  of the pack and a private scratch, and every process of that user is killed when the run ends (one run at a time per
+  such user). It refuses to run a program as its own user unless told (`allowSameUser`, the offline tests). Starting a
+  run applies the account's launch rules for a signed-in person (`src/limits.ts` `checkRun`) and a per-workspace cap
+  on runs queued or running (`OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE`, 20). **Not wired yet:** no process runs runs in
+  a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one); a run's gateway spend is
+  limited by its kind's budget but is not yet counted in the account's month figures or spend pages (they read
+  sessions); and `gen-packs` holds a pack's run programs to the server-code import rules (a program that needs
+  `node:child_process` is refused today).
   `npm run test:runs` proves the lifecycle offline with fixture kinds (`scripts/fixtures/runs/`).
 - **The workspace store** (mold_v0-033, built): a job kind with `workspace: true` gets versioned snapshots of its
   workspace's files that outlive a run, one store per workspace and pack (`sql/migrations/0006_workspace_store.sql`,

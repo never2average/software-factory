@@ -138,7 +138,7 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
     const ws = workspaceOf(org);
     // The run engine (src/runs.ts) reaches the gateway and much of the server: loaded on first use, not at start.
     const { workspaceRuns } = await import("./runs.js");
-    const ctx = { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId), runs: workspaceRuns(pack, org.orgId, org.userId ?? null) };
+    const ctx = { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId), runs: workspaceRuns(pack, org.orgId, org.userId ?? null, org) };
     const value = await withTenant(org.orgId, () => t.handler(ws, args ?? {}, ctx));
     recordMcpEvent(org, { method: "tools/call", name: t.name, ms: performance.now() - t0 });
     return toToolResult(value);

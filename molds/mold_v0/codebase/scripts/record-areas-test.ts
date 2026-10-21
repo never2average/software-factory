@@ -52,6 +52,7 @@ try {
     assert.throws(() => installPacks([{ manifest: manifest("pk"), definition: { id: "pk", tools: [{ name: "list_records", description: "d", handler: () => null }] } }]), /already a shell tool/);
     assert.throws(() => definePack({ id: "pk", recordAreas: [area("a1", { list_columns: ["nope"] })] }), /list_columns must name declared fields/);
     assert.throws(() => definePack({ id: "pk", recordAreas: [area("a1", { role: "asset" })] }), /workspace scope only/);
+    assert.throws(() => definePack({ id: "pk", recordAreas: [area("areas")] }), /areas is reserved/, "the area list's own path");
     console.log("✓ the registry refuses clashing area names, links to undeclared areas, a pack tool named list_records and bad columns");
   }
 
