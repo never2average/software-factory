@@ -3,8 +3,8 @@
  *
  *   minute (0-59)  hour (0-23)  day of month (1-31)  month (1-12)  day of week (0-7, 0 and 7 are Sunday)
  *
- * Each field is `*`, a number, a range `a-b`, a step `*\/n` or `a-b/n`, or a comma list of those. As in cron, when both
- * the day of month and the day of week are restricted, a day matches either. Nothing else (no names, no `@daily`, no
+ * Each field is `*`, a number, a range `a-b`, a step `*\/n` or `a-b/n`, or a comma list of those. As in Vixie cron, when
+ * both the day of month and the day of week are restricted (neither starts with `*`), a day matches either. Nothing else (no names, no `@daily`, no
  * seconds, no time zones): what a schedule says is exactly when it runs, in UTC.
  *
  * A schedule may run at most every MIN_GAP_MINUTES minutes (the scheduler ticks every minute on a server and every five
@@ -34,7 +34,8 @@ function field(text: string, lo: number, hi: number, what: string): { values: Se
     if (!(step >= 1)) throw new CronError(`${what}: a step is at least 1`);
     for (let v = a; v <= b; v += step) values.add(v);
   }
-  return { values, any: text === "*" };
+  // As Vixie cron: a field that starts with * ("*", "*/2") leaves the day unrestricted for the day-of-month/day-of-week OR.
+  return { values, any: text.startsWith("*") };
 }
 
 /** Parse an expression; throws a CronError that says what is wrong. */
@@ -57,10 +58,8 @@ export function parseCron(expr: unknown): Cron {
 
 const dayMatches = (c: Cron, d: Date) => {
   const a = c.doms.has(d.getUTCDate()), b = c.dows.has(d.getUTCDay());
-  if (c.domAny && c.dowAny) return true;
-  if (c.domAny) return b;
-  if (c.dowAny) return a;
-  return a || b;
+  // Vixie cron: either field starting with * means both must match; both restricted means either may.
+  return c.domAny || c.dowAny ? a && b : a || b;
 };
 
 /** The first time the expression matches strictly after `t` (to the minute), or null within five years. */

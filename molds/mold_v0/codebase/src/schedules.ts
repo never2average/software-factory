@@ -50,6 +50,8 @@ export function defaultSchedules(): DefaultSchedule[] {
 /** Check areas that declare due dates. */
 export const dueAreas = (): (RecordArea & { due: NonNullable<RecordArea["due"]> })[] =>
   recordAreas().filter((a): a is RecordArea & { due: NonNullable<RecordArea["due"]> } => !!a.due);
+/** The job kinds a pack schedules (it declares a default schedule of the kind): the ones owners may schedule too. */
+export const schedulableKinds = () => [...new Map(defaultSchedules().map((d) => [`${d.pack}/${d.job_kind}`, { pack: d.pack, name: d.job_kind }])).values()];
 /** Whether there is anything to schedule at all (a job kind in the build). */
 export const schedulesWired = () => jobKinds().length > 0;
 
@@ -69,16 +71,18 @@ export interface ScheduleView {
   assets: { area: string; keys: string[] | null } | null; environment: string | null; scope: Record<string, unknown>;
   enabled: boolean; is_default: boolean; customized: boolean; next_at: string | null;
   last: { slot_at: string; fired_at: string | null; skipped: number; runs: string[]; error: string | null } | null;
-  updated_by: string | null; updated_at: string;
+  updated_at: string;
 }
 const view = (r: Row): ScheduleView => ({
   id: String(r.id), pack: r.pack, name: r.name, label: r.label, job_kind: r.job_kind, cron: r.cron,
   assets: r.asset_area ? { area: r.asset_area, keys: r.asset_keys ?? null } : null, environment: r.environment, scope: r.scope ?? {},
   enabled: r.enabled, is_default: r.is_default, customized: r.customized, next_at: r.enabled ? iso(r.next_at) : null,
   last: r.last_slot_at ? { slot_at: iso(r.last_slot_at)!, fired_at: iso(r.last_fired_at), skipped: r.last_skipped, runs: r.last_runs ?? [], error: r.last_error } : null,
-  updated_by: r.updated_by, updated_at: iso(r.updated_at)!,
+  updated_at: iso(r.updated_at)!,
 });
 
+/** A firing's last_error until its runs are started: a firing cut short (the function killed) shows it, never a silent success. */
+const STARTING = "starting runs (if this stays, the tick was cut short and this due time was lost)";
 /** The far future, for a row whose expression has no next match (it is turned off too). */
 const NEVER = new Date(Date.UTC(9999, 0, 1));
 const nextOf = (cron: string, after: Date) => nextAfter(parseCron(cron), after) ?? NEVER;
@@ -91,34 +95,45 @@ const nextOf = (cron: string, after: Date) => nextAfter(parseCron(cron), after) 
  */
 export async function ensureDefaults(now = clock(), orgId: number | null = null): Promise<number> {
   const defs = defaultSchedules();
-  if (!defs.length) return 0;
   let n = 0;
   await asPlatform(async () => {
     const db = await getDb();
     for (const d of defs) {
-      const rows = await db.query(
-        `/* tenant: platform copy of a pack's default schedule into every workspace (or the one asked), each row its own org_id */
+      const p = [d.pack, d.name, d.label ?? null, d.job_kind, d.cron, d.assets?.area ?? null, d.assets?.keys ?? null, d.environment ?? null,
+        JSON.stringify(d.scope ?? {}), d.enabled, nextOf(d.cron, now), orgId];
+      // New workspaces only: a row that exists is neither written nor locked.
+      n += (await db.query(
+        `/* tenant: platform copy of a pack's default schedule into each workspace that lacks it (or the one asked), each row its own org_id */
          INSERT INTO workspace_schedules (org_id, pack, name, label, job_kind, cron, asset_area, asset_keys, environment, scope, enabled, is_default, next_at)
-         SELECT o.id, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, $11 FROM organizations o WHERE ($12::int IS NULL OR o.id = $12)
-         ON CONFLICT (org_id, pack, name) DO UPDATE SET label = excluded.label, job_kind = excluded.job_kind, cron = excluded.cron,
-                asset_area = excluded.asset_area, asset_keys = excluded.asset_keys, environment = excluded.environment, scope = excluded.scope,
-                enabled = excluded.enabled,
+         SELECT o.id, $1, $2, $3, $4, $5, $6, $7::text[], $8, $9::jsonb, $10::boolean, true, $11::timestamptz FROM organizations o
+          WHERE ($12::int IS NULL OR o.id = $12)
+            AND NOT EXISTS (SELECT 1 FROM workspace_schedules w WHERE w.org_id = o.id AND w.pack = $1 AND w.name = $2 AND w.is_default)
+         ON CONFLICT (org_id, pack, name, is_default) DO NOTHING RETURNING id`, p)).length;
+      // The pack changed its default: the copies no owner changed follow (only those rows are written).
+      n += (await db.query(
+        `/* tenant: platform update of a pack's default schedule in every workspace whose copy no owner changed, each row its own org_id */
+         UPDATE workspace_schedules SET label = $3, job_kind = $4, cron = $5, asset_area = $6, asset_keys = $7::text[], environment = $8, scope = $9::jsonb,
+                enabled = $10::boolean,
                 -- A new time, or the pack turning it on: due from now (nothing missed while off is run).
-                next_at = CASE WHEN workspace_schedules.cron = excluded.cron AND (workspace_schedules.enabled OR NOT excluded.enabled)
-                               THEN workspace_schedules.next_at ELSE excluded.next_at END,
-                seq = workspace_schedules.seq + 1, updated_at = now()
-          WHERE workspace_schedules.is_default AND NOT workspace_schedules.customized
-            AND (workspace_schedules.label, workspace_schedules.job_kind, workspace_schedules.cron, workspace_schedules.asset_area, workspace_schedules.asset_keys,
-                 workspace_schedules.environment, workspace_schedules.scope, workspace_schedules.enabled)
-                IS DISTINCT FROM (excluded.label, excluded.job_kind, excluded.cron, excluded.asset_area, excluded.asset_keys, excluded.environment, excluded.scope, excluded.enabled)
-         RETURNING id`,
-        [d.pack, d.name, d.label ?? null, d.job_kind, d.cron, d.assets?.area ?? null, d.assets?.keys ?? null, d.environment ?? null,
-         JSON.stringify(d.scope ?? {}), d.enabled, nextOf(d.cron, now), orgId]);
-      n += rows.length;
+                next_at = CASE WHEN cron = $5 AND (enabled OR NOT $10::boolean) THEN next_at ELSE $11::timestamptz END,
+                last_error = NULL, seq = seq + 1, updated_at = now()
+          WHERE pack = $1 AND name = $2 AND is_default AND NOT customized AND ($12::int IS NULL OR org_id = $12)
+            AND ((label, job_kind, cron, asset_area, asset_keys, environment, scope, enabled)
+                 IS DISTINCT FROM ($3::text, $4::text, $5::text, $6::text, $7::text[], $8::text, $9::jsonb, $10::boolean)
+                 OR last_error = $13)
+         RETURNING id`, [...p, ORPHANED])).length;
     }
+    // A default the packs no longer declare stops: turned off and said so (an owner may then remove it).
+    n += (await db.query(
+      `/* tenant: platform switch-off of defaults no pack declares any more, in every workspace, each row its own org_id */
+       UPDATE workspace_schedules SET enabled = false, last_error = $2, seq = seq + 1, updated_at = now()
+        WHERE is_default AND (enabled OR last_error IS DISTINCT FROM $2) AND NOT (pack || '/' || name = ANY ($1::text[])) AND ($3::int IS NULL OR org_id = $3)
+       RETURNING id`, [defs.map((d) => `${d.pack}/${d.name}`), ORPHANED, orgId])).length;
   });
   return n;
 }
+const ORPHANED = "no pack declares this default any more: it is off, and may be removed";
+const declared = (pack: string, name: string) => defaultSchedules().some((d) => d.pack === pack && d.name === name);
 
 // ---------- the workspace's side: list, add, change, remove (the console) ----------
 
@@ -202,15 +217,20 @@ const MAX_PER_WORKSPACE = () => Number(process.env.OCTILLION_SCHEDULES_MAX_PER_W
 export async function createSchedule(orgId: number, by: string, b: Record<string, unknown>, now = clock()): Promise<ScheduleView> {
   const pack = String(b.pack ?? ""), kind = String(b.job_kind ?? ""), name = String(b.name ?? "");
   if (!findKind(pack, kind)) throw new PackError(`no job kind ${JSON.stringify(`${pack}/${kind}`.slice(0, 80))} in this build`, 400);
+  // Only kinds the pack itself schedules (it declares a default schedule of the kind): a pack's other kinds are started by
+  // its own code, which decides who may start them and with what scope.
+  if (!schedulableKinds().some((k) => k.pack === pack && k.name === kind)) throw new PackError(`job kind ${pack}/${kind} is not one the pack schedules`, 400);
+  if (b.scope !== undefined) throw new PackError("scope is the pack's: a schedule of yours runs with the scope of the pack's own schedule of that kind", 400);
   if (!NAME.test(name)) throw new PackError("name: 2-63 lowercase letters, digits and _, starting with a letter", 400);
   if (defaultSchedules().some((d) => d.pack === pack && d.name === name)) throw new PackError(`${name} is one of pack ${pack}'s default schedules: change that one instead`, 409);
   if (b.cron === undefined) throw new PackError("cron is required", 400);
   const f = await checkFields(orgId, pack, b);
+  f.scope = defaultSchedules().find((d) => d.pack === pack && d.job_kind === kind)?.scope ?? {};
   const [{ n }] = await withTenant(orgId, async () => (await getDb()).query<{ n: number }>("SELECT count(*)::int AS n FROM workspace_schedules WHERE org_id = $1", [orgId]));
   if (n >= MAX_PER_WORKSPACE()) throw new PackError(`this workspace already has ${n} schedules (at most ${MAX_PER_WORKSPACE()})`, 429);
   const r = await asPlatform(async () => (await getDb()).query<Row>(
     `INSERT INTO workspace_schedules (org_id, pack, name, label, job_kind, cron, asset_area, asset_keys, environment, scope, enabled, is_default, customized, next_at, created_by, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, true, $12, $13, $13) ON CONFLICT (org_id, pack, name) DO NOTHING RETURNING ${COLS}`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, false, true, $12, $13, $13) ON CONFLICT (org_id, pack, name, is_default) DO NOTHING RETURNING ${COLS}`,
     [orgId, pack, name, f.label ?? null, kind, f.cron!, f.assets?.area ?? null, f.assets?.keys ?? null, f.environment ?? null,
      JSON.stringify(f.scope ?? {}), f.enabled ?? true, nextOf(f.cron!, now), by]));
   if (!r[0]) throw new PackError(`this workspace already has a schedule ${name} of pack ${pack}`, 409);
@@ -221,8 +241,10 @@ export async function createSchedule(orgId: number, by: string, b: Record<string
 export async function updateSchedule(orgId: number, id: string, by: string, b: Record<string, unknown>, now = clock()): Promise<ScheduleView> {
   const cur = await getSchedule(orgId, id);
   if (!cur) throw new PackError("no such schedule", 404);
+  if (b.scope !== undefined) throw new PackError("scope is the pack's: it cannot be changed here", 400);
   const f = await checkFields(orgId, cur.pack, b);
-  if (!Object.keys(f).length) throw new PackError("nothing to change: label, cron, assets, environment, scope or enabled", 400);
+  if (!Object.keys(f).length) throw new PackError("nothing to change: label, cron, assets, environment or enabled", 400);
+  if (f.enabled === true && cur.is_default && !declared(cur.pack, cur.name)) throw new PackError("no pack declares this default any more: remove it instead", 409);
   const cron = f.cron ?? cur.cron;
   // A new time, or turning it back on: the next due time counts from now (what was missed while off is not run).
   const fresh = f.cron !== undefined || (f.enabled === true && !cur.enabled);
@@ -242,8 +264,8 @@ export async function updateSchedule(orgId: number, id: string, by: string, b: R
 export async function deleteSchedule(orgId: number, id: string): Promise<boolean> {
   const cur = await getSchedule(orgId, id);
   if (!cur) return false;
-  if (cur.is_default) throw new PackError("a pack's default schedule cannot be removed: turn it off instead", 409);
-  const rows = await asPlatform(async () => (await getDb()).query("DELETE FROM workspace_schedules WHERE org_id = $1 AND id = $2 AND NOT is_default RETURNING id", [orgId, cur.id]));
+  if (cur.is_default && declared(cur.pack, cur.name)) throw new PackError("a pack's default schedule cannot be removed: turn it off instead", 409);
+  const rows = await asPlatform(async () => (await getDb()).query("DELETE FROM workspace_schedules WHERE org_id = $1 AND id = $2 RETURNING id", [orgId, cur.id]));
   return rows.length > 0;
 }
 
@@ -276,12 +298,30 @@ const targetKey = (t: Record<string, unknown> | null | undefined) => {
   return `${typeof a?.key === "string" ? a.key : ""}\u0000${typeof (t ?? {}).environment === "string" ? (t ?? {}).environment : ""}`;
 };
 
+/**
+ * Whether the account may start runs now, as a person's launch is checked (src/limits.ts): not blocked (no allowance,
+ * over its cap or buffer) and its allowance readable. Scheduled runs have no launcher, so the account's own standing applies.
+ */
+export async function accountStanding(orgId: number): Promise<string | null> {
+  try {
+    const { overview } = await import("./limits.js");
+    const [o] = await asPlatform(async () => (await getDb()).query<{ slug: string }>("SELECT slug FROM organizations WHERE id = $1", [orgId]));
+    if (!o) return "no such workspace";
+    const v = await asPlatform(() => overview({ orgId, slug: o.slug }));
+    if (v.budget_error) return "the account's allowance could not be checked: not started";
+    if (v.account.blocked) return `the account cannot start runs now (${v.account.blocked}): not started`;
+    return null;
+  } catch (e) { return `the account's allowance could not be checked (${(e as Error).message}): not started`; }
+}
+
 /** Start the runs of one firing (its row already moved on). Never throws: what went wrong is the row's last_error. */
 async function fire(s: Row): Promise<{ runs: string[]; error: string | null }> {
   const errors: string[] = [];
   const runs: string[] = [];
   try {
     if (!findKind(s.pack, s.job_kind)) return { runs, error: `job kind ${s.pack}/${s.job_kind} is not in this build` };
+    const standing = await accountStanding(s.org_id);
+    if (standing) return { runs, error: standing };
     const { targets, note } = await targetsOf(s);
     if (note) errors.push(note);
     const by = `schedule:${s.id}`;
@@ -324,7 +364,7 @@ export async function tickSchedules(now = clock(), opts: { limit?: number } = {}
       `UPDATE workspace_schedules SET next_at = $4::timestamptz, seq = seq + 1, last_slot_at = $5::timestamptz, last_fired_at = $6::timestamptz,
               last_skipped = $7, last_runs = '{}', last_error = $8, enabled = enabled AND $4::timestamptz < $9::timestamptz, updated_at = now()
         WHERE id = $1 AND org_id = $2 AND seq = $3 AND enabled AND next_at <= $6::timestamptz RETURNING seq`,
-      [s.id, s.org_id, s.seq, next, slot, now, skipped, bad, NEVER]));
+      [s.id, s.org_id, s.seq, next, slot, now, skipped, bad ?? STARTING, NEVER]));
     if (!won) { report.lost++; continue; }
     report.fired++;
     report.skipped_slots += skipped;
@@ -350,7 +390,7 @@ const realDay = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d
 /**
  * Once a UTC day: post a notice for every workspace record of a due area whose date is within its window (today to
  * today + within_days), and email each workspace's people with the area's notify roles the notices not yet emailed.
- * A notice is posted once per record and due date; it is emailed until an email reached every recipient.
+ * A notice is posted once per record and due date; it is emailed until an email reached someone of the workspace.
  */
 export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): Promise<DueReport> {
   const day = dayOf(now);
@@ -358,11 +398,11 @@ export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): P
   const areas = dueAreas();
   if (!areas.length) return { ...report, reason: "no record area declares due dates" };
   const db = await getDb();
+  // The day is marked done after the work, so a check cut short runs again at the next tick. Two checks at once are
+  // harmless: a notice is posted once (its unique key) and an email sent once (its idempotency key, src/email.ts).
   if (!opts.force) {
-    const [mark] = await asPlatform(() => db.query(
-      `INSERT INTO scheduler_marks (name, day, at) VALUES ('due_check', $1, $2) ON CONFLICT (name) DO UPDATE SET day = excluded.day, at = excluded.at
-        WHERE scheduler_marks.day < excluded.day RETURNING name`, [day, now]));
-    if (!mark) return { ...report, reason: "already ran today" };
+    const [mark] = await asPlatform(() => db.query<{ day: string | Date }>("SELECT day FROM scheduler_marks WHERE name = 'due_check'"));
+    if (mark && dayOf(new Date(mark.day)) >= day) return { ...report, reason: "already ran today" };
   }
   report.ran = true;
   report.areas = areas.length;
@@ -372,7 +412,7 @@ export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): P
     const rows = await asPlatform(() => db.query<{ org_id: number; key: string; title: string | null; due_on: string }>(
       `/* tenant: platform due-date check across workspaces; each row keeps its own org_id */ SELECT org_id, key, title, substr(data->>$3, 1, 10) AS due_on
          FROM workspace_records WHERE pack = $1 AND area = $2 AND NOT sealed AND substr(data->>$3, 1, 10) BETWEEN $4 AND $5
-        ORDER BY org_id, due_on, key LIMIT 20000`, [a.pack, a.name, a.due.field, day, hi]));
+        ORDER BY org_id, due_on, key`, [a.pack, a.name, a.due.field, day, hi]));
     for (const r of rows) {
       if (!realDay(r.due_on)) continue;
       report.found++;
@@ -391,13 +431,19 @@ export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): P
     for (const n of pending) byOrg.set(n.org_id, [...(byOrg.get(n.org_id) ?? []), n]);
     for (const [orgId, list] of byOrg) {
       const items = list.map((n) => ({ key: n.record_key, title: n.title, due_on: typeof n.due_on === "string" ? n.due_on.slice(0, 10) : dayOf(new Date(n.due_on)) }));
-      const out = await mail.dueSoon(orgId, { area: a.name, label: a.label, within_days: a.due.within_days, roles: a.due.notify, day, items });
-      if (out.recipients > 0 && out.delivered === out.recipients) {
+      const out = await mail.dueSoon(orgId, { area: a.name, label: a.label, within_days: a.due.within_days, roles: a.due.notify, day, items,
+        batch: list.map((n) => String(n.id)) });
+      // Emailed once it reached someone of the workspace: a recipient whose address fails is not a reason to send the
+      // list to everyone again tomorrow (the failure stays in email_log).
+      if (out.delivered > 0) {
         await asPlatform(() => db.query("UPDATE workspace_notices SET emailed_at = $3 WHERE org_id = $1 AND id = ANY ($2::bigint[])", [orgId, list.map((n) => n.id), now]));
         report.emailed += out.recipients;
       } else report.email_failed += out.recipients - out.delivered;
     }
   }
+  if (!opts.force) await asPlatform(() => db.query(
+    `INSERT INTO scheduler_marks (name, day, at) VALUES ('due_check', $1, $2) ON CONFLICT (name) DO UPDATE SET day = excluded.day, at = excluded.at
+      WHERE scheduler_marks.day < excluded.day`, [day, now]));
   return report;
 }
 

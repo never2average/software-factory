@@ -4,8 +4,9 @@
  *
  *   GET    /api/schedules          a signed-in person of the workspace: its schedules (the packs' defaults copied in),
  *                                  the job kinds and asset areas one may name, whether they may change them
- *   POST   /api/schedules          {pack, job_kind, name, cron, assets?, environment?, scope?, label?, enabled?}: add one ("manage")
- *   PATCH  /api/schedules/:id      {cron?, enabled?, assets?, environment?, scope?, label?}: change one ("manage")
+ *   POST   /api/schedules          {pack, job_kind, name, cron, assets?, environment?, label?, enabled?}: add one ("manage"), for a
+ *                                  kind the pack itself schedules, with the scope of the pack's own schedule of it
+ *   PATCH  /api/schedules/:id      {cron?, enabled?, assets?, environment?, label?}: change one ("manage"; never the scope)
  *   DELETE /api/schedules/:id      remove one the workspace added ("manage"; a pack's default is turned off instead)
  *   GET    /api/notices            a signed-in person of the workspace: its notices (?all=1 with dismissed ones)
  *   POST   /api/notices/:id/dismiss  ("edit")
@@ -19,8 +20,7 @@ import { log } from "./admin.js";
 import { customerSession, type Session } from "./app.js";
 import { PackError } from "./pack-api.js";
 import { recordAreas } from "./record-areas.js";
-import { jobKinds } from "./runs.js";
-import { createSchedule, deleteSchedule, dismissNotice, dueAreas, listNotices, listSchedules, schedulesWired, updateSchedule } from "./schedules.js";
+import { createSchedule, deleteSchedule, dismissNotice, dueAreas, listNotices, listSchedules, schedulableKinds, schedulesWired, updateSchedule } from "./schedules.js";
 
 function base(r: Router) {
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
@@ -54,7 +54,7 @@ export function scheduleAppRouter(): Router {
   base(r);
   r.get("/", answer(async (_req, res) => ({
     schedules: await listSchedules(S(res).org),
-    kinds: jobKinds().map((k) => ({ pack: k.pack, name: k.name })),
+    kinds: schedulableKinds(),
     asset_areas: recordAreas().filter((a) => a.role === "asset" && a.scope === "workspace").map((a) => ({ pack: a.pack, name: a.name, label: a.label })),
     timezone: "UTC",
     can_manage: canAccount(S(res).accountRole, "manage"),
