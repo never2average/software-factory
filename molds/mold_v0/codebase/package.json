@@ -17,6 +17,7 @@
     "test:packs": "tsx scripts/packs-test.ts",
     "test:record-areas": "tsx scripts/record-areas-test.ts",
     "test:runs": "tsx scripts/runs-test.ts",
+    "test:workspace-store": "tsx scripts/workspace-store-test.ts",
     "org:delete": "tsx scripts/delete-org.ts",
     "org:create": "tsx --env-file-if-exists=.env scripts/create-org.ts",
     "admin:token": "tsx --env-file-if-exists=.env scripts/admin-token.ts",

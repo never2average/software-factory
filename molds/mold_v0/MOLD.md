@@ -93,6 +93,20 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   app (no runner is launched by the autoscaler; `drainRuns` is there for one), and `gen-packs` holds a pack's run
   programs to the server-code import rules (a program that needs `node:child_process` is refused today).
   `npm run test:runs` proves the lifecycle offline with fixture kinds (`scripts/fixtures/runs/`).
+- **The workspace store** (mold_v0-033, built): a job kind with `workspace: true` gets versioned snapshots of its
+  workspace's files that outlive a run, one store per workspace and pack (`sql/migrations/0006_workspace_store.sql`,
+  `src/workspace-store.ts`, `src/workspace-bundle.ts`). Its claim takes the store's lease (`workspace_leases`, renewed
+  by the heartbeat): one writer per workspace store, a second run waits in the queue. The harness checks the latest
+  snapshot out before the program runs (each file checked against the sha256 manifest), and writes the directory back
+  only when the program and the validator exited 0: it is staged, and becomes the next version inside the run's
+  completion as succeeded; any other end discards it. Objects live in the product's storage (`src/storage.ts`
+  `objectStore()`: the R2 bucket, or `OCTILLION_STORAGE_DIR` on one machine and in tests) under
+  `workspaces/org-<id>/<store>/`, sealed with the workspace's data key (`src/orgcrypto.ts` `sealBytes`, refused while
+  the vault is locked) and bound by AES-GCM additional data to their workspace, store, row and manifest. A runner names
+  a run and its lease token, never a workspace (`GET`/`PUT /api/worker/runs/:id/workspace`); packing never follows a
+  link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots. **Not wired yet:**
+  no customer-facing read of a snapshot's files (an evidence viewer), and no retention of old versions (all are kept).
+  `npm run test:workspace-store` proves it with two workspaces.
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".

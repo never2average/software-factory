@@ -26,6 +26,7 @@ import { JobKindSchema, PackError, z, type RunResultRow, type RunView, type Work
 import { packs } from "./packs.js";
 import { findArea } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
+import { acquireLease, commitStaged, discardStaged, releaseLease, renewLease } from "./workspace-store.js";
 
 export type JobKind = z.output<typeof JobKindSchema> & { pack: string };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -192,8 +193,11 @@ export async function sweepRuns(): Promise<{ requeued: number; failed: number; c
   });
 }
 
-/** The workspace store's lease for a run (mold_v0-033): released when the attempt ends. A no-op until the store exists. */
-async function releaseWorkspace(_runId: string): Promise<void> {}
+/** The workspace store (mold_v0-033): when an attempt ends, its lease goes and any stage it did not commit is discarded. */
+async function releaseWorkspace(runId: string): Promise<void> {
+  await discardStaged(runId);
+  await releaseLease(runId);
+}
 
 /**
  * Claim the oldest queued run of the given kinds ("pack/kind"; all when empty). Returns null when there is none.
@@ -205,12 +209,16 @@ export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}
   const kinds = (opts.kinds ?? []).filter((k) => typeof k === "string").slice(0, 50);
   const lease = `orl_${randomBytes(24).toString("base64url")}`;
   const row = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
-    const candidates = await tx.query<{ id: string; org_id: number; pack: string; kind: string }>(
-      `/* tenant: platform claim across workspaces (the workspace comes from the row) */ SELECT id, org_id, pack, kind FROM runs
+    const candidates = await tx.query<{ id: string; org_id: number; pack: string; kind: string; workspace: boolean; lease_seconds: number }>(
+      `/* tenant: platform claim across workspaces (the workspace comes from the row) */ SELECT id, org_id, pack, kind,
+              coalesce((spec->>'workspace')::boolean, false) AS workspace, lease_seconds FROM runs
         WHERE status = 'queued' AND ($1::text[] IS NULL OR pack || '/' || kind = ANY ($1::text[]))
         ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds.length ? kinds : null]);
     for (const c of candidates) {
       if (!findKind(c.pack, c.kind)) continue; // a kind this build no longer has: left queued for a build that has it
+      // One writer per workspace store (mold_v0-033): while another run of this workspace and pack holds the store's
+      // lease, this one waits in the queue.
+      if (c.workspace && !(await acquireLease(tx, c.org_id, c.pack, c.id, c.lease_seconds))) continue;
       const [r] = await tx.query<RunRow>(
         `/* tenant: the claimed run, by id */ UPDATE runs SET status = 'running', attempt = attempt + 1, worker_id = $2, lease_token_hash = $3,
                 lease_expires_at = now() + make_interval(secs => lease_seconds), heartbeat_at = now(),
@@ -249,6 +257,9 @@ async function leased(q: Queryable, runId: string, leaseToken: unknown, lock = f
   return r;
 }
 
+/** The running run behind a lease token (the workspace store's checkout and stage, src/workspace-store.ts). */
+export const leasedRun = (runId: string, leaseToken: string) => asPlatform(async () => leased(await getDb(), runId, leaseToken));
+
 /** Renew the lease. `cancel` is true once the run is cancelled or past its deadline: the runner stops and completes. */
 export async function heartbeatRun(runId: string, leaseToken: string): Promise<{ lease_expires_at: string; cancel: boolean; reason: string | null }> {
   return asPlatform(async () => {
@@ -263,8 +274,8 @@ export async function heartbeatRun(runId: string, leaseToken: string): Promise<{
     return { lease_expires_at: iso(u.lease_expires_at)!, cancel: !!r.cancel_requested_at || !!late, reason: r.cancel_requested_at ? "cancelled" : late ? "deadline" : null };
   });
 }
-/** The workspace store's lease follows the run's (mold_v0-033). A no-op until the store exists. */
-async function renewWorkspace(_runId: string, _seconds: number): Promise<void> {}
+/** The workspace store's lease follows the run's (mold_v0-033). */
+const renewWorkspace = (runId: string, seconds: number) => renewLease(runId, seconds);
 
 const EVENT_TYPE = /^[a-z][a-z0-9_.:-]{0,63}$/;
 /** Append events (at most 500 per call, 16 KB each, 20 000 per run). */
@@ -356,6 +367,18 @@ async function complete(runId: string, leaseToken: string, c: Completion): Promi
     if (run.cancel_requested_at) { status = "cancelled"; kind = "cancelled"; error = "cancelled"; }
     else if (c.outcome === "succeeded") {
       const results = await checkResults(tx, run.org_id, Array.isArray(c.results) ? c.results : []);
+      // The workspace's write-back (mold_v0-033): the staged snapshot becomes the next version now, with the results.
+      const wb = run.spec?.workspace ? await commitStaged(tx, run) : null;
+      if (wb === "conflict") {
+        status = run.attempt < run.max_attempts ? "queued" : "failed"; kind = "infrastructure";
+        error = "the workspace changed after this run checked it out: retried from a fresh checkout";
+        const [u] = await tx.query<RunRow>(
+          `/* tenant: the leased run, by id */ UPDATE runs SET status = $2, error_kind = $3, error = $4, cost_usd = $5, ended_at = CASE WHEN $2 = 'queued' THEN NULL ELSE now() END,
+                  worker_id = NULL, lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now() WHERE id = $1 RETURNING ${COLS}`, [run.id, status, kind, error, usage.cost_usd]);
+        await event(run.id, run.org_id, run.attempt, status === "queued" ? "retry" : status, { error_kind: kind, error }, tx);
+        return u!;
+      }
+      if (wb) await event(run.id, run.org_id, run.attempt, "workspace_written", wb, tx);
       for (const x of results)
         await tx.query(
           `INSERT INTO run_results (run_id, org_id, check_area, check_key, asset_area, asset_key, source_area, source_key, status, finding_fingerprint, evidence_ref, detail)
