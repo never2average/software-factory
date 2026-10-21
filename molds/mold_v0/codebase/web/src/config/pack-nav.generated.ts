@@ -28,9 +28,25 @@ export interface RecordAreaSpec {
   description: string | null;
   role: 'source' | 'check' | 'asset';
   scope: 'platform' | 'workspace';
-  fields: { name: string; label: string; type: string }[];
+  fields: RecordFieldSpec[];
   list_columns: string[];
   links: { field: string; area: string }[];
+  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;
+}
+
+/** A field of a record area (typed by mold_v0-057). */
+export interface RecordFieldSpec {
+  name: string;
+  label: string;
+  type: string;
+  help?: string;
+  required?: boolean;
+  options?: (string | { value: string; label?: string })[];
+  to?: string;
+  multiple?: boolean;
+  min?: number;
+  max?: number;
+  max_length?: number;
 }
 
 export const recordAreas: RecordAreaSpec[] = [];

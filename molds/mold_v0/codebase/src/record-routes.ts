@@ -31,13 +31,15 @@ export function recordAppRouter(): Router {
   r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   r.use(customerSession);
   const org = (res: Response) => (res.locals.session as Session).org;
+  // The person asking: an area's read permission is theirs to pass (mold_v0-057).
+  const actor = (res: Response) => { const s = res.locals.session as Session; return { role: s.accountRole ?? null, userId: s.user ?? null }; };
   r.get("/areas", answer(async () => ({ areas: recordAreas().map(areaSummary) })));
   r.get("/:area", answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
-    return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after })) };
+    return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };
   }));
   r.get("/:area/:key", answer(async (req, res) => {
-    const d = await detailFor(org(res), String(req.params.area), String(req.params.key));
+    const d = await detailFor(org(res), String(req.params.area), String(req.params.key), actor(res));
     if (!d) throw new PackError("Not found", 404);
     return d;
   }));
