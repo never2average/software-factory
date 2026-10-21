@@ -53,7 +53,9 @@
       "path": "molds/mold_v0",
       "source": {
         "commit": "7399bd4c361138ef664ee8a5d5c5667be7121f2f",
-        "snapshot_date": "2026-10-21"
+        "snapshot_date": "2026-10-21",
+        "in_tree": true,
+        "in_tree_since": "e8d836532cb737ea3b2809f674a216591e7314fc"
       }
     },
     {

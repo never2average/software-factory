@@ -703,8 +703,12 @@ def self_test():
     cr = {"target": "compose_remote", "deployed_at": "2026-10-20T00:00:00+00:00", "compose_remote": {"domain": "a.example.org", "production_url": "https://a.example.org"}}
     ok(lane_url.target_url(cr) == "https://a.example.org" and lane_url.target_url(dict(cr, deployed_at=None)) == "", "compose_remote is graded at its recorded address, only once a deploy wrote it")
     specs = {l: read_spec(l, "mold_v0") for l in LANES}
-    ok(all(specs.values()) and [c["name"] for c in specs["functional"]["checks"]] == ["typecheck", "smoke", "mcp.check"]
-       and [c["name"] for c in specs["context"]["checks"]] == ["check:tenant-sql"], "mold_v0's lanes run the product's own typecheck, smoke, MCP check and tenant-SQL check")
+    ok(all(specs.values()) and [c["name"] for c in specs["functional"]["checks"]] == ["typecheck", "test:migrations", "smoke", "mcp.check"]
+       and [c["name"] for c in specs["context"]["checks"]] == ["check:tenant-sql", "check:rls"],
+       "mold_v0's lanes run the product's own typecheck, migration test, smoke, MCP check, tenant-SQL check and row-level security check")
+    offline = {c["name"]: c["run"] for l in ("functional", "context") for c in specs[l]["checks"] if c["name"] in ("test:migrations", "check:rls")}
+    ok(all("-u DATABASE_URL" in r for r in offline.values()) and "-u MIGRATIONS_PG_URL" in offline["test:migrations"] and "PGLITE_DIR=" in offline["check:rls"],
+       "  ...the migration test and the RLS check run offline only: no DATABASE_URL (nor MIGRATIONS_PG_URL) reaches them, the RLS check on a throwaway embedded database")
     ok(all(specs[l]["checks"] == [] and "skipped" in specs[l]["summary"] for l in ("load", "accessibility", "responsiveness")),
        "mold_v0's lanes with no harness of the product's own are empty, and say they are skipped, never pass")
     print(f"lanes: {len(checks)} checks passed (--json, exit codes, the lane lock, --background and status; mold_v0's lanes)")

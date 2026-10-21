@@ -96,7 +96,10 @@ AGENT INTERFACE. --json prints one result ({"ok","status","summary","next","need
 ONLY WHAT PASSED, AND ONLY WHAT ANSWERS. Before any deploy (--deploy and --deploy-remote) lib/deploy_gate.py checks that
 the mold commit the build is made from (state/factory.json molds[].source.commit) passed every job of the mold source's
 ci.yml, for exactly that commit; red, still running or unknown refuses with one plain sentence naming the check, unless
---allow-unverified-mold "<reason>" (kept in infrastructure.json deploy_gate.override). On Vercel the deploy then records
+--allow-unverified-mold "<reason>" (kept in infrastructure.json deploy_gate.override). An IN-TREE mold (authored in this
+repository; today mold_v0, mold_v0-040) is judged on THIS repository's checks for the commit being deployed (HEAD, with
+its codebase exactly that commit): the workflow its mold.json names, or until one is named every check GitHub reports
+for that commit (none at all refuses). On Vercel the deploy then records
 which deployment serves each project, and after the three deploys runs the health gate and the smoke test
 (lib/smoke.py: one chat as the operator, in the operator's own workspace, answered in time). Either failing points
 every project back at its recorded deployment, reads health again and ends failed, "rolled back" (see RELEASES below:
@@ -140,7 +143,9 @@ lib/single_service.py right after state is read, for every flag: target compose_
 of the app's own running the mold's OWN compose stack under the project sf-<app id> (vm_remote's host probe, SSH,
 DNS check, key pair, hidden prompt, env file and firewall rules, reused), and target vercel is TWO projects: <project>-api
 (the API function, with the app's own database) and <project> (the web console, pointed at the API) (mold_v0-029). The same
-CI gate applies to its deploys. It adds --lane-key [--dry-run] [--yes] (an organisation of the app's own for the
+CI gate applies to its deploys. When its mold.json declares "rls" (mold_v0 since mold_v0-031), the deploy also runs the
+product's own row-level security check against the deployed database and records datastores.postgres.rls_verified
+(mold_v0-051); a failure is a failed health check. It adds --lane-key [--dry-run] [--yes] (an organisation of the app's own for the
 lanes' MCP check). Its --help: python3 .claude/scripts/lib/single_service.py --help
 
 DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier is exhausted;
