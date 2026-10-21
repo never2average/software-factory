@@ -4,42 +4,33 @@
  * connector's OAuth): the UI sends Clerk's session (the __session cookie on the same origin, or a Bearer session
  * token), and the account is the session's active Clerk organization.
  *
- * Nothing new is stored. Setup and usage come from the connector log Octillion already keeps (mcp_events, per user);
+ * Nothing new is stored. Setup and usage come from the connector log the server already keeps (mcp_events, per user);
  * people from Clerk and the plan from Stripe, through src/admin.ts.
  */
 import express, { type NextFunction, type Request, type Response } from "express";
 import { withTenant } from "./tenant-scope.js";
 import { z } from "zod";
 import * as admin from "./admin.js";
-import { orgForClerk } from "./auth.js";
+import { orgForClerk, type Org } from "./auth.js";
 import { orgBudget } from "./billing.js";
 import * as billing from "./billing.js";
 import * as experiments from "./experiments.js";
 import { getDb } from "./db.js";
-import { getProduct, HIT, listProducts, orgMonthSpendUsd, saveProduct, saveScenarios, SCENARIO_ROWS } from "./queries.js";
+import { HIT, orgMonthSpendUsd, SCENARIO_ROWS } from "./session-engine.js";
 import { RUN_USD } from "./run-spend.js";
 import { workspaceRunUsage } from "./usage-report.js";
 import { endpointLimit } from "./rate-limits.js";
-import * as context from "./context.js";
-import { getPopulation } from "./populations.js";
-import * as playbooks from "./playbooks.js";
-import { markStage, playbooksFor, PlaybookError, syncProgress } from "./playbooks.js";
-import { TOOL_NAMES } from "./server.js";
+import { currentPopulation } from "./agent-mix.js";
+import { hosts } from "./host.js";
+import { PROFILE } from "./profile.js";
 import { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
 import { capture, identifyPerson } from "./telemetry.js";
-import * as journeys from "./journeys.js";
 import * as limits from "./limits.js";
 import * as clerk from "./clerk.js";
 import { clerkSession } from "./session.js";
 import * as roles from "./account-roles.js";
-import * as priv from "./private.js";
-import * as contributions from "./contributions.js";
-import { recordPageAction } from "./analytics.js";
-import { visibilityRoutes } from "./visibility.js";
 import { answerDocs, sseStart, streamDocsAnswer, type DocsStreamEvent } from "./docs-answers.js";
 
-/** The portal surface: library content redacted (src/queries.ts Surface). MCP tool handlers (src/server.ts) never pass it. */
-const PORTAL = { redact: true } as const;
 
 const publicUrl = () => (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/$/, "");
 
@@ -51,39 +42,19 @@ export interface Session { org: number; slug: string; user: string | null; email
 
 const identified = new Set<string>();
 
-class AppError extends Error { constructor(message: string, public status = 400, public info: Record<string, unknown> = {}) { super(message); } }
+/** "a" or "an" before a name, as it is read (the profile's name in a sentence). */
+const an = (name: string) => `${/^[aeiou]/i.test(name) ? "an" : "a"} ${name}`;
+
+export class AppError extends Error { constructor(message: string, public status = 400, public info: Record<string, unknown> = {}) { super(message); } }
 
 // ---------- what "set up" and "using it fully" mean ----------
-
-/** Tool groups, in workflow order. A group nobody has used yet comes with the prompt that starts it. */
-export const TOOL_GROUPS = [
-  { id: "start", label: "Get started", tools: ["get_started"], prompt: "Get me started with Octillion." },
-  { id: "onboard", label: "Onboard a product", tools: ["onboard_product", "get_onboarding", "save_product", "save_scenarios", "get_product", "list_products"],
-    prompt: "Onboard my product: <name>, <website>, <docs link>. It is a <one-line description>." },
-  { id: "run", label: "Run simulations", tools: ["run_simulation", "get_simulation", "list_simulations", "cancel_simulation"], prompt: "Run a simulation." },
-  { id: "report", label: "Read the visibility report", tools: ["get_visibility_report", "export_visibility_report"], prompt: "Show my visibility report." },
-  { id: "evidence", label: "Check the evidence", tools: ["get_agent_session", "get_session_transcript", "search_transcripts"],
-    prompt: "Why did agents pick <competitor> on <task>? Show me the transcript." },
-  { id: "tune", label: "See who is tested", tools: ["list_agents", "list_developer_profiles", "browse_task_library"],
-    prompt: "Which coding agents and developer personas do you test with?" },
-  { id: "memory", label: "Build team memory", tools: ["save_to_memory", "search_memory"],
-    prompt: "Remember: we lead with <your angle> against <competitor>." },
-] as const;
-
-/** Plain-language fixes for errors people hit, matched on the tool's error text. */
-const HINTS: [RegExp, string][] = [
-  [/budget/i, "The account reached its monthly model budget. Results stay available; an owner or billing manager can change the plan on the Billing tab."],
-  [/no active Octillion plan/i, "The account has no active plan. An owner or billing manager can choose one on the Billing tab."],
-  [/no (product|products)/i, "Onboard a product first: \"Onboard my product: <name>, <website>, <docs link>.\""],
-  [/research failed|403|fetch/i, "Octillion could not read your website or docs. Check that they are public, or paste a short description instead."],
-];
 
 /**
  * Each coding agent's share of real-world developer usage (the default developer population, the same mix the agent
  * selector and simulations use), so the connection picker lists agents in the order people actually use them.
  */
 async function withUsageShares(c: ReturnType<typeof admin.connectInfo>) {
-  const pop = await getPopulation().catch(() => null);
+  const pop = await currentPopulation().catch(() => null);
   const share = new Map<string, number>();
   for (const a of pop?.agents ?? []) share.set(a.harness, (share.get(a.harness) ?? 0) + Number(a.weight || 0));
   const clients = c.clients.map((x) => ({ ...x, share: share.has(x.id) ? Math.round((share.get(x.id) ?? 0) * 1000) / 10 : null }));
@@ -92,49 +63,36 @@ async function withUsageShares(c: ReturnType<typeof admin.connectInfo>) {
   return { ...c, clients };
 }
 
+/**
+ * The shell's Setup page: joining, connecting a client, its tools and a first call, from the connector log. A host pack
+ * (src/host.ts) replaces this route with its own steps and tool groups (mold_v0-039); with zero packs this is the page.
+ */
 async function setup(s: Session, since?: string) {
   const db = await getDb();
+  const P = PROFILE.name;
   // Per person (the Clerk user); per account for a session without a user.
   const who = s.user ? "org_id = $1 AND user_id = $2" : "org_id = $1 AND user_id IS NULL";
   const args = s.user ? [s.org, s.user] : [s.org];
   const [m] = await db.query<Record<string, any>>(
     `/* tenant: who = org_id = $1, the session's account */ SELECT min(at) FILTER (WHERE method = 'initialize') AS connected,
             min(at) FILTER (WHERE method = 'tools/list') AS tools_listed,
-            min(at) FILTER (WHERE method = 'resources/read' AND name LIKE 'ui://octillion/%') AS dashboard,
             min(at) FILTER (WHERE method = 'tools/call' AND ok) AS first_call,
             count(*) FILTER (WHERE method = 'tools/call') AS calls
        FROM mcp_events WHERE ${who}`, args);
   const clients = await db.query<{ client: string; last: Date }>(
     `/* tenant: who = org_id = $1, the session's account */ SELECT client, max(at) AS last FROM mcp_events WHERE ${who} AND method = 'initialize' AND client IS NOT NULL GROUP BY client ORDER BY max(at) DESC LIMIT 5`, args);
-  const used = new Set((await db.query<{ name: string }>(
-    `SELECT DISTINCT name FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' AND ok`, [s.org])).map((r) => r.name));
   const errors = await db.query<{ at: Date; name: string | null; error: string | null }>(
     `/* tenant: who = org_id = $1, the session's account */ SELECT at, name, error FROM mcp_events WHERE ${who} AND NOT ok ORDER BY at DESC LIMIT 5`, args);
-  const facts = await admin.accountFacts(s.slug);
-  const textOnly = clients.length > 0 && clients.every((c) => !/claude-ai|claude\.ai|openai|chatgpt/i.test(c.client));
   const steps = [
     { id: "joined", label: "Join your team's account", done: true, at: null, help: "You accepted the invitation and signed in, so your usage, limits and context belong to your team's account." },
-    { id: "connected", label: "Add the Octillion connector to your AI client", done: Boolean(m.connected), at: m.connected,
-      help: "Octillion runs inside the AI client you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us." },
-    { id: "tools", label: "Switch the Octillion tools on", done: Boolean(m.tools_listed), at: m.tools_listed,
-      help: "Your client has to load Octillion's tools before it can use them. In Cursor, switch the Octillion server on in its MCP settings; in other clients, start a new chat." },
-    { id: "dashboard", label: "See results as an interactive dashboard", done: Boolean(m.dashboard), at: m.dashboard, optional: true,
-      help: textOnly ? "Your client shows results as text. In Claude or ChatGPT, the same answers render as an interactive dashboard with charts and transcripts." : "Ask anything in Claude or ChatGPT and an interactive dashboard, with charts and transcripts, renders under the answer." },
-    { id: "first_call", label: "Ask Octillion something", done: Boolean(m.first_call), at: m.first_call, help: "Your first question checks everything works end to end and gives you a guided tour. Type: \"Get me started with Octillion.\"" },
-    { id: "onboarded", label: "Onboard your product (team)", done: Boolean(facts.onboarded_at), at: facts.onboarded_at, help: `Octillion researches your product, its packages and competitors, and drafts realistic coding tasks to test. Type: "${TOOL_GROUPS[1].prompt.replace(/^Type:\s*/, "").replace(/^"|"$/g, "")}"` },
-    { id: "simulated", label: "Run a simulation (team)", done: Boolean(facts.first_sim_at), at: facts.first_sim_at, help: "Coding agents work your tasks in sandboxes and Octillion records which tools they pick. Type: \"Run a simulation.\" It takes 20 to 60 minutes." },
-    { id: "reported", label: "Read the visibility report (team)", done: Boolean(facts.first_report_at), at: facts.first_report_at, help: "The report shows how often agents pick you, where you lose and the transcript evidence for why. Type: \"Show my visibility report.\"" },
+    { id: "connected", label: `Add the ${P} connector to your AI client`, done: Boolean(m.connected), at: m.connected,
+      help: `${P} runs inside the AI client you already use. Pick your client under Connection string, follow its one step, then press Test my connection to prove it reaches us.` },
+    { id: "tools", label: `Switch the ${P} tools on`, done: Boolean(m.tools_listed), at: m.tools_listed,
+      help: `Your client has to load ${P}'s tools before it can use them. In Cursor, switch the ${P} server on in its MCP settings; in other clients, start a new chat.` },
+    { id: "first_call", label: `Ask ${P} something`, done: Boolean(m.first_call), at: m.first_call, help: `Your first question checks everything works end to end. Type: "What can ${P} do?"` },
   ];
-  // Every step has a prompt to paste into the AI client: the one its help names (Type: "…"), or one that checks the step.
-  const STEP_PROMPTS: Record<string, string> = {
-    connected: "Is Octillion connected? Tell me what it can do.", tools: "Which Octillion tools can you use?", dashboard: "Show my Octillion dashboard.",
-  };
-  // A viewer can't launch: where the onboarding and simulation prompts would be, a short note instead.
-  const viewer = !roles.canAccount(s.accountRole, "launch");
-  const VIEWER_NOTE = "Viewers read reports and usage; a Member runs this. Ask an account owner if you need to.";
-  const prompted = steps.map((st) => viewer && (st.id === "onboarded" || st.id === "simulated")
-    ? { ...st, help: VIEWER_NOTE, prompt: null } : { ...st, prompt: STEP_PROMPTS[st.id] ?? st.help.match(/Type:\s*"(.+?)"/)?.[1] ?? null });
-  const groups = TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, prompt: g.prompt, used: g.tools.filter((t) => used.has(t)).length, total: g.tools.length }));
+  const STEP_PROMPTS: Record<string, string> = { connected: `Is ${P} connected? Tell me what it can do.`, tools: `Which ${P} tools can you use?` };
+  const prompted = steps.map((st) => ({ ...st, prompt: STEP_PROMPTS[st.id] ?? st.help.match(/Type:\s*"(.+?)"/)?.[1] ?? null }));
   let live = null;
   if (since) {
     const [r] = await db.query<{ at: Date; client: string | null }>(
@@ -143,11 +101,10 @@ async function setup(s: Session, since?: string) {
     live = r ?? null;
   }
   return {
-    steps: prompted, done: steps.filter((x) => x.done && !("optional" in x && x.optional)).length, total: steps.filter((x) => !("optional" in x && x.optional)).length,
-    clients, calls: Number(m.calls), groups, coverage: groups.filter((g) => g.used > 0).length / groups.length,
-    next: groups.find((g) => g.used === 0) ?? null,
-    errors: errors.map((e) => ({ ...e, hint: HINTS.find(([re]) => re.test(e.error ?? ""))?.[1] ?? null })),
-    connect: await withUsageShares(admin.connectInfo()), live, viewer_note: viewer ? VIEWER_NOTE : null,
+    steps: prompted, done: steps.filter((x) => x.done).length, total: steps.length,
+    clients, calls: Number(m.calls), groups: [] as { id: string; label: string; prompt: string; used: number; total: number }[], coverage: 0, next: null,
+    errors: errors.map((e) => ({ ...e, hint: null })),
+    connect: await withUsageShares(admin.connectInfo()), live, viewer_note: null,
   };
 }
 
@@ -161,10 +118,8 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
   const list = (v: unknown) => [...new Set(String(v ?? "").split(",").map((x) => x.trim()).filter(Boolean))].slice(0, 200);
   const users = list(q.user), useCases = list(q.use_case);
   const db = await getDb();
-  // A use case is its stages' tools: tool calls narrow to those (simulations and spend belong to no single use case).
-  const templates = await playbooks.listTemplates({ promotedOnly: true, orgId: s.org });
-  const ucTools = useCases.length ? [...new Set(templates.filter((t) => useCases.includes(t.id)).flatMap((t) => t.stages.flatMap((st) => st.tools)))] : null;
-  const toolSql = ucTools ? ` AND name = ANY('{${ucTools.map((t) => t.replace(/[^\w]/g, "")).join(",")}}'::text[])` : "";
+  // Use cases are a host pack's (its own /usage, src/host.ts): the shell has none, so a use-case filter narrows nothing.
+  const toolSql = "";
   const ev = (users.length ? " AND user_id = ANY($4)" : "") + toolSql;
   const sim = users.length ? " AND created_by = ANY($4)" : "";
   const p = users.length ? [s.org, range.start, range.end, users] : [s.org, range.start, range.end];
@@ -233,8 +188,7 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
       recent: runUsage.recent.map((x) => ({ ...x, by: label(x.requested_by) })) } } : {}),
     charts,
     days, range: { from: range.from, to: range.to }, daily, tools, runs: runs[0], filters: { user: users, use_case: useCases },
-    use_cases: templates.map((t) => ({ id: t.id, name: t.name, own: Boolean((t as { own?: boolean }).own),
-      calls: [...new Set(t.stages.flatMap((st) => st.tools))].reduce((n, x) => n + (toolCalls.get(x) ?? 0), 0) })),
+    use_cases: [] as { id: string; name: string; own: boolean; calls: number }[],
     people: [
       ...t.members.map((m) => ({ user_id: m.user_id, email: m.email ?? m.name ?? "Unnamed member", me: m.user_id === s.user, calls: callsOf.get(m.user_id) ?? 0 })),
       ...people.filter((x) => !known.has(x.user_id)).map((x) => ({ user_id: x.user_id, email: "Former member", me: false, calls: Number(x.calls) })),
@@ -314,8 +268,8 @@ async function usageCharts(s: Session, range: ReturnType<typeof reportRange>, us
   const who = new Map(members.map((m) => [m.user_id, m.email ?? m.name ?? null]));
   const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id ? (id === s.user ? "You" : who.get(id) ?? "Former member") : "Connector key");
   return {
-    workflow: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, total: g.tools.length,
-      used: g.tools.filter((x) => calls.get(x)).length, calls: g.tools.reduce((n, x) => n + (calls.get(x) ?? 0), 0) })),
+    // Workflow groups are a host pack's (its own /usage): none in the shell.
+    workflow: [] as { id: string; label: string; total: number; used: number; calls: number }[],
     clients: clients.map((c) => ({ client: c.client, calls: Number(c.calls) })),
     sims_weekly: weeks.map((week) => ({ week, completed: Number(simW.get(week)?.completed ?? 0), other: Number(simW.get(week)?.other ?? 0), partial: partial(week) })),
     harnesses: harnesses.map((h) => ({ harness: h.harness, sessions: Number(h.sessions), completed: Number(h.completed) })),
@@ -425,10 +379,10 @@ export async function customerSession(req: Request, res: Response, next: NextFun
   const ms = (await clerk.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
   // The session's active organization; without one, the person's oldest membership that is not suspended.
   const m = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : ms.find((x) => !clerk.isSuspended(x));
-  if (!m) return void res.status(403).json({ error: "You are not in an Octillion account yet. Ask your admin to invite you.", code: "no_account" });
+  if (!m) return void res.status(403).json({ error: `You are not in ${an(PROFILE.name)} account yet. Ask your admin to invite you.`, code: "no_account" });
   if (clerk.isSuspended(m)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
   const org = await orgForClerk(m.organization!.id);
-  if (!org) return void res.status(403).json({ error: "This organization is not an Octillion account. Octillion is invite-only for now: ask your Octillion contact for an invitation.", code: "no_account" });
+  if (!org) return void res.status(403).json({ error: `This organization is not ${an(PROFILE.name)} account. ${PROFILE.name} is invite-only for now: ask your ${PROFILE.name} contact for an invitation.`, code: "no_account" });
   const user = await clerk.users.get(c.userId);
   const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
     accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };
@@ -452,7 +406,7 @@ export function appRouter() {
   const api = express.Router();
   // Small bodies everywhere except imports (memory, use cases, personas, tasks), which parse their own.
   const small = express.json({ limit: "16kb" });
-  api.use((req, res, next) => (req.path === "/context/memories/import" || req.path === "/journeys/import" || (req.method === "POST" && (req.path === "/personas" || req.path === "/tasks")) ? next() : small(req, res, next)));
+  api.use((req, res, next) => (hosts().some((h) => h.routes?.appLargeBody?.(req)) ? next() : small(req, res, next)));
   api.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   api.use(customerSession);
   const S = (res: Response) => res.locals.session as Session;
@@ -465,6 +419,10 @@ export function appRouter() {
   const can = (res: Response, p: roles.AccountPermission) => roles.canAccount(S(res).accountRole, p);
   const perms = (res: Response) => roles.accountPermissionsOf(S(res).accountRole);
   const actor = (res: Response) => `customer:${S(res).email ?? S(res).slug}`;
+  const orgOf = async (res: Response): Promise<Org> => ({ orgId: S(res).org, slug: S(res).slug, name: (await admin.accountFacts(S(res).slug)).name, userId: S(res).user ?? undefined, role: S(res).accountRole });
+  // A host pack's own portal routes (src/host.ts, mold_v0-039) come first: a path it serves replaces the shell's (its
+  // Setup and Usage pages in place of the neutral ones below).
+  for (const h of hosts()) h.routes?.app?.(api, { S, need, can, actor, orgOf, AppError });
 
   api.get("/me", async (_req, res) => {
     const s = S(res);
@@ -494,94 +452,7 @@ export function appRouter() {
     capture({ distinctId: S(res).user ?? `org:${S(res).slug}`, orgSlug: S(res).slug }, "app_connection_test_started");
     res.json({ since: new Date().toISOString() });
   });
-  // Journeys on Setup: use-case pipelines with real progress (src/playbooks.ts).
-  api.get("/journeys", async (_req, res) => {
-    await syncProgress({ orgId: S(res).org, slug: S(res).slug }, S(res).user ?? undefined).catch((e) => console.error("journey sync:", e.message));
-    res.json({ journeys: await playbooksFor(S(res).org) });
-  });
-  // The account's own use cases (Add use case on /app/adoption): anyone adds; whoever added it or an admin removes.
-  api.post("/journeys", async (req, res) => {
-    need(res, "edit");
-    const id = await playbooks.createUseCase({ orgId: S(res).org, slug: S(res).slug }, actor(res), req.body ?? {}, TOOL_NAMES);
-    capture({ distinctId: S(res).user ?? `org:${S(res).slug}`, orgSlug: S(res).slug }, "use_case_added", { journey: id });
-    res.status(201).json({ id });
-  });
-  api.delete("/journeys/:id", async (req, res) => {
-    need(res, "edit");
-    await playbooks.deleteUseCase(S(res).org, String(req.params.id), actor(res), can(res, "manage"));
-    res.status(204).end();
-  });
-  // Import use cases from a file: up to 100, names the account already has are skipped.
-  api.post("/journeys/import", express.json({ limit: "1mb" }), async (req, res) => {
-    need(res, "edit");
-    const r = await playbooks.importUseCases({ orgId: S(res).org, slug: S(res).slug }, actor(res), req.body?.items, TOOL_NAMES);
-    capture({ distinctId: S(res).user ?? `org:${S(res).slug}`, orgSlug: S(res).slug }, "use_cases_imported", { imported: r.imported, skipped: r.skipped });
-    res.json(r);
-  });
-  // Adoption person by person: who uses each use case, how far they got, where they are stuck, who can help, and the
-  // open help requests. from/to (YYYY-MM-DD) pick who was active; user=a,b narrows to those people.
-  api.get("/adoption", async (req, res) => {
-    const s = S(res);
-    const range = req.query.from || req.query.to ? reportRange(req.query) : null;
-    const users = String(req.query.user ?? "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 200);
-    const [rows, t, help, calls] = await Promise.all([playbooks.adoptionByPerson(s.org, { start: range?.start, end: range?.end, users }), admin.team(s.slug), playbooks.helpRequests(s.org),
-      // Who used each workflow part: tool calls by person (null = a connector key, not a signed-in person).
-      (await getDb()).query<{ user_id: string | null; name: string; calls: number; last: Date }>(
-        `SELECT user_id, name, count(*)::int AS calls, max(at) AS last FROM mcp_events
-          WHERE org_id = $1 AND method = 'tools/call' AND name IS NOT NULL AND ($2::timestamptz IS NULL OR at >= $2) AND ($3::timestamptz IS NULL OR at < $3)
-          GROUP BY user_id, name`, [s.org, range?.start ?? null, range?.end ?? null])]);
-    const who = new Map(t.members.map((m) => [m.user_id, m.email ?? m.name ?? null]));
-    const label = (id: string | null) => (id ? (id === s.user ? "You" : who.get(id) ?? "Former member") : null);
-    res.json({ me: s.user, use_cases: rows.map((r) => ({ ...r, helper_label: label(r.helper), helper_email: r.helper ? who.get(r.helper) ?? null : null,
-      people: r.people.map((x) => ({ ...x, label: label(x.user_id), email: who.get(x.user_id) ?? null })) })),
-      help: help.map((h) => ({ ...h, requester_label: label(h.requester), requester_email: who.get(h.requester) ?? null,
-        helper_label: label(h.helper), helper_email: h.helper ? who.get(h.helper) ?? null : null })),
-      members: t.members.filter((m) => m.user_id).map((m) => ({ user_id: m.user_id, label: label(m.user_id),
-        calls: calls.reduce((n, c) => n + (c.user_id === m.user_id ? Number(c.calls) : 0), 0) })),
-      workflow: TOOL_GROUPS.map((g) => {
-        const byUser = new Map<string | null, { used: Set<string>; calls: number; last: Date | null }>();
-        for (const c of calls) {
-          if (!(g.tools as readonly string[]).includes(c.name) || (users.length && (!c.user_id || !users.includes(c.user_id)))) continue;
-          const u = byUser.get(c.user_id) ?? { used: new Set<string>(), calls: 0, last: null };
-          u.used.add(c.name); u.calls += Number(c.calls); u.last = !u.last || c.last > u.last ? c.last : u.last;
-          byUser.set(c.user_id, u);
-        }
-        return { id: g.id, people: [...byUser].map(([id, u]) => ({ user_id: id, label: id ? label(id) : "Connector key", email: id ? who.get(id) ?? null : null,
-          used: u.used.size, total: g.tools.length, calls: u.calls, last: u.last })).sort((a, b) => b.used - a.used || b.calls - a.calls) };
-      }) });
-  });
-  // Help requests: ask the team, pick one up, close it (asker or helper), hand it back (helper) or withdraw it (asker).
-  api.post("/adoption/help", async (req, res) => {
-    need(res, "edit");
-    const s = S(res);
-    if (!s.user) throw new AppError("Sign in as a person to ask for help");
-    const id = await playbooks.askForHelp(s.org, String(req.body?.journey_id ?? ""), s.user, req.body?.note);
-    capture({ distinctId: s.user, orgSlug: s.slug }, "help_requested", { journey: String(req.body?.journey_id ?? "") });
-    res.status(201).json({ id });
-  });
-  api.post("/adoption/help/:id/:action", async (req, res) => {
-    const s = S(res), id = Number(req.params.id), action = String(req.params.action);
-    if (!s.user) throw new AppError("Sign in as a person to help");
-    need(res, "edit");
-    if (action === "pick") await playbooks.pickUpHelp(s.org, id, s.user);
-    else if (action === "done" || action === "release" || action === "cancel") await playbooks.updateHelp(s.org, id, s.user, action);
-    else throw new AppError("action must be pick, done, release or cancel", 404);
-    capture({ distinctId: s.user, orgSlug: s.slug }, `help_${action === "pick" ? "picked_up" : action}`, { request: id });
-    res.status(204).end();
-  });
-  api.post("/journeys/:id/view", async (req, res) => {
-    capture({ distinctId: S(res).user ?? `org:${S(res).slug}`, orgSlug: S(res).slug }, "journey_viewed", { journey: String(req.params.id) });
-    res.status(204).end();
-  });
-  // Stages with no tool (shipping a docs change) are marked by the person; recorded for everyone in the account.
-  api.post("/journeys/:id/stages/:stage", async (req, res) => {
-    need(res, "edit");
-    await markStage({ orgId: S(res).org, slug: S(res).slug }, S(res).user, String(req.params.id), String(req.params.stage), req.body?.done !== false);
-    res.status(204).end();
-  });
   api.get("/usage", async (req, res) => void res.json(await usage(S(res), req.query)));
-  // Pick rate (/app/pick-rate): its charts, filters, saved reports and exports (src/visibility.ts).
-  visibilityRoutes(api, { S, need, fail: (m, status, info) => new AppError(m, status, info), accountName: async (slug) => (await admin.accountFacts(slug)).name });
   api.get("/team", async (_req, res) => void res.json({ ...(await admin.team(S(res).slug, true)), me: S(res).user, can_manage: can(res, "team"), permissions: perms(res) }));
   // At most so many invitations an hour per workspace (each also issues a key; mold_v0-018, src/rate-limits.ts).
   // Permission first, so someone who may not invite cannot use up the workspace's quota.
@@ -648,205 +519,6 @@ export function appRouter() {
     res.status(204).end();
   });
 
-  // Context (src/context.ts): the company's (owners edit), the person's own, and product profiles (owners edit).
-  // Product reads and writes raise plain errors for user mistakes (an unknown product, a bad field): show them as 400s.
-  const q = <T>(p: Promise<T>) => p.catch((e: Error) => { throw new AppError(e.message, /no product|not found|unknown/i.test(e.message) ? 404 : 400); });
-  const orgOf = async (res: Response) => ({ orgId: S(res).org, slug: S(res).slug, name: (await admin.accountFacts(S(res).slug)).name, userId: S(res).user ?? undefined, role: S(res).accountRole });
-  api.get("/context", async (_req, res) => {
-    const s = S(res), org = await orgOf(res);
-    res.json({ company: await context.getCompany(s.org), person: s.user ? await context.getPerson(s.org, s.user) : null,
-               products: ((await listProducts(org)) as any).products.map((p: any) => ({ slug: p.slug, name: p.name })), styles: context.ANSWER_STYLES,
-               can_manage: can(res, "manage"), permissions: perms(res), preview: await context.contextForAI(org) });
-  });
-  api.put("/context/company", async (req, res) => { need(res, "manage"); res.json(await context.saveCompany(S(res).org, actor(res), req.body ?? {})); });
-  api.put("/context/me", async (req, res) => {
-    need(res, "edit");
-    res.json(await context.savePerson(S(res).org, S(res).user!, req.body ?? {}));
-  });
-  // Memory: anyone who may edit adds company and product memory and their own; owners add to anyone's and delete any
-  // item, everyone else deletes what they added. Viewers only read.
-  const memorySubject = async (res: Response, scope: string, subject: unknown) => {
-    const s = S(res);
-    if (scope !== "user") return String(subject ?? "");
-    const id = String(subject || s.user || "");
-    if (!id) throw new AppError("Sign in as a person to keep personal memory");
-    if (id !== s.user) {
-      need(res, "manage");
-      if (!(await admin.team(s.slug)).members.some((m) => m.user_id === id)) throw new AppError("Not a member of this account", 404);
-    }
-    return id;
-  };
-  api.get("/context/memories", async (req, res) => {
-    const scope = String(req.query.scope ?? "") as context.MemoryScope;
-    if (!context.MEMORY_SCOPES.includes(scope)) throw new AppError("scope must be company, user or product");
-    const me = actor(res), admin_ = can(res, "manage"), edit = can(res, "edit");
-    const memories = await context.listMemories(S(res).org, scope, scope === "product" && !req.query.subject ? "" : await memorySubject(res, scope, req.query.subject));
-    // Items saved from chat (save_to_memory) are by "ai:<user id>": shown as the AI client, editable by that person.
-    const mineAi = `ai:${S(res).user ?? ""}`;
-    res.json({ memories: memories.map((m) => ({ ...m, created_by: m.created_by?.startsWith("ai:") ? "AI client" : m.created_by?.replace(/^customer:/, "") ?? null,
-      can_delete: admin_ || (edit && (m.created_by === me || (!!S(res).user && m.created_by === mineAi))) })), kinds: context.MEMORY_KINDS, permissions: perms(res) });
-  });
-  api.post("/context/memories", async (req, res) => {
-    need(res, "edit");
-    const scope = String(req.body?.scope ?? "");
-    res.status(201).json(await context.addMemory(S(res).org, actor(res), req.body ?? {}, await memorySubject(res, scope, req.body?.subject)));
-  });
-  api.post("/context/memories/import", express.json({ limit: "2mb" }), async (req, res) => {
-    need(res, "edit");
-    const scope = String(req.body?.scope ?? "") as context.MemoryScope;
-    if (!context.MEMORY_SCOPES.includes(scope)) throw new AppError("scope must be company, user or product");
-    res.json(await context.importMemories(S(res).org, actor(res), scope, await memorySubject(res, scope, req.body?.subject), req.body?.items));
-  });
-  api.put("/context/memories/:id", async (req, res) => {
-    const m = await context.getMemory(S(res).org, Number(req.params.id));
-    if (!m) throw new AppError("Not found", 404);
-    need(res, "edit");
-    if (m.created_by !== actor(res) && !(S(res).user && m.created_by === `ai:${S(res).user}`)) need(res, "manage");
-    res.json(await context.updateMemory(S(res).org, m.id, req.body ?? {}));
-  });
-  api.delete("/context/memories/:id", async (req, res) => {
-    const m = await context.getMemory(S(res).org, Number(req.params.id));
-    if (!m) throw new AppError("Not found", 404);
-    need(res, "edit");
-    if (m.created_by !== actor(res) && !(S(res).user && m.created_by === `ai:${S(res).user}`)) need(res, "manage");
-    await context.deleteMemory(S(res).org, m.id);
-    res.status(204).end();
-  });
-  // Users: owners see and edit everyone's context; everyone else only their own.
-  api.get("/context/users", async (_req, res) => {
-    const s = S(res);
-    const t = await admin.team(s.slug);
-    const members = t.members.filter((m) => can(res, "manage") || m.user_id === s.user)
-      .map((m) => ({ user_id: m.user_id, email: m.email, name: m.name, role: m.role, account_role: m.account_role, active: m.status === "active" }));
-    if (s.user && !members.some((m) => m.user_id === s.user)) members.unshift({ user_id: s.user, email: null, name: null, role: s.role, account_role: s.accountRole, active: true });
-    const [ctx, counts] = await Promise.all([context.getPeople(s.org, members.map((m) => m.user_id)), context.memoryCounts(s.org, "user")]);
-    res.json({ users: members.map((m) => ({ ...m, me: m.user_id === s.user, context: ctx[m.user_id], memories: counts[m.user_id] ?? 0 })), can_manage: can(res, "manage"), permissions: perms(res) });
-  });
-  api.put("/context/users/:userId", async (req, res) => {
-    const s = S(res), id = String(req.params.userId);
-    need(res, "edit");
-    if (id !== s.user) {
-      need(res, "manage");
-      if (!(await admin.team(s.slug)).members.some((m) => m.user_id === id)) throw new AppError("Not a member of this account", 404);
-    }
-    res.json(await context.savePerson(s.org, id, req.body ?? {}));
-  });
-  // Portal reads and writes of a product pass PORTAL: tasks onboarding picked from Octillion's library show by title only
-  // (the MCP tools return them whole). Every /api/app route that returns a product, persona list or task does the same.
-  api.get("/context/products/:slug", async (req, res) => void res.json(await q(getProduct(await orgOf(res), String(req.params.slug), PORTAL))));
-  api.post("/context/products", async (req, res) => {
-    need(res, "manage");
-    const name = String(req.body?.name ?? "").trim();
-    if (!name) throw new AppError("A product needs a name");
-    res.status(201).json(await q(saveProduct(await orgOf(res), { name, description: req.body?.description || undefined, website_url: req.body?.website_url || undefined, docs_url: req.body?.docs_url || undefined }, PORTAL)));
-  });
-  api.put("/context/products/:slug", async (req, res) => {
-    need(res, "manage");
-    const b = req.body ?? {}, org = await orgOf(res);
-    await q(getProduct(org, String(req.params.slug), PORTAL)); // an unknown slug is a 404 here, not a new product
-    res.json(await q(saveProduct(org, { product: String(req.params.slug), name: b.name, description: b.description, category: b.category,
-      website_url: b.website_url, docs_url: b.docs_url, aliases: b.aliases, packages: b.packages, domains: b.domains, competitors: b.competitors }, PORTAL)));
-  });
-  api.put("/context/products/:slug/scenarios/:id", async (req, res) => {
-    need(res, "manage");
-    await q(saveScenarios(await orgOf(res), String(req.params.slug), [{ id: Number(req.params.id), active: Boolean(req.body?.active) } as any]));
-    res.status(204).end();
-  });
-
-  // ---------- Developer personas and Programming tasks: the account's own (src/private.ts) ----------
-  // The same functions and input checks as the MCP tools save_personas, import_tasks and save_scenarios; each write
-  // is recorded as that tool's page action, so journey stages complete from the page as from the AI client.
-  // Like q(), but a database error (SQLSTATE) gets a generic message, as on the connector: its text can echo other rows.
-  const qp = <T>(p: Promise<T>) => p.catch((e: Error & { code?: unknown }) => {
-    if (e instanceof AppError) throw e;
-    if (typeof e.code === "string" && /^[0-9A-Z]{5}$/.test(e.code)) throw new AppError(`The request could not be completed (database error ${e.code}). Check the values and try again.`);
-    throw new AppError(e.message, /^No (persona|task|product|open submission)s? |not found|unknown/i.test(e.message) ? 404 : 400);
-  });
-  const checked = <T>(schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false; error: any } }, v: unknown, root: string): T => {
-    const r = schema.safeParse(v);
-    if (!r.success) throw new AppError(priv.inputIssues(r.error, root));
-    return r.data;
-  };
-  api.get("/personas", async (_req, res) => {
-    const org = await orgOf(res);
-    // Only the account's own (the portal never lists Octillion's shared personas; onboarding's picked copies by name).
-    const own = await qp(priv.listPersonas(org, [], PORTAL));
-    await recordPageAction(org, "list_personas", { every: 3_600_000 });
-    res.json({ personas: own.personas, permissions: perms(res), publish: { credit_usd: (await contributions.discountUsd()).persona } });
-  });
-  // New persona, edits by slug and Import: the save_personas shape ({ personas: [...] }, 1-20 at a time).
-  api.post("/personas", express.json({ limit: "256kb" }), async (req, res) => {
-    need(res, "edit");
-    const org = await orgOf(res);
-    const r = await qp(priv.savePersonas(org, checked(priv.personasInputSchema, req.body?.personas, "personas") as priv.PersonaInput[], PORTAL));
-    await recordPageAction(org, "save_personas");
-    res.status(201).json(r);
-  });
-  api.patch("/personas/:slug", async (req, res) => {
-    need(res, "edit");
-    const org = await orgOf(res), slug = String(req.params.slug), b = req.body ?? {};
-    const keys = Object.keys(b);
-    const r = keys.length === 1 && keys[0] === "active"
-      ? await qp(priv.setPersonaActive(org, slug, Boolean(b.active), PORTAL))
-      : await qp(priv.savePersonas(org, [checked(priv.personaInputSchema, { ...b, slug }, "persona") as priv.PersonaInput], PORTAL));
-    await recordPageAction(org, "save_personas");
-    res.json(r);
-  });
-  api.delete("/personas/:slug", async (req, res) => {
-    need(res, "manage");
-    await qp(priv.deletePersona(await orgOf(res), String(req.params.slug)));
-    res.status(204).end();
-  });
-
-  api.get("/tasks", async (_req, res) => {
-    const org = await orgOf(res);
-    const [sets, detail, products] = await Promise.all([qp(priv.listTaskSets(org)), priv.taskSetDetails(org), listProducts(org)]);
-    await recordPageAction(org, "list_task_sets", { every: 3_600_000 });
-    res.json({ task_sets: sets.task_sets, tasks: detail.tasks, runs: detail.runs,
-      products: ((products as any).products as any[]).map((p) => ({ slug: p.slug, name: p.name })), permissions: perms(res),
-      publish: { credit_usd: (await contributions.discountUsd()).task } });
-  });
-  // Create a task set, add tasks to one (same name) and Import: the import_tasks shape.
-  api.post("/tasks", express.json({ limit: "1mb" }), async (req, res) => {
-    need(res, "edit");
-    const org = await orgOf(res), b = req.body ?? {};
-    const input = checked(z.object(priv.importTasksInputShape), { task_set: b.task_set, description: b.description || undefined, tasks: b.tasks }, "");
-    const r = await qp(priv.importTasks(org, { product: b.product ? String(b.product) : undefined, ...input } as Parameters<typeof priv.importTasks>[1]));
-    await recordPageAction(org, "import_tasks");
-    res.status(201).json(r);
-  });
-  // An edit may clear the repo (null) or set the platform back to automatic ("").
-  const taskPatch = priv.taskInputSchema.partial().extend({ repo_url: z.string().nullable().optional(), platform: z.union([priv.taskInputSchema.shape.platform.unwrap(), z.literal("")]).optional(), active: z.boolean().optional() });
-  api.patch("/tasks/:id", async (req, res) => {
-    need(res, "edit");
-    const org = await orgOf(res), id = Number(req.params.id);
-    if (!Number.isInteger(id)) throw new AppError("No such task", 404);
-    const r = await qp(priv.updateTask(org, id, checked(taskPatch, req.body ?? {}, "task") as Parameters<typeof priv.updateTask>[2]));
-    await recordPageAction(org, r.set ? "import_tasks" : "save_scenarios");
-    res.json(r);
-  });
-  // No library routes in the portal: it never browses or picks from Octillion's task library (the AI client can, over MCP:
-  // browse_task_library and save_scenarios {library_task_id}).
-
-  // Publish to Octillion's library (src/contributions.ts): the account's own personas and tasks only, Member or above.
-  // Octillion reviews each request; an accepted one earns a credit on the next invoice. Withdraw while it waits.
-  api.post("/personas/:slug/publish", async (req, res) => {
-    need(res, "edit");
-    res.status(201).json(await qp(contributions.publish(await orgOf(res), actor(res), "persona", String(req.params.slug))));
-  });
-  api.post("/tasks/:id/publish", async (req, res) => {
-    need(res, "edit");
-    res.status(201).json(await qp(contributions.publish(await orgOf(res), actor(res), "task", String(req.params.id))));
-  });
-  api.post("/submissions/:id/withdraw", async (req, res) => {
-    need(res, "edit");
-    res.json(await qp(contributions.withdraw(await orgOf(res), String(req.params.id))));
-  });
-
-  // Journey tips (src/journeys.ts): everything waiting for this person, dismiss one, or turn tips off.
-  api.get("/nudges", async (_req, res) => void res.json(await journeys.nudgesForApp(S(res).org, S(res).user)));
-  api.post("/nudges/:id/dismiss", async (req, res) => { await journeys.dismiss(S(res).org, S(res).slug, S(res).user, Number(req.params.id)); res.status(204).end(); });
-  api.post("/nudges/mute", async (req, res) => { await journeys.setMuted(S(res).org, S(res).slug, S(res).user, req.body?.muted !== false); res.status(204).end(); });
   // "Ask AI" in the Cmd+K bar (src/docs-answers.ts): any signed-in person; the customer guide only, never the internal docs.
   api.post("/docs/answer", async (req, res) => {
     const s = S(res);
@@ -868,13 +540,16 @@ export function appRouter() {
     if (done?.type === "done") capture({ distinctId: who, orgSlug: s.slug }, "docs_answer_asked", { answered: done.answer != null, reason: done.reason, streamed: true });
     res.end();
   });
-  api.get("/billing", async (_req, res) => void res.json({ ...(await billingView(S(res))), can_manage: can(res, "billing"), permissions: perms(res),
-    contributions: await contributions.creditsFor(S(res).org) }));
+  api.get("/billing", async (_req, res) => {
+    const extras = await Promise.all(hosts().map((h) => h.routes?.billingExtras?.(S(res).org) ?? {}));
+    res.json({ ...(await billingView(S(res))), can_manage: can(res, "billing"), permissions: perms(res), ...Object.assign({}, ...extras) });
+  });
   api.get("/billing/usage", async (_req, res) => void res.json(await billingUsage(S(res))));
   api.post("/billing/portal", async (_req, res) => { need(res, "billing"); res.json(await admin.portalLink(actor(res), S(res).slug, `${publicUrl()}/app#billing`)); });
   api.post("/billing/checkout", async (req, res) => { need(res, "billing"); res.json(await admin.checkoutLink(actor(res), S(res).slug, req.body?.price_id, `${publicUrl()}/app#billing`, { requireAllowed: true })); });
   api.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) => {
-    if (!(err instanceof AppError || err instanceof PlaybookError || err instanceof context.ContextError || err instanceof limits.LimitError || err instanceof journeys.JourneyError || err instanceof admin.AdminError || err instanceof clerk.ClerkError || err instanceof billing.StripeError)) return next(err);
+    const hostError = hosts().some((h) => (h.routes?.appErrors ?? []).some((C) => err instanceof C));
+    if (!(err instanceof AppError || hostError || err instanceof limits.LimitError || err instanceof admin.AdminError || err instanceof clerk.ClerkError || err instanceof billing.StripeError)) return next(err);
     // A Budget rules refusal also says which rule (code), the limit and what's left, who set it and the admins to ask.
     res.status(err.status ?? 400).json({ error: err.message, ...(err instanceof limits.LimitError || err instanceof AppError ? err.info : {}) });
   });

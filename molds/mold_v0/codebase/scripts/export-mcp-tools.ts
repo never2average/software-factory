@@ -6,6 +6,8 @@
 //   npx tsx scripts/export-mcp-tools.ts --full   print the whole surface to stdout instead (server name and version,
 //                                                every tool with its schemas, annotations and _meta, every prompt), for a
 //                                                before/after diff of a shell or pack change (mold_v0-038, 039)
+// The build's host packs first (src/hosts.ts, mold_v0-039): their tools are part of the surface.
+import "../src/hosts.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

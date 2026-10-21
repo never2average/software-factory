@@ -21,7 +21,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 try {
   const { getDb } = await import("../src/db.js");
   const db = await getDb();
-  const { TOOL_NAMES } = await import("../src/server.js");
+  const TOOL_NAMES = (await import("../src/server.js")).ownToolNames(); // the host packs' tools (src/host.ts): none with zero packs
   const { setPacksForTest, installPacks, packRegistry } = await import("../src/packs.js");
   const { definePack, defineTool, z, PackError } = await import("../src/pack-api.js");
   const rec = await import("../src/record-areas.js");

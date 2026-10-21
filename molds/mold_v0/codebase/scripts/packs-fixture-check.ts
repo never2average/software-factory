@@ -73,7 +73,8 @@ const stamp = Date.now().toString(36);
 const { createOrg } = await import("../src/auth.js");
 const A = (await createOrg(`Pack A ${stamp}`)).org, B = (await createOrg(`Pack B ${stamp}`)).org;
 {
-  const { createServer, TOOL_NAMES } = await import("../src/server.js");
+  const { createServer, ownToolNames } = await import("../src/server.js");
+  const TOOL_NAMES = ownToolNames();
   const connect = async (org: import("../src/auth.js").Org) => {
     const server = createServer(org);
     const client = new Client({ name: "packs-check", version: "1" });

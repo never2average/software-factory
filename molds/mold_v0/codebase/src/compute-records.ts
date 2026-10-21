@@ -1,7 +1,7 @@
 import { getDb } from "./db.js";
 import { AUTOSCALE } from "./autoscaler.js";
 import { scheduledAgents, variantsOf } from "./agents.js";
-import { getPopulation } from "./populations.js";
+import { currentPopulation } from "./agent-mix.js";
 import { currentCodeHash } from "./fleet.js";
 import { agentKeyCoverage, classifiedSandboxes, type ClassifiedSandbox } from "./compute.js";
 import { classifyOrchestrator, classifySession, FIX_LINKS, type SessionErrorKey } from "./error-classes.js";
@@ -34,7 +34,7 @@ const HEARTBEAT_STALE_S = 90;
 
 /** The agent ids the current population schedules (with their model variants). Null when there is no population. */
 export async function scheduledIds(): Promise<Set<string> | null> {
-  try { return new Set(scheduledAgents(await getPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)])); }
+  try { return new Set(scheduledAgents(await currentPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)])); }
   catch { return null; }
 }
 

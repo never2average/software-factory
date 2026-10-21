@@ -13,6 +13,7 @@ import { Markdown } from '@/components/markdown';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
+import { profile } from '@/config/profile.generated';
 
 interface DocsSource { n: number; title: string; heading: string | null; href: string }
 interface DocsAnswer {
@@ -146,7 +147,7 @@ function AskAiDialog({ question, onQuestion }: { question: string | null; onQues
             const next = String(new FormData(e.currentTarget).get('question') ?? '').trim();
             if (next.length >= 3) onQuestion(next);
           }}>
-            <Input key={q} name='question' defaultValue={q} aria-label='Your question' maxLength={400} placeholder='Ask a question about Octillion' />
+            <Input key={q} name='question' defaultValue={q} aria-label='Your question' maxLength={400} placeholder={`Ask a question about ${profile.name}`} />
           </form>
         </DialogHeader>
 

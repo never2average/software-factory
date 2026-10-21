@@ -210,7 +210,7 @@ client tailors answers without being told again. Company context also goes to on
 
 ## Journeys
 
-See **[docs/journeys.md](journeys.md)**: build journeys in PostHog Workflows; Octillion delivers their in-chat and
+See **docs/journeys.md** (the octillion host pack's docs): build journeys in PostHog Workflows; Octillion delivers their in-chat and
 `/app` tips.
 
 ## Day to day

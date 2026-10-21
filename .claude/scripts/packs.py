@@ -56,7 +56,7 @@ SKIP = ("__pycache__", ".pyc", ".DS_Store")
 
 def load(p): return json.load(open(p))
 
-RULE_KEYS = {"$comment", "pack_id", "allowed", "required", "manifest_required", "supports", "generators", "verify", "prune"}
+RULE_KEYS = {"$comment", "pack_id", "allowed", "required", "manifest_required", "supports", "generators", "verify", "prune", "host_packs"}
 def rules_for(mold_id):
     """The `packs` block of molds/<mold_id>/mold.json, checked, or None: the mold_v1 rules above (every mold without one)."""
     p = os.path.join(ROOT, "molds", str(mold_id or ""), "mold.json")
@@ -261,6 +261,7 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
     if lane and os.path.isdir(build): shutil.rmtree(build)
     if not packs:
         gone = _prune(build, mold_dir, rules, []) if not lane and os.path.isdir(build) else []
+        if not lane and os.path.isdir(build) and _host_packs(build, rules, []): gone.append("profile.json host_packs")
         if gone: _generate(build, rules)
         print(f"{app_id}: no packs; nothing to apply" + (f"; {', '.join(gone)} (no longer named) taken out of its build copy and the registry regenerated" if gone else "")); return 0
     errs = [e for p in packs for e in check_pack(p, rules=rules)]
@@ -290,35 +291,59 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
             sys.exit(f"{p}: {f} would be written outside {os.path.relpath(build, ROOT)}/ (through a link in the build copy); nothing was removed or copied")
     gone = _prune(build, mold_dir, rules, packs)
     d = rules.get("prune")
-    for p in packs if d else []:        # a named pack's folder is rewritten whole, so a file it dropped does not linger
-        own = os.path.join(build, d, p)
-        if os.path.isdir(own) and not os.path.islink(own) and not os.path.lexists(os.path.join(mold_dir, d, p)): shutil.rmtree(own)
+    for p in packs if d else []:        # a named pack's folders are rewritten whole, so a file it dropped does not linger
+        for base in [d, *HOST_DIRS]:      # a host pack's console and orchestrator folders too (mold_v0-039)
+            own = os.path.join(build, base, p)
+            if os.path.isdir(own) and not os.path.islink(own) and not os.path.lexists(os.path.join(mold_dir, base, p)): shutil.rmtree(own)
     for f, p in sorted(seen.items()):
         dest = os.path.join(build, f)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         if os.path.lexists(dest): os.remove(dest)          # never write through a hard link
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
+    _host_packs(build, rules, packs)
     _generate(build, rules)
     print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)"
           + (f"; {', '.join(gone)} no longer named, taken out" if gone else "")
           + f"); {', '.join(' '.join(c) for c in rules['generators'])} regenerated the registry")
     return 0
 
+# A host pack's console and orchestrator folders (mold_v0-039), pruned like rules['prune'] when the mold has one.
+HOST_DIRS = ("web/src/packs", "orchestrator/packs")
+
 def _prune(build, mold_dir, rules, packs):
-    """Per-pack folders under rules['prune'] in the build copy that are neither the mold's nor a pack the app names:
-    what an earlier apply left for a pack since dropped. Removed, so the registry never lists it. -> the removed paths."""
+    """Per-pack folders under rules['prune'] (and a host pack's console and orchestrator folders) in the build copy that
+    are neither the mold's nor a pack the app names: what an earlier apply left for a pack since dropped. Removed, so the
+    registry never lists it. -> the removed paths."""
     d = rules.get("prune")
     if not d: return []
-    here, gone = os.path.join(build, d), []
-    if os.path.lexists(here) and not os.path.realpath(here).startswith(os.path.realpath(build) + os.sep):
-        sys.exit(f"{os.path.relpath(here, ROOT)} is a link out of the build copy; nothing was removed or copied")
-    for x in sorted(os.listdir(here)) if os.path.isdir(here) else []:
-        if x in packs or os.path.lexists(os.path.join(mold_dir, d, x)): continue
-        p = os.path.join(here, x)
-        if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p)
-        else: os.remove(p)
-        gone.append(f"{d}/{x}")
+    gone = []
+    for base in (d, *HOST_DIRS):
+        here = os.path.join(build, base)
+        if os.path.lexists(here) and not os.path.realpath(here).startswith(os.path.realpath(build) + os.sep):
+            sys.exit(f"{os.path.relpath(here, ROOT)} is a link out of the build copy; nothing was removed or copied")
+        for x in sorted(os.listdir(here)) if os.path.isdir(here) else []:
+            if x in packs or os.path.lexists(os.path.join(mold_dir, base, x)): continue
+            p = os.path.join(here, x)
+            if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p)
+            else: os.remove(p)
+            gone.append(f"{base}/{x}")
     return gone
+
+def _host_packs(build, rules, packs):
+    """mold_v0-039: the packs this mold lets be host packs (mold.json packs.host_packs: the product's own surface, with
+    the shell's services) that the app names, written into the build copy's profile.json as `host_packs`, which the
+    mold's generator reads. Every other pack stays an ordinary pack, held to the strict import rules."""
+    allowed = rules.get("host_packs") or []
+    if not allowed: return False
+    p = os.path.join(build, "profile.json")
+    doc = load(p) if os.path.isfile(p) else {}
+    want = [x for x in packs if x in allowed]
+    if doc.get("host_packs") == (want or None): return False
+    if want: doc["host_packs"] = want
+    else: doc.pop("host_packs", None)
+    if os.path.lexists(p): os.remove(p)          # never write through a hard link into the mold
+    with open(p, "w") as fh: fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    return True
 
 def _generate(build, rules):
     for cmd in rules["generators"]:
@@ -399,7 +424,7 @@ def rules_self_test():
         if not c: raise AssertionError(what)
     ok(rules_for("mold_v1") is None and rules_for(None) is None, "mold_v1 (no mold.json) keeps the built-in rules, byte for byte")
     R = rules_for("mold_v0")
-    ok(R and R["mold_id"] == "mold_v0" and R["generators"] == [["node", "scripts/gen-packs.mjs"]] and supports_packs(os.path.join(ROOT, "molds", "mold_v0", "codebase"), R),
+    ok(R and R["mold_id"] == "mold_v0" and R["generators"][0] == ["node", "scripts/gen-packs.mjs"] and supports_packs(os.path.join(ROOT, "molds", "mold_v0", "codebase"), R),
        "mold_v0's rules load from its mold.json, and its codebase passes their support test (scripts/gen-packs.mjs)")
     m = {"pack_id": "notes", "name": "Notes", "description": "d", "mold_id": "mold_v0"}
     good = ["packs/notes/pack.json", "packs/notes/index.ts", "packs/notes/migrations/0001_notes.sql"]
@@ -427,7 +452,8 @@ def rules_self_test():
                 "mkdirSync('src', { recursive: true });\nconst ids = readdirSync('packs', { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();\n"
                 "if (process.argv.includes('--check')) process.exit(0);\nwriteFileSync('src/packs.generated.ts', JSON.stringify(ids) + '\\n');\n")
             man = load(os.path.join(keep[0], "molds", "mold_v0", "mold.json"))
-            json.dump({"mold_id": "mold_t", "packs": man["packs"], "build_copy": man["build_copy"]}, open(os.path.join(mold, "mold.json"), "w"))
+            # mold_v0's rules with its registry generator only (the stand-in codebase has no tsx for the others)
+            json.dump({"mold_id": "mold_t", "packs": dict(man["packs"], generators=man["packs"]["generators"][:1], verify=man["packs"]["verify"][:1]), "build_copy": man["build_copy"]}, open(os.path.join(mold, "mold.json"), "w"))
             for pid in ("notes", "tasks"):
                 f = os.path.join(t, "packs", pid, "files", "packs", pid); os.makedirs(f)
                 json.dump({"pack_id": pid, "name": pid, "description": "d", "mold_id": "mold_t"}, open(os.path.join(t, "packs", pid, "pack.json"), "w"))
@@ -450,6 +476,11 @@ def rules_self_test():
             app([]); ok(quiet(apply, "zz") == 0 and reg() == "[]" and os.listdir(os.path.join(b, "packs")) == ["README.md"], "no packs: the last one pruned, the mold's own file kept")
             app(["notes"]); quiet(apply, "zz"); open(os.path.join(b, "packs", "notes", "stale.ts"), "w").write("dropped\n")
             ok(quiet(apply, "zz") == 0 and not os.path.exists(os.path.join(b, "packs", "notes", "stale.ts")), "a file a still-named pack dropped does not linger in the build copy")
+            for base in HOST_DIRS:            # a host pack's console and orchestrator folders (mold_v0-039) the same way
+                os.makedirs(os.path.join(b, base, "notes"), exist_ok=True); open(os.path.join(b, base, "notes", "stale.ts"), "w").write("dropped\n")
+                os.makedirs(os.path.join(b, base, "gone"), exist_ok=True)
+            ok(quiet(apply, "zz") == 0 and not any(os.path.exists(os.path.join(b, base, x)) for base in HOST_DIRS for x in ("notes/stale.ts", "gone")),
+               "a host pack's console and orchestrator folders: rewritten whole while named, pruned once not")
             for hid in (".impl/x.ts", "node_modules/pg/index.js"):
                 ok(any("hidden or node_modules" in e for e in check_pack("notes", good + ["packs/notes/" + hid], m, R)), f"refused: {hid} (the shell's own checks skip it)")
             open(os.path.join(t, "packs", "notes", "files", "packs", "README.md"), "w").write("mine\n")

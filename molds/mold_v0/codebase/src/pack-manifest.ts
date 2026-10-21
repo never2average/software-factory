@@ -50,6 +50,16 @@ export const PackJsonSchema = z.object({
   migrations: inside("migrations").optional(),
   runner: inside("runner").optional(),
   upstream: z.unknown().optional(),
+  /**
+   * A host pack (mold_v0-039; src/host.ts): its server entry (defineHost), its operator scripts' directory and the profile
+   * it brings under the build's profile.json. Only a pack the build's profile.json lists in `host_packs` may have one
+   * (scripts/gen-packs.mjs checks it and its import boundary).
+   */
+  host: z.object({
+    entry: z.string().regex(/^[a-z0-9_\-/]+\.ts$/i, "a .ts file inside the pack").refine((p) => !p.includes(".."), "a .ts file inside the pack"),
+    scripts: inside("scripts").optional(),
+    profile: z.record(z.string(), z.unknown()).optional(),
+  }).strict().optional(),
   pages: z.array(PageSchema).optional(),
   words: z.record(z.string().regex(/^[a-z][a-z_]{1,30}$/, "a lowercase shell word"), z.string().trim().min(1).max(40)).optional(),
   record_areas: z.array(RecordAreaSchema).max(100).optional(),

@@ -40,7 +40,7 @@ turns it into shell, or builds it where nothing exists yet.
 ### Tenancy and the sign-in adapter
 
 - **Today.** Workspaces are `organizations` (`sql/schema.sql`), and every customer query takes the calling org first
-  (`src/auth.ts`, `src/queries.ts`); `scripts/check-tenant-sql.ts` (with `scripts/tenant-sql-baseline.json`) refuses
+  (`src/auth.ts`, and the product's queries, now its host pack's); `scripts/check-tenant-sql.ts` (with `scripts/tenant-sql-baseline.json`) refuses
   an unscoped query. People, memberships, roles and invites live in Clerk (`src/clerk.ts`, `src/session.ts`,
   `web/src/proxy.ts`); account roles are `src/account-roles.ts`, platform admins `src/admin-auth.ts` and
   `src/admin-roles.ts`. Deleting a workspace across every store is `src/tenancy.ts`; `scripts/create-org.ts` and
@@ -55,14 +55,14 @@ turns it into shell, or builds it where nothing exists yet.
 ### MCP front door with a pack-filled tool registry
 
 - **Today.** `/mcp` and `/mcp/:key` in `src/http.ts` (stateless Streamable HTTP, OAuth protected-resource metadata
-  under `/.well-known`); the tool registry is `src/server.ts`, which registers the product's 31 tools by hand; a stdio
+  under `/.well-known`); the tool registry is `src/server.ts` (the host packs' tools, then every pack's); a stdio
   entry for local hosts is `src/stdio.ts`; the inline dashboard widget is `src/ui/widget.html`. Hashed per-org keys are
   `api_keys` (`sql/schema.sql`). Per-call activity (method, tool, outcome, latency, never arguments or results) is
   `src/analytics.ts` (`mcp_events`). A second MCP server for platform staff is `src/admin-mcp.ts`. Per-client install
   guides come from `src/connect-catalog.ts`.
 - **Generalised by.** mold_v0-038 (done: pack tools register after the shell's from the registry `gen-packs.mjs`
-  generates, `src/packs.ts`; the server name comes from the profile; the shell's own 31 tools stay in `src/server.ts`
-  until mold_v0-039), mold_v0-007 (keys header-only, named, revocable, expiring), mold_v0-013 (a built-in MCP OAuth server when
+  generates, `src/packs.ts`; the server name comes from the profile), mold_v0-039 (done: the product's 31 tools are its
+  host pack's, registered through `src/host.ts`; with zero packs `/mcp` lists none), mold_v0-007 (keys header-only, named, revocable, expiring), mold_v0-013 (a built-in MCP OAuth server when
   Clerk is off), mold_v0-010 (install guides from the profile, tool docs from the registry), mold_v0-018, **built** (MCP rate
   limits per key, member, workspace and address with a 429 and Retry-After, request and answer size caps, requests in
   flight per workspace, the sign-up, invitation and key endpoints; `src/rate-limits.ts`, numbers from the profile's
@@ -140,8 +140,8 @@ status, finding fingerprint, evidence reference).
 
 - **Today.** The product has two record areas, built by hand: **personas** (`developer_profiles`, `product_personas`)
   and **tasks** (`library_tasks`, `scenarios`, `org_task_sets`), each a shared library (rows with no org) plus an org's
-  private rows (`src/library.ts`, `src/private.ts`, sealed by `src/orgcrypto.ts`), seeded from `vault/` by
-  `src/vault.ts`. The console already has a generic table and side peek (`web/src/components/layout/record-view.tsx`,
+  private rows (since mold_v0-039 the host pack's `server/library.ts`, `server/private.ts`, sealed by the shell's
+  `src/orgcrypto.ts`), seeded from the pack's `vault/` by its `server/vault.ts`. The console already has a generic table and side peek (`web/src/components/layout/record-view.tsx`,
   `record-filters.tsx`).
 - **Generalised by.** mold_v0-047, **built** (the shell's record areas: a pack declares one and gets a list page, a
   detail page and MCP list/get with no extra code; workspace scope under row-level security; platform scope read-only
@@ -154,7 +154,7 @@ status, finding fingerprint, evidence reference).
 - **Today.** Background loops started in `src/http.ts` on a server (the autoscaler, the archiver), and on Vercel one
   cron in `vercel.json` (`/api/cron/autoscale`, guarded by `CRON_SECRET`). Transactional email is `src/email.ts`
   through one provider (`email_log`); daily spend alerts use `usage_alerts`; in-client tips come from
-  `src/journeys.ts`. There were no per-workspace schedules before mold_v0-035.
+  the product's journeys (its host pack's `server/journeys.ts` since mold_v0-039). There were no per-workspace schedules before mold_v0-035.
 - **Generalised by.** mold_v0-035 (built): per-workspace schedules with defaults from the pack, editable by owners in
   the console, a missed tick run at most once, ticked from the existing cron entry on Vercel and a one-minute loop on a
   server (`src/schedules.ts`, `src/cron.ts`, `src/schedule-routes.ts`, `sql/migrations/0008_schedules.sql`); due-date
@@ -178,7 +178,7 @@ status, finding fingerprint, evidence reference).
 ### Onboarding
 
 - **Today.** The `/app` setup checklist with a live connection test (`src/app.ts`, `web/src/features/portal/setup.tsx`),
-  playbooks (`src/playbooks.ts`), journeys (`src/journeys.ts`), and the access-request funnel on `/admin`
+  the product's playbooks and journeys (its host pack's since mold_v0-039), and the access-request funnel on `/admin`
   (`src/admin.ts`, `web/src/features/admin/requests.tsx`). Its steps are the product's own.
 - **Generalised by.** mold_v0-011, **built** (an onboarding checklist from pack-declared steps, each read per
   workspace from its own events and rows, shown on the Setup page; zero packs leave the page unchanged;
@@ -213,30 +213,48 @@ status, finding fingerprint, evidence reference).
 
 ## What is product surface (pack), not shell
 
-These leave the shell for `packs/octillion` (mold_v0-039, tables by mold_v0-049). After that, a build with no packs
-has none of them, and a build with `["octillion"]` has all of them, proved by an empty surface diff.
+**Moved by mold_v0-039** into the factory's host pack `octillion` (`packs/octillion/` at the factory root, git-ignored
+like every pack; MOLD.md "Host packs"). A build with no packs has none of it; a build with `["octillion"]` has all of it,
+at the same paths and with the same MCP surface. Paths below are where each now lives in a build copy.
 
-- **Tools.** The 31 tools registered in `src/server.ts` (`get_started`, `onboard_product`, `run_simulation`,
-  `get_visibility_report`, `search_transcripts`, `save_personas`, `browse_task_library`, `save_to_memory` and the rest),
-  their queries (`src/queries.ts`) and the widget (`src/ui/widget.html`).
-- **Domain code.** Scoring and its hooks (`src/scoring.ts`, `src/reasons.ts`, `src/visibility.ts`), product research and
-  prospects (`src/research.ts`, `src/prospect.ts`, `src/websearch.ts`, `src/registry-meta.ts`), task adaptation and
-  platforms (`src/adapt.ts`, `src/platform.ts`), developer populations and the agent mix weighted by real-world use (`src/populations.ts`;
-  the harness registry itself, `harnesses/registry.json` with `src/agents.ts`, stays in the shell), context and memory (`src/context.ts`), library contributions
-  (`src/contributions.ts`), the product's playbooks in `src/playbooks.ts`.
-- **Orchestrator extension.** `orchestrator/pi-octillion/` (the Pi orchestrator that answers as a simulated developer)
-  and the starter projects in `orchestrator/workspaces/`.
-- **Record areas.** Personas and tasks (`src/library.ts`, `src/private.ts`, `vault/`, `src/vault.ts`) and their pages
-  (`web/src/app/admin/personas/`, `web/src/app/admin/tasks/`, `web/src/app/app/personas/`, `web/src/app/app/tasks/`).
-- **Console pages.** Pick rate (`web/src/app/app/pick-rate/`, `web/src/features/portal/pick-rate.tsx`,
-  `visibility.tsx`, `adoption.tsx`), context (`web/src/app/app/context/`), and the admin pages for the agent mix
-  (`web/src/app/admin/agents/`).
-- **Landing.** `public/index.html`, `public/connect.html`, `web/src/app/(site)/` and `web/src/features/site/`.
-- **Tables.** `products`, `scenarios`, `simulations`, the verdict columns of `agent_sessions`, `product_research`,
-  `developer_profiles`, `library_tasks`, `product_personas`, `developer_populations`, `library_submissions`,
-  `visibility_reports` and the other product-only tables in `sql/schema.sql` (mold_v0-049).
-- **Other.** The client skill (`integrations/claude-skill/octillion/`, `public/downloads/octillion-skill.zip`) and the
-  case studies under `docs/case-studies/`.
+- **Tools.** The 31 tools (`get_started`, `onboard_product`, `run_simulation`, `get_visibility_report`,
+  `search_transcripts`, `save_personas`, `browse_task_library`, `save_to_memory` and the rest), their slash commands, the
+  dashboard widget and the server's instructions: `packs/octillion/server/tools.ts`, `server/ui/widget.html`; their
+  queries `server/queries.ts`; the admin MCP's `library_stats`: `server/admin-tools.ts`.
+- **Domain code.** Scoring and its hooks (`server/scoring.ts`, `server/sessions.ts`, `server/reasons.ts`,
+  `server/visibility.ts`), product research and prospects (`server/research.ts`, `server/prospect.ts`,
+  `server/websearch.ts`, `server/registry-meta.ts`), task adaptation and platforms (`server/adapt.ts`,
+  `server/platform.ts`), developer populations and the agent mix weighted by real-world use (`server/populations.ts`; the
+  harness registry itself, `harnesses/registry.json` with `src/agents.ts`, stays in the shell, and with no host pack the
+  engine schedules by it: `src/agent-mix.ts`), context and memory (`server/context.ts`), library contributions
+  (`server/contributions.ts`), playbooks and journeys (`server/playbooks.ts`, `server/journeys.ts`), the product's
+  settings (`server/settings.ts`), its portal, admin, worker and public routes (`server/portal.ts`,
+  `server/http-routes.ts`), all wired by `packs/octillion/host.ts`. The generic one-model call it used moved to the shell
+  (`src/ask-model.ts`), as did the model keys and sandbox provider pages' API (`src/platform-keys.ts`).
+- **Orchestrator extension.** The Pi orchestrator that answers as a simulated developer:
+  `orchestrator/packs/octillion/` (run by `orchestrator/main.ts`), with its tests. The starter projects in
+  `orchestrator/workspaces/` stay with the session engine: neutral framework starters it seeds sandboxes from.
+- **Record areas.** Personas and tasks (`server/library.ts`, `server/private.ts`, `server/vault.ts`, the curated vault
+  `packs/octillion/vault/`) and their pages, still over their own tables (not the shell's record store) until
+  mold_v0-049 moves the tables: declaring them as record areas now would add MCP tools and empty pages, so the surface
+  would not be the product's.
+- **Console pages.** Pick rate (with its report), context (company, users, products), journeys, developer personas and
+  programming tasks on /app; personas, tasks, journeys and the harness mix on /admin (agent configuration, every
+  global setting, stays the shell's page):
+  `web/src/packs/octillion/` (pages, features, sidebar entries, `routes.json`), at their old URLs.
+- **Landing.** The landing page, its layout and early access (`web/src/packs/octillion/pages/site/`, `features/site/`),
+  and the API host's `index.html` and `connect.html` (`packs/octillion/public/`).
+- **Docs.** The customer guide (`web/src/packs/octillion/guide.ts`), the product's internal docs and case studies
+  (`packs/octillion/docs/`), the README.
+- **Other.** The client skill (`packs/octillion/integrations/claude-skill/octillion/`, the download in
+  `packs/octillion/public/downloads/`), the operator scripts and the product's own smoke test and connector check
+  (`packs/octillion/scripts/`: `npm run pack:run -- <script>`).
+- **Still in the shell.** The tables (`products`, `scenarios`, `simulations`, the verdict columns of `agent_sessions`,
+  `product_research`, `developer_profiles`, `library_tasks`, `product_personas`, `developer_populations`,
+  `library_submissions`, `visibility_reports` and the other product-only tables: mold_v0-049), the session engine that
+  reads them (the job queue's claim, the autoscaler's simulation and research jobs, the Compute, Accounts, Usage and
+  Billing pages' figures over sessions), the library submission emails and credits (`src/email.ts`, `src/billing.ts`),
+  and the product's name in some console text, environment names and the default icons (mold_v0-045).
 
 The second app, an audit-agent pack, is built on the same contract and changes nothing above (mold_v0-044, 048): its
 runner, run kinds, tools, pages and record areas are its own pack.

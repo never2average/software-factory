@@ -4,7 +4,7 @@
  * Claims jobs, runs the harness in a sandbox (boat.dev by default), streams its JSONL and, while the agent stops
  * before it is done (core/progress.ts), resumes it with neutral canned developer nudges (core/session.ts
  * driveToDone) up to MAX_AGENT_TURNS. Then finishes: git diff event, /complete, sandbox deleted. The Pi
- * orchestrator (pi-octillion/main.ts) adds the in-character simulated developer and falls back to this driver.
+ * orchestrator (a host pack's, e.g. packs/octillion/main.ts) adds the in-character simulated developer and falls back to this driver.
  *
  * Run: `npx tsx orchestrator/worker.ts`
  */
@@ -29,7 +29,7 @@ export async function runDeterministic(job: Job, runner: Runner, orchestrator: R
 }
 
 /**
- * Generic claim loop shared by worker.ts and pi-octillion/main.ts.
+ * Generic claim loop shared by worker.ts and a host pack's orchestrator.
  * RUNNER=pool: claims per harness with limit = idle pods of that harness, and reserves a pod per job.
  * Other runners: claims up to WORKER_CONCURRENCY free slots.
  */
@@ -163,7 +163,7 @@ function getAdapterId(h: string): string {
   try { return getAdapter(h).id; } catch { return h; }
 }
 
-// Run only when executed directly (pi-octillion imports runDeterministic/claimLoop).
+// Run only when executed directly (main.ts and a host pack's orchestrator import runDeterministic/claimLoop).
 if (process.argv[1] && /worker\.(ts|js)$/.test(process.argv[1])) {
   startIdleWatcher();
   claimLoop((job, runner) => runDeterministic(job, runner), "worker")

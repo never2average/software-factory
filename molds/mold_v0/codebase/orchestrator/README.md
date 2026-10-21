@@ -9,12 +9,13 @@ Two entry points share the same deterministic core:
 
 | entry | what it does |
 |---|---|
-| `npx tsx orchestrator/pi-octillion/main.ts` | **Orchestrator agent.** Pi (embedded through its SDK) plays the developer for up to `max_user_turns` replies. |
+| `npx tsx orchestrator/main.ts` | **Orchestrator agent.** Pi (embedded through its SDK) plays the developer for up to `max_user_turns` replies. |
 | `npx tsx orchestrator/worker.ts` | **Deterministic worker, no LLM.** It runs the harness once and finishes. The Pi path falls back to this. |
 
 ```
 orchestrator/
-  pi-octillion/   Pi extension package: index.ts (tools), prompt.ts (system prompts), main.ts (host), research*.ts, skills/
+  main.ts         runs a host pack's orchestrator (packs/<id>/main.ts) or the deterministic worker
+  packs/octillion/ (the octillion host pack's, mold_v0-039) Pi extension package: index.ts (tools), prompt.ts (system prompts), main.ts (host), research*.ts, skills/
   core/           config, sessions, runners (boat; docker/local/pool for tests), host guard, fleet client, sink, boat client
   harnesses/      adapters.ts + credentials.ts: per-harness argv, resume, digest, credential mapping
   fleet/          plan.ts (standalone per-agent plan), status.ts (pods per group)
@@ -197,7 +198,7 @@ Pi ([earendil-works/pi](https://github.com/earendil-works/pi), MIT) is used thro
   so profiles can't bleed between jobs. Context stays small: about 2-6k tokens per turn, with no compaction. Failures
   are isolated per job, and the fallback is per job. Concurrency is plain `Promise` parallelism in one Node process,
   with no LLM attention split across workers.
-- **What Pi can do.** It gets only the pi-octillion tools: `start_worker`, `wait_for_turn`, `reply_as_developer`,
+- **What Pi can do.** It gets only the octillion pack's Pi tools: `start_worker`, `wait_for_turn`, `reply_as_developer`,
   `finish_session`. `claim_jobs` is added in manual CLI mode. Pi's built-in read/bash/edit/write tools are off, and so is
   the discovery of extensions, skills, context files and `~/.pi` settings. The model runtime uses its own temp `auth.json` and `models.json`.
 - **Guards in the tools, not the prompt.** The tools enforce `max_user_turns`, "reply only when the run ended
@@ -209,12 +210,12 @@ Pi ([earendil-works/pi](https://github.com/earendil-works/pi), MIT) is used thro
   `pi+fallback` or `fallback`), `orchestrator_error`, `orchestrator_cost_usd`, `orchestrator_tokens_*` and
   `orchestrator_llm_calls`.
 
-Manual and debug use from the Pi CLI: `pi -e ./orchestrator/pi-octillion --no-builtin-tools --no-context-files`. This is
+Manual and debug use from the Pi CLI: `pi -e ./orchestrator/packs/octillion --no-builtin-tools --no-context-files`. This is
 manager mode, with `claim_jobs` and the `octillion-orchestrator` skill.
 
 ### The simulated developer: blindness
 
-`pi-octillion/prompt.ts` exports `SIMULATED_DEVELOPER_SYSTEM_PROMPT` (the founder can tune it),
+`packs/octillion/prompt.ts` exports `SIMULATED_DEVELOPER_SYSTEM_PROMPT` (the founder can tune it),
 `ORCHESTRATOR_SYSTEM_PROMPT` (the tool protocol plus those rules) and `jobPrompt()`. Pi answers as `job.profile`: role,
 experience, company size, stack, constraints, tone and instructions. With no profile, it answers as a neutral
 "experienced developer who wants the task done; answers briefly". The prompt requires the following:
@@ -498,13 +499,13 @@ Heartbeats and `/complete` always go to the API. The server recounts events from
 cd orchestrator && npm install && cd ..       # Pi SDK (orchestrator/package.json)
 export OCTILLION_URL=https://octillion.example.com OCTILLION_WORKER_TOKEN=...   # nothing else secret
 
-npx tsx orchestrator/pi-octillion/main.ts                                         # boat.dev (key from the broker)
-RUNNER=pool ORCHESTRATOR_ID=orch-eu-1 npx tsx orchestrator/pi-octillion/main.ts   # warm pod pool, server-planned
+npx tsx orchestrator/main.ts                                         # boat.dev (key from the broker)
+RUNNER=pool ORCHESTRATOR_ID=orch-eu-1 npx tsx orchestrator/main.ts   # warm pod pool, server-planned
 npx tsx orchestrator/fleet/status.ts --owner orch-eu-1
 npx tsx orchestrator/worker.ts                                                    # no LLM: one run per job
 
 # dev without a vault
-CREDENTIALS_MODE=env ANTHROPIC_API_KEY=... BOAT_API_KEY=... npx tsx orchestrator/pi-octillion/main.ts
+CREDENTIALS_MODE=env ANTHROPIC_API_KEY=... BOAT_API_KEY=... npx tsx orchestrator/main.ts
 ```
 
 SIGINT/SIGTERM kills running sandboxes, which are reported as `failed`. In pool mode it also leaves the fleet and removes the pods. A repeated
@@ -526,7 +527,7 @@ signal within 3s is ignored, because npx and tsx both forward it. A 404 or 409 f
 - **Gateway tokens are not real keys.** Codex sent the `ogw_` token to api.openai.com when only `OPENAI_BASE_URL` was set, which is why the mapping
   uses `openai_base_url`. A misconfigured harness leaks at most a gateway token, never a vault key.
 
-## Product onboarding research (`pi-octillion/research.ts`, docs/onboarding.md)
+## Product onboarding research (`packs/octillion/research.ts`, docs/onboarding.md)
 
 The orchestrator also claims research jobs: `POST /api/worker/research/claim`, polled next to the agent-session claims.
 `ORCHESTRATOR_MODE=research` runs a research-only worker that never claims coding-agent sessions.
@@ -540,7 +541,7 @@ Each job gets a dedicated Pi session on the same broker brain (`openai/gpt-6.1-s
 | `validate(result_json)` | `POST /research/:id/validate` → `{ok, issues}` |
 | `submit(result_json)` | `POST /research/:id/complete`. A 422 returns its issues to the model to fix. After 4 attempts (`RESEARCH_MAX_SUBMITS`) the job completes `failed` with the issues |
 
-- **Prompt.** `pi-octillion/research-prompt.ts` (`RESEARCH_SYSTEM_PROMPT`, exported for tuning) tells the model to:
+- **Prompt.** `packs/octillion/research-prompt.ts` (`RESEARCH_SYSTEM_PROMPT`, exported for tuning) tells the model to:
   - read the docs for real install commands, packages, import paths and domains;
   - pick 2-5 real competitors;
   - write 2-4 blind personas;

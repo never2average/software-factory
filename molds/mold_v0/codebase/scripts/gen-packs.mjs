@@ -9,6 +9,18 @@
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
+//   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts
+//   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
+//   orchestrator/packs.generated.ts      the host packs' orchestrator entries (orchestrator/packs/<id>/main.ts)
+//
+// Host packs (mold_v0-039): a pack whose pack.json has `host` (an entry with defineHost, src/host.ts) is the product's
+// own surface: tools, routes and hooks at the shell's fixed points, console pages (web/src/packs/<id>/), an orchestrator
+// extension (orchestrator/packs/<id>/) and operator scripts (`host.scripts`). Only a pack the build's profile.json lists
+// in `host_packs` may be one. Its server code may import its own files, src/pack-api.ts and src/pack-host.ts (the shell
+// services it may use) and the server's packages, nothing else of the shell; its console code its own files, the
+// console's shared code (@/components, @/lib, @/hooks, @/types, @/config, @/features) and the console's packages; its
+// orchestrator code its own files and the orchestrator's (never src/); its scripts anything (they are never loaded by
+// the server: server code may not import them).
 //
 // It refuses (exit 1, every problem listed) a pack whose files would get past the seam:
 //   - pack.json: unknown fields, an id that is not the directory's, a missing entry, badly named or numbered migrations
@@ -52,6 +64,7 @@ const OUT = path.resolve(opt("--out") ?? ROOT);
 const PROFILE_FILE = path.resolve(opt("--profile") ?? path.join(ROOT, "profile.json"));
 const CHECK = argv.includes("--check");
 const PACK_API = path.join(ROOT, "src", "pack-api.ts");
+const PACK_HOST = path.join(ROOT, "src", "pack-host.ts");
 
 /** The neutral profile: what a build with no profile.json shows. No product's words. */
 export const DEFAULT_PROFILE = {
@@ -69,7 +82,7 @@ const ID = /^[a-z][a-z0-9_]{1,30}$/;
 const PAGE_ID = /^[a-z][a-z0-9-]{0,40}$/;
 const DATA_PATH = /^\/[a-z0-9_\-/]*$/i;
 const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
-const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner",
+const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner", "host",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
   "record_areas", "job_kinds", "credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
@@ -83,6 +96,22 @@ const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "no
  */
 const RUNNER_BARE = new Set(["node:child_process", "node:fs", "node:fs/promises", "node:path", "node:url", "node:util", "node:buffer", "node:events",
   "node:crypto", "node:os", "node:stream", "node:stream/promises", "node:readline", "node:timers", "node:timers/promises", "node:zlib", "node:string_decoder"]);
+
+/**
+ * What a host pack's server code (mold_v0-039) may import besides its own files, src/pack-api.ts and src/pack-host.ts:
+ * node's built-ins and the server's own packages (package.json dependencies). Never another shell module: everything
+ * of the shell a host pack uses is named in src/pack-host.ts.
+ */
+const SERVER_DEPS = (() => { try { const j = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")); return new Set([...Object.keys(j.dependencies ?? {}), ...Object.keys(j.devDependencies ?? {})]); } catch { return new Set(); } })();
+const packageOf = (spec) => spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+const hostBare = (spec) => spec.startsWith("node:") || SERVER_DEPS.has(packageOf(spec));
+/** The text bans a host pack's server code is held to (it may leave a workspace's scope and read the environment: it is the product's reviewed code). */
+const HOST_BANNED = (re) => /workspace_records|SESSION|eval|createRequire/.test(String(re));
+/** The packs the build's profile.json allows to be host packs (mold_v0-039): `host_packs`, a list of ids. */
+const HOST_PACKS = (() => {
+  try { const v = JSON.parse(readFileSync(PROFILE_FILE, "utf8"))?.host_packs; return Array.isArray(v) ? new Set(v.filter((x) => typeof x === "string")) : new Set(); }
+  catch { return new Set(); }
+})();
 
 const problems = [];
 const fail = (where, what) => problems.push(`${where}: ${what}`);
@@ -133,8 +162,12 @@ const LITERAL_IMPORT = /^import\s*\(\s*(["'])[^"'`$]*\1\s*\)/;
 
 const within = (dir, p) => { const r = path.relative(dir, p); return r === "" || (!r.startsWith("..") && !path.isAbsolute(r)); };
 
-/** The import boundary: server code everywhere but `runnerDir`, runner code under it (mold_v0-054). */
-function checkCode(packDir, id, runnerDir) {
+/**
+ * The import boundary: server code everywhere but `runnerDir`, runner code under it (mold_v0-054). `host` (mold_v0-039)
+ * is null for an ordinary pack, else { scriptsDir }: its server code may also import src/pack-host.ts and the server's
+ * packages, and the files under scriptsDir are operator scripts, never loaded by the server.
+ */
+function checkCode(packDir, id, runnerDir, host = null) {
   const code = [];
   for (const e of walk(packDir)) {
     const where = `pack ${id}: ${posix(path.relative(packDir, e.p))}`;
@@ -142,18 +175,24 @@ function checkCode(packDir, id, runnerDir) {
     if (e.link) fail(where, "a symbolic link: a pack carries plain files only");
     else if (e.dir) { if (path.basename(e.p) === "node_modules") fail(where, "a node_modules directory: a pack carries its own files only, never packages"); }
     else if (CODE_FILE.test(e.p)) code.push(e.p);
-    else if (!DATA_FILE.test(e.p)) fail(where, "a file a pack may not carry (code is .ts, .mts, .js or .mjs; data .json, .sql, .md, .txt, .csv, .yaml, .html, .css or an image)");
+    // A host pack (mold_v0-039) may also carry its downloads (a .zip under public/) and Python data tools (never loaded by node).
+    else if (!DATA_FILE.test(e.p) && !(host && ((/\.zip$/i.test(e.p) && within(path.join(packDir, "public"), e.p)) || /\.py$/i.test(e.p)))) fail(where, "a file a pack may not carry (code is .ts, .mts, .js or .mjs; data .json, .sql, .md, .txt, .csv, .yaml, .html, .css or an image)");
   }
-  graphJobs.push({ packDir, id, runnerDir, code });
+  const scriptsDir = host?.scriptsDir ?? null;
+  const isScript = (f) => scriptsDir !== null && within(scriptsDir, f);
+  graphJobs.push({ packDir, id, runnerDir, code: code.filter((f) => !isScript(f)), host, scriptsDir });
   for (const file of code) {
     const where = `pack ${id}: ${posix(path.relative(packDir, file))}`;
+    // A host pack's operator scripts (mold_v0-039) are run by hand with tsx, never loaded by the server: no import rule.
+    if (isScript(file)) continue;
     const runner = runnerDir !== null && within(runnerDir, file);
     const src = readFileSync(file, "utf8");
     if (runner && !/\.m?js$/.test(file)) fail(where, "runner code runs with node as it is: a .js or .mjs file");
-    for (const [re, what] of BANNED_CODE) if (re.test(src)) fail(where, `uses ${what}`);
+    for (const [re, what] of BANNED_CODE) if ((!host || runner || HOST_BANNED(re)) && re.test(src)) fail(where, `uses ${what}`);
     // Server code runs in the server's process: no process object at all, so it can neither read the server's
     // environment nor change the limits read from it (mold_v0-018, src/rate-limits.ts). Runner code has its own process.
-    if (!runner && /\bprocess\b/.test(src)) fail(where, "uses process (server code may not read or change the server's environment)");
+    // A host pack's server code is the product's own (mold_v0-039) and reads its settings from the environment.
+    if (!runner && !host && /\bprocess\b/.test(src)) fail(where, "uses process (server code may not read or change the server's environment)");
     for (const m of src.matchAll(DYNAMIC_IMPORT)) if (!LITERAL_IMPORT.test(src.slice(m.index))) fail(where, "a dynamic import of anything but one string literal");
     for (const m of src.matchAll(SPECIFIERS)) {
       const spec = m[1] ?? m[2] ?? m[3];
@@ -167,10 +206,12 @@ function checkCode(packDir, id, runnerDir) {
         const raw = path.resolve(path.dirname(file), spec);
         const target = raw.replace(/\.js$/, ".ts");
         if (target === PACK_API) continue;
+        if (host && target === PACK_HOST) continue;
         const inside = path.relative(packDir, target);
-        if (inside.startsWith("..") || path.isAbsolute(inside)) fail(where, `imports ${spec}: a pack may import its own files and src/pack-api.ts only`);
+        if (inside.startsWith("..") || path.isAbsolute(inside)) fail(where, `imports ${spec}: a pack may import its own files and src/pack-api.ts only${host ? " (a host pack also src/pack-host.ts)" : ""}`);
         else if (runnerDir !== null && (within(runnerDir, raw) || within(runnerDir, target))) fail(where, `imports ${spec}: server code may not import the runner's code (it may start processes)`);
-      } else if (!ALLOWED_BARE.has(spec)) fail(where, `imports ${spec}: not allowed in a pack's server code (allowed: ${[...ALLOWED_BARE].join(", ")}, src/pack-api.ts, its own files${runnerDir !== null ? "; a run program that needs more goes under the pack's runner directory" : ""})`);
+        else if (isScript(raw) || isScript(target)) fail(where, `imports ${spec}: server code may not import the pack's operator scripts`);
+      } else if (host ? !hostBare(spec) : !ALLOWED_BARE.has(spec)) fail(where, host ? `imports ${spec}: a host pack's server code may import node's built-ins and the server's packages only` : `imports ${spec}: not allowed in a pack's server code (allowed: ${[...ALLOWED_BARE].join(", ")}, src/pack-api.ts, its own files${runnerDir !== null ? "; a run program that needs more goes under the pack's runner directory" : ""})`);
     }
   }
 }
@@ -188,15 +229,16 @@ async function checkGraphs() {
   let esbuild;
   try { esbuild = createRequire(path.join(ROOT, "package.json"))("esbuild"); }
   catch { fail("packs", "checking the packs' imports needs esbuild (a dependency of tsx): run npm ci"); return; }
-  for (const { packDir, id, runnerDir, code } of graphJobs) {
+  for (const { packDir, id, runnerDir, code, host, scriptsDir } of graphJobs) {
     if (!code.length) continue;
-    const API = "pack-api:";
+    const API = "pack-api:", HOSTAPI = "pack-host:";
     const plugin = { name: "pack-boundary", setup(b) {
       b.onResolve({ filter: /.*/ }, (a) => {
         if (a.kind === "entry-point") return undefined;
         if (!a.path.startsWith(".") && !a.path.startsWith("/")) return { path: a.path, external: true };
         const abs = path.resolve(a.resolveDir, a.path);
         if (abs === PACK_API || abs.replace(/\.js$/, ".ts") === PACK_API) return { path: API, external: true };
+        if (host && (abs === PACK_HOST || abs.replace(/\.js$/, ".ts") === PACK_HOST)) return { path: HOSTAPI, external: true };
         return undefined;
       });
     } };
@@ -214,6 +256,7 @@ async function checkGraphs() {
       const file = path.resolve(packDir, input);
       const where = `pack ${id}: ${posix(input)}`;
       if (!within(packDir, file)) { fail(where, "a file outside the pack is loaded: a pack may import its own files and src/pack-api.ts only"); continue; }
+      if (scriptsDir !== null && within(scriptsDir, file)) { fail(where, "the pack's operator scripts are loaded by its server code: server code may not import them"); continue; }
       const runner = runnerDir !== null && within(runnerDir, file);
       for (const imp of info.imports ?? []) {
         const target = imp.external ? null : path.resolve(packDir, imp.path);
@@ -222,7 +265,7 @@ async function checkGraphs() {
           else if (imp.external && !RUNNER_BARE.has(imp.path)) fail(where, `imports ${imp.path}: not allowed in runner code`);
           else if (target && !within(runnerDir, target)) fail(where, `imports ${posix(imp.path)}: runner code may import its own runner files and node's built-ins only (never src/pack-api.ts, the pack's server code or the shell)`);
         } else {
-          if (imp.external && imp.path !== API && !ALLOWED_BARE.has(imp.path)) fail(where, `imports ${imp.path}: not allowed in a pack's server code`);
+          if (imp.external && imp.path !== API && !(host && imp.path === HOSTAPI) && !(host ? hostBare(imp.path) : ALLOWED_BARE.has(imp.path))) fail(where, `imports ${imp.path}: not allowed in a pack's server code`);
           else if (target && runnerDir !== null && within(runnerDir, target)) fail(where, `imports ${posix(imp.path)}: server code may not import the runner's code (it may start processes)`);
           else if (target && !within(packDir, target)) fail(where, `imports ${posix(imp.path)}: a pack may import its own files and src/pack-api.ts only`);
         }
@@ -427,11 +470,89 @@ function loadPack(dirName) {
       if (typeof m.migrations === "string" && within(runnerDir, path.join(dir, m.migrations))) fail(where, "migrations may not be inside the runner directory");
     }
   }
-  if (id && ID.test(id)) checkCode(dir, id, runnerDir);
-  // A pack with no entry is its pack.json alone (mold_v0-057): server code it carries would never load, so say so.
-  if (entry === null) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
+  // A host pack (mold_v0-039): `host` names its server entry (defineHost, src/host.ts), optionally its operator scripts'
+  // directory and the profile it brings (under the build's profile.json). Only a pack profile.json lists in host_packs.
+  let host = null;
+  if (m.host !== undefined) {
+    const h = m.host;
+    const HOST_KEYS = new Set(["entry", "scripts", "profile"]);
+    if (!h || typeof h !== "object" || Array.isArray(h)) fail(where, "host must be an object {entry, scripts?, profile?}");
+    else {
+      for (const k of Object.keys(h)) if (!HOST_KEYS.has(k)) fail(where, `host: unknown field ${k}`);
+      if (!HOST_PACKS.has(dirName)) fail(where, `host: pack ${dirName} is not a host pack of this build (profile.json host_packs does not list it)`);
+      if (typeof h.entry !== "string" || !/^[a-z0-9_\-/]+\.ts$/i.test(h.entry) || h.entry.includes("..")) fail(where, "host.entry must be a .ts file inside the pack");
+      else if (!existsSync(path.join(dir, h.entry))) fail(where, `host.entry ${h.entry} does not exist`);
+      let scriptsDir = null;
+      if (h.scripts !== undefined) {
+        if (typeof h.scripts !== "string" || !/^[a-z0-9_\-/]+$/i.test(h.scripts) || h.scripts.includes("..")) fail(where, "host.scripts must be a directory inside the pack");
+        else if (!existsSync(path.join(dir, h.scripts))) fail(where, `host.scripts directory ${h.scripts} does not exist`);
+        else scriptsDir = path.join(dir, h.scripts);
+      }
+      if (scriptsDir && typeof h.entry === "string" && within(scriptsDir, path.join(dir, h.entry))) fail(where, "host.entry may not be inside host.scripts");
+      if (h.profile !== undefined && (!h.profile || typeof h.profile !== "object" || Array.isArray(h.profile))) fail(where, "host.profile must be an object of profile fields");
+      host = { entry: typeof h.entry === "string" ? h.entry : null, scriptsDir, profile: h.profile ?? null };
+    }
+  }
+  if (id && ID.test(id)) checkCode(dir, id, runnerDir, host ? { scriptsDir: host.scriptsDir } : null);
+  // A pack with no entry is its pack.json alone (mold_v0-057): server code it carries would never load, so say so (a
+  // host pack's server code loads from its host entry).
+  if (entry === null && !host) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
     fail(where, `${posix(path.relative(dir, e.p))} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
-  return { id, dir, json: m, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
+  if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
+  return { id, dir, json: m, host, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
+}
+
+// ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
+
+const WEB_PACKS = path.join(ROOT, "web", "src", "packs");
+const ORCH_PACKS = path.join(ROOT, "orchestrator", "packs");
+const WEB_DEPS = (() => { try { const j = JSON.parse(readFileSync(path.join(ROOT, "web", "package.json"), "utf8")); return new Set([...Object.keys(j.dependencies ?? {}), ...Object.keys(j.devDependencies ?? {})]); } catch { return new Set(); } })();
+const ORCH_DEPS = (() => { try { const j = JSON.parse(readFileSync(path.join(ROOT, "orchestrator", "package.json"), "utf8")); return new Set([...Object.keys(j.dependencies ?? {}), ...Object.keys(j.devDependencies ?? {})]); } catch { return new Set(); } })();
+const ORCH_LOCKED = (() => { try { return new Set(Object.keys(JSON.parse(readFileSync(path.join(ROOT, "orchestrator", "package-lock.json"), "utf8")).packages ?? {}).filter((k) => k.startsWith("node_modules/")).map((k) => k.slice("node_modules/".length))); } catch { return new Set(); } })();
+/** The console's shared code a host pack's pages may import (never another pack's pages, never the shell's own pages). */
+const WEB_SHARED = /^@\/(components|lib|hooks|types|config|features|styles|constants)(\/|$)/;
+const WEB_FILE = /\.(ts|tsx|css|json|md|svg|png|jpe?g|webp|gif|txt)$/i;
+const ORCH_FILE = /\.(ts|mts|js|mjs|json|md|txt|ya?ml|sh|toml|py|go|rs|java|kt|xml|gradle|properties|html|css|tsx|jsx|dart|swift|cmake|cpp|hpp|h|c|lock|gitignore|env|example)$|(^|\/)(Dockerfile|Makefile|CMakeLists\.txt|Cargo\.toml|go\.mod|go\.sum|Gemfile|Podfile|gradlew|\.gitignore|\.env\.example)$/i;
+function checkSideCode(base, kind, ids) {
+  if (!existsSync(base)) return [];
+  const found = [];
+  for (const e of readdirSync(base, { withFileTypes: true })) {
+    if (e.name === "README.md" || (kind === "orchestrator" && e.name === "packs.generated.ts")) continue;
+    const at = `${posix(path.relative(ROOT, base))}/${e.name}`;
+    if (!e.isDirectory() || e.isSymbolicLink()) { fail(at, "only one directory per host pack lives here"); continue; }
+    if (!ids.has(e.name)) { fail(at, `no host pack ${e.name} in this build (a pack's ${kind} code is a host pack's only)`); continue; }
+    found.push(e.name);
+    const own = path.join(base, e.name);
+    for (const f of walk(own)) {
+      const where = `${posix(path.relative(ROOT, f.p))}`;
+      if (f.link) { fail(where, "a symbolic link: a pack carries plain files only"); continue; }
+      if (f.dir) { if (path.basename(f.p) === "node_modules") fail(where, "a node_modules directory"); continue; }
+      if (kind === "web" && !WEB_FILE.test(f.p)) { fail(where, "a file a pack's console code may not carry"); continue; }
+      if (!/\.(ts|tsx|mts|js|mjs)$/.test(f.p)) continue;
+      // An orchestrator pack's starter workspaces (workspaces/: projects agents work in) and its tests (test/: run by hand,
+      // never uploaded to a sandbox, orchestrator/deploy/boat-lib.ts) are never loaded by the orchestrator.
+      if (kind === "orchestrator" && (within(path.join(own, "workspaces"), f.p) || within(path.join(own, "test"), f.p))) continue;
+      const src = readFileSync(f.p, "utf8");
+      if (/\beval\s*\(|\bnew\s+Function\b|\bcreateRequire\b/.test(src)) fail(where, "uses eval, Function or createRequire");
+      if (kind === "web" && /process\.env\.(?!NEXT_PUBLIC_|NODE_ENV\b)/.test(src)) fail(where, "reads the server's environment (a console page may read NEXT_PUBLIC_ names only)");
+      for (const m of src.matchAll(SPECIFIERS)) {
+        const spec = m[1] ?? m[2] ?? m[3];
+        if (spec.startsWith(".")) {
+          const t = path.resolve(path.dirname(f.p), spec);
+          if (kind === "web" && !within(own, t)) fail(where, `imports ${spec}: a console pack imports its own files, the console's shared code (@/components, @/lib, …) and packages only`);
+          if (kind === "orchestrator" && !within(path.join(ROOT, "orchestrator"), t)) fail(where, `imports ${spec}: orchestrator code imports the orchestrator's own files only (never the server's src/)`);
+          if (kind === "orchestrator" && within(ORCH_PACKS, t) && !within(own, t)) fail(where, `imports ${spec}: another pack's orchestrator code`);
+        } else if (kind === "web" && spec.startsWith("@/")) {
+          if (spec === `@/packs/${e.name}` || spec.startsWith(`@/packs/${e.name}/`)) continue;
+          if (!WEB_SHARED.test(spec)) fail(where, `imports ${spec}: a console pack may import the console's shared code only (@/components, @/lib, @/hooks, @/types, @/config, @/features, @/styles)`);
+        } else if (!spec.startsWith("node:") && !(kind === "web" ? WEB_DEPS : ORCH_DEPS).has(packageOf(spec))
+          // The orchestrator's packages' own packages (Pi's model layer, installed with it: its package-lock) count as its packages.
+          && !(kind === "orchestrator" && ORCH_LOCKED.has(packageOf(spec))))
+          fail(where, `imports ${spec}: not a package of the ${kind === "web" ? "console" : "orchestrator"}`);
+      }
+    }
+  }
+  return found;
 }
 
 const packDirs = existsSync(PACKS_DIR) ? readdirSync(PACKS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [];
@@ -441,6 +562,11 @@ for (const d of packDirs) {
   const p = loadPack(d);
   if (p) packs.push(p);
 }
+const hostIds = new Set(packs.filter((p) => p.host).map((p) => p.id));
+const webPacks = !opt("--packs") ? checkSideCode(WEB_PACKS, "web", hostIds) : [];
+const orchPacks = !opt("--packs") ? checkSideCode(ORCH_PACKS, "orchestrator", hostIds) : [];
+for (const id of webPacks) if (!existsSync(path.join(WEB_PACKS, id, "index.ts"))) fail(`web/src/packs/${id}`, "a console pack's entry is index.ts (its pages, nav and landing)");
+for (const id of orchPacks) if (!existsSync(path.join(ORCH_PACKS, id, "main.ts"))) fail(`orchestrator/packs/${id}`, "an orchestrator pack's entry is main.ts");
 
 // Nor may it name a shell table: pack "api" would own api_keys, and its migrations could then alter or re-secure it.
 const SHELL_TABLES = new Set(["pack_schema_migrations", "schema_migrations"]);
@@ -483,11 +609,19 @@ function limitsProblem(v, plans = true) {
 }
 
 let profile = { ...DEFAULT_PROFILE };
-if (existsSync(PROFILE_FILE)) {
-  const pf = readJson(PROFILE_FILE, rel(PROFILE_FILE));
-  if (pf && typeof pf === "object" && !Array.isArray(pf)) {
+// A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
+// its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
+const hostProfiles = packs.filter((p) => p.host?.profile);
+if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) => p.id).join(" and ")} both bring a profile`);
+{
+  const filePf = existsSync(PROFILE_FILE) ? readJson(PROFILE_FILE, rel(PROFILE_FILE)) : null;
+  const pf = { ...(hostProfiles[0]?.host.profile ?? {}), ...(filePf && typeof filePf === "object" && !Array.isArray(filePf) ? filePf : {}) };
+  if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
+  {
     for (const [k, v] of Object.entries(pf)) {
       if (k === "$comment") continue;
+      // Which packs may be host packs (read above, before the packs): a list of pack ids, never shown.
+      if (k === "host_packs") { if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !ID.test(x))) fail(rel(PROFILE_FILE), "host_packs: a list of pack ids"); continue; }
       if (k === "limits") { const bad = limitsProblem(v); if (bad) fail(rel(PROFILE_FILE), `limits: ${bad}`); else profile.limits = v; continue; }
       // The customer MCP server's own version and instructions (mold_v0-060), optional: absent, the shell's.
       if (k === "mcp_server_version") { if (typeof v !== "string" || !/^\d{1,6}\.\d{1,6}\.\d{1,6}([-+][0-9A-Za-z.-]{1,40})?$/.test(v)) fail(rel(PROFILE_FILE), "mcp_server_version: a version like 1.2.3"); else profile[k] = v; continue; }
@@ -659,6 +793,66 @@ files.set(srcPacks, HEADER +
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
   `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir })))};\n`);
+// The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
+const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
+const hostPacks = packs.filter((p) => p.host && p.host.entry);
+files.set(srcHosts, HEADER +
+  hostPacks.map((p, i) => `import host${i} from ${JSON.stringify(importPath(srcHosts, path.join(p.dir, p.host.entry)))};\n`).join("") +
+  (hostPacks.length ? "\n" : "") +
+  "/** The host packs of this build (src/host.ts), in pack order; none with zero packs. */\n" +
+  `export const HOSTS: readonly unknown[] = [${hostPacks.map((_p, i) => `host${i}`).join(", ")}];\n`);
+// Their console code (web/src/packs/<id>/index.ts) and orchestrator entries (orchestrator/packs/<id>/main.ts).
+files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADER +
+  "import type { HostWeb } from '@/features/packs/host-web';\n" +
+  webPacks.map((id, i) => `import * as web${i} from '@/packs/${id}';\n`).join("") +
+  "\n/** The host packs' console code (mold_v0-039): pages at their own URLs, sidebar entries, the landing page; none with zero packs. */\n" +
+  `export const HOST_WEB: readonly HostWeb[] = [${webPacks.map((_id, i) => `web${i}.default`).join(", ")}];\n`);
+// Their sidebar entries and the shell features they enable (web/src/packs/<id>/nav.ts), apart from their pages so the
+// sidebar's bundle never carries the pages.
+{
+  const navs = webPacks.filter((id) => existsSync(path.join(WEB_PACKS, id, "nav.ts")));
+  files.set(path.join(OUT, "web", "src", "config", "pack-host-nav.generated.ts"), HEADER +
+    navs.map((id, i) => `import * as nav${i} from '@/packs/${id}/nav';\n`).join("") +
+    "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
+    `export const HOST_NAV: readonly unknown[] = [${navs.map((_id, i) => `nav${i}`).join(", ")}];\n`);
+}
+// Their customer guides (web/src/packs/<id>/guide.ts: pure TS, relative imports only, as the docs corpus reads it).
+{
+  const guides = webPacks.filter((id) => existsSync(path.join(WEB_PACKS, id, "guide.ts")));
+  files.set(path.join(OUT, "web", "src", "config", "pack-guides.generated.ts"), HEADER +
+    guides.map((id, i) => `import * as guide${i} from '../packs/${id}/guide';\n`).join("") +
+    "\n/** The host packs' customer guides (mold_v0-039): the first replaces the shell's (src/content/customer-guide.ts). */\n" +
+    `export const HOST_GUIDES: readonly unknown[] = [${guides.map((_id, i) => `guide${i}`).join(", ")}];\n`);
+}
+// Their console URLs (web/src/packs/<id>/routes.json): each rewritten to the shell's host page route, and their redirects.
+{
+  const rewrites = [], redirects = [], seenUrl = new Set();
+  const ROUTE_PATH = /^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/;
+  for (const id of webPacks) {
+    const file = path.join(WEB_PACKS, id, "routes.json");
+    const r = existsSync(file) ? readJson(file, `web/src/packs/${id}/routes.json`) : {};
+    if (!r || typeof r !== "object") continue;
+    for (const [area, prefix, to] of [["app", "/app/", `/app/host/${id}/`], ["admin", "/admin/", `/admin/host/${id}/`], ["site", "/", `/host/${id}/`]]) {
+      for (const p of Array.isArray(r[area]) ? r[area] : []) {
+        if (typeof p !== "string" || !ROUTE_PATH.test(p) || p.startsWith("host/") || p === "host") { fail(`web/src/packs/${id}/routes.json`, `${area}: ${JSON.stringify(p)} is not a page path`); continue; }
+        const source = prefix + p;
+        if (seenUrl.has(source)) fail(`web/src/packs/${id}/routes.json`, `${source} is claimed twice`);
+        seenUrl.add(source);
+        rewrites.push({ source, destination: to + p });
+      }
+    }
+    for (const x of Array.isArray(r.redirects) ? r.redirects : []) {
+      if (!x || typeof x.source !== "string" || typeof x.destination !== "string" || !x.source.startsWith("/") || !x.destination.startsWith("/")) { fail(`web/src/packs/${id}/routes.json`, "a redirect is {source, destination, permanent} with paths on this site"); continue; }
+      redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
+    }
+  }
+  refuse();
+  files.set(path.join(OUT, "web", "src", "config", "pack-routes.generated.json"), JSON.stringify({ $comment: "Generated by scripts/gen-packs.mjs from web/src/packs/*/routes.json (mold_v0-039). Do not edit: run npm run gen:packs.", rewrites, redirects }, null, 2) + "\n");
+}
+if (existsSync(path.join(OUT, "orchestrator")))
+  files.set(path.join(OUT, "orchestrator", "packs.generated.ts"), HEADER +
+    "/** The host packs' orchestrator entries (mold_v0-039), relative to orchestrator/: main.ts runs the first, else the deterministic worker. */\n" +
+    `export const ORCHESTRATOR_ENTRIES: readonly string[] = ${JSON.stringify(orchPacks.map((id) => `./packs/${id}/main.ts`))};\n`);
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
   `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);
@@ -701,10 +895,10 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const packOnboardingSteps = ${onboardingSteps.length};\n` +
   // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own.
-  (packs.length ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */\n" +
+  (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).length) ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
     `export const usagePortalNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
-    : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
+    : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
   viewsModule());
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +

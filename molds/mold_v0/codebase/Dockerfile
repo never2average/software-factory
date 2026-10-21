@@ -21,18 +21,16 @@ COPY packs ./packs
 COPY public ./public
 COPY --from=web /web/out ./web/out
 COPY harnesses ./harnesses
-# Curated developer profiles and task library (npm run vault:sync with VAULT_DIR=vault/curated).
-COPY vault ./vault
 # Orchestrator sources (no node_modules, no Pi clone, no tests): the autoscaler (src/autoscaler.ts) imports
 # orchestrator/deploy/boat-lib.ts, and tars these same files for orchestrator sandboxes / the snapshot image.
-COPY orchestrator/package.json orchestrator/package-lock.json orchestrator/tsconfig.json orchestrator/worker.ts ./orchestrator/
+COPY orchestrator/package.json orchestrator/package-lock.json orchestrator/tsconfig.json orchestrator/worker.ts orchestrator/main.ts orchestrator/packs.generated.ts ./orchestrator/
 COPY orchestrator/core ./orchestrator/core
 COPY orchestrator/deploy ./orchestrator/deploy
 COPY orchestrator/fleet ./orchestrator/fleet
 # The whole directory: the worker sandbox also gets files from here (acp-client.mjs for Zed personas).
 COPY orchestrator/harnesses ./orchestrator/harnesses
 COPY orchestrator/images ./orchestrator/images
-COPY orchestrator/pi-octillion ./orchestrator/pi-octillion
+COPY orchestrator/packs ./orchestrator/packs
 COPY orchestrator/workspaces ./orchestrator/workspaces
 # Run sandboxes on a server of its own (mold_v0-055, src/run-sandboxes.ts): each run is a container of this same image,
 # started as root only to lock its run user down (nftables) and switch to it. git for agent-workspace runs; the run's
