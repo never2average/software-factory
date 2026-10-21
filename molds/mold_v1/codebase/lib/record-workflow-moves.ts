@@ -62,6 +62,7 @@ import {
   eligibleHolders,
   extensionOf,
   engineDirectory,
+  followRecord,
   RecordWorkflowRefused,
   recordData,
   recordMoveOf,
@@ -272,6 +273,9 @@ export async function openRecordWorkflow(
       else if (pending) dirty = (await settleRecordMove({ binding, dsl, instance, directory, rbac, state, now })) !== "none";
       // Moved without the engine since it was last brought in line (a rollover, a system move): re-synced first.
       if (!busy && recordStateOf(instance) !== undefined && recordStateOf(instance) !== state) dirty = resyncInstance({ binding, dsl, instance, state, actor, now }) || dirty;
+      // The record's own values changed since the instance last followed them (an edit that moved nothing, an import):
+      // they are followed before anything is checked. By "system": whoever reads it now did not make that edit.
+      if (!busy) dirty = followRecord({ binding, dsl, instance, directory, rbac, actor: "system", now }) || dirty;
     } else {
       // Attached lazily: the record's first move since its lifecycle runs the workflow. Its steps start where its
       // stored state (read under whichever key and spelling the row holds it) says they stand.
@@ -301,7 +305,8 @@ export class RecordWorkflowBusy extends Error {
  * Step 2 (see the file's header), in the transaction the record was just written in. `entityId`: the record's key
  * (`workflowRecordKey` of the row written); `created`: the write made the record; `check`: the move it made (the
  * validator's `lifecycle`), or null for a write that moved nothing; `after`: the record as written. Attaches the
- * instance (a create, or the first move since the binding), applies the move's step change, and saves. Throws
+ * instance (a create, or the first move since the binding), applies the move's step change (a move that names no step
+ * brings the steps in line with the record's new state, `workflow_states`), and saves. Throws
  * RecordWorkflowConflict on a stale revision (the caller's transaction must roll back), RecordWorkflowBusy when another
  * mover's reserved move is pending, and RecordWorkflowRefused for a workflow that would queue what this phase does not
  * run. Returns the instance saved, or null when nothing was (not a move, or the workflow is not this record's).
@@ -311,7 +316,7 @@ export async function commitRecordWorkflow(
   input: { entityId: string; created: boolean; check: MoveCheck | null; after: AreaRow; deliver?: StepActionRunner },
 ): Promise<WorkflowInstance | null> {
   const { v, binding, store, directory, rbac, dsl, now } = session;
-  if (!input.created && !input.check) return null;
+  if (!input.created && !input.check) return followRecordEdit(session, input);
   if (session.busy) throw new RecordWorkflowBusy();
   let instance = session.instance;
   if (!instance) return null;
@@ -328,7 +333,14 @@ export async function commitRecordWorkflow(
   instance = withRecordData(instance, data);
   if (step) {
     await applyStepMove({ dsl, instance, directory, rbac, step, actor: session.actor, comment: session.comment, evidence: session.evidence, now, administrative: administrativeOf(input.check) });
+  } else if (input.check) {
+    // A move that names no step (a board drag, a done toggle, a move outside the transitions under "warn"): the steps
+    // follow the record to its new state (`workflow_states`), as provisioning rows, so the next move is checked from
+    // where the record now is. Nothing for a stored instance already there, or one just seeded at it.
+    resyncInstance({ binding, dsl, instance, state: after, actor: session.actor, now, byMove: true });
   }
+  // The record as written: its anchored due dates follow its values (a move may change them too).
+  followRecord({ binding, dsl, instance, directory, rbac, actor: session.actor, now });
   setRecordState(instance, after);
   // An instance stored for the first time (a create: no lock was taken before the record had its key) is saved under
   // the record's lock, held to the end of this transaction, so its delivery's claim waits for the commit.
@@ -337,6 +349,48 @@ export async function commitRecordWorkflow(
   if (!saved.ok) throw saved.conflict;
   deliverAfterCommit(saved.instance, session.orgId, binding.areaId, input.deliver);
   return saved.instance;
+}
+
+/**
+ * A write that moved nothing (an edit of the record's values), in its own transaction after the record is written: a
+ * stored instance follows the record as written (followRecord: its anchored due dates), and is saved when that, or the
+ * read in step 1 (a re-sync, a settled reservation), changed it. Nothing for an instance not stored yet (it is attached
+ * from the record's values on its first move or read) or while another mover's move is pending (it follows on the
+ * next read). Returns the instance saved, or null.
+ */
+async function followRecordEdit(session: RecordWorkflowSession, input: { entityId: string; after: AreaRow; deliver?: StepActionRunner }): Promise<WorkflowInstance | null> {
+  const { v, binding, store, directory, rbac, dsl, now } = session;
+  if (session.busy || !session.stored || !session.instance) return null;
+  const instance = withRecordData(session.instance, recordData(v, input.after));
+  const followed = followRecord({ binding, dsl, instance, directory, rbac, actor: session.actor, now });
+  if (!followed && !session.dirty) return null;
+  const saved = await store.update(instance);
+  if (!saved.ok) throw saved.conflict;
+  deliverAfterCommit(saved.instance, session.orgId, binding.areaId, input.deliver);
+  return saved.instance;
+}
+
+/**
+ * A record written ELSEWHERE by a write that moved nothing (a task's edit through the task-workflow service), in its
+ * own short transaction once the write is made: under the record's workflow lock, the record as it is now and its
+ * stored instance (openRecordWorkflow, which follows the record's values), saved when they changed it. Nothing for a
+ * record whose instance was never stored. Returns whether it saved.
+ */
+export async function followRecordWrite(
+  tx: ScopedDb,
+  orgId: string,
+  areaId: RecordAreaId,
+  input: { entityId: string; actor: string; readRecord: () => Promise<AreaRow | null>; now?: Date; deliver?: StepActionRunner },
+  opts: { areas?: RecordAreas; workflows?: Record<string, unknown> } = {},
+): Promise<boolean> {
+  const { row } = await lockedRead(tx, orgId, areaId, input.readRecord, input.entityId);
+  if (!row) return false;
+  const session = await openRecordWorkflow(tx, orgId, areaId, { entityId: input.entityId, before: row, actor: input.actor, now: input.now }, opts);
+  if (!session?.instance || !session.stored || session.busy || !session.dirty) return false;
+  const saved = await session.store.update(session.instance);
+  if (!saved.ok) throw saved.conflict;
+  deliverAfterCommit(saved.instance, orgId, areaId, input.deliver);
+  return true;
 }
 
 /** What `reserveRecordMove` reserved: the move's id (null when the write moves nothing). */
@@ -366,7 +420,10 @@ export async function reserveRecordMove(
   const session = await openRecordWorkflow(tx, opened.orgId, opened.binding.areaId, { entityId: input.entityId, before, actor: opened.actor, comment: opened.comment, evidence: opened.evidence, now }, opts);
   if (!session || !session.instance) return { id: null };
   if (session.busy) throw new RecordWorkflowBusy();
-  if (session.state !== opened.state || session.stored !== opened.stored || session.basis !== opened.basis) {
+  // Who holds each step, as each read followed the record: an edit of the record between the check and now (its
+  // reviewer changed) may have moved a step to someone else, and the move was checked against the former holder.
+  const holders = (i: WorkflowInstance | null) => JSON.stringify((i?.steps ?? []).map((s) => [s.id, s.assignee, s.due_on ?? null]));
+  if (session.state !== opened.state || session.stored !== opened.stored || session.basis !== opened.basis || holders(session.instance) !== holders(opened.instance)) {
     throw new RecordWorkflowConflict("stale_revision", session.instance.id, opened.revision, session.revision, `the record or its workflow changed since the move was checked (state "${opened.state}" → "${session.state}", revision ${opened.revision} → ${session.revision})`);
   }
   const step = check.transition?.step ?? null;
@@ -405,7 +462,11 @@ export async function settleReservedMove(
   const dsl = pinned?.definition ?? binding.dsl;
   const { directory, rbac } = await directoryOf(tx, orgId);
   const instance = withRecordData(found, recordData(v, row));
-  const outcome = await settleRecordMove({ binding, dsl, instance, directory, rbac, state, now: input.now ?? new Date() });
+  const now = input.now ?? new Date();
+  const mover = recordMoveOf(found)!.actor;
+  const outcome = await settleRecordMove({ binding, dsl, instance, directory, rbac, state, now });
+  // The record as the service wrote it: its anchored due dates follow its values (the write may have changed them).
+  followRecord({ binding, dsl, instance, directory, rbac, actor: mover, now });
   const saved = await store.update(instance);
   if (!saved.ok) throw saved.conflict;
   deliverAfterCommit(saved.instance, orgId, areaId, input.deliver);
@@ -543,14 +604,15 @@ export function stepOptions(session: RecordWorkflowSession, instance: WorkflowIn
 
 /**
  * The cards' view of many records at once (no history, no lock, nothing saved): each record's instance, re-synced in
- * memory to the state the record is in now (`states`: key -> the record's state as the rules read it), or, never
- * attached, seeded in memory from it. Keyed by the record key.
+ * memory to the state the record is in now (`states`: key -> the record's state as the rules read it) and, given the
+ * record (`row`), following its values (followRecord), or, never attached, seeded in memory from it. Keyed by the
+ * record key.
  */
 export async function recordWorkflowSummaries(
   tx: ScopedDb,
   orgId: string,
   areaId: RecordAreaId,
-  records: { key: string; state: string | null }[],
+  records: { key: string; state: string | null; row?: AreaRow | null }[],
   opts: { areas?: RecordAreas; workflows?: Record<string, unknown>; now?: Date } = {},
 ): Promise<{ instances: Map<string, WorkflowInstance>; directory: ReturnType<typeof engineDirectory>["directory"] } | null> {
   const areas = opts.areas ?? RECORD_AREAS;
@@ -559,7 +621,8 @@ export async function recordWorkflowSummaries(
   if (!binding) return null;
   const now = opts.now ?? new Date();
   const store = new RecordWorkflowStore(tx, orgId, { definitions: workflows as Record<string, WorkflowDSL> });
-  const { directory } = await directoryOf(tx, orgId);
+  const { directory, rbac } = await directoryOf(tx, orgId);
+  const v = areaView(areaId, areas);
   const stored = (await store.listStepsForRecords(areaId, records.map((r) => r.key))).filter((i) => i.workflow_id === binding.workflowId);
   const byKey = new Map(stored.map((i) => [i.object.id, i]));
   const out = new Map<string, WorkflowInstance>();
@@ -567,10 +630,16 @@ export async function recordWorkflowSummaries(
     const found = byKey.get(r.key);
     if (found) {
       if (recordStateOf(found) !== undefined && recordStateOf(found) !== r.state && !recordMoveOf(found)) resyncInstance({ binding, dsl: binding.dsl, instance: found, state: r.state, actor: "system", now });
+      if (r.row && !recordMoveOf(found)) {
+        const read = withRecordData(found, recordData(v, r.row));
+        followRecord({ binding, dsl: binding.dsl, instance: read, directory, rbac, actor: "system", now });
+        out.set(r.key, read);
+        continue;
+      }
       out.set(r.key, found);
       continue;
     }
-    const seeded = seedInstance({ binding, orgId, entity: { type: areaId, id: r.key }, state: r.state, data: {}, directory, actor: "system", now });
+    const seeded = seedInstance({ binding, orgId, entity: { type: areaId, id: r.key }, state: r.state, data: r.row ? recordData(v, r.row) : {}, directory, actor: "system", now });
     if (seeded) out.set(r.key, seeded);
   }
   return { instances: out, directory };

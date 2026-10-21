@@ -22,6 +22,10 @@
  *   enforce): a task through the todos routes, whose write is the task-workflow service's (a stand-in running the
  *   service's own engine, as scripts/lib/record-lifecycle-db-probe.mjs does), and upsert_todo; a period through the
  *   cycles routes and upsert_cycle. Refused moves reach neither the service nor the table.
+ *   people  (WORKFLOW_PROBE_SET=people; the copy also carries scripts/fixtures/record-workflows/people.json) holders
+ *           read from the record's own person fields however they are capitalised (mold_v1-300), a step due on the
+ *           record's date and following an edit of it (mold_v1-302), an open step following its person field when it is
+ *           changed (mold_v1-303): deployments through their routes, tasks through the todos routes and the service.
  *
  * Needs ADMIN_URL and DATABASE_URL (app_rw).
  */
@@ -71,7 +75,8 @@ const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 const root = (p) => pathToFileURL(`${process.cwd()}/${p}`).href;
 const { RECORD_AREAS } = await import(root("agent/lib/record-areas.generated.ts"));
 const LC = RECORD_AREAS.deployments.lifecycle;
-const MODE = LC?.workflow ? LC.enforce ?? "off" : "unbound";
+// WORKFLOW_PROBE_SET=people: the copy carries scripts/fixtures/record-workflows/people.json too; only its checks run.
+const MODE = process.env.WORKFLOW_PROBE_SET === "people" ? "people" : LC?.workflow ? LC.enforce ?? "off" : "unbound";
 const ssl = /localhost|127\.0\.0\.1/.test(adminUrl) ? false : "require";
 const admin = postgres(adminUrl, { ssl, prepare: false, max: 1, onnotice: () => {} });
 const holder = postgres(adminUrl, { ssl, prepare: false, max: 1, onnotice: () => {} });
@@ -496,6 +501,15 @@ try {
     const clean = await move(MAKER, "W-2", "in_review", SUBMIT);
     const i2 = await instanceOf("W-2");
     check("warn: a move that keeps the rules carries no warning and changes its step as the holder's own", clean.status === 200 && !clean.body?.warnings && !(await eventsOf(i2)).some((e) => e.data?.administrative) && stepOf(i2, "prepare")?.state === "completed", clean);
+    // A move that names no step (a drag across the board, outside the transitions): the steps follow the record.
+    await create(MAKER, "W-3");
+    const dragged = await move(OWNER, "W-3", "approved");
+    const i3 = await instanceOf("W-3");
+    const ev3 = await eventsOf(i3);
+    check("warn: a move that names no step (drafting → approved) brings the steps to the new state's workflow_states, as provisioning rows by the mover", dragged.status === 200 && (await stateOf("W-3")) === "approved" && stepOf(i3, "prepare")?.state === "completed" && stepOf(i3, "review")?.state === "completed" && i3.terminal === true && i3.engine_state?.record_state === "approved" && ev3.filter((e) => e.source === "provisioning" && e.data?.by_move === true && e.actor === OWNER).length === 2 && !ev3.some((e) => e.type === "state_changed"), { dragged, steps: i3?.steps, ev: ev3.map((e) => [e.type, e.source, e.detail]) });
+    const back = await move(MAKER, "W-3", "drafting");
+    const i3b = await instanceOf("W-3");
+    check("…and its next move is checked from there: back to drafting reopens the preparation for its holder", back.status === 200 && stepOf(i3b, "prepare")?.state === "open" && i3b.engine_state?.record_state === "drafting", { back, steps: i3b?.steps });
   }
 
   if (MODE === "off") {
@@ -506,7 +520,66 @@ try {
     check("off: `evidence` is no field of the record (today's 400), and nothing is written", withEvidence.status === 400 && /evidence/.test(withEvidence.body?.error ?? "") && (await stateOf("O-1")) === "in_review", withEvidence);
   }
 
+  if (MODE === "people") {
+    // ── holders from the record's person fields, due dates from its dates (people.json) ──────────────────────────
+    const UP = (e) => e.toUpperCase();
+    const taskRow = async (id) => (await admin`SELECT * FROM todos WHERE org_id = ${A} AND id = ${id}`)[0];
+    const taskInstance = async (id) => (await admin`SELECT * FROM record_workflow_instances WHERE org_id = ${A} AND entity_type = 'tasks' AND entity_id = ${id}`)[0];
+    const todo = async (who, method, { body, id } = {}) => {
+      const handlers = await import(root(id ? "app/api/ops/todos/[id]/route.ts" : "app/api/ops/todos/route.ts"));
+      const request = new NextRequest(`${H}/api/ops/todos${id ? `/${id}` : ""}`, { method, headers: { authorization: bearers[who], "x-ops-org": orgOf[who], "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+      const res = await handlers[method](request, id ? { params: Promise.resolve({ id }) } : undefined);
+      const out = await res.text();
+      let json = null;
+      try { json = JSON.parse(out); } catch { /* not json */ }
+      return { status: res.status, body: json };
+    };
+
+    // A deployment imported with its people spelled in capitals (the write path's own validator lower-cases a person
+    // field; an import, an older row or another service does not).
+    await admin`INSERT INTO deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, custom) VALUES (${A}, ${CO}, 'P-1', 'prod', 'eu-west-1', '1.0', 'deployed', 'healthy', ${admin.json({ review_state: "drafting", assignee: UP(MAKER), reviewer: ` ${UP(CHECKER)} `, target_date: "2026-09-10" })})`;
+    const submitted = await move(MAKER, "P-1", "in_review", SUBMIT);
+    const p1 = await instanceOf("P-1");
+    check("people: a preparer and a reviewer spelled in capitals on the record hold their steps; the preparer's move breaks no step rule (mold_v1-300)", submitted.status === 200 && !submitted.body?.warnings && JSON.stringify(stepOf(p1, "prepare")?.assignee) === JSON.stringify([MAKER]) && JSON.stringify(stepOf(p1, "review")?.assignee) === JSON.stringify([CHECKER]) && stepOf(p1, "prepare")?.state === "completed", { submitted, steps: p1?.steps });
+    check("people: the review is due two days before the record's target date, at the end of that day (mold_v1-302)", stepOf(p1, "review")?.due_on === "2026-09-08T23:59:59.999Z", stepOf(p1, "review"));
+    const edited = await call(MAKER, "PATCH", { id: "P-1", body: { customerId: CO, custom: { target_date: "2026-09-20" } } });
+    const p1b = await instanceOf("P-1");
+    const anchoredRows = (await eventsOf(p1b)).filter((e) => e.data?.anchored_to === "target_date");
+    check("people: an edit of the target date that moves nothing moves the open review's due date with it, as a provisioning row", edited.status === 200 && stepOf(p1b, "review")?.due_on === "2026-09-18T23:59:59.999Z" && p1b.revision === p1.revision + 1 && anchoredRows.length === 1 && anchoredRows[0].source === "provisioning" && anchoredRows[0].actor === MAKER, { edited, review: stepOf(p1b, "review"), rows: anchoredRows });
+
+    // The review is the reviewer's: the reviewer is changed on the record (an edit that moves nothing), and the open
+    // review passes to the new one, who approves without an administrator's reassignment (mold_v1-303).
+    await admin`INSERT INTO deployments (org_id, customer_id, deployment_id, environment, region, deployed_version, release_status, health_status, custom) VALUES (${A}, ${CO}, 'P-2', 'prod', 'eu-west-1', '1.0', 'deployed', 'healthy', ${admin.json({ review_state: "drafting", assignee: MAKER, reviewer: CHECKER })})`;
+    await move(MAKER, "P-2", "in_review", SUBMIT);
+    const p2 = await instanceOf("P-2");
+    const handed = await call(MAKER, "PATCH", { id: "P-2", body: { customerId: CO, custom: { reviewer: OTHER } } });
+    const p2h = await instanceOf("P-2");
+    const reresolved = (await eventsOf(p2h)).filter((e) => e.type === "assignee_reresolved" && e.data?.reason === "record_field");
+    check("people: the reviewer changed on the record (no move) moves the open review to the new reviewer, as a row naming the field (mold_v1-303)", JSON.stringify(stepOf(p2, "review")?.assignee) === JSON.stringify([CHECKER]) && handed.status === 200 && JSON.stringify(stepOf(p2h, "review")?.assignee) === JSON.stringify([OTHER]) && p2h.revision === p2.revision + 1 && reresolved.length === 1 && JSON.stringify(reresolved[0].data?.fields) === JSON.stringify(["reviewer"]) && reresolved[0].actor === MAKER, { handed, before: stepOf(p2, "review"), review: stepOf(p2h, "review"), rows: reresolved });
+    const byNew = await move(OTHER, "P-2", "approved", { reason: "looks fine" });
+    check("…the new reviewer approves as the step's holder: no broken step rule, the review completed", byNew.status === 200 && !byNew.body?.warnings && stepOf(await instanceOf("P-2"), "review")?.state === "completed", byNew);
+
+    // A task created through the service with its assignee spelled in capitals, due on a date.
+    const made = await todo(MAKER, "POST", { body: { title: "Prepare the pack", assignee: UP(MAKER), dueAt: "2026-09-15" } });
+    const tid = made.body?.item?.id;
+    const t1 = tid ? await taskInstance(tid) : null;
+    check("people: a task whose assignee the service stored in capitals: its preparation is the assignee's, due at the end of the task's due date", made.status === 201 && JSON.stringify(stepOf(t1, "prepare")?.assignee) === JSON.stringify([MAKER]) && stepOf(t1, "prepare")?.due_on === "2026-09-15T23:59:59.999Z", { made, t1: t1?.steps, task: await taskRow(tid) });
+    const moved = await todo(MAKER, "PATCH", { id: tid, body: { dueAt: "2026-09-25" } });
+    const t1b = await taskInstance(tid);
+    check("people: the task's due date edited through the service (no move): the open preparation's due date follows", moved.status === 200 && stepOf(t1b, "prepare")?.due_on === "2026-09-25T23:59:59.999Z", { moved, t1b: t1b?.steps });
+    const taskSubmit = await todo(MAKER, "PATCH", { id: tid, body: { custom: { state: "in_review" }, ...SUBMIT } });
+    check("people: under strict the assignee spelled in capitals submits the task's preparation as its holder", taskSubmit.status === 200 && stepOf(await taskInstance(tid), "prepare")?.state === "completed", taskSubmit);
+    // The task's review has nobody yet (it names no reviewer); naming one on the task through the service (no move)
+    // gives the open review to them, and under strict they approve it (mold_v1-303).
+    const named = await todo(MAKER, "PATCH", { id: tid, body: { custom: { reviewer: UP(CHECKER) } } });
+    const t2 = await taskInstance(tid);
+    check("people: a reviewer named on the task through the service (no move) takes the open review", named.status === 200 && JSON.stringify(stepOf(t2, "review")?.assignee) === JSON.stringify([CHECKER]), { named, review: stepOf(t2, "review") });
+    const taskApprove = await todo(CHECKER, "PATCH", { id: tid, body: { custom: { state: "approved" }, reason: "complete" } });
+    check("…and approves it under strict as its holder", taskApprove.status === 200 && stepOf(await taskInstance(tid), "review")?.state === "completed", taskApprove);
+  }
+
   // ── workspace B ────────────────────────────────────────────────────────────────────────────────────────────────
+  if (MODE !== "people") {
   const anyKey = (await admin`SELECT entity_id FROM record_workflow_instances WHERE org_id = ${A} AND entity_type = 'deployments' ORDER BY entity_id LIMIT 1`)[0]?.entity_id ?? null;
   const anyA = anyKey ? decodeURIComponent(anyKey.split("/")[1]) : null;
   if (anyA) {
@@ -525,6 +598,7 @@ try {
     check("workspace B attaches its own instance to its own record of the same id; A's is untouched", ownMade.status === 201 && ownInst && ownInst.id !== aInst.id && JSON.stringify(stepOf(ownInst, "prepare")?.assignee) === JSON.stringify([BEN]), { ownMade, ownInst: ownInst?.steps });
   } else {
     check("workspace B: nothing of A's to see (no instance was attached in this mode)", (await instanceCount(A)) === 0);
+  }
   }
 } catch (e) {
   failures++;

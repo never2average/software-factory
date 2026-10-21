@@ -11,7 +11,9 @@
  *   3. EVERY REFUSAL, with its exact sentence: `profiles/<file>: records.workflows.<id>.<path>: <reason>` (the engine's
  *      spec.json, its validator, what this phase cannot run: email and agent actions, prompt branches) and
  *      `profiles/<file>: records.areas.<area>.lifecycle…: <reason>` (an unknown workflow, step or step state, a step or
- *      workflow_states with no workflow, a record state that is not one or is a legacy spelling).
+ *      workflow_states with no workflow, a record state that is not one or is a legacy spelling; a due-date anchor,
+ *      lifecycle.workflow_due, on no workflow, an unknown step, a field that is not one of the area's dates, days out of
+ *      range).
  *
  * Usage: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflows.mjs
  */
@@ -106,6 +108,14 @@ const BOUND = {
   },
 };
 const bound = (lifecycle = {}, workflows = { "two-person-review": review }) => ({ records: { workflows, areas: { deployments: reviewArea({ ...BOUND, ...lifecycle }) } } });
+/** The same area with two dates of its own (a step's due date may be anchored to either: lifecycle.workflow_due). */
+const dated = (lifecycle = {}) => {
+  const a = reviewArea(lifecycle);
+  a.fields.target_date = { type: "date", label: "Target date" };
+  a.fields.signed_at = { type: "datetime", label: "Signed at" };
+  return a;
+};
+const boundDated = (lifecycle = {}) => ({ records: { workflows: { "two-person-review": review }, areas: { deployments: dated({ ...BOUND, ...lifecycle }) } } });
 
 // --- 1. nothing moves without one ------------------------------------------------------------------------------------
 check("the default declares no workflow, and no compiled area carries a binding", () => {
@@ -207,6 +217,13 @@ const BAD = [
   ["workflow_states keyed by a legacy spelling", bound({ workflow_states: { draft: { prepare: "open" } } }), 'records.areas.deployments.lifecycle.workflow_states.draft: "draft" is a stored legacy spelling of "drafting"; key workflow_states by the state itself, "drafting"'],
   ["workflow_states naming a step the workflow does not have", bound({ workflow_states: { approved: { sign_off: "completed" } } }), 'records.areas.deployments.lifecycle.workflow_states.approved.sign_off: "sign_off" is not a step of the workflow "two-person-review" (its steps: "prepare", "review")'],
   ["workflow_states giving a step a state the engine does not have", bound({ workflow_states: { approved: { review: "approved" } } }), 'records.areas.deployments.lifecycle.workflow_states.approved.review: "approved" is not a step state of the workflow engine ("open", "completed", "rejected", "escalated")'],
+  // A step's due date anchored to a date of the record (mold_v1-302).
+  ["workflow_due with no workflow on the lifecycle", { records: { areas: { deployments: dated({ transitions: [], workflow_due: { review: { field: "target_date" } } }) } } }, "records.areas.deployments.lifecycle.workflow_due: workflow_due names a step of the lifecycle's workflow, and this lifecycle has none; name it with lifecycle.workflow"],
+  ["workflow_due naming a step the workflow does not have", boundDated({ workflow_due: { sign_off: { field: "target_date" } } }), 'records.areas.deployments.lifecycle.workflow_due.sign_off: "sign_off" is not a step of the workflow "two-person-review" (its steps: "prepare", "review")'],
+  ["workflow_due anchored to a field the area does not have", boundDated({ workflow_due: { review: { field: "due" } } }), 'records.areas.deployments.lifecycle.workflow_due.review.field: "due" is not a field of this area (its dates: "target_date", "signed_at")'],
+  ["workflow_due anchored to a field that is not a date", boundDated({ workflow_due: { review: { field: "review_state" } } }), 'records.areas.deployments.lifecycle.workflow_due.review.field: "review_state" is a pick_list field; a due date is anchored to a date or datetime field ("target_date", "signed_at")'],
+  ["workflow_due anchored on an area with no date at all", bound({ workflow_due: { review: { field: "review_state" } } }), 'records.areas.deployments.lifecycle.workflow_due.review.field: "review_state" is a pick_list field; a due date is anchored to a date or datetime field'],
+  ["workflow_due further out than ten years", boundDated({ workflow_due: { review: { field: "target_date", days: 4000 } } }), "records.areas.deployments.lifecycle.workflow_due.review.days: must be a whole number of days between -3650 and 3650"],
 ];
 for (const [what, profile, message] of BAD) {
   check(`refused: ${what}`, () => {
@@ -219,6 +236,21 @@ check("a refusal names the file that states the workflow, not the last file", ()
   const r = gen([["50-a.json", W("gateway", FIXTURES["gateway-branch"])], ["51-b.json", { product: { tagline: "Another line." } }]]);
   assert.equal(r.rc, 1);
   assert.equal(lastLine(r.err), `profiles/50-a.json: records.workflows.gateway.diff[2].applicability_query.prompt: ${LATER.prompt}`);
+});
+
+check("a step's due date anchored to a date of the record compiles, carried on the lifecycle as written (mold_v1-302)", () => {
+  const due = { review: { field: "target_date", days: -2 }, prepare: { field: "signed_at" } };
+  const a = ok([["50-x.json", boundDated({ workflow_due: due })]], "--print-areas");
+  assert.deepEqual(a.deployments.lifecycle.workflow_due, due);
+  const generated = readFileSync(join(ROOT, "agent/lib/record-areas.generated.ts"), "utf8");
+  assert.ok(generated.includes("workflow_due?: Record<string, { field: string; days?: number }>;"), "RecordLifecycle.workflow_due");
+});
+check("an anchor with a key the schema does not know, or days that are not whole, is refused", () => {
+  for (const anchor of [{ field: "target_date", hours: 3 }, { field: "target_date", days: 1.5 }, { days: 2 }]) {
+    const r = gen([["50-bad.json", boundDated({ workflow_due: { review: anchor } })]]);
+    assert.equal(r.rc, 1, JSON.stringify(anchor));
+    assert.match(lastLine(r.err), /^profiles\/50-bad\.json: records\.areas\.deployments\.lifecycle\.workflow_due\.review/, JSON.stringify(anchor));
+  }
 });
 
 // Phase 6: email and agent actions build (the app turns them into its own notifications and tasks for the assistant).

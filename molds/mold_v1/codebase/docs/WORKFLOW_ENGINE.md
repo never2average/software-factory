@@ -135,7 +135,27 @@ connection and no lock is held across its call; the record and its instance are 
 
 **A record moved without the engine** (a period's rollover, a system move): the instance remembers the record state
 it was last brought in line with (`record_state`); when the record is found elsewhere, the steps `workflow_states`
-lists for its state are re-synced first, as `provisioning` history rows, so a stale step never refuses a move.
+lists for its state are re-synced first, as `provisioning` history rows, so a stale step never refuses a move. A move
+that names no step (a board drag, a task's done toggle, a move outside the transitions under `warn`) brings the steps to
+its target's `workflow_states` the same way, the rows by the mover (`by_move`), in `commitRecordWorkflow` and when a
+reserved move settles. Under `strict` such a move only REOPENS the steps its target lists as open: it never completes
+or rejects a step with nobody's approval (and no row in the approval log); under `warn` the steps follow the record
+whole.
+
+**The record's own values.** The workflow reads the record's fields as `object.data`; a person or email field is read
+as the people directory keys a person (trimmed, lower case), so a holder query on it finds the person however the
+record spells the email. Wherever the instance is read with the record (`openRecordWorkflow`, `commitRecordWorkflow`, a
+settled reservation, the cards in memory), it follows the record's values (`followRecord`): a step's due date anchored
+to a date of the record (`lifecycle.workflow_due`) moves when that date changes, and an OPEN step whose holder rule
+reads the record's own field (`{ "email": { "$object": "reviewer" } }`) passes to whom the rule now picks when its
+holders are no longer ones it picks (the reviewer was changed): an `assignee_reresolved` row, reason `record_field`,
+naming the fields, with no administrator's reassignment. Never to someone who holds another step of the workflow (the
+preparer named as reviewer does not take the review). A holder a person placed (`assignee_pinned`) or one of the
+workflow's own rules chose stands, an escalated step is not moved, a field cleared leaves the holder, a step not open yet re-reads the field when it opens, and a rule that reads no field of the
+record (a duty, a department) never moves for it. A write that moves nothing saves the
+instance when that changed it: in its own transaction for the doors that write here, and in a short transaction after
+the service's write for a task (`followRecordWrite`; if that fails, the next read does it). A task's move reserved
+after such an edit is refused (409) when the edit moved a step's holder or due date since the move was checked.
 
 **Binding.** An instance is attached when a record is created, or on its first move after the binding (a record that
 existed before). Its steps are seeded from `lifecycle.workflow_states` for the record's state as the rules read it (under

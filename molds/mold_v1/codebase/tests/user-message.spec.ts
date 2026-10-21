@@ -151,3 +151,26 @@ test("a reply streaming faster than the screen draws still grows", async ({ page
   await expect.poll(async () => (await reply.innerText()).length, { timeout: 10_000 }).toBeGreaterThan(first + 40);
   await expect(reply).toContainText("Streaming sentence 3.", { timeout: 10_000 });
 });
+
+/**
+ * Under `prefers-reduced-motion` the streamed reply is not tweened (mold_v1-299): each chunk shows in full as it
+ * arrives and the reveal never asks for a frame. Frames run at once here (no slowing), so a reveal that did run would
+ * be counted; the count must stay 0 while the reply grows by whole sentences.
+ */
+test("under reduced motion a streaming reply shows each chunk in full, with no reveal frames", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => {
+    const raf = window.requestAnimationFrame.bind(window);
+    (window as unknown as { framesAsked: number }).framesAsked = 0;
+    window.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      // The reveal's own frame callback is `tick` (see the spec above).
+      if (/(^|\.)tick$/.test(cb.name)) (window as unknown as { framesAsked: number }).framesAsked += 1;
+      return raf(cb);
+    };
+  });
+  await open(page);
+  const reply = bubble(page, "a-stream");
+  await expect(reply).toContainText("Streaming sentence 3.", { timeout: 10_000 });
+  await expect(reply).toContainText("Streaming sentence 6.", { timeout: 10_000 });
+  expect(await page.evaluate(() => (window as unknown as { framesAsked: number }).framesAsked)).toBe(0);
+});

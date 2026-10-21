@@ -959,6 +959,12 @@ jobs:
         if: always()
         run: npm run test:chat-end-of-answer
 
+      # Streamed text under prefers-reduced-motion (mold_v1-299): the reply's reveal reads the reader's setting, live, and
+      # tweens nothing when it is on (the full text as it arrives). tests/user-message.spec.ts drives it in a browser.
+      - name: Streamed text honours reduced motion
+        if: always()
+        run: npm run test:reduced-motion
+
       # "The thinking stream continues above the subagent segment." After a specialist returns, eve resumes the
       # turn at stepIndex 0 again, and its reducer keys thinking and text by step, so the orchestrator's later
       # thinking streamed INTO the block above the card (and a sentence written before delegating was overwritten

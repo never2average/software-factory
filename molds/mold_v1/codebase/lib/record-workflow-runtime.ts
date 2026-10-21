@@ -72,6 +72,16 @@ export interface WorkflowBinding {
   enforce: "warn" | "strict";
   /** Record state -> each step's state, for a record already mid-lifecycle (`lifecycle.workflow_states`). */
   states: Record<string, Record<string, StepStateValue>>;
+  /** Step id -> the record date its due date is anchored to (`lifecycle.workflow_due`); `day`: a date field (no time). */
+  due: Record<string, DueAnchor>;
+}
+
+/** A step's due date anchored to a date of the record (`lifecycle.workflow_due`, mold_v1-302). */
+export interface DueAnchor {
+  field: string;
+  days: number;
+  /** The field is a date with no time of day: the step is due at the end of that day (UTC), not its first instant. */
+  day: boolean;
 }
 
 /**
@@ -85,7 +95,14 @@ export function workflowBindingOf(areaId: RecordAreaId, areas: RecordAreas, work
   if (enforce === "off") return null;
   const dsl = Object.hasOwn(workflows, lc.workflow) ? (workflows[lc.workflow] as WorkflowDSL) : undefined;
   if (!dsl) return null;
-  return { areaId, workflowId: lc.workflow, dsl, enforce, states: (lc.workflow_states ?? {}) as Record<string, Record<string, StepStateValue>> };
+  const fields = areas[areaId]?.fields ?? {};
+  const due: Record<string, DueAnchor> = {};
+  for (const [stepId, a] of Object.entries(lc.workflow_due ?? {})) {
+    const f = (fields as Record<string, { type?: string }>)[a.field];
+    if (!f || (f.type !== "date" && f.type !== "datetime")) continue; // refused at build; never guessed here
+    due[stepId] = { field: a.field, days: Number.isInteger(a.days) ? (a.days as number) : 0, day: f.type === "date" };
+  }
+  return { areaId, workflowId: lc.workflow, dsl, enforce, states: (lc.workflow_states ?? {}) as Record<string, Record<string, StepStateValue>>, due };
 }
 
 /** The engine's directory and role scopes for one workspace, from its people (identitySnapshot). */
@@ -99,14 +116,23 @@ export function engineDirectory(snapshot: DirectorySnapshot): { directory: Direc
   return { directory, rbac };
 }
 
-/** A record as the workflow reads it (`object.data`, `task`): every field of the area by key, as the screens read it. */
+/** A person (or email) field's value as the people directory keys it: trimmed, lower case; a list, each of its emails. */
+const personValue = (x: unknown): unknown =>
+  typeof x === "string" ? x.trim().toLowerCase() : Array.isArray(x) ? x.map((e) => (typeof e === "string" ? e.trim().toLowerCase() : e)) : x;
+
+/**
+ * A record as the workflow reads it (`object.data`, `task`): every field of the area by key, as the screens read it.
+ * A person or email field is read as the people directory keys a person (agent/lib/people-directory.ts: trimmed, lower
+ * case), so a step's holder query on it (`{ "email": { "$object": "reviewer" } }`) finds the person whatever case the
+ * record spells their email in (mold_v1-300). The record itself is never rewritten.
+ */
 export function recordData(v: AreaView, row: AreaRow | null | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (!row) return out;
   for (const f of v.fields) {
     const x = v.get(row, f.key);
     if (x === undefined) continue;
-    out[f.key] = x instanceof Date ? x.toISOString() : x;
+    out[f.key] = x instanceof Date ? x.toISOString() : f.type === "person" || f.type === "email" ? personValue(x) : x;
   }
   return out;
 }
@@ -163,9 +189,173 @@ export function seedInstance(input: {
     if (!state || state === from) continue;
     instance.history.push({ at: now.toISOString(), type: "step_patched", step_id: tpl.id, detail: `attached at "${input.state}"`, data: { state: { before: from, after: state }, attached_at: input.state }, actor: input.actor, source: "provisioning" });
   }
+  // A step whose due date is anchored to a date of the record starts due then (its template's date, if any, gives way).
+  anchorDueDates({ binding, instance, actor: input.actor, now, quiet: true });
   instance.terminal = isTerminal(binding.dsl, instance);
   setRecordState(instance, input.state);
   return instance;
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The date a step anchored to the record is due (`anchor`), from the record's data, as an ISO datetime; null when the
+ * record has no such date (or one that does not read as a date). A date field's day ends at 23:59:59.999 UTC: a step
+ * due "on the record's date" is not overdue during that day.
+ */
+export function anchoredDueOn(anchor: DueAnchor, data: Record<string, unknown>): string | null {
+  const raw = data[anchor.field];
+  let t: number;
+  if (anchor.day) {
+    const day = typeof raw === "string" ? /^(\d{4})-(\d{2})-(\d{2})/.exec(raw.trim()) : null;
+    if (!day) return null;
+    t = Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]), 23, 59, 59, 999);
+  } else {
+    t = typeof raw === "string" || typeof raw === "number" ? new Date(raw).getTime() : Number.NaN;
+  }
+  if (!Number.isFinite(t)) return null;
+  const out = new Date(t + anchor.days * DAY_MS);
+  return Number.isNaN(out.getTime()) ? null : out.toISOString();
+}
+
+/** The record date each anchored step's due date was last set from (`due_anchors`, kept beside the engine's fields). */
+const dueAnchorsOf = (instance: WorkflowInstance): Record<string, string> => ({ ...((instance as WorkflowInstance & Kept).due_anchors ?? {}) });
+
+/**
+ * Bring each step anchored to a date of the record (`binding.due`) to that date, from the record's data on the
+ * instance (`object.data`, `withRecordData`): when the instance is attached, and again whenever the record's date
+ * CHANGES (`due_anchors` remembers the date each step was last set from). Between those, the step's own date stands: a
+ * rule that sets it on re-entry, a holder's extension, an administrator's correction. A step that is finished
+ * (completed, rejected) keeps its date; the change is remembered all the same. A record with no such date leaves the
+ * step's date as it is. Each change is a provisioning row (never a decision) unless `quiet` (seeding: the date is the
+ * step's first). Returns whether the instance changed. Mutates `instance`.
+ */
+export function anchorDueDates(input: { binding: WorkflowBinding; instance: WorkflowInstance; actor: string; now: Date; quiet?: boolean }): boolean {
+  const { binding, instance, now } = input;
+  const entries = Object.entries(binding.due ?? {});
+  if (!entries.length) return false;
+  const data = (instance.object?.data ?? {}) as Record<string, unknown>;
+  const kept = dueAnchorsOf(instance);
+  let changed = false;
+  for (const [stepId, anchor] of entries) {
+    const step = instance.steps.find((s) => s.id === stepId);
+    if (!step) continue;
+    const target = anchoredDueOn(anchor, data);
+    if (target === null) {
+      // The record's date was cleared: the step keeps its date, and the date set again later (even the same one) is a change.
+      if (stepId in kept) {
+        delete kept[stepId];
+        changed = true;
+      }
+      continue;
+    }
+    if (kept[stepId] === target) continue;
+    kept[stepId] = target;
+    changed = true;
+    if (step.state === "completed" || step.state === "rejected") continue;
+    if (step.due_on === target) continue;
+    const before = step.due_on ?? null;
+    step.due_on = target;
+    if (input.quiet) continue;
+    instance.history.push({
+      at: now.toISOString(),
+      type: "step_patched",
+      step_id: step.id,
+      detail: `due date follows the record's "${anchor.field}"${anchor.days ? ` (${anchor.days > 0 ? "+" : ""}${anchor.days} days)` : ""}`,
+      data: { due_on: { before, after: target }, anchored_to: anchor.field },
+      actor: input.actor,
+      source: "provisioning",
+    });
+  }
+  if (changed) {
+    (instance as WorkflowInstance & Kept).due_anchors = kept;
+    if (!input.quiet) instance.updated_at = now.toISOString();
+  }
+  return changed;
+}
+
+/** The record fields a holder query reads (`{ "$object": "<field>" }` anywhere in it), in order, once each. */
+function objectFieldsOf(query: unknown, out: string[] = []): string[] {
+  if (Array.isArray(query)) for (const q of query) objectFieldsOf(q, out);
+  else if (query && typeof query === "object") {
+    for (const [k, v] of Object.entries(query as Record<string, unknown>)) {
+      if (k === "$object" && typeof v === "string") {
+        if (!out.includes(v)) out.push(v);
+      } else objectFieldsOf(v, out);
+    }
+  }
+  return out;
+}
+
+/**
+ * An OPEN step whose holder the workflow reads from the record's own fields (its rule's query names `$object`, e.g.
+ * `{ "email": { "$object": "reviewer" } }`) follows those fields (mold_v1-303): when the people holding it are no longer
+ * all ones its rule picks from the record as it now is (the reviewer was changed), it passes to whom the rule picks
+ * now, as an `assignee_reresolved` row naming the fields (reason "record_field"), never to someone who holds another
+ * step of the workflow (an edit never makes the maker the checker: the holder then stays). Not a step whose holder a
+ * person placed (`assignee_pinned`: an administrator's reassignment stands) or one of the workflow's own rules chose
+ * (an escalation's pick), nor one that is escalated, finished or not open yet (it
+ * re-reads the field when it opens, `reresolve_on`), nor one whose rule picks nobody from the record now (a field
+ * cleared: the holder stays), nor one whose rule reads no field of the record (who holds it does not hang on the
+ * record). The workflow's own rules are not run for it, as for a re-sync. Returns whether a holder changed.
+ */
+/** Whether the step's holder was last chosen by one of the workflow's own rules (an `internal_set` of its assignee). */
+function ruleChoseHolder(instance: WorkflowInstance, stepId: string): boolean {
+  for (let i = instance.history.length - 1; i >= 0; i -= 1) {
+    const e = instance.history[i];
+    if (e.step_id !== stepId) continue;
+    if (e.type === "internal_set" && typeof e.detail === "string" && e.detail.startsWith("assignee ←")) return true;
+    if (e.type === "assignee_reresolved" || (e.type === "step_patched" && (e.data as { assignee?: unknown } | undefined)?.assignee)) return false;
+  }
+  return false;
+}
+
+export function followHolders(input: { dsl: WorkflowDSL; instance: WorkflowInstance; directory: Directory; actor: string; now: Date }): boolean {
+  const { dsl, instance, directory, now } = input;
+  const org = instance.organization_id;
+  const data = (instance.object?.data ?? {}) as Record<string, unknown>;
+  let changed = false;
+  for (const step of instance.steps) {
+    if (!step.status || step.state !== "open" || step.assignee_pinned || ruleChoseHolder(instance, step.id)) continue;
+    const spec = dsl.init.steps.find((t) => t.id === step.id)?.assignee;
+    const query = spec?.condition?.$or?.query;
+    if (!spec || !query || spec.relative) continue;
+    const fields = objectFieldsOf(query);
+    if (!fields.length) continue;
+    const eligible = resolveAssignees({ ...spec, limit: Infinity }, directory, [], undefined, undefined, org, data).ids;
+    if (step.assignee.length && step.assignee.every((id) => eligible.includes(id))) continue;
+    // Never to someone who holds another step of this workflow (the maker never becomes the checker by an edit).
+    const others = [...new Set(instance.steps.filter((s) => s.id !== step.id).flatMap((s) => s.assignee))];
+    const ids = resolveAssignees(spec, directory, others, undefined, `${org}:${instance.workflow_id}:${step.id}`, org, data).ids;
+    if (!ids.length || JSON.stringify(ids) === JSON.stringify(step.assignee)) continue;
+    const before = step.assignee;
+    step.assignee = ids;
+    instance.history.push({
+      at: now.toISOString(),
+      type: "assignee_reresolved",
+      step_id: step.id,
+      detail: `the record's ${fields.map((f) => `"${f}"`).join(", ")} changed: ${JSON.stringify(before)} → ${JSON.stringify(ids)}`,
+      data: { before, after: ids, reason: "record_field", fields },
+      actor: input.actor,
+      source: "provisioning",
+    });
+    changed = true;
+  }
+  if (changed) instance.updated_at = now.toISOString();
+  return changed;
+}
+
+/**
+ * Bring the stored instance in line with the record's own values, read on it (`object.data`): the due dates anchored to
+ * the record's dates (anchorDueDates) and the holders of open steps read from its person fields (followHolders). Called
+ * wherever the instance is read with the record (a door's read, a move, a settled reservation, a write that moved
+ * nothing), so an edit of the record reaches its workflow without a move or an administrator. Returns whether the
+ * instance changed (the caller saves it). Mutates `instance`.
+ */
+export function followRecord(input: { binding: WorkflowBinding; dsl: WorkflowDSL; instance: WorkflowInstance; directory: Directory; rbac: Rbac; actor: string; now: Date }): boolean {
+  const dates = anchorDueDates({ binding: input.binding, instance: input.instance, actor: input.actor, now: input.now });
+  const holders = followHolders({ dsl: input.dsl, instance: input.instance, directory: input.directory, actor: input.actor, now: input.now });
+  return dates || holders;
 }
 
 /**
@@ -184,7 +374,7 @@ export interface RecordMove {
   administrative: { rules: string[]; message: string } | null;
   at: string;
 }
-type Kept = { record_state?: string | null; record_move?: RecordMove; fired_actions?: string[] };
+type Kept = { record_state?: string | null; record_move?: RecordMove; fired_actions?: string[]; due_anchors?: Record<string, string> };
 export const recordStateOf = (instance: WorkflowInstance): string | null | undefined => (instance as WorkflowInstance & Kept).record_state;
 export const setRecordState = (instance: WorkflowInstance, state: string | null): void => {
   (instance as WorkflowInstance & Kept).record_state = state;
@@ -197,25 +387,32 @@ export const setRecordMove = (instance: WorkflowInstance, move: RecordMove | und
 
 /**
  * The record reached `state` without the workflow (a system move: a period's rollover; or a write from before the
- * binding was enforced): bring each step `workflow_states` lists for that state in line with it, as provisioning rows
+ * binding was enforced), or by a move that names no step (a board drag, a done toggle, a move outside the transitions
+ * under "warn": `byMove`): bring each step `workflow_states` lists for that state in line with it, as provisioning rows
  * that say so (never a decision), so the next move is checked against where the record really is. Holders are kept.
  */
-export function resyncInstance(input: { binding: WorkflowBinding; dsl: WorkflowDSL; instance: WorkflowInstance; state: string | null; actor: string; now: Date; at?: Date | string | null }): boolean {
+export function resyncInstance(input: { binding: WorkflowBinding; dsl: WorkflowDSL; instance: WorkflowInstance; state: string | null; actor: string; now: Date; at?: Date | string | null; byMove?: boolean }): boolean {
   const { binding, instance, now } = input;
   const before = recordStateOf(instance);
   if (before === input.state) return false;
   const seeded = (input.state !== null ? binding.states[input.state] : undefined) ?? {};
   const at = iso(input.at, now);
+  // Under "strict" a person's move that names no step never DECIDES a step (completes or rejects it with nobody's
+  // approval and no row in the approval log): it may only reopen what its target lists as open. Under "warn" the steps
+  // follow the record whole, as an administrative move would.
+  const reopenOnly = input.byMove === true && binding.enforce === "strict";
   for (const step of instance.steps) {
     const state = seeded[step.id];
     if (!state || !(STEP_STATES as readonly string[]).includes(state)) continue;
+    if (reopenOnly && state !== "open") continue;
     const prior = step.state;
     if (prior !== state) step.state = state as StepState["state"];
     if (state === "completed") step.completed_at ??= at;
     else delete step.completed_at;
     if (state !== "rejected") step.status = true;
     if (prior !== state) {
-      instance.history.push({ at: now.toISOString(), type: "step_patched", step_id: step.id, detail: `re-synced: the record moved from "${before ?? ""}" to "${input.state ?? ""}" outside its workflow`, data: { state: { before: prior, after: state }, resynced_to: input.state }, actor: input.actor, source: "provisioning" });
+      const how = input.byMove ? "by a move that names no step" : "outside its workflow";
+      instance.history.push({ at: now.toISOString(), type: "step_patched", step_id: step.id, detail: `re-synced: the record moved from "${before ?? ""}" to "${input.state ?? ""}" ${how}`, data: { state: { before: prior, after: state }, resynced_to: input.state, ...(input.byMove ? { by_move: true } : {}) }, actor: input.actor, source: "provisioning" });
     }
   }
   instance.terminal = isTerminal(input.dsl, instance);
@@ -226,7 +423,8 @@ export function resyncInstance(input: { binding: WorkflowBinding; dsl: WorkflowD
 
 /**
  * Settle a reserved move by where the record now is: it reached the move's target (the other service took the write):
- * the step changes as it was checked when reserved; it is still where it was: released, nothing changes; anywhere else:
+ * the step changes as it was checked when reserved (a move that names no step, such as a done toggle, brings the steps
+ * in line with the target's `workflow_states`); it is still where it was: released, nothing changes; anywhere else:
  * re-synced to it. The reservation is cleared either way. Mutates `instance`.
  */
 export async function settleRecordMove(input: { binding: WorkflowBinding; dsl: WorkflowDSL; instance: WorkflowInstance; directory: Directory; rbac: Rbac; state: string | null; now: Date }): Promise<"applied" | "released" | "resynced" | "none"> {
@@ -237,6 +435,8 @@ export async function settleRecordMove(input: { binding: WorkflowBinding; dsl: W
   if (input.state === move.to && move.from !== move.to) {
     if (move.step) {
       await applyStepMove({ dsl: input.dsl, instance, directory: input.directory, rbac: input.rbac, step: move.step, actor: move.actor, comment: move.comment, evidence: move.evidence, now: input.now, administrative: move.administrative });
+    } else {
+      resyncInstance({ binding: input.binding, dsl: input.dsl, instance, state: input.state, actor: move.actor, now: input.now, byMove: true });
     }
     instance.history.push({ at: input.now.toISOString(), type: "task_updated", detail: `move ${move.id} settled: the record reached "${move.to}"`, data: { record_move: move.id, outcome: "applied" }, actor: move.actor, source: "user" });
     setRecordState(instance, input.state);

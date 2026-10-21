@@ -1060,7 +1060,8 @@ writes byte for byte as before.
 | `records.workflows.<id>` | A workflow document. The id is lowercase letters and digits, words joined by `-` or `_`, starting with a letter, at most 64 characters. A later file's document with the same id replaces the earlier one **whole** (a workflow is one document; its steps and rules never merge). A workflow no area runs is still checked. |
 | `lifecycle.workflow` | The id of the workflow this area's lifecycle runs. |
 | `lifecycle.transitions[i].step` | `{ "id": "<step id>", "state": "<step state>" }`: making this move changes that step of the workflow to that state (one of the engine's step states: `open`, `completed`, `rejected`, `escalated`). A move without `step` changes no step. |
-| `lifecycle.workflow_states` | `{ "<record state>": { "<step id>": "<step state>" } }`: for a record that is already mid-lifecycle when its workflow is attached (lazily, the first time it moves), the state of each step for each record state. Keyed by the lifecycle's states as the field's choices spell them, never by a stored legacy spelling (`legacy_values`). A state or step left out is not set. |
+| `lifecycle.workflow_states` | `{ "<record state>": { "<step id>": "<step state>" } }`: for a record that is already mid-lifecycle when its workflow is attached (lazily, the first time it moves), the state of each step for each record state. Keyed by the lifecycle's states as the field's choices spell them, never by a stored legacy spelling (`legacy_values`). A state or step left out is not set. The same map brings the steps along when the record moves by a move that names no step (a board drag, a done toggle, a move outside the transitions under `warn`), or without the engine. |
+| `lifecycle.workflow_due` | `{ "<step id>": { "field": "<date field>", "days": <whole days> } }`: the step's due date anchored to a date of the record (a `date` or `datetime` field of the area; `days` after it, before it when negative, 0 by default, at most 3650 either way). A `date` field's day ends at 23:59:59.999 UTC, so a step due on the record's date is not overdue during that day. The date is set when the instance is attached and again whenever the record's date changes (an edit that moves nothing included); in between, the step's own date stands (a rule's date on re-entry, a holder's extension, an administrator's correction). A finished step keeps its date. A record with no such date leaves the step's date as the workflow sets it. Adding the key (or changing `days`) realigns every open step it names once, on its next read, over any earlier correction. A period's rollover does not move an anchored date by itself; the next read does. |
 
 **Build-time checks** (`scripts/lib/record-workflows.mjs`, called by `scripts/gen-deployment-profile.mjs` before any
 area is checked), each failing the build with `profiles/<file>: records.workflows.<id>.<path>: <reason>` (the file that
@@ -1084,9 +1085,12 @@ last states the workflow) or `profiles/<file>: records.areas.<area>.lifecycle…
   workflow's steps (they are listed); a step state that is not one of the engine's; a `workflow_states` key that is not
   a state of the lifecycle's field, or is a legacy spelling of one (`"draft" is a stored legacy spelling of
   "drafting"; key workflow_states by the state itself, "drafting"`). A step's `id` and `state` are both required
-  (the schema, `scripts/schemas/record-area.schema.json`).
+  (the schema, `scripts/schemas/record-area.schema.json`). A `workflow_due` on a lifecycle with no `workflow`, naming a
+  step the workflow does not have, anchored to a field that is not a date of the area (`"review_state" is a pick_list
+  field; a due date is anchored to a date or datetime field ("target_date")`), or `days` that are not whole or further
+  than 3650.
 
-The compiled area carries the binding as written (`RecordLifecycle.workflow`, `.workflow_states`,
+The compiled area carries the binding as written (`RecordLifecycle.workflow`, `.workflow_states`, `.workflow_due`,
 `RecordTransition.step` in `agent/lib/record-areas.generated.ts`), read by the write path (lib/record-workflow-moves.ts).
 A bound area's ops routes take the move's `evidence` beside its `reason`. Held by `npm run test:record-areas-workflows`,
 `npm run test:record-workflow-runtime` and `npm run test:record-workflow-runtime-db`.

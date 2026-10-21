@@ -31,6 +31,7 @@ import { writeDeclaredPeriod } from "./period-area-store.ts";
 import { memberRole } from "./record-area-store.ts";
 import {
   attachCreatedRecord,
+  followRecordWrite,
   lockRecordWorkflow,
   openRecordWorkflow,
   RECORD_SERVICE_TIMEOUT_MS,
@@ -176,6 +177,13 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
         throw e;
       }
       const settled = moveId ? await settle() : null;
+      // A write that moved nothing (an edit of the task's values): its stored instance follows the task as written (its
+      // anchored due dates). If that fails, the next read of the task does it.
+      if (wf?.session?.stored && !moveId) {
+        await withOrgDb(orgId, (tx) => followRecordWrite(tx, orgId, "tasks", { entityId: id, actor, readRecord: () => storedTask(tx, orgId, id), deliver: (o, fn) => withOrgDb(o, fn as never) })).catch((error) => {
+          console.error(`[upsert_todo] could not bring the workflow of task ${id} in line with its edit:`, error);
+        });
+      }
       const note = moveId && !settled ? { workflow_note: `This ${TASKS.noun} was changed, but its workflow step could not be updated just now; it follows on the next read of this ${TASKS.noun}.` } : {};
       await recordMove(item.id);
       return { updated: true as const, todo: { id: item.id, title: item.title, done: item.done }, ...(prepared.warnings.length && ENFORCED ? { warnings: prepared.warnings } : {}), ...(await recur(item)), ...note };

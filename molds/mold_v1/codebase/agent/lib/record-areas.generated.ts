@@ -62,6 +62,8 @@ export interface RecordLifecycle {
   workflow?: string;
   /** Record state -> each step's state: where a record already mid-lifecycle stands, for its workflow to be attached lazily. */
   workflow_states?: Record<string, Record<string, RecordWorkflowStepState>>;
+  /** Step id -> the record date its due date is anchored to, and whole days after it (before it when negative). */
+  workflow_due?: Record<string, { field: string; days?: number }>;
 }
 export type RecordRoles = "*" | RecordRole[];
 export interface RecordArea {

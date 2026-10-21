@@ -39,6 +39,7 @@ import { stateLabel, type SpecialistCardFacts, type StateFacts } from "@/lib/spe
 import { stopReasonLine } from "@/lib/specialist-relay";
 import { SpecialistStatusIcon, useSpecialistState } from "./specialist-status";
 import { isPreviewablePdfPath } from "@/lib/pdf-preview";
+import { prefersReducedMotion, useReducedMotion } from "@/lib/reduced-motion";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { ErrorBoundary } from "./error-boundary";
 import { specialistBaseName, toolCallSummary, toolDisplayName } from "./tool-display";
@@ -605,16 +606,23 @@ function AttachmentPreviewChip({ name, path }: { readonly name: string; readonly
  * ONE frame loop per part, reading the newest text from a ref: a new chunk does not cancel the frame already asked
  * for. When it did, text arriving more often than the screen draws (a busy or slow machine: frames slower than the
  * chunks) cancelled every frame before it ran, and the reply froze mid-word until the stream paused (mold_v1-292).
+ *
+ * Under `prefers-reduced-motion` nothing is tweened: the full text shows as it arrives, and a reader who turns the
+ * setting on mid-stream gets the rest at once (lib/reduced-motion.ts; mold_v1-299).
  */
-function useSmoothText(target: string, enabled: boolean): string {
+function useSmoothText(target: string, streaming: boolean): string {
+  const reduced = useReducedMotion();
+  const enabled = streaming && !reduced;
   const [shown, setShown] = useState(target);
   const shownRef = useRef(target);
   const targetRef = useRef(target);
   const rafRef = useRef(0);
   useEffect(() => {
     targetRef.current = target;
-    if (!enabled || !target.startsWith(shownRef.current)) {
-      // Not animating, or a different text entirely (new message) — snap.
+    // The setting is read here too, not only through the hook: the hydration render takes the server's reading
+    // (false), and this effect runs before the re-render with the real one, so it would ask for one frame (mold_v1-299).
+    if (!enabled || prefersReducedMotion() || !target.startsWith(shownRef.current)) {
+      // Not animating (or the reader asked for reduced motion), or a different text entirely (new message) — snap.
       cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
       shownRef.current = target;
