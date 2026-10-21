@@ -11,10 +11,12 @@
  *   GET  /:id/workspace       the run's own workspace store, latest snapshot, as a bundle (src/workspace-bundle.ts);
  *                             headers X-Workspace-Version, X-Workspace-Manifest-Sha256 (mold_v0-033)
  *   PUT  /:id/workspace       a bundle (application/octet-stream): staged, committed only when the run succeeds
+ *   GET  /:id/credentials     the workspace credentials the run receives (mold_v0-034; src/credentials.ts):
+ *                             {credentials: [{name, env | file, value}], missing: [name]}. Never cached, never logged.
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { PackError } from "./pack-api.js";
-import { appendRunEvents, claimRun, completeRun, heartbeatRun, leasedRun } from "./runs.js";
+import { appendRunEvents, claimRun, completeRun, heartbeatRun, leasedRun, runCredentialsForLease } from "./runs.js";
 import { checkoutBundle, stageBundle } from "./workspace-store.js";
 import type { WorkerAuth } from "./workerauth.js";
 
@@ -48,6 +50,7 @@ export function runWorkerRouter(): Router {
     res.set({ "content-type": "application/octet-stream", "x-workspace-version": String(out.version), "x-workspace-manifest-sha256": out.manifest_sha256 });
     res.end(out.bundle);
   }));
+  r.get("/:id/credentials", answer((req) => runCredentialsForLease(String(req.params.id), leaseOf(req))));
   const maxBundle = Number(process.env.OCTILLION_WORKSPACE_MAX_BUNDLE_BYTES ?? 300 * 1024 * 1024);
   r.put("/:id/workspace", express.raw({ type: "application/octet-stream", limit: maxBundle }), answer(async (req) => {
     if (!Buffer.isBuffer(req.body)) throw new PackError("send the workspace as application/octet-stream", 400);

@@ -19,9 +19,14 @@
  *   jobKinds     wired (mold_v0-041): ctx.runs.start(kind, ...) queues a run of the pack's own kind for the calling
  *                workspace; a runner claims it (src/runs.ts, /api/worker/runs) and the workspace harness runs it
  *                (src/run-harness.ts); results become run_results rows checked against the record areas
- *   credentials, schedules, onboarding
- *                declared and validated here, listed by packRegistry(); wired by later tickets (credential vault 034,
- *                scheduler 035, onboarding checklist 011)
+ *   credentials  wired (mold_v0-034): the workspace credential vault (src/credentials.ts). A workspace's people give
+ *                each value in the console (/app/credentials; only its last 4 characters are ever shown again); it is
+ *                sealed with the workspace's data key; a run of a job kind that names the field in `credentials`
+ *                receives it (an environment variable, or a file in a private directory) for the asset and environment
+ *                the run targets. Pack code on the server never sees a value: no handler context carries one
+ *   onboarding   wired (mold_v0-011): the /app Setup page's pack checklist (src/onboarding.ts, /api/onboarding); each
+ *                step's done_when is read for the calling workspace only, from its own events and rows
+ *   schedules    declared and validated here, listed by packRegistry(); wired by the scheduler (035)
  *
  * A pack never imports another shell module (the build refuses it: scripts/gen-packs.mjs), so everything it may use
  * is here: the definition helpers, zod, and the context each handler receives (its workspace and a database handle
@@ -184,7 +189,9 @@ const packFile = z.string().regex(/^[a-z0-9_\-][a-z0-9_\-/.]*\.m?js$/i, "a .js o
  * across all its attempts, enforced by the gateway.
  *   runner     "workspace-harness": the harness checks the workspace out (when `workspace`), runs `entry` with node in
  *              it, then `validator` (exit 0 means valid), and writes the workspace back only then (mold_v0-033)
- *   entry      the run's program, a file inside the pack; exit 0 done, 75 an infrastructure failure (retried), else failed
+ *   entry      the run's program, a file inside the pack; exit 0 done, 75 an infrastructure failure (retried), else failed.
+ *              Put it under the pack's runner directory (pack.json `runner`, mold_v0-054) when it starts processes or
+ *              needs more of node than server code may import: scripts/gen-packs.mjs holds runner code to its own rules
  *   egress     the hosts the run may reach besides the gateway, through the run's egress proxy
  */
 export const JobKindSchema = z.object({
@@ -201,6 +208,11 @@ export const JobKindSchema = z.object({
   egress: z.array(host).max(50).default([]),
   /** The workspace store (mold_v0-033): check the workspace's snapshot out before the run, write it back after. */
   workspace: z.boolean().default(false),
+  /**
+   * The pack's credential fields a run of this kind receives (mold_v0-034), by name; none by default. Each is delivered
+   * as the field declares (deliver_as), and only the value bound to what the run targets (src/credentials.ts).
+   */
+  credentials: z.array(name).max(20).default([]),
 }).strict();
 
 const field = z.object({ name, label: z.string().min(1).max(80), type: z.enum(["text", "number", "date", "boolean", "json", "link"]).default("text") }).strict();
@@ -225,14 +237,40 @@ export const RecordAreaSchema = z.object({
   .refine((a) => (a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c)), "list_columns must name declared fields")
   .refine((a) => (a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field)), "a link's field must be a declared field");
 
-/** A credential field a workspace gives (wired by mold_v0-034): only its name ever reaches a run's definition. */
+/**
+ * Environment names a credential may not take: the ones the harness sets for every run (src/run-harness.ts), the proxy
+ * settings, and the loader's. A gateway provider's variables (ANTHROPIC_API_KEY, ...) are set by the shell too: a
+ * credential named like one is not delivered (the run's "credentials" event lists it as shadowed).
+ */
+export const RESERVED_ENV = /^(PATH|HOME|LANG|LC_[A-Z_]+|RUN_[A-Z0-9_]*|HTTPS?_PROXY|ALL_PROXY|NO_PROXY|NODE_USE_ENV_PROXY|NODE_OPTIONS|NPM_CONFIG_[A-Z0-9_]*|LD_[A-Z0-9_]*)$/;
+const envNameField = envName.refine((n) => !RESERVED_ENV.test(n), "an environment name the shell sets for every run (PATH, HOME, RUN_*, proxy and loader settings): choose another");
+const envLabel = z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment name: lowercase letters, digits, _ and -");
+/**
+ * A credential field a workspace gives (wired by mold_v0-034; src/credentials.ts): a key, a token, a password the
+ * pack's runs need to reach the workspace's own systems. Bound to:
+ *   workspace    one value for the whole workspace
+ *   asset        one value per asset record of `area` (one of this pack's asset areas), e.g. one per application
+ *   environment  one value per asset and environment (`environments` lists the allowed names; any when absent)
+ * A run receives it only when its kind lists the field in `credentials`, only the value bound to the asset
+ * (targets.asset, its key) and environment (targets.environment) the run targets, as an environment variable
+ * (deliver_as {env}) or a file in a private directory named by RUN_CREDENTIALS_DIR (deliver_as {file}). Values never
+ * reach the pack's server code, the run's events or results, the MCP output or any log.
+ */
 export const CredentialSchema = z.object({
   name,
-  label: z.string().min(1),
-  help: z.string().optional(),
+  label: z.string().min(1).max(80),
+  help: z.string().max(500).optional(),
   bound_to: z.enum(["workspace", "asset", "environment"]),
-  deliver_as: z.union([z.object({ env: envName }).strict(), z.object({ file: z.string().regex(/^[a-z0-9_.-]+$/i) }).strict()]),
-}).strict();
+  /** The asset area (asset and environment bindings): one of this pack's own areas with role "asset". */
+  area: name.optional(),
+  environments: z.array(envLabel).min(1).max(20).optional(),
+  deliver_as: z.union([
+    z.object({ env: envNameField }).strict(),
+    z.object({ file: z.string().regex(/^[a-z0-9_][a-z0-9_.-]{0,99}$/i, "a file name (letters, digits, _ . -), no directories") }).strict(),
+  ]),
+}).strict()
+  .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
+  .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
 
 /** A default schedule per workspace (wired by mold_v0-035). */
 export const ScheduleSchema = z.object({
@@ -242,8 +280,19 @@ export const ScheduleSchema = z.object({
   scope: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
-/** An onboarding checklist step (wired by mold_v0-011): ticked off by an event the shell records. */
-export const OnboardingStepSchema = z.object({ id: name, label: z.string().min(1), help: z.string().optional(), done_when: z.string().min(1) }).strict();
+/**
+ * When an onboarding step is done (mold_v0-011; src/onboarding.ts), read for one workspace from what really happened
+ * in it: "workspace" (it exists), "connected" (an MCP client connected), "first_call" (any tool call succeeded),
+ * "tool:<name>" (that tool's call succeeded: a shell tool, list_records/get_record, or any pack's), "credential:<name>"
+ * (a value of this pack's credential field is set), "record:<area>" (a record of this pack's workspace-scope area
+ * exists), "run:<kind>" (a run of this pack's job kind succeeded).
+ */
+export const ONBOARDING_CONDITION = /^(workspace|connected|first_call|(tool|credential|record|run):[a-z][a-z0-9_]{0,63})$/;
+/** An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events. */
+export const OnboardingStepSchema = z.object({
+  id: name, label: z.string().min(1).max(120), help: z.string().max(500).optional(),
+  done_when: z.string().regex(ONBOARDING_CONDITION, "done_when: workspace, connected, first_call, tool:<name>, credential:<name>, record:<area> or run:<kind>"),
+}).strict();
 
 export interface PackDefinition {
   id: string;
@@ -313,6 +362,36 @@ export function validatePack(p: PackDefinition): PackDefinition {
   each(p.onboarding, OnboardingStepSchema, "onboarding");
   const kinds = new Set((p.jobKinds ?? []).map((k) => k.name));
   for (const s of p.schedules ?? []) if (s?.job_kind && !kinds.has(s.job_kind)) problems.push(at(`schedule ${s.name} names job kind ${s.job_kind}, which this pack does not declare`));
+  // Credentials (mold_v0-034): an asset binding names this pack's own asset area; a kind names this pack's own fields;
+  // two fields never deliver to the same environment variable or file.
+  const creds = new Map((p.credentials ?? []).map((c) => [c?.name, c]));
+  for (const c of p.credentials ?? []) {
+    if (c?.area !== undefined && !(p.recordAreas ?? []).some((a) => a?.name === c.area && a.role === "asset"))
+      problems.push(at(`credential ${c.name} is bound to area ${c.area}, which is not one of this pack's asset areas`));
+  }
+  const targets = new Map<string, string>();
+  for (const c of p.credentials ?? []) {
+    const d = c?.deliver_as as { env?: string; file?: string } | undefined;
+    const where = d?.env ? `env ${d.env}` : d?.file ? `file ${d.file}` : null;
+    if (!where) continue;
+    if (targets.has(where)) problems.push(at(`credentials ${targets.get(where)} and ${c.name} both deliver to ${where}`));
+    else targets.set(where, c.name);
+  }
+  for (const k of p.jobKinds ?? []) for (const n of (k as { credentials?: unknown[] })?.credentials ?? [])
+    if (typeof n === "string" && !creds.has(n)) problems.push(at(`job kind ${k.name} names credential ${n}, which this pack does not declare`));
+  // Onboarding (mold_v0-011): a step's condition names this pack's own kind, credential or workspace-scope area. (A tool
+  // may be any pack's or the shell's: src/packs.ts installPacks checks it against the whole build.)
+  for (const st of p.onboarding ?? []) {
+    const [what, arg] = String(st?.done_when ?? "").split(":", 2);
+    if (!arg) continue;
+    if (what === "run" && !kinds.has(arg)) problems.push(at(`onboarding step ${st.id} names job kind ${arg}, which this pack does not declare`));
+    if (what === "credential" && !creds.has(arg)) problems.push(at(`onboarding step ${st.id} names credential ${arg}, which this pack does not declare`));
+    if (what === "record") {
+      const a = (p.recordAreas ?? []).find((x) => x?.name === arg);
+      if (!a) problems.push(at(`onboarding step ${st.id} names record area ${arg}, which this pack does not declare`));
+      else if (a.scope !== "workspace") problems.push(at(`onboarding step ${st.id}: record:${arg} must name a workspace-scope area (a shared area says nothing about one workspace)`));
+    }
+  }
   if (problems.length) throw new PackDefinitionError(problems.join("\n"));
   return p;
 }
