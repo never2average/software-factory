@@ -11,6 +11,13 @@
                                            the rehearsal's fake deployment. Nothing is cloned and no account is needed.
   mold.py --self-test
 
+AN IN-TREE MOLD (molds/<mold_id>/mold.json "source": {"in_tree": true}, or the same in state/factory.json; today mold_v0,
+operator decision D1, mold_v0-040; lib/intree.py) is authored in this repository from a recorded fork point and has no
+source to copy from: `refresh` refuses (exit 2, nothing written), `fetch` writes nothing (exit 0 when the codebase is
+here, 2 when it is not: it comes with a checkout of this repository), and `check` reports "in-tree since <commit>" with
+the last commit that changed it and any uncommitted change under it (exit 0; 2 when the codebase is missing).
+--rehearsal refuses an in-tree mold too. Every other mold (mold_v1) behaves exactly as above.
+
 Where the source lives is this machine's own: state/factory.local.json -> "mold_sources" -> {"<mold_id>": "<git URL>"}
 (never committed; .claude/scripts/lib/factory_local.py). The snapshot goes to molds/<mold_id>/codebase (git-ignored),
 or to --into DIR. The clone is shallow, in a temporary directory, and removed afterwards.
@@ -25,6 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "lib"))
 from factory_local import mold_source
 import asr
+import intree
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
 # Never part of a snapshot (molds/mold_v1/MOLD.md): the source's own history, installed packages, and what the
@@ -103,6 +111,9 @@ def prove(tmp, dest):
 
 def record(root, mold_id, commit, today):
     """refresh: the new commit and snapshot date in state/factory.json and in the mold's MOLD.md."""
+    try: it = intree.is_in_tree(mold_id, root)
+    except intree.Unreadable: it = True        # cannot tell: never rewrite
+    if it: raise Stop(f"{mold_id} is authored in this repository (in-tree), or its mold.json cannot be read; its pin is never rewritten.", 2)
     p = os.path.join(root, "state", "factory.json")
     with open(p) as f: fj = json.load(f)
     for m in fj.get("molds", []):
@@ -117,9 +128,46 @@ def record(root, mold_id, commit, today):
         open(md, "w").write(s2)
 
 
+def in_tree(cmd, mold_id, I, root, rehearsal=False):
+    """fetch / refresh / check of an in-tree mold: nothing is ever cloned, copied or recorded. -> exit code."""
+    since = (I.get("since") or "")[:12] or "its recorded fork point"
+    cb = os.path.join(root, "molds", mold_id, "codebase"); here = os.path.isdir(cb) and bool(os.listdir(cb))
+    what = (f"{mold_id} is authored in this repository (in-tree since {since}, operator decision D1; molds/{mold_id}/MOLD.md), "
+            f"so it has no source to copy from")
+    if cmd == "refresh" or rehearsal:
+        print(f"{what}. {'Refreshing' if cmd == 'refresh' else 'A rehearsal stand-in'} would overwrite the work done here, so it is "
+              f"refused. Change molds/{mold_id}/codebase by a pull request to this repository instead. Nothing was changed.", file=sys.stderr)
+        return 2
+    if not here:
+        print(f"{what}: molds/{mold_id}/codebase comes with a checkout of this repository, and it is missing here. Restore it with "
+              f"`git checkout -- molds/{mold_id}/codebase` (or pull). Nothing was changed.", file=sys.stderr)
+        return 2
+    if cmd == "fetch":
+        print(f"{mold_id}: in-tree since {since}: nothing to fetch; molds/{mold_id}/codebase is this checkout's own. Nothing was changed.")
+        return 0
+    last = intree.last_change(mold_id, root)
+    print(f"{mold_id}: in-tree since {since} (forked from {((I.get('forked_from') or {}).get('commit') or '?')[:12]}); "
+          f"last changed here in {last[:12] if last else '(git cannot say)'}")
+    man = {}
+    try: man = json.load(open(os.path.join(root, "molds", mold_id, "mold.json")))
+    except (OSError, ValueError): pass
+    dirty = intree.uncommitted(mold_id, root, ((man.get("compose") or {}).get("source_excludes") or []))
+    if dirty is None: print("  note: git could not list changes under the codebase (not a checkout of this repository?)")
+    elif dirty:
+        print(f"  {len(dirty)} uncommitted change(s) under molds/{mold_id}/codebase (a deploy refuses until they are committed):")
+        for d in dirty[:20]: print("   " + d)
+        if len(dirty) > 20: print(f"   ... and {len(dirty) - 20} more")
+    else: print("  no uncommitted change under the codebase")
+    print("IN-TREE")
+    return 0
+
+
 def main(a, root=ROOT, today=None):
     if not a or a[0] not in ("fetch", "refresh", "check") or len(a) < 2: print(__doc__); return 2
     cmd, mold_id = a[0], a[1]
+    try: I = intree.info(mold_id, root)
+    except intree.Unreadable as e: print(str(e), file=sys.stderr); return 2
+    if I is not None: return in_tree(cmd, mold_id, I, root, rehearsal="--rehearsal" in a)
     if "--rehearsal" in a:
         if cmd != "fetch": print("--rehearsal goes with fetch only.", file=sys.stderr); return 2
         if not os.environ.get("FACTORY_REHEARSAL"):
@@ -367,6 +415,56 @@ def self_test():
         finally:
             if was is None: os.environ.pop("FACTORY_REHEARSAL", None)
             else: os.environ["FACTORY_REHEARSAL"] = was
+        # mold_v0-040: an in-tree mold is never fetched, refreshed or rewritten; mold "m" above (a sourced one) is unaffected
+        r2 = os.path.join(t, "factory2"); cb2 = os.path.join(r2, "molds", "v0", "codebase")
+        os.makedirs(os.path.join(r2, "state")); os.makedirs(os.path.join(cb2, "src"))
+        open(os.path.join(cb2, "src", "a.ts"), "w").write("a\n"); open(os.path.join(cb2, ".gitignore"), "w").write("node_modules/\ndist/\n")
+        fj3 = {"molds": [{"mold_id": "v0", "source": {"commit": c1, "snapshot_date": "2026-01-01"}}, {"mold_id": "m", "source": {"commit": c1}}]}
+        json.dump(fj3, open(os.path.join(r2, "state", "factory.json"), "w"), indent=2)
+        man2 = {"mold_id": "v0", "source": {"in_tree": True, "since": "PLACEHOLDER", "forked_from": {"commit": c1}}, "compose": {"source_excludes": ["node_modules"]}}
+        json.dump(man2, open(os.path.join(r2, "molds", "v0", "mold.json"), "w"))
+        json.dump({"mold_sources": {"v0": bare, "m": bare}}, open(os.path.join(r2, "state", "factory.local.json"), "w"))
+        git("init", "-q", "-b", "main", r2); git("add", "-A", cwd=r2); git("commit", "-qm", "fork", cwd=r2); fork = git("rev-parse", "HEAD", cwd=r2)
+        man2["source"]["since"] = fork; json.dump(man2, open(os.path.join(r2, "molds", "v0", "mold.json"), "w"))
+        git("add", "-A", cwd=r2); git("commit", "-qm", "record the fork point", cwd=r2)
+        snapshot = lambda: {f: open(os.path.join(dp, f)).read() for dp, _, fs in os.walk(cb2) for f in fs}
+        fjtext = lambda: open(os.path.join(r2, "state", "factory.json")).read()
+        before2, fjb = snapshot(), fjtext()
+        rc, out = quiet(["refresh", "v0"], r2)
+        ok(rc == 2 and "in-tree" in out and "refused" in out and snapshot() == before2 and fjtext() == fjb, "in-tree: refresh refuses, writes nothing (codebase, factory.json)")
+        rc, out = quiet(["refresh", "v0", "--into", os.path.join(t, "elsewhere2")], r2)
+        ok(rc == 2 and not os.path.exists(os.path.join(t, "elsewhere2")), "in-tree: refresh --into refuses as well")
+        rc, out = quiet(["fetch", "v0"], r2)
+        ok(rc == 0 and "nothing to fetch" in out and snapshot() == before2, "in-tree: fetch writes nothing and says why")
+        rc, out = quiet(["check", "v0"], r2)
+        ok(rc == 0 and f"in-tree since {fork[:12]}" in out and f"forked from {c1[:12]}" in out and "no uncommitted change" in out and out.rstrip().endswith("IN-TREE"),
+           "in-tree: check reports in-tree since <fork commit>, and that nothing is uncommitted")
+        open(os.path.join(cb2, "src", "a.ts"), "w").write("edited here\n"); os.makedirs(os.path.join(cb2, "node_modules", "x")); open(os.path.join(cb2, "node_modules", "x", "i.js"), "w").write("1\n")
+        os.makedirs(os.path.join(cb2, "dist")); open(os.path.join(cb2, "dist", "out.js"), "w").write("built\n"); open(os.path.join(cb2, "new.ts"), "w").write("n\n")
+        rc, out = quiet(["check", "v0"], r2)
+        ok(rc == 0 and "src/a.ts" in out and "new.ts" in out and "dist" in out and "node_modules" not in out and open(os.path.join(cb2, "src", "a.ts")).read() == "edited here\n",
+           "in-tree: check names edits, new files and ignored files a deploy would carry (not an excluded node_modules), and changes nothing")
+        rc, out = quiet(["fetch", "v0"], r2)
+        ok(rc == 0 and open(os.path.join(cb2, "src", "a.ts")).read() == "edited here\n" and os.path.exists(os.path.join(cb2, "new.ts")), "in-tree: fetch never puts anything back over work done here")
+        was = os.environ.get("FACTORY_REHEARSAL"); os.environ["FACTORY_REHEARSAL"] = os.path.join(t, "reh2")
+        try: rc, out = quiet(["fetch", "v0", "--rehearsal"], r2)
+        finally:
+            if was is None: os.environ.pop("FACTORY_REHEARSAL", None)
+            else: os.environ["FACTORY_REHEARSAL"] = was
+        ok(rc == 2 and open(os.path.join(cb2, "src", "a.ts")).read() == "edited here\n" and not os.path.exists(os.path.join(cb2, "app")), "in-tree: a rehearsal stand-in never overwrites it")
+        man2["source"] = {}; json.dump(man2, open(os.path.join(r2, "molds", "v0", "mold.json"), "w"))
+        fj3["molds"][0]["source"]["in_tree"] = True; json.dump(fj3, open(os.path.join(r2, "state", "factory.json"), "w"), indent=2); fjb = fjtext()
+        rc, out = quiet(["refresh", "v0"], r2)
+        ok(rc == 2 and "in-tree" in out and fjtext() == fjb and open(os.path.join(cb2, "src", "a.ts")).read() == "edited here\n", "in-tree: state/factory.json alone saying in_tree is enough to refuse")
+        open(os.path.join(r2, "molds", "v0", "mold.json"), "w").write("{ not json")
+        rc, out = quiet(["refresh", "v0"], r2)
+        ok(rc == 2 and "not valid JSON" in out and open(os.path.join(cb2, "src", "a.ts")).read() == "edited here\n", "an unreadable mold.json: refused, never read as 'not in-tree'")
+        open(os.path.join(r2, "molds", "v0", "mold.json"), "w").write("[1, 2]")
+        rc, out = quiet(["refresh", "v0"], r2)
+        ok(rc == 2 and "not a JSON object" in out, "a mold.json that is JSON but not an object: refused with a reason, no traceback")
+        try: record(r2, "v0", "f" * 40, "2026-01-01"); ok(False, "record refuses an in-tree mold")
+        except Stop as e: ok(e.code == 2 and fjtext() == fjb, "record() itself refuses to rewrite an in-tree mold's pin")
+        ok(not intree.is_in_tree("m", r2) and not intree.is_in_tree("mold_v1", ROOT), "a sourced mold (and mold_v1 here) is not in-tree")
     print(f"mold: {len(checks)} checks passed (offline: a local bare repository as the source)")
 
 

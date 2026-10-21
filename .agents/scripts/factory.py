@@ -538,6 +538,39 @@ def _vm_remote_hosts(apps):
                                f"choose another private /30 in state/application/{app_id}/infrastructure.json")
             seen[("tunnel network", net)] = app_id
     return out
+def _rls_claim_single(app_id, docs, want, ev):
+    """A single-service app (mold_v0, mold_v0-051) proves row-level security with the PRODUCT'S OWN check (npm run
+    check:rls: its catalog check and a live two-organisation probe, rolled back), run by every deploy against the
+    deployed database and recorded by lib/single_service.py (record_rls). The evidence is that check's verdict, not
+    mold_v1's field-by-field measurement, so this reads what it writes: the source is that check, the mode and the
+    backend match, the app serving traffic was not read as failing, and the proof is not older than the deploy.
+    running_app `unmeasured` is accepted here and only here: on Vercel the factory cannot run anything inside the
+    function, the check ran against the database the just-built deployment reads, and the function's own probe
+    (cron, hourly) is recorded as it said; validate never turns that into `enforced`."""
+    import single_service
+    infra = docs.get("infrastructure") or {}; pg = (docs.get("datastores") or {}).get("postgres") or {}
+    w = f"{app_id}/datastores.json: postgres.rls is {want!r}"
+    fix = f"Run: python3 .claude/scripts/provision.py {app_id} --verify-rls"
+    redeploy = f"Run: python3 .claude/scripts/provision.py {app_id} " + ("--deploy-remote" if infra.get("target") == "compose_remote" else "--deploy")
+    t = infra.get("target")
+    if not ((infra.get("compose_remote") or {}).get("production_url") if t == "compose_remote" else (infra.get("vercel") or {}).get("api_url")):
+        return []   # never deployed on the target it has now (a target switch): the first deploy there measures it
+    if not ev: return [f"{w} on a deployed app but nothing has measured it. {fix}"]
+    out = []
+    if not str(ev.get("source", "")).startswith(single_service.RLS_SOURCE):
+        out.append(f"{w} but the evidence is not the product's own check ({str(ev.get('source'))[:80]!r}). {fix}")
+    if ev.get("mode") != want: out.append(f"{w} but the evidence records mode {ev.get('mode')!r}" + (" (the check failed)" if "FAILED" in str(ev.get("source")) else "") + f". {fix}")
+    if ev.get("backend") and pg.get("provider") and ev["backend"] != pg["provider"]:
+        out.append(f"{w} but the evidence was measured on backend {ev['backend']!r} while postgres.provider is {pg['provider']!r}. {fix}")
+    ra = ev.get("running_app")
+    if ra == "not_enforced": out.append(f"{w} but the app serving traffic was read as failing it ({str(ev.get('running_app_detail'))[:160]}). {redeploy}")
+    elif ra == "unmeasured" and t != "vercel":
+        out.append(f"{w} but rls_verified.running_app is 'unmeasured', which only a Vercel function can be (its own server's check runs with the serving image). {fix}")
+    elif ra not in ("enforced", "unmeasured"): out.append(f"{w} but rls_verified.running_app is {ra!r}. {fix}")
+    at = str(ev.get("at") or ""); atd = _ts(at); dep = str(infra.get("deployed_at") or "")
+    if not atd: out.append(f"{w} but rls_verified.at is {at[:60]!r}, which is not {TS_FORM}. {fix}")
+    elif _ts(dep) and atd < _ts(dep): out.append(f"{w} but the evidence was measured {at} and this app was deployed {dep}. {fix}")
+    return out
 def _rls_claim(app_id, docs):
     """`"rls": "fail_closed"` used to be a string literal that nothing in the factory ever read: intake
     stamped it into every app regardless of provider, scope or tenancy, validate checked it against a
@@ -552,6 +585,8 @@ def _rls_claim(app_id, docs):
     ds = docs.get("datastores") or {}; st = (docs.get("application") or {}).get("status")
     pg = ds.get("postgres", {}); want = pg.get("rls"); ev = pg.get("rls_verified") or {}
     if want in (None, "off") or st not in DEPLOYED: return []
+    import single_service
+    if single_service.applies(docs.get("application") or {}, ROOT): return _rls_claim_single(app_id, docs, want, ev)
     # A vm app in a DEPLOYED status is reported by _vm_status as exactly that — the status is the error.
     # Every line below would add an instruction (--verify-rls, --deploy) that the vm lane cannot act on,
     # so it says nothing here; this is not an exemption, the app already failed validate one line up.
@@ -897,13 +932,19 @@ def doctor_items():
             d = L.get("defaults") or {}
             want = {"defaults.operator_email": d.get("operator_email"), "defaults.notify_domain": d.get("notify_domain"),
                     "defaults.vercel_team": d.get("vercel_team")}
-            for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active"]:
-                want[f"mold_sources.{m['mold_id']}"] = (L.get("mold_sources") or {}).get(m["mold_id"])
+            for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active" and not _in_tree(m["mold_id"])]:
+                want[f"mold_sources.{m['mold_id']}"] = (L.get("mold_sources") or {}).get(m["mold_id"])   # an in-tree mold has no source
             blank = [k for k, x in want.items() if not isinstance(x, str) or PLACEHOLDER.search(x.strip())]
             add(f"{rel} filled", not blank, "value", f"{rel} still lacks the operator's own value for {', '.join(blank)} "
                 f"(state/factory.local.example.json shows each one). Ask the operator for them, one at a time.")
-    for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active"]:
+    for m in [m for m in load(os.path.join(ST, "factory.json"))["molds"] if m.get("status") == "active" or _in_tree(m["mold_id"])]:
         mid = m["mold_id"]; cb = os.path.join(ROOT, "molds", mid, "codebase")
+        if _in_tree(mid):
+            # authored in this repository (lib/intree.py, mold_v0-040): nothing to fetch or compare; it comes with the checkout
+            here = os.path.isdir(cb) and bool(os.listdir(cb))
+            add(f"{mid} in-tree (authored in this repository)", here, "mold",
+                f"molds/{mid}/codebase is missing from this checkout: git checkout -- molds/{mid}/codebase (or pull). mold.py never fetches an in-tree mold.")
+            continue
         if not os.path.isdir(cb) or not os.listdir(cb):
             add(f"{mid} fetched", False, "mold", f"Fetch it: python3 .claude/scripts/mold.py fetch {mid}"); continue
         if services.REHEARSAL:
@@ -917,6 +958,12 @@ def doctor_items():
     add(f"disk: {free} GB free", free >= 5, "disk", f"Only {free} GB is free on this machine's disk; a deploy needs about 5 GB. "
         f"Remove old build copies (rm -rf build/*) or ask the operator for a bigger disk.")
     return items
+def _in_tree(mold_id):
+    """lib/intree.py: True for a mold authored in this repository; an unreadable mold.json counts as in-tree here, so
+    doctor never sends anyone to fetch over it (mold.py itself refuses and says why)."""
+    import intree
+    try: return intree.is_in_tree(mold_id, ROOT)
+    except intree.Unreadable: return True
 def cmd_doctor(a):
     as_json = "--json" in a
     items = doctor_items()
@@ -982,6 +1029,18 @@ def self_test():
         r = subprocess.run([sys.executable, F, "doctor", "--json"], capture_output=True, text=True, env=env)
         names = {i["name"]: i for i in json.loads(r.stdout)["details"]["checks"]}
         ok(not names["state/factory.local.json filled"]["ok"] and "defaults.operator_email" in names["state/factory.local.json filled"]["fix"], "doctor: a placeholder value left from the example is named")
+        # mold_v0-040: an in-tree mold (any status) is reported as such: never "fetch it", never a mold_sources entry asked for
+        json.dump({"molds": [{"mold_id": "m1", "status": "active"}, {"mold_id": "m0", "status": "wip"}, {"mold_id": "m2", "status": "active", "source": {"in_tree": True}}]},
+                  open(os.path.join(t, "state", "factory.json"), "w"))
+        os.makedirs(os.path.join(t, "molds", "m0", "codebase", "src")); open(os.path.join(t, "molds", "m0", "codebase", "src", "a.ts"), "w").write("a\n")
+        json.dump({"mold_id": "m0", "source": {"in_tree": True, "since": "f" * 40}}, open(os.path.join(t, "molds", "m0", "mold.json"), "w"))
+        r = subprocess.run([sys.executable, F, "doctor", "--json"], capture_output=True, text=True, env=env)
+        names = {i["name"]: i for i in json.loads(r.stdout)["details"]["checks"]}
+        ok(names["m0 in-tree (authored in this repository)"]["ok"] and not any(n.startswith("m0 fetched") for n in names)
+           and not names["m2 in-tree (authored in this repository)"]["ok"] and "git checkout" in names["m2 in-tree (authored in this repository)"]["fix"]
+           and "mold_sources.m2" not in names["state/factory.local.json filled"]["fix"] and "m1 fetched" in names,
+           "doctor: an in-tree mold is present-or-not in the checkout, never fetched, never asked a source for; a sourced mold beside it unchanged")
+        json.dump({"molds": [{"mold_id": "m1", "status": "active"}]}, open(os.path.join(t, "state", "factory.json"), "w"))
         r = subprocess.run([sys.executable, F, "status", "app1", "--json"], capture_output=True, text=True, env=env)
         d = json.loads(r.stdout)
         ok(r.returncode == 0 and "No deploy" in d["details"]["deploy"]["summary"] and "--background" in d["details"]["lanes"]["next"], "status <app>: nothing run yet says so, with the start commands")
@@ -1002,6 +1061,26 @@ def self_test():
        "validate: a compose_remote app carrying a vercel object is refused (one object per target)")
     ok(_single_service("x", {"application": {"mold_id": "mold_v0"}, "infrastructure": dict(cr, target="vm_remote")}),
        "validate: mold_v0 on a target its mold.json does not name is refused")
+    # mold_v0-051: a single-service app's RLS claim is read against the product's own check, as lib/single_service.py records it
+    ds = lambda ev: {"postgres": {"provider": "self_hosted", "rls": "fail_closed", **({"rls_verified": ev} if ev else {})}}
+    good = {"at": "2026-10-21T10:00:00+00:00", "backend": "self_hosted", "mode": "fail_closed", "running_app": "enforced",
+            "source": "check:rls (npm run check:rls, the product's own: catalog + live probe, rolled back), by provision.py --deploy-remote"}
+    app0 = {"mold_id": "mold_v0", "status": "stamped"}
+    inf0 = {"target": "compose_remote", "deployed_at": "2026-10-21T09:59:00+00:00", "compose_remote": {"production_url": "https://a.example.org"}}
+    claim = lambda ev: _rls_claim("x", {"application": app0, "infrastructure": inf0, "datastores": ds(ev)})
+    ok(claim(good) == [], "validate: a mold_v0 app with the product's own RLS check passed after its deploy validates")
+    ok(claim(dict(good, running_app="unmeasured")), "  ...unmeasured on its own server (where the check runs with the serving image) is refused")
+    ok(_rls_claim("x", {"application": app0, "infrastructure": {"target": "vercel", "deployed_at": inf0["deployed_at"], "vercel": {"api_url": "https://a-api.example.org"}},
+                        "datastores": {"postgres": {"provider": "neon", "rls": "fail_closed", "rls_verified": dict(good, backend="neon", running_app="unmeasured")}}}) == [],
+       "  ...on Vercel unmeasured (the function's own probe not run yet) is accepted, never turned into enforced")
+    ok(claim(None) and "--verify-rls" in claim(None)[0], "validate: fail_closed with no evidence: refused, with --verify-rls")
+    ok(claim(dict(good, mode="off", running_app="not_enforced", source=good["source"] + "; FAILED: x")), "validate: a failed check: refused")
+    ok(claim(dict(good, source="provision.py --verify-rls (mold_v1)")), "validate: evidence that is not the product's own check: refused")
+    ok(claim(dict(good, at="2026-10-21T09:00:00+00:00")), "validate: evidence older than the deploy: refused")
+    ok(claim(dict(good, backend="neon")), "validate: evidence from another backend: refused")
+    ok(_rls_claim("x", {"application": app0, "infrastructure": inf0, "datastores": {"postgres": {"provider": "self_hosted", "rls": "off"}}}) == [], "validate: rls off asks for nothing")
+    ok(_rls_claim("x", {"application": app0, "infrastructure": {"target": "vercel", "deployed_at": inf0["deployed_at"]}, "datastores": ds(None)}) == [],
+       "validate: an app never deployed on the target it has now (a switch) is asked for evidence by its first deploy there, not here")
     print(f"factory: {len(checks)} checks passed")
     return 0
 

@@ -1,12 +1,30 @@
 {
-  "$comment": "What the factory reads to run mold_v0 (.claude/scripts/lib/single_service.py). The codebase next to it is a verbatim snapshot and is never edited; every product-specific value the factory needs (env names, the service, its port) is READ from the codebase's own files at plan time, so this file names paths and rules only.",
+  "$comment": "What the factory reads to run mold_v0 (.claude/scripts/lib/single_service.py). The codebase next to it is AUTHORED IN THIS REPOSITORY since the fork point below (operator decision D1, 2026-10-20; mold_v0-040), a recorded exception to 'never edit a mold in place' (MOLD.md). Every product-specific value the factory needs (env names, the service, its port) is still READ from the codebase's own files at plan time, so this file names paths and rules only.",
   "mold_id": "mold_v0",
+  "source": {
+    "$comment": "in_tree: the codebase is edited here and never fetched, refreshed or rewritten by mold.py (lib/intree.py). since: the factory commit whose snapshot is the fork point. forked_from: the source commit that snapshot was taken at (the operator's product with mold_v0-031's hardening merged); nothing is ever fetched from it again. ci.workflow: the factory workflow whose run the deploy gate requires for the commit being deployed (lib/deploy_gate.py). null until mold_v0-001 adds it: until then the gate requires at least one GitHub Actions check of this repository to have succeeded for that commit and nothing (from any app) to have failed or be running.",
+    "in_tree": true,
+    "since": "e8d836532cb737ea3b2809f674a216591e7314fc",
+    "forked_from": {
+      "commit": "7399bd4c361138ef664ee8a5d5c5667be7121f2f",
+      "snapshot_date": "2026-10-21"
+    },
+    "ci": {
+      "workflow": null
+    }
+  },
   "shape": "single_service",
   "targets": [
     "compose_remote",
     "vercel"
   ],
   "health_path": "/healthz",
+  "rls": {
+    "$comment": "The product's own row-level security proof (mold_v0-031; its scripts/check-rls.ts: the catalog, then a live probe in a rolled-back transaction). Applies only while the codebase's package.json has the script. Intake writes datastores.postgres.rls = mode; the deploy runs the script (compose_remote: in a one-off container of the new release, with the server's env file; vercel: on this machine against the api project's production database) and a failure is a failed health check; the lanes run it against an embedded throwaway database. A deploy counts only the product's PASS line for a real Postgres ('pass'), never one for its embedded fallback.",
+    "script": "check:rls",
+    "mode": "fail_closed",
+    "pass": "RLS CHECK PASS (postgres)"
+  },
   "compose": {
     "file": "deploy/docker-compose.prod.yml",
     "mint": "deploy/bootstrap.sh",
