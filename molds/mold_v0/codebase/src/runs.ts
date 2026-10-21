@@ -83,7 +83,8 @@ const jsonObject = (v: unknown, what: string) => {
 /**
  * Queue a run of `pack`'s job kind for workspace `orgId` (the caller's own workspace, from its session). When the
  * caller is a signed-in person (`org.userId`), the account's own launch rules apply first (src/limits.ts checkRun:
- * a viewer cannot launch, a blocked member or account cannot, the account's allowance and concurrency).
+ * a viewer cannot launch, a blocked member or account cannot, the account's allowance and concurrency); when it is
+ * platform staff acting for the workspace (`org.staff`, mold_v0-067), the account's rules with no person (checkAccountRun).
  */
 export async function startRun(orgId: number, pack: string, kind: string, input: { scope?: unknown; targets?: unknown } = {}, requestedBy: string | null = null,
                                org?: import("./auth.js").Org): Promise<RunView> {
@@ -93,6 +94,11 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
   if (org?.userId) {
     const { checkRun, LimitError } = await import("./limits.js");
     try { await asPlatform(() => checkRun(org)); }
+    catch (e) { if (e instanceof LimitError) throw new PackError(e.message, (e as { status?: number }).status ?? 403); throw e; }
+  } else if (org?.staff) {
+    // Staff starting a run for the workspace (mold_v0-067): the account's own launch rules, with no person.
+    const { checkAccountRun, LimitError } = await import("./limits.js");
+    try { await asPlatform(() => checkAccountRun(org)); }
     catch (e) { if (e instanceof LimitError) throw new PackError(e.message, (e as { status?: number }).status ?? 403); throw e; }
   }
   const [{ n }] = await asPlatform(async () => (await getDb()).query<{ n: number }>(

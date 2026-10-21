@@ -40,6 +40,7 @@ import { platformAnalytics } from "./insights.js";
 import { listSettings } from "./settings.js";
 import { adminGeneratedTools, generatedAdminInstructions } from "./mcp-tools.js";
 import { reserveAdminTools } from "./packs.js";
+import type { AdminShellToolName, SameNames } from "./shell-tools.js";
 
 /** Who is calling: the name changes are logged under (their email, or the token's X-Admin-Actor label) and their role. */
 export interface AdminCaller { actor: string; role: PlatformRole; userId: string | null; ip?: string }
@@ -315,6 +316,9 @@ export const ADMIN_TOOLS = {
 
 export type AdminToolName = keyof typeof ADMIN_TOOLS;
 export const ADMIN_TOOL_NAMES = Object.keys(ADMIN_TOOLS) as AdminToolName[];
+// The build reads the same names from src/shell-tools.ts (mold_v0-067): a change here alone does not typecheck.
+const sameAdminNames: SameNames<AdminToolName, AdminShellToolName> = true;
+void sameAdminNames;
 // The tools generated from the packs (mold_v0-060, src/mcp-tools.ts) come after these and may not take one of their names.
 reserveAdminTools(ADMIN_TOOL_NAMES);
 
