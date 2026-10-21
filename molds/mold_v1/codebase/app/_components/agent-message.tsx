@@ -563,32 +563,51 @@ function AttachmentPreviewChip({ name, path }: { readonly name: string; readonly
  * POPS in paragraph-sized bursts. This tweens the visible prefix toward the
  * full text at a rate proportional to the backlog, so bursts read as a stream;
  * when streaming ends (or the part isn't eligible) it snaps to the full text.
+ *
+ * ONE frame loop per part, reading the newest text from a ref: a new chunk does not cancel the frame already asked
+ * for. When it did, text arriving more often than the screen draws (a busy or slow machine: frames slower than the
+ * chunks) cancelled every frame before it ran, and the reply froze mid-word until the stream paused (mold_v1-292).
  */
 function useSmoothText(target: string, enabled: boolean): string {
   const [shown, setShown] = useState(target);
   const shownRef = useRef(target);
+  const targetRef = useRef(target);
+  const rafRef = useRef(0);
   useEffect(() => {
+    targetRef.current = target;
     if (!enabled || !target.startsWith(shownRef.current)) {
       // Not animating, or a different text entirely (new message) — snap.
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
       shownRef.current = target;
       setShown(target);
       return;
     }
-    let raf = 0;
+    if (rafRef.current !== 0) return; // the running loop reads the new text on its next frame
     const tick = () => {
+      const goal = targetRef.current;
       const current = shownRef.current;
-      if (current.length >= target.length) return;
+      if (current.length >= goal.length || !goal.startsWith(current)) {
+        rafRef.current = 0;
+        return;
+      }
       // Catch-up rate scales with backlog: never crawls behind a big flush,
       // never teleports either (≥2 chars/frame, backlog/40 when far behind).
-      const step = Math.max(2, Math.ceil((target.length - current.length) / 40));
-      const next = target.slice(0, current.length + step);
+      const step = Math.max(2, Math.ceil((goal.length - current.length) / 40));
+      const next = goal.slice(0, current.length + step);
       shownRef.current = next;
       setShown(next);
-      raf = requestAnimationFrame(tick);
+      rafRef.current = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    rafRef.current = requestAnimationFrame(tick);
   }, [target, enabled]);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    },
+    [],
+  );
   return enabled ? shown : target;
 }
 

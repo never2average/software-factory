@@ -75,6 +75,8 @@ interface Answer {
   status?: number;
   json?: unknown;
   delayMs?: number;
+  /** Held until this settles: an answer that must arrive after something the test does, however slow the machine. */
+  after?: Promise<unknown>;
 }
 interface Server {
   posts: Post[];
@@ -104,6 +106,7 @@ async function open(
     server.posts.push(post);
     const said = answer(post);
     if (said.delayMs) await new Promise((r) => setTimeout(r, said.delayMs));
+    if (said.after) await said.after;
     return route.fulfill({ status: said.status ?? 200, json: said.json ?? {} }).catch(() => {});
   });
   await page.goto("/preview/user-message");
@@ -322,7 +325,13 @@ test("the text reads in the order spoken when the server answers out of order", 
 });
 
 test("typing while it listens is not overwritten: the text lands where it was going, around what was typed", async ({ page }) => {
-  const server = await open(page, { answer: (post) => ({ json: { text: WORDS[post.seq ?? 0] }, delayMs: post.seq === 0 ? 2_500 : 0 }) });
+  // The first section's answer is held until the person has finished typing below, so the words are on their way the
+  // whole time the person types. It was held a fixed 2.5 s, and on a busy machine typing "Note: " and ", thanks" took
+  // longer: the words landed mid-typing and the check of what was typed failed (mold_v1-292). Sections spoken while
+  // it was held land with it, in the order spoken.
+  let typed = () => {};
+  const typing = new Promise<void>((r) => (typed = r));
+  const server = await open(page, { answer: (post) => ({ json: { text: WORDS[post.seq ?? 0] }, after: post.seq === 0 ? typing : undefined }) });
   await caretAt(page, "Start end", "Start ".length);
   await mic(page).dblclick();
   await expect(root(page)).toHaveAttribute("data-state", "latched");
@@ -337,8 +346,10 @@ test("typing while it listens is not overwritten: the text lands where it was go
   await box(page).pressSequentially(", thanks");
   await expect(box(page)).toHaveValue("Note: Start end, thanks");
   await expect(root(page)).toHaveAttribute("data-state", "latched");
+  typed();
   // It lands between "Start" and "end", where the cursor was when listening began, moved along by "Note: ".
-  await expect(box(page)).toHaveValue(new RegExp(`^Note: Start ${WORDS[0]}( ${WORDS[1]})? end, thanks$`), { timeout: 10_000 });
+  const inOrder = WORDS.slice(1).reduceRight((rest, w) => `(?: ${w}${rest})?`, "");
+  await expect(box(page)).toHaveValue(new RegExp(`^Note: Start ${WORDS[0]}${inOrder} end, thanks$`), { timeout: 10_000 });
   // The person's cursor stayed where they were typing, and typing carries on there.
   await expect(box(page)).toBeFocused();
   await box(page).pressSequentially("!");
@@ -632,6 +643,24 @@ test.describe("on a phone", () => {
         await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: Math.round(m.x + m.width / 2), y: Math.round(m.y + m.height / 2) }] });
       },
       up: () => cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }),
+      /**
+       * Two quick taps, as a finger makes them: 50 ms down, 100 ms apart. The button reads how soon the second press
+       * came from the events' own time stamps, so each event carries the time the finger moved, and none is sent
+       * before that time. Sent as down/up/down/up with the button looked up between them, the round trips alone took
+       * 800 ms on a busy machine, twice the 400 ms of a double press: the page was right to see two taps
+       * (mold_v1-292).
+       */
+      async double() {
+        await mic(page).evaluate((el) => el.scrollIntoView({ block: "center" }));
+        const m = (await mic(page).boundingBox())!;
+        const at = { x: Math.round(m.x + m.width / 2), y: Math.round(m.y + m.height / 2) };
+        const start = Date.now();
+        for (const [type, ms] of [["touchStart", 0], ["touchEnd", 50], ["touchStart", 150], ["touchEnd", 200]] as const) {
+          const wait = start + ms - Date.now();
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+          await cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchStart" ? [at] : [], timestamp: (start + ms) / 1000 });
+        }
+      },
     };
   }
 
@@ -677,10 +706,7 @@ test.describe("on a phone", () => {
     expect(server.posts).toHaveLength(1);
 
     // A double-tap: hands-free; a tap stops it.
-    await touch.down();
-    await touch.up();
-    await touch.down();
-    await touch.up();
+    await touch.double();
     await expect(root(page)).toHaveAttribute("data-state", "latched");
     await expect(mic(page)).toHaveAttribute("aria-pressed", "true");
     expect(await height(page)).toBe(before);

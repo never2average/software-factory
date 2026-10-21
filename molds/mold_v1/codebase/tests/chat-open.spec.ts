@@ -133,13 +133,19 @@ interface Calls {
 async function serve(
   page: Page,
   opts: {
-    snapshot: (session: string) => { body: unknown; delayMs?: number } | null;
+    /**
+     * `after`: the answer is held until it settles, so it arrives after something the test does, however slow the
+     * machine. A fixed delay is a race against the page: on a busy box (a `next dev` rebuild mid-test) a click the
+     * test made inside the delay reached the page after it (mold_v1-292).
+     */
+    snapshot: (session: string) => { body: unknown; delayMs?: number; after?: Promise<unknown> } | null;
     replay: (session: string, start: number) => { body: string; delayMs?: number };
   },
 ): Promise<Calls> {
   const calls: Calls = { snapshotGets: [], deletes: [], seamReads: 0, fullReplays: 0, replayReads: [] };
-  const later = async (ms: number | undefined, fn: () => Promise<void>) => {
+  const later = async (ms: number | undefined, fn: () => Promise<void>, after?: Promise<unknown>) => {
     if (ms) await new Promise((r) => setTimeout(r, ms));
+    if (after) await after;
     try {
       await fn();
     } catch {
@@ -162,7 +168,7 @@ async function serve(
       if (req.method() === "GET") {
         calls.snapshotGets.push(session);
         const answer = opts.snapshot(session);
-        return later(answer?.delayMs, () => route.fulfill({ status: 200, json: { snapshot: answer?.body ?? null } }));
+        return later(answer?.delayMs, () => route.fulfill({ status: 200, json: { snapshot: answer?.body ?? null } }), answer?.after);
       }
       return route.fulfill({ status: 200, json: { ok: true } });
     }
@@ -241,9 +247,13 @@ test.describe("reopening a chat", () => {
     ]);
     const failed: string[] = [];
     page.on("requestfailed", (r) => failed.push(new URL(r.url()).pathname));
+    // Alpha's saved copy takes 2.5 s, and is held until Bravo is on screen: the click on Bravo always comes while it is
+    // on its way. With the 2.5 s alone, a click the page handled late (a `next dev` rebuild mid-test) let Alpha's open
+    // finish first, legitimately, and read its seam (mold_v1-292).
+    let bravoShown = () => {};
+    const bravoOnScreen = new Promise<void>((r) => (bravoShown = r));
     const calls = await serve(page, {
-      // Alpha's saved copy takes 2.5 s.
-      snapshot: (s) => (s === "sess-a" ? { body: snapshotA, delayMs: 2_500 } : null),
+      snapshot: (s) => (s === "sess-a" ? { body: snapshotA, delayMs: 2_500, after: bravoOnScreen } : null),
       replay: (_s, start) => ({ body: ndjson([marker(start)]) }),
     });
 
@@ -252,6 +262,7 @@ test.describe("reopening a chat", () => {
     await expect.poll(() => calls.snapshotGets.length, { timeout: 15_000 }).toBe(1);
     await page.getByRole("button", { name: /Bravo chat/ }).click();
     await expect(page.getByText("Bravo answer 2.")).toBeVisible();
+    bravoShown();
     // Long enough for Alpha's saved copy to have landed, if anything were still listening for it.
     await page.waitForTimeout(4_000);
 
@@ -276,8 +287,12 @@ test.describe("reopening a chat", () => {
       ],
       "chat-b",
     );
+    // Alpha's saved copy takes 3 s, and is held until the test has seen Bravo gone under the shimmer (the same race as
+    // above: a late-handled click must not let the copy land first).
+    let leftSeen = () => {};
+    const left = new Promise<void>((r) => (leftSeen = r));
     await serve(page, {
-      snapshot: (s) => (s === "sess-a" ? { body: snapshotA, delayMs: 3_000 } : null),
+      snapshot: (s) => (s === "sess-a" ? { body: snapshotA, delayMs: 3_000, after: left } : null),
       replay: (_s, start) => ({ body: ndjson([marker(start)]) }),
     });
     await page.goto("/preview/chat-open");
@@ -286,6 +301,7 @@ test.describe("reopening a chat", () => {
     // While Alpha's saved copy is on its way, Bravo is gone from the page, not just covered by the shimmer.
     await expect(page.getByLabel("Loading conversation")).toBeVisible();
     await expect(page.getByText("Bravo answer 2.")).toHaveCount(0, { timeout: 1_000 });
+    leftSeen();
     await expect(page.getByText("Alpha answer 2.")).toBeVisible({ timeout: 15_000 });
   });
 

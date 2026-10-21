@@ -280,6 +280,7 @@
     "sandbox:prewarm": "node scripts/sandbox-prewarm-serial.mjs",
     "sandbox:limits": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/sandbox-limits.mjs",
     "test:own-listener": "node scripts/test-own-listener.mjs",
+    "test:warm-previews": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-warm-previews.mjs",
     "test:chat-stop-state": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-chat-stop-state.mjs",
     "test:empty-model-response": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-empty-model-response.mjs",
     "test:recovery-honesty": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-recovery-honesty.mjs",

@@ -30,6 +30,10 @@ const check = (what, ok, detail) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const APP = mkdtempSync(join(tmpdir(), "eve-served-model-"));
+// Its own empty `.git`, as a real app in its repository has: `eve dev` searches upward for one to find the root it
+// watches, and a stray one in the temporary directory (left by anything else on the machine) made it watch all of
+// it, re-reading thousands of entries whenever anything there changed (mold_v1-286, mold_v1-292).
+mkdirSync(join(APP, ".git"));
 const LOG = join(APP, "served.ndjson");
 const ROOT_MODEL = "probe/root-model";
 const ALPHA_MODEL = "probe/specialist-model";

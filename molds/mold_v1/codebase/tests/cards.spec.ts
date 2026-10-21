@@ -134,25 +134,36 @@ test("work periods follow the profile's mode", async ({ page }) => {
 test("sandbox line: shows the place in line live, clears when the sandbox opens; silent without the cap", async ({ page }) => {
   const answers = [[{ position: 3, waitedS: 4 }], [{ position: 2, waitedS: 9 }], [{ position: 1, waitedS: 14 }, { position: 5, waitedS: 1 }], []];
   const asked: string[] = [];
-  let i = 0;
+  // The server's answer moves on when the test has seen the line say the last one, and the page has asked again
+  // since: the line follows the server live, whatever the machine's speed. Each answer was held for three polls
+  // (0.75 s), and a page busy hydrating, or an assertion between its retries, missed a state that came and went
+  // (mold_v1-292).
+  let stage = 0;
+  const askedAt: number[] = [];
   await page.route("**/eve/v1/session/*/sandbox-wait", async (route) => {
     const id = decodeURIComponent(new URL(route.request().url()).pathname.split("/")[4] ?? "");
     asked.push(id);
-    const waits = answers[Math.min(i, answers.length - 1)];
-    // Each answer is held for a few polls, so every state is on screen long enough to be seen.
-    if (asked.filter((a) => a === "capped").length % 3 === 0) i += 1;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, waits }) });
+    if (id === "capped") askedAt.push(stage);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, waits: answers[stage] }) });
   });
+  const next = async () => {
+    stage += 1;
+    await expect.poll(() => askedAt.filter((s) => s === stage).length, { timeout: 10_000 }).toBeGreaterThan(0);
+  };
   await page.goto("/preview/user-message");
 
   const capped = page.getByTestId("chat-capped");
   const line = capped.getByTestId("sandbox-wait");
-  await expect(line).toHaveText("Waiting for a free sandbox (3rd in line)…");
+  // The first answer waits for the page to hydrate (`next dev` hydrates after the load event; seconds on a busy box).
+  await expect(line).toHaveText("Waiting for a free sandbox (3rd in line)…", { timeout: 30_000 });
   await expect(line).toHaveAttribute("role", "status");
+  await next();
   await expect(line).toHaveText("Waiting for a free sandbox (2nd in line)…");
   // Two of this chat's commands wait: the one nearest the front is said.
+  await next();
   await expect(line).toHaveText("Waiting for a free sandbox (next in line)…");
   // The sandbox opened: the line is gone, "Working…" is back.
+  await next();
   await expect(line).toHaveCount(0);
   await expect(capped.getByTestId("no-wait")).toBeVisible();
 
