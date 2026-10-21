@@ -11,6 +11,7 @@ import * as mail from "./email.js";
 import { appRouter } from "./app.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
+import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
@@ -291,6 +292,8 @@ export function createApp() {
   });
   worker.use(express.json({ limit: "32mb" }));
   worker.use(express.text({ type: ["application/x-ndjson", "application/jsonl", "text/plain"], limit: "32mb" }));
+  // The generic run engine's runners (mold_v0-041, src/run-routes.ts): the fleet token, then each run's lease token.
+  worker.use("/runs", runWorkerRouter());
 
   worker.post("/claim", async (req, res) => {
     const { worker_id, limit, models, harness, agent_ids, simulation_id } = req.body ?? {};

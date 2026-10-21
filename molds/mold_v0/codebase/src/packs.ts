@@ -4,6 +4,8 @@
  * server (src/pack-routes.ts) and the migration runner (src/migrate.ts reads src/pack-migrations.generated.ts, which
  * imports no pack code). With zero packs every list here is empty and the shell is exactly what it was.
  */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { accountRefusal, canAccount } from "./account-roles.js";
@@ -23,6 +25,8 @@ export interface PackManifest {
   entry: string;
   migrations: string | null;
   words: Record<string, string>;
+  /** The pack's directory, relative to the codebase root (absolute in tests): where a run's programs are (mold_v0-041). */
+  dir?: string;
 }
 export interface GeneratedPack { manifest: PackManifest; definition: unknown }
 export interface InstalledPack { id: string; manifest: PackManifest; definition: PackDefinition }
@@ -66,6 +70,14 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
   return out;
 }
 
+/** A pack's directory on disk: its pack.json's `dir` from the generated registry, else packs/<id> in the codebase. */
+export function packDir(id: string): string {
+  const p = packs().find((x) => x.id === id);
+  if (!p) throw new PackDefinitionError(`no pack ${id}`);
+  return path.resolve(ROOT, p.manifest.dir ?? path.join("packs", id));
+}
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
 let installed: InstalledPack[] | null = null;
 let reserved: readonly string[] = [];
 /** The shell's own tool names, set by src/server.ts before any pack is used, so a pack cannot shadow one. */
@@ -85,8 +97,8 @@ export function packRegistry() {
     tools: all.flatMap((p) => (p.definition.tools ?? []).map((t) => ({ pack: p.id, name: t.name }))),
     routes: all.flatMap((p) => (p.definition.routes ?? []).map((r) => ({ pack: p.id, scope: r.scope, method: r.method, path: r.path }))),
     words: Object.fromEntries(all.map((p) => [p.id, p.manifest.words])),
-    // recordAreas: wired (src/record-areas.ts, mold_v0-047). Declared and validated, not wired yet: credential vault 034,
-    // scheduler 035, onboarding 011.
+    // recordAreas (src/record-areas.ts, mold_v0-047) and jobKinds (src/runs.ts, mold_v0-041) are wired. Declared and
+    // validated, not wired yet: credential vault 034, scheduler 035, onboarding 011.
     jobKinds: flat("jobKinds"), recordAreas: flat("recordAreas"), credentials: flat("credentials"), schedules: flat("schedules"), onboarding: flat("onboarding"),
   };
 }
@@ -124,7 +136,10 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
     const needs = toolNeeds(t);
     if (needs && org.role && !canAccount(org.role, needs)) throw new PackError(accountRefusal(needs).message, 403);
     const ws = workspaceOf(org);
-    const value = await withTenant(org.orgId, () => t.handler(ws, args ?? {}, { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId) }));
+    // The run engine (src/runs.ts) reaches the gateway and much of the server: loaded on first use, not at start.
+    const { workspaceRuns } = await import("./runs.js");
+    const ctx = { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId), runs: workspaceRuns(pack, org.orgId, org.userId ?? null) };
+    const value = await withTenant(org.orgId, () => t.handler(ws, args ?? {}, ctx));
     recordMcpEvent(org, { method: "tools/call", name: t.name, ms: performance.now() - t0 });
     return toToolResult(value);
   } catch (err) {

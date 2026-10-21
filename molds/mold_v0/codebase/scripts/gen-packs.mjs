@@ -306,7 +306,7 @@ function loadPack(dirName) {
     }
   }
   if (id && ID.test(id)) checkCode(dir, id);
-  return { id, dir, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words }, pages };
+  return { id, dir, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
 }
 
 const packDirs = existsSync(PACKS_DIR) ? readdirSync(PACKS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [];
@@ -410,7 +410,7 @@ const files = new Map();
 files.set(srcPacks, HEADER +
   packs.map((p, i) => `import pack${i} from ${JSON.stringify(importPath(srcPacks, path.join(p.dir, p.manifest.entry)))};\n`).join("") +
   `\n/** Every pack in this build, in pack order (by id): its pack.json and its definePack export (src/packs.ts checks both). */\n` +
-  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string; migrations: string | null; words: Record<string, string> }; readonly definition: unknown }[] = [` +
+  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string; migrations: string | null; words: Record<string, string>; dir: string }; readonly definition: unknown }[] = [` +
   (packs.length ? `\n${packs.map((p, i) => `  { manifest: ${JSON.stringify(p.manifest)}, definition: pack${i} },`).join("\n")}\n` : "") + "];\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +

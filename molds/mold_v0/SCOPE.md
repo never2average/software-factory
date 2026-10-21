@@ -76,9 +76,9 @@ turns it into shell, or builds it where nothing exists yet.
   allowlist, opt-in today: private runs on the sandbox runner only), and `orchestrator/worker.ts` is the deterministic worker. Harnesses are pinned in
   `harnesses/registry.json`, adapted by `orchestrator/harnesses/adapters.ts`, built by `orchestrator/images/`. The
   admin Compute page reads `src/compute*.ts`; failure classes are `src/error-classes.ts`.
-- **Generalised by.** mold_v0-041 (a generic `runs` and `run_results` model beside the session queue, a
+- **Generalised by.** mold_v0-041, **built** (a generic `runs` and `run_results` model beside the session queue, a
   workspace-harness runner, per-kind token lifetime and budget, cost per run from gateway usage, the per-run egress
-  allowlist under test), mold_v0-018 (concurrency per workspace and run budget per run kind). Run kinds come from
+  allowlist under test; `src/runs.ts`, `src/run-harness.ts`, `/api/worker/runs`), mold_v0-018 (concurrency per workspace and run budget per run kind). Run kinds come from
   packs (mold_v0-038).
 
 ### Inference gateway and metering
@@ -87,8 +87,8 @@ turns it into shell, or builds it where nothing exists yet.
   (`gateway_tokens`), the credential broker, session and org budgets. Providers include `src/vertex.ts`. Each request
   is priced by `src/usage.ts` from `model_prices` into `gateway_usage` and `gateway_model_usage`; model spend for
   admins is `src/spend.ts` and `src/spend-usage.ts`; per-account budgets and throughput are `src/limits.ts`.
-- **Generalised by.** mold_v0-041 (token lifetime per run kind, so a long run's token does not expire mid-run; cost per
-  run), mold_v0-008 (usage pages per run, member and workspace, in neutral words).
+- **Generalised by.** mold_v0-041, **built** (token lifetime per run kind, so a long run's token does not expire
+  mid-run; cost per run; a run's budget across its attempts), mold_v0-008 (usage pages per run, member and workspace, in neutral words).
 
 ### Vaults, including per-workspace credentials
 
