@@ -338,10 +338,15 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   `detail.<word>`) or `{due: <date field>}` (overdue, due soon, later, no date); `by_time` a series of the last N days,
   weeks (from Monday) or months (UTC), by group for an enum of at most 8 options, a boolean, a status or a kind; `limit`
   groups (at most 50, flagged `more`); `roles`. One aggregate query each, inside `withTenant` with `org_id` named, field
-  names and values only as bound parameters, a group limit, a time window and a 5 s statement timeout; an asset area's
-  rows (sealed) are opened and evaluated by the same rules in code, over at most 5,000 rows (`partial`). A person reads
-  a metric when their role may read its area and is in its `roles` (an API key: no role limits); a reference's label is
-  its record's title only for those who may read that record. When a record is created or moved the store stamps when
+  names and values only as bound parameters, a group limit, a time window and a 5 s statement timeout on Postgres
+  (PGlite, the embedded database of tests and one-machine runs, ignores statement timeouts); at most 30 metrics a
+  request, 4 at a time. An asset area's rows (sealed) are opened one by one and evaluated by the same rules in code,
+  over its newest 5,000 rows and at most 32 MB of them, read once per request (`partial` when cut). A span that ends
+  before it starts (a state entered again since) is not a duration. A person reads a metric when their role may read
+  its area and is in its `roles` (an API key: no role limits); a run-results metric needs every check and asset area's
+  read permission; a referenced record is named (title or key) only for those who may read its area ("Restricted"
+  otherwise), and `/api/runs/:id` leaves out results whose check, and names no asset or source, the person may not
+  read. When a record is created or moved the store stamps when
   it entered the state (`$state_at` in the row's data: never a field, never writable, carried over on writes), which is
   what `state:<value>` reads (time to fix). `charts` (`number` tiles, `bar`, `stacked_bar`, `line`, `area`, `table`;
   no donut, never two y-axes, `palette` categorical or ordinal) are checked against their metrics' shapes and units at

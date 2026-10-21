@@ -103,10 +103,13 @@ export function pointOf(over: SpecArea | RunSource, p: string): Column | string 
 
 /** Who may read an area's records (its declared `read`, the platform's own otherwise): src/record-areas.ts allowedRoles. */
 export const areaReadRoles = (a: SpecArea): AccountRole[] => ACCOUNT_ROLES.filter((r) => (a.permissions?.read ?? DECLARABLE_ROLES).includes(r) && canAccount(r, "read"));
-/** Who may read a metric: its `roles`, narrowed by its area's read permission (run sources: every role). */
+/** Who may read a metric: its `roles`, narrowed by its area's read permission (run results: every check and asset area's). */
 export function metricRoles(m: SpecMetric, areas: readonly SpecArea[]): AccountRole[] {
   const area = areas.find((a) => a.name === m.over);
-  const base: readonly AccountRole[] = area ? areaReadRoles(area) : ACCOUNT_ROLES.filter((r) => canAccount(r, "read"));
+  // Run results name check, asset and source records (and their detail): readable by the roles that may read every check
+  // and asset area of the build. Runs carry only their kind, status, times and cost: every role, as on the usage pages.
+  const base: readonly AccountRole[] = area ? areaReadRoles(area)
+    : ACCOUNT_ROLES.filter((r) => canAccount(r, "read") && (m.over !== "run_results" || areas.filter((a) => a.role !== "source").every((a) => areaReadRoles(a).includes(r))));
   return base.filter((r) => !m.roles || m.roles.includes(r));
 }
 
@@ -187,8 +190,8 @@ export function checkViews(b: BuildViews): string[] {
         if (k) {
           if (k.multiple) at(p, `${w}: group_by: ${m.group_by} holds a list: group by a single-valued field`);
           else if (k.type === "time" || k.type === "number") at(p, `${w}: group_by: ${m.group_by} is a ${k.type === "time" ? "date" : "number"}: group by a word field (use by_time for dates)`);
-          else if (m.by_time && !(k.type === "boolean" || (k.type === "enum" && k.options!.length <= 8) || (typeof over === "string" && m.group_by === "kind")))
-            at(p, `${w}: a series grouped by ${m.group_by} could have many groups: group a series by an enum of at most 8 options, a true/false field, a status or a kind`);
+          else if (m.by_time && !(k.type === "boolean" || (k.type === "enum" && k.options!.length <= 8) || (typeof over === "string" && m.group_by === "kind" && b.jobKinds <= 8)))
+            at(p, `${w}: a series grouped by ${m.group_by} could have many groups: group a series by an enum of at most 8 options, a true/false field, a status, or a kind (in a build of at most 8)`);
         }
       }
     }

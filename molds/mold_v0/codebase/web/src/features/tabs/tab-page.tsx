@@ -157,16 +157,27 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
     <div className='flex flex-col gap-6'>
       <ChartGrid charts={tabCharts(tab)} />
       {views.length > 1 && (
-        <div role='tablist' aria-label='Views' className='bg-muted text-muted-foreground inline-flex w-fit items-center rounded-lg p-[3px]'>
+        <div role='tablist' aria-label='Views' className='bg-muted text-muted-foreground inline-flex w-fit items-center rounded-lg p-[3px]'
+          onKeyDown={(e) => {
+            // Arrow keys move between the views, as a tab list does.
+            const i = views.indexOf(view), d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+            if (!d) return;
+            const v = views[(i + d + views.length) % views.length]!;
+            setView(v);
+            (e.currentTarget.querySelector(`[data-view='${v}']`) as HTMLElement | null)?.focus();
+          }}>
           {views.map((v) => (
-            <button key={v} type='button' role='tab' aria-selected={view === v} onClick={() => setView(v)}
+            <button key={v} type='button' role='tab' data-view={v} id={`view-tab-${v}`} aria-controls='view-panel' tabIndex={view === v ? 0 : -1}
+              aria-selected={view === v} onClick={() => setView(v)}
               className={`rounded-md px-3 py-1 text-sm ${view === v ? 'bg-background text-foreground shadow-sm' : ''}`}>{VIEW_LABELS[v]}</button>
           ))}
         </div>
       )}
+      <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}>
       {view === 'board' && tab.board_by ? <BoardView area={area} by={tab.board_by} detail={detail} />
         : view === 'timeline' ? <TimelineView area={area} by={tab.timeline_by ?? 'updated'} detail={detail} />
         : views.length ? <TableView area={area} detail={detail} /> : null}
+      </div>
     </div>
   );
 }
@@ -242,10 +253,11 @@ function RunsTab({ reports }: { reports: boolean }) {
 
 export function TabPage({ tab }: { tab: PackTabSpec }) {
   const { role, loaded } = useAccountRole();
-  const allowed = !loaded || role === null || tab.roles.includes(role);
+  // Nothing is asked of the server until the role is known (the server refuses what the role may not read anyway).
+  const allowed = role === null || tab.roles.includes(role);
   return (
     <PageContainer pageTitle={tab.label} pageDescription={tab.description ?? undefined}>
-      {!allowed ? <p className='text-muted-foreground text-sm'>Your role can't see this tab. Ask an account owner.</p>
+      {!loaded ? <LoadingCards count={1} /> : !allowed ? <p className='text-muted-foreground text-sm'>Your role can't see this tab. Ask an account owner.</p>
         : tab.kind === 'overview' ? <ChartGrid charts={tabCharts(tab)} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
         : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTab reports={tab.kind === 'reports'} />
