@@ -578,6 +578,24 @@
               "minLength": 1
             }
           }
+        },
+        "workflow_due": {
+          "$comment": "A step's due date anchored to a date of the record (mold_v1-302): step id -> { field: a date or datetime field of the area, days: whole days after it (before it when negative) }. Set when the instance is attached and again whenever that date changes; the step's own date (its template's, a rule's, an extension, an administrator's) stands until then. Checked by scripts/lib/record-workflows.mjs.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field"],
+            "properties": {
+              "field": {
+                "type": "string",
+                "minLength": 1
+              },
+              "days": {
+                "type": "integer"
+              }
+            }
+          }
         }
       }
     },

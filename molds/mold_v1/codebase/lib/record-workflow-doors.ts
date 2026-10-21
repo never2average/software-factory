@@ -184,13 +184,13 @@ export async function nextStepsDoor(
   const areas = opts.areas ?? RECORD_AREAS;
   if (!recordWorkflowBound(areaId, areas, opts.workflows)) return [];
   const v = areaView(areaId, areas);
-  const found: { ref: RecordRef; key: string | null; state: string | null }[] = [];
+  const found: { ref: RecordRef; key: string | null; state: string | null; row: AreaRow | null }[] = [];
   for (const ref of refs.slice(0, 100)) {
     const r = await boundRecord(tx, orgId, areaId, ref, false);
-    found.push({ ref, key: r?.key ?? null, state: r ? storedStateOf(v, r.row) : null });
+    found.push({ ref, key: r?.key ?? null, state: r ? storedStateOf(v, r.row) : null, row: r?.row ?? null });
   }
-  const keyed = found.filter((f): f is { ref: RecordRef; key: string; state: string | null } => f.key !== null);
-  const read = await recordWorkflowSummaries(tx, orgId, areaId, keyed.map((f) => ({ key: f.key, state: f.state })), opts);
+  const keyed = found.filter((f): f is { ref: RecordRef; key: string; state: string | null; row: AreaRow | null } => f.key !== null);
+  const read = await recordWorkflowSummaries(tx, orgId, areaId, keyed.map((f) => ({ key: f.key, state: f.state, row: f.row })), opts);
   const reader2: ViewReader = {
     privileged: privilegedRole(reader.role),
     nameOf: (id) => {

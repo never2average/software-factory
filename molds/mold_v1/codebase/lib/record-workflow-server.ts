@@ -34,6 +34,7 @@ import { callerEmail, guardTaskRequest, taskLifecycleInputsIn, type TaskLifecycl
 import { afterTaskWrite } from "@/lib/record-lifecycle-server";
 import {
   attachCreatedRecord,
+  followRecordWrite,
   lockRecordWorkflow,
   openRecordWorkflow,
   RECORD_SERVICE_TIMEOUT_MS,
@@ -143,6 +144,16 @@ export async function forwardWorkflowTask(request: NextRequest, ctx: OrgContext,
       return withWorkflowNote(done, `This ${noun} was changed, but its workflow step could not be updated just now; it follows on the next read of this ${noun}.`);
     }
     return afterTaskWrite(response, ctx.orgId, taskId, guarded.lifecycle);
+  }
+
+  // A write that moved nothing (an edit of the task's values): its stored instance follows the task as the service
+  // wrote it (its anchored due dates). If that fails, the next read of the task does it.
+  if (taskId && !moveId && opened.session?.stored && response.ok) {
+    try {
+      await withOrgRls(ctx.orgId, (tx) => followRecordWrite(tx, ctx.orgId, "tasks", { entityId: taskId, actor: me, readRecord: readTask(tx), deliver: (org, fn) => withOrgRls(org, fn as never) }));
+    } catch (error) {
+      console.error(`[record-workflow] could not bring the workflow of task ${taskId} in line with its edit:`, error);
+    }
   }
 
   if (create && response.ok) {

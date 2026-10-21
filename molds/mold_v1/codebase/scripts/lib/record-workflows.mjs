@@ -9,6 +9,8 @@
  *   records.areas.<area>.lifecycle.workflow_states           { "<record state>": { "<step id>": "<step state>" } }:
  *                                                            where a record already mid-lifecycle stands, for its
  *                                                            workflow instance to be created lazily
+ *   records.areas.<area>.lifecycle.workflow_due              { "<step id>": { "field": "<date field>", "days": n } }:
+ *                                                            the step's due date anchored to a date of the record
  *
  * This file is only the build's checks: nothing at runtime reads a workflow yet. workflowProblem() checks one document
  * (the engine's spec.json, then its semantic validator, then what this phase refuses); bindingProblem() checks a
@@ -32,6 +34,8 @@ const list = (xs) => xs.map(quote).join(", ");
 /** A workflow id: lowercase words of letters and digits joined by "-" or "_", starting with a letter. */
 export const WORKFLOW_ID = /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/;
 export const WORKFLOW_ID_MAX = 64;
+/** How far from the record's date a step's anchored due date may fall, in days (lifecycle.workflow_due). */
+export const DUE_DAYS_MAX = 3650;
 
 /**
  * What the app refuses, and why (docs/WORKFLOW_ENGINE.md). Email and agent actions run (phase 6): an email becomes the
@@ -123,7 +127,7 @@ export function workflowProblem(id, doc) {
 
 /**
  * The first problem with a compiled area's binding to a workflow (records.areas.<area>.lifecycle.workflow, its
- * transitions' `step`, its `workflow_states`), or null. Run after checkArea() (so the lifecycle's field is a pick_list
+ * transitions' `step`, its `workflow_states`, its `workflow_due`), or null. Run after checkArea() (so the lifecycle's field is a pick_list
  * and its states are checked); `workflows` is the merged records.workflows, each already checked by workflowProblem().
  */
 export function bindingProblem(area, workflows) {
@@ -165,6 +169,18 @@ export function bindingProblem(area, workflows) {
         const p = stepProblem({ id: `${at}.${stepId}`, state: `${at}.${stepId}` }, stepId, stepState);
         if (p) return p;
       }
+    }
+  }
+  if (lc.workflow_due !== undefined) {
+    if (id === undefined) return noWorkflow("lifecycle.workflow_due", "workflow_due");
+    for (const [stepId, anchor] of Object.entries(lc.workflow_due)) {
+      const at = `lifecycle.workflow_due.${stepId}`;
+      if (!steps.includes(stepId)) return bad(at, `${quote(stepId)} is not a step of the workflow ${quote(id)} (its steps: ${list(steps)})`);
+      const f = area.fields[anchor.field];
+      const dates = Object.values(area.fields).filter((x) => x.type === "date" || x.type === "datetime").map((x) => x.key);
+      if (!f) return bad(`${at}.field`, `${quote(anchor.field)} is not a field of this area${dates.length ? ` (its dates: ${list(dates)})` : " (it has no date field)"}`);
+      if (f.type !== "date" && f.type !== "datetime") return bad(`${at}.field`, `${quote(anchor.field)} is a ${f.type} field; a due date is anchored to a date or datetime field${dates.length ? ` (${list(dates)})` : ""}`);
+      if (anchor.days !== undefined && (!Number.isInteger(anchor.days) || Math.abs(anchor.days) > DUE_DAYS_MAX)) return bad(`${at}.days`, `must be a whole number of days between -${DUE_DAYS_MAX} and ${DUE_DAYS_MAX}`);
     }
   }
   return null;

@@ -1,0 +1,298 @@
+{
+  "$comment": "Holders from the record's own person fields (mold_v1-300) and a step's due date anchored to a record's date (mold_v1-302), for the workflow runtime's tests (scripts/test-record-workflow-runtime.mjs, scripts/test-record-workflow-runtime-db.mjs): laid over scripts/fixtures/record-workflows/review.json, never on its own. The deployments area gains three own fields (an assignee and a reviewer, both people, and a target date) and the tasks a reviewer (they have an assignee and a due date of their own); the review is due two days before a deployment's target date, a task's preparation on the task's own due date; the maker-checker document is replaced whole by one whose preparation is held by the record's assignee and whose review by its reviewer, each re-read whenever the step opens again. A test fixture; no deployment ships it.",
+  "records": {
+    "areas": {
+      "deployments": {
+        "fields": {
+          "assignee": {
+            "type": "person",
+            "label": "Preparer"
+          },
+          "reviewer": {
+            "type": "person",
+            "label": "Reviewer"
+          },
+          "target_date": {
+            "type": "date",
+            "label": "Target date"
+          }
+        },
+        "lifecycle": {
+          "workflow_due": {
+            "review": {
+              "field": "target_date",
+              "days": -2
+            }
+          }
+        }
+      },
+      "tasks": {
+        "fields": {
+          "reviewer": {
+            "type": "person",
+            "label": "Reviewer"
+          }
+        },
+        "lifecycle": {
+          "workflow_due": {
+            "prepare": {
+              "field": "dueAt"
+            }
+          }
+        }
+      }
+    },
+    "workflows": {
+      "maker-checker": {
+        "_notes": [
+          "The neutral maker-checker review with its holders read from the record's own person fields: the preparation is its assignee's, the review its reviewer's, each re-read whenever the step opens again."
+        ],
+        "init": {
+          "start_id": "prepare",
+          "transitions": {
+            "open": [
+              "completed",
+              "rejected",
+              "escalated"
+            ],
+            "completed": [
+              "open"
+            ],
+            "rejected": [
+              "open"
+            ],
+            "escalated": [
+              "completed",
+              "rejected",
+              "open"
+            ]
+          },
+          "terminal_when": {
+            "selector": {
+              "id": "review"
+            },
+            "all": {
+              "state": "completed"
+            }
+          },
+          "steps": [
+            {
+              "id": "prepare",
+              "title": "Prepare",
+              "comments_required": {
+                "default": true,
+                "evaluation_criterion": "What was done.",
+                "required_on": [
+                  "completed"
+                ]
+              },
+              "evidence_required": {
+                "default": true,
+                "evaluation_criterion": "The material that shows it.",
+                "required_on": [
+                  "completed"
+                ]
+              },
+              "assignee": {
+                "condition": {
+                  "$or": {
+                    "query": {
+                      "email": {
+                        "$object": "assignee"
+                      }
+                    }
+                  }
+                },
+                "reresolve_on": [
+                  "open"
+                ]
+              }
+            },
+            {
+              "id": "review",
+              "title": "Review",
+              "status": {
+                "default": false
+              },
+              "comments_required": {
+                "default": true,
+                "evaluation_criterion": "Why it is approved, or what is missing.",
+                "required_on": [
+                  "completed",
+                  "rejected"
+                ]
+              },
+              "assignee": {
+                "condition": {
+                  "$or": {
+                    "query": {
+                      "email": {
+                        "$object": "reviewer"
+                      }
+                    }
+                  }
+                },
+                "reresolve_on": [
+                  "open"
+                ]
+              }
+            }
+          ]
+        },
+        "diff": [
+          {
+            "priority": 0,
+            "applicability": "all",
+            "selector": {
+              "rule": "forAll"
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "completed"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "self",
+                "set": {
+                  "completed_at": {
+                    "value": {
+                      "$delta": {}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 0.5,
+            "applicability": "all",
+            "selector": {
+              "rule": "forAll"
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "completed",
+                  "after": ""
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "self",
+                "set": {
+                  "completed_at": {
+                    "value": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 1,
+            "applicability": "all",
+            "selector": {
+              "rule": "single",
+              "group_selector": {
+                "id": "prepare"
+              }
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "completed"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "other",
+                "other_selector": {
+                  "id": "review"
+                },
+                "set": {
+                  "status": {
+                    "value": true
+                  },
+                  "state": {
+                    "value": "open"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 2,
+            "applicability": "all",
+            "selector": {
+              "rule": "single",
+              "group_selector": {
+                "id": "review"
+              }
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "rejected"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "other",
+                "other_selector": {
+                  "id": "prepare"
+                },
+                "set": {
+                  "status": {
+                    "value": true
+                  },
+                  "state": {
+                    "value": "open"
+                  },
+                  "completed_at": {
+                    "value": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "priority": 3,
+            "applicability": "all",
+            "selector": {
+              "rule": "single",
+              "group_selector": {
+                "id": "review"
+              }
+            },
+            "condition": {
+              "step$state": {
+                "$delta": {
+                  "before": "",
+                  "after": "rejected"
+                }
+              }
+            },
+            "action": {
+              "internal": {
+                "scope": "self",
+                "set": {
+                  "status": {
+                    "value": false
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

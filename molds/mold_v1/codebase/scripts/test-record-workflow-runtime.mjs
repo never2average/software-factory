@@ -24,6 +24,11 @@
  *      is refused.
  *   7. LEGACY SPELLINGS AND RENAMED KEYS: a record stored under an earlier key and a legacy spelling attaches at the
  *      state it stands for and its move drives the step; the write names only the new key.
+ *   9. PERSON FIELDS (scripts/fixtures/record-workflows/people.json): a holder read from the record's person field
+ *      whatever case it is spelled in (mold_v1-300).
+ *  10. ANCHORED DUE DATES (lifecycle.workflow_due): a step due on a date of the record, following it when it changes,
+ *      the step's own date standing in between (mold_v1-302).
+ *  11. HOLDERS FOLLOW THE RECORD: an open step's holder moves with the person field it is read from (mold_v1-303).
  *
  * Usage: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-runtime.mjs
  */
@@ -476,6 +481,42 @@ await check("a reserved move is settled by the record's actual state: reached �
   assert.equal(await runtime.settleRecordMove({ binding, dsl: DSL, instance: seed("drafting"), directory, rbac, state: "drafting", now: T0 }), "none");
 });
 
+await check("a reserved move that names no step (a done toggle) settles by bringing the steps to the target's workflow_states", async () => {
+  const toggled = seed("drafting");
+  runtime.setRecordMove(toggled, { id: "m-2", from: "drafting", to: "approved", step: null, actor: OWNER, comment: null, evidence: null, administrative: null, at: T0.toISOString() });
+  assert.equal(await runtime.settleRecordMove({ binding, dsl: DSL, instance: toggled, directory, rbac, state: "approved", now: T0 }), "applied");
+  assert.deepEqual(toggled.steps.map((s) => [s.id, s.state, s.status]), [["prepare", "completed", true], ["review", "completed", true]]);
+  assert.equal(toggled.terminal, true);
+  assert.equal(runtime.recordStateOf(toggled), "approved");
+  const rows = toggled.history.filter((e) => e.type === "step_patched" && e.source === "provisioning");
+  assert.deepEqual(rows.map((e) => [e.step_id, e.actor, e.data.by_move]), [["prepare", OWNER, true], ["review", OWNER, true]]);
+  assert.match(rows[0].detail, /re-synced: the record moved from "drafting" to "approved" by a move that names no step/);
+  assert.ok(!toggled.history.some((e) => e.type === "state_changed"), "never a decision in the approval log");
+  // The next move is checked from there: sending it back is the review's own transition, from "completed".
+  assert.deepEqual(rules(gateFor(toggled, CHECKER, { comment: "no" }).stepBroken(transition(V, "Send back"))), ["step_transition"]);
+});
+
+await check("under strict, a move that names no step never decides a step: it only reopens what its target lists as open", () => {
+  const inst = seed("drafting", strictBinding);
+  assert.equal(runtime.resyncInstance({ binding: strictBinding, dsl: DSL, instance: inst, state: "approved", actor: OWNER, now: T0, byMove: true }), true);
+  assert.deepEqual(inst.steps.map((s) => s.state), ["open", "open"], "nothing completed with nobody's approval");
+  assert.equal(inst.terminal, false);
+  const back = seed("approved", strictBinding);
+  runtime.resyncInstance({ binding: strictBinding, dsl: DSL, instance: back, state: "drafting", actor: OWNER, now: T0, byMove: true });
+  assert.equal(back.steps.find((s) => s.id === "prepare").state, "open", "reopening is not a decision");
+  // A re-sync for a move made WITHOUT the engine (a rollover) still follows the record whole.
+  const system = seed("drafting", strictBinding);
+  runtime.resyncInstance({ binding: strictBinding, dsl: DSL, instance: system, state: "approved", actor: "system", now: T0 });
+  assert.deepEqual(system.steps.map((s) => s.state), ["completed", "completed"]);
+});
+
+await check("…and back: a move that names no step to an earlier state reopens what that state lists", () => {
+  const inst = seed("in_review");
+  assert.equal(runtime.resyncInstance({ binding, dsl: DSL, instance: inst, state: "drafting", actor: OWNER, now: T0, byMove: true }), true);
+  assert.equal(inst.steps.find((s) => s.id === "prepare").state, "open");
+  assert.equal(inst.steps.find((s) => s.id === "prepare").completed_at, undefined);
+});
+
 await check("the workflow's key is the record's own: a task's and a period's id, an implementation's id, a deployment's account and id", () => {
   assert.equal(moves.workflowRecordKey("tasks", { id: "t-1", entityId: "other" }), "t-1");
   assert.equal(moves.workflowRecordKey("periods", { id: "p-1" }), "p-1");
@@ -483,6 +524,171 @@ await check("the workflow's key is the record's own: a task's and a period's id,
   assert.equal(moves.workflowRecordKey("deployments", { customerId: "a/b", deploymentId: "D 1" }), "a%2Fb/D%201");
   assert.notEqual(moves.workflowRecordKey("deployments", { customerId: "a", deploymentId: "b/c" }), moves.workflowRecordKey("deployments", { customerId: "a/b", deploymentId: "c" }));
   assert.equal(moves.workflowRecordKey("tasks", null), null);
+});
+
+// ── 9. holders from the record's own person fields ──────────────────────────────────────────────────────────────
+
+section("9. Holders read from the record's person fields (scripts/fixtures/record-workflows/people.json)");
+
+const PEOPLE = JSON.parse(readFileSync(join(ROOT, "scripts/fixtures/record-workflows/people.json"), "utf8"));
+const PDSL = PEOPLE.records.workflows["maker-checker"];
+const PWORKFLOWS = { "maker-checker": PDSL };
+const PAREAS = compiled([["50-review.json", PROFILE], ["52-people.json", PEOPLE]]);
+const pbinding = runtime.workflowBindingOf("deployments", PAREAS, PWORKFLOWS);
+const PV = areaView("deployments", PAREAS);
+const prow = (state, custom = {}) => ({ deploymentId: "rec-1", customerId: "acct-1", custom: { review_state: state, ...custom } });
+const pseed = (state, custom) => runtime.seedInstance({ binding: pbinding, orgId: ORG, entity: { type: "deployments", id: "rec-1" }, state, data: runtime.recordData(PV, prow(state, custom)), directory, actor: OWNER, now: T0 });
+const holderOf = (inst, id) => inst.steps.find((s) => s.id === id).assignee;
+/** The instance as read with the record's values `custom` (lib/record-workflow-store.ts withRecordData). */
+const withData = (inst, custom, state = runtime.recordStateOf(inst)) => {
+  const data = runtime.recordData(PV, prow(state, custom));
+  return Object.assign(inst, { object: { ...inst.object, data }, task: data });
+};
+
+await check("a person field is read as the directory keys a person: trimmed, lower case (the record is not rewritten)", () => {
+  const before = prow("drafting", { assignee: "  B-Maker@X.Test ", reviewer: "C-CHECKER@x.test", note: "Kept As Written" });
+  const data = runtime.recordData(PV, before);
+  assert.equal(data.assignee, MAKER);
+  assert.equal(data.reviewer, CHECKER);
+  assert.equal(data.note, undefined, "not a field of the area");
+  assert.equal(before.custom.assignee, "  B-Maker@X.Test ", "the row itself is untouched");
+});
+
+await check("a mixed-case email on the record still resolves the step's holder (seeded at the start and mid-lifecycle)", () => {
+  assert.deepEqual(holderOf(pseed("drafting", { assignee: "B-Maker@X.Test" }), "prepare"), [MAKER]);
+  const mid = pseed("in_review", { assignee: "b-maker@x.test", reviewer: "C-Checker@X.TEST" });
+  assert.deepEqual(holderOf(mid, "review"), [CHECKER]);
+  // So the reviewer named in mixed case may approve, and someone else may not.
+  const approve = transition(PV, "Approve");
+  const gate = (who) => runtime.stepGate({ dsl: PDSL, instance: mid, directory, rbac, actor: who, comment: "ok" });
+  assert.deepEqual(rules(gate(CHECKER).stepBroken(approve)), []);
+  assert.deepEqual(rules(gate(OTHER).stepBroken(approve)), ["not_holder"]);
+});
+
+await check("…and a step that opens later re-reads it in the same way (the review, when the preparation completes)", async () => {
+  const inst = pseed("drafting", { assignee: "B-MAKER@x.test", reviewer: "c-checker@X.test" });
+  await runtime.applyStepMove({ dsl: PDSL, instance: inst, directory, rbac, step: { id: "prepare", state: "completed" }, actor: MAKER, comment: "done", evidence: "doc://1", now: T0 });
+  assert.equal(inst.steps[1].state, "open");
+  assert.deepEqual(holderOf(inst, "review"), [CHECKER]);
+});
+
+// ── 10. a step's due date anchored to a date of the record ──────────────────────────────────────────────────────────
+
+section("10. A step's due date anchored to a date of the record (lifecycle.workflow_due)");
+
+await check("the binding carries each anchor with its field's kind; the template's own date gives way at the start", () => {
+  assert.deepEqual(pbinding.due, { review: { field: "target_date", days: -2, day: true } });
+  const inst = pseed("drafting", { target_date: "2026-06-20" });
+  assert.equal(inst.steps.find((s) => s.id === "review").due_on, "2026-06-18T23:59:59.999Z", "two days before the target date, at the end of that day");
+  assert.deepEqual(inst.history.map((e) => e.type), ["instance_created"], "seeding writes no row for it");
+  // No such date on the record: the step's own date stands (here none).
+  assert.equal(pseed("drafting", {}).steps.find((s) => s.id === "review").due_on, undefined);
+});
+
+await check("anchoredDueOn: a date field's day ends at 23:59:59.999 UTC; a datetime is taken as it is; days before and after", () => {
+  assert.equal(runtime.anchoredDueOn({ field: "d", days: 0, day: true }, { d: "2026-06-20" }), "2026-06-20T23:59:59.999Z");
+  assert.equal(runtime.anchoredDueOn({ field: "d", days: 3, day: true }, { d: "2026-06-20T00:00:00.000Z" }), "2026-06-23T23:59:59.999Z");
+  assert.equal(runtime.anchoredDueOn({ field: "d", days: -1, day: false }, { d: "2026-06-20T10:30:00.000Z" }), "2026-06-19T10:30:00.000Z");
+  for (const d of [undefined, null, "", "soon", 42]) assert.equal(runtime.anchoredDueOn({ field: "d", days: 0, day: true }, { d }), null, String(d));
+});
+
+await check("the record's date changes: the open step's due date follows, as a provisioning row; unchanged, nothing happens", () => {
+  const inst = pseed("in_review", { target_date: "2026-06-20" });
+  const later = withData(inst, { target_date: "2026-07-01" });
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: later, directory, rbac, actor: OWNER, now: T0 }), true);
+  const review = later.steps.find((s) => s.id === "review");
+  assert.equal(review.due_on, "2026-06-29T23:59:59.999Z");
+  const row = later.history.at(-1);
+  assert.deepEqual([row.type, row.step_id, row.source, row.actor], ["step_patched", "review", "provisioning", OWNER]);
+  assert.deepEqual(row.data, { due_on: { before: "2026-06-18T23:59:59.999Z", after: "2026-06-29T23:59:59.999Z" }, anchored_to: "target_date" });
+  assert.match(row.detail, /due date follows the record's "target_date" \(-2 days\)/);
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: later, directory, rbac, actor: OWNER, now: T0 }), false, "nothing to do the second time");
+});
+
+await check("between changes of the record's date, the step's own date stands (an extension, a correction, a rule's date)", () => {
+  const inst = pseed("in_review", { target_date: "2026-06-20" });
+  const review = inst.steps.find((s) => s.id === "review");
+  review.due_on = "2026-06-25T12:00:00.000Z"; // an administrator's correction
+  const same = withData(inst, { target_date: "2026-06-20" });
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: same, directory, rbac, actor: OWNER, now: T0 }), false);
+  assert.equal(review.due_on, "2026-06-25T12:00:00.000Z");
+});
+
+await check("a finished step keeps its date; the record's new date is remembered (no row for it)", () => {
+  const inst = pseed("approved", { target_date: "2026-06-20" });
+  const review = inst.steps.find((s) => s.id === "review");
+  const before = review.due_on;
+  const moved = withData(inst, { target_date: "2026-08-01" });
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: moved, directory, rbac, actor: OWNER, now: T0 }), true, "remembered (the caller saves it)");
+  assert.equal(review.due_on, before);
+  assert.ok(!moved.history.some((e) => e.data?.anchored_to), "no row for a finished step");
+});
+
+await check("a date cleared and set again (even to the same day) is a change: the step follows it again", () => {
+  const inst = pseed("in_review", { target_date: "2026-06-20" });
+  const review = inst.steps.find((s) => s.id === "review");
+  review.due_on = "2026-06-30T00:00:00.000Z"; // a correction while the date stands
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: withData(inst, {}), directory, rbac, actor: OWNER, now: T0 }), true, "the clearing is remembered");
+  assert.equal(review.due_on, "2026-06-30T00:00:00.000Z", "a cleared date leaves the step's date");
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: withData(inst, { target_date: "2026-06-20" }), directory, rbac, actor: OWNER, now: T0 }), true);
+  assert.equal(review.due_on, "2026-06-18T23:59:59.999Z");
+});
+
+// ── 11. an open step's holder follows the person field it is read from ────────────────────────────────────────────
+
+section("11. An open step's holder follows the record's person field (no reassignment needed)");
+
+await check("the reviewer is changed on the record: the open review passes to the new reviewer, as a row naming the field", () => {
+  const inst = withData(pseed("in_review", { assignee: MAKER, reviewer: CHECKER }), { assignee: MAKER, reviewer: "F-Other@X.test" });
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: inst, directory, rbac, actor: MAKER, now: T0 }), true);
+  assert.deepEqual(holderOf(inst, "review"), [OTHER]);
+  assert.deepEqual(holderOf(inst, "prepare"), [MAKER], "a finished step keeps who held it");
+  const row = inst.history.at(-1);
+  assert.deepEqual([row.type, row.step_id, row.source, row.actor], ["assignee_reresolved", "review", "provisioning", MAKER]);
+  assert.deepEqual(row.data, { before: [CHECKER], after: [OTHER], reason: "record_field", fields: ["reviewer"] });
+  assert.match(row.detail, /^the record's "reviewer" changed: \["c-checker@x\.test"\] → \["f-other@x\.test"\]$/);
+  // The step rules follow: the new reviewer may approve, the old one may not.
+  const approve = transition(PV, "Approve");
+  const gate = (who) => runtime.stepGate({ dsl: PDSL, instance: inst, directory, rbac, actor: who, comment: "ok" });
+  assert.deepEqual(rules(gate(OTHER).stepBroken(approve)), []);
+  assert.deepEqual(rules(gate(CHECKER).stepBroken(approve)), ["not_holder"]);
+  assert.equal(runtime.followRecord({ binding: pbinding, dsl: PDSL, instance: inst, directory, rbac, actor: MAKER, now: T0 }), false, "nothing more to do");
+});
+
+await check("what does not move: a holder a person placed, a field cleared, a step not open yet, a rule that reads no field", () => {
+  const pinned = pseed("in_review", { assignee: MAKER, reviewer: CHECKER });
+  pinned.steps.find((s) => s.id === "review").assignee_pinned = true;
+  withData(pinned, { assignee: MAKER, reviewer: OTHER });
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: pinned, directory, actor: OWNER, now: T0 }), false);
+  assert.deepEqual(holderOf(pinned, "review"), [CHECKER], "an administrator's reassignment stands");
+  const cleared = withData(pseed("in_review", { assignee: MAKER, reviewer: CHECKER }), { assignee: MAKER });
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: cleared, directory, actor: OWNER, now: T0 }), false);
+  assert.deepEqual(holderOf(cleared, "review"), [CHECKER], "nobody named now: the holder stays");
+  const dormant = withData(pseed("drafting", { assignee: MAKER, reviewer: CHECKER }), { assignee: MAKER, reviewer: OTHER });
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: dormant, directory, actor: OWNER, now: T0 }), false, "the review re-reads its field when it opens");
+  const maker = withData(pseed("in_review", { assignee: MAKER, reviewer: CHECKER }), { assignee: MAKER, reviewer: MAKER });
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: maker, directory, actor: MAKER, now: T0 }), false);
+  assert.deepEqual(holderOf(maker, "review"), [CHECKER], "the preparer named as reviewer does not take the review");
+  const ruled = withData(pseed("in_review", { assignee: MAKER, reviewer: CHECKER }), { assignee: MAKER, reviewer: CHECKER });
+  ruled.steps.find((s) => s.id === "review").assignee = [LEAD];
+  ruled.history.push({ at: T0.toISOString(), type: "internal_set", step_id: "review", detail: `assignee ← ["${LEAD}"] (rule p7)`, actor: "system", source: "rule" });
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: ruled, directory, actor: OWNER, now: T0 }), false, "a holder the workflow's own rule chose stands");
+  const escalated = withData(pseed("in_review", { assignee: MAKER, reviewer: CHECKER }), { assignee: MAKER, reviewer: OTHER });
+  escalated.steps.find((s) => s.id === "review").state = "escalated";
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: escalated, directory, actor: OWNER, now: T0 }), false, "an escalated step is not moved");
+  const byDuty = seed("in_review");
+  byDuty.steps.find((s) => s.id === "review").assignee = [OTHER];
+  assert.equal(runtime.followHolders({ dsl: DSL, instance: byDuty, directory, actor: OWNER, now: T0 }), false, "a rule on the people's duty does not hang on the record");
+});
+
+await check("an open step whose holder is still one its rule picks stays with them; one with nobody takes whom the field names", () => {
+  const same = withData(pseed("in_review", { assignee: MAKER, reviewer: CHECKER }), { assignee: MAKER, reviewer: "C-Checker@x.test" });
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: same, directory, actor: OWNER, now: T0 }), false);
+  const none = pseed("in_review", { assignee: MAKER });
+  assert.deepEqual(holderOf(none, "review"), []);
+  withData(none, { assignee: MAKER, reviewer: CHECKER });
+  assert.equal(runtime.followHolders({ dsl: PDSL, instance: none, directory, actor: OWNER, now: T0 }), true);
+  assert.deepEqual(holderOf(none, "review"), [CHECKER]);
 });
 
 console.log(`\ntest-record-workflow-runtime: ${passed} checks passed${process.exitCode ? ", SOME FAILED" : ""}`);
