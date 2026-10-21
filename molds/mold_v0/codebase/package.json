@@ -20,6 +20,7 @@
     "test:workspace-store": "tsx scripts/workspace-store-test.ts",
     "test:credentials": "tsx scripts/credentials-test.ts",
     "test:onboarding": "tsx scripts/onboarding-test.ts",
+    "test:schedules": "tsx scripts/schedules-test.ts",
     "org:delete": "tsx scripts/delete-org.ts",
     "org:create": "tsx --env-file-if-exists=.env scripts/create-org.ts",
     "admin:token": "tsx --env-file-if-exists=.env scripts/admin-token.ts",

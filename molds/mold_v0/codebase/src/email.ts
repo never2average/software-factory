@@ -6,6 +6,8 @@
  *                       given), approved (a short welcome beside Clerk's invitation)
  *   library submissions received (operator alert), accepted (credit and when it applies), declined (with the reason)
  *   budget              an account's spend crossing 80% and 100% of its monthly allowance (to owners and billing managers)
+ *   due soon            a workspace's records due within their area's window (mold_v0-035, src/schedules.ts dueCheck): one
+ *                       list a day to the workspace's own people with the area's notify roles (owners by default)
  *   test                the "Send test email" button on /admin/emails
  *
  * Rules:
@@ -31,7 +33,7 @@ import { PROFILE } from "./profile.js";
 
 export const EMAIL_PROVIDER = "resend";
 export const EMAIL_KINDS = ["request_received", "request_alert", "request_declined", "request_approved", "submission_alert", "submission_accepted",
-  "submission_declined", "budget_80", "budget_100", "test"] as const;
+  "submission_declined", "budget_80", "budget_100", "due_soon", "test"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
 export interface Email {
@@ -349,6 +351,42 @@ export async function checkBudget(orgId: number, now = new Date()): Promise<{ th
 }
 /** checkBudget without waiting (after a session finishes). */
 export const checkBudgetLater = (orgId: number) => { const p = checkBudget(orgId); telemetry.keepAlive(p); return p; };
+
+// ---------- due dates (mold_v0-035: src/schedules.ts dueCheck, once a day) ----------
+
+export interface DueItem { key: string; title: string | null; due_on: string }
+
+/**
+ * One workspace's records of one area due within its window: one email a day to each of the workspace's own people with
+ * one of `roles` (its Clerk organization's members, suspended people left out: accountRecipients). The idempotency key
+ * names the workspace, area, the notices listed (`batch`, their ids) and the recipient, so the same list never goes to
+ * the same person twice, and a list with other notices is another email. Never throws. `delivered` counts recipients
+ * whose email went out (now or before).
+ */
+export async function dueSoon(orgId: number, d: { area: string; label: string; within_days: number; roles: AccountRole[]; day: string; items: DueItem[]; batch: string[] }):
+  Promise<{ recipients: number; delivered: number }> {
+  try {
+    if (!d.items.length) return { recipients: 0, delivered: 0 };
+    const [o] = await asPlatform(async () => (await getDb()).query<{ name: string; slug: string }>("SELECT name, slug FROM organizations WHERE id = $1", [orgId]));
+    if (!o) return { recipients: 0, delivered: 0 };
+    const to = await asPlatform(() => accountRecipients(orgId, d.roles));
+    if (!to.length) { console.error(`email due_soon: ${o.slug} has no ${d.roles.join("/")} with an email`); return { recipients: 0, delivered: 0 }; }
+    const n = d.items.length, shown = d.items.slice(0, 50);
+    const list = shown.map((x) => `- ${(x.title ?? x.key).replace(/[\r\n]+/g, " ").slice(0, 200)} (${x.key}): due ${x.due_on}`).join("\n");
+    const results = await Promise.all(to.map((t) => send({ kind: "due_soon", to: t, idempotencyKey: keyFor(`due:${orgId}:${d.area}:${createHash("sha256").update(d.batch.join(",")).digest("hex").slice(0, 16)}`, t),
+      meta: { account: o.slug, area: d.area, day: d.day, items: n },
+      subject: `${n} ${d.label.toLowerCase()} due within ${d.within_days} day${d.within_days === 1 ? "" : "s"} in ${o.name}`.slice(0, 200),
+      text: lines("Hi,",
+        `${n === 1 ? "This is" : "These are"} due in ${o.name} within the next ${d.within_days} day${d.within_days === 1 ? "" : "s"}:`,
+        list + (n > shown.length ? `\n…and ${n - shown.length} more` : ""),
+        `See them on ${siteUrl()}/app/notices. You're getting this because of your role in ${o.name} (${d.roles.join(", ")}).`,
+        SIGN) })));
+    return { recipients: to.length, delivered: results.filter((r) => r.status === "sent" || r.status === "duplicate").length };
+  } catch (e) {
+    console.error(`email due_soon for ${orgId} failed:`, (e as Error).message);
+    return { recipients: 0, delivered: 0 };
+  }
+}
 
 // ---------- /admin/emails ----------
 
