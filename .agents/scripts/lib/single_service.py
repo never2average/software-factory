@@ -990,8 +990,14 @@ def lane_key(app_id, app, infra, a, P, runner=None, say=print, root=None, adir=N
         if r.returncode: r = subprocess.run(cmd + lk["again"], cwd=codebase(app["mold_id"], root), env=env, capture_output=True, text=True, timeout=180)
         out = r.stdout or ""
     m = re.search(lk["url_pattern"], out)
+    if not m and lk.get("key_pattern") and lk.get("base_pattern"):
+        # after the product's keys-out-of-URLs hardening the script prints the address and the key apart; the private
+        # file keeps the legacy combined form, which the product's mcp:check reads and sends as a header, never in a URL
+        k, b = re.search(lk["key_pattern"], out), re.search(lk["base_pattern"], out)
+        if k and b:
+            AR.forbid(k.group(1)); m = re.match(r"(.+)", b.group(1).rstrip("/") + "/" + k.group(1))
     if r.returncode or not m:
-        raise Stop(f"{app_id}: the organisation's connector address was not made (exit {r.returncode}): " + VR.redact(re.sub(lk["url_pattern"], "<address>", (r.stderr or out)))[-300:])
+        raise Stop(f"{app_id}: the organisation's connector address was not made (exit {r.returncode}): " + VR.redact(re.sub(r"oct_[A-Za-z0-9_-]+", "<key>", re.sub(lk["url_pattern"], "<address>", (r.stderr or out))))[-300:])
     AR.forbid(m.group(0))
     write_private(lane_key_path(app_id), m.group(0) + "\n")
     if t == "compose_remote" and adir:      # names only: which organisation, and when (the address stays in the private file)
