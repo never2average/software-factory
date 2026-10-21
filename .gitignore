@@ -47,3 +47,7 @@ reports/usage/
 
 # Claude Code per-machine settings (permission rules for this operator)
 .claude/settings.local.json
+
+# mold_v0 is authored here (in-tree since mold_v0-040): its own build/ sources and env template are code, not output
+!molds/mold_v0/codebase/vault/build/
+!molds/mold_v0/codebase/.env.example
