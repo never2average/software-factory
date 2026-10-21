@@ -82,7 +82,9 @@
       "factory-lane-check",
       "factory-lanes"
     ],
-    "url_pattern": "https?://\\S+/mcp/[A-Za-z0-9_-]+"
+    "url_pattern": "https?://\\S+/mcp/[A-Za-z0-9_-]+",
+    "key_pattern": "API key \\(shown once\\): (oct_[A-Za-z0-9_-]+)",
+    "base_pattern": "Connector URL: (https?://\\S+/mcp)\\b"
   },
   "packs": {
     "$comment": "Where an app's packs go and what proves the mold takes them (.claude/scripts/packs.py; mold_v0-024; MOLD.md \"Pack and record-area contract\"). A factory pack packs/<id>/files/ mirrors the codebase root and may add files ONLY under packs/<its own id>/ ({pack} is substituted with the pack's id, so it cannot write into another pack or the shell): its pack.json, its definePack entry, its migrations, its run programs. Its console pages need no files of their own: they render through the shell's generic page (web/src/app/{app,admin}/packs/[pack]/[page]) from pack.json. A file that already exists in the codebase is refused (a pack only adds). The id pattern is the shell's own (scripts/gen-packs.mjs: it is also the pack's table prefix). After copying, the shell's generator writes the registry the server and the console import; gen-packs refuses a pack whose code or SQL gets past the seam. `prune`: a pack folder an earlier apply left in the build copy for a pack the app no longer names is removed, so the registry never lists it.",
