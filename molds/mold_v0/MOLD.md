@@ -56,8 +56,8 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
   `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
   pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
-  data route. **schedules** and profile **words** are declared and validated and listed by `packRegistry()`; the
-  scheduler (035) wires them. **credentials** (034) and **onboarding** (011) are wired (below).
+  data route. Profile **words** are declared and validated and listed by `packRegistry()`. **credentials** (034),
+  **onboarding** (011) and **schedules** (035) are wired (below).
 - **recordAreas** (mold_v0-047, built): a pack declares areas in `definePack` and writes no record code. Their rows
   live in two shell tables (`sql/migrations/0004_record_areas.sql`): `platform_records` (platform scope: the tenant
   role may only `SELECT` it, so customers cannot write it whatever the code does; staff write it at
@@ -170,6 +170,33 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
   shell yet, and the product's own setup steps (`src/app.ts`) stay as they are until mold_v0-039 moves them into the
   `octillion` pack.
+- **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
+  (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
+  minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
+  record, `targets.asset` {area, key}, so credentials bound to that asset reach it), an `environment`, a run `scope`,
+  and `enabled`). Every workspace gets its own copy (`workspace_schedules`, `sql/migrations/0008_schedules.sql`;
+  tenant work may only read its own rows); a copy no owner changed follows the pack's later changes. A workspace's
+  owners ("manage") turn schedules off and on, change their time and assets, and add their own for any job kind of the
+  build in the console (`/app/schedules`, `src/schedule-routes.ts` at `/api/schedules`, mounted only when a job kind
+  exists; the workspace is the session's, an asset key must be one of its own records, a default is turned off, never
+  removed). The tick (`src/schedules.ts` `tickSchedules(now)`) takes every enabled row whose `next_at` has come: of the
+  due times missed since the last tick only the latest runs, once (the others are counted in `last_skipped`), and the
+  row's next due time is the first match after now. The row is moved on by a compare-and-set on its `seq`, so two ticks
+  at once (the Vercel cron, servers' loops, replicas) start its runs once; a target whose previous run from the
+  schedule is still queued or running is not started again. Runs start through the run engine (`startRun`, requested by
+  `schedule:<id>`, under its per-workspace cap); the run engine is unchanged. The tick runs from the product's existing
+  cron entry on Vercel (`/api/cron/autoscale`, `CRON_SECRET` only, every 5 minutes) and from a one-minute loop on a
+  server (`startScheduler`, `OCTILLION_SCHEDULER=off` turns it off). **Due dates:** a check area of workspace scope may
+  declare `due` (one of its date fields, `within_days`, default 7, and the `notify` roles, owners by default). Once a UTC
+  day (`scheduler_marks`) `dueCheck(now)` posts one in-app notice per record and due date within the window
+  (`workspace_notices`; `/app/notices`, `/api/notices`, mounted only when such an area exists; "edit" dismisses), and
+  emails the workspace's own people with those roles (its Clerk organization's members, suspended people left out) one
+  list of the notices not yet emailed (`due_soon` in `email_log`, keyed by workspace, area, day and recipient; a notice
+  is emailed until the email reached every recipient). `npm run test:schedules` proves it with a clock the test
+  controls: five missed hours run once, three ticks at once start each run once, two workspaces never see or start each
+  other's schedules, and due-date emails go only to each workspace's owners. **Not covered:** time zones (UTC only); an
+  account's spend limits for unattended runs (they are the run engine's and the limits tickets', 053/008/018); a
+  schedule fires at the cron's resolution of the tick (every 5 minutes on Vercel).
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
@@ -187,7 +214,7 @@ a pack. Each pack exports one `definePack({...})`:
 | `jobKinds` | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
 | `recordAreas` | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), fields, list columns and links to other areas | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047) |
 | `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
-| `schedules` | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
+| `schedules` | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
 | `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
