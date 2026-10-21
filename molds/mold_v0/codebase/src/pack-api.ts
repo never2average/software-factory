@@ -32,6 +32,12 @@
  *                (src/schedules.ts) starts due runs through the run engine; a missed tick runs at most once
  *   recordAreas  `due` (mold_v0-035): a workspace check area may name a date field; a daily check posts an in-app
  *                notice and emails the workspace's owners about records due within `within_days`
+ *   agentJobKinds, metrics   declared and validated (mold_v0-057); wired by the agent-workspace runner (061) and the
+ *                metrics and charts (063)
+ *
+ * Declarative packs (mold_v0-057): everything above but tools and routes can be written in pack.json instead
+ * (src/pack-manifest.ts, the schema at packs/pack.schema.json), with no entry at all. gen-packs compiles it into this
+ * same definition; a code entry, when there is one, extends it (src/packs.ts mergePack).
  *
  * A pack never imports another shell module (the build refuses it: scripts/gen-packs.mjs), so everything it may use
  * is here: the definition helpers, zod, and the context each handler receives (its workspace and a database handle
@@ -69,19 +75,30 @@ export interface RecordRow {
   /** A platform area's version label (the source it was indexed from); null for workspace areas. */
   version: string | null;
   updated_at: string;
+  /**
+   * Where the stored row no longer fits its area's declaration (mold_v0-057: a field removed, an option dropped, a type
+   * changed after the row was written): each such field, named. Present only when there is one; a field no longer
+   * declared is left out of `data`, the rest is shown as stored, and the next write must fit the declaration.
+   */
+  drift?: string[];
 }
 export interface RecordPage { records: RecordRow[]; next: string | null }
 export interface RecordInput { title?: string | null; data: Record<string, unknown>; version?: string | null }
 
 /**
  * Records as one workspace sees them: every platform area (read only) and the workspace's own rows of every
- * workspace area. `put` and `delete` reach only this pack's own workspace areas, in this workspace; an asset area's
- * title and data are sealed with the workspace's data key at rest.
+ * workspace area. `put`, `move` and `delete` reach only this pack's own workspace areas, in this workspace; an asset
+ * area's title and data are sealed with the workspace's data key at rest. Every call is checked against the area's
+ * declaration for the person the call is made for (mold_v0-057): its permissions for their role, each field's type,
+ * required fields, references (to records this workspace sees) and the lifecycle (a put never changes the state; a
+ * move goes only along a declared transition).
  */
 export interface WorkspaceRecords {
   list(area: string, opts?: { limit?: number; after?: string }): Promise<RecordPage>;
   get(area: string, key: string): Promise<RecordRow | null>;
   put(area: string, key: string, value: RecordInput): Promise<RecordRow>;
+  /** Move a record of an area with a lifecycle to state `to` (mold_v0-057). Refused (409) off the declared transitions. */
+  move(area: string, key: string, to: string): Promise<RecordRow>;
   delete(area: string, key: string): Promise<boolean>;
 }
 /** Records as platform staff see them: platform areas only; `put` and `delete` reach this pack's own platform areas. */
@@ -200,12 +217,103 @@ const packFile = z.string().regex(/^[a-z0-9_\-][a-z0-9_\-/.]*\.m?js$/i, "a .js o
  *              needs more of node than server code may import: scripts/gen-packs.mjs holds runner code to its own rules
  *   egress     the hosts the run may reach besides the gateway, through the run's egress proxy
  */
-export const JobKindSchema = z.object({
+// ---------- record fields, lifecycles and permissions (mold_v0-047, typed by mold_v0-057) ----------
+
+/** The account roles (src/account-roles.ts), in order: what a declaration may name in permissions and transitions. */
+export const DECLARABLE_ROLES = ["viewer", "member", "billing", "owner"] as const;
+/** The roles the platform lets change anything (account permission "edit"): a write permission may name only these. */
+export const WRITE_ROLES = ["member", "billing", "owner"] as const;
+const role = z.enum(DECLARABLE_ROLES);
+/**
+ * A choice of an enum field (and so a lifecycle state): the stored value and what a person reads. Values are plain
+ * words (letters, digits, space and . _ : / - ( ) &), never markup or quotes: they reach screens, MCP answers and queries
+ * only as data, and this keeps them that way wherever they are shown.
+ */
+const choiceValue = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$/, "a choice value: 1-80 letters, digits, spaces and _ . : / ( ) & -, starting with a letter or digit");
+const choice = z.union([choiceValue, z.object({ value: choiceValue, label: z.string().min(1).max(80).optional() }).strict()]);
+export const FIELD_TYPES = ["text", "number", "date", "boolean", "json", "link", "enum", "person", "reference", "file"] as const;
+/**
+ * A field of a record area (or an argument of a job kind):
+ *   text, number, date, boolean, json   as they read; `max_length` (text), `min`/`max` (number)
+ *   enum        one of `options` (a list of values or {value, label}); `multiple` takes a list of them
+ *   person      a person of the workspace, by their sign-in id; `multiple` takes a list
+ *   reference   the key of a record of area `to` (`multiple`: a list of keys); on write the record must exist as the
+ *               writer sees it (the same workspace for a workspace area), so a reference never reaches another
+ *               workspace's records; a shared (platform) area may refer only to shared areas
+ *   file        a file reference {path, name?, sha256?, size?}: a path inside the workspace's store (no "..", no
+ *               leading "/"); `multiple` takes a list
+ *   link        the 047 form of reference (a key or a list of keys, resolved through the area's `links`)
+ * `required` refuses a write that leaves it empty.
+ */
+export const RecordFieldSchema = z.object({
   name,
-  runner: z.literal("workspace-harness"),
-  image: z.string().min(1).optional(),
-  entry: packFile,
-  validator: packFile.optional(),
+  label: z.string().min(1).max(80),
+  type: z.enum(FIELD_TYPES).default("text"),
+  help: z.string().max(300).optional(),
+  required: z.boolean().optional(),
+  options: z.array(choice).min(1).max(100).optional(),
+  to: name.optional(),
+  multiple: z.boolean().optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  max_length: z.number().int().min(1).max(20_000).optional(),
+}).strict().superRefine((f, ctx) => {
+  const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
+  if (f.type === "enum" && !f.options) bad("an enum field lists its options", "options");
+  if (f.type !== "enum" && f.options) bad("options are for an enum field only", "options");
+  if (f.options) {
+    const vals = f.options.map((o) => (typeof o === "string" ? o : o.value));
+    if (new Set(vals).size !== vals.length) bad("an option is listed twice", "options");
+  }
+  if (f.type === "reference" && !f.to) bad("a reference field names the area it refers to (to)", "to");
+  if (f.type !== "reference" && f.to) bad("to is for a reference field only", "to");
+  if (f.multiple && !["enum", "person", "reference", "file"].includes(f.type)) bad("multiple is for enum, person, reference and file fields", "multiple");
+  if ((f.min !== undefined || f.max !== undefined) && f.type !== "number") bad("min and max are for a number field", "min");
+  if (f.min !== undefined && f.max !== undefined && f.min > f.max) bad("min is above max", "min");
+  if (f.max_length !== undefined && f.type !== "text") bad("max_length is for a text field", "max_length");
+});
+const field = RecordFieldSchema;
+/** The stored values of an enum field's options, in order. */
+export const optionValues = (f: { options?: z.output<typeof choice>[] }) => (f.options ?? []).map((o) => (typeof o === "string" ? o : o.value));
+
+/**
+ * A lifecycle (mold_v0-057): the states of a workspace area's records and the moves between them. `field` names one of
+ * the area's enum fields; its options are the states. A new record starts in `initial`; a write never changes the state
+ * (it is carried over); only a move does, and only along a transition whose `from` holds the stored state ("*": any)
+ * and whose `to` is the new one, by a caller whose role is in the transition's `roles` (any role that may move, when
+ * absent) and in the area's `move` permission.
+ */
+export const LifecycleSchema = z.object({
+  field: name,
+  initial: choiceValue,
+  transitions: z.array(z.object({
+    from: z.union([z.literal("*"), z.array(choiceValue).min(1).max(100)]),
+    to: choiceValue,
+    label: z.string().min(1).max(80).optional(),
+    roles: z.array(role).min(1).max(4).optional(),
+  }).strict()).min(1).max(200),
+}).strict();
+
+/**
+ * Who may do what to an area's records (mold_v0-057), as lists of account roles. Defaults: `read` every role; `create`,
+ * `update`, `move` the roles that may change anything (member, billing, owner: the platform's "edit"); `delete` as
+ * `update`. A declaration can only narrow the platform: a write naming "viewer" (read-only in the platform) is refused
+ * at build, and at run time a role must hold both the declaration and the platform's permission. A shared (platform)
+ * area declares `read` only: its rows are written by platform staff, never by a workspace.
+ */
+export const PermissionsSchema = z.object({
+  read: z.array(role).min(1).max(4).optional(),
+  create: z.array(role).min(1).max(4).optional(),
+  update: z.array(role).min(1).max(4).optional(),
+  move: z.array(role).min(1).max(4).optional(),
+  delete: z.array(role).min(1).max(4).optional(),
+}).strict();
+export type RecordAction = keyof z.output<typeof PermissionsSchema>;
+
+const jobKindBase = {
+  name,
+  label: z.string().min(1).max(80).optional(),
+  description: z.string().max(500).optional(),
   providers: z.array(z.string().regex(/^[a-z][a-z0-9_-]{1,40}$/, "a gateway provider slug")).max(8).default([]),
   token_lifetime_seconds: z.number().int().min(60).max(24 * 3600).default(3600),
   lease_seconds: z.number().int().min(15).max(3600).default(120),
@@ -226,13 +334,41 @@ export const JobKindSchema = z.object({
    * as the field declares (deliver_as), and only the value bound to what the run targets (src/credentials.ts).
    */
   credentials: z.array(name).max(20).default([]),
-}).strict();
+  /**
+   * The run's arguments (mold_v0-057): typed like a record area's fields (the same types and checks). When declared, a
+   * run's `scope` must be exactly these (unknown keys refused, each value of its type, required ones present); checked
+   * when a pack's code starts the run (src/packs.ts declaredRuns). Absent: the scope is free, as before.
+   */
+  args: z.array(field).max(30).optional(),
+};
+export const JobKindSchema = z.object({
+  ...jobKindBase,
+  runner: z.literal("workspace-harness"),
+  image: z.string().min(1).optional(),
+  entry: packFile,
+  validator: packFile.optional(),
+}).strict()
+  .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice");
 
-const field = z.object({ name, label: z.string().min(1).max(80), type: z.enum(["text", "number", "date", "boolean", "json", "link"]).default("text") }).strict();
+/**
+ * A job kind for the built-in agent-workspace runner (mold_v0-061: an agent repository at a pinned commit, a declared
+ * command, validation and write-back). Declared and validated here (mold_v0-057) with everything but the runner's own
+ * settings, which 061 adds; a pack.json may declare one with no program of its own. The run engine does not take it
+ * yet (it is not in `jobKinds`, so ctx.runs.start refuses it and no runner claims it): 061 wires it.
+ */
+export const AgentJobKindSchema = z.object({
+  ...jobKindBase,
+  runner: z.literal("agent-workspace"),
+}).strict()
+  .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice");
+
 /**
  * A record area (wired by mold_v0-047; molds/mold_v0/MOLD.md "Pack and record-area contract"). Area names are unique
  * across every pack in a build (they are the `area` of the MCP tools and the path of the console pages). A `link`
- * names a field whose value is the key (or a list of keys) of records in another area.
+ * names a field whose value is the key (or a list of keys) of records in another area; a `reference` field does the
+ * same and is checked on write (mold_v0-057). `lifecycle` and `permissions` (mold_v0-057) are enforced by the shell's
+ * record store (src/record-areas.ts) on every write and move through it (ctx.records, the record tools and routes); a
+ * pack's code may not name the record tables in its own queries (scripts/gen-packs.mjs refuses it).
  */
 export const RecordAreaSchema = z.object({
   name,
@@ -243,6 +379,17 @@ export const RecordAreaSchema = z.object({
   fields: z.array(field).min(1).max(60),
   list_columns: z.array(name).max(8).optional(),
   links: z.array(z.object({ field: name, area: name }).strict()).optional(),
+  lifecycle: LifecycleSchema.optional(),
+  permissions: PermissionsSchema.optional(),
+  /**
+   * Where the area's rows come from (mold_v0-059 reads it): one of the pack's `repositories`. Declared and checked today
+   * (it must name a declared repository); until 059, rows are the shell's record tables', written as before.
+   */
+  repository: name.optional(),
+  /** In words, what one row is and how it is keyed (for people and intake; never read by code). */
+  rows: z.string().max(500).optional(),
+  /** In words, where a shared row's version comes from (an upstream commit, a date). */
+  version: z.string().max(200).optional(),
   /**
    * Due dates (wired by mold_v0-035; src/schedules.ts): a check area of workspace scope may name one of its date fields.
    * Once a day the shell posts an in-app notice for each record whose date falls within `within_days` (today included),
@@ -253,14 +400,80 @@ export const RecordAreaSchema = z.object({
     within_days: z.number().int().min(0).max(365).default(7),
     notify: z.array(z.enum(["owner", "billing", "member", "viewer"])).min(1).max(4).default(["owner"]),
   }).strict().optional(),
-}).strict()
-  .refine((a) => a.name !== "areas", "areas is reserved (the list of areas at /api/records/areas)")
-  .refine((a) => !(a.role === "asset" && a.scope === "platform"), "an asset area holds a workspace's private data: workspace scope only")
-  .refine((a) => new Set(a.fields.map((f) => f.name)).size === a.fields.length, "a field is declared twice")
-  .refine((a) => (a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c)), "list_columns must name declared fields")
-  .refine((a) => (a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field)), "a link's field must be a declared field")
-  .refine((a) => !a.due || (a.role === "check" && a.scope === "workspace"), "due is for a check area of workspace scope (each workspace's own dates)")
-  .refine((a) => !a.due || a.fields.some((f) => f.name === a.due!.field && f.type === "date"), "due.field must name one of the area's date fields");
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine((a, ctx) => {
+  const bad = (message: string, ...path: (string | number)[]) => ctx.addIssue({ code: "custom", message, path });
+  if (a.name === "areas") bad("areas is reserved (the list of areas at /api/records/areas)", "name");
+  if (a.role === "asset" && a.scope === "platform") bad("an asset area holds a workspace's private data: workspace scope only", "scope");
+  if (new Set(a.fields.map((f) => f.name)).size !== a.fields.length) bad("a field is declared twice", "fields");
+  if (!(a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c))) bad("list_columns must name declared fields", "list_columns");
+  if (!(a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field))) bad("a link's field must be a declared field", "links");
+  for (const [i, l] of (a.links ?? []).entries()) {
+    const f = a.fields.find((x) => x.name === l.field);
+    if (f?.type === "reference" && f.to !== l.area) bad(`field ${f.name} refers to ${f.to}; its link names ${l.area}`, "links", i);
+  }
+  if (a.due && !(a.role === "check" && a.scope === "workspace")) bad("due is for a check area of workspace scope (each workspace's own dates)", "due");
+  if (a.due && !a.fields.some((f) => f.name === a.due!.field && f.type === "date")) bad("due.field must name one of the area's date fields", "due", "field");
+  const p = a.permissions;
+  if (p) for (const k of ["create", "update", "move", "delete"] as const) {
+    if (a.scope === "platform" && p[k]) bad(`a shared (platform) area is written by platform staff only: declare read alone`, "permissions", k);
+    if ((p[k] ?? []).includes("viewer")) bad(`viewer is read-only in the platform: a declaration cannot let a viewer ${k}`, "permissions", k);
+  }
+  const lc = a.lifecycle;
+  if (lc) {
+    if (a.scope !== "workspace") bad("a lifecycle is for a workspace's own records (a shared area is written by staff)", "lifecycle");
+    const f = a.fields.find((x) => x.name === lc.field);
+    if (!f || f.type !== "enum" || f.multiple) bad(`lifecycle.field must name one of the area's single-choice enum fields`, "lifecycle", "field");
+    else {
+      const states = new Set(optionValues(f));
+      if (!states.has(lc.initial)) bad(`initial ${lc.initial} is not one of ${f.name}'s options`, "lifecycle", "initial");
+      for (const [i, t] of lc.transitions.entries()) {
+        for (const s of t.from === "*" ? [] : t.from) if (!states.has(s)) bad(`from ${s} is not one of ${f.name}'s options`, "lifecycle", "transitions", i, "from");
+        if (!states.has(t.to)) bad(`to ${t.to} is not one of ${f.name}'s options`, "lifecycle", "transitions", i, "to");
+        if ((t.roles ?? []).includes("viewer")) bad("viewer is read-only in the platform: a transition cannot be a viewer's", "lifecycle", "transitions", i, "roles");
+      }
+    }
+  }
+});
+
+/** The links of an area: its declared `links` and one per reference field (mold_v0-057), each field once. */
+export const areaLinks = (a: { fields: { name: string; type?: string; to?: string }[]; links?: { field: string; area: string }[] }) => {
+  const out = [...(a.links ?? [])];
+  for (const f of a.fields) if (f.type === "reference" && f.to && !out.some((l) => l.field === f.name)) out.push({ field: f.name, area: f.to });
+  return out;
+};
+
+/**
+ * A data repository (mold_v0-059 builds the adapters: the shell's tables, the workspace store's files, an upstream
+ * catalog at a pin, an external API). Declared here so a pack.json can carry its repositories today: a `kind` (a plain
+ * word) and the kind's own settings, which 059 defines and checks; an area names one with `repository`.
+ */
+export const RepositorySchema = z.object({
+  kind: z.string().regex(/^[a-z][a-z0-9_]{1,40}$/, "a repository kind: lowercase letters, digits and _"),
+  $comment: z.string().max(2000).optional(),
+}).catchall(z.unknown());
+
+/**
+ * How a run's output becomes run_results rows (mold_v0-061 with the agent-workspace runner; 063's metrics read the rows):
+ * declared here so a pack.json can carry it today. `check`, when given, names the record areas a result's check is in
+ * (checked against the build); 061 defines and checks the rest.
+ */
+export const RunResultsSchema = z.object({
+  check: z.array(name).max(20).optional(),
+  $comment: z.string().max(2000).optional(),
+}).catchall(z.unknown());
+
+/**
+ * A metric over a pack's records or its runs' results (mold_v0-063 builds it, with the charts that show it). Declared
+ * here so 063 slots in without reshaping pack.json: a name, a label and what it is `over` (a record area of the build, or
+ * "run_results"); 063 defines and checks the rest of each metric, which until then is kept but not read.
+ */
+export const MetricSchema = z.object({
+  name,
+  label: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
+  over: name,
+}).catchall(z.unknown());
 
 /**
  * Environment names a credential may not take: the ones the harness sets for every run (src/run-harness.ts), the proxy
@@ -340,10 +553,18 @@ export interface PackDefinition {
   tools?: PackTool<any>[];
   routes?: PackRoute[];
   jobKinds?: z.input<typeof JobKindSchema>[];
+  /** Job kinds for the agent-workspace runner (mold_v0-061 wires them; declared and validated since mold_v0-057). */
+  agentJobKinds?: z.input<typeof AgentJobKindSchema>[];
   recordAreas?: z.input<typeof RecordAreaSchema>[];
   credentials?: z.input<typeof CredentialSchema>[];
   schedules?: z.input<typeof ScheduleSchema>[];
   onboarding?: z.input<typeof OnboardingStepSchema>[];
+  /** Metrics over the pack's records and run results (mold_v0-063 builds them; declared and validated since 057). */
+  metrics?: z.input<typeof MetricSchema>[];
+  /** The pack's data repositories, by name (mold_v0-059 builds the adapters; declared and validated since 057). */
+  repositories?: Record<string, z.input<typeof RepositorySchema>>;
+  /** How a run's output becomes run_results rows (mold_v0-061; declared and validated since 057). */
+  runResults?: z.input<typeof RunResultsSchema>;
   /**
    * Migrations are declared in pack.json (`migrations`, a directory of NNNN_name.sql inside the pack) so the build can
    * check them without running the pack: this field, when given, must name the same directory.
@@ -397,15 +618,38 @@ export function validatePack(p: PackDefinition): PackDefinition {
     }
   };
   each(p.jobKinds, JobKindSchema, "jobKinds");
+  each(p.agentJobKinds, AgentJobKindSchema, "agentJobKinds");
+  each(p.metrics, MetricSchema, "metrics");
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.credentials, CredentialSchema, "credentials");
   each(p.schedules, ScheduleSchema, "schedules");
   each(p.onboarding, OnboardingStepSchema, "onboarding");
+  // Repositories (mold_v0-059) and the run-results mapping (061): declared shapes; an area names a declared repository.
+  const repos = p.repositories ?? {};
+  if (typeof repos !== "object" || Array.isArray(repos)) problems.push(at("repositories must be an object of name -> repository"));
+  else for (const [rn, r] of Object.entries(repos)) {
+    if (!/^[a-z][a-z0-9_]{1,62}$/.test(rn)) problems.push(at(`repository name ${JSON.stringify(rn.slice(0, 64))}: lowercase letters, digits and _`));
+    const v = RepositorySchema.safeParse(r);
+    if (!v.success) problems.push(at(`repositories.${rn}: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));
+  }
+  for (const a of p.recordAreas ?? []) if (a?.repository !== undefined && !Object.hasOwn(repos, a.repository))
+    problems.push(at(`record area ${a.name} reads from repository ${a.repository}, which this pack does not declare`));
+  if (p.runResults !== undefined) {
+    const v = RunResultsSchema.safeParse(p.runResults);
+    if (!v.success) problems.push(at(`runResults: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));
+  }
   const kinds = new Set((p.jobKinds ?? []).map((k) => k.name));
+  for (const k of p.agentJobKinds ?? []) if (k?.name && kinds.has(k.name)) problems.push(at(`job kind ${k.name} is declared twice`)); else if (k?.name) kinds.add(k.name);
   for (const s of p.schedules ?? []) if (s?.job_kind && !kinds.has(s.job_kind)) problems.push(at(`schedule ${s.name} names job kind ${s.job_kind}, which this pack does not declare`));
   // A schedule runs over this pack's own asset records (mold_v0-035), as a credential binds to them.
   for (const s of p.schedules ?? []) if (s?.assets?.area && !(p.recordAreas ?? []).some((a) => a?.name === s.assets!.area && a.role === "asset"))
     problems.push(at(`schedule ${s.name} runs over area ${s.assets.area}, which is not one of this pack's asset areas`));
+  // A schedule's scope gives only arguments its kind declares (mold_v0-057; what a schedule's run gets is the scheduler's, 035).
+  for (const s of p.schedules ?? []) {
+    const k = [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])].find((x) => x?.name === s?.job_kind);
+    if (!k?.args) continue;
+    for (const key of Object.keys(s.scope ?? {})) if (!k.args.some((a) => a?.name === key)) problems.push(at(`schedule ${s.name}: ${k.name} has no argument ${key}`));
+  }
   // Credentials (mold_v0-034): an asset binding names this pack's own asset area; a kind names this pack's own fields;
   // two fields never deliver to the same environment variable or file.
   const creds = new Map((p.credentials ?? []).map((c) => [c?.name, c]));
@@ -421,7 +665,7 @@ export function validatePack(p: PackDefinition): PackDefinition {
     if (targets.has(where)) problems.push(at(`credentials ${targets.get(where)} and ${c.name} both deliver to ${where}`));
     else targets.set(where, c.name);
   }
-  for (const k of p.jobKinds ?? []) for (const n of (k as { credentials?: unknown[] })?.credentials ?? [])
+  for (const k of [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])]) for (const n of (k as { credentials?: unknown[] })?.credentials ?? [])
     if (typeof n === "string" && !creds.has(n)) problems.push(at(`job kind ${k.name} names credential ${n}, which this pack does not declare`));
   // Onboarding (mold_v0-011): a step's condition names this pack's own kind, credential or workspace-scope area. (A tool
   // may be any pack's or the shell's: src/packs.ts installPacks checks it against the whole build.)

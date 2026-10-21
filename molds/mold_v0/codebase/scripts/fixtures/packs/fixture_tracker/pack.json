@@ -1,0 +1,325 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_tracker",
+  "name": "Fixture tracker",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-057; scripts/declarative-packs-test.ts): a pack.json and nothing else. Never shipped.",
+  "record_areas": [
+    {
+      "name": "tracker_policies",
+      "label": "Policies",
+      "role": "source",
+      "scope": "platform",
+      "fields": [
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "required": true,
+          "max_length": 500
+        },
+        {
+          "name": "severity",
+          "label": "Default severity",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        }
+      ],
+      "permissions": {
+        "read": [
+          "member",
+          "billing",
+          "owner"
+        ]
+      },
+      "repository": "tracker_library",
+      "rows": "one per policy (key: its code)",
+      "version": "upstream commit"
+    },
+    {
+      "name": "tracker_apps",
+      "label": "Applications",
+      "role": "asset",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "url",
+          "label": "Address",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "person"
+        },
+        {
+          "name": "environment",
+          "label": "Environment",
+          "type": "enum",
+          "options": [
+            {
+              "value": "prod",
+              "label": "Production"
+            },
+            {
+              "value": "staging",
+              "label": "Staging"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tracker_findings",
+      "label": "Findings",
+      "role": "check",
+      "scope": "workspace",
+      "list_columns": [
+        "severity",
+        "state",
+        "app"
+      ],
+      "fields": [
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "required": true,
+          "options": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            {
+              "value": "open",
+              "label": "Open"
+            },
+            {
+              "value": "triaged",
+              "label": "Triaged"
+            },
+            {
+              "value": "fixed",
+              "label": "Fixed"
+            },
+            {
+              "value": "wont_fix",
+              "label": "Won't fix"
+            },
+            {
+              "value": "reopened",
+              "label": "Reopened"
+            }
+          ]
+        },
+        {
+          "name": "app",
+          "label": "Application",
+          "type": "reference",
+          "to": "tracker_apps",
+          "required": true
+        },
+        {
+          "name": "policy",
+          "label": "Policy",
+          "type": "reference",
+          "to": "tracker_policies"
+        },
+        {
+          "name": "due",
+          "label": "Due",
+          "type": "date"
+        },
+        {
+          "name": "score",
+          "label": "Score",
+          "type": "number",
+          "min": 0,
+          "max": 10
+        },
+        {
+          "name": "assignees",
+          "label": "Assignees",
+          "type": "person",
+          "multiple": true
+        },
+        {
+          "name": "evidence",
+          "label": "Evidence",
+          "type": "file",
+          "multiple": true
+        }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "open",
+        "transitions": [
+          {
+            "from": [
+              "open"
+            ],
+            "to": "triaged",
+            "label": "Triage"
+          },
+          {
+            "from": [
+              "triaged",
+              "reopened"
+            ],
+            "to": "fixed",
+            "label": "Mark fixed"
+          },
+          {
+            "from": [
+              "open",
+              "triaged"
+            ],
+            "to": "wont_fix",
+            "label": "Accept the risk",
+            "roles": [
+              "owner"
+            ]
+          },
+          {
+            "from": [
+              "fixed",
+              "wont_fix"
+            ],
+            "to": "reopened",
+            "label": "Reopen"
+          }
+        ]
+      },
+      "permissions": {
+        "create": [
+          "member",
+          "owner"
+        ],
+        "update": [
+          "member",
+          "owner"
+        ],
+        "move": [
+          "member",
+          "billing",
+          "owner"
+        ],
+        "delete": [
+          "owner"
+        ]
+      },
+      "repository": "tracker_ledger"
+    }
+  ],
+  "repositories": {
+    "tracker_library": {
+      "kind": "upstream_catalog",
+      "$comment": "Read by mold_v0-059's adapter; declared and checked for its shape today.",
+      "upstream": "pack.json#upstream",
+      "files": {
+        "policies": "catalog/policies.json"
+      }
+    },
+    "tracker_ledger": {
+      "kind": "workspace_files",
+      "store": "fixture_tracker",
+      "path": "ledger/main.jsonl",
+      "format": "jsonl",
+      "append_only": true,
+      "identity": "id"
+    }
+  },
+  "job_kinds": [
+    {
+      "name": "tracker_scan",
+      "label": "Scan an application",
+      "runner": "agent-workspace",
+      "args": [
+        {
+          "name": "app",
+          "label": "Application",
+          "type": "reference",
+          "to": "tracker_apps",
+          "required": true
+        },
+        {
+          "name": "depth",
+          "label": "Depth",
+          "type": "number",
+          "min": 1,
+          "max": 5
+        }
+      ],
+      "budget_usd": 2,
+      "token_lifetime_seconds": 1800,
+      "concurrency_per_workspace": 2,
+      "credentials": [
+        "tracker_token"
+      ],
+      "workspace": true
+    }
+  ],
+  "credentials": [
+    {
+      "name": "tracker_token",
+      "label": "Application token",
+      "bound_to": "asset",
+      "area": "tracker_apps",
+      "deliver_as": {
+        "env": "TRACKER_TOKEN"
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "name": "nightly_scan",
+      "job_kind": "tracker_scan",
+      "cron": "0 3 * * *"
+    }
+  ],
+  "onboarding": [
+    {
+      "id": "first_app",
+      "label": "Add a first application",
+      "done_when": "record:tracker_apps"
+    },
+    {
+      "id": "first_scan",
+      "label": "Run a first scan",
+      "done_when": "run:tracker_scan"
+    }
+  ],
+  "metrics": [
+    {
+      "name": "open_by_severity",
+      "label": "Open findings by severity",
+      "over": "tracker_findings",
+      "group_by": "severity"
+    }
+  ],
+  "run_results": {
+    "$comment": "How a run's ledger lines become run_results rows (mold_v0-061 reads it).",
+    "check": [
+      "tracker_findings"
+    ],
+    "asset": "tracker_apps by targets.asset",
+    "finding_statuses": {
+      "open": "fail",
+      "fixed": "pass",
+      "wont_fix": "not_applicable"
+    }
+  }
+}

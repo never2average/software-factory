@@ -36,6 +36,7 @@
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
 //   --packs <dir> --out <dir> --profile <file>   another packs directory, output root or profile (tests)
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -68,7 +69,9 @@ const ID = /^[a-z][a-z0-9_]{1,30}$/;
 const PAGE_ID = /^[a-z][a-z0-9-]{0,40}$/;
 const DATA_PATH = /^\/[a-z0-9_\-/]*$/i;
 const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
-const MANIFEST_KEYS = new Set(["id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner"]);
+const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner",
+  // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
+  "record_areas", "job_kinds", "credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -115,6 +118,9 @@ const BANNED_CODE = [
   [/\b(SET|RESET)\s+(LOCAL\s+|SESSION\s+)?ROLE\b/i, "SET/RESET ROLE (leaves the tenant role)"],
   [/\bset_config\b/i, "set_config (changes the tenant setting)"],
   [/octillion\.org_id/, "the tenant setting"],
+  // The record tables are the shell's record store's (mold_v0-057): a pack reaches records through ctx.records, which
+  // checks fields, states and permissions; a raw query would write past them.
+  [/\b(workspace_records|platform_records)\b/i, "the record tables (use ctx.records: it checks fields, states and permissions)"],
   [/\bSESSION\s+AUTHORIZATION\b/i, "SET SESSION AUTHORIZATION"],
   // Ways to load a module the import list below cannot see.
   [/\brequire\b/, "require (a pack is an ES module: use import)"],
@@ -369,9 +375,11 @@ function loadPack(dirName) {
   const id = m.id;
   if (typeof m.name !== "string" || !m.name.trim()) fail(where, "name is required");
   if (typeof m.version !== "string" || !m.version.trim()) fail(where, "version is required");
-  const entry = m.entry ?? "index.ts";
-  if (typeof entry !== "string" || !/^[a-z0-9_\-/]+\.ts$/i.test(entry) || entry.includes("..")) fail(where, "entry must be a .ts file inside the pack");
-  else if (!existsSync(path.join(dir, entry))) fail(where, `entry ${entry} does not exist`);
+  // The code entry is optional (mold_v0-057): a pack.json alone is a whole pack. Without `entry`, index.ts is the entry
+  // when there is one (as before), else the pack has no code entry and its definition is its declarations.
+  const entry = m.entry ?? (existsSync(path.join(dir, "index.ts")) ? "index.ts" : null);
+  if (entry !== null && (typeof entry !== "string" || !/^[a-z0-9_\-/]+\.ts$/i.test(entry) || entry.includes(".."))) fail(where, "entry must be a .ts file inside the pack");
+  else if (entry !== null && !existsSync(path.join(dir, entry))) fail(where, `entry ${entry} does not exist`);
   let migrations = null;
   if (m.migrations !== undefined) {
     if (typeof m.migrations !== "string" || !/^[a-z0-9_\-/]+$/i.test(m.migrations) || m.migrations.includes("..")) fail(where, "migrations must be a directory inside the pack");
@@ -420,7 +428,10 @@ function loadPack(dirName) {
     }
   }
   if (id && ID.test(id)) checkCode(dir, id, runnerDir);
-  return { id, dir, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
+  // A pack with no entry is its pack.json alone (mold_v0-057): server code it carries would never load, so say so.
+  if (entry === null) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
+    fail(where, `${posix(path.relative(dir, e.p))} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
+  return { id, dir, json: m, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
 }
 
 const packDirs = existsSync(PACKS_DIR) ? readdirSync(PACKS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [];
@@ -497,51 +508,79 @@ const refuse = () => {
 };
 refuse();
 
-// ---------- record areas (mold_v0-047), credentials (mold_v0-034), onboarding (mold_v0-011): from each pack's definePack ----------
+// ---------- each pack's definition: its pack.json's declarations (mold_v0-057) extended by its code entry ----------
+// Record areas (mold_v0-047), credentials (mold_v0-034) and onboarding (mold_v0-011) are read from it for the console.
 
-/** Each pack's record areas (parsed by src/pack-api.ts RecordAreaSchema, defaults filled in) and credential fields, by pack id. */
-function readRecordAreas() {
+/**
+ * Each pack's pack.json checked against its schema (src/pack-manifest.ts) and compiled into definePack fields, its
+ * entry (when it has one) loaded once through tsx as the server loads it, the two merged and checked as the server will
+ * (src/pack-api.ts validatePack): what the console needs, and the compiled declarations for the registry.
+ */
+function readDefinitions() {
   if (!packs.length) return {};
   const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
-  if (!existsSync(tsx)) { fail("record areas", `reading the packs' definitions needs tsx (${rel(tsx)}): run npm ci`); return {}; }
+  if (!existsSync(tsx)) { fail("packs", `reading the packs' definitions needs tsx (${rel(tsx)}): run npm ci`); return {}; }
   const dir = mkdtempSync(path.join(tmpdir(), "gen-packs-"));
   try {
-    const script = path.join(dir, "areas.mts");
+    const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
-const [api, entries] = JSON.parse(process.argv[2]);
-const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema } = await import(pathToFileURL(api).href);
+import { readFileSync } from "node:fs";
+const [api, manifestApi, entries] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const MARK = process.argv[3];
+const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
+const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
 const out = {};
-for (const [id, file] of entries) {
+for (const [id, json, file] of entries) {
+  let declared;
+  try { declared = compileDeclarations(json); }
+  catch (e) { out[id] = { json: e instanceof PackJsonError ? e.problems : [String(e?.message ?? e)] }; continue; }
   try {
-    const m = await import(pathToFileURL(file).href);
-    const def = m.default?.default ?? m.default;
-    out[id] = { areas: (def?.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
-      credentials: (def?.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
-      onboarding: (def?.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
-      kinds: (def?.jobKinds ?? []).length };
-  } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 1500) }; }
+    let code = null;
+    if (file) { const m = await import(pathToFileURL(file).href); code = m.default?.default ?? m.default ?? null; }
+    const def = validatePack(mergePack(id, declared, code));
+    if (def.id !== id) throw new Error(\`its entry defines pack \${JSON.stringify(def.id)}; the ids must match\`);
+    out[id] = { declared, areas: (def.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
+      credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
+      onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
+      metrics: (def.metrics ?? []).map((x) => ({ name: x.name, over: x.over })),
+      argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
+      resultChecks: def.runResults?.check ?? [],
+      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null })) };
+  } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 3000) }; }
 }
-process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
+process.stdout.write("\\n" + MARK + " " + JSON.stringify(out) + "\\n");
 `);
-    const arg = JSON.stringify([PACK_API, packs.map((p) => [p.id, path.join(p.dir, p.manifest.entry)])]);
-    const r = spawnSync(tsx, [script, arg], { cwd: ROOT, encoding: "utf8", timeout: 120_000 });
-    const line = (r.stdout ?? "").split("\n").find((l) => l.startsWith("RECORD_AREAS "));
-    if (r.status !== 0 || !line) { fail("record areas", `loading the packs' definitions failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
-    const got = JSON.parse(line.slice("RECORD_AREAS ".length));
-    for (const [id, v] of Object.entries(got)) if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = { areas: [], credentials: [], onboarding: [], kinds: 0 }; }
+    // The packs' pack.json files go in a file (an argument is limited to 128 KiB); the answer comes back on a line marked
+    // with a one-time word, so nothing a pack's entry prints while it loads can stand in for it.
+    const input = path.join(dir, "input.json"), mark = `PACK_DEFINITIONS_${randomBytes(12).toString("hex")}`;
+    writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)])]));
+    const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+    const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
+    if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
+    const got = JSON.parse(line.slice(mark.length + 1));
+    const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [] };
+    for (const [id, v] of Object.entries(got)) {
+      if (v.json !== undefined) { for (const pr of v.json) fail(`packs/${id}/pack.json`, pr); got[id] = empty; }
+      else if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = empty; }
+    }
+    // A declared kind's programs are files of the pack (a workspace-harness kind's entry and validator).
+    for (const p of packs) for (const k of got[p.id]?.kinds ?? []) for (const f of [k.entry, k.validator])
+      if (f && !existsSync(path.join(p.dir, f))) fail(`packs/${p.id}`, `job kind ${k.name}: ${f} is not a file of the pack`);
     return got;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
-const defsByPack = readRecordAreas();
+const defsByPack = readDefinitions();
 const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
 /** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
 const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
 /** The onboarding steps the packs declare (mold_v0-011): the console's Setup page asks for them only when there is one. */
 const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []).map((st) => ({ pack: p.id, ...st })));
+/** Every reference an area makes: its links and its reference fields (mold_v0-057). */
+const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type === "reference" && !(a.links ?? []).some((l) => l.field === f.name)).map((f) => ({ field: f.name, area: f.to }))];
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
-const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? 0), 0);
+const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
 const dueAreaCount = recordAreas.filter((a) => a.due).length;
 const workspaceItems = [
   ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
@@ -554,8 +593,21 @@ const workspaceItems = [
     if (owner.has(a.name)) fail(`packs/${a.pack}`, `record area ${a.name} is already pack ${owner.get(a.name)}'s (area names are unique in a build)`);
     else owner.set(a.name, a.pack);
   }
-  for (const a of recordAreas) for (const l of a.links ?? [])
+  for (const a of recordAreas) for (const l of linksOf(a)) {
     if (!owner.has(l.area)) fail(`packs/${a.pack}`, `record area ${a.name} links field ${l.field} to area ${l.area}, which no pack declares`);
+    // A shared row is every workspace's: it may not point at one workspace's records (mold_v0-057).
+    else if (a.scope === "platform" && recordAreas.find((x) => x.name === l.area)?.scope === "workspace")
+      fail(`packs/${a.pack}`, `record area ${a.name} is shared (platform) and its field ${l.field} refers to ${l.area}, a workspace's own area: a shared area may refer to shared areas only`);
+  }
+  // A job kind's reference argument names an area of this build (mold_v0-057).
+  for (const p of packs) for (const x of defsByPack[p.id]?.argRefs ?? [])
+    if (!owner.has(x.to)) fail(`packs/${p.id}`, `job kind ${x.kind}'s argument ${x.arg} refers to area ${x.to}, which no pack declares`);
+  // The run-results mapping (mold_v0-061) names the record areas a result's check is in.
+  for (const p of packs) for (const c of defsByPack[p.id]?.resultChecks ?? [])
+    if (!owner.has(c)) fail(`packs/${p.id}`, `run_results.check names ${c}, which is not a record area of this build`);
+  // A metric (mold_v0-063) is over a record area of this build or the runs' results.
+  for (const p of packs) for (const x of defsByPack[p.id]?.metrics ?? [])
+    if (x.over !== "run_results" && !owner.has(x.over)) fail(`packs/${p.id}`, `metric ${x.name} is over ${x.over}, which is neither a record area of this build nor run_results`);
 }
 refuse();
 
@@ -568,10 +620,11 @@ const importPath = (from, to) => { let r = posix(path.relative(path.dirname(from
 const srcPacks = path.join(OUT, "src", "packs.generated.ts");
 const files = new Map();
 files.set(srcPacks, HEADER +
-  packs.map((p, i) => `import pack${i} from ${JSON.stringify(importPath(srcPacks, path.join(p.dir, p.manifest.entry)))};\n`).join("") +
-  `\n/** Every pack in this build, in pack order (by id): its pack.json and its definePack export (src/packs.ts checks both). */\n` +
-  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string; migrations: string | null; words: Record<string, string>; dir: string }; readonly definition: unknown }[] = [` +
-  (packs.length ? `\n${packs.map((p, i) => `  { manifest: ${JSON.stringify(p.manifest)}, definition: pack${i} },`).join("\n")}\n` : "") + "];\n");
+  packs.map((p, i) => p.manifest.entry === null ? "" : `import pack${i} from ${JSON.stringify(importPath(srcPacks, path.join(p.dir, p.manifest.entry)))};\n`).join("") +
+  `\n/**\n * Every pack in this build, in pack order (by id): its pack.json, the definePack fields its declarations compile to\n` +
+  ` * (mold_v0-057; null for none) and its code entry's definePack export (null for a pack.json alone). src/packs.ts merges and checks them.\n */\n` +
+  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string }; readonly declared: unknown; readonly definition: unknown }[] = [` +
+  (packs.length ? `\n${packs.map((p, i) => `  { manifest: ${JSON.stringify(p.manifest)}, declared: ${Object.keys(defsByPack[p.id]?.declared ?? {}).length ? JSON.stringify(defsByPack[p.id].declared) : "null"}, definition: ${p.manifest.entry === null ? "null" : `pack${i}`} },`).join("\n")}\n` : "") + "];\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
   `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir })))};\n`);
@@ -599,9 +652,13 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const packAdminNav: NavGroup[] = ${json(nav("admin"))};\n\n` +
   "/** A record area a pack declares (mold_v0-047): the shell's generic list and detail pages (app/{app,admin}/records/[area]). */\n" +
   "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n  role: 'source' | 'check' | 'asset';\n" +
-  "  scope: 'platform' | 'workspace';\n  fields: { name: string; label: string; type: string }[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n}\n\n" +
+  "  scope: 'platform' | 'workspace';\n  fields: RecordFieldSpec[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n" +
+  "  lifecycle: { field: string; initial: string; transitions: { from: '*' | string[]; to: string; label?: string; roles?: string[] }[] } | null;\n}\n\n" +
+  "/** A field of a record area (typed by mold_v0-057). */\n" +
+  "export interface RecordFieldSpec {\n  name: string;\n  label: string;\n  type: string;\n  help?: string;\n  required?: boolean;\n" +
+  "  options?: (string | { value: string; label?: string })[];\n  to?: string;\n  multiple?: boolean;\n  min?: number;\n  max?: number;\n  max_length?: number;\n}\n\n" +
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
-    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: a.links ?? [] })))};\n\n` +
+    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.length ? [{ label: "Records", items: recordAreas.map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
