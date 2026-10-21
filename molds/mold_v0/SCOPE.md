@@ -140,7 +140,8 @@ status, finding fingerprint, evidence reference).
 - **Generalised by.** mold_v0-047, **built** (the shell's record areas: a pack declares one and gets a list page, a
   detail page and MCP list/get with no extra code; workspace scope under row-level security; platform scope read-only
   to customers; `src/record-areas.ts`, `platform_records`, `workspace_records`), mold_v0-039 (personas and tasks leave the shell for the `octillion` pack), mold_v0-048 (the second app's areas, on
-  this contract).
+  this contract), mold_v0-066 and 059, **built** (sealed areas, keys with ( and ), batch writes; the generic data API
+  and data repositories: `src/data-api.ts`, `src/data-repositories.ts`).
 
 ### Schedules and notifications
 

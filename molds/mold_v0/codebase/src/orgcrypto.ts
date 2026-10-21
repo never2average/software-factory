@@ -10,7 +10,7 @@
  * Sealed values look like `enc:v1:<iv>:<tag>:<ciphertext>` (base64 parts); anything else is returned as is, so rows
  * written before encryption keep working.
  */
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
 import { decrypt, encrypt, vaultUnlocked } from "./keyvault.js";
 
@@ -102,6 +102,18 @@ export async function openBytes(orgId: number, sealed: Buffer, aad: string): Pro
   d.setAAD(Buffer.from(aad, "utf8"));
   d.setAuthTag(sealed.subarray(16, 32));
   return Buffer.concat([d.update(sealed.subarray(32)), d.final()]);
+}
+
+/**
+ * A keyed fingerprint of one organization's text (mold_v0-059: a sealed record's fingerprint): HMAC-SHA256 under a key
+ * derived from the organization's data key, so a stored fingerprint says nothing about sealed values to anyone without
+ * that key (a plain hash of a short value could be guessed). Refused while the vault is locked.
+ */
+export async function orgMac(orgId: number, purpose: string, text: string): Promise<string> {
+  if (!vaultUnlocked()) throw new Error("the key vault is locked (OCTILLION_VAULT_KEY): a sealed record's fingerprint needs the workspace's key");
+  const key = (await dataKey(orgId, true))!;
+  const k = createHmac("sha256", key).update(`orgmac/v1/${purpose}`).digest();
+  return createHmac("sha256", k).update(text, "utf8").digest("hex");
 }
 
 /** Forget a cached data key (organization deletion). */

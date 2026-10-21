@@ -36,6 +36,13 @@
  *                pinned commit, a declared command, validation and write-back; runs like jobKinds (ctx.runs.start)
  *   onWorkspaceCommit  wired (mold_v0-064): called after a workspace run's snapshot commits, before its results are checked
  *   metrics      declared and validated (mold_v0-057); wired by the metrics and charts (063)
+ *   repositories wired (mold_v0-059; src/data-repositories.ts): where an area's rows come from, through one adapter
+ *                interface: the shell's tables (the default), the workspace store's files (indexed after a commit), an
+ *                upstream catalog at a pinned commit (indexed by platform staff), an external HTTP API (read live).
+ *                `loaders` (code only) turn a repository's files into rows when the declared mapping is not enough
+ *   the data API wired (mold_v0-059; src/data-api.ts, src/data-routes.ts): list (filter, sort, paging), get, create,
+ *                update, move, delete and batch for every area, at /api/data and /api/admin/data, through the same
+ *                record store as ctx.records
  *
  * Declarative packs (mold_v0-057): everything above but tools and routes can be written in pack.json instead
  * (src/pack-manifest.ts, the schema at packs/pack.schema.json), with no entry at all. gen-packs compiles it into this
@@ -87,6 +94,22 @@ export interface RecordRow {
 }
 export interface RecordPage { records: RecordRow[]; next: string | null }
 export interface RecordInput { title?: string | null; data: Record<string, unknown>; version?: string | null }
+/**
+ * A page of an area (mold_v0-059): `limit` (1-200, default 50); `after` (the previous page's `next`); `sort` (a field, or
+ * key, title or updated_at; "-" first for descending; default the key); `filter` ({field: value} or {field: {op: value}},
+ * op one of eq, ne, in, lt, lte, gt, gte, contains, prefix, exists; every field a declared one, or key, title, updated_at).
+ */
+export interface RecordQuery { limit?: number; after?: string; sort?: string; filter?: Record<string, unknown> }
+/**
+ * One write of a batch (mold_v0-066): `put` creates or replaces, `create` only creates (409 when the key exists),
+ * `update` only replaces (404 when it does not), `move` follows the lifecycle, `delete` removes. A batch is one
+ * transaction: every operation is checked and applied, or none is.
+ */
+export type RecordOperation =
+  | { op: "put" | "create" | "update"; area: string; key: string; title?: string | null; data: Record<string, unknown>; version?: string | null }
+  | { op: "move"; area: string; key: string; to: string }
+  | { op: "delete"; area: string; key: string };
+export interface RecordOperationResult { op: RecordOperation["op"]; area: string; key: string; record?: RecordRow; deleted?: boolean }
 
 /**
  * Records as one workspace sees them: every platform area (read only) and the workspace's own rows of every
@@ -97,19 +120,23 @@ export interface RecordInput { title?: string | null; data: Record<string, unkno
  * move goes only along a declared transition).
  */
 export interface WorkspaceRecords {
-  list(area: string, opts?: { limit?: number; after?: string }): Promise<RecordPage>;
+  list(area: string, opts?: RecordQuery): Promise<RecordPage>;
   get(area: string, key: string): Promise<RecordRow | null>;
   put(area: string, key: string, value: RecordInput): Promise<RecordRow>;
   /** Move a record of an area with a lifecycle to state `to` (mold_v0-057). Refused (409) off the declared transitions. */
   move(area: string, key: string, to: string): Promise<RecordRow>;
   delete(area: string, key: string): Promise<boolean>;
+  /** Several writes as one transaction (mold_v0-066): all of them, or (on any refusal or error) none. */
+  batch(ops: RecordOperation[]): Promise<RecordOperationResult[]>;
 }
 /** Records as platform staff see them: platform areas only; `put` and `delete` reach this pack's own platform areas. */
 export interface PlatformRecords {
-  list(area: string, opts?: { limit?: number; after?: string }): Promise<RecordPage>;
+  list(area: string, opts?: RecordQuery): Promise<RecordPage>;
   get(area: string, key: string): Promise<RecordRow | null>;
   put(area: string, key: string, value: RecordInput): Promise<RecordRow>;
   delete(area: string, key: string): Promise<boolean>;
+  /** Several writes (put, create, update, delete) as one transaction (mold_v0-066): all of them, or none. */
+  batch(ops: RecordOperation[]): Promise<RecordOperationResult[]>;
 }
 
 /** A run of a job kind (mold_v0-041), as its workspace sees it. */
@@ -214,6 +241,12 @@ export class PackError extends Error {
 // ---------- declared now, wired by later tickets ----------
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "lowercase letters, digits and _, starting with a letter");
+/**
+ * A record key (mold_v0-047; ( and ) since mold_v0-066): 1-200 of letters, digits and . _ : ( ) -, starting with a letter
+ * or digit. Keys are stored and compared as they are; wherever the shell puts one inside a larger string (a paging
+ * cursor, a URL), it is encoded there and decoded back (src/record-query.ts).
+ */
+export const RECORD_KEY = /^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$/;
 const envName = z.string().regex(/^[A-Z][A-Z0-9_]{1,62}$/, "an environment variable name");
 /**
  * A host a run may reach: HTTPS on port 443 only. The egress proxy (orchestrator/core/egress.ts, shared with the
@@ -430,10 +463,17 @@ export const RecordAreaSchema = z.object({
   lifecycle: LifecycleSchema.optional(),
   permissions: PermissionsSchema.optional(),
   /**
-   * Where the area's rows come from (mold_v0-059 reads it): one of the pack's `repositories`. Declared and checked today
-   * (it must name a declared repository); until 059, rows are the shell's record tables', written as before.
+   * Where the area's rows come from (mold_v0-059; src/data-repositories.ts): one of the pack's `repositories`. Absent,
+   * the shell's own tables, written through the record store. An area fed by the workspace store's files or an external
+   * API is read only (its rows come from there); one fed by an upstream catalog is indexed by platform staff.
    */
   repository: name.optional(),
+  /**
+   * Sealed at rest (mold_v0-066): the title and data of every record are encrypted with the workspace's data key, as an
+   * asset area's always are. Workspace scope only (a shared row has no workspace key). Writes are refused while the key
+   * vault is locked; a filter or sort over a sealed area runs on the opened rows, never in the database.
+   */
+  sealed: z.boolean().optional(),
   /** In words, what one row is and how it is keyed (for people and intake; never read by code). */
   rows: z.string().max(500).optional(),
   /** In words, where a shared row's version comes from (an upstream commit, a date). */
@@ -453,6 +493,9 @@ export const RecordAreaSchema = z.object({
   const bad = (message: string, ...path: (string | number)[]) => ctx.addIssue({ code: "custom", message, path });
   if (a.name === "areas") bad("areas is reserved (the list of areas at /api/records/areas)", "name");
   if (a.role === "asset" && a.scope === "platform") bad("an asset area holds a workspace's private data: workspace scope only", "scope");
+  if (a.sealed && a.scope === "platform") bad("a shared (platform) area has no workspace key to seal it with: sealed is for workspace areas", "sealed");
+  if (a.sealed === false && a.role === "asset") bad("an asset area is always sealed", "sealed");
+  if (a.due && (a.sealed || a.role === "asset")) bad("due dates are read in the database: a sealed area's dates are not readable there", "due");
   if (new Set(a.fields.map((f) => f.name)).size !== a.fields.length) bad("a field is declared twice", "fields");
   if (!(a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c))) bad("list_columns must name declared fields", "list_columns");
   if (!(a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field))) bad("a link's field must be a declared field", "links");
@@ -491,15 +534,123 @@ export const areaLinks = (a: { fields: { name: string; type?: string; to?: strin
   return out;
 };
 
+// ---------- data repositories (mold_v0-059; src/data-repositories.ts) ----------
+
+/** The repository kinds: where an area's rows come from. */
+export const REPOSITORY_KINDS = ["shell_tables", "workspace_files", "upstream_catalog", "http_api"] as const;
+/** Kinds whose areas are read only through every door (their rows come from the repository). */
+export const READ_ONLY_KINDS = ["workspace_files", "http_api"] as const;
+const comment = z.string().max(2000).optional();
+const fileKey = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/, "a file name in the declaration: lowercase letters, digits and _");
+/** A path inside a repository or a workspace's files: no "..", no leading "/"; {name} placeholders and * in the last part. */
+const repoPath = z.string().regex(/^(?!\/)[A-Za-z0-9._/{}*-]{1,300}$/, "a relative path (letters, digits, . _ - / { } *)")
+  .refine((p) => !p.split("/").some((s) => s === ".." || s === "." || s === ""), "a relative path with no . or .. part");
+/** A value inside a document: a dotted path of properties ("a.b"), "$." for the document's root, "@<name>" a path placeholder, "@file" the file's path. */
+export const VALUE_PATH = /^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\.|$))(\$\.|@)?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+const valuePath = z.string().regex(VALUE_PATH, "a value path: a.b, $.a (the document's root), @name (a path placeholder) or @file");
+/** Text with {value path} parts: a record's key or title made from a document's values. */
+const template = z.string().min(1).max(300).refine((t) => /\{[^{}]+\}/.test(t) && [...t.matchAll(/\{([^{}]*)\}/g)].every((m) => VALUE_PATH.test(m[1]!)) && !/[\u0000-\u001f]/.test(t),
+  "a template: text with {value path} parts, e.g. {id} or {$.instrument}:{id}");
 /**
- * A data repository (mold_v0-059 builds the adapters: the shell's tables, the workspace store's files, an upstream
- * catalog at a pin, an external API). Declared here so a pack.json can carry its repositories today: a `kind` (a plain
- * word) and the kind's own settings, which 059 defines and checks; an area names one with `repository`.
+ * How a repository's documents become one area's rows (no code): `from` names one of the repository's `files` (a file, a
+ * directory or a glob: every JSON document under it), `each` the list inside a document that holds one row per item
+ * ("groups.controls": every control of every group), `key` and `title` templates, and `fields` each field's value path
+ * (absent: the item's property of the same name, or its camelCase form).
  */
-export const RepositorySchema = z.object({
-  kind: z.string().regex(/^[a-z][a-z0-9_]{1,40}$/, "a repository kind: lowercase letters, digits and _"),
-  $comment: z.string().max(2000).optional(),
+export const RowMapSchema = z.object({
+  from: fileKey.optional(),
+  each: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "a dotted path to a list (each list on the way is walked)").optional(),
+  key: template,
+  title: template.optional(),
+  fields: z.record(name, valuePath).optional(),
+  /** Only the items whose values are these (e.g. {"kind": "control"} in a ledger that holds several kinds of lines). */
+  where: z.record(z.string().regex(VALUE_PATH, "a value path"), z.union([z.string().max(200), z.number(), z.boolean()])).optional(),
+}).strict();
+/** An upstream project pinned by commit: a full commit id, never a branch or a tag. */
+export const UpstreamSchema = z.object({
+  repo: z.string().regex(/^(https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|file:\/\/\/[A-Za-z0-9._~/-]+)$/, "an https:// repository address (file:// only in tests)"),
+  commit: z.string().regex(/^([0-9a-f]{40}|[0-9a-f]{64})$/, "a full commit id (40 or 64 hex characters): never a branch or a tag"),
+  license: z.string().max(80).optional(),
+}).strict();
+const ShellTablesSchema = z.object({ kind: z.literal("shell_tables"), $comment: comment }).strict();
+/**
+ * The workspace store's files (mold_v0-033): read only, indexed into the workspace's rows after a commit. Either `path`
+ * (a file template: one row per `identity` value of a JSON-lines or JSON-list file, the last one winning when
+ * `append_only`) or `dir` (a directory template: one row per matching directory, its `files` read into the fields of the
+ * same name). `{name}` parts match one path segment and are values (@name); `store` is the pack's own store (its id).
+ * `never_read` names what is never kept: "<file> <a.b[].c>" drops that value of that file, "any ENC[...] value" drops
+ * every sealed (sops) value.
+ */
+const WorkspaceFilesSchema = z.object({
+  kind: z.literal("workspace_files"), $comment: comment,
+  store: name.optional(),
+  path: repoPath.optional(),
+  dir: repoPath.optional(),
+  files: z.record(fileKey, repoPath).optional(),
+  format: z.enum(["json", "jsonl", "text"]).optional(),
+  identity: valuePath.optional(),
+  append_only: z.boolean().optional(),
+  latest: z.string().max(200).optional(),
+  never_read: z.array(z.string().max(200).refine((r) => !/(__proto__|constructor|prototype)/.test(r), "no __proto__, constructor or prototype").regex(/^(any ENC\[\.\.\.\] value|\S+ [A-Za-z_][A-Za-z0-9_]*(\[\])?(\.[A-Za-z_][A-Za-z0-9_]*(\[\])?)*)$/, "\"<file> <a.b[].c>\" or \"any ENC[...] value\"")).max(50).optional(),
+  map: z.record(name, RowMapSchema).optional(),
+}).strict()
+  .refine((r) => (r.path === undefined) !== (r.dir === undefined), "a workspace_files repository names a path (one file template) or a dir (a directory template), not both")
+  .refine((r) => r.files === undefined || r.dir !== undefined, "files are read inside each dir: declare dir");
+/**
+ * An upstream catalog at a pinned commit: `upstream` (pack.json#upstream, or {repo, commit}) is fetched at the pin only
+ * (any other commit or a redirect is refused), its `files` read there and indexed into platform areas by staff,
+ * idempotently (by fingerprint), pruning only rows it wrote (and refusing to empty an area or prune more than
+ * `prune.max_fraction` of it). Other keys are the pack's loader's own settings.
+ */
+const UpstreamCatalogSchema = z.object({
+  kind: z.literal("upstream_catalog"), $comment: comment,
+  upstream: z.union([z.literal("pack.json#upstream"), UpstreamSchema]),
+  transport: z.enum(["git", "github"]).optional(),
+  files: z.record(fileKey, repoPath).optional(),
+  map: z.record(name, RowMapSchema).optional(),
+  prune: z.object({ max_fraction: z.number().min(0).max(1).optional(), allow_empty: z.boolean().optional() }).strict().optional(),
 }).catchall(z.unknown());
+/**
+ * An external HTTP API, read live and read only: `base_url` (its host among `egress`, the only hosts it may reach; a
+ * redirect is refused), the workspace's `credential` field (mold_v0-034, bound to the workspace) sent in `auth.header`,
+ * `list.path` (the list of items at `list.items`), `get.path` (with {key}) and a `map` per area.
+ */
+const HttpApiSchema = z.object({
+  kind: z.literal("http_api"), $comment: comment,
+  base_url: z.string().regex(/^https?:\/\/[a-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~/-]*)?$/i, "an https:// address"),
+  egress: z.array(host).min(1).max(10),
+  credential: name.optional(),
+  auth: z.object({ header: z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,62}$/, "a header name").optional(), scheme: z.string().regex(/^[A-Za-z]{1,20}$/, "a word").optional() }).strict().optional(),
+  list: z.object({ path: z.string().regex(/^\/[A-Za-z0-9._~/-]*(\?[A-Za-z0-9._~=&-]*)?$/, "a path under base_url"), items: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/).optional() }).strict(),
+  get: z.object({ path: z.string().regex(/^\/[A-Za-z0-9._~/{}-]*\{key\}[A-Za-z0-9._~/{}-]*$/, "a path under base_url with {key}") }).strict().optional(),
+  map: z.record(name, RowMapSchema.omit({ from: true, each: true, where: true })).optional(),
+  max_items: z.number().int().min(1).max(5000).optional(),
+}).strict();
+/**
+ * A data repository (mold_v0-059; src/data-repositories.ts): a `kind` and its settings. An area names one with
+ * `repository`; an area that names none reads the shell's tables.
+ */
+export const RepositorySchema = z.discriminatedUnion("kind", [ShellTablesSchema, WorkspaceFilesSchema, UpstreamCatalogSchema, HttpApiSchema]);
+export type Repository = z.output<typeof RepositorySchema>;
+
+/** What a pack's loader reads: one repository's documents, never a workspace id or a database. */
+export interface RepositoryInput {
+  repository: string;
+  kind: "workspace_files" | "upstream_catalog";
+  settings: Record<string, unknown>;
+  /** The upstream commit (an upstream catalog), or null. */
+  version: string | null;
+  /** The areas this repository feeds: their names, roles and fields (rows name these). */
+  areas: { name: string; role: "source" | "check" | "asset"; fields: string[] }[];
+  /** A file's text (null when absent): a path inside the repository or the workspace's files. */
+  read(path: string): Promise<string | null>;
+  /** The files under a directory (every file when absent), sorted. */
+  list(dir?: string): Promise<string[]>;
+}
+/** A loader's rows, by area: each a key, a title and the area's fields (checked like any write). */
+export type RepositoryRows = Record<string, { key: string; title?: string | null; data: Record<string, unknown> }[]>;
+/** A pack's code that turns a repository's documents into rows (when the declared `map` is not enough). */
+export type RepositoryLoader = (input: RepositoryInput) => RepositoryRows | Promise<RepositoryRows>;
 
 /**
  * How a run's output becomes run_results rows (mold_v0-061 with the agent-workspace runner; 063's metrics read the rows):
@@ -576,7 +727,7 @@ export const ScheduleSchema = z.object({
   label: z.string().min(1).max(80).optional(),
   job_kind: name,
   cron: z.string().max(120).refine((c) => { try { parseCron(c); return true; } catch { return false; } }, "a cron expression: five fields (minute hour day-of-month month day-of-week, UTC), at most every 5 minutes"),
-  assets: z.object({ area: name, keys: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/, "a record key")).min(1).max(50).optional() }).strict().optional(),
+  assets: z.object({ area: name, keys: z.array(z.string().regex(RECORD_KEY, "a record key")).min(1).max(50).optional() }).strict().optional(),
   environment: z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment name: lowercase letters, digits, _ and -").optional(),
   scope: z.record(z.string(), z.unknown()).optional(),
   enabled: z.boolean().default(true),
@@ -609,8 +760,10 @@ export interface PackDefinition {
   onboarding?: z.input<typeof OnboardingStepSchema>[];
   /** Metrics over the pack's records and run results (mold_v0-063 builds them; declared and validated since 057). */
   metrics?: z.input<typeof MetricSchema>[];
-  /** The pack's data repositories, by name (mold_v0-059 builds the adapters; declared and validated since 057). */
+  /** The pack's data repositories, by name (mold_v0-059; src/data-repositories.ts). */
   repositories?: Record<string, z.input<typeof RepositorySchema>>;
+  /** Code that turns a repository's documents into rows, by repository name (mold_v0-059; code only, never pack.json). */
+  loaders?: Record<string, RepositoryLoader>;
   /** How a run's output becomes run_results rows (mold_v0-061; declared and validated since 057). */
   runResults?: z.input<typeof RunResultsSchema>;
   /**
@@ -637,7 +790,7 @@ const METHODS = new Set<HttpMethod>(["get", "post", "put", "patch", "delete"]);
 export class PackDefinitionError extends Error {}
 
 /** Check a pack's definition: names, paths, permissions and the declared-only fields. Throws on the first problem list. */
-export function validatePack(p: PackDefinition): PackDefinition {
+export function validatePack(p: PackDefinition, partial = false): PackDefinition {
   const problems: string[] = [];
   const at = (what: string) => `pack ${JSON.stringify(p?.id)}: ${what}`;
   if (!p || typeof p !== "object") throw new PackDefinitionError("definePack: expected an object");
@@ -695,6 +848,7 @@ export function validatePack(p: PackDefinition): PackDefinition {
   }
   for (const a of p.recordAreas ?? []) if (a?.repository !== undefined && !Object.hasOwn(repos, a.repository))
     problems.push(at(`record area ${a.name} reads from repository ${a.repository}, which this pack does not declare`));
+  problems.push(...repositoryProblems(p, partial).map(at));
   if (p.runResults !== undefined) {
     const v = RunResultsSchema.safeParse(p.runResults);
     if (!v.success) problems.push(at(`runResults: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));
@@ -745,9 +899,63 @@ export function validatePack(p: PackDefinition): PackDefinition {
   return p;
 }
 
+/**
+ * What a pack's repositories must agree on with its areas and credentials (mold_v0-059): the scope each kind feeds, no
+ * writes declared on a read-only area, the store, the credential and the egress of an API, maps and loaders naming
+ * what exists.
+ */
+function repositoryProblems(p: PackDefinition, partial: boolean): string[] {
+  const out: string[] = [];
+  const repos = (p.repositories ?? {}) as Record<string, z.input<typeof RepositorySchema>>;
+  if (typeof repos !== "object" || Array.isArray(repos)) return out;
+  const areas = (p.recordAreas ?? []).filter((a) => a && typeof a === "object");
+  for (const [rn, raw] of Object.entries(repos)) {
+    const v = RepositorySchema.safeParse(raw);
+    if (!v.success) continue; // its shape is reported above
+    const r = v.data;
+    const fed = areas.filter((a) => a.repository === rn);
+    for (const a of fed) {
+      if (r.kind === "workspace_files" && a.scope !== "workspace") out.push(`record area ${a.name}: a workspace_files repository feeds a workspace's own areas (scope workspace)`);
+      if (r.kind === "upstream_catalog" && a.scope !== "platform") out.push(`record area ${a.name}: an upstream catalog feeds shared areas (scope platform)`);
+      if (r.kind === "http_api" && r.credential && a.scope !== "workspace") out.push(`record area ${a.name}: an API read with a workspace's credential feeds a workspace's own areas`);
+      if ((READ_ONLY_KINDS as readonly string[]).includes(r.kind)) {
+        if (a.lifecycle) out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): it cannot have a lifecycle`);
+        for (const k of ["create", "update", "move", "delete"] as const) if (a.permissions?.[k]) out.push(`record area ${a.name} reads from ${r.kind} repository ${rn} (read only): it cannot declare ${k}`);
+      }
+    }
+    if (r.kind === "workspace_files" && r.store !== undefined && r.store !== p.id) out.push(`repository ${rn}: store ${r.store} is not this pack's own store (${p.id})`);
+    if (r.kind === "http_api") {
+      const h = (() => { try { return new URL(r.base_url).hostname.toLowerCase(); } catch { return ""; } })();
+      const allowed = r.egress.some((e) => { const x = e.toLowerCase().replace(/^\*\./, ""); return h === x || h.endsWith(`.${x}`); });
+      if (!allowed) out.push(`repository ${rn}: base_url's host ${h} is not in its egress list`);
+      if (r.credential !== undefined) {
+        const c = (p.credentials ?? []).find((x) => x?.name === r.credential);
+        if (!c) out.push(`repository ${rn} names credential ${r.credential}, which this pack does not declare`);
+        else if (c.bound_to !== "workspace") out.push(`repository ${rn}: credential ${r.credential} must be bound to the workspace (one value per workspace)`);
+      }
+    }
+    const map = (r as { map?: Record<string, z.input<typeof RowMapSchema>> }).map ?? {};
+    for (const [an, m] of Object.entries(map)) {
+      const a = fed.find((x) => x.name === an);
+      if (!a) { out.push(`repository ${rn} maps area ${an}, which does not read from it`); continue; }
+      for (const f of Object.keys(m.fields ?? {})) if (!a.fields.some((x) => x.name === f)) out.push(`repository ${rn}: its map of ${an} names field ${f}, which ${an} does not declare`);
+      const files = (r as { files?: Record<string, string> }).files;
+      if (m.from !== undefined && !Object.hasOwn(files ?? {}, m.from)) out.push(`repository ${rn}: its map of ${an} reads ${m.from}, which is not one of its files`);
+    }
+  }
+  for (const [rn, fn] of Object.entries(p.loaders ?? {})) {
+    const r = repos[rn];
+    // A code entry alone may not carry the repositories its pack.json declares: checked once merged (src/packs.ts).
+    if (!r) { if (!partial) out.push(`loader ${rn} names no repository of this pack`); }
+    else if (r.kind !== "workspace_files" && r.kind !== "upstream_catalog") out.push(`loader ${rn}: only a workspace_files or upstream_catalog repository takes a loader`);
+    if (typeof fn !== "function") out.push(`loader ${rn} must be a function`);
+  }
+  return out;
+}
+
 /** A pack's one export: `export default definePack({ id, tools, routes, ... })`. Checked when the module loads. */
 export function definePack<const P extends PackDefinition>(p: P): P {
-  validatePack(p);
+  validatePack(p, true);
   return p;
 }
 

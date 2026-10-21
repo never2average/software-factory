@@ -7,22 +7,34 @@
  *                      checks). The tenant role may only SELECT them: read-only to customers by the database's own
  *                      grants. Written by platform staff (/api/admin/records, need("library")) or a pack's admin route.
  *   workspace_records  areas with scope "workspace": one workspace's own rows (org_id), under row-level security
- *                      (tenant_isolation). Written by the pack's own code for the calling workspace (ctx.records.put).
- *                      An "asset" area's title and data are sealed with the workspace's data key (src/orgcrypto.ts).
+ *                      (tenant_isolation). Written by the pack's own code for the calling workspace (ctx.records.put)
+ *                      and the data API (mold_v0-059). A sealed area's (an asset area's, or one declared `sealed`,
+ *                      mold_v0-066) title and data are sealed with the workspace's data key (src/orgcrypto.ts).
+ *
+ * mold_v0-066: `batch` applies several writes as one transaction (every query of the batch, the reference checks
+ * included, runs on that transaction: txScope below), so an index is all-or-nothing; record keys may hold ( and ).
+ * mold_v0-059: lists take filters and a sort (src/record-query.ts); an area's rows may come from a repository
+ * (src/data-repositories.ts): an area fed by the workspace's files or read live from an API is read only through every
+ * door, and only the repository's own writer (writeFromRepository) changes its rows, marking each with its source and
+ * a fingerprint so a re-index writes nothing that has not changed and prunes only what it wrote.
  *
  * Every workspace read and write runs inside withTenant for that workspace and names its org_id as well, so the
  * database refuses another workspace's rows even when a query forgets its filter. The HTTP routes are in
  * src/record-routes.ts (this module stays free of the server's modules: src/packs.ts imports it).
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getDb } from "./db.js";
-import { isSealed, open, openJson, seal, sealJson } from "./orgcrypto.js";
+import { getDb, type Queryable } from "./db.js";
+import { vaultUnlocked } from "./keyvault.js";
+import { ensureOrgKey, isSealed, open, openJson, seal, sealJson } from "./orgcrypto.js";
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { areaLinks, DECLARABLE_ROLES, optionValues, PackError, RecordAreaSchema, RecordFieldSchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordPage, type RecordRow, type Workspace, type WorkspaceRecords } from "./pack-api.js";
+import { areaLinks, DECLARABLE_ROLES, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
 import { packs } from "./packs.js";
-import { asPlatform, withTenant } from "./tenant-scope.js";
+import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
+import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
 
-export type RecordArea = z.output<typeof RecordAreaSchema> & { pack: string };
+/** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
+export type RecordArea = z.output<typeof RecordAreaSchema> & { pack: string; repo: { name: string; kind: Repository["kind"]; settings: Repository } | null };
 
 /** The MCP tools the shell adds when at least one area is declared (a pack may not take these names). */
 export const RECORD_TOOL_NAMES = ["list_records", "get_record"] as const;
@@ -32,7 +44,12 @@ let cache: { from: unknown; areas: RecordArea[] } | null = null;
 export function recordAreas(): RecordArea[] {
   const list = packs();
   if (cache?.from === list) return cache.areas;
-  const areas = list.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => ({ ...RecordAreaSchema.parse(a), pack: p.id })));
+  const areas = list.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => {
+    const parsed = RecordAreaSchema.parse(a);
+    const raw = parsed.repository ? p.definition.repositories?.[parsed.repository] : undefined;
+    const settings = raw ? RepositorySchema.parse(raw) : null;
+    return { ...parsed, pack: p.id, repo: settings ? { name: parsed.repository!, kind: settings.kind, settings } : null };
+  }));
   cache = { from: list, areas };
   return areas;
 }
@@ -74,15 +91,40 @@ function assertMay(area: RecordArea, action: RecordAction, actor: Actor) {
   throw new PackError(`You can't ${VERB[action]} ${area.label} records with the ${ACCOUNT_ROLE_LABELS[actor.role!]} role${who.length ? ` (${who.join(", ")} can)` : ""}.`, 403);
 }
 
+/** A sealed area (mold_v0-066): an asset area, or one declared `sealed`. Its title and data are ciphertext at rest. */
+export const isSealedArea = (a: Pick<RecordArea, "role" | "sealed">) => a.role === "asset" || a.sealed === true;
+/** An area whose rows come from the workspace's files or an API: no door writes it, only its repository's writer. */
+export const isReadOnlyArea = (a: Pick<RecordArea, "repo">) => !!a.repo && (READ_ONLY_KINDS as readonly string[]).includes(a.repo.kind);
+const readOnly = (a: RecordArea) =>
+  new PackError(`${a.label} records come from ${a.repo!.kind === "http_api" ? "an external API" : "the workspace's files"} (repository ${a.repo!.name}): read only here`, 409);
+/** An area read live from an API (src/data-repositories.ts): its rows are not in the shell's tables. */
+const isLive = (a: RecordArea) => a.repo?.kind === "http_api";
+const live = () => import("./data-repositories.js");
+
+// ---------- the batch's transaction (mold_v0-066) ----------
+
+/**
+ * Inside a batch every query of the record store runs on the batch's one transaction, opened for one workspace (or the
+ * platform). A query that has left that scope (a callback that lost it, a write to another workspace) is refused, never
+ * run outside the transaction.
+ */
+const txScope = new AsyncLocalStorage<{ tx: Queryable; orgId: number | null }>();
+async function q(): Promise<Queryable> {
+  const t = txScope.getStore();
+  if (!t) return getDb();
+  if (currentTenant() !== t.orgId) throw new Error("a record query left its batch's scope: refused");
+  return t.tx;
+}
+
 // ---------- values ----------
 
-const KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const KEY = RECORD_KEY;
 const PERSON = /^[A-Za-z0-9][A-Za-z0-9_.:@|-]{0,199}$/;
 const FILE_PATH = /^(?!\/)(?!.*\/\/)[A-Za-z0-9._ /-]{1,500}$/;
 const MAX_DATA_BYTES = 256 * 1024;
 const MAX_LIST = 100;
 export const checkKey = (key: unknown): string => {
-  if (typeof key !== "string" || !KEY.test(key)) throw new PackError("a record key is 1-200 letters, digits, . _ : or -, starting with a letter or digit", 400);
+  if (typeof key !== "string" || !KEY.test(key)) throw new PackError("a record key is 1-200 letters, digits, . _ : ( ) or -, starting with a letter or digit", 400);
   return key;
 };
 
@@ -110,17 +152,19 @@ const expects = (f: Field) => {
     default: return `a ${f.type}`;
   }
 };
+/** One element of a list field (enum, person, reference, file) against its type. */
+function fitsOne(f: Field, x: unknown): boolean {
+  switch (f.type) {
+    case "enum": return typeof x === "string" && optionValues(f).includes(x);
+    case "person": return typeof x === "string" && PERSON.test(x);
+    case "reference": return typeof x === "string" && KEY.test(x);
+    case "file": return isFile(x);
+    default: return false;
+  }
+}
 /** One value against its field's type (references are only shaped here: whether the record exists is checked on write). */
 function fits(f: Field, v: unknown): boolean {
-  const one = (x: unknown): boolean => {
-    switch (f.type) {
-      case "enum": return typeof x === "string" && optionValues(f).includes(x);
-      case "person": return typeof x === "string" && PERSON.test(x);
-      case "reference": return typeof x === "string" && KEY.test(x);
-      case "file": return isFile(x);
-      default: return false;
-    }
-  };
+  const one = (x: unknown) => fitsOne(f, x);
   switch (f.type) {
     case "text": return typeof v === "string" && v.length <= (f.max_length ?? 20_000);
     case "number": return typeof v === "number" && Number.isFinite(v) && (f.min === undefined || v >= f.min) && (f.max === undefined || v <= f.max);
@@ -160,11 +204,11 @@ export function checkData(area: { name: string; fields: readonly Field[] }, data
 async function existing(target: RecordArea, keys: string[], orgId: number | null): Promise<Set<string>> {
   if (!keys.length) return new Set();
   if (target.scope === "platform") {
-    const rows = await (await getDb()).query<{ key: string }>("SELECT key FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [target.pack, target.name, keys]);
+    const rows = await (await q()).query<{ key: string }>("SELECT key FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [target.pack, target.name, keys]);
     return new Set(rows.map((r) => r.key));
   }
   if (orgId === null) return new Set(); // a shared row never refers to one workspace's records (refused at build too)
-  return withTenant(orgId, async () => new Set((await (await getDb()).query<{ key: string }>(
+  return withTenant(orgId, async () => new Set((await (await q()).query<{ key: string }>(
     "SELECT key FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY ($4::text[])", [orgId, target.pack, target.name, keys])).map((r) => r.key)));
 }
 
@@ -220,45 +264,84 @@ const title = (t: unknown): string | null => {
 interface Row { key: string; title: string | null; data: unknown; version?: string | null; updated_at: Date | string }
 const iso = (d: Date | string) => (d instanceof Date ? d : new Date(d)).toISOString();
 async function toRecord(area: RecordArea, row: Row, orgId: number | null): Promise<RecordRow> {
-  // Sealed values (an asset area's) open with the row's own workspace key only; a platform row is never sealed.
-  const raw = orgId !== null && area.role === "asset" ? await openJson(orgId, row.data) : (row.data as Record<string, unknown>) ?? {};
+  // Sealed values open with the row's own workspace key only (a row sealed before its area stopped being sealed opens
+  // too); a platform row is never sealed.
+  const raw = orgId !== null ? await openJson(orgId, row.data) : (row.data as Record<string, unknown>) ?? {};
   const { data, drift } = conform(area, raw);
   const t = orgId !== null && isSealed(row.title) ? await open(orgId, row.title) : row.title;
   return { area: area.name, key: row.key, title: t ?? null, data, version: row.version ?? null, updated_at: iso(row.updated_at), ...(drift.length ? { drift } : {}) };
 }
 
-const pageArgs = (opts: { limit?: unknown; after?: unknown } = {}) => {
-  const n = opts.limit === undefined ? 50 : Number(opts.limit);
-  if (!Number.isInteger(n) || n < 1 || n > 200) throw new PackError("limit is 1 to 200", 400);
-  const after = opts.after === undefined || opts.after === "" ? "" : checkKey(opts.after);
-  return { limit: n, after };
-};
+/** A query (mold_v0-059) against an area's fields: limit, sort, filter, cursor (src/record-query.ts). */
+export const queryOf = (area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Parsed =>
+  parseQuery(area.fields as QField[], opts as RecordQuery, fits as (f: QField, v: unknown) => boolean, fitsOne as (f: QField, v: unknown) => boolean);
+
+/** At most this many rows of one workspace's sealed area are opened to filter or sort them in memory. */
+export const MEMORY_SCAN_LIMIT = 5000;
 
 // ---------- reads and writes ----------
 
-export async function listPlatform(area: RecordArea, opts?: { limit?: unknown; after?: unknown }): Promise<RecordPage> {
-  const { limit, after } = pageArgs(opts);
-  const rows = await (await getDb()).query<Row>(
-    "SELECT key, title, data, version, updated_at FROM platform_records WHERE pack = $1 AND area = $2 AND key > $3 ORDER BY key LIMIT $4",
-    [area.pack, area.name, after, limit + 1]);
-  const page = await Promise.all(rows.slice(0, limit).map((r) => toRecord(area, r, null)));
-  return { records: page, next: rows.length > limit ? page.at(-1)!.key : null };
+/**
+ * A page of an area's rows in the shell's tables: the area's and (for a workspace area) the workspace's own scope first,
+ * then the query's conditions and order (src/record-query.ts), so a filter, sort or cursor only narrows the caller's
+ * rows. A sealed area's titles and data are ciphertext in the database: a query that reads them runs on the opened rows.
+ */
+async function listTable(area: RecordArea, orgId: number | null, p: Parsed): Promise<RecordPage> {
+  if (orgId !== null && isSealedArea(area) && readsContent(p)) {
+    const all = await scanWorkspace(orgId, area, p.conds.filter((c) => c.target === "key"));
+    return pageInMemory(p, all);
+  }
+  const run = async () => {
+    const params: unknown[] = orgId === null ? [area.pack, area.name] : [orgId, area.pack, area.name];
+    const base = orgId === null ? ["pack = $1", "area = $2"] : ["org_id = $1", "pack = $2", "area = $3"];
+    const table = orgId === null ? "platform_records" : "workspace_records";
+    // A sorted page starts after its cursor's row, read again in this same scope (its sort value is never the caller's).
+    if (p.after && p.sort.target !== "key" && !(await (await q()).query(`SELECT 1 FROM ${table} WHERE ${[...base, `key = $${params.length + 1}`].join(" AND ")}`, [...params, p.after.k])).length)
+      throw goneCursor();
+    const parts = sqlParts(p, params, { table, where: base });
+    params.push(p.limit + 1);
+    const rows = await (await q()).query<Row>(
+      `SELECT key, title, data, ${orgId === null ? "version" : "NULL::text AS version"}, updated_at FROM ${table}
+        WHERE ${[...base, ...parts.where].join(" AND ")} ORDER BY ${parts.order} LIMIT $${params.length}`, params);
+    const page = await Promise.all(rows.slice(0, p.limit).map((r) => toRecord(area, r, orgId)));
+    const last = rows[p.limit - 1];
+    return { records: page, next: rows.length > p.limit && last ? cursorOf(p.sort, last.key) : null };
+  };
+  return orgId === null ? run() : withTenant(orgId, run);
 }
 
-async function listWorkspace(orgId: number, area: RecordArea, opts?: { limit?: unknown; after?: unknown }): Promise<RecordPage> {
-  const { limit, after } = pageArgs(opts);
+/** Every row of one workspace's area, opened (a sealed area's filter and sort): at most MEMORY_SCAN_LIMIT. */
+async function scanWorkspace(orgId: number, area: RecordArea, keyConds: Parsed["conds"]): Promise<RecordRow[]> {
   return withTenant(orgId, async () => {
-    const rows = await (await getDb()).query<Row>(
-      "SELECT key, title, data, updated_at FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key > $4 ORDER BY key LIMIT $5",
-      [orgId, area.pack, area.name, after, limit + 1]);
-    const page = await Promise.all(rows.slice(0, limit).map((r) => toRecord(area, r, orgId)));
-    return { records: page, next: rows.length > limit ? page.at(-1)!.key : null };
+    const params: unknown[] = [orgId, area.pack, area.name];
+    const parts = sqlParts({ limit: 1, conds: keyConds, sort: { target: "key", name: "key", desc: false, text: "key" }, after: null }, params);
+    params.push(MEMORY_SCAN_LIMIT + 1);
+    const rows = await (await q()).query<Row>(
+      `SELECT key, title, data, updated_at FROM workspace_records WHERE ${["org_id = $1", "pack = $2", "area = $3", ...parts.where].join(" AND ")} ORDER BY key LIMIT $${params.length}`, params);
+    if (rows.length > MEMORY_SCAN_LIMIT)
+      throw new PackError(`${area.label} is sealed: a filter or sort opens every record, and it has more than ${MEMORY_SCAN_LIMIT}. Filter by key first.`, 413);
+    return Promise.all(rows.map((r) => toRecord(area, r, orgId)));
   });
 }
 
+/** One page of a platform area (any caller: shared rows are every workspace's). */
+export async function listPlatform(area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Promise<RecordPage> {
+  const p = queryOf(area, opts);
+  if (isLive(area)) return (await live()).listLive(area, null, p);
+  return listTable(area, null, p);
+}
+
+async function listWorkspace(orgId: number, area: RecordArea, opts?: RecordQuery | { limit?: unknown; after?: unknown }): Promise<RecordPage> {
+  const p = queryOf(area, opts);
+  if (isLive(area)) return (await live()).listLive(area, orgId, p);
+  return listTable(area, orgId, p);
+}
+
 export async function getPlatform(area: RecordArea, key: string): Promise<RecordRow | null> {
-  const [r] = await (await getDb()).query<Row>("SELECT key, title, data, version, updated_at FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3",
-    [area.pack, area.name, checkKey(key)]);
+  checkKey(key);
+  if (isLive(area)) return (await live()).getLive(area, null, key);
+  const [r] = await (await q()).query<Row>("SELECT key, title, data, version, updated_at FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3",
+    [area.pack, area.name, key]);
   return r ? toRecord(area, r, null) : null;
 }
 
@@ -266,14 +349,15 @@ export async function getPlatform(area: RecordArea, key: string): Promise<Record
 async function readWorkspace(orgId: number, area: RecordArea, key: string): Promise<{ rev: string; record: RecordRow; opened: Record<string, unknown> } | null> {
   return withTenant(orgId, async () => {
     // xmin: the row version, for the compare-and-set of a write or move (exact, whatever the stored values are).
-    const [r] = await (await getDb()).query<Row & { rev: string }>("SELECT key, title, data, updated_at, xmin::text AS rev FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4",
+    const [r] = await (await q()).query<Row & { rev: string }>("SELECT key, title, data, updated_at, xmin::text AS rev FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4",
       [orgId, area.pack, area.name, checkKey(key)]);
     if (!r) return null;
-    const opened = area.role === "asset" ? await openJson(orgId, r.data) : (r.data as Record<string, unknown>) ?? {};
+    const opened = await openJson(orgId, r.data);
     return { rev: r.rev, record: await toRecord(area, r, orgId), opened };
   });
 }
 async function getWorkspace(orgId: number, area: RecordArea, key: string): Promise<RecordRow | null> {
+  if (isLive(area)) return (await live()).getLive(area, orgId, checkKey(key));
   return (await readWorkspace(orgId, area, key))?.record ?? null;
 }
 
@@ -281,7 +365,7 @@ async function getWorkspace(orgId: number, area: RecordArea, key: string): Promi
  * One workspace's view of an area: a platform area's shared rows, or the workspace's own rows of a workspace area. With
  * an actor (the person asking), the area's read permission is checked first (mold_v0-057).
  */
-export const listFor = (orgId: number, name: string, opts?: { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR) => {
+export const listFor = (orgId: number, name: string, opts?: RecordQuery | { limit?: unknown; after?: unknown }, actor: Actor = SYSTEM_ACTOR) => {
   const a = areaOrThrow(name);
   assertMay(a, "read", actor);
   return a.scope === "platform" ? listPlatform(a, opts) : listWorkspace(orgId, a, opts);
@@ -323,40 +407,59 @@ const ownWorkspaceArea = (pack: string, name: string) => {
 /** A record's state; a row with none (written before its area had a lifecycle) is in the initial state. */
 const stateOf = (area: RecordArea, data: Record<string, unknown>) => (area.lifecycle ? data[area.lifecycle.field] ?? area.lifecycle.initial : undefined);
 
-async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null): Promise<RecordRow> {
+/**
+ * Who wrote a row (mold_v0-059): null for every door (ctx.records, the data API, staff), or a repository's writer with
+ * the row's fingerprint. A write through a door clears both, so the next index writes the row again.
+ */
+export interface WriteMeta { source: string; fingerprint: string; /** Staff forced the index: it may take over a hand row. */ claim?: boolean }
+
+/** Sealed values are never stored in the clear: a sealed area's write is refused while the key vault is locked. */
+const assertCanSeal = (area: RecordArea) => {
+  if (isSealedArea(area) && !vaultUnlocked()) throw new PackError(`${area.label} records are sealed and the key vault is locked: nothing is stored unsealed`, 503);
+};
+
+async function writeRow(orgId: number, area: RecordArea, key: string, t: string | null, data: Record<string, unknown>, prev: { rev: string } | null, meta: WriteMeta | null = null): Promise<RecordRow> {
   let stored: Record<string, unknown> = data;
-  if (area.role === "asset") {
+  if (isSealedArea(area)) {
+    assertCanSeal(area);
     stored = await withTenant(orgId, () => sealJson(orgId, data));
     if (t) t = await withTenant(orgId, () => seal(orgId, t!));
   }
   const sealed = isSealed((stored as { _sealed?: unknown })._sealed);
   return withTenant(orgId, async () => {
-    const db = await getDb();
+    const db = await q();
     const [r] = prev === null
       ? await db.query<Row>(
-        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO workspace_records (org_id, pack, area, key, title, data, sealed, source, fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (org_id, pack, area, key) DO NOTHING RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed])
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, meta?.source ?? null, meta?.fingerprint ?? null])
       // An area with a lifecycle changes a row only from what was read (its state may have moved meanwhile).
       : await db.query<Row>(
-        `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, updated_at = now()
+        `UPDATE workspace_records SET title = $5, data = $6, sealed = $7, source = $9, fingerprint = $10, updated_at = now()
           WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($8::text IS NULL OR xmin::text = $8) RETURNING key, title, data, updated_at`,
-        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null]);
-    if (!r) throw new PackError(`${area.label} record ${key} was changed by someone else meanwhile: read it again and retry`, 409);
+        [orgId, area.pack, area.name, key, t, JSON.stringify(stored), sealed, area.lifecycle ? prev.rev : null, meta?.source ?? null, meta?.fingerprint ?? null]);
+    if (!r) throw new PackError(prev === null ? `${area.label} record ${key} already exists` : `${area.label} record ${key} was changed by someone else meanwhile: read it again and retry`, 409);
     return toRecord(area, r, orgId);
   });
 }
 
-async function putWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, value: RecordInput): Promise<RecordRow> {
+/** put: create or replace; create: only a new key (409 when it exists); update: only an existing key (404). */
+export type PutMode = "put" | "create" | "update";
+
+async function putWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
+  if (!meta && isReadOnlyArea(area)) throw readOnly(area);
   checkKey(key);
+  assertCanSeal(area);
   // A writer must also be a reader: a write's answer (and its refusals) show the stored record.
   assertMay(area, "read", actor);
   const prev = await readWorkspace(orgId, area, key);
+  if (prev && mode === "create") throw new PackError(`${area.label} record ${key} already exists`, 409);
+  if (!prev && mode === "update") throw new PackError(`no ${area.name} record ${key}`, 404);
   assertMay(area, prev ? "update" : "create", actor);
   const given = value?.data;
   const t = title(value?.title);
-  if (!area.lifecycle) return writeRow(orgId, area, key, t, await checkRecord(area, given, orgId, actor), prev);
+  if (!area.lifecycle) return writeRow(orgId, area, key, t, await checkRecord(area, given, orgId, actor), prev, meta);
   // A lifecycle (mold_v0-057): a new record starts in its initial state; a write never changes the state.
   const field = area.lifecycle.field;
   const asked = given && typeof given === "object" && !Array.isArray(given) ? (given as Record<string, unknown>)[field] : undefined;
@@ -368,7 +471,7 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
   const rest = { ...(given as Record<string, unknown> ?? {}) };
   delete rest[field];
   const data = await checkRecord(area, rest, orgId, actor, undefined, [field]);
-  return writeRow(orgId, area, key, t, { ...data, [field]: state }, prev);
+  return writeRow(orgId, area, key, t, { ...data, [field]: state }, prev, meta);
 }
 
 /** The moves a record in `from` may make, in words (a refusal's second sentence). */
@@ -378,6 +481,8 @@ const movesFrom = (area: RecordArea, from: unknown) => area.lifecycle!.transitio
 
 async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
+  if (isReadOnlyArea(area)) throw readOnly(area);
+  assertCanSeal(area);
   if (!area.lifecycle) throw new PackError(`area ${area.name} has no lifecycle: its records do not move`, 400);
   assertMay(area, "read", actor);
   assertMay(area, "move", actor);
@@ -397,37 +502,147 @@ async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: st
   return writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to }, prev);
 }
 
-async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string): Promise<boolean> {
+async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, source: string | null = null): Promise<boolean> {
   const area = ownWorkspaceArea(pack, name);
+  if (source === null && isReadOnlyArea(area)) throw readOnly(area);
   assertMay(area, "read", actor);
   assertMay(area, "delete", actor);
-  return withTenant(orgId, async () => (await (await getDb()).query(
-    "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 RETURNING id", [orgId, area.pack, area.name, checkKey(key)])).length > 0);
+  // A repository's writer deletes only rows it wrote itself (its prune).
+  return withTenant(orgId, async () => (await (await q()).query(
+    "DELETE FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = $4 AND ($5::text IS NULL OR source = $5) RETURNING id",
+    [orgId, area.pack, area.name, checkKey(key), source])).length > 0);
 }
 
-/** Platform staff (or a pack's admin route) writing a shared row. `pack` limits a pack to its own areas; null is the admin API. */
-export async function putPlatform(pack: string | null, name: string, key: string, value: RecordInput): Promise<RecordRow> {
+const platformAreaFor = (pack: string | null, name: string) => {
   const area = areaOrThrow(name);
   if (area.scope !== "platform") throw new PackError(`area ${area.name} holds each workspace's own records: written by the workspace, not here`, 403);
   if (pack !== null && area.pack !== pack) throw new PackError(`area ${area.name} belongs to pack ${area.pack}`, 403);
+  return area;
+};
+
+/**
+ * Platform staff (or a pack's admin route) writing a shared row. `pack` limits a pack to its own areas; null is the admin
+ * API. A row written here is a hand row (no source): a repository's re-index never prunes it.
+ */
+export async function putPlatform(pack: string | null, name: string, key: string, value: RecordInput, mode: PutMode = "put", meta: WriteMeta | null = null): Promise<RecordRow> {
+  const area = platformAreaFor(pack, name);
+  if (!meta && isReadOnlyArea(area)) throw readOnly(area);
   checkKey(key);
   const data = await checkRecord(area, value?.data, null, SYSTEM_ACTOR);
   const version = value?.version === undefined || value.version === null ? null : String(value.version).slice(0, 120);
+  const t = title(value?.title);
   return asPlatform(async () => {
-    const [r] = await (await getDb()).query<Row>(
-      `INSERT INTO platform_records (pack, area, key, title, data, version) VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (pack, area, key) DO UPDATE SET title = excluded.title, data = excluded.data, version = excluded.version, updated_at = now()
-       RETURNING key, title, data, version, updated_at`,
-      [area.pack, area.name, key, title(value?.title), JSON.stringify(data), version]);
-    return toRecord(area, r!, null);
+    const db = await q();
+    const params = [area.pack, area.name, key, t, JSON.stringify(data), version, meta?.source ?? null, meta?.fingerprint ?? null];
+    const [r] = mode === "update"
+      ? await db.query<Row>(`UPDATE platform_records SET title = $4, data = $5, version = $6, source = $7, fingerprint = $8, updated_at = now()
+          WHERE pack = $1 AND area = $2 AND key = $3 RETURNING key, title, data, version, updated_at`, params)
+      : await db.query<Row>(
+        `INSERT INTO platform_records (pack, area, key, title, data, version, source, fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (pack, area, key) DO ${mode === "create" ? "NOTHING" : `UPDATE SET title = excluded.title, data = excluded.data, version = excluded.version, source = excluded.source, fingerprint = excluded.fingerprint, updated_at = now()${
+           // A repository's writer replaces only its own rows: a row written by hand meanwhile stays (unless staff forced it).
+           meta && !meta.claim ? " WHERE platform_records.source = excluded.source" : ""}`}
+         RETURNING key, title, data, version, updated_at`, params);
+    if (!r && meta) throw new PackError(`${area.label} record ${key} was written by hand meanwhile: kept (index again, or force it)`, 409);
+    if (!r) throw mode === "create" ? new PackError(`${area.label} record ${key} already exists`, 409) : new PackError(`no ${area.name} record ${key}`, 404);
+    return toRecord(area, r, null);
   });
 }
-export async function deletePlatform(pack: string | null, name: string, key: string): Promise<boolean> {
-  const area = areaOrThrow(name);
-  if (area.scope !== "platform") throw new PackError(`area ${area.name} holds each workspace's own records`, 403);
-  if (pack !== null && area.pack !== pack) throw new PackError(`area ${area.name} belongs to pack ${area.pack}`, 403);
-  return asPlatform(async () => (await (await getDb()).query(
-    "DELETE FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3 RETURNING id", [area.pack, area.name, checkKey(key)])).length > 0);
+export async function deletePlatform(pack: string | null, name: string, key: string, source: string | null = null): Promise<boolean> {
+  const area = platformAreaFor(pack, name);
+  if (source === null && isReadOnlyArea(area)) throw readOnly(area);
+  return asPlatform(async () => (await (await q()).query(
+    "DELETE FROM platform_records WHERE pack = $1 AND area = $2 AND key = $3 AND ($4::text IS NULL OR source = $4) RETURNING id", [area.pack, area.name, checkKey(key), source])).length > 0);
+}
+
+// ---------- batches (mold_v0-066) ----------
+
+/** The most operations one batch of a door (ctx.records, the data API) may carry; a repository's index may carry more. */
+export const MAX_BATCH = 1000;
+const MAX_INDEX_BATCH = 100_000;
+
+/** An operation's own refusal, numbered: which one of the batch failed (nothing of the batch was written). */
+const numbered = (i: number, op: { op?: unknown; area?: unknown; key?: unknown }, e: unknown) => {
+  const what = `operation ${i + 1} (${String(op?.op)} ${String(op?.area).slice(0, 64)} ${String(op?.key).slice(0, 200)})`;
+  if (e instanceof PackError) return new PackError(`${what}: ${e.message}. Nothing of the batch was written.`, e.status);
+  // Anything else (a database error) is the caller's 500, as for a single write; the batch is still all-or-nothing.
+  return e;
+};
+const checkOps = (ops: unknown, max: number): RecordOperation[] => {
+  if (!Array.isArray(ops) || !ops.length) throw new PackError("a batch is a list of 1 or more operations", 400);
+  if (ops.length > max) throw new PackError(`a batch holds at most ${max} operations`, 413);
+  for (const [i, o] of ops.entries()) {
+    const x = o as Record<string, unknown>;
+    if (!x || typeof x !== "object" || !["put", "create", "update", "move", "delete"].includes(x.op as string) || typeof x.area !== "string" || typeof x.key !== "string")
+      throw new PackError(`operation ${i + 1}: {op: put|create|update|move|delete, area, key, ...}`, 400);
+  }
+  return ops as RecordOperation[];
+};
+
+/**
+ * Run `fn` as one transaction for one workspace (orgId) or the platform (null): every record query inside runs on it;
+ * any refusal or error rolls all of it back. Batches do not nest.
+ */
+export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T>): Promise<T> {
+  if (txScope.getStore()) throw new Error("a batch inside a batch: refused");
+  // The data key is loaded before the transaction: sealing and opening inside it then need no other query.
+  if (orgId !== null) await ensureOrgKey(orgId);
+  const run = async () => (await getDb()).transaction((tx) => txScope.run({ tx, orgId }, fn));
+  return orgId === null ? asPlatform(run) : withTenant(orgId, run);
+}
+
+async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
+  const ops = checkOps(raw, max);
+  return inTransaction(orgId, async () => {
+    const out: RecordOperationResult[] = [];
+    for (const [i, o] of ops.entries()) {
+      try {
+        if (o.op === "move") out.push({ op: o.op, area: o.area, key: o.key, record: await moveWorkspace(orgId, pack, actor, o.area, o.key, o.to) });
+        else if (o.op === "delete") out.push({ op: o.op, area: o.area, key: o.key, deleted: await deleteWorkspace(orgId, pack, actor, o.area, o.key, source) });
+        else {
+          const fp = source !== null ? fingerprints?.get(`${o.area}\u0000${o.key}`) : undefined;
+          out.push({ op: o.op, area: o.area, key: o.key, record: await putWorkspace(orgId, pack, actor, o.area, o.key, { title: o.title, data: o.data }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
+        }
+      } catch (e) { throw numbered(i, o, e); }
+    }
+    return out;
+  });
+}
+
+async function batchPlatform(pack: string | null, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
+  const ops = checkOps(raw, max);
+  return inTransaction(null, async () => {
+    const out: RecordOperationResult[] = [];
+    for (const [i, o] of ops.entries()) {
+      try {
+        if (o.op === "move") throw new PackError("a shared area has no lifecycle: its records do not move", 400);
+        if (o.op === "delete") out.push({ op: o.op, area: o.area, key: o.key, deleted: await deletePlatform(pack, o.area, o.key, source) });
+        else {
+          const fp = source !== null ? fingerprints?.get(`${o.area}\u0000${o.key}`) : undefined;
+          out.push({ op: o.op, area: o.area, key: o.key, record: await putPlatform(pack, o.area, o.key, { title: o.title, data: o.data, version: o.version }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
+        }
+      } catch (e) { throw numbered(i, o, e); }
+    }
+    return out;
+  });
+}
+
+// ---------- a repository's own writer (mold_v0-059; src/data-repositories.ts) ----------
+
+/** A row as its repository last wrote it: its key, its source and fingerprint (never its values). */
+export interface StoredMark { key: string; source: string | null; fingerprint: string | null }
+/** The marks of every row of an area (the workspace's own for a workspace area). */
+export async function storedMarks(area: RecordArea, orgId: number | null): Promise<StoredMark[]> {
+  if (orgId === null) return asPlatform(async () => (await q()).query<StoredMark>("SELECT key, source, fingerprint FROM platform_records WHERE pack = $1 AND area = $2 ORDER BY key", [area.pack, area.name]));
+  return withTenant(orgId, async () => (await q()).query<StoredMark>("SELECT key, source, fingerprint FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 ORDER BY key", [orgId, area.pack, area.name]));
+}
+/**
+ * Write a repository's index as one transaction (all of it or none): puts carry the source and their fingerprints; a
+ * delete removes only a row of that source. Not reachable from any door: only src/data-repositories.ts calls it.
+ */
+export async function writeFromRepository(orgId: number | null, pack: string, source: string, ops: RecordOperation[], fingerprints: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
+  if (!ops.length) return [];
+  return orgId === null ? batchPlatform(pack, ops, MAX_INDEX_BATCH, source, fingerprints, claim) : batchWorkspace(orgId, pack, SYSTEM_ACTOR, ops, MAX_INDEX_BATCH, source, fingerprints, claim);
 }
 
 /**
@@ -435,12 +650,18 @@ export async function deletePlatform(pack: string | null, name: string, key: str
  * checked for `actor` (the person the call is made for) against the area's declaration (mold_v0-057). The generic data
  * API (mold_v0-059) is built on the same functions, so every door applies the same rules.
  */
-export const workspaceRecords = (pack: string, orgId: number, actor: Actor = SYSTEM_ACTOR): WorkspaceRecords => ({
+export const workspaceRecords = (pack: string, orgId: number, actor: Actor = SYSTEM_ACTOR): WorkspaceRecords & {
+  create(area: string, key: string, value: RecordInput): Promise<RecordRow>;
+  update(area: string, key: string, value: RecordInput): Promise<RecordRow>;
+} => ({
   list: async (area, opts) => listFor(orgId, area, opts, actor),
   get: async (area, key) => getFor(orgId, area, key, actor),
   put: (area, key, value) => putWorkspace(orgId, pack, actor, area, key, value),
+  create: (area, key, value) => putWorkspace(orgId, pack, actor, area, key, value, "create"),
+  update: (area, key, value) => putWorkspace(orgId, pack, actor, area, key, value, "update"),
   move: (area, key, to) => moveWorkspace(orgId, pack, actor, area, key, to),
   delete: (area, key) => deleteWorkspace(orgId, pack, actor, area, key),
+  batch: (ops) => batchWorkspace(orgId, pack, actor, ops),
 });
 /** ctx.records for a pack's admin route: platform areas only; writes to the pack's own platform areas. */
 export const platformRecords = (pack: string): PlatformRecords => {
@@ -454,13 +675,23 @@ export const platformRecords = (pack: string): PlatformRecords => {
     get: async (area, key) => getPlatform(platformArea(area), key),
     put: (area, key, value) => putPlatform(pack, area, key, value),
     delete: (area, key) => deletePlatform(pack, area, key),
+    batch: (ops) => batchPlatform(pack, ops),
   };
+};
+/** The admin API's door to shared areas (any pack's): create, update, put, delete and batch, as staff. */
+export const adminRecords = {
+  put: (area: string, key: string, value: RecordInput, mode: PutMode = "put") => putPlatform(null, area, key, value, mode),
+  delete: (area: string, key: string) => deletePlatform(null, area, key),
+  batch: (ops: unknown) => batchPlatform(null, ops),
 };
 
 /** What the console and the MCP tools show of an area (never its pack's code). */
 export const areaSummary = (a: RecordArea) => ({
   name: a.name, label: a.label, description: a.description ?? null, role: a.role, scope: a.scope, pack: a.pack,
   fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: areaLinks(a),
+  // mold_v0-059/066: where its rows come from, whether a door may write them, and whether they are sealed at rest.
+  ...(a.repo ? { repository: { name: a.repo.name, kind: a.repo.kind }, read_only: isReadOnlyArea(a) } : {}),
+  ...(isSealedArea(a) ? { sealed: true } : {}),
   // mold_v0-057: the lifecycle and who may do what (each action's roles, never wider than the platform's).
   ...(a.lifecycle ? { lifecycle: a.lifecycle } : {}),
   ...(a.permissions ? { permissions: Object.fromEntries((["read", "create", "update", "move", "delete"] as const).map((k) => [k, allowedRoles(a, k)])) } : {}),

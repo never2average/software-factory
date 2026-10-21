@@ -1,0 +1,512 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_catalog",
+  "name": "Fixture catalog",
+  "version": "0.1.0",
+  "description": "A test fixture for the data API and data repositories (mold_v0-059, 066; scripts/data-api-test.ts, scripts/data-repositories-test.ts). Its repositories have the shape of the second app's declaration: an upstream catalog at a pin, a workspace ledger and workspace application folders. Never shipped.",
+  "entry": "index.ts",
+  "upstream": {
+    "repo": "https://example.org/fixture/catalog",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "license": "test-only"
+  },
+  "record_areas": [
+    {
+      "name": "regulators",
+      "label": "Regulators",
+      "role": "source",
+      "scope": "platform",
+      "repository": "catalogs",
+      "rows": "one per regulator (key: its code) and one per instrument (key: its instrument id)",
+      "version": "upstream commit",
+      "fields": [
+        {
+          "name": "kind",
+          "label": "Kind",
+          "type": "text"
+        },
+        {
+          "name": "regulator",
+          "label": "Regulator",
+          "type": "link"
+        },
+        {
+          "name": "instruments",
+          "label": "Instruments",
+          "type": "link"
+        },
+        {
+          "name": "short_name",
+          "label": "Short name",
+          "type": "text"
+        },
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "text"
+        },
+        {
+          "name": "catalog_controls",
+          "label": "Catalog controls",
+          "type": "number"
+        },
+        {
+          "name": "upstream_path",
+          "label": "Upstream file",
+          "type": "text"
+        }
+      ],
+      "list_columns": [
+        "kind",
+        "regulator",
+        "short_name",
+        "status"
+      ],
+      "links": [
+        {
+          "field": "regulator",
+          "area": "regulators"
+        },
+        {
+          "field": "instruments",
+          "area": "regulators"
+        }
+      ]
+    },
+    {
+      "name": "controls",
+      "label": "Controls",
+      "role": "check",
+      "scope": "platform",
+      "repository": "catalogs",
+      "rows": "one per catalog control (key: <instrument>:<control id>, ( and ) kept)",
+      "version": "upstream commit",
+      "fields": [
+        {
+          "name": "instrument",
+          "label": "Instrument",
+          "type": "link"
+        },
+        {
+          "name": "regulator",
+          "label": "Regulator",
+          "type": "link"
+        },
+        {
+          "name": "control_id",
+          "label": "Control id",
+          "type": "text"
+        },
+        {
+          "name": "group_id",
+          "label": "Group",
+          "type": "text"
+        },
+        {
+          "name": "group_title",
+          "label": "Group title",
+          "type": "text"
+        },
+        {
+          "name": "prose",
+          "label": "Requirement",
+          "type": "text"
+        },
+        {
+          "name": "mandatory",
+          "label": "Mandatory",
+          "type": "boolean"
+        },
+        {
+          "name": "default_severity",
+          "label": "Default severity",
+          "type": "text"
+        },
+        {
+          "name": "upstream_path",
+          "label": "Upstream file",
+          "type": "text"
+        }
+      ],
+      "list_columns": [
+        "instrument",
+        "control_id",
+        "mandatory",
+        "default_severity"
+      ],
+      "links": [
+        {
+          "field": "instrument",
+          "area": "regulators"
+        },
+        {
+          "field": "regulator",
+          "area": "regulators"
+        }
+      ]
+    },
+    {
+      "name": "control_status",
+      "label": "Control status",
+      "role": "check",
+      "scope": "workspace",
+      "repository": "company_ledger",
+      "rows": "one per ledger control id (the latest line wins)",
+      "fields": [
+        {
+          "name": "control_id",
+          "label": "Control id",
+          "type": "text"
+        },
+        {
+          "name": "implementation_status",
+          "label": "Implementation",
+          "type": "text"
+        },
+        {
+          "name": "effectiveness",
+          "label": "Effectiveness",
+          "type": "text"
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "json"
+        },
+        {
+          "name": "next_due_at",
+          "label": "Next due",
+          "type": "date"
+        },
+        {
+          "name": "recorded_at",
+          "label": "Recorded",
+          "type": "date"
+        },
+        {
+          "name": "company",
+          "label": "Company",
+          "type": "text"
+        }
+      ],
+      "list_columns": [
+        "control_id",
+        "implementation_status",
+        "next_due_at"
+      ]
+    },
+    {
+      "name": "applications",
+      "label": "Digital applications",
+      "role": "asset",
+      "scope": "workspace",
+      "repository": "company_applications",
+      "rows": "one per applications/<app_id>/ directory",
+      "fields": [
+        {
+          "name": "app_id",
+          "label": "Application id",
+          "type": "text"
+        },
+        {
+          "name": "readme",
+          "label": "Read me",
+          "type": "text"
+        },
+        {
+          "name": "environments",
+          "label": "Environments",
+          "type": "json"
+        },
+        {
+          "name": "repos",
+          "label": "Repositories",
+          "type": "json"
+        },
+        {
+          "name": "credential_refs",
+          "label": "Credential references",
+          "type": "json"
+        }
+      ],
+      "list_columns": [
+        "app_id",
+        "environments"
+      ]
+    },
+    {
+      "name": "notes",
+      "label": "Notes",
+      "role": "check",
+      "scope": "workspace",
+      "sealed": true,
+      "fields": [
+        {
+          "name": "body",
+          "label": "Body",
+          "type": "text"
+        },
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "name": "score",
+          "label": "Score",
+          "type": "number",
+          "min": 0,
+          "max": 100
+        },
+        {
+          "name": "control",
+          "label": "Control",
+          "type": "reference",
+          "to": "controls"
+        },
+        {
+          "name": "app",
+          "label": "Application",
+          "type": "reference",
+          "to": "applications"
+        }
+      ],
+      "list_columns": [
+        "severity",
+        "score"
+      ]
+    },
+    {
+      "name": "tasks",
+      "label": "Tasks",
+      "role": "check",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "summary",
+          "label": "Summary",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "severity",
+          "label": "Severity",
+          "type": "enum",
+          "options": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        {
+          "name": "score",
+          "label": "Score",
+          "type": "number"
+        },
+        {
+          "name": "due",
+          "label": "Due",
+          "type": "date"
+        },
+        {
+          "name": "tags",
+          "label": "Tags",
+          "type": "enum",
+          "multiple": true,
+          "options": [
+            "web",
+            "api",
+            "infra"
+          ]
+        },
+        {
+          "name": "owner",
+          "label": "Owner",
+          "type": "person"
+        },
+        {
+          "name": "parent",
+          "label": "Parent",
+          "type": "reference",
+          "to": "tasks"
+        },
+        {
+          "name": "control",
+          "label": "Control",
+          "type": "reference",
+          "to": "controls"
+        },
+        {
+          "name": "state",
+          "label": "State",
+          "type": "enum",
+          "options": [
+            "open",
+            "doing",
+            "done"
+          ]
+        }
+      ],
+      "list_columns": [
+        "summary",
+        "severity",
+        "state",
+        "due"
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "open",
+        "transitions": [
+          {
+            "from": [
+              "open"
+            ],
+            "to": "doing",
+            "label": "Start"
+          },
+          {
+            "from": [
+              "doing"
+            ],
+            "to": "done",
+            "label": "Finish"
+          },
+          {
+            "from": "*",
+            "to": "open",
+            "label": "Reopen",
+            "roles": [
+              "owner"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "vendor_items",
+      "label": "Vendor items",
+      "role": "check",
+      "scope": "workspace",
+      "repository": "vendor_api",
+      "fields": [
+        {
+          "name": "name",
+          "label": "Name",
+          "type": "text"
+        },
+        {
+          "name": "level",
+          "label": "Level",
+          "type": "number"
+        },
+        {
+          "name": "state",
+          "label": "State",
+          "type": "text"
+        }
+      ],
+      "list_columns": [
+        "name",
+        "level",
+        "state"
+      ]
+    }
+  ],
+  "credentials": [
+    {
+      "name": "vendor_token",
+      "label": "Vendor API token",
+      "bound_to": "workspace",
+      "deliver_as": {
+        "env": "VENDOR_TOKEN"
+      }
+    }
+  ],
+  "repositories": {
+    "catalogs": {
+      "kind": "upstream_catalog",
+      "upstream": "pack.json#upstream",
+      "files": {
+        "regulators": "schemas/vocab/regulators.schema.json",
+        "instruments": "references/instruments.json",
+        "catalogs_dir": "references/catalogs"
+      },
+      "catalog_file_from": "instruments[].catalogFile",
+      "catalog_kind": "fixture.catalog.regulator",
+      "instruments_kind": "fixture.catalog.instruments"
+    },
+    "company_ledger": {
+      "kind": "workspace_files",
+      "store": "fixture_catalog",
+      "path": "company-profile/{company}/soc/main.jsonl",
+      "format": "jsonl",
+      "append_only": true,
+      "identity": "id",
+      "latest": "last line per id",
+      "map": {
+        "control_status": {
+          "key": "{id}",
+          "title": "{title}",
+          "where": {
+            "kind": "control"
+          },
+          "fields": {
+            "control_id": "id",
+            "company": "@company"
+          }
+        }
+      }
+    },
+    "company_applications": {
+      "kind": "workspace_files",
+      "store": "fixture_catalog",
+      "dir": "applications/{app_id}",
+      "files": {
+        "readme": "README.md",
+        "environments": "env/*.json",
+        "repos": "repos/*.json",
+        "credential_refs": "credentials.json"
+      },
+      "never_read": [
+        "credentials.json entries[].ref",
+        "any ENC[...] value"
+      ]
+    },
+    "vendor_api": {
+      "kind": "http_api",
+      "base_url": "https://vendor.test.example/v1",
+      "egress": [
+        "vendor.test.example"
+      ],
+      "credential": "vendor_token",
+      "auth": {
+        "header": "Authorization",
+        "scheme": "Bearer"
+      },
+      "list": {
+        "path": "/items",
+        "items": "items"
+      },
+      "get": {
+        "path": "/items/{key}"
+      },
+      "map": {
+        "vendor_items": {
+          "key": "{id}",
+          "title": "{label}",
+          "fields": {
+            "name": "label",
+            "level": "level",
+            "state": "status"
+          }
+        }
+      }
+    }
+  }
+}

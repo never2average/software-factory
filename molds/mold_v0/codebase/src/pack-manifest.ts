@@ -11,13 +11,14 @@
  *   tabs          mold_v0-058  the console's sidebar and tabs per record area
  *   mcp           mold_v0-060  the branded MCP server's generated tools and install pages
  *   charts        mold_v0-063  the charts that show `metrics` (metrics themselves are declared and checked today)
- * Declared and checked for their shape today, read by the ticket that builds them: `repositories` (each a `kind` and its
- * settings; an area names one with `repository`: mold_v0-059's adapters), `run_results` (how a run's output becomes
- * run_results rows: mold_v0-061) and `metrics` (mold_v0-063).
+ * `repositories` (mold_v0-059: each a `kind` and its settings, read by src/data-repositories.ts; an area names one with
+ * `repository`; "pack.json#upstream" is resolved here to the pack.json's own `upstream` pin). Declared and checked for
+ * their shape today, read by the ticket that builds them: `run_results` (how a run's output becomes run_results rows:
+ * mold_v0-061) and `metrics` (mold_v0-063).
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
-import { AgentJobKindSchema, CredentialSchema, JobKindSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, CredentialSchema, JobKindSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -99,7 +100,17 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.schedules?.length) out.schedules = p.schedules;
   if (p.onboarding?.length) out.onboarding = p.onboarding;
   if (p.metrics?.length) out.metrics = p.metrics;
-  if (p.repositories && Object.keys(p.repositories).length) out.repositories = p.repositories;
+  if (p.repositories && Object.keys(p.repositories).length) {
+    // An upstream catalog may point at pack.json's own pin: resolved here, so the definition carries the pin itself.
+    const problems: string[] = [];
+    out.repositories = Object.fromEntries(Object.entries(p.repositories).map(([n, r]) => {
+      if (r.kind !== "upstream_catalog" || r.upstream !== "pack.json#upstream") return [n, r];
+      const pin = UpstreamSchema.safeParse(p.upstream);
+      if (!pin.success) problems.push(`repositories.${n}.upstream: pack.json#upstream needs pack.json upstream {repo, commit}: ${pin.error.issues.map((i) => `${where(i.path) || "upstream"} ${i.message}`).join("; ")}`);
+      return [n, { ...r, upstream: pin.success ? pin.data : r.upstream }];
+    }));
+    if (problems.length) throw new PackJsonError(problems);
+  }
   if (p.run_results) out.runResults = p.run_results;
   return out;
 }
