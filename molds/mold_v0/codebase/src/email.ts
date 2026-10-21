@@ -359,10 +359,11 @@ export interface DueItem { key: string; title: string | null; due_on: string }
 /**
  * One workspace's records of one area due within its window: one email a day to each of the workspace's own people with
  * one of `roles` (its Clerk organization's members, suspended people left out: accountRecipients). The idempotency key
- * names the workspace, area, day and recipient, so a second check the same day sends nothing twice. Never throws.
- * `delivered` counts recipients whose email went out (now or earlier the same day).
+ * names the workspace, area, the notices listed (`batch`, their ids) and the recipient, so the same list never goes to
+ * the same person twice, and a list with other notices is another email. Never throws. `delivered` counts recipients
+ * whose email went out (now or before).
  */
-export async function dueSoon(orgId: number, d: { area: string; label: string; within_days: number; roles: AccountRole[]; day: string; items: DueItem[] }):
+export async function dueSoon(orgId: number, d: { area: string; label: string; within_days: number; roles: AccountRole[]; day: string; items: DueItem[]; batch: string[] }):
   Promise<{ recipients: number; delivered: number }> {
   try {
     if (!d.items.length) return { recipients: 0, delivered: 0 };
@@ -372,7 +373,7 @@ export async function dueSoon(orgId: number, d: { area: string; label: string; w
     if (!to.length) { console.error(`email due_soon: ${o.slug} has no ${d.roles.join("/")} with an email`); return { recipients: 0, delivered: 0 }; }
     const n = d.items.length, shown = d.items.slice(0, 50);
     const list = shown.map((x) => `- ${(x.title ?? x.key).replace(/[\r\n]+/g, " ").slice(0, 200)} (${x.key}): due ${x.due_on}`).join("\n");
-    const results = await Promise.all(to.map((t) => send({ kind: "due_soon", to: t, idempotencyKey: keyFor(`due:${orgId}:${d.area}:${d.day}`, t),
+    const results = await Promise.all(to.map((t) => send({ kind: "due_soon", to: t, idempotencyKey: keyFor(`due:${orgId}:${d.area}:${createHash("sha256").update(d.batch.join(",")).digest("hex").slice(0, 16)}`, t),
       meta: { account: o.slug, area: d.area, day: d.day, items: n },
       subject: `${n} ${d.label.toLowerCase()} due within ${d.within_days} day${d.within_days === 1 ? "" : "s"} in ${o.name}`.slice(0, 200),
       text: lines("Hi,",

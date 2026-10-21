@@ -66,6 +66,7 @@ try {
     const weekly = cron.parseCron("30 3 * * 1");
     assert.equal(cron.nextAfter(weekly, at("2030-01-07T04:00:00Z"))!.toISOString(), "2030-01-14T03:30:00.000Z", "Mondays at 03:30");
     assert.equal(cron.latestAtOrBefore(weekly, at("2030-01-13T00:00:00Z"))!.toISOString(), "2030-01-07T03:30:00.000Z");
+    assert.equal(cron.nextAfter(cron.parseCron("0 0 */2 * 1"), at("2030-01-01T00:00:00Z"))!.toISOString(), "2030-01-07T00:00:00.000Z", "as Vixie cron: */2 with a weekday means both (an odd day that is a Monday)");
     const either = cron.parseCron("0 0 1 * 5"); // the 1st of the month or a Friday
     assert.equal(cron.nextAfter(either, at("2030-01-01T00:00:00Z"))!.toISOString(), "2030-01-04T00:00:00.000Z", "a Friday");
     assert.equal(cron.nextAfter(either, at("2030-01-25T00:00:00Z"))!.toISOString(), "2030-02-01T00:00:00.000Z", "the 1st (also a Friday)");
@@ -104,17 +105,19 @@ try {
   }
 
   // ---------- the fixture pack ----------
-  const def = (hourly = "0 * * * *") => definePack({
+  const def = (hourly = "0 * * * *", extra: { name: string; job_kind: string; cron: string; enabled?: boolean }[] = [], weekly = true) => definePack({
     id: "fixture_sched",
     recordAreas: [
       { name: "sc_apps", label: "Applications", role: "asset", scope: "workspace", fields: [{ name: "url", label: "Address" }] },
       { name: "sc_controls", label: "Controls", role: "check", scope: "workspace", fields: [{ name: "sla", label: "SLA date", type: "date" }],
         due: { field: "sla", within_days: 7 } },
     ],
-    jobKinds: [{ name: "sweep", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15 }],
+    jobKinds: [{ name: "sweep", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15 },
+      { name: "manual", runner: "workspace-harness", entry: "noop.mjs", lease_seconds: 15 }],
     schedules: [
+      ...extra,
       { name: "hourly_sweep", label: "Hourly sweep", job_kind: "sweep", cron: hourly, assets: { area: "sc_apps" } },
-      { name: "weekly_report", job_kind: "sweep", cron: "0 3 * * 1", enabled: false },
+      ...(weekly ? [{ name: "weekly_report", job_kind: "sweep", cron: "0 3 * * 1", enabled: false }] : []),
     ],
   });
   const manifest = { id: "fixture_sched", name: "Fixture schedules", version: "1", entry: "index.ts", migrations: null, words: {}, dir: path.join(ROOT, "scripts", "fixtures", "runs") };
@@ -124,6 +127,8 @@ try {
   await put(A, "sc_apps", "a-web", { url: "https://a-web.example" });
   await put(A, "sc_apps", "a-api", { url: "https://a-api.example" });
   await put(B, "sc_apps", "b-web", { url: "https://b-web.example" });
+  // Scheduled runs have no launcher: the account's own standing applies (src/limits.ts). Both accounts have an allowance.
+  await db.query("UPDATE organizations SET budget_override_usd = 100 WHERE id = ANY ($1::int[])", [[A.orgId, B.orgId]]);
   const runsOf = (org: { orgId: number }, id?: string) => db.query<{ id: string; org_id: number; status: string; targets: any; requested_by: string }>(
     `SELECT id, org_id, status, targets, requested_by FROM runs WHERE org_id = $1 AND ($2::text IS NULL OR requested_by = $2) ORDER BY created_at, id`, [org.orgId, id ? `schedule:${id}` : null]);
   const rowOf = async (org: { orgId: number }, name: string) => (await db.query<any>("SELECT * FROM workspace_schedules WHERE org_id = $1 AND name = $2", [org.orgId, name]))[0];
@@ -210,6 +215,9 @@ try {
       assert.equal((await add({ pack: "fixture_sched", job_kind: "sweep", name: "x", cron: "0 * * * *", assets: { area: "sc_controls" } })).status, 400, "not an asset area");
       assert.equal((await add({ pack: "fixture_sched", job_kind: "sweep", name: "hourly_sweep", cron: "0 * * * *" })).status, 409, "a default's name");
       assert.equal((await add({ pack: "fixture_sched", job_kind: "sweep", name: "x", cron: "0 * * * *" }, member)).status, 403);
+      assert.equal((await add({ pack: "fixture_sched", job_kind: "manual", name: "x", cron: "0 * * * *" })).status, 400, "a kind the pack does not schedule itself");
+      assert.equal((await add({ pack: "fixture_sched", job_kind: "sweep", name: "x", cron: "0 * * * *", scope: { checks: ["all"] } })).status, 400, "the scope is the pack's");
+      assert.deepEqual(mine.kinds, [{ pack: "fixture_sched", name: "sweep" }], "only the kinds the pack schedules are offered");
       const made = await (await add({ pack: "fixture_sched", job_kind: "sweep", name: "nightly_web", cron: "15 2 * * *", assets: { area: "sc_apps", keys: ["a-web"] }, environment: "prod" })).json();
       assert.equal(made.is_default, false);
       assert.equal(made.next_at, "2030-01-08T02:15:00.000Z", "due by the scheduler's clock");
@@ -240,6 +248,27 @@ try {
       assert.equal((await rowOf(B, "hourly_sweep")).cron, "0,30 * * * *", "B's untouched copy follows the pack");
       assert.equal(new Date((await rowOf(B, "hourly_sweep")).next_at).toISOString(), "2030-01-08T03:30:00.000Z");
       assert.equal((await rowOf(A, "hourly_sweep")).cron, "0 * * * *", "A's changed copy is A's own");
+      // A default added later with the name of an owner's own schedule is still copied in, beside it.
+      assert.equal((await add({ pack: "fixture_sched", job_kind: "sweep", name: "clash_me", cron: "0 4 * * *" })).status, 200);
+      setPacksForTest([{ manifest, definition: def("0,30 * * * *", [{ name: "clash_me", job_kind: "sweep", cron: "0 5 * * *" }]) }]);
+      await sch.ensureDefaults(at("2030-01-08T03:11:00Z"));
+      assert.deepEqual((await db.query<any>("SELECT is_default, cron FROM workspace_schedules WHERE org_id = $1 AND name = 'clash_me' ORDER BY is_default", [A.orgId])).map((r) => [r.is_default, r.cron]),
+        [[false, "0 4 * * *"], [true, "0 5 * * *"]]);
+      // A default the pack drops is turned off and said so; then its owner may remove it.
+      setPacksForTest([{ manifest, definition: def("0,30 * * * *", [], false) }]);
+      await sch.ensureDefaults(at("2030-01-08T03:12:00Z"));
+      const gone = await db.query<any>("SELECT id, enabled, last_error FROM workspace_schedules WHERE org_id = $1 AND is_default AND name IN ('weekly_report', 'clash_me')", [A.orgId]);
+      assert.ok(gone.length === 2 && gone.every((r) => !r.enabled && /no pack declares/.test(r.last_error)), "dropped defaults are off");
+      assert.equal((await http.req("PATCH", `/api/schedules/${gone[0].id}`, h(owner), { enabled: true })).status, 409, "and cannot be turned on");
+      assert.equal((await http.req("DELETE", `/api/schedules/${gone[0].id}`, h(owner))).status, 204, "but can be removed");
+      // A blocked account (no allowance) starts no scheduled run: the tick says why.
+      await cancelAll();
+      await db.query("UPDATE organizations SET budget_override_usd = NULL WHERE id = $1", [B.orgId]);
+      const blocked = await sch.tickSchedules(at("2030-01-08T03:30:00Z"));
+      assert.ok(blocked.fired >= 1);
+      assert.deepEqual((await rowOf(B, "hourly_sweep")).last_runs, [], "B's due time started nothing");
+      assert.match((await rowOf(B, "hourly_sweep")).last_error, /cannot start runs now \(no_allowance\)/);
+      await db.query("UPDATE organizations SET budget_override_usd = 100 WHERE id = $1", [B.orgId]);
       // Removing: A's own one goes; a default cannot be removed (turned off instead).
       assert.equal((await http.req("DELETE", `/api/schedules/${hourly.id}`, h(owner))).status, 409);
       assert.equal((await http.req("DELETE", `/api/schedules/${made.id}`, h(owner))).status, 204);

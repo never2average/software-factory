@@ -175,28 +175,34 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
   record, `targets.asset` {area, key}, so credentials bound to that asset reach it), an `environment`, a run `scope`,
   and `enabled`). Every workspace gets its own copy (`workspace_schedules`, `sql/migrations/0008_schedules.sql`;
-  tenant work may only read its own rows); a copy no owner changed follows the pack's later changes. A workspace's
-  owners ("manage") turn schedules off and on, change their time and assets, and add their own for any job kind of the
-  build in the console (`/app/schedules`, `src/schedule-routes.ts` at `/api/schedules`, mounted only when a job kind
+  tenant work may only read its own rows); a copy no owner changed follows the pack's later changes, and a default the
+  pack drops is turned off (its owner may then remove it). A workspace's owners ("manage") turn schedules off and on,
+  change their time and assets, and add their own for a kind the pack itself schedules (with the scope of the pack's own
+  schedule of it: owners never set a run's scope) in the console (`/app/schedules`, `src/schedule-routes.ts` at `/api/schedules`, mounted only when a job kind
   exists; the workspace is the session's, an asset key must be one of its own records, a default is turned off, never
   removed). The tick (`src/schedules.ts` `tickSchedules(now)`) takes every enabled row whose `next_at` has come: of the
   due times missed since the last tick only the latest runs, once (the others are counted in `last_skipped`), and the
   row's next due time is the first match after now. The row is moved on by a compare-and-set on its `seq`, so two ticks
   at once (the Vercel cron, servers' loops, replicas) start its runs once; a target whose previous run from the
-  schedule is still queued or running is not started again. Runs start through the run engine (`startRun`, requested by
+  schedule is still queued or running is not started again, and an account that could not launch a run now (blocked: no
+  allowance, over its cap; or its allowance unreadable, `src/limits.ts` overview) starts none. A firing shows "starting
+  runs" until they are started, so one cut short is visible. Runs start through the run engine (`startRun`, requested by
   `schedule:<id>`, under its per-workspace cap); the run engine is unchanged. The tick runs from the product's existing
   cron entry on Vercel (`/api/cron/autoscale`, `CRON_SECRET` only, every 5 minutes) and from a one-minute loop on a
   server (`startScheduler`, `OCTILLION_SCHEDULER=off` turns it off). **Due dates:** a check area of workspace scope may
   declare `due` (one of its date fields, `within_days`, default 7, and the `notify` roles, owners by default). Once a UTC
-  day (`scheduler_marks`) `dueCheck(now)` posts one in-app notice per record and due date within the window
+  day (`scheduler_marks`, marked after the work, so a check cut short runs again) `dueCheck(now)` posts one in-app notice per record and due date within the window
   (`workspace_notices`; `/app/notices`, `/api/notices`, mounted only when such an area exists; "edit" dismisses), and
   emails the workspace's own people with those roles (its Clerk organization's members, suspended people left out) one
-  list of the notices not yet emailed (`due_soon` in `email_log`, keyed by workspace, area, day and recipient; a notice
-  is emailed until the email reached every recipient). `npm run test:schedules` proves it with a clock the test
-  controls: five missed hours run once, three ticks at once start each run once, two workspaces never see or start each
-  other's schedules, and due-date emails go only to each workspace's owners. **Not covered:** time zones (UTC only); an
-  account's spend limits for unattended runs (they are the run engine's and the limits tickets', 053/008/018); a
-  schedule fires at the cron's resolution of the tick (every 5 minutes on Vercel).
+  list of the notices not yet emailed (`due_soon` in `email_log`, keyed by workspace, area, the notices listed and
+  recipient, so the same list never reaches a person twice; a notice counts as emailed once it reached one recipient). `npm run test:schedules` proves it with a clock the test
+  controls: five missed hours run once, three ticks at once start each run once (and, on Postgres 17 with eight
+  concurrent ticks over twenty workspaces, each schedule fired once in five rounds), two workspaces never see or start each
+  other's schedules, and due-date emails go only to each workspace's owners. **Not covered:** time zones (UTC only; day
+  fields as Vixie cron); per-person limits for unattended runs (there is no launcher; the account's standing applies,
+  and its spend counting is the limits tickets', 053/008/018); the run engine's per-workspace cap is a count then an
+  insert, so concurrent firings can pass it slightly; a schedule fires at the resolution of the tick (every 5 minutes on
+  Vercel).
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".

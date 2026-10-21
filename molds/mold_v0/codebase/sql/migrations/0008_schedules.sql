@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS workspace_schedules (
   updated_by     TEXT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (org_id, pack, name)
+  -- A pack's default and an owner's own schedule never share a row, whatever their names (a default added later with
+  -- the name of an owner's schedule is still copied in).
+  UNIQUE (org_id, pack, name, is_default)
 );
 CREATE INDEX IF NOT EXISTS workspace_schedules_due_idx ON workspace_schedules (next_at) WHERE enabled;
 
