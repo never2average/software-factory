@@ -17,6 +17,9 @@ import * as billing from "./billing.js";
 import * as experiments from "./experiments.js";
 import { getDb } from "./db.js";
 import { getProduct, HIT, listProducts, orgMonthSpendUsd, saveProduct, saveScenarios, SCENARIO_ROWS } from "./queries.js";
+import { RUN_USD } from "./run-spend.js";
+import { workspaceRunUsage } from "./usage-report.js";
+import { endpointLimit } from "./rate-limits.js";
 import * as context from "./context.js";
 import { getPopulation } from "./populations.js";
 import * as playbooks from "./playbooks.js";
@@ -183,10 +186,13 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
          FROM agent_sessions WHERE org_id = $1 AND queued_at >= $2 AND queued_at < $3
           ${users.length ? "AND simulation_id IN (SELECT id FROM simulations WHERE org_id = $1 AND created_by = ANY($4))" : ""}`, p),
     // This month's spend on the selected people's runs (session cost, or the gateway's live total while it runs).
+    // And on the runs they started (mold_v0-053).
     users.length ? db.query<{ usd: number }>(
-      `SELECT coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0)::float AS usd
-         FROM agent_sessions s JOIN simulations r ON r.id = s.simulation_id
-        WHERE s.org_id = $1 AND r.created_by = ANY($2) AND s.queued_at >= ${month}`, [s.org, users]) : Promise.resolve(null),
+      `SELECT (SELECT coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0)
+                 FROM agent_sessions s JOIN simulations r ON r.id = s.simulation_id
+                WHERE s.org_id = $1 AND r.created_by = ANY($2) AND s.queued_at >= ${month})
+            + (SELECT coalesce(sum(${RUN_USD}), 0) FROM runs r WHERE r.org_id = $1 AND r.requested_by = ANY($2) AND r.created_at >= ${month}) AS usd`,
+      [s.org, users]) : Promise.resolve(null),
     // Tool calls by tool for the people picked but any use case: each use case's count in the Use cases filter.
     db.query<{ name: string; calls: number }>(
       `SELECT name, count(*) AS calls FROM mcp_events WHERE org_id = $1 AND method = 'tools/call' AND at >= $2 AND at < $3${users.length ? " AND user_id = ANY($4)" : ""} GROUP BY name`, p),
@@ -200,10 +206,15 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
          FROM agent_sessions WHERE org_id = $1 AND queued_at >= $2 AND queued_at < $3
           ${users.length ? "AND simulation_id IN (SELECT id FROM simulations WHERE org_id = $1 AND created_by = ANY($4))" : ""} GROUP BY 2
        UNION ALL
-       SELECT 'spend', to_char(s.queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'),
-              coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0)::float
-         FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= ${month}
-          ${users.length ? "AND s.simulation_id IN (SELECT id FROM simulations WHERE org_id = $1 AND created_by = ANY($4))" : ""} GROUP BY 2`, p),
+       SELECT 'spend', day, sum(v)::float FROM (
+         SELECT to_char(s.queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+                GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0)) AS v
+           FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= ${month}
+            ${users.length ? "AND s.simulation_id IN (SELECT id FROM simulations WHERE org_id = $1 AND created_by = ANY($4))" : ""}
+         UNION ALL
+         -- Runs (mold_v0-053): the same day rule, by who started them.
+         SELECT to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), ${RUN_USD}
+           FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${month}${users.length ? " AND r.requested_by = ANY($4)" : ""}) x GROUP BY 2`, p),
   ]);
   const periodDays = dayKeys(range.start, range.end), monthDays = sparkSpans().monthDays;
   const toolCalls = new Map(byTool.map((x) => [x.name, Number(x.calls)]));
@@ -212,7 +223,14 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
   const known = new Set(t.members.map((m) => m.user_id));
   const [{ budget }, spent] = await Promise.all([orgBudget(s.org).catch(() => ({ budget: 0 })), orgMonthSpendUsd(s.org)]);
   const charts = await usageCharts(s, range, users, p, byTool, budget, t.members);
+  // Runs (mold_v0-008): their tool calls' people and cost, per run, kind and person, only when the period has any.
+  const runUsage = await workspaceRunUsage(s.org, range.start, range.end, users);
+  const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id ? (id === s.user ? "You" : t.members.find((m) => m.user_id === id)?.email ?? "Former member") : "Connector key");
+  // Spend per person is for billing roles (as Spend by person below); everyone else sees their own line.
+  const billing = roles.canAccount(s.accountRole, "billing");
   return {
+    ...(runUsage.runs ? { run_usage: { ...runUsage, by_person: runUsage.by_person.filter((x) => billing || x.user_id === s.user).map((x) => ({ ...x, label: label(x.user_id) })),
+      recent: runUsage.recent.map((x) => ({ ...x, by: label(x.requested_by) })) } } : {}),
     charts,
     days, range: { from: range.from, to: range.to }, daily, tools, runs: runs[0], filters: { user: users, use_case: useCases },
     use_cases: templates.map((t) => ({ id: t.id, name: t.name, own: Boolean((t as { own?: boolean }).own),
@@ -267,11 +285,16 @@ async function usageCharts(s: Session, range: ReturnType<typeof reportRange>, us
     db.query<{ harness: string; sessions: unknown; completed: unknown }>(
       `SELECT s.harness, count(*) AS sessions, count(*) FILTER (WHERE s.status = 'completed') AS completed
          FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= $2 AND s.queued_at < $3${sesBy} GROUP BY 1 ORDER BY 2 DESC`, p),
-    // This month's spend, like the card: by who launched the run (billing roles), else by simulation.
+    // This month's spend, like the card: by who launched the run (billing roles), else by simulation; runs (mold_v0-053)
+    // by who started them, else by their kind.
     db.query<{ key: string | null; name: string | null; usd: number }>(
-      `SELECT ${billingRole ? "sim.created_by AS key, NULL AS name" : "sim.id AS key, sim.name AS name"}, sum(${cost})::float AS usd
-         FROM agent_sessions s JOIN simulations sim ON sim.id = s.simulation_id AND sim.org_id = $1
-        WHERE s.org_id = $1 AND s.queued_at >= ${month}${sesBy.replace("$4", "$2")}
+      `SELECT key, name, sum(usd)::float AS usd FROM (
+         SELECT ${billingRole ? "sim.created_by AS key, NULL AS name" : "sim.id AS key, sim.name AS name"}, ${cost} AS usd
+           FROM agent_sessions s JOIN simulations sim ON sim.id = s.simulation_id AND sim.org_id = $1
+          WHERE s.org_id = $1 AND s.queued_at >= ${month}${sesBy.replace("$4", "$2")}
+         UNION ALL
+         SELECT ${billingRole ? "r.requested_by AS key, NULL AS name" : "'run:' || r.pack || '/' || r.kind AS key, r.kind AS name"}, ${RUN_USD}
+           FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${month}${users.length ? " AND r.requested_by = ANY($2)" : ""}) x
         GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10`, users.length ? [s.org, users] : [s.org]),
     db.query<{ id: string; name: string; status: string; created_at: Date; created_by: string | null; product: string; sessions: unknown; scored: unknown; hits: unknown }>(
       `SELECT sim.id, sim.name, sim.status, sim.created_at, sim.created_by, pr.name AS product, count(s.id) AS sessions,
@@ -289,7 +312,7 @@ async function usageCharts(s: Session, range: ReturnType<typeof reportRange>, us
   const simW = new Map(sims.map((r) => [r.week, r]));
   const calls = new Map(byTool.map((x) => [x.name, Number(x.calls)]));
   const who = new Map(members.map((m) => [m.user_id, m.email ?? m.name ?? null]));
-  const label = (id: string | null) => (id ? (id === s.user ? "You" : who.get(id) ?? "Former member") : "Connector key");
+  const label = (id: string | null) => (id?.startsWith("schedule:") ? "Schedule" : id ? (id === s.user ? "You" : who.get(id) ?? "Former member") : "Connector key");
   return {
     workflow: TOOL_GROUPS.map((g) => ({ id: g.id, label: g.label, total: g.tools.length,
       used: g.tools.filter((x) => calls.get(x)).length, calls: g.tools.reduce((n, x) => n + (calls.get(x) ?? 0), 0) })),
@@ -343,6 +366,22 @@ async function billingUsage(s: Session) {
   const byPerson = await db.query<{ user_id: string | null; usd: number; runs: number }>(
     `/* tenant: sc is this account's sessions (org_id = $1) */ WITH ${sc} SELECT r.created_by AS user_id, sum(sc.usd)::float AS usd, count(DISTINCT r.id)::int AS runs
        FROM sc JOIN simulations r ON r.id = sc.simulation_id GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, [s.org]);
+  // Runs (mold_v0-053): their spend by day and by who started them, merged in only when this month has any.
+  const runRows = await db.query<{ day: string; user_id: string | null; usd: number; live: boolean }>(
+    `SELECT to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, r.requested_by AS user_id, ${RUN_USD}::float AS usd,
+            r.status IN ('queued', 'running') AS live
+       FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${month}`, [s.org]);
+  let runInFlight = 0;
+  for (const x of runRows) {
+    const d = daily.find((y) => y.day === x.day);
+    if (d) d.usd = Number(d.usd) + Number(x.usd);
+    else daily.push({ day: x.day, usd: Number(x.usd), sessions: 0 });
+    const p = byPerson.find((y) => y.user_id === x.user_id);
+    if (p) p.usd = Number(p.usd) + Number(x.usd);
+    else byPerson.push({ user_id: x.user_id, usd: Number(x.usd), runs: 0 });
+    if (x.live) runInFlight += Number(x.usd);
+  }
+  if (runRows.length) { daily.sort((a, b) => a.day.localeCompare(b.day)); byPerson.sort((a, b) => b.usd - a.usd); byPerson.splice(8); }
   const all = roles.canAccount(s.accountRole, "billing");
   const people = all ? (await admin.team(s.slug)).members : [];
   const now = new Date(), start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1), end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
@@ -356,14 +395,18 @@ async function billingUsage(s: Session) {
   return {
     period: { start: new Date(start).toISOString(), end: new Date(end).toISOString(), days, elapsed_days: elapsed },
     spent_usd: spent, budget_usd: budget, projected_usd: limits.pace(spent, now, recent).projected_usd ?? spent,
-    metered_usd: Number(m?.metered ?? 0), in_flight_usd: Math.max(0, spent - Number(m?.metered ?? 0)),
+    // Metered: finished sessions (what Stripe was sent). In flight: the rest of the sessions' spend, and running runs'.
+    metered_usd: Number(m?.metered ?? 0),
+    in_flight_usd: runRows.length ? Math.max(0, spent - Number(m?.metered ?? 0) - runRows.filter((x) => !x.live).reduce((a, x) => a + Number(x.usd), 0)) : Math.max(0, spent - Number(m?.metered ?? 0)),
     sessions: { finished: m?.finished ?? 0, running: m?.running ?? 0 },
+    ...(runRows.length ? { runs: { finished: runRows.filter((x) => !x.live).length, running: runRows.filter((x) => x.live).length,
+      usd: runRows.reduce((a, x) => a + Number(x.usd), 0), in_flight_usd: runInFlight } } : {}),
     meter: { enabled: Boolean(process.env.STRIPE_SPEND_METER && billing.stripeEnabled()), event: process.env.STRIPE_SPEND_METER ?? null },
     daily, by_agent: byAgent,
     // Members see only their own line; owners and billing managers see everyone, by email.
     by_person: byPerson.filter((p) => all || p.user_id === s.user).map((p) => {
       const who = people.find((x) => x.user_id === p.user_id);
-      return { ...p, label: p.user_id == null ? "Connector key" : p.user_id === s.user ? "You" : who?.email ?? who?.name ?? "Former member" };
+      return { ...p, label: p.user_id == null ? "Connector key" : p.user_id.startsWith("schedule:") ? "Schedule" : p.user_id === s.user ? "You" : who?.email ?? who?.name ?? "Former member" };
     }),
   };
 }
@@ -540,7 +583,10 @@ export function appRouter() {
   // Pick rate (/app/pick-rate): its charts, filters, saved reports and exports (src/visibility.ts).
   visibilityRoutes(api, { S, need, fail: (m, status, info) => new AppError(m, status, info), accountName: async (slug) => (await admin.accountFacts(slug)).name });
   api.get("/team", async (_req, res) => void res.json({ ...(await admin.team(S(res).slug, true)), me: S(res).user, can_manage: can(res, "team"), permissions: perms(res) }));
-  api.post("/team/invitations", async (req, res) => {
+  // At most so many invitations an hour per workspace (each also issues a key; mold_v0-018, src/rate-limits.ts).
+  // Permission first, so someone who may not invite cannot use up the workspace's quota.
+  api.post("/team/invitations", (_req, res, next) => { need(res, "team"); next(); },
+    endpointLimit("invite", (_req, res) => (res.locals.session as Session).slug) as express.RequestHandler, async (req, res) => {
     need(res, "team");
     const r = await admin.invite(actor(res), S(res).slug, req.body?.email, req.body?.role ?? "member");
     res.status(201).json({ invitation: r.invitation, key: r.key, connector_url: r.connector_url });

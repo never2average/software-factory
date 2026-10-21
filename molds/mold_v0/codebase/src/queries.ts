@@ -3,6 +3,7 @@ import { PLATFORMS, isPlatform, platformOf, type Platform } from "./platform.js"
 import { getDb, type Queryable } from "./db.js";
 import { settingNumber } from "./settings.js";
 import { orgBudget } from "./billing.js";
+import { orgMonthRunSpendUsd } from "./run-spend.js";
 import { LimitError, askAdmins, checkRun, launchNote, runsAtOnceError, launcherOverLimit, monthFigures, monthWords, sessionsLimit, type LaunchNote } from "./limits.js";
 import { randomId, type Org } from "./auth.js";
 import { transcripts, type SearchParams } from "./transcripts.js";
@@ -383,14 +384,17 @@ export async function getStarted(org: Org) {
   return { ...d, welcome: { stage, say, message: `Welcome to Octillion, ${org.name}. ${what} ${next} Tell the user their next step in one or two sentences and offer this prompt to type: "${say}"` } };
 }
 
-/** The organization's metered model spend (gateway cost of its agent sessions) this calendar month, UTC. */
+/**
+ * The organization's metered model spend this calendar month, UTC: the gateway cost of its agent sessions and of its
+ * runs (mold_v0-053, src/run-spend.ts; each by the month it was queued in).
+ */
 export async function orgMonthSpendUsd(orgId: number): Promise<number> {
   const db = await getDb();
   const [r] = await db.query<{ usd: number }>(
-    // Per session: its recorded cost, or the gateway's live total while it runs (whichever is larger); same as Billing shows.
+    // Per session (and per run): its recorded cost, or the gateway's live total while it runs (whichever is larger); same as Billing shows.
     `SELECT coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0) AS usd
        FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`, [orgId]);
-  return Number(r?.usd ?? 0);
+  return Number(r?.usd ?? 0) + (await orgMonthRunSpendUsd(orgId));
 }
 
 /** Why an account without a plan or allowance cannot run anything that spends on models. */

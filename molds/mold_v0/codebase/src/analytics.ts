@@ -6,7 +6,32 @@ import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { capture, identifyOrg, identifyPerson, posthogEnabled } from "./telemetry.js";
 
-export interface McpEvent { method: string; name?: string | null; client?: string | null; ok?: boolean; error?: string | null; ms?: number | null }
+export interface McpEvent {
+  method: string; name?: string | null; client?: string | null; ok?: boolean; error?: string | null; ms?: number | null;
+  /** mold_v0-008: the error's class (src/usage-report.ts errorClass), the request's arguments' and the answer's sizes in bytes. */
+  error_class?: string | null; req_bytes?: number | null; res_bytes?: number | null;
+}
+
+/**
+ * A failed call's class (mold_v0-008): what kind of failure it was, never its text or arguments. A database error
+ * (SQLSTATE), a refusal (permission, row-level security), a limit (budget, rate, size), a bad argument, a missing
+ * thing, or anything else.
+ */
+export function errorClass(err: unknown): string {
+  const e = err as { code?: unknown; status?: unknown; name?: unknown; issues?: unknown };
+  if (e?.code === "42501") return "refused";
+  if (typeof e?.code === "string" && /^[0-9A-Z]{5}$/.test(e.code)) return "database";
+  const status = typeof e?.status === "number" ? e.status : null;
+  if (status === 429 || status === 413) return "limit";
+  if (status === 401 || status === 403) return "refused";
+  if (status === 404) return "not_found";
+  if (status === 400 || status === 422 || e?.name === "ZodError" || Array.isArray(e?.issues)) return "invalid_input";
+  if (status === 409) return "conflict";
+  return "error";
+}
+
+/** The size of a value as JSON, in bytes (0 when it cannot be measured). */
+export const jsonBytes = (v: unknown) => { try { return Buffer.byteLength(JSON.stringify(v ?? null)); } catch { return 0; } };
 
 const identified = new Set<string>();
 /** Once per process per person: their email and account in PostHog (journeys email them and target by account). */
@@ -25,9 +50,13 @@ const PRODUCT_EVENTS: Record<string, string> = { initialize: "mcp_connected", "t
 export function recordMcpEvent(org: Org, e: McpEvent): void {
   getDb()
     .then((db) => db.query(
-      "INSERT INTO mcp_events (org_id, method, name, client, ok, error, ms, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+      `INSERT INTO mcp_events (org_id, method, name, client, ok, error, ms, user_id, client_name, client_version, error_class, req_bytes, res_bytes, key_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [org.orgId, e.method.slice(0, 80), e.name?.slice(0, 200) ?? null, e.client?.slice(0, 120) ?? null, e.ok ?? true,
-       e.error?.slice(0, 500) ?? null, e.ms == null ? null : Math.round(e.ms), org.userId ?? null],
+       e.error?.slice(0, 500) ?? null, e.ms == null ? null : Math.round(e.ms), org.userId ?? null,
+       org.client?.name?.slice(0, 80) ?? null, org.client?.version?.slice(0, 40) ?? null,
+       e.ok === false ? (e.error_class ?? "error").slice(0, 40) : null,
+       e.req_bytes == null ? null : Math.round(e.req_bytes), e.res_bytes == null ? null : Math.round(e.res_bytes), org.keyId ?? null],
     ))
     .catch((err) => console.error("mcp event record failed:", (err as Error).message));
   // A successful tool call may complete a stage of a customer journey (src/playbooks.ts): sync shortly after.

@@ -8,11 +8,14 @@
  *   email_from_address the default sender's address
  *   console_title      the console's title (web/src/app/layout.tsx and the /app and /admin layouts, the manifest)
  *   name, console_description, short_description   the product's name and the console's descriptions
+ *   limits             optional (mold_v0-018): the build's own rate limits and run ceilings, and per-plan ones
+ *                      (src/rate-limits.ts); absent, the shell's defaults
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
  */
 import { GENERATED_PROFILE } from "./profile.generated.js";
+import type { ProfileLimits } from "./rate-limits.js";
 
 export interface Profile {
   name: string;
@@ -22,9 +25,10 @@ export interface Profile {
   short_description: string;
   email_sender_name: string;
   email_from_address: string;
+  limits?: ProfileLimits;
 }
 
-export const PROFILE: Readonly<Profile> = Object.freeze({ ...GENERATED_PROFILE });
+export const PROFILE: Readonly<Profile> = Object.freeze({ ...(GENERATED_PROFILE as Profile) });
 
 /** The default sender, as Name <address> (an admin can change it on the Emails settings). */
 export const defaultSender = (p: Profile = PROFILE) => `${p.email_sender_name} <${p.email_from_address}>`;

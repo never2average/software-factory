@@ -96,10 +96,52 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   of the pack and a private scratch, and every process of that user is killed when the run ends (one run at a time per
   such user). It refuses to run a program as its own user unless told (`allowSameUser`, the offline tests). Starting a
   run applies the account's launch rules for a signed-in person (`src/limits.ts` `checkRun`) and a per-workspace cap
-  on runs queued or running (`OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE`, 20). **Not wired yet:** no process runs runs in
-  a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one); a run's gateway spend is
-  limited by its kind's budget but is not yet counted in the account's month figures or spend pages (they read
-  sessions).
+  on runs queued or running (`runs.live_per_workspace`, 20; below). **Not wired yet:** no process runs runs in
+  a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one).
+- **Run spend in the month figures** (mold_v0-053, built; `src/run-spend.ts`): a run's cost is GREATEST(its recorded
+  cost, its live gateway total), in the month and on the day it was queued, by the member who started it. It counts
+  wherever session spend did: the account's month figure (`orgMonthSpendUsd`, so Billing, the usage alert email, the
+  allowance check at launch and while sampling, and Budget rules), each person's spend against their limits, the
+  month's pace, the portal's Usage and Billing pages and the admin Spend page (per account, day, person and run kind).
+  With no runs every figure is what it was. A workspace's tenant work reads its own runs' gateway usage
+  (`sql/migrations/0009_usage_and_limits.sql` widens the `gateway_usage` policy to the workspace's runs), never
+  another's: `check:rls` probes it. A schedule's runs (`requested_by` `schedule:<id>`) count in the account's figures
+  and show as "Schedule", never against a member's own limit. `npm run test:run-spend` proves it with two workspaces.
+- **Usage pages in neutral words** (mold_v0-008, built; `src/usage-report.ts`, `src/usage-routes.ts`): each MCP call
+  records its workspace, member or key id, client name and version (from its User-Agent), tool, outcome, error class,
+  latency and request and answer sizes (`mcp_events`; never arguments or answers; recording is fire-and-forget and never
+  fails the call). `GET /api/usage` (the workspace's members) and `GET /api/admin/onboarding/usage` (every workspace,
+  platform admins) give calls per tool with errors and p50/p95, errors by class, clients, daily and weekly active people,
+  week-over-week retention, per member or per workspace calls, runs and run cost, and per run its tool calls (events of
+  type `tool_call` or `tool.<name>`), model requests, tokens and cost. The console's `/app/activity` and
+  `/admin/activity` show them in the build's words (a pack's `words` for workspace, member, run, tool call, key), in the
+  sidebar once the build has a pack; the existing Usage, Billing and Spend pages show runs only when there are any.
+  Spend per person is for billing roles (owners, billing managers); everyone else sees the workspace's figures and
+  their own.
+  `npm run test:usage`.
+- **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
+  profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
+  non-positive one), the workspace's plan, and the server's environment (`OCTILLION_LIMIT_<SECTION>_<NAME>`), last wins.
+  *MCP:* per address before sign-in, then per key, per member (all their keys) and per workspace (all its keys), counted
+  in fixed one-minute windows in `rate_limit_hits` (platform rows, no tenant access) so they hold across instances; a
+  refusal is HTTP 429 with `Retry-After` and a JSON-RPC error (`-32029`) naming the limit, its number and when to retry,
+  recorded once (not per message) as a failed call of class `rate_limited`; each message of a JSON-RPC batch counts
+  and a batch of more than 100 is refused before anything is counted; a request over `max_request_bytes` is a 413 and an answer over
+  `max_response_bytes` a plain tool error; requests in flight per workspace are capped on each instance. The sign-up
+  (per address), invitation and key-creation (per workspace) endpoints are limited per hour. *Runs:* a kind may declare
+  `concurrency_per_workspace` and `month_budget_usd` beside `budget_usd`; each is clamped to the platform's ceiling
+  (`runs.concurrency_per_workspace`, `runs.kind_month_budget_usd`, `runs.budget_usd_max`), so a pack can lower a limit,
+  never raise it, and a pack's server code may not touch `process` (gen-packs refuses it), so it cannot change the
+  environment the ceilings are read from. The workspace's live-run cap is counted with the insert under a lock per
+  workspace (`npm run test:run-start-race` on a real Postgres: 40 concurrent starts leave exactly the cap live; the
+  code before let 40 of 40 through). Concurrency holds at claim (under a non-blocking lock per workspace and kind;
+  extra runs wait, other workspaces' go ahead); the kind's month budget and the account's allowance at start and on
+  every gateway request, so splitting work into many runs spends no more than one could (past the limit by at most
+  the requests in flight when it is reached). An account with no allowance (no plan, no override) starts no run and
+  its running ones stop spending, as its own launches do. For these checks a run queued in an earlier month and still
+  live counts in the current month too. The per-address count trusts `X-Forwarded-For` as the server's `trust proxy` does: behind no proxy, a
+  client can vary it, and the key, member and workspace limits still hold. `npm run test:limits` (with a load test: one
+  workspace's 120 requests at once leave another's error rate at 0).
 - **The runner boundary** (mold_v0-054, built; the import check resolves each pack's real import graph with esbuild,
   the resolver tsx uses, so spacing, comments, re-exports, extensionless or dot files cannot hide an import; a pack may
   carry only `.ts`/`.mts`/`.js`/`.mjs` code and plain data files, no `node_modules`, no links): a pack's code is of two kinds, told apart by pack.json `runner` (a

@@ -20,6 +20,7 @@ import { orgBudget } from "./billing.js";
 import { getDb, type Queryable } from "./db.js";
 import { settingNumber } from "./settings.js";
 import { accountRefusal, canAccount, type AccountRole } from "./account-roles.js";
+import { monthRunSpendByPerson, RUN_USD } from "./run-spend.js";
 
 /** Why a launch was refused, for /app to show beside the message; validation errors carry no code. */
 export type LimitCode = "viewer_role" | "no_allowance" | "account_cap" | "budget_error" | "launch_access" | "person_limit" | "team_budget" | "rest_pot" | "buffer" |
@@ -62,7 +63,8 @@ async function load(orgId: number, q?: Queryable) {
 }
 
 /**
- * This month's spend, tokens and open runs per person who launched simulations (simulations.created_by). Spend is live:
+ * This month's spend, tokens and open runs per person who launched simulations (simulations.created_by), plus the
+ * spend of the runs they started (runs.requested_by, mold_v0-053). Spend is live:
  * per session, its recorded cost or the gateway's running total while it runs (whichever is larger), the same figure as
  * the account's spend (orgMonthSpendUsd in src/queries.ts), so a person's limit counts the runs they have going now.
  * in_flight is the part of it from sessions still queued or running.
@@ -82,8 +84,14 @@ async function usageByPerson(orgId: number) {
             coalesce(u.tokens_out, 0) AS tokens_out, coalesce(o.running, 0) AS running
        FROM (SELECT DISTINCT created_by FROM sims) p LEFT JOIN used u ON u.created_by = p.created_by LEFT JOIN open o ON o.created_by = p.created_by`,
     [orgId]);
-  return new Map(rows.map((r) => [r.user_id, { spent: Number(r.spent), in_flight_usd: Number(r.in_flight), tokens_in: Number(r.tokens_in),
+  const out = new Map(rows.map((r) => [r.user_id, { spent: Number(r.spent), in_flight_usd: Number(r.in_flight), tokens_in: Number(r.tokens_in),
     tokens_out: Number(r.tokens_out), running: Number(r.running) }]));
+  // The runs a person started this month count against their limits too (mold_v0-053, src/run-spend.ts).
+  for (const [user, x] of await monthRunSpendByPerson(orgId)) {
+    const u = out.get(user) ?? { spent: 0, in_flight_usd: 0, tokens_in: 0, tokens_out: 0, running: 0 };
+    out.set(user, { ...u, spent: u.spent + x.spent, in_flight_usd: u.in_flight_usd + x.in_flight_usd });
+  }
+  return out;
 }
 
 /** The most agent sessions one run may have: the server's limit, or the account's own if it is lower. */
@@ -288,13 +296,16 @@ const AVG_MIN_SESSIONS = 20;
  * days (the pace behind the usage banner).
  */
 export async function monthFigures(orgId: number) {
+  // The pace counts runs too (mold_v0-053); the average per session is the sessions' own (a launch's estimate).
   const [r] = await (await getDb()).query<{ finished: number; avg_usd: number | null; recent: number; recent_days: number }>(
     `WITH s AS (SELECT a.status, a.queued_at,
                        GREATEST(a.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = a.id), 0)) AS usd
-                  FROM agent_sessions a WHERE a.org_id = $1 AND a.queued_at >= ${MONTH})
+                  FROM agent_sessions a WHERE a.org_id = $1 AND a.queued_at >= ${MONTH}),
+          rr AS (SELECT r.created_at, ${RUN_USD} AS usd FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${MONTH})
      SELECT count(*) FILTER (WHERE status IN ('completed', 'failed', 'timeout')) AS finished,
             avg(usd) FILTER (WHERE status IN ('completed', 'failed', 'timeout')) AS avg_usd,
-            coalesce(sum(usd) FILTER (WHERE queued_at >= greatest(${MONTH}, now() - interval '7 days')), 0) AS recent,
+            coalesce(sum(usd) FILTER (WHERE queued_at >= greatest(${MONTH}, now() - interval '7 days')), 0)
+              + (SELECT coalesce(sum(usd), 0) FROM rr WHERE created_at >= greatest(${MONTH}, now() - interval '7 days')) AS recent,
             extract(epoch FROM now() - greatest(${MONTH}, now() - interval '7 days')) / 86400 AS recent_days
        FROM s`, [orgId]);
   const finished = Number(r?.finished ?? 0);

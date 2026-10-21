@@ -12,6 +12,10 @@ export interface Org {
   userId?: string;
   /** Their account role (src/account-roles.ts), from the Clerk membership; absent for legacy API keys (no limits). */
   role?: AccountRole;
+  /** The API key's row id, when the request came with a key (rate limits and usage per key, mold_v0-018/008); never the key. */
+  keyId?: number;
+  /** The MCP client, as its User-Agent names it ("name/version"), for usage per client (mold_v0-008). */
+  client?: { name: string | null; version: string | null };
 }
 
 const KEY_PREFIX = "oct_";
@@ -59,7 +63,7 @@ export async function resolveKey(key: string | undefined | null): Promise<Org | 
   // Best effort; never block the request on it.
   db.query("/* tenant: the key row just resolved by its hash */ UPDATE api_keys SET last_used_at = now() WHERE id = $1", [row.id]).catch(() => {});
   // A key issued to a person acts as that person (usage, adoption, limits); an account key has no person.
-  return { orgId: row.org_id, slug: row.slug, name: row.name, ...(row.user_id ? { userId: row.user_id } : {}) };
+  return { orgId: row.org_id, slug: row.slug, name: row.name, ...(row.user_id ? { userId: row.user_id } : {}), keyId: Number(row.id) };
 }
 
 /** Constant-time check of the orchestrator's shared worker token (OCTILLION_WORKER_TOKEN). */
