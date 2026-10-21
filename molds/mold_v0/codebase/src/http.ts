@@ -22,6 +22,7 @@ import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
+import { mountInstallPages } from "./install-pages.js";
 import * as roles from "./admin-roles.js";
 import * as adminTokens from "./admin-tokens.js";
 const { need } = roles;
@@ -93,6 +94,9 @@ export function createApp() {
     await (await getDb()).query("SELECT 1");
     res.json({ ok: true, transcripts: transcripts().kind, rls_probe: rlsProbeState() });
   });
+
+  // How to connect each MCP client, from the profile and this address (mold_v0-060): public, no key in any of it.
+  mountInstallPages(app, PUBLIC_URL);
 
   // ---------- inference gateway: /gw/<provider>/... (ogw_ session tokens, real keys from the vault) ----------
   // Mounted before any body parser: requests and responses stream straight through.

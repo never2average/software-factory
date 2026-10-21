@@ -22,6 +22,7 @@
     "test:console-tabs": "tsx scripts/console-tabs-test.ts",
     "test:record-batch": "tsx scripts/record-batch-test.ts",
     "test:data-api": "tsx scripts/data-api-test.ts",
+    "test:mcp-tools": "tsx scripts/mcp-tools-test.ts",
     "test:data-repositories": "tsx scripts/data-repositories-test.ts",
     "test:runs": "tsx scripts/runs-test.ts",
     "test:agent-runner": "tsx scripts/agent-runner-test.ts",
