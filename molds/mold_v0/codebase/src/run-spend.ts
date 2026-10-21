@@ -8,7 +8,7 @@
  * person is runs.requested_by (the signed-in member who started it; null for a connector key).
  *
  * Every query names the workspace (org_id) and also runs under row-level security when called inside withTenant: the
- * gateway_usage policy shows a workspace its own runs' rows only (sql/migrations/0008_usage_and_limits.sql).
+ * gateway_usage policy shows a workspace its own runs' rows only (sql/migrations/0009_usage_and_limits.sql).
  */
 import { getDb } from "./db.js";
 

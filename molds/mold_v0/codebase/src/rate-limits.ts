@@ -11,7 +11,7 @@
  * A pack has no say in any of them: packs add files only under packs/<id>/ and never the profile (molds/mold_v0/MOLD.md),
  * and a job kind's own limits are clamped to the platform's (src/runs.ts effectiveKindLimits).
  *
- * Counting: fixed one-minute (or one-hour) windows in rate_limit_hits (sql/migrations/0008_usage_and_limits.sql), one
+ * Counting: fixed one-minute (or one-hour) windows in rate_limit_hits (sql/migrations/0009_usage_and_limits.sql), one
  * statement per request for every bucket it touches, so the count holds across processes and serverless instances.
  * A bucket names what it counts (a key's id, a member's id, a workspace's id, a hash of an address), never a secret.
  * Concurrency per workspace is counted in the process (requests in flight at once on this instance).

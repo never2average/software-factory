@@ -14,6 +14,8 @@ import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { credentialAppRouter } from "./credential-routes.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
+import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
+import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
@@ -115,7 +117,10 @@ export function createApp() {
     const reasons = await (await import("./reasons.js")).drainReasons(30).catch((e) => ({ error: (e as Error).message }));
     // Row-level security, proven on the live database (src/rls.ts): Vercel has no release step to run check:rls in.
     const rls = await probeFromCron(getDb);
-    res.json({ tick, pruned, reasons, rls });
+    // The packs' schedules and the daily due-date check (mold_v0-035, src/schedules.ts): a server ticks them from its own
+    // loop (startScheduler); on Vercel this cron entry is the tick. Nothing is read with no job kind and no due area.
+    const schedules = await schedulerTick().catch((e) => ({ error: (e as Error).message }));
+    res.json({ tick, pruned, reasons, rls, schedules });
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
@@ -166,6 +171,9 @@ export function createApp() {
   app.use("/api/onboarding", onboardingAppRouter());
   // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------
   app.use("/api/usage", usageAppRouter());
+  // ---------- schedules per workspace and due-date notices: /api/schedules, /api/notices (src/schedule-routes.ts); with no job kind or due area nothing is mounted ----------
+  app.use("/api/schedules", scheduleAppRouter());
+  app.use("/api/notices", noticeAppRouter());
 
   // ---------- journey webhook: PostHog Workflows queues in-chat nudges (src/journeys.ts) ----------
   // The secret goes in an Authorization header, or in the path for webhook steps that cannot set headers.
@@ -764,6 +772,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     // Off-machine archive of traces and research to R2 (src/archive.ts): backfills, then keeps up every 5 minutes.
     startArchiver();
     console.error(`  archive       ${storageEnabled() ? "on (traces + research to R2)" : "off (R2_* not set)"}`);
+    // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; OCTILLION_SCHEDULER=off disables.
+    if (startScheduler()) console.error("  scheduler     on (every minute; OCTILLION_SCHEDULER=off to disable)");
   });
   // Graceful drain (deploys, restarts): stop accepting connections, let in-flight requests finish (gateway streams
   // are sandboxed agents' model calls; cutting them fails the sessions), then exit. A rolling deploy starts the new
@@ -775,6 +785,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(`${signal}: draining, in-flight requests get up to ${limit}s`);
     void stopAutoscaler();
     stopArchiver();
+    stopScheduler();
     void telemetry.flush();
     server.close(() => { console.error("drained, exiting"); process.exit(0); });
     server.closeIdleConnections();
