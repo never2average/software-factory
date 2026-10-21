@@ -22,7 +22,7 @@
     },
     {
       "name": "check:rls",
-      "run": "d=$(mktemp -d) && env -u DATABASE_URL -u CLICKHOUSE_URL PGLITE_DIR=\"$d\" npm run --silent check:rls; s=$?; rm -rf \"$d\"; exit $s",
+      "run": "d=$(mktemp -d) && env -u CLICKHOUSE_URL DATABASE_URL= PGLITE_DIR=\"$d\" npm run --silent check:rls; s=$?; rm -rf \"$d\"; exit $s",
       "cwd": "codebase",
       "timeout_s": 600,
       "requires": [

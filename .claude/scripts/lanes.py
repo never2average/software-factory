@@ -400,7 +400,7 @@ def report_text(lane, app_id, mold_id, commit, spec, status, results, ctx, unmet
             L += ["", f"`{r['cmd']}`", "", "```", "\n".join((r["out"] or "(no output)").splitlines()[-40:])[-4000:], "```", ""]
         if any(r["defect"] for r in fails):
             L += ["Rows marked with a task id are defects of the mold snapshot itself, not of this application. "
-                  "Fixing them needs a mold refresh from source (`mold.py refresh <mold_id>`, `MOLD.md`); they are reported here rather than "
+                  "Fixing them needs a change to the mold (a refresh from its source, `mold.py refresh <mold_id>`; for an in-tree mold such as mold_v0 a pull request to this repository; `MOLD.md`); they are reported here rather than "
                   "muted, and they still fail the lane.", ""]
     # A check skipped by a precondition has no output; one skipped on its own output (skip_on) measured
     # rows, and those are printed — the report shows what was measured and the verdict stays `skipped`.
@@ -707,7 +707,7 @@ def self_test():
        and [c["name"] for c in specs["context"]["checks"]] == ["check:tenant-sql", "check:rls"],
        "mold_v0's lanes run the product's own typecheck, migration test, smoke, MCP check, tenant-SQL check and row-level security check")
     offline = {c["name"]: c["run"] for l in ("functional", "context") for c in specs[l]["checks"] if c["name"] in ("test:migrations", "check:rls")}
-    ok(all("-u DATABASE_URL" in r for r in offline.values()) and "-u MIGRATIONS_PG_URL" in offline["test:migrations"] and "PGLITE_DIR=" in offline["check:rls"],
+    ok(all("DATABASE_URL= " in r for r in offline.values()) and "-u MIGRATIONS_PG_URL" in offline["test:migrations"] and "PGLITE_DIR=" in offline["check:rls"],
        "  ...the migration test and the RLS check run offline only: no DATABASE_URL (nor MIGRATIONS_PG_URL) reaches them, the RLS check on a throwaway embedded database")
     ok(all(specs[l]["checks"] == [] and "skipped" in specs[l]["summary"] for l in ("load", "accessibility", "responsiveness")),
        "mold_v0's lanes with no harness of the product's own are empty, and say they are skipped, never pass")

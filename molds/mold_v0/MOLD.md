@@ -214,9 +214,11 @@ deploy would carry other than mold.json's `source_excludes`, such as `node_modul
 
 - once mold_v0-001 names the shell's own workflow in [mold.json](mold.json) (`source.ci.workflow`), that workflow's run
   for the commit must have passed with every job it defines, the same rules as mold_v1's `ci.yml`;
-- until then, **every** check run and commit status GitHub reports for that commit must have passed, and there must be
-  at least one. None of them tests the shell yet, so a green verdict says only "this repository's checks passed for
-  this commit", and the recorded verdict says exactly what was read.
+- until then, at least one of this repository's **own** checks (a GitHub Actions run of its workflows) must have
+  succeeded for that commit, and no check or status at all (from any app) may have failed or still be running. A
+  check or status posted by an outside app (a git-connected deploy service, a bot) can refuse a deploy but never pass
+  one, and a skipped check never counts. None of these checks tests the shell yet, so a green verdict says only "this
+  repository's own checks passed for this commit", and the recorded verdict says exactly what was read.
 
 Today this repository runs no workflow, so the verdict is *missing* and a mold_v0 deploy needs
 `--allow-unverified-mold "<reason>"` (recorded in `infrastructure.json` `deploy_gate.override`). A check that failed, one

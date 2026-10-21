@@ -41,13 +41,17 @@ def info(mold_id, root=None):
         try: man = json.load(open(p))
         except ValueError as e: raise Unreadable(f"molds/{mold_id}/mold.json is not valid JSON ({e}), so whether {mold_id} is authored "
                                                  f"in this repository cannot be told; fix the file first. Nothing was changed.")
+        if not isinstance(man, dict): raise Unreadable(f"molds/{mold_id}/mold.json is not a JSON object, so whether {mold_id} is authored in "
+                                                       f"this repository cannot be told; fix the file first. Nothing was changed.")
     src = man.get("source") if isinstance(man.get("source"), dict) else {}
-    fsrc = (_factory_entry(mold_id, root).get("source") or {})
+    fsrc = _factory_entry(mold_id, root).get("source"); fsrc = fsrc if isinstance(fsrc, dict) else {}
     if src.get("in_tree") is not True and fsrc.get("in_tree") is not True: return None
     out = {"mold_id": mold_id, "codebase": f"molds/{mold_id}/codebase", "ci": {"workflow": None}}
     out.update({k: v for k, v in fsrc.items() if k != "commit"})
     out.update(src)
-    out["since"] = src.get("since") or fsrc.get("in_tree_since") or fsrc.get("since") or ""
+    since = src.get("since") or fsrc.get("in_tree_since") or fsrc.get("since") or ""
+    out["since"] = since if isinstance(since, str) else ""
+    if not isinstance(out.get("forked_from"), dict): out["forked_from"] = {}
     out["ci"] = dict({"workflow": None}, **(out.get("ci") if isinstance(out.get("ci"), dict) else {}))
     return out
 
