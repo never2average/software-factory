@@ -265,7 +265,7 @@
       ],
       "budget_usd": 2,
       "token_lifetime_seconds": 1800,
-      "concurrency": 2,
+      "concurrency_per_workspace": 2,
       "credentials": [
         "tracker_token"
       ],

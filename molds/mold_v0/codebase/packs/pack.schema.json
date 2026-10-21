@@ -436,6 +436,42 @@
             "type": "string",
             "maxLength": 200
           },
+          "due": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "within_days": {
+                "default": 7,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 365
+              },
+              "notify": {
+                "default": [
+                  "owner"
+                ],
+                "minItems": 1,
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "owner",
+                    "billing",
+                    "member",
+                    "viewer"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "field"
+            ],
+            "additionalProperties": false
+          },
           "$comment": {
             "type": "string",
             "maxLength": 2000
@@ -504,6 +540,16 @@
                 "type": "number",
                 "exclusiveMinimum": 0,
                 "maximum": 10000
+              },
+              "concurrency_per_workspace": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "month_budget_usd": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 100000
               },
               "egress": {
                 "default": [],
@@ -621,11 +667,6 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "concurrency": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 50
               },
               "runner": {
                 "type": "string",
@@ -700,6 +741,16 @@
                 "exclusiveMinimum": 0,
                 "maximum": 10000
               },
+              "concurrency_per_workspace": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "month_budget_usd": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 100000
+              },
               "egress": {
                 "default": [],
                 "maxItems": 50,
@@ -816,11 +867,6 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              "concurrency": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 50
               },
               "runner": {
                 "type": "string",
@@ -926,13 +972,44 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{1,62}$"
           },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
           "job_kind": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{1,62}$"
           },
           "cron": {
             "type": "string",
-            "pattern": "^(\\S+\\s+){4}\\S+$"
+            "maxLength": 120
+          },
+          "assets": {
+            "type": "object",
+            "properties": {
+              "area": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "keys": {
+                "minItems": 1,
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+                }
+              }
+            },
+            "required": [
+              "area"
+            ],
+            "additionalProperties": false
+          },
+          "environment": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,39}$"
           },
           "scope": {
             "type": "object",
@@ -940,6 +1017,10 @@
               "type": "string"
             },
             "additionalProperties": {}
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
           }
         },
         "required": [

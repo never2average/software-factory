@@ -56,8 +56,8 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
   `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
   pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
-  data route. **schedules** and profile **words** are declared and validated and listed by `packRegistry()`; the
-  scheduler (035) wires them. **credentials** (034) and **onboarding** (011) are wired (below).
+  data route. Profile **words** are declared and validated and listed by `packRegistry()`. **credentials** (034),
+  **onboarding** (011) and **schedules** (035) are wired (below).
 - **recordAreas** (mold_v0-047, built): a pack declares areas in `definePack` and writes no record code. Their rows
   live in two shell tables (`sql/migrations/0004_record_areas.sql`): `platform_records` (platform scope: the tenant
   role may only `SELECT` it, so customers cannot write it whatever the code does; staff write it at
@@ -96,10 +96,52 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   of the pack and a private scratch, and every process of that user is killed when the run ends (one run at a time per
   such user). It refuses to run a program as its own user unless told (`allowSameUser`, the offline tests). Starting a
   run applies the account's launch rules for a signed-in person (`src/limits.ts` `checkRun`) and a per-workspace cap
-  on runs queued or running (`OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE`, 20). **Not wired yet:** no process runs runs in
-  a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one); a run's gateway spend is
-  limited by its kind's budget but is not yet counted in the account's month figures or spend pages (they read
-  sessions).
+  on runs queued or running (`runs.live_per_workspace`, 20; below). **Not wired yet:** no process runs runs in
+  a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one).
+- **Run spend in the month figures** (mold_v0-053, built; `src/run-spend.ts`): a run's cost is GREATEST(its recorded
+  cost, its live gateway total), in the month and on the day it was queued, by the member who started it. It counts
+  wherever session spend did: the account's month figure (`orgMonthSpendUsd`, so Billing, the usage alert email, the
+  allowance check at launch and while sampling, and Budget rules), each person's spend against their limits, the
+  month's pace, the portal's Usage and Billing pages and the admin Spend page (per account, day, person and run kind).
+  With no runs every figure is what it was. A workspace's tenant work reads its own runs' gateway usage
+  (`sql/migrations/0009_usage_and_limits.sql` widens the `gateway_usage` policy to the workspace's runs), never
+  another's: `check:rls` probes it. A schedule's runs (`requested_by` `schedule:<id>`) count in the account's figures
+  and show as "Schedule", never against a member's own limit. `npm run test:run-spend` proves it with two workspaces.
+- **Usage pages in neutral words** (mold_v0-008, built; `src/usage-report.ts`, `src/usage-routes.ts`): each MCP call
+  records its workspace, member or key id, client name and version (from its User-Agent), tool, outcome, error class,
+  latency and request and answer sizes (`mcp_events`; never arguments or answers; recording is fire-and-forget and never
+  fails the call). `GET /api/usage` (the workspace's members) and `GET /api/admin/onboarding/usage` (every workspace,
+  platform admins) give calls per tool with errors and p50/p95, errors by class, clients, daily and weekly active people,
+  week-over-week retention, per member or per workspace calls, runs and run cost, and per run its tool calls (events of
+  type `tool_call` or `tool.<name>`), model requests, tokens and cost. The console's `/app/activity` and
+  `/admin/activity` show them in the build's words (a pack's `words` for workspace, member, run, tool call, key), in the
+  sidebar once the build has a pack; the existing Usage, Billing and Spend pages show runs only when there are any.
+  Spend per person is for billing roles (owners, billing managers); everyone else sees the workspace's figures and
+  their own.
+  `npm run test:usage`.
+- **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
+  profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
+  non-positive one), the workspace's plan, and the server's environment (`OCTILLION_LIMIT_<SECTION>_<NAME>`), last wins.
+  *MCP:* per address before sign-in, then per key, per member (all their keys) and per workspace (all its keys), counted
+  in fixed one-minute windows in `rate_limit_hits` (platform rows, no tenant access) so they hold across instances; a
+  refusal is HTTP 429 with `Retry-After` and a JSON-RPC error (`-32029`) naming the limit, its number and when to retry,
+  recorded once (not per message) as a failed call of class `rate_limited`; each message of a JSON-RPC batch counts
+  and a batch of more than 100 is refused before anything is counted; a request over `max_request_bytes` is a 413 and an answer over
+  `max_response_bytes` a plain tool error; requests in flight per workspace are capped on each instance. The sign-up
+  (per address), invitation and key-creation (per workspace) endpoints are limited per hour. *Runs:* a kind may declare
+  `concurrency_per_workspace` and `month_budget_usd` beside `budget_usd`; each is clamped to the platform's ceiling
+  (`runs.concurrency_per_workspace`, `runs.kind_month_budget_usd`, `runs.budget_usd_max`), so a pack can lower a limit,
+  never raise it, and a pack's server code may not touch `process` (gen-packs refuses it), so it cannot change the
+  environment the ceilings are read from. The workspace's live-run cap is counted with the insert under a lock per
+  workspace (`npm run test:run-start-race` on a real Postgres: 40 concurrent starts leave exactly the cap live; the
+  code before let 40 of 40 through). Concurrency holds at claim (under a non-blocking lock per workspace and kind;
+  extra runs wait, other workspaces' go ahead); the kind's month budget and the account's allowance at start and on
+  every gateway request, so splitting work into many runs spends no more than one could (past the limit by at most
+  the requests in flight when it is reached). An account with no allowance (no plan, no override) starts no run and
+  its running ones stop spending, as its own launches do. For these checks a run queued in an earlier month and still
+  live counts in the current month too. The per-address count trusts `X-Forwarded-For` as the server's `trust proxy` does: behind no proxy, a
+  client can vary it, and the key, member and workspace limits still hold. `npm run test:limits` (with a load test: one
+  workspace's 120 requests at once leave another's error rate at 0).
 - **The runner boundary** (mold_v0-054, built; the import check resolves each pack's real import graph with esbuild,
   the resolver tsx uses, so spacing, comments, re-exports, extensionless or dot files cannot hide an import; a pack may
   carry only `.ts`/`.mts`/`.js`/`.mjs` code and plain data files, no `node_modules`, no links): a pack's code is of two kinds, told apart by pack.json `runner` (a
@@ -210,9 +252,9 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   - **Schema drift**: a row read under a changed declaration keeps its stored values, drops fields no longer declared
     from what is shown, and names every field that no longer fits in `drift`; the next write must fit.
   - **Job kinds**: `runner: "workspace-harness"` (a program of the pack, as before) or `"agent-workspace"` (mold_v0-061:
-    declared with its limits, `args`, `concurrency` and `credentials`, listed as `agentJobKinds`, not taken by the run
+    declared with its limits, `args`, `credentials` and the run limits (`budget_usd`, `concurrency_per_workspace`, `month_budget_usd`), listed as `agentJobKinds`, not taken by the run
     engine until 061). `args` are typed like fields and checked when a pack's code starts a run (`declaredRuns`, outside
-    the engine); `concurrency` is declared and validated, the engine's per-workspace cap still holds.
+    the engine); the run engine applies a harness kind's limits (above).
   - **Credentials, schedules, onboarding** as in `definePack`; **metrics** (mold_v0-063: a name, a label, `over` an area
     or `run_results`, the rest kept for 063); **repositories** (mold_v0-059: a `kind` and its settings; an area names one
     with `repository`, checked) and **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas,
@@ -223,6 +265,39 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
     generic data API (059), built on the same store functions. A shared library and each workspace's state of it are two
     areas today (one platform, one workspace, the second's rows keyed by the first's keys and linked to them); a declared
     "library + per-workspace state" pairing is an extension point for 059 (one area name, two scopes).
+- **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
+  (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
+  minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
+  record, `targets.asset` {area, key}, so credentials bound to that asset reach it), an `environment`, a run `scope`,
+  and `enabled`). Every workspace gets its own copy (`workspace_schedules`, `sql/migrations/0008_schedules.sql`;
+  tenant work may only read its own rows); a copy no owner changed follows the pack's later changes, and a default the
+  pack drops is turned off (its owner may then remove it). A workspace's owners ("manage") turn schedules off and on,
+  change their time and assets, and add their own for a kind the pack itself schedules (with the scope of the pack's own
+  schedule of it: owners never set a run's scope) in the console (`/app/schedules`, `src/schedule-routes.ts` at `/api/schedules`, mounted only when a job kind
+  exists; the workspace is the session's, an asset key must be one of its own records, a default is turned off, never
+  removed). The tick (`src/schedules.ts` `tickSchedules(now)`) takes every enabled row whose `next_at` has come: of the
+  due times missed since the last tick only the latest runs, once (the others are counted in `last_skipped`), and the
+  row's next due time is the first match after now. The row is moved on by a compare-and-set on its `seq`, so two ticks
+  at once (the Vercel cron, servers' loops, replicas) start its runs once; a target whose previous run from the
+  schedule is still queued or running is not started again, and an account that could not launch a run now (blocked: no
+  allowance, over its cap; or its allowance unreadable, `src/limits.ts` overview) starts none. A firing shows "starting
+  runs" until they are started, so one cut short is visible. Runs start through the run engine (`startRun`, requested by
+  `schedule:<id>`, under its per-workspace cap); the run engine is unchanged. The tick runs from the product's existing
+  cron entry on Vercel (`/api/cron/autoscale`, `CRON_SECRET` only, every 5 minutes) and from a one-minute loop on a
+  server (`startScheduler`, `OCTILLION_SCHEDULER=off` turns it off). **Due dates:** a check area of workspace scope may
+  declare `due` (one of its date fields, `within_days`, default 7, and the `notify` roles, owners by default). Once a UTC
+  day (`scheduler_marks`, marked after the work, so a check cut short runs again) `dueCheck(now)` posts one in-app notice per record and due date within the window
+  (`workspace_notices`; `/app/notices`, `/api/notices`, mounted only when such an area exists; "edit" dismisses), and
+  emails the workspace's own people with those roles (its Clerk organization's members, suspended people left out) one
+  list of the notices not yet emailed (`due_soon` in `email_log`, keyed by workspace, area, the notices listed and
+  recipient, so the same list never reaches a person twice; a notice counts as emailed once it reached one recipient). `npm run test:schedules` proves it with a clock the test
+  controls: five missed hours run once, three ticks at once start each run once (and, on Postgres 17 with eight
+  concurrent ticks over twenty workspaces, each schedule fired once in five rounds), two workspaces never see or start each
+  other's schedules, and due-date emails go only to each workspace's owners. **Not covered:** time zones (UTC only; day
+  fields as Vixie cron); per-person limits for unattended runs (there is no launcher; the account's standing applies,
+  and its spend counting is the limits tickets', 053/008/018); the run engine's per-workspace cap is a count then an
+  insert, so concurrent firings can pass it slightly; a schedule fires at the resolution of the tick (every 5 minutes on
+  Vercel).
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
@@ -241,7 +316,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `jobKinds` (`job_kinds`) | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
 | `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
 | `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
-| `schedules` (`schedules`) | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
+| `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
 | `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |

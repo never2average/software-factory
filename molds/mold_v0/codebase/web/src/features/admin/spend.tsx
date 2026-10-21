@@ -43,6 +43,8 @@ interface AccountRow {
   key: string; slug: string | null; name: string; shared: boolean;
   allowance: { budget_usd: number; plan: string | null; source: 'override' | 'plan' | 'default' } | null;
   spent_usd: number; session_usd: number; orchestrator_usd: number; month_usd: number; month_pct: number | null;
+  /** Runs of the generic run engine (mold_v0-053): 0 when there are none. */
+  run_usd?: number; daily_run?: number[];
   sessions: number; top_model: string | null; last_spend_at: string | null;
   daily_session: number[]; daily_orchestrator: number[]; month_daily: number[];
 }
@@ -55,12 +57,13 @@ interface ProviderSpend { provider: string; top_accounts: { key: string; name: s
 interface Spend {
   range: { from: string; to: string; days: string[] };
   month: { start: string; days_in_month: number; elapsed_days: number; days: string[] };
-  totals: { total_usd: number; session_usd: number; orchestrator_usd: number; shared_usd: number; metered_model_usd: number; unpriced_requests: number };
+  totals: { total_usd: number; session_usd: number; orchestrator_usd: number; run_usd?: number; shared_usd: number; metered_model_usd: number; unpriced_requests: number };
   accounts: AccountRow[]; models: ModelRow[]; providers: ProviderSpend[];
 }
 interface AccountDetail {
   key: string; name: string;
-  by_person: { user_id: string | null; label: string; session_usd: number; orchestrator_usd: number; usd: number; sessions: number }[];
+  by_person: { user_id: string | null; label: string; session_usd: number; orchestrator_usd: number; run_usd?: number; usd: number; sessions: number }[];
+  by_run_kind?: { kind: string; usd: number; runs: number }[];
   by_model: { model: string; provider: string | null; usd: number; sessions: number | null; requests: number | null }[];
   by_agent: { agent: string; usd: number; sessions: number }[];
   by_product: { product: string; usd: number; sessions: number }[];
@@ -876,7 +879,7 @@ function SpendAccounts({ data, loading, rows, cards, filters, filtered, range }:
         </span>
       ) : NA
     ) },
-    { key: 'spent', label: 'Spent in range', className: 'text-right', type: 'number', value: (a) => a.spent_usd, render: (a) => num(cents(a.spent_usd), `Sessions ${cents(a.session_usd)} · orchestrators ${cents(a.orchestrator_usd)}`) },
+    { key: 'spent', label: 'Spent in range', className: 'text-right', type: 'number', value: (a) => a.spent_usd, render: (a) => num(cents(a.spent_usd), `Sessions ${cents(a.session_usd)} · orchestrators ${cents(a.orchestrator_usd)}${a.run_usd ? ` · runs ${cents(a.run_usd)}` : ''}`) },
     { key: 'session', label: 'Sessions $', className: 'text-right', hidden: true, type: 'number', value: (a) => a.session_usd, render: (a) => num(cents(a.session_usd)) },
     { key: 'orchestrator', label: 'Orchestrators $', className: 'text-right', hidden: true, type: 'number', value: (a) => a.orchestrator_usd, render: (a) => num(cents(a.orchestrator_usd)) },
     { key: 'month', label: 'This month', className: 'w-56', type: 'number', value: (a) => a.month_pct ?? null, render: (a) => (
@@ -903,7 +906,7 @@ function AllowanceMeter({ used, budget, pct }: { used: number; budget: number; p
   if (!budget || pct == null) return <span className='text-muted-foreground text-xs tabular-nums'>{cents(used)} · no allowance</span>;
   const fill = pct >= 1 ? 'bg-destructive' : pct >= 0.8 ? 'bg-amber-500' : 'bg-primary';
   return (
-    <span className='flex flex-col gap-1.5' title={`${cents(used)} of ${cents(budget)} this month (session spend, as Billing counts it)`}>
+    <span className='flex flex-col gap-1.5' title={`${cents(used)} of ${cents(budget)} this month (session and run spend, as Billing counts it)`}>
       <span className='text-xs tabular-nums'>{cents(used)} <span className='text-muted-foreground'>of {cents(budget)}</span>
         <span className={cn('ml-1.5', pct >= 1 ? 'text-destructive' : pct >= 0.8 ? AMBER : 'text-muted-foreground')}>{Math.round(pct * 100)}%</span></span>
       <span className='bg-muted flex h-1.5 w-full overflow-hidden rounded-full' role='meter' aria-valuemin={0} aria-valuemax={budget} aria-valuenow={used}>
@@ -919,17 +922,24 @@ function AccountPeek({ a, days, range }: { a: AccountRow; days: string[]; range:
   return (
     <div className='grid gap-6'>
       <PeekSection title='Daily spend'>
-        <p className='text-sm'>{cents(a.spent_usd)} in range: sessions {cents(a.session_usd)}, orchestrators {cents(a.orchestrator_usd)}.</p>
+        <p className='text-sm'>{cents(a.spent_usd)} in range: sessions {cents(a.session_usd)}, orchestrators {cents(a.orchestrator_usd)}{a.run_usd ? <>, runs {cents(a.run_usd)}</> : null}.</p>
         <DailyBars days={days} format={(v) => `$${v < 10 ? v.toFixed(2) : Math.round(v)}`}
-          series={[{ key: 'session', label: 'Sessions', values: a.daily_session }, { key: 'orchestrator', label: 'Orchestrators', values: a.daily_orchestrator }]} />
+          series={[{ key: 'session', label: 'Sessions', values: a.daily_session }, { key: 'orchestrator', label: 'Orchestrators', values: a.daily_orchestrator },
+            ...(a.run_usd && a.daily_run ? [{ key: 'run', label: 'Runs', values: a.daily_run }] : [])]} />
       </PeekSection>
       {isLoading ? <Skeleton className='h-40' /> : !data ? <ErrorBox error={error} /> : (
         <>
           {!a.shared && (
             <PeekSection title='By person'>
-              {data.by_person.length ? <MiniTable head={['Who', 'Sessions', 'Sessions $', 'Orchestrators $', 'Total']} rows={data.by_person.map((p) => [
-                <span key='w' title={p.user_id ?? undefined}>{p.label}</span>, p.sessions, cents(p.session_usd), cents(p.orchestrator_usd), <span key='t' className='font-medium'>{cents(p.usd)}</span>])} />
+              {data.by_person.length ? <MiniTable head={['Who', 'Sessions', 'Sessions $', 'Orchestrators $', ...(data.by_run_kind ? ['Runs $'] : []), 'Total']} rows={data.by_person.map((p) => [
+                <span key='w' title={p.user_id ?? undefined}>{p.label}</span>, p.sessions, cents(p.session_usd), cents(p.orchestrator_usd), ...(data.by_run_kind ? [cents(p.run_usd ?? 0)] : []),
+                <span key='t' className='font-medium'>{cents(p.usd)}</span>])} />
                 : none('No spend in this range.')}
+            </PeekSection>
+          )}
+          {data.by_run_kind && (
+            <PeekSection title='Runs by kind'>
+              <MiniTable head={['Kind', 'Runs', 'Spend']} rows={data.by_run_kind.map((k) => [<Mono key='k'>{k.kind}</Mono>, k.runs, cents(k.usd)])} />
             </PeekSection>
           )}
           <PeekSection title={a.shared ? 'Orchestrator models (all orchestrator spend)' : 'By model'}>

@@ -57,8 +57,13 @@ export const recordPortalNav: NavGroup[] = [];
 /** The /admin sidebar's Records group: the platform-scope areas staff maintain. */
 export const recordAdminNav: NavGroup[] = [];
 
-/** The /app sidebar's Credentials page (mold_v0-034): when any pack declares a credential field. */
-export const credentialPortalNav: NavGroup[] = [];
+/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules
+ * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates. */
+export const workspacePortalNav: NavGroup[] = [];
 
 /** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */
 export const packOnboardingSteps = 0;
+
+/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */
+export const usagePortalNav: NavGroup[] = [];
+export const usageAdminNav: NavGroup[] = [];

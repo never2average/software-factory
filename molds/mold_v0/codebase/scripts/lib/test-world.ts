@@ -18,6 +18,8 @@ process.env.OCTILLION_REGISTRY = "scripts/fixtures/registry.json";
 process.env.OCTILLION_WORKER_TOKEN ??= `test-worker-${randomBytes(8).toString("hex")}`;
 process.env.REASONS_ENABLED = "off";
 process.env.OCTILLION_AUTOSCALE ??= "off";
+// Every workspace has an allowance unless a test says otherwise: an account with none starts no run (mold_v0-018).
+process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ??= "1000";
 export const STAMP = Date.now().toString(36);
 
 export const cleanup = () => rmSync(TMP, { recursive: true, force: true });
@@ -69,5 +71,5 @@ export async function startHttp() {
   const req = (method: string, p: string, h: Record<string, string> = {}, body?: unknown) =>
     fetch(`${base}${p}`, { method, headers: { ...h, ...(body !== undefined ? { "content-type": "application/json" } : {}) }, body: body === undefined ? undefined : typeof body === "string" || body instanceof Uint8Array ? body as BodyInit : JSON.stringify(body) });
   const close = async () => { server.close(); await mock.close(); };
-  return { base, signIn, adminToken, req, close };
+  return { base, signIn, adminToken, req, close, mock };
 }
