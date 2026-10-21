@@ -26,7 +26,12 @@
  *                the run targets. Pack code on the server never sees a value: no handler context carries one
  *   onboarding   wired (mold_v0-011): the /app Setup page's pack checklist (src/onboarding.ts, /api/onboarding); each
  *                step's done_when is read for the calling workspace only, from its own events and rows
- *   schedules    declared and validated here, listed by packRegistry(); wired by the scheduler (035)
+ *   schedules    wired (mold_v0-035): each workspace gets the pack's default schedules (a job kind of the pack, a cron
+ *                expression in UTC, the pack's asset records it runs over); owners turn them off and on, change when they
+ *                run and over which assets, and add their own in the console (/app/schedules). The scheduler
+ *                (src/schedules.ts) starts due runs through the run engine; a missed tick runs at most once
+ *   recordAreas  `due` (mold_v0-035): a workspace check area may name a date field; a daily check posts an in-app
+ *                notice and emails the workspace's owners about records due within `within_days`
  *
  * A pack never imports another shell module (the build refuses it: scripts/gen-packs.mjs), so everything it may use
  * is here: the definition helpers, zod, and the context each handler receives (its workspace and a database handle
@@ -35,6 +40,7 @@
 import { z } from "zod";
 import type { AccountPermission, AccountRole } from "./account-roles.js";
 import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.js";
+import { parseCron } from "./cron.js";
 
 export { z };
 
@@ -230,12 +236,24 @@ export const RecordAreaSchema = z.object({
   fields: z.array(field).min(1).max(60),
   list_columns: z.array(name).max(8).optional(),
   links: z.array(z.object({ field: name, area: name }).strict()).optional(),
+  /**
+   * Due dates (wired by mold_v0-035; src/schedules.ts): a check area of workspace scope may name one of its date fields.
+   * Once a day the shell posts an in-app notice for each record whose date falls within `within_days` (today included),
+   * and emails the workspace's people with the `notify` roles (owners by default) a list of them.
+   */
+  due: z.object({
+    field: name,
+    within_days: z.number().int().min(0).max(365).default(7),
+    notify: z.array(z.enum(["owner", "billing", "member", "viewer"])).min(1).max(4).default(["owner"]),
+  }).strict().optional(),
 }).strict()
   .refine((a) => a.name !== "areas", "areas is reserved (the list of areas at /api/records/areas)")
   .refine((a) => !(a.role === "asset" && a.scope === "platform"), "an asset area holds a workspace's private data: workspace scope only")
   .refine((a) => new Set(a.fields.map((f) => f.name)).size === a.fields.length, "a field is declared twice")
   .refine((a) => (a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c)), "list_columns must name declared fields")
-  .refine((a) => (a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field)), "a link's field must be a declared field");
+  .refine((a) => (a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field)), "a link's field must be a declared field")
+  .refine((a) => !a.due || (a.role === "check" && a.scope === "workspace"), "due is for a check area of workspace scope (each workspace's own dates)")
+  .refine((a) => !a.due || a.fields.some((f) => f.name === a.due!.field && f.type === "date"), "due.field must name one of the area's date fields");
 
 /**
  * Environment names a credential may not take: the ones the harness sets for every run (src/run-harness.ts), the proxy
@@ -272,12 +290,28 @@ export const CredentialSchema = z.object({
   .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
 
-/** A default schedule per workspace (wired by mold_v0-035). */
+/**
+ * A default schedule (wired by mold_v0-035; src/schedules.ts). Every workspace gets its own copy (per workspace: its own
+ * on/off, time and assets, its own runs), which its owners may change in the console; the pack's later changes reach a
+ * copy no owner has changed.
+ *   job_kind     one of this pack's job kinds: each due time starts runs of it through the run engine
+ *   cron         five fields, UTC (src/cron.ts): at most every 5 minutes
+ *   assets       which asset records of the workspace it runs over: one run per record (targets.asset {area, key}, the
+ *                credentials bound to that asset reach the run); `keys` absent means every record of the area. Without
+ *                `assets`, one run for the workspace
+ *   environment  targets.environment of each run (an environment-bound credential)
+ *   scope        the run's scope (what is checked: source and check record keys), as given to ctx.runs.start
+ *   enabled      false: offered to each workspace but off until an owner turns it on
+ */
 export const ScheduleSchema = z.object({
   name,
+  label: z.string().min(1).max(80).optional(),
   job_kind: name,
-  cron: z.string().regex(/^(\S+\s+){4}\S+$/, "five cron fields"),
+  cron: z.string().max(120).refine((c) => { try { parseCron(c); return true; } catch { return false; } }, "a cron expression: five fields (minute hour day-of-month month day-of-week, UTC), at most every 5 minutes"),
+  assets: z.object({ area: name, keys: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/, "a record key")).min(1).max(50).optional() }).strict().optional(),
+  environment: z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment name: lowercase letters, digits, _ and -").optional(),
   scope: z.record(z.string(), z.unknown()).optional(),
+  enabled: z.boolean().default(true),
 }).strict();
 
 /**
@@ -362,6 +396,9 @@ export function validatePack(p: PackDefinition): PackDefinition {
   each(p.onboarding, OnboardingStepSchema, "onboarding");
   const kinds = new Set((p.jobKinds ?? []).map((k) => k.name));
   for (const s of p.schedules ?? []) if (s?.job_kind && !kinds.has(s.job_kind)) problems.push(at(`schedule ${s.name} names job kind ${s.job_kind}, which this pack does not declare`));
+  // A schedule runs over this pack's own asset records (mold_v0-035), as a credential binds to them.
+  for (const s of p.schedules ?? []) if (s?.assets?.area && !(p.recordAreas ?? []).some((a) => a?.name === s.assets!.area && a.role === "asset"))
+    problems.push(at(`schedule ${s.name} runs over area ${s.assets.area}, which is not one of this pack's asset areas`));
   // Credentials (mold_v0-034): an asset binding names this pack's own asset area; a kind names this pack's own fields;
   // two fields never deliver to the same environment variable or file.
   const creds = new Map((p.credentials ?? []).map((c) => [c?.name, c]));

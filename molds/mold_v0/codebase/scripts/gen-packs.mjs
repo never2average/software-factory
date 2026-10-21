@@ -485,7 +485,8 @@ for (const [id, file] of entries) {
     const def = m.default?.default ?? m.default;
     out[id] = { areas: (def?.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
       credentials: (def?.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
-      onboarding: (def?.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })) };
+      onboarding: (def?.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
+      kinds: (def?.jobKinds ?? []).length };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 1500) }; }
 }
 process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
@@ -495,7 +496,7 @@ process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
     const line = (r.stdout ?? "").split("\n").find((l) => l.startsWith("RECORD_AREAS "));
     if (r.status !== 0 || !line) { fail("record areas", `loading the packs' definitions failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
     const got = JSON.parse(line.slice("RECORD_AREAS ".length));
-    for (const [id, v] of Object.entries(got)) if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = { areas: [], credentials: [], onboarding: [] }; }
+    for (const [id, v] of Object.entries(got)) if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = { areas: [], credentials: [], onboarding: [], kinds: 0 }; }
     return got;
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -507,6 +508,14 @@ const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a)
 const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
 /** The onboarding steps the packs declare (mold_v0-011): the console's Setup page asks for them only when there is one. */
 const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []).map((st) => ({ pack: p.id, ...st })));
+/** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
+const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? 0), 0);
+const dueAreaCount = recordAreas.filter((a) => a.due).length;
+const workspaceItems = [
+  ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
+  ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
+  ...(dueAreaCount ? [{ title: "Notices", url: "/app/notices", icon: "notification", items: [] }] : []),
+];
 {
   const owner = new Map();
   for (const a of recordAreas) {
@@ -565,8 +574,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.length ? [{ label: "Records", items: recordAreas.map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
   `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform") ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform").map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
-  "/** The /app sidebar's Credentials page (mold_v0-034): when any pack declares a credential field. */\n" +
-  `export const credentialPortalNav: NavGroup[] = ${json(credentialFields.length ? [{ label: "Workspace", items: [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] }] : [])};\n\n` +
+  "/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules\n" +
+  " * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates. */\n" +
+  `export const workspacePortalNav: NavGroup[] = ${json(workspaceItems.length ? [{ label: "Workspace", items: workspaceItems }] : [])};\n\n` +
   "/** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */\n" +
   `export const packOnboardingSteps = ${onboardingSteps.length};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
