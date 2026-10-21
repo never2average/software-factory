@@ -148,6 +148,9 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       await tx.query("INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd) VALUES ($1, $2, 'probe', 'probe', '{}', 1, 60, 60, 1)", [`${tag}-run-${o}`, o]);
       await tx.query("INSERT INTO run_events (run_id, org_id, attempt, type) VALUES ($1, $2, 0, 'probe')", [`${tag}-run-${o}`, o]);
       await tx.query("INSERT INTO run_results (run_id, org_id, check_area, check_key, status) VALUES ($1, $2, 'probe', 'probe', 'pass')", [`${tag}-run-${o}`, o]);
+      // The workspace store (mold_v0-033): a snapshot and a lease per organization.
+      await tx.query("INSERT INTO workspace_snapshots (org_id, store, version, status, base_version, manifest, manifest_sha256, files, bytes, object_key) VALUES ($1, 'probe', 1, 'committed', 0, '{}', 'x', 0, 0, 'x')", [o]);
+      await tx.query("INSERT INTO workspace_leases (org_id, store, run_id, expires_at) VALUES ($1, 'probe', $2, now())", [o, `${tag}-run-${o}`]);
     }
     await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
@@ -197,6 +200,8 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("runs: a tenant changes its own run (budget, status)", "/* tenant: rls probe */ UPDATE runs SET budget_usd = 1000 WHERE id = $1", [`${tag}-run-${a}`]);
     await refused("run_results: a tenant writes its own result", "INSERT INTO run_results (run_id, org_id, check_area, check_key, status) VALUES ($1, $2, 'p', 'p', 'pass')", [`${tag}-run-${a}`, a]);
     await refused("run_events: a tenant writes an event", "INSERT INTO run_events (run_id, org_id, attempt, type) VALUES ($1, $2, 0, 'x')", [`${tag}-run-${a}`, a]);
+    await refused("workspace_snapshots: a tenant writes a snapshot row", "INSERT INTO workspace_snapshots (org_id, store, version, status, base_version, manifest, manifest_sha256, files, bytes, object_key) VALUES ($1, 'p', 9, 'committed', 0, '{}', 'x', 0, 0, 'x')", [a]);
+    await refused("workspace_leases: a tenant takes a store's lease", "/* tenant: rls probe */ UPDATE workspace_leases SET run_id = 'x'");
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 

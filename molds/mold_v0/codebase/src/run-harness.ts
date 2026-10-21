@@ -34,6 +34,7 @@ import path from "node:path";
 import { proxySource } from "../orchestrator/core/egress.js";
 import type { RunView } from "./pack-api.js";
 import type { Claim, Completion } from "./runs.js";
+import { packBundle, unpackBundle } from "./workspace-bundle.js";
 
 /** What a runner needs from the engine: in-process (localRunnerClient) or over HTTP (httpRunnerClient). */
 export interface RunnerClient {
@@ -50,13 +51,14 @@ export interface RunnerClient {
 /** The engine in this process (a runner on the server itself, and the offline tests). */
 export async function localRunnerClient(workerId: string): Promise<RunnerClient> {
   const runs = await import("./runs.js");
+  const store = await import("./workspace-store.js");
   return {
     claim: (kinds) => runs.claimRun(workerId, { kinds }),
     heartbeat: (id, lease) => runs.heartbeatRun(id, lease),
     events: async (id, lease, ev) => void (await runs.appendRunEvents(id, lease, ev)),
     complete: (id, lease, c) => runs.completeRun(id, lease, c),
-    checkout: async () => { throw new Error("the workspace store is not wired (mold_v0-033)"); },
-    stage: async () => { throw new Error("the workspace store is not wired (mold_v0-033)"); },
+    checkout: (id, lease, dir) => store.checkoutForRun(id, lease, dir),
+    stage: (id, lease, dir) => store.stageForRun(id, lease, dir),
   };
 }
 
@@ -77,8 +79,13 @@ export function httpRunnerClient(base: string, workerToken: string, workerId: st
     heartbeat: (id, lease) => call("POST", `/${encodeURIComponent(id)}/heartbeat`, lease, {}),
     events: async (id, lease, events) => void (await call("POST", `/${encodeURIComponent(id)}/events`, lease, { events })),
     complete: async (id, lease, c) => (await call<{ run: RunView }>("POST", `/${encodeURIComponent(id)}/complete`, lease, c)).run,
-    checkout: async () => { throw new Error("the workspace store is not wired (mold_v0-033)"); },
-    stage: async () => { throw new Error("the workspace store is not wired (mold_v0-033)"); },
+    checkout: async (id, lease, dir) => {
+      const res = await fetch(url(`/${encodeURIComponent(id)}/workspace`), { headers: { authorization: `Bearer ${workerToken}`, "x-run-lease": lease } });
+      if (!res.ok) throw Object.assign(new Error(`GET workspace: ${res.status} ${(await res.text()).slice(0, 300)}`), { status: res.status });
+      unpackBundle(Buffer.from(await res.arrayBuffer()), dir, res.headers.get("x-workspace-manifest-sha256") ?? undefined);
+      return { version: Number(res.headers.get("x-workspace-version") ?? 0) };
+    },
+    stage: (id, lease, dir) => call("PUT", `/${encodeURIComponent(id)}/workspace`, lease, undefined, packBundle(dir).bundle),
   };
 }
 
@@ -172,7 +179,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   const stop = (why: NonNullable<typeof stopped>) => {
     stopped ??= why;
     const c = proc.child;
-    if (c && c.exitCode === null) { c.kill("SIGTERM"); setTimeout(() => { if (c.exitCode === null) c.kill("SIGKILL"); }, 3000).unref(); }
+    if (c && c.exitCode === null) { killGroup(c, "SIGTERM"); setTimeout(() => { if (c.exitCode === null) killGroup(c, "SIGKILL"); }, 3000).unref(); }
   };
   const beat = setInterval(async () => {
     try {
@@ -204,7 +211,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       ...claim.gateway.env, ...(proxy?.env ?? {}),
     };
     const code = await new Promise<number | null>((resolve) => {
-      const child = spawn(process.execPath, [entry], { cwd: work, env, stdio: ["ignore", "pipe", "pipe"] });
+      // Its own process group, so a stop (and the end of the run) takes whatever it started with it.
+      const child = spawn(process.execPath, [entry], { cwd: work, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
       proc.child = child;
       let buf = "";
       child.stdout!.on("data", (d: Buffer) => {
@@ -215,7 +223,10 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       let err = "";
       child.stderr!.on("data", (d: Buffer) => { err = (err + d.toString("utf8")).slice(-4000); });
       child.on("error", () => resolve(INFRA_EXIT));
-      child.on("close", (c) => { if (buf.trim()) pending.push(lineEvent(buf)); if (err.trim()) pending.push({ type: "stderr", data: { tail: err.slice(-2000) } }); resolve(c); });
+      child.on("close", (c) => {
+        killGroup(child, "SIGKILL"); // nothing the program left running may touch the workspace after it ends
+        if (buf.trim()) pending.push(lineEvent(buf)); if (err.trim()) pending.push({ type: "stderr", data: { tail: err.slice(-2000) } }); resolve(c);
+      });
     });
     if (stopped === "lease") return null;
     if (stopped === "cancelled") return await complete({ outcome: "failed", error_kind: "run", error: "cancelled" });
@@ -239,8 +250,10 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     if (spec.workspace) {
       try { await client.stage(run.id, lease, work); }
       catch (e) {
-        if ((e as { status?: number }).status === 409) return null;
-        return await complete({ outcome: "failed", error_kind: "infrastructure", error: `write back: ${(e as Error).message}` });
+        const status = (e as { status?: number }).status;
+        if (status === 409) return null;
+        // A workspace the run left unpackable (a symbolic link, a special file, too big) is the run's failure, not the infrastructure's.
+        return await complete({ outcome: "failed", error_kind: status === 400 ? "run" : "infrastructure", error: `write back: ${(e as Error).message}` });
       }
     }
     return await complete({ outcome: "succeeded", results });
@@ -250,6 +263,10 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     if (proxy && opts.onProxyLog) { try { opts.onProxyLog(readFileSync(proxy.log, "utf8")); } catch { opts.onProxyLog(""); } }
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+function killGroup(c: ChildProcess, signal: NodeJS.Signals) {
+  try { if (c.pid) process.kill(-c.pid, signal); } catch { /* already gone */ }
 }
 
 function lineEvent(line: string): { type: string; data?: Record<string, unknown> } {

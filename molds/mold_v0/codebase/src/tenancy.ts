@@ -14,11 +14,11 @@
  */
 import { forgetOrgKey } from "./orgcrypto.js";
 import { getDb } from "./db.js";
-import { keys, listKeys, deleteKeys, storageEnabled } from "./storage.js";
+import { keys, listKeys, deleteKeys, objectStore, storageEnabled } from "./storage.js";
 import { baseTranscripts } from "./transcripts.js";
 import { forgetArchivedOrg } from "./archive.js";
 
-const PREFIX_KINDS = ["transcripts", "research", "reports", "diffs", "exports"] as const;
+const PREFIX_KINDS = ["transcripts", "research", "reports", "diffs", "exports", "workspaces"] as const;
 
 export interface OrgDeletion {
   org_id: number;
@@ -56,6 +56,9 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
     await tx.query("UPDATE agent_sessions SET status = 'cancelled', ended_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
     await tx.query("UPDATE simulations SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
     await tx.query("UPDATE product_research SET status = 'failed', error = 'organization deleted', finished_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
+    // Runs (mold_v0-041): no more spending, no more claims.
+    await tx.query("UPDATE gateway_tokens SET revoked_at = now() WHERE revoked_at IS NULL AND run_id IN (SELECT id FROM runs WHERE org_id = $1)", [orgId]);
+    await tx.query("UPDATE runs SET status = 'cancelled', error_kind = 'cancelled', error = 'organization deleted', cancel_requested_at = now(), ended_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
   });
   log(`org ${orgId}: access revoked, work stopped`);
 
@@ -71,6 +74,13 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
     if (left.length) throw new Error(`org ${orgId}: ${left.length} object(s) still in R2 after the purge; re-run deleteOrg`);
   }
   log(`org ${orgId}: ${objects.length} object(s) purged from R2`);
+  // Workspace snapshots kept in a local directory instead (mold_v0-033, OCTILLION_STORAGE_DIR without R2).
+  if (!storageEnabled() && process.env.OCTILLION_STORAGE_DIR) {
+    const local = objectStore();
+    const mine = await local.list(keys.orgPrefix("workspaces", orgId));
+    await local.remove(mine);
+    log(`org ${orgId}: ${mine.length} workspace snapshot(s) removed from ${process.env.OCTILLION_STORAGE_DIR}`);
+  }
 
   // 5-6. Postgres cascade, then the tombstone.
   await db.transaction(async (tx) => {

@@ -107,9 +107,9 @@ turns it into shell, or builds it where nothing exists yet.
   `src/archive.ts` copies finished traces and research there. Raw transcripts are `src/transcripts.ts` (ClickHouse,
   or `transcript_events` in Postgres for local runs). `src/db.ts` is the query interface over Postgres or an embedded
   one for tests. A run's working files live and die with its sandbox.
-- **Generalised by.** mold_v0-033 (a workspace store: versioned per-workspace snapshots with a sha256 manifest,
-  sealed with the workspace data key, checked out before a run, written back only when the run's validation passes, one
-  writer per workspace under a lease).
+- **Generalised by.** mold_v0-033, **built** (a workspace store: versioned per-workspace snapshots with a sha256
+  manifest, sealed with the workspace data key, checked out before a run, written back only when the run's validation
+  passes, one writer per workspace under a lease; `src/workspace-store.ts`, `src/storage.ts` `objectStore()`).
 
 ### Record areas
 

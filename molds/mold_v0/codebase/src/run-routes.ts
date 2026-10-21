@@ -8,10 +8,14 @@
  *   POST /:id/heartbeat       -> {lease_expires_at, cancel, reason}
  *   POST /:id/events          {events: [{type, data}]} -> {appended}
  *   POST /:id/complete        {outcome, error_kind?, error?, results?} -> {run}
+ *   GET  /:id/workspace       the run's own workspace store, latest snapshot, as a bundle (src/workspace-bundle.ts);
+ *                             headers X-Workspace-Version, X-Workspace-Manifest-Sha256 (mold_v0-033)
+ *   PUT  /:id/workspace       a bundle (application/octet-stream): staged, committed only when the run succeeds
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { PackError } from "./pack-api.js";
-import { appendRunEvents, claimRun, completeRun, heartbeatRun } from "./runs.js";
+import { appendRunEvents, claimRun, completeRun, heartbeatRun, leasedRun } from "./runs.js";
+import { checkoutBundle, stageBundle } from "./workspace-store.js";
 import type { WorkerAuth } from "./workerauth.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -39,5 +43,15 @@ export function runWorkerRouter(): Router {
   r.post("/:id/heartbeat", answer((req) => heartbeatRun(String(req.params.id), leaseOf(req))));
   r.post("/:id/events", answer((req) => appendRunEvents(String(req.params.id), leaseOf(req), (req.body ?? {}).events)));
   r.post("/:id/complete", answer(async (req) => ({ run: await completeRun(String(req.params.id), leaseOf(req), req.body ?? {}) })));
+  r.get("/:id/workspace", answer(async (req, res) => {
+    const out = await checkoutBundle(await leasedRun(String(req.params.id), leaseOf(req)));
+    res.set({ "content-type": "application/octet-stream", "x-workspace-version": String(out.version), "x-workspace-manifest-sha256": out.manifest_sha256 });
+    res.end(out.bundle);
+  }));
+  const maxBundle = Number(process.env.OCTILLION_WORKSPACE_MAX_BUNDLE_BYTES ?? 300 * 1024 * 1024);
+  r.put("/:id/workspace", express.raw({ type: "application/octet-stream", limit: maxBundle }), answer(async (req) => {
+    if (!Buffer.isBuffer(req.body)) throw new PackError("send the workspace as application/octet-stream", 400);
+    return stageBundle(await leasedRun(String(req.params.id), leaseOf(req)), req.body);
+  }));
   return r;
 }

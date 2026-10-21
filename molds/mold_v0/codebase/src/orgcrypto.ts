@@ -78,6 +78,32 @@ export async function openRows<T extends Record<string, any>>(orgId: number, row
   return rows;
 }
 
+const BYTES_MAGIC = Buffer.from("WSE1");
+/**
+ * Seal bytes with the organization's data key (a workspace snapshot, mold_v0-033): "WSE1" + iv + tag + ciphertext.
+ * `aad` binds the ciphertext to what it is (the workspace, the store, the snapshot and its manifest), so a sealed blob
+ * moved under another row or another workspace does not open. Fails closed: refuses while the vault is locked.
+ */
+export async function sealBytes(orgId: number, body: Buffer, aad: string): Promise<Buffer> {
+  if (!vaultUnlocked()) throw new Error("the key vault is locked (OCTILLION_VAULT_KEY): workspace data is never stored unsealed");
+  const key = (await dataKey(orgId, true))!;
+  const iv = randomBytes(12);
+  const c = createCipheriv("aes-256-gcm", key, iv);
+  c.setAAD(Buffer.from(aad, "utf8"));
+  const ct = Buffer.concat([c.update(body), c.final()]);
+  return Buffer.concat([BYTES_MAGIC, iv, c.getAuthTag(), ct]);
+}
+/** Open bytes sealed by sealBytes for this organization and this `aad`; throws on any other key, aad or change. */
+export async function openBytes(orgId: number, sealed: Buffer, aad: string): Promise<Buffer> {
+  if (sealed.length < 32 || !sealed.subarray(0, 4).equals(BYTES_MAGIC)) throw new Error("not a sealed workspace object");
+  const key = await dataKey(orgId, false);
+  if (!key) throw new Error("the workspace's data key is gone (the workspace was deleted)");
+  const d = createDecipheriv("aes-256-gcm", key, sealed.subarray(4, 16));
+  d.setAAD(Buffer.from(aad, "utf8"));
+  d.setAuthTag(sealed.subarray(16, 32));
+  return Buffer.concat([d.update(sealed.subarray(32)), d.final()]);
+}
+
 /** Forget a cached data key (organization deletion). */
 export function forgetOrgKey(orgId: number): void { keys.delete(orgId); }
 
