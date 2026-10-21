@@ -135,12 +135,15 @@ export interface RunCredentials { credentials: Delivered[]; missing: string[] }
 /** The part of a run row this needs: its own workspace, pack, frozen kind and targets. */
 export interface RunForCredentials { org_id: number; pack: string; spec: { credentials?: string[] } | null; targets: Record<string, unknown> | null }
 
+/** The asset (its key, and the area when the run names one) and environment a run targets. */
 const targetOf = (targets: Record<string, unknown> | null) => {
   const t = targets ?? {};
   const a = t.asset;
-  const asset = typeof a === "string" ? a : a && typeof a === "object" && typeof (a as { key?: unknown }).key === "string" ? (a as { key: string }).key : null;
+  const asObj = a && typeof a === "object" ? (a as { key?: unknown; area?: unknown }) : null;
+  const asset = typeof a === "string" ? a : typeof asObj?.key === "string" ? asObj.key : null;
+  const area = typeof asObj?.area === "string" ? asObj.area : null;
   const env = typeof t.environment === "string" && ENV.test(t.environment) ? t.environment : null;
-  return { asset: asset && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(asset) ? asset : null, environment: env };
+  return { asset: asset && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(asset) ? asset : null, area, environment: env };
 };
 
 /**
@@ -148,16 +151,18 @@ const targetOf = (targets: Record<string, unknown> | null) => {
  * run's own workspace and the asset and environment it targets. A field with no such value is listed as missing (the
  * program decides what to do without it). The workspace comes from the run row only.
  */
-export async function runCredentials(run: RunForCredentials): Promise<RunCredentials> {
+export async function runCredentials(run: RunForCredentials, opts: { strict?: boolean } = {}): Promise<RunCredentials> {
   const names = Array.isArray(run.spec?.credentials) ? run.spec!.credentials.filter((n): n is string => typeof n === "string") : [];
   const out: RunCredentials = { credentials: [], missing: [] };
   if (!names.length) return out;
-  const { asset, environment } = targetOf(run.targets);
+  const { asset, area, environment } = targetOf(run.targets);
   for (const name of names) {
     const spec = findCredential(run.pack, name);
     if (!spec) { out.missing.push(name); continue; }
     const s: Slot = { spec, asset: spec.bound_to === "workspace" ? null : asset, environment: spec.bound_to === "environment" ? environment : null };
     if ((spec.bound_to !== "workspace" && !s.asset) || (spec.bound_to === "environment" && !s.environment)) { out.missing.push(name); continue; }
+    // A run that names the asset's area gets a value only for that area's asset (not a same-named key of another area).
+    if (spec.bound_to !== "workspace" && area !== null && area !== spec.area) { out.missing.push(name); continue; }
     const [r] = await asPlatform(async () => (await getDb()).query<{ sealed: string }>(
       `SELECT sealed FROM workspace_credentials WHERE org_id = $1 AND pack = $2 AND name = $3 AND bound_to = $4
           AND coalesce(asset_key, '') = $5 AND coalesce(environment, '') = $6`,
@@ -165,7 +170,12 @@ export async function runCredentials(run: RunForCredentials): Promise<RunCredent
     if (!r) { out.missing.push(name); continue; }
     let value: string;
     try { value = (await asPlatform(() => openBytes(run.org_id, Buffer.from(r.sealed, "base64"), aad(run.org_id, s)))).toString("utf8"); }
-    catch { out.missing.push(name); continue; } // a value that does not open in this slot is not this slot's
+    catch (e) {
+      // A value that does not open in this slot is not this slot's. While redacting (strict), a value that cannot be
+      // opened (the vault locked) refuses the write rather than store it unredacted.
+      if (opts.strict) throw new PackError("the run's credentials cannot be opened now (the key vault is locked?): try again", 503);
+      void e; out.missing.push(name); continue;
+    }
     out.credentials.push({ name, ...("env" in spec.deliver_as ? { env: spec.deliver_as.env } : { file: spec.deliver_as.file }), value });
   }
   return out;
@@ -174,5 +184,5 @@ export async function runCredentials(run: RunForCredentials): Promise<RunCredent
 /** The values a run may have received, for redacting what it writes (src/runs.ts events and completion). */
 export async function runSecrets(run: RunForCredentials): Promise<Secret[]> {
   if (!run.spec?.credentials?.length) return [];
-  return (await runCredentials(run)).credentials.map((c) => ({ name: c.name, value: c.value }));
+  return (await runCredentials(run, { strict: true })).credentials.map((c) => ({ name: c.name, value: c.value }));
 }

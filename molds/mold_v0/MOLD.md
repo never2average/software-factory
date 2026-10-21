@@ -100,7 +100,9 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one); a run's gateway spend is
   limited by its kind's budget but is not yet counted in the account's month figures or spend pages (they read
   sessions).
-- **The runner boundary** (mold_v0-054, built): a pack's code is of two kinds, told apart by pack.json `runner` (a
+- **The runner boundary** (mold_v0-054, built; the import check resolves each pack's real import graph with esbuild,
+  the resolver tsx uses, so spacing, comments, re-exports, extensionless or dot files cannot hide an import; a pack may
+  carry only `.ts`/`.mts`/`.js`/`.mjs` code and plain data files, no `node_modules`, no links): a pack's code is of two kinds, told apart by pack.json `runner` (a
   directory inside the pack). *Server code* (everything else: the entry, tools, routes, loaded into the server) keeps
   the strict rules above and may neither import a process API nor the runner's files. *Runner code* (under `runner`:
   a job kind's programs, run by the harness with node as the run's own user) may also import `node:child_process`,
@@ -110,7 +112,9 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   computed import, `eval`). The entry may not sit in the runner directory, and no pack may carry a symbolic link. The
   processes a program starts run as the run's user and die with the run (`npm run test:runs`, section 12); the import
   rules keep the runner's code reviewable, while what isolates it at run time is the run user and an environment built
-  from nothing. `npm run test:packs` proves both boundaries (a program with `child_process` passes under `runner` and is
+  from nothing. The same holds for server code: the import rules are a lint, not a sandbox (server code still runs in
+  the server's process and could read its environment), so "values never reach a pack's server code" holds for the
+  shell's API, which gives a handler none, not against a hostile pack. `npm run test:packs` proves both boundaries (a program with `child_process` passes under `runner` and is
   refused outside it, and 19 ways across the boundary are refused).
   `npm run test:runs` proves the lifecycle offline with fixture kinds (`scripts/fixtures/runs/`).
 - **The workspace store** (mold_v0-033, built): a job kind with `workspace: true` gets versioned snapshots of its
@@ -131,18 +135,23 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   (`definePack({ credentials })`: a label, help, `bound_to` the workspace, an `asset` of one of its asset areas (`area`)
   or an asset's `environment` (optionally from a list), delivered as an environment variable or a file). A workspace's
   owners set the values in the console (`/app/credentials`, `src/credential-routes.ts` at `/api/credentials`, mounted
-  only when a field exists; an asset binding must name an asset record of their own workspace); every answer shows only
-  the last 4 characters. Values live in `workspace_credentials` (`sql/migrations/0007_workspace_credentials.sql`),
+  only when a field exists; an asset binding must name an asset record of their own workspace); no answer carries a
+  value, owners see the last 4 characters and everyone else only which values are set; a file field takes a multi-line
+  value (a key). Values live in `workspace_credentials` (`sql/migrations/0007_workspace_credentials.sql`),
   sealed with the workspace data key (`sealBytes`, refused while the vault is locked) and bound by additional data to
   their workspace, pack, field, asset and environment; the tenant role has no grant on the table (a pack's server code
   never sees a value; `check:rls` probes it). A job kind names the fields its runs receive (`credentials: [...]`, none
   by default); the runner fetches them with the run's lease (`GET /api/worker/runs/:id/credentials`), looked up with the
   run row's own workspace and its `targets.asset` / `targets.environment`, and gives the entry program each value as
   its declared environment variable or as a file (0400, the run user's) in a private directory on tmpfs
-  (`RUN_CREDENTIALS_DIR`, `/dev/shm`), removed when the program ends; the validator gets none. Everything a run writes
-  (stdout lines, the stderr tail, results, errors) is redacted of the values (as is, JSON-escaped, base64, hex, each line
-  of a multi-line value; `src/credential-redact.ts`) by the harness and again by the engine before it is stored; a
-  workspace that holds a value is not written back. `npm run test:credentials` proves it with two workspaces: same asset
+  (`RUN_CREDENTIALS_DIR`, `/dev/shm`; with no tmpfs the run fails rather than write one to disk), removed when the
+  program ends; the validator gets none. Runs share their user, so before and after each run every file that user owns
+  in `/tmp`, `/var/tmp` and `/dev/shm` is removed (a copy or hard link of a value never waits for the next run). A target
+  that names an asset's area gets a value only for the field's own area. Everything a run writes (stdout lines, the
+  stderr tail, results as text and as values, errors, event types) is redacted of the values (as is, JSON-escaped,
+  URL-encoded, hex, base64 at any byte offset, numbers, each line of a multi-line value, longest first across values;
+  `src/credential-redact.ts`) by the harness and again by the engine before it is stored (the engine refuses to store
+  while it cannot open the values); a workspace holding a value in a file or a file name is not written back. `npm run test:credentials` proves it with two workspaces: same asset
   key, concurrent runs, 0 cross-workspace injections; a canary grep of every table, the database's files, the object
   store, the MCP and HTTP answers and the process's logs finds 0. **Not covered:** a program that sends a value out
   through an allowed host or the model gateway (egress is the run's allowlist; the gateway does not store prompts), or

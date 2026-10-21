@@ -124,6 +124,16 @@ try {
         return gen(["--packs", dir, "--out", path.join(dir, "out")]);
       })();
       refused("a symbolic link in a pack", linked, /a symbolic link/);
+      // The review's bypasses of the import scan (mold_v0-054): the import graph is resolved, not read with a pattern.
+      const IDX = (extra: string) => `import { definePack } from "$API";\n${extra}\nexport default definePack({ id: "pk" });\n`;
+      refused("an import with no spaces", tryPack("pk", { "index.ts": IDX(`import{execSync}from"node:child_process";`) }, R), /imports node:child_process: not allowed in a pack's server code/);
+      refused("an import split by a comment", tryPack("pk", { "index.ts": IDX(`import {execSync} from /*"*/ "node:child_process";`) }, R), /imports node:child_process/);
+      refused("a re-export of the runner's code", tryPack("pk", { "index.ts": IDX(`export*from"./runner/run.mjs";`), "runner/run.mjs": "export const x = 1;\n" }, R), /server code may not import the runner's code/);
+      refused("an extensionless file", tryPack("pk", { "index.ts": IDX(`import "./helper";`), "helper": `import { execSync } from "node:child_process";\n` }, R), /a file a pack may not carry/);
+      refused("a dot directory", tryPack("pk", { "index.ts": IDX(`import "./.lib/h.ts";`), ".lib/h.ts": `import{execSync}from"node:child_process";\n` }, R), /\.lib\/h\.ts: imports node:child_process/);
+      refused("a node_modules directory", tryPack("pk", { "index.ts": IDX(`import "./node_modules/h.mjs";`), "node_modules/h.mjs": "export {};\n" }, R), /a node_modules directory/);
+      refused("runner code reaching the pack API with no spaces", tryPack("pk", { "runner/run.mjs": `import{z}from"${path.relative(path.join(tmp, "x", "pk", "runner"), API).split(path.sep).join("/")}";\n` }, R), /runner code may import its own runner files/);
+      refused("node:module from server code", tryPack("pk", { "index.ts": IDX(`import*as m from"node:module";`) }, R), /imports node:module/);
       console.log("✓ the runner boundary: run programs under the runner directory may start processes; server code may not, nor import them; runner code reaches no shell module and never leaves the workspace's scope");
     }
     refused("a page in no area", tryPack("pk", {}, { pages: [{ id: "x", area: "elsewhere", title: "X", data: "/x" }] }), /area must be/);
