@@ -160,8 +160,9 @@ status, finding fingerprint, evidence reference).
 - **Today.** The `/app` setup checklist with a live connection test (`src/app.ts`, `web/src/features/portal/setup.tsx`),
   playbooks (`src/playbooks.ts`), journeys (`src/journeys.ts`), and the access-request funnel on `/admin`
   (`src/admin.ts`, `web/src/features/admin/requests.tsx`). Its steps are the product's own.
-- **Generalised by.** mold_v0-011 (an onboarding checklist from pack-declared steps, ticking itself off from real
-  events).
+- **Generalised by.** mold_v0-011, **built** (an onboarding checklist from pack-declared steps, each read per
+  workspace from its own events and rows, shown on the Setup page; zero packs leave the page unchanged;
+  `src/onboarding.ts`).
 
 ### Billing and email (optional)
 

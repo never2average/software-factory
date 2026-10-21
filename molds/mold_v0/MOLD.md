@@ -56,8 +56,8 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
   `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
   pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
-  data route. **schedules, onboarding** and profile **words** are declared and validated and listed by
-  `packRegistry()`; the scheduler (035) and checklist (011) wire them. **credentials** are wired (034, below).
+  data route. **schedules** and profile **words** are declared and validated and listed by `packRegistry()`; the
+  scheduler (035) wires them. **credentials** (034) and **onboarding** (011) are wired (below).
 - **recordAreas** (mold_v0-047, built): a pack declares areas in `definePack` and writes no record code. Their rows
   live in two shell tables (`sql/migrations/0004_record_areas.sql`): `platform_records` (platform scope: the tenant
   role may only `SELECT` it, so customers cannot write it whatever the code does; staff write it at
@@ -148,6 +148,19 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   through an allowed host or the model gateway (egress is the run's allowlist; the gateway does not store prompts), or
   writes part of a value; values replaced while a run is going are redacted only by the harness (which holds what it
   delivered); no rotation reminder or expiry.
+- **The onboarding checklist from packs** (mold_v0-011, built): a pack declares steps (`definePack({ onboarding })`: an
+  id, a label, help, and `done_when`, one of `workspace`, `connected`, `first_call`, `tool:<name>`,
+  `credential:<name>`, `record:<area>`, `run:<kind>`; a credential, a workspace-scope area or a kind must be the pack's
+  own, a tool any tool of the build, all checked when the pack loads). `src/onboarding.ts` reads each condition for the
+  calling workspace only (its id from the session; every query names it and runs under row-level security for it; the
+  credential vault, which tenant work cannot reach, is read with that id), with the time it first held, and serves the
+  list at `/api/onboarding` (signed-in people of the workspace, read only; mounted only when a step exists). The
+  console's Setup page shows it above the shell's own timeline when the build has a step (`packOnboardingSteps` in
+  `pack-nav.generated.ts`); with zero packs it asks nothing and the page is unchanged. `npm run test:onboarding` proves
+  it with two workspaces (everything B does ticks none of A's steps). **Not covered:** the end-to-end browser walk of
+  the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
+  shell yet, and the product's own setup steps (`src/app.ts`) stay as they are until mold_v0-039 moves them into the
+  `octillion` pack.
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
@@ -166,7 +179,7 @@ a pack. Each pack exports one `definePack({...})`:
 | `recordAreas` | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), fields, list columns and links to other areas | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047) |
 | `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `schedules` | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
-| `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011) |
+| `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
 

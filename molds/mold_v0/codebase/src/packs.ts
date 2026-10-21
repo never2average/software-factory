@@ -63,6 +63,11 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     }
     out.push({ id: m.id, manifest: m, definition: def });
   }
+  // An onboarding step's tool:<name> names a tool of this build: the shell's, the record tools, or a pack's (mold_v0-011).
+  for (const p of out) for (const st of p.definition.onboarding ?? []) {
+    const [what, arg] = st.done_when.split(":", 2);
+    if (what === "tool" && arg && !toolOwner.has(arg)) problems.push(`pack ${p.id}: onboarding step ${st.id} names no tool ${arg} (not the shell's nor any pack's)`);
+  }
   // A link names an area some pack in this build declares.
   for (const p of out) for (const a of p.definition.recordAreas ?? []) for (const l of a.links ?? [])
     if (!areaOwner.has(l.area)) problems.push(`pack ${p.id}: record area ${a.name} links field ${l.field} to area ${l.area}, which no pack declares`);
@@ -97,8 +102,8 @@ export function packRegistry() {
     tools: all.flatMap((p) => (p.definition.tools ?? []).map((t) => ({ pack: p.id, name: t.name }))),
     routes: all.flatMap((p) => (p.definition.routes ?? []).map((r) => ({ pack: p.id, scope: r.scope, method: r.method, path: r.path }))),
     words: Object.fromEntries(all.map((p) => [p.id, p.manifest.words])),
-    // recordAreas (src/record-areas.ts, mold_v0-047), jobKinds (src/runs.ts, mold_v0-041) and credentials (src/credentials.ts,
-    // mold_v0-034) are wired. Declared and validated, not wired yet: scheduler 035, onboarding 011.
+    // recordAreas (src/record-areas.ts, mold_v0-047), jobKinds (src/runs.ts, mold_v0-041), credentials (src/credentials.ts,
+    // mold_v0-034) and onboarding (src/onboarding.ts, mold_v0-011) are wired. Declared and validated, not wired yet: scheduler 035.
     jobKinds: flat("jobKinds"), recordAreas: flat("recordAreas"), credentials: flat("credentials"), schedules: flat("schedules"), onboarding: flat("onboarding"),
   };
 }
