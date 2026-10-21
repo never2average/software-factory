@@ -1085,6 +1085,297 @@
           "over": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "measure": {
+            "default": "count",
+            "type": "string",
+            "enum": [
+              "count",
+              "sum",
+              "average",
+              "rate",
+              "duration"
+            ]
+          },
+          "field": {
+            "type": "string",
+            "pattern": "^([a-z][a-z0-9_]{1,62}|detail\\.[a-z][a-z0-9_]{0,62})$"
+          },
+          "rate": {
+            "type": "object",
+            "properties": {
+              "where": {
+                "minItems": 1,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "pattern": "^([a-z][a-z0-9_]{1,62}|detail\\.[a-z][a-z0-9_]{0,62})$"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "ne",
+                        "in",
+                        "not_in",
+                        "lt",
+                        "lte",
+                        "gt",
+                        "gte",
+                        "empty",
+                        "not_empty"
+                      ]
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            }
+                          ]
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 50,
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "where"
+            ],
+            "additionalProperties": false
+          },
+          "duration": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "pattern": "^(state:[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}|[a-z][a-z0-9_]{1,62})$"
+              },
+              "to": {
+                "type": "string",
+                "pattern": "^(state:[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}|[a-z][a-z0-9_]{1,62})$"
+              },
+              "stat": {
+                "default": "average",
+                "type": "string",
+                "enum": [
+                  "average",
+                  "median",
+                  "p90",
+                  "max"
+                ]
+              },
+              "unit": {
+                "default": "days",
+                "type": "string",
+                "enum": [
+                  "days",
+                  "hours"
+                ]
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          "where": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "pattern": "^([a-z][a-z0-9_]{1,62}|detail\\.[a-z][a-z0-9_]{0,62})$"
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "ne",
+                    "in",
+                    "not_in",
+                    "lt",
+                    "lte",
+                    "gt",
+                    "gte",
+                    "empty",
+                    "not_empty"
+                  ]
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    {
+                      "minItems": 1,
+                      "maxItems": 50,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}$"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "group_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([a-z][a-z0-9_]{1,62}|detail\\.[a-z][a-z0-9_]{0,62})$"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "due": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                  },
+                  "soon_days": {
+                    "default": 7,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365
+                  }
+                },
+                "required": [
+                  "due"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "by_time": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string",
+                "pattern": "^(state:[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}|[a-z][a-z0-9_]{1,62})$"
+              },
+              "every": {
+                "type": "string",
+                "enum": [
+                  "day",
+                  "week",
+                  "month"
+                ]
+              },
+              "last": {
+                "default": 12,
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 400
+              }
+            },
+            "required": [
+              "at",
+              "every"
+            ],
+            "additionalProperties": false
+          },
+          "limit": {
+            "default": 12,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "roles": {
+            "minItems": 1,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "member",
+                "billing",
+                "owner"
+              ]
+            }
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "count",
+              "number",
+              "usd",
+              "percent",
+              "days",
+              "hours"
+            ]
+          },
+          "$comment": {
+            "type": "string",
+            "maxLength": 2000
           }
         },
         "required": [
@@ -1092,7 +1383,208 @@
           "label",
           "over"
         ],
-        "additionalProperties": {}
+        "additionalProperties": false
+      }
+    },
+    "charts": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "type": {
+            "type": "string"
+          },
+          "metrics": {
+            "minItems": 1,
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            }
+          },
+          "palette": {
+            "default": "categorical",
+            "type": "string",
+            "enum": [
+              "categorical",
+              "ordinal"
+            ]
+          },
+          "$comment": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "name",
+          "title",
+          "type",
+          "metrics"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "tabs": {
+      "maxItems": 40,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,40}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "overview",
+              "area",
+              "runs",
+              "reports",
+              "credentials",
+              "usage",
+              "schedules",
+              "notices",
+              "setup",
+              "billing",
+              "profile",
+              "page"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "icon": {
+            "type": "string",
+            "enum": [
+              "dashboard",
+              "chartBar",
+              "chartLine",
+              "trendingUp",
+              "gauge",
+              "health",
+              "kanban",
+              "inbox",
+              "building",
+              "route",
+              "rocket",
+              "book",
+              "plug",
+              "user",
+              "teams",
+              "page",
+              "post",
+              "settings",
+              "clock",
+              "calendar",
+              "search",
+              "check",
+              "circleCheck",
+              "warning",
+              "alertCircle",
+              "shield",
+              "lock",
+              "notification",
+              "billing",
+              "account",
+              "code",
+              "product",
+              "workspace",
+              "forms",
+              "play",
+              "refresh",
+              "media",
+              "adjustments"
+            ]
+          },
+          "group": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "area": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "views": {
+            "minItems": 1,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "table",
+                "board",
+                "timeline",
+                "detail"
+              ]
+            }
+          },
+          "board_by": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "timeline_by": {
+            "type": "string",
+            "pattern": "^(state:[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}|[a-z][a-z0-9_]{1,62})$"
+          },
+          "charts": {
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+            }
+          },
+          "page": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,40}$"
+          },
+          "roles": {
+            "minItems": 1,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "member",
+                "billing",
+                "owner"
+              ]
+            }
+          },
+          "$comment": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "additionalProperties": false
       }
     },
     "repositories": {
@@ -1137,17 +1629,9 @@
       },
       "additionalProperties": {}
     },
-    "tabs": {
-      "not": {},
-      "description": "Reserved: comes with mold_v0-058."
-    },
     "mcp": {
       "not": {},
       "description": "Reserved: comes with mold_v0-060."
-    },
-    "charts": {
-      "not": {},
-      "description": "Reserved: comes with mold_v0-063."
     }
   },
   "required": [

@@ -203,6 +203,7 @@ export const checkArgs = (kind: string, args: readonly z.input<typeof RecordFiel
 export function conform(area: RecordArea, data: Record<string, unknown>): { data: Record<string, unknown>; drift: string[] } {
   const out: Record<string, unknown> = {}, drift: string[] = [];
   for (const [k, v] of Object.entries(data ?? {})) {
+    if (k === STATE_TIMES) continue; // the shell's own (when each state was entered), never a field
     const f = area.fields.find((x) => x.name === k);
     if (!f) { drift.push(k); continue; }
     if (v !== null && v !== undefined && !fits(f, v)) drift.push(k);
@@ -320,6 +321,16 @@ const ownWorkspaceArea = (pack: string, name: string) => {
   if (area.pack !== pack) throw new PackError(`area ${area.name} belongs to pack ${area.pack}`, 403);
   return area;
 };
+/**
+ * When a record last entered each state of its lifecycle (mold_v0-063: the metrics' state:<value> points, time to fix):
+ * kept in the row's data under this key, which no field can be named (field names start with a letter), so no write can
+ * set it; the store stamps it when a record is created and on every move, and carries it over on writes.
+ */
+export const STATE_TIMES = "$state_at";
+const stateTimes = (data: Record<string, unknown> | undefined): Record<string, string> => {
+  const v = data?.[STATE_TIMES];
+  return v && typeof v === "object" && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};
+};
 /** A record's state; a row with none (written before its area had a lifecycle) is in the initial state. */
 const stateOf = (area: RecordArea, data: Record<string, unknown>) => (area.lifecycle ? data[area.lifecycle.field] ?? area.lifecycle.initial : undefined);
 
@@ -368,7 +379,8 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
   const rest = { ...(given as Record<string, unknown> ?? {}) };
   delete rest[field];
   const data = await checkRecord(area, rest, orgId, actor, undefined, [field]);
-  return writeRow(orgId, area, key, t, { ...data, [field]: state }, prev);
+  const times = prev ? stateTimes(prev.opened) : { [String(state)]: new Date().toISOString() };
+  return writeRow(orgId, area, key, t, { ...data, [field]: state, ...(Object.keys(times).length ? { [STATE_TIMES]: times } : {}) }, prev);
 }
 
 /** The moves a record in `from` may make, in words (a refusal's second sentence). */
@@ -394,7 +406,7 @@ async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: st
   }
   if (actor.role !== null && !ways.some((t) => !t.roles || t.roles.includes(actor.role!)))
     throw new PackError(`The move of ${area.label} record ${key} to ${JSON.stringify(to)} is for ${[...new Set(ways.flatMap((t) => t.roles ?? []))].join(", ")}, not the ${ACCOUNT_ROLE_LABELS[actor.role]} role.`, 403);
-  return writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to }, prev);
+  return writeRow(orgId, area, key, prev.record.title, { ...prev.opened, [field]: to, [STATE_TIMES]: { ...stateTimes(prev.opened), [to]: new Date().toISOString() } }, prev);
 }
 
 async function deleteWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string): Promise<boolean> {

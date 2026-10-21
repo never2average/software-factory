@@ -32,8 +32,12 @@
  *                (src/schedules.ts) starts due runs through the run engine; a missed tick runs at most once
  *   recordAreas  `due` (mold_v0-035): a workspace check area may name a date field; a daily check posts an in-app
  *                notice and emails the workspace's owners about records due within `within_days`
- *   agentJobKinds, metrics   declared and validated (mold_v0-057); wired by the agent-workspace runner (061) and the
- *                metrics and charts (063)
+ *   metrics      wired (mold_v0-063): counts, sums, averages, rates and durations over a record area or the runs'
+ *                results, by group or over time, computed for one workspace under its row-level security
+ *                (src/metrics.ts, /api/metrics); `charts` show them on the console's tabs
+ *   tabs         wired (mold_v0-058): the /app sidebar and its pages (overview charts, an area's table, board, timeline,
+ *                runs, reports and the shell's own pages); with no tabs the sidebar is the shell's
+ *   agentJobKinds  declared and validated (mold_v0-057); wired by the agent-workspace runner (061)
  *
  * Declarative packs (mold_v0-057): everything above but tools and routes can be written in pack.json instead
  * (src/pack-manifest.ts, the schema at packs/pack.schema.json), with no entry at all. gen-packs compiles it into this
@@ -463,17 +467,178 @@ export const RunResultsSchema = z.object({
   $comment: z.string().max(2000).optional(),
 }).catchall(z.unknown());
 
+// ---------- metrics, charts and console tabs (mold_v0-063, mold_v0-058) ----------
+
 /**
- * A metric over a pack's records or its runs' results (mold_v0-063 builds it, with the charts that show it). Declared
- * here so 063 slots in without reshaping pack.json: a name, a label and what it is `over` (a record area of the build, or
- * "run_results"); 063 defines and checks the rest of each metric, which until then is kept but not read.
+ * What a metric or a tab may name besides an area's own fields: a field name, or a column the shell keeps for the rows
+ * it is over (`created`, `updated` for records; `status`, `check`, `asset`, `source`, `check_area`, `created` and
+ * `detail.<word>` for run_results; `status`, `kind`, `error_kind`, `cost_usd`, `created`, `started`, `ended` for runs).
+ * Plain words only: they reach SQL as bound values, never as text of the query (src/metrics.ts).
+ */
+const fieldRef = z.string().regex(/^([a-z][a-z0-9_]{1,62}|detail\.[a-z][a-z0-9_]{0,62})$/, "a field name (lowercase letters, digits and _), or detail.<word> over run_results");
+/**
+ * A point in time: one of the area's date fields; `created` or `updated` (the row's own times); `state:<value>` (when the
+ * record last entered that state of its lifecycle: the shell records it on every write and move since mold_v0-063);
+ * `started` or `ended` (runs).
+ */
+export const METRIC_POINT = /^(state:[A-Za-z0-9][A-Za-z0-9 _.:/()&-]{0,79}|[a-z][a-z0-9_]{1,62})$/;
+const point = z.string().regex(METRIC_POINT, "a date field, created, updated, started, ended or state:<value>");
+/** A value a condition compares with: a choice value or word, a number, true/false, a date (YYYY-MM-DD), today or now (optionally +/- days: today-30). */
+const condValue = z.union([choiceValue, z.number().finite(), z.boolean()]);
+export const METRIC_OPS = ["eq", "ne", "in", "not_in", "lt", "lte", "gt", "gte", "empty", "not_empty"] as const;
+/**
+ * One condition of a metric's `where` (all must hold) or of a rate's numerator: a field, an operator and a value.
+ *   eq ne          equal / not equal (ne also takes rows with no value)
+ *   in not_in      one of / none of a list (not_in also takes rows with no value)
+ *   lt lte gt gte  numbers, or dates against a date (YYYY-MM-DD), "today" or "now", optionally +/- days ("today-30")
+ *   empty not_empty  no value / a value
+ */
+export const MetricConditionSchema = z.object({
+  field: fieldRef,
+  op: z.enum(METRIC_OPS),
+  value: z.union([condValue, z.array(condValue).min(1).max(50)]).optional(),
+}).strict().superRefine((c, ctx) => {
+  const bad = (message: string) => ctx.addIssue({ code: "custom", message, path: ["value"] });
+  if (c.op === "empty" || c.op === "not_empty") { if (c.value !== undefined) bad(`${c.op} takes no value`); return; }
+  if (c.value === undefined) return bad(`${c.op} needs a value`);
+  if ((c.op === "in" || c.op === "not_in") !== Array.isArray(c.value)) bad(c.op === "in" || c.op === "not_in" ? `${c.op} takes a list of values` : `${c.op} takes one value`);
+  if (["lt", "lte", "gt", "gte"].includes(c.op) && typeof c.value !== "number" && !(typeof c.value === "string" && RELATIVE_DATE.test(c.value)))
+    bad(`${c.op} compares with a number, a date (YYYY-MM-DD), today or now (optionally +/- days, as today-30)`);
+});
+/** A date a condition may compare with: YYYY-MM-DD, or today/now with an optional +/- number of days. */
+export const RELATIVE_DATE = /^(\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])|(today|now)([+-]\d{1,4})?)$/;
+
+export const METRIC_MEASURES = ["count", "sum", "average", "rate", "duration"] as const;
+/**
+ * A metric (mold_v0-063; src/metrics.ts computes it): a number, or numbers by group or over time, computed on the server
+ * for one workspace under its row-level security, over a record area of the build (its shared rows, or the workspace's
+ * own) or over the workspace's runs or run_results.
+ *   measure   count (the default) | sum or average of a number `field` | rate (the share of rows meeting `rate.where`,
+ *             0 to 1) | duration (the time from `duration.from` to `duration.to`, as its average, median, p90 or max, in
+ *             days or hours; rows without both are left out)
+ *   where     conditions every row must meet (open findings: state in open, triaged)
+ *   group_by  a field (one bar per value; an enum's options in their declared order), or {due: a date field, soon_days}:
+ *             overdue / due soon / later / no date, against today
+ *   by_time   a series: rows by `at` (a point in time), one bucket per day, week (from Monday) or month, the `last` N
+ *             buckets up to now (UTC). With group_by, one series per group (an enum or a status: at most 8 groups)
+ *   limit     groups shown (largest first; an enum's options in order), at most 50; the answer says when there are more
+ *   roles     who may read it (narrows: an area metric also needs the area's read permission)
+ *   unit      how the console shows it (count, number, usd, percent, days, hours); from the measure when absent
  */
 export const MetricSchema = z.object({
   name,
   label: z.string().min(1).max(80),
   description: z.string().max(500).optional(),
   over: name,
-}).catchall(z.unknown());
+  measure: z.enum(METRIC_MEASURES).default("count"),
+  field: fieldRef.optional(),
+  rate: z.object({ where: z.array(MetricConditionSchema).min(1).max(10) }).strict().optional(),
+  duration: z.object({
+    from: point, to: point,
+    stat: z.enum(["average", "median", "p90", "max"]).default("average"),
+    unit: z.enum(["days", "hours"]).default("days"),
+  }).strict().optional(),
+  where: z.array(MetricConditionSchema).max(10).optional(),
+  group_by: z.union([fieldRef, z.object({ due: name, soon_days: z.number().int().min(1).max(365).default(7) }).strict()]).optional(),
+  by_time: z.object({
+    at: point,
+    every: z.enum(["day", "week", "month"]),
+    last: z.number().int().min(2).max(400).default(12),
+  }).strict().optional(),
+  limit: z.number().int().min(1).max(50).default(12),
+  roles: z.array(role).min(1).max(4).optional(),
+  unit: z.enum(["count", "number", "usd", "percent", "days", "hours"]).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine((m, ctx) => {
+  const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  const needs = { sum: "field", average: "field", rate: "rate", duration: "duration" } as const;
+  for (const [measure, key] of Object.entries(needs)) {
+    if (m.measure === measure && m[key] === undefined) bad(`a ${measure} metric names its ${key}`, key);
+    if (m.measure !== measure && key !== "field" && m[key] !== undefined) bad(`${key} is for a ${measure} metric`, key);
+  }
+  if (m.field !== undefined && m.measure !== "sum" && m.measure !== "average") bad("field is for a sum or average metric", "field");
+  const max = { day: 400, week: 260, month: 120 } as const;
+  if (m.by_time && m.by_time.last > max[m.by_time.every]) bad(`by_time.last is at most ${max[m.by_time.every]} for every ${m.by_time.every}`, "by_time", "last");
+  if (m.by_time && m.group_by && typeof m.group_by === "object") bad("a series groups by a field, not by due dates", "group_by");
+  if (m.name === "metrics") bad("metrics is reserved", "name");
+});
+export type Metric = z.output<typeof MetricSchema>;
+
+/**
+ * The chart forms the console draws (web/src/features/tabs/charts.tsx), chosen by the data's job:
+ *   number        stat tiles: one per metric, each a single value (no group_by, no by_time)
+ *   bar           magnitude by group (one metric with group_by), or by time (one metric with by_time)
+ *   stacked_bar   part-to-whole: one metric with group_by and by_time (a column per bucket, a segment per group), or
+ *                 2-6 metrics with the same group_by (a bar per group, a segment per metric)
+ *   line, area    trends: 1-4 metrics with by_time (the same buckets), or one with by_time and group_by
+ *   table         any metrics with the same grouping: a row per group or bucket, a column per metric
+ * No donut or pie (the console's chart rules: part-to-whole is a stacked bar, close values a bar), and never two y-axes.
+ * `palette` "ordinal" colours an ordered enum (low to critical) with one hue, light to dark; "categorical" (default) gives
+ * each group or metric its own hue, in a fixed order that follows the entity, never its rank.
+ */
+export const CHART_TYPES = ["bar", "stacked_bar", "line", "area", "number", "table"] as const;
+export const ChartSchema = z.object({
+  name,
+  title: z.string().min(1).max(120),
+  description: z.string().max(300).optional(),
+  type: z.string().superRefine((t, ctx) => {
+    if (t === "donut" || t === "pie") ctx.addIssue({ code: "custom", message: `${t} charts are not offered: show part-to-whole as a stacked_bar and close values as a bar` });
+    else if (!(CHART_TYPES as readonly string[]).includes(t)) ctx.addIssue({ code: "custom", message: `type is one of ${CHART_TYPES.join(", ")}` });
+  }).transform((t) => t as (typeof CHART_TYPES)[number]),
+  metrics: z.array(name).min(1).max(6),
+  palette: z.enum(["categorical", "ordinal"]).default("categorical"),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type Chart = z.output<typeof ChartSchema>;
+
+/**
+ * A console tab (mold_v0-058): an entry of the /app sidebar and the page it opens. When any pack declares tabs, the
+ * sidebar is exactly the declared tabs, in order (grouped by `group`); with none it is the shell's own.
+ *   overview      the tab's `charts` (mold_v0-063)
+ *   area          a record area's records: `views` table (rows and list columns), board (a column per state of
+ *                 `board_by`, the lifecycle's field by default), timeline (by `timeline_by`: one of its date fields, or
+ *                 updated, the default), detail (rows open the record's page); `charts` above them
+ *   runs          the workspace's runs; reports: finished runs and their results
+ *   credentials, usage, schedules, notices, setup, billing, profile   the shell's own page
+ *   page          one of the pack's own pages (pack.json pages, `page`)
+ * `label` is the tab's name in the app's words (default: the area's label, else the shell's word), `icon` one of
+ * TAB_ICONS, `roles` who sees it (narrowing what its data allows: an area tab is never shown to a role that may not read
+ * the area, an overview never to one that may read none of its metrics).
+ */
+export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "page"] as const;
+/** The icons a tab may use: names of the console's icon set (web/src/components/icons.tsx). */
+export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
+  "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
+  "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments"] as const;
+export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
+export const TabSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
+  kind: z.enum(TAB_KINDS),
+  label: z.string().trim().min(1).max(40).optional(),
+  description: z.string().max(300).optional(),
+  icon: z.enum(TAB_ICONS).optional(),
+  group: z.string().trim().min(1).max(40).optional(),
+  area: name.optional(),
+  views: z.array(z.enum(TAB_VIEWS)).min(1).max(4).optional(),
+  board_by: name.optional(),
+  timeline_by: point.optional(),
+  charts: z.array(name).max(12).optional(),
+  page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
+  roles: z.array(role).min(1).max(4).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict().superRefine((t, ctx) => {
+  const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+  if (t.kind === "area" && !t.area) bad("an area tab names its record area", "area");
+  if (t.kind !== "area") for (const k of ["area", "views", "board_by", "timeline_by"] as const) if (t[k] !== undefined) bad(`${k} is for an area tab`, k);
+  if (t.kind === "overview" && !t.charts?.length) bad("an overview tab lists its charts", "charts");
+  if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
+  if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
+  if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
+  if (t.views && new Set(t.views).size !== t.views.length) bad("a view is listed twice", "views");
+  if (t.board_by && !(t.views ?? []).includes("board")) bad("board_by is for a tab with the board view", "board_by");
+  if (t.timeline_by && !(t.views ?? []).includes("timeline")) bad("timeline_by is for a tab with the timeline view", "timeline_by");
+});
+export type Tab = z.output<typeof TabSchema>;
 
 /**
  * Environment names a credential may not take: the ones the harness sets for every run (src/run-harness.ts), the proxy
@@ -559,8 +724,12 @@ export interface PackDefinition {
   credentials?: z.input<typeof CredentialSchema>[];
   schedules?: z.input<typeof ScheduleSchema>[];
   onboarding?: z.input<typeof OnboardingStepSchema>[];
-  /** Metrics over the pack's records and run results (mold_v0-063 builds them; declared and validated since 057). */
+  /** Metrics over the records and the runs' results (mold_v0-063; src/metrics.ts computes them for one workspace). */
   metrics?: z.input<typeof MetricSchema>[];
+  /** Charts of the pack's metrics (mold_v0-063), shown on its overview and area tabs. */
+  charts?: z.input<typeof ChartSchema>[];
+  /** The console's sidebar and tabs (mold_v0-058): when any pack declares them, the /app sidebar is exactly these. */
+  tabs?: z.input<typeof TabSchema>[];
   /** The pack's data repositories, by name (mold_v0-059 builds the adapters; declared and validated since 057). */
   repositories?: Record<string, z.input<typeof RepositorySchema>>;
   /** How a run's output becomes run_results rows (mold_v0-061; declared and validated since 057). */
@@ -620,6 +789,14 @@ export function validatePack(p: PackDefinition): PackDefinition {
   each(p.jobKinds, JobKindSchema, "jobKinds");
   each(p.agentJobKinds, AgentJobKindSchema, "agentJobKinds");
   each(p.metrics, MetricSchema, "metrics");
+  each(p.charts, ChartSchema, "charts");
+  each(p.tabs, TabSchema, "tabs");
+  // A chart shows this pack's own metrics; a tab shows this pack's own charts (mold_v0-063, 058). What each metric reads
+  // (fields, states, areas of the whole build) is checked with the build (src/metric-spec.ts).
+  const metricNames = new Set((p.metrics ?? []).map((m) => m?.name));
+  for (const c of p.charts ?? []) for (const m of c?.metrics ?? []) if (!metricNames.has(m)) problems.push(at(`chart ${c.name} shows metric ${m}, which this pack does not declare`));
+  const chartNames = new Set((p.charts ?? []).map((c) => c?.name));
+  for (const t of p.tabs ?? []) for (const c of t?.charts ?? []) if (!chartNames.has(c)) problems.push(at(`tab ${t.id} shows chart ${c}, which this pack does not declare`));
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.credentials, CredentialSchema, "credentials");
   each(p.schedules, ScheduleSchema, "schedules");
