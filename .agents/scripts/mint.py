@@ -52,7 +52,8 @@ so `run` can be repeated at any time and picks up where things stand:
   address    the application's own domain serves it (only if one is named)                  <- one DNS record
 
 A SINGLE-SERVICE MOLD (molds/<mold_id>/mold.json; today mold_v0, mold_v0-028) keeps the same ten stations and order.
-packs, brand, workspaces and package are "not needed", each with the reason its mold.json gives; keys reads provision.py's
+workspaces and package are "not needed", each with the reason its mold.json gives; packs and brand read as for any app
+(mold_v0-024: the mold's own pack rules in mold.json and brand rules in branding/rules.json); keys reads provision.py's
 check as for a server of its own; deploy runs `provision.py <app> --deploy-remote` (its own compose stack, target
 compose_remote) or `--deploy` (two Vercel projects: the API, then the console), and needs no sign-in; tests is done when the five lanes ran after the
 deploy and none failed, and asks the operator for one yes when the MCP check still lacks an organisation of its own
@@ -135,8 +136,11 @@ def st_state(app, a, i):
 def st_packs(app, a, i):
     packs = a.get("packs") or []
     if not packs: return NA, "this application is the mold as it comes (no pack of its own)"
-    bad = [p for p in packs if quiet(os.path.join(S, "packs.py"), "check", p).returncode]
-    return (FAILED, f"pack(s) {', '.join(bad)} do not check clean: python3 .claude/scripts/packs.py check {bad[0]}") if bad else (DONE, ", ".join(packs))
+    # every pack is checked by its APP's mold's rules (mold_v0-024: mold.json packs; mold_v1 has none and keeps the
+    # built-in ones), never by the mold a pack's own pack.json names
+    mold = ("--mold", str(a.get("mold_id")))
+    bad = [p for p in packs if quiet(os.path.join(S, "packs.py"), "check", p, *mold).returncode]
+    return (FAILED, f"pack(s) {', '.join(bad)} do not check clean: python3 .claude/scripts/packs.py check {bad[0]}{' '.join(('',) + mold)}") if bad else (DONE, ", ".join(packs))
 
 def st_brand(app, a, i):
     b = (a.get("surface") or {}).get("branding") or {}
@@ -789,7 +793,8 @@ def single_self_test():
         stub = lambda app, a_, i_: (DONE, "stub")
         STATIONS[:] = [(nm, stub if nm in ("brief", "state", "keys") else fn) for nm, fn in saved_st]
         rows = {nm: (st, why) for nm, st, why in survey("zz")}
-        ok(all(rows[s][0] == NA and rows[s][1] for s in ("packs", "brand", "workspaces", "package")), f"packs, brand, workspaces, package: not needed, with a reason: {rows}")
+        ok(all(rows[s][0] == NA and rows[s][1] for s in ("packs", "brand", "workspaces", "package")), f"packs, brand (none named), workspaces, package: not needed, with a reason: {rows}")
+        ok("no pack of its own" in rows["packs"][1] and "the mold's own look" in rows["brand"][1], "packs and brand: mint's own readings, since mold_v0 has pack and brand rules (mold_v0-024)")
         ok(rows["deploy"] == (TODO, "first deploy to its own server"), f"the deploy is next and needs only a yes: {rows['deploy']}")
         ok(rows["tests"][0] == "later" and rows["address"][0] == NA, "tests wait for the deploy; the address comes with it")
         r = survey_result("zz", survey("zz"))
@@ -803,6 +808,8 @@ def single_self_test():
         for fn, args in ((code_request, ("zz", "o@example.org")), (code, ("zz", "123456", "o@example.org")), (reuse_keys, ("zz", "other"))):
             try: fn(*args); ok(False, f"{fn.__name__} refuses a single-service app")
             except SystemExit as e: ok("Nothing was sent" in str(e) or "its own" in str(e), f"{fn.__name__} refuses a single-service app: {e}")
+        ran.clear(); st_packs("zz", {"mold_id": "mold_v0", "packs": ["notes"]}, {}); st_packs("zz", {"mold_id": "mold_v1", "packs": ["other-pack"]}, {})
+        ok(ran[0][1:] == ("check", "notes", "--mold", "mold_v0") and ran[1][1:] == ("check", "other-pack", "--mold", "mold_v1"), f"the packs station checks a pack by its app's mold's rules, whatever its pack.json says: {ran}")
         ran.clear(); globals()["docs"] = lambda app: ({"mold_id": "mold_v0"}, {}); finish_new("zz", "Product name: Shop\n")
         ok(ran == [], "finish_new neither brands nor names an agent package for a single-service app")
         import tempfile

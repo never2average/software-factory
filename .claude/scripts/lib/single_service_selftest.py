@@ -298,6 +298,13 @@ def run():
         ok(env[2] == "DOMAIN=shop.example.org\nPUBLIC_URL=https://shop.example.org\n", f"the env step gets state's settings on stdin: {env[2]!r}")
         ok(all("-p sf-zz-shop" not in " ".join(c[1]) or "shop " not in " ".join(c[1]) for c in R.calls), "no step names the default project")
         ok(reads == ["https://shop.example.org/healthz"] and res["health"]["public"] == "200" and res["release"] == "20261020T000000Z", f"the public health read: {reads}")
+        # mold_v0-024: an app with packs or a brand sends build/<app_id>/ (made afresh just before contact), never the codebase
+        src_step = next(st for st in SS.plan(S, F, SS.source_for("zz_shop", {"mold_id": "mold_vx", "packs": ["shop_notes"]}, t)) if st["id"] == "source")
+        mf_src = open(os.path.join(HERE, "single_service.py")).read()
+        ok(any(os.path.join(t, "build", "zz_shop") + "/" in str(x) for x in src_step["argv"])
+           and mf_src.index("src = build_source(app_id, app, root, say=say)") < mf_src.index("res = deploy(S, F, src, say=say)")
+           and mf_src.index("_ready_to_contact(S, app_id)\n        src = build_source") > 0,
+           f"compose_remote: a packed app's source step sends its build copy, built after the contact check and before the deploy: {src_step['argv'][-3:]}")
         # an operator value travels on stdin only
         R2 = Runner(dict(R.answers)); S2 = dict(S, secrets_user=["PAY_SECRET_KEY"])
         SS.deploy(S2, F, cb, runner=R2, secrets_for=lambda m: {"PAY_SECRET_KEY": "sk-standin-123456"}, resolver=lambda d: ["203.0.113.7"],
@@ -592,6 +599,42 @@ def run():
             fp.promote_new = lambda before_, cb_, roles: (_ for _ in ()).throw(SystemExit("zz-shop: the new deployment could not be put in front of traffic"))
             a_, i_, err = vdeploy(fp)
             ok("could not be put in front" in err and ("point", "zz-shop-api", "dpl_api_old", "rollback") in fp.calls, f"a deploy step that stops part-way rolls back too: {err[:160]}")
+            # mold_v0-024: an app with packs or a brand ships build/<app_id>/ made AFRESH by branding.py and packs.py, never the
+            # codebase rsynced over it (which would drop its packs) and never a copy an earlier run left (a dropped pack, an older codebase)
+            bdir = os.path.join(t, "build", "zz_shop"); built = []
+            def brun(cmd, **k):
+                built.append([os.path.basename(cmd[1])] + cmd[2:]); os.makedirs(os.path.join(bdir, "web"), exist_ok=True)
+                open(os.path.join(bdir, "MADE_BY_" + os.path.basename(cmd[1]).split(".")[0] + "_" + cmd[2]), "w").write("x")
+                return subprocess.CompletedProcess(cmd, 0, f"{cmd[2]} ok\n", "")
+            os.makedirs(os.path.join(bdir, "packs", "dropped_pack"), exist_ok=True)
+            a_ = dict(va, packs=["shop_notes"], surface={"branding": {"product_name": "Shop"}}); i_ = cp(vi); fp = FakeP(projects=["zz-shop-api", "zz-shop"]); err = ""
+            try: SS.vercel_deploy("zz_shop", a_, i_, vdir, fp, say=lambda s: None, root=t, read_page=pages({}), build_run=brun)
+            except SS.Stop as e: err = str(e)
+            deploys = [c for c in fp.calls if c[0] == "deploy"]
+            ok(not err and built == [["branding.py", "zz_shop", "prepare"], ["packs.py", "apply", "zz_shop"], ["packs.py", "verify", "zz_shop"]]
+               and not os.path.exists(os.path.join(bdir, "packs", "dropped_pack")) and not os.path.exists(os.path.join(bdir, "vercel.json"))
+               and os.path.exists(os.path.join(bdir, "MADE_BY_packs_apply")) and deploys and deploys[0][2] == os.path.join("build", "zz_shop"),
+               f"packs and a brand: the brand, then the packs and their checks, into a fresh build/<app_id>/ that is deployed as made (the codebase is not copied over it, the old copy is gone): {err[:200]} {built}")
+            ok(SS.source_for("zz_shop", a_, t) == bdir and SS.source_for("zz_shop", dict(va), t) == SS.codebase("mold_vx", t)
+               and SS.uses_build({"packs": ["p"]}) and SS.uses_build({"surface": {"branding": {"product_name": "x"}}}) and not SS.uses_build({"surface": {}}),
+               "source_for: build/<app_id>/ with packs or a brand, the codebase with neither")
+            built.clear(); fp = FakeP(projects=["zz-shop-api", "zz-shop"]); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(va, packs=["shop_notes"]), cp(vi), vdir, fp, say=lambda s: None, root=t, read_page=pages({}),
+                                  build_run=lambda cmd, **k: built.append(cmd) or subprocess.CompletedProcess(cmd, 1, "", "pack shop_notes: src/x.ts is outside what a pack may add"))
+            except SS.NotBuilt as e: err = str(e)
+            ok("outside what a pack may add" in err and "nothing was created" in err and len(built) == 1 and not any(c[0] in ("deploy", "set_env", "framework", "neon") for c in fp.calls),
+               f"a pack that does not apply stops the deploy before anything is created (NotBuilt, not reverted): {err[:200]} {fp.calls[:4]}")
+            vd2 = os.path.join(t, "vapp2"); os.makedirs(vd2, exist_ok=True); json.dump(dict(va, packs=["shop_notes"]), open(os.path.join(vd2, "application.json"), "w"))
+            real_bs = SS.build_source
+            SS.build_source = lambda *x, **k: (_ for _ in ()).throw(SS.NotBuilt("zz_shop: the packs could not be applied, so nothing was created or deployed: stand-in"))
+            try: rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], dict(va, packs=["shop_notes"]), cp(vi), {}, vd2, FakeP(projects=["zz-shop-api", "zz-shop"]), say=lambda s: None, root=t)
+            finally: SS.build_source = real_bs
+            ok(rc == 1 and json.load(open(os.path.join(vd2, "application.json"))).get("status") == "planned", "provision.py: a build copy that cannot be made exits 1 and leaves the app as it was (not reverted)")
+            ran_none = []
+            ok(SS.build_source("zz_shop", dict(va), t, run=lambda *x, **k: ran_none.append(x)) == SS.codebase("mold_vx", t) and not ran_none,
+               "an app with neither packs nor a brand: the codebase itself, nothing run")
+            try: SS.build_source("zz_shop", dict(va, packs=["shop_notes"]), t); ok(False, "a temp root without a stand-in runner")
+            except SS.NotBuilt as e: ok("stand-in runner" in str(e), "build_source never runs the real branding.py and packs.py for a temp factory root")
             fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], health={web_u: "500"})
             a_, i_, err = vdeploy(fp)
             ok(i_["vercel"]["rollback"]["result"] == "nothing to roll back to" and not any(c[0] == "point" for c in fp.calls), "a first deploy that fails says there was nothing to go back to")
@@ -788,8 +831,10 @@ def run():
         os.environ["FACTORY_PRIVATE_DIR"] = os.path.join(t, "private")
         a = {"app_id": "zz_shop", "mold_id": "mold_vx", "status": "planned", "mold_commit": "c" * 40}
         i = {"target": "compose_remote", "compose_remote": {"domain": "shop.example.org"}}
-        for st in ("packs", "brand", "workspaces", "package"):
+        for st in ("workspaces", "package"):
             ok(SS.station(st, "zz_shop", a, i, t)[0] == SS.NA, f"{st} is not needed, with its reason")
+        ok(SS.station("packs", "zz_shop", a, i, t) is None and SS.station("brand", "zz_shop", a, i, t) is None,
+           "packs and brand keep mint's own readings: the mold has pack rules and brand rules (mold_v0-024)")
         ok(SS.station("brief", "zz_shop", None, None, t) is None and SS.station("keys", "zz_shop", a, i, t) is None, "brief, state and keys keep their own readings")
         ok(SS.station("deploy", "zz_shop", a, i, t)[0] == SS.TODO, "not deployed: the deploy is next, and needs no sign-in")
         dep = dict(i, deployed_at="2026-10-20T00:00:00+00:00", compose_remote={"domain": "shop.example.org", "production_url": "https://shop.example.org"})
