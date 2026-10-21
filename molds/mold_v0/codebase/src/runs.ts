@@ -477,6 +477,8 @@ export async function completeRun(runId: string, leaseToken: string, c: Completi
   return complete(runId, leaseToken, c);
 }
 
+/** The start of a run's error when the shell's index of its workspace files refused the commit (mold_v0-059). */
+const INDEX_REFUSED = "the index of the workspace's files refused the commit: ";
 /** How long a pack's onWorkspaceCommit hook may take (mold_v0-064). */
 const hookSeconds = () => Math.min(Math.max(Number(process.env.OCTILLION_WORKSPACE_HOOK_SECONDS ?? 120) || 120, 1), 1800);
 
@@ -524,7 +526,7 @@ async function commitThenHook(runId: string, leaseToken: string, secrets: Secret
     // all-or-nothing; then the pack's hook sees them indexed. A refused index fails the run as a failed hook does.
     if (index) {
       const { indexWorkspaceFiles } = await import("./data-repositories.js");
-      const reports = await indexWorkspaceFiles(run.org_id, run.pack, files);
+      const reports = await indexWorkspaceFiles(run.org_id, run.pack, files).catch((e) => { throw new Error(`${INDEX_REFUSED}${String((e as Error)?.message ?? e)}`); });
       await event(run.id, run.org_id, run.attempt, "workspace_indexed", { version: snap?.version ?? 0, repositories: reports.map((x) => ({ repository: x.repository, areas: x.areas })) });
     }
     if (!hook) return { committed: true, hookError: null };
@@ -588,7 +590,8 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
     else if (c.outcome === "succeeded" && hooked?.hookError) {
       // The hook failed: the results are not accepted. The snapshot stays committed (it passed the run's validation);
       // the next run's commit calls the hook again.
-      status = "failed"; kind = "run"; error = `the pack's workspace hook (onWorkspaceCommit) failed: ${hooked.hookError}`.slice(0, 2000);
+      status = "failed"; kind = "run";
+      error = (hooked.hookError.startsWith(INDEX_REFUSED) ? hooked.hookError : `the pack's workspace hook (onWorkspaceCommit) failed: ${hooked.hookError}`).slice(0, 2000);
     }
     else if (c.outcome === "succeeded") {
       const { rows: results, unresolved } = await checkResults(tx, run.org_id, Array.isArray(c.results) ? c.results : [], run.spec ?? {});

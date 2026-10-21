@@ -546,7 +546,7 @@ const fileKey = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/, "a file name in the d
 const repoPath = z.string().regex(/^(?!\/)[A-Za-z0-9._/{}*-]{1,300}$/, "a relative path (letters, digits, . _ - / { } *)")
   .refine((p) => !p.split("/").some((s) => s === ".." || s === "." || s === ""), "a relative path with no . or .. part");
 /** A value inside a document: a dotted path of properties ("a.b"), "$." for the document's root, "@<name>" a path placeholder, "@file" the file's path. */
-export const VALUE_PATH = /^(\$\.|@)?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+export const VALUE_PATH = /^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\.|$))(\$\.|@)?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 const valuePath = z.string().regex(VALUE_PATH, "a value path: a.b, $.a (the document's root), @name (a path placeholder) or @file");
 /** Text with {value path} parts: a record's key or title made from a document's values. */
 const template = z.string().min(1).max(300).refine((t) => /\{[^{}]+\}/.test(t) && [...t.matchAll(/\{([^{}]*)\}/g)].every((m) => VALUE_PATH.test(m[1]!)) && !/[\u0000-\u001f]/.test(t),
@@ -591,7 +591,7 @@ const WorkspaceFilesSchema = z.object({
   identity: valuePath.optional(),
   append_only: z.boolean().optional(),
   latest: z.string().max(200).optional(),
-  never_read: z.array(z.string().max(200).regex(/^(any ENC\[\.\.\.\] value|\S+ [A-Za-z_][A-Za-z0-9_]*(\[\])?(\.[A-Za-z_][A-Za-z0-9_]*(\[\])?)*)$/, "\"<file> <a.b[].c>\" or \"any ENC[...] value\"")).max(50).optional(),
+  never_read: z.array(z.string().max(200).refine((r) => !/(__proto__|constructor|prototype)/.test(r), "no __proto__, constructor or prototype").regex(/^(any ENC\[\.\.\.\] value|\S+ [A-Za-z_][A-Za-z0-9_]*(\[\])?(\.[A-Za-z_][A-Za-z0-9_]*(\[\])?)*)$/, "\"<file> <a.b[].c>\" or \"any ENC[...] value\"")).max(50).optional(),
   map: z.record(name, RowMapSchema).optional(),
 }).strict()
   .refine((r) => (r.path === undefined) !== (r.dir === undefined), "a workspace_files repository names a path (one file template) or a dir (a directory template), not both")

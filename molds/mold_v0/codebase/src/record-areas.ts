@@ -30,7 +30,7 @@ import { ensureOrgKey, isSealed, open, openJson, seal, sealJson } from "./orgcry
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
 import { areaLinks, DECLARABLE_ROLES, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
 import { packs } from "./packs.js";
-import { pageInMemory, parseQuery, readsContent, sqlParts, cursorOf, type Parsed, type QField } from "./record-query.js";
+import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
 import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
@@ -294,15 +294,18 @@ async function listTable(area: RecordArea, orgId: number | null, p: Parsed): Pro
   const run = async () => {
     const params: unknown[] = orgId === null ? [area.pack, area.name] : [orgId, area.pack, area.name];
     const base = orgId === null ? ["pack = $1", "area = $2"] : ["org_id = $1", "pack = $2", "area = $3"];
-    const parts = sqlParts(p, params);
-    params.push(p.limit + 1);
     const table = orgId === null ? "platform_records" : "workspace_records";
-    const rows = await (await q()).query<Row & { _sv: string | null }>(
-      `SELECT key, title, data, ${orgId === null ? "version" : "NULL::text AS version"}, updated_at, ${parts.sortValue} AS _sv FROM ${table}
+    // A sorted page starts after its cursor's row, read again in this same scope (its sort value is never the caller's).
+    if (p.after && p.sort.target !== "key" && !(await (await q()).query(`SELECT 1 FROM ${table} WHERE ${[...base, `key = $${params.length + 1}`].join(" AND ")}`, [...params, p.after.k])).length)
+      throw goneCursor();
+    const parts = sqlParts(p, params, { table, where: base });
+    params.push(p.limit + 1);
+    const rows = await (await q()).query<Row>(
+      `SELECT key, title, data, ${orgId === null ? "version" : "NULL::text AS version"}, updated_at FROM ${table}
         WHERE ${[...base, ...parts.where].join(" AND ")} ORDER BY ${parts.order} LIMIT $${params.length}`, params);
     const page = await Promise.all(rows.slice(0, p.limit).map((r) => toRecord(area, r, orgId)));
     const last = rows[p.limit - 1];
-    return { records: page, next: rows.length > p.limit && last ? cursorOf(p.sort, last._sv, last.key) : null };
+    return { records: page, next: rows.length > p.limit && last ? cursorOf(p.sort, last.key) : null };
   };
   return orgId === null ? run() : withTenant(orgId, run);
 }
@@ -408,7 +411,7 @@ const stateOf = (area: RecordArea, data: Record<string, unknown>) => (area.lifec
  * Who wrote a row (mold_v0-059): null for every door (ctx.records, the data API, staff), or a repository's writer with
  * the row's fingerprint. A write through a door clears both, so the next index writes the row again.
  */
-export interface WriteMeta { source: string; fingerprint: string }
+export interface WriteMeta { source: string; fingerprint: string; /** Staff forced the index: it may take over a hand row. */ claim?: boolean }
 
 /** Sealed values are never stored in the clear: a sealed area's write is refused while the key vault is locked. */
 const assertCanSeal = (area: RecordArea) => {
@@ -468,7 +471,7 @@ async function putWorkspace(orgId: number, pack: string, actor: Actor, name: str
   const rest = { ...(given as Record<string, unknown> ?? {}) };
   delete rest[field];
   const data = await checkRecord(area, rest, orgId, actor, undefined, [field]);
-  return writeRow(orgId, area, key, t, { ...data, [field]: state }, prev);
+  return writeRow(orgId, area, key, t, { ...data, [field]: state }, prev, meta);
 }
 
 /** The moves a record in `from` may make, in words (a refusal's second sentence). */
@@ -479,6 +482,7 @@ const movesFrom = (area: RecordArea, from: unknown) => area.lifecycle!.transitio
 async function moveWorkspace(orgId: number, pack: string, actor: Actor, name: string, key: string, to: unknown): Promise<RecordRow> {
   const area = ownWorkspaceArea(pack, name);
   if (isReadOnlyArea(area)) throw readOnly(area);
+  assertCanSeal(area);
   if (!area.lifecycle) throw new PackError(`area ${area.name} has no lifecycle: its records do not move`, 400);
   assertMay(area, "read", actor);
   assertMay(area, "move", actor);
@@ -535,8 +539,11 @@ export async function putPlatform(pack: string | null, name: string, key: string
           WHERE pack = $1 AND area = $2 AND key = $3 RETURNING key, title, data, version, updated_at`, params)
       : await db.query<Row>(
         `INSERT INTO platform_records (pack, area, key, title, data, version, source, fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (pack, area, key) DO ${mode === "create" ? "NOTHING" : "UPDATE SET title = excluded.title, data = excluded.data, version = excluded.version, source = excluded.source, fingerprint = excluded.fingerprint, updated_at = now()"}
+         ON CONFLICT (pack, area, key) DO ${mode === "create" ? "NOTHING" : `UPDATE SET title = excluded.title, data = excluded.data, version = excluded.version, source = excluded.source, fingerprint = excluded.fingerprint, updated_at = now()${
+           // A repository's writer replaces only its own rows: a row written by hand meanwhile stays (unless staff forced it).
+           meta && !meta.claim ? " WHERE platform_records.source = excluded.source" : ""}`}
          RETURNING key, title, data, version, updated_at`, params);
+    if (!r && meta) throw new PackError(`${area.label} record ${key} was written by hand meanwhile: kept (index again, or force it)`, 409);
     if (!r) throw mode === "create" ? new PackError(`${area.label} record ${key} already exists`, 409) : new PackError(`no ${area.name} record ${key}`, 404);
     return toRecord(area, r, null);
   });
@@ -584,7 +591,7 @@ export async function inTransaction<T>(orgId: number | null, fn: () => Promise<T
   return orgId === null ? asPlatform(run) : withTenant(orgId, run);
 }
 
-async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>): Promise<RecordOperationResult[]> {
+async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
   const ops = checkOps(raw, max);
   return inTransaction(orgId, async () => {
     const out: RecordOperationResult[] = [];
@@ -594,7 +601,7 @@ async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: un
         else if (o.op === "delete") out.push({ op: o.op, area: o.area, key: o.key, deleted: await deleteWorkspace(orgId, pack, actor, o.area, o.key, source) });
         else {
           const fp = source !== null ? fingerprints?.get(`${o.area}\u0000${o.key}`) : undefined;
-          out.push({ op: o.op, area: o.area, key: o.key, record: await putWorkspace(orgId, pack, actor, o.area, o.key, { title: o.title, data: o.data }, o.op, source !== null && fp ? { source, fingerprint: fp } : null) });
+          out.push({ op: o.op, area: o.area, key: o.key, record: await putWorkspace(orgId, pack, actor, o.area, o.key, { title: o.title, data: o.data }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
         }
       } catch (e) { throw numbered(i, o, e); }
     }
@@ -602,7 +609,7 @@ async function batchWorkspace(orgId: number, pack: string, actor: Actor, raw: un
   });
 }
 
-async function batchPlatform(pack: string | null, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>): Promise<RecordOperationResult[]> {
+async function batchPlatform(pack: string | null, raw: unknown, max = MAX_BATCH, source: string | null = null, fingerprints?: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
   const ops = checkOps(raw, max);
   return inTransaction(null, async () => {
     const out: RecordOperationResult[] = [];
@@ -612,7 +619,7 @@ async function batchPlatform(pack: string | null, raw: unknown, max = MAX_BATCH,
         if (o.op === "delete") out.push({ op: o.op, area: o.area, key: o.key, deleted: await deletePlatform(pack, o.area, o.key, source) });
         else {
           const fp = source !== null ? fingerprints?.get(`${o.area}\u0000${o.key}`) : undefined;
-          out.push({ op: o.op, area: o.area, key: o.key, record: await putPlatform(pack, o.area, o.key, { title: o.title, data: o.data, version: o.version }, o.op, source !== null && fp ? { source, fingerprint: fp } : null) });
+          out.push({ op: o.op, area: o.area, key: o.key, record: await putPlatform(pack, o.area, o.key, { title: o.title, data: o.data, version: o.version }, o.op, source !== null && fp ? { source, fingerprint: fp, claim } : null) });
         }
       } catch (e) { throw numbered(i, o, e); }
     }
@@ -633,9 +640,9 @@ export async function storedMarks(area: RecordArea, orgId: number | null): Promi
  * Write a repository's index as one transaction (all of it or none): puts carry the source and their fingerprints; a
  * delete removes only a row of that source. Not reachable from any door: only src/data-repositories.ts calls it.
  */
-export async function writeFromRepository(orgId: number | null, pack: string, source: string, ops: RecordOperation[], fingerprints: Map<string, string>): Promise<RecordOperationResult[]> {
+export async function writeFromRepository(orgId: number | null, pack: string, source: string, ops: RecordOperation[], fingerprints: Map<string, string>, claim = false): Promise<RecordOperationResult[]> {
   if (!ops.length) return [];
-  return orgId === null ? batchPlatform(pack, ops, MAX_INDEX_BATCH, source, fingerprints) : batchWorkspace(orgId, pack, SYSTEM_ACTOR, ops, MAX_INDEX_BATCH, source, fingerprints);
+  return orgId === null ? batchPlatform(pack, ops, MAX_INDEX_BATCH, source, fingerprints, claim) : batchWorkspace(orgId, pack, SYSTEM_ACTOR, ops, MAX_INDEX_BATCH, source, fingerprints, claim);
 }
 
 /**
