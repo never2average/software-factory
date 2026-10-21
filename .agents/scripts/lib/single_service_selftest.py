@@ -68,6 +68,7 @@ def fixture_mold(t, lockfile=True):
     open(os.path.join(cb, "package.json"), "w").write("{}\n")
     if lockfile: open(os.path.join(cb, "package-lock.json"), "w").write("{}\n")
     man = json.load(open(os.path.join(ROOT, "molds", "mold_v0", "mold.json"))); man["mold_id"] = "mold_vx"
+    man.pop("source", None)    # mold_v0 is in-tree (mold_v0-040); this fixture stands for a mold with a source of its own
     json.dump(man, open(os.path.join(t, "molds", "mold_vx", "mold.json"), "w"))
     os.makedirs(os.path.join(t, "state"))
     json.dump({"molds": [{"mold_id": "mold_vx", "source": {"commit": "c" * 40}}]}, open(os.path.join(t, "state", "factory.json"), "w"))
@@ -317,6 +318,57 @@ def run():
         ok("THE SITE IS DOWN" in stop(runner=Runner(dict(R.answers, up=(1, "UP=failed\nROLLBACK_FAILED=20261019T000000Z\n")))), "an up whose switch back failed says the site is down")
         waits = []
         ok("does not serve" in stop(read_public=lambda u: ("502", None, "bad gateway"), wait=waits.append) and waits, "a public 502 (after waiting for the certificate) stops with the rollback command")
+        # --- 7b. row-level security on the deployed database (mold_v0-051) ---------------------------------------------
+        real_spec = SS.rls_spec(SS.codebase("mold_v0"), SS.manifest("mold_v0"))
+        ok(real_spec and real_spec["script"] == "check:rls" and real_spec["mode"] == "fail_closed", f"mold_v0 declares the product's own RLS check, and its package.json has it: {real_spec}")
+        ok(SS.rls_spec(cb, man) is None and F.get("rls") is None, "a codebase without that script asks for no RLS check (the fixture)")
+        ok(SS.shape_state("zz_rls", "mold_v0", "compose_remote", {"product_id": "p"}, {"source": {"commit": "c" * 40}}, {}, {}, "briefs/zz_rls.md")[2]["postgres"]["rls"] == "fail_closed"
+           and SS.shape_state("zz_rls", "mold_vx", "compose_remote", {"product_id": "p"}, {"source": {"commit": "c" * 40}}, {}, {}, "briefs/zz_rls.md", root=t)[2]["postgres"]["rls"] == "off",
+           "intake writes postgres.rls 'fail_closed' for mold_v0 (its check exists), 'off' for a mold without one")
+        cbx = os.path.join(t, "rls-cb"); os.makedirs(cbx); json.dump({"scripts": {"check:rls": "tsx scripts/check-rls.ts"}}, open(os.path.join(cbx, "package.json"), "w"))
+        spec = SS.rls_spec(cbx, man); FR = dict(F, rls=spec)
+        steps = {st["id"]: st for st in SS.plan(S, FR, cb)}
+        ok("rls" in steps and "-p sf-zz-shop" in " ".join(steps["rls"]["argv"]) and "run --rm -T --no-deps" in " ".join(steps["rls"]["argv"]) and "npm run --silent check:rls" in " ".join(steps["rls"]["argv"])
+           and "rls" not in {st["id"] for st in SS.plan(S, F, cb)}, "the plan runs the RLS check in a one-off container of the app's own project, only when the mold declares it")
+        PASS = "RLS CHECK PASS (postgres): every tenant table has row-level security; live probe 58 checks, nothing crossed"
+        ok(not SS.rls_passed(0, PASS.replace("(postgres)", "(pglite)"), spec) and SS.rls_passed(0, PASS, spec),
+           "a PASS from the product's embedded fallback (pglite: no DATABASE_URL reached it) never counts at a deploy")
+        R5 = Runner(dict(R.answers, rls=(0, ".env not found\n" + PASS + "\n")))
+        res5 = SS.deploy(S, FR, cb, runner=R5, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                         say=lambda s_: None, release="20261020T000005Z", wait=lambda s_: None)
+        ids5 = [c[0] for c in R5.calls]
+        ok(res5["rls"]["passed"] and res5["rls"]["said"] == PASS and ids5.index("rls") > ids5.index("health") and "back" not in ids5, f"compose: the RLS check runs after health and passes: {ids5}")
+        for what, ans in (("a failing check", (1, "RLS CHECK FAIL (postgres):\n  products: A reads B's product by id\n")), ("a check that printed no PASS", (0, "")),
+                          ("a check that could not run", (127, "npm: not found"))):
+            R6 = Runner(dict(R.answers, rls=ans, back=(0, "ROLLED_BACK=20261019T000000Z\nSERVING=20261019T000000Z\n")))
+            try:
+                SS.deploy(S, FR, cb, runner=R6, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                          say=lambda s_: None, release="20261020T000006Z", wait=lambda s_: None); msg = ""
+            except SS.Stop as e: msg = str(e); ok(getattr(e, "rls", None) and not e.rls["passed"], f"compose: {what}: the failed verdict travels with the stop, so it is recorded")
+            ok("row-level security check failed" in msg and "switched back by itself" in msg and [c[0] for c in R6.calls][-1] == "back",
+               f"compose: {what} is a failed health check: the server goes back to the release before ({msg[:200]})")
+        adr = os.path.join(t, "rls-app"); os.makedirs(adr); json.dump({"postgres": {"provider": "self_hosted", "rls": "fail_closed"}}, open(os.path.join(adr, "datastores.json"), "w"))
+        ev = SS.record_rls(adr, spec, True, PASS, "by provision.py --deploy-remote", "enforced", "ran in a one-off container.")
+        stored = json.load(open(os.path.join(adr, "datastores.json")))["postgres"]["rls_verified"]
+        ok(stored == ev and ev["mode"] == "fail_closed" and ev["backend"] == "self_hosted" and ev["source"].startswith(SS.RLS_SOURCE) and ev["running_app"] == "enforced" and "+00:00" in ev["at"],
+           f"the evidence lands in datastores.postgres.rls_verified: {ev}")
+        ev = SS.record_rls(adr, spec, False, "RLS CHECK FAIL", "by provision.py --verify-rls", "enforced", "x")
+        ok(ev["mode"] == "off" and ev["running_app"] == "not_enforced" and "FAILED" in ev["source"], "a failed check is recorded as such, never with the asked-for mode")
+        class PV:
+            def __init__(self, env): self.env = env
+            def pull_env(self, cb_, proj, required=False, environment="production"): return dict(self.env)
+        seen = []
+        def run_ok(cb_, url_, spec_): seen.append(url_); return 0, PASS
+        pv = SS.rls_vercel(PV({"DATABASE_URL": "postgres://u:p@db.invalid/x"}), cbx, "zz-shop-api", spec, {"ok": True, "rls_probe": "not run"}, run_ok)
+        ok(pv[0] and pv[2] == "unmeasured" and "not run" in pv[3] and seen == ["postgres://u:p@db.invalid/x"] and "postgres://" not in pv[1] + pv[3],
+           f"vercel: the check runs against the api project's database; the function's probe 'not run' is recorded unmeasured, never enforced: {pv}")
+        ok(SS.rls_vercel(PV({"DATABASE_URL": "postgres://u:p@db.invalid/x"}), cbx, "a", spec, {"rls_probe": "ok"}, run_ok)[2] == "enforced", "  ...the function's own probe 'ok': enforced")
+        bad = SS.rls_vercel(PV({"DATABASE_URL": "postgres://u:p@db.invalid/x"}), cbx, "a", spec, {"rls_probe": "failed"}, run_ok)
+        ok(not bad[0] and bad[2] == "not_enforced", "  ...the function's own probe 'failed': not passed, whatever the check said")
+        ok(not SS.rls_vercel(PV({"DATABASE_URL": "x"}), cbx, "a", spec, {}, lambda c_, u_, s_: (1, "RLS CHECK FAIL (postgres): x"))[0], "  ...a failing check: not passed")
+        try: SS.rls_vercel(PV({}), cbx, "a", spec, {}, run_ok); ok(False, "no database address refuses")
+        except SS.Stop as e: ok("could not be read back" in str(e), "  ...no DATABASE_URL to read back: refused, never passed")
+        ok(SS.rls_tools_missing(cbx, spec) and SS.rls_tools_missing(cbx, None) is None, "vercel: the check needs the mold's dependencies on this machine, and says how to install them")
         # --- 8. on the server: the env file is merged, minted by the mold's own script, values never leave it ----------
         ef = os.path.join(t, "etc", "env"); os.makedirs(os.path.dirname(ef)); VR.env_write(ef, {"POSTGRES_PASSWORD": "keep-me"})
         lines = []
@@ -561,6 +613,38 @@ def run():
             a_, i_, err = vdeploy(fp); rb = i_["vercel"]["rollback"]
             ok(rb["result"] == "rolled back, but health is not all 200" and rb["health"]["web"] == "502" and "not all 200" in err,
                f"a rollback whose health still fails records what it measured, never 'rolled back': {rb} {err[-160:]}")
+            # mold_v0-051: with the mold's RLS check declared, the deploy runs it against the api project's database after its health
+            pj = os.path.join(cb, "package.json"); pj_was = open(pj).read()
+            json.dump({"scripts": {"check:rls": "tsx scripts/check-rls.ts"}}, open(pj, "w"))
+            os.makedirs(os.path.join(cb, "node_modules", ".bin"), exist_ok=True); open(os.path.join(cb, "node_modules", ".bin", "tsx"), "w").write("")
+            json.dump({"postgres": {"provider": "neon", "rls": "fail_closed"}}, open(os.path.join(vdir, "datastores.json"), "w"))
+            try:
+                ran = []
+                def rls_ok(cb_, url_, spec_): ran.append(url_); return 0, "RLS CHECK PASS (postgres): every tenant table has row-level security; live probe 58 checks, nothing crossed"
+                fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before)
+                a_ = dict(va); i_ = cp(vi); err = ""
+                try: SS.vercel_deploy("zz_shop", a_, i_, vdir, fp, say=lambda s_: None, root=t, read_page=pages({}), rls_run=rls_ok)
+                except SS.Stop as e_: err = str(e_)
+                ev = json.load(open(os.path.join(vdir, "datastores.json")))["postgres"].get("rls_verified") or {}
+                ok(not err and ran == ["standin"] and ev.get("mode") == "fail_closed" and ev.get("backend") == "neon" and ev.get("running_app") == "unmeasured"
+                   and "--deploy" in ev.get("source", ""), f"vercel: the RLS check ran against the api project's database and the evidence is recorded: {err[:200]} {ev}")
+                fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before)
+                a_ = dict(va); i_ = cp(vi); err = ""
+                try: SS.vercel_deploy("zz_shop", a_, i_, vdir, fp, say=lambda s_: None, root=t, read_page=pages({}), rls_run=lambda c_, u_, s_: (1, "RLS CHECK FAIL (postgres):\n  x: A reads B"))
+                except SS.Stop as e_: err = str(e_)
+                deps = [c[1] for c in fp.calls if c[0] == "deploy"]
+                evf = json.load(open(os.path.join(vdir, "datastores.json")))["postgres"].get("rls_verified") or {}
+                ok(evf.get("mode") == "off" and evf.get("running_app") == "not_enforced" and "FAILED" in evf.get("source", ""),
+                   f"vercel: a failing RLS check replaces the earlier pass in state (never left standing): {evf}")
+                ok("row-level security check failed" in err and "zz-shop" not in deps and i_["vercel"]["rollback"]["result"].startswith("rolled back") and i_["vercel"]["rollback"]["projects"],
+                   f"vercel: a failing RLS check is a failed health check: the api goes back, the console is never deployed: {err[-200:]} {deps}")
+                os.remove(os.path.join(cb, "node_modules", ".bin", "tsx")); fp = FakeP(env={"zz-shop-api": ["DATABASE_URL"]}, projects=["zz-shop"])
+                a_ = dict(va); i_ = cp(vi); err = ""
+                try: SS.vercel_deploy("zz_shop", a_, i_, vdir, fp, say=lambda s_: None, root=t, read_page=pages({}), rls_run=rls_ok)
+                except SS.Stop as e_: err = str(e_)
+                ok("npm --prefix" in err and not any(c[0] in ("deploy", "vrun") for c in fp.calls), f"vercel: without the mold's dependencies here the deploy refuses before anything is made: {err[:200]}")
+            finally:
+                open(pj, "w").write(pj_was); os.remove(os.path.join(vdir, "datastores.json"))
             # mold_v0-037 (5): an unexpected error half-way rolls both back, reverts, re-raises; the link temp directories are removed
             fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before)
             links = []; real_link = fp._link_dir

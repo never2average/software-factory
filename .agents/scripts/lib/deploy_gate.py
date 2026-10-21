@@ -25,6 +25,22 @@ check, unless the operator chose to deploy anyway: --allow-unverified-mold "<rea
 the time are written to infrastructure.json deploy_gate.override, and the deploy says so loudly.
 
 Every verdict, green included, is recorded in infrastructure.json deploy_gate (at, mold_id, commit, verdict, detail).
+
+AN IN-TREE MOLD (lib/intree.py; today mold_v0, authored in THIS repository since its fork point, mold_v0-040) has no
+source of its own to ask. Its gate reads THIS repository instead, for the commit being deployed:
+  0. the commit is HEAD of the checkout the deploy runs from, and molds/<mold_id>/codebase on disk must be exactly that
+     commit: no tracked change, no untracked file, no ignored file the deploy would carry (anything ignored that is
+     not in mold.json's source_excludes). Otherwise: unverifiable, naming the paths. No git, no HEAD: unverifiable;
+  1. the repository is this checkout's `origin` (a GitHub address), never a tracked value;
+  2. with mold.json "source": {"ci": {"workflow": ".github/workflows/<file>.yml"}} (ticket mold_v0-001 adds it): the
+     same three rules as above, for that workflow of this repository at that commit;
+  3. until a workflow is named: at least one GitHub Actions check run of this repository succeeded for that commit,
+     and NO check run or commit status from any app failed or is still running. An outside app's check or status
+     (a git-connected deploy service, a bot) can refuse, never pass; skipped never counts (none of our own: missing).
+     None of those runs is the shell's own test yet, so a green here says "this repository's own checks passed for
+     this commit", nothing more, and the verdict says exactly that.
+GitHub not answering, a check that failed, one still running, or none: refused as for any mold, with the same
+--allow-unverified-mold "<reason>" way round. Nothing is green without a positive reading.
 Standard library only.
 """
 import base64, datetime, json, os, re, subprocess, sys
@@ -32,6 +48,7 @@ import base64, datetime, json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import factory_local  # noqa: E402
+import intree  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 STATE = os.path.join(ROOT, "state")
@@ -94,13 +111,12 @@ def required_checks(ci_text):
     return out
 
 
-def _ci_text(host, repo, sha, mold_id, state_dir, gh):
-    rc, doc, _ = gh(host, f"repos/{repo}/contents/{WORKFLOW}?ref={sha}")
+def _ci_text(host, repo, sha, workflow, local_copy, gh):
+    rc, doc, _ = gh(host, f"repos/{repo}/contents/{workflow}?ref={sha}")
     if rc == 0 and isinstance(doc, dict) and doc.get("content"):
         try: return base64.b64decode(doc["content"]).decode(), "GitHub, at the commit"
         except Exception: pass
-    p = os.path.join(os.path.dirname(state_dir), "molds", mold_id, "codebase", WORKFLOW)
-    if os.path.isfile(p): return open(p).read(), "the local snapshot"
+    if local_copy and os.path.isfile(local_copy): return open(local_copy).read(), "the local copy"
     return None, None
 
 
@@ -112,6 +128,10 @@ def _verdict(state, mold_id, sha, message, **extra):
 
 def check(mold_id, commit=None, state_dir=STATE, gh=gh_api):
     """The verdict for one mold commit. Never raises; never writes."""
+    root = os.path.dirname(os.path.abspath(state_dir))
+    try: I = intree.info(mold_id, root)
+    except intree.Unreadable as e: return _verdict("unverifiable", mold_id, commit, str(e))
+    if I is not None: return check_in_tree(mold_id, I, root, commit=commit, gh=gh)
     sha = commit or mold_commit(mold_id, state_dir)
     if not sha:
         return _verdict("unverifiable", mold_id, None, f"state/factory.json names no source commit for {mold_id}, so there is "
@@ -122,14 +142,22 @@ def check(mold_id, commit=None, state_dir=STATE, gh=gh_api):
         return _verdict("unverifiable", mold_id, sha, f"this machine names no GitHub source for {mold_id} (state/factory.local.json "
                         f"mold_sources), so whether commit {short} passed its checks cannot be asked.")
     host, repo = slug.split("/", 1)
+    return _judge_workflow(host, repo, sha, mold_id, f"{mold_id}'s", f"{mold_id}'s source", WORKFLOW,
+                           os.path.join(root, "molds", mold_id, "codebase", WORKFLOW), gh,
+                           "Push that commit to the source, or wait for its run to start, then deploy again.")
+
+
+def _judge_workflow(host, repo, sha, mold_id, whose, where_from, workflow, local_copy, gh, missing_how):
+    """One workflow's run for exactly `sha`, and every job that workflow defines at that commit. -> verdict."""
+    short = sha[:7]; wname = os.path.basename(workflow)
     rc, doc, err = gh(host, f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100")
     if rc != 0 or not isinstance(doc, dict):
-        return _verdict("unverifiable", mold_id, sha, f"GitHub could not be asked about commit {short} of {mold_id}'s source: "
+        return _verdict("unverifiable", mold_id, sha, f"GitHub could not be asked about commit {short} of {where_from}: "
                         f"{err or 'no answer'}. Check this machine's sign-in with `gh auth status`.")
-    runs = [r for r in doc.get("workflow_runs") or [] if (r.get("path") or "").split("@")[0] == WORKFLOW and r.get("head_sha", sha) == sha]
+    runs = [r for r in doc.get("workflow_runs") or [] if (r.get("path") or "").split("@")[0] == workflow and r.get("head_sha", sha) == sha]
     if not runs:
-        return _verdict("missing", mold_id, sha, f"{mold_id}'s checks (ci.yml) have not run for commit {short}: there is no result to "
-                        f"trust yet. Push that commit to the source, or wait for its run to start, then deploy again.")
+        return _verdict("missing", mold_id, sha, f"{whose} checks ({wname}) have not run for commit {short}: there is no result to "
+                        f"trust yet. {missing_how}")
     runs.sort(key=lambda r: (r.get("event") == "push", r.get("run_attempt") or 0, r.get("created_at") or "", r.get("id") or 0), reverse=True)
     run = runs[0]
     rc, cdoc, err = gh(host, f"repos/{repo}/commits/{sha}/check-runs?per_page=100")
@@ -137,7 +165,7 @@ def check(mold_id, commit=None, state_dir=STATE, gh=gh_api):
     suite = run.get("check_suite_id")
     if suite: checks = [c for c in checks if (c.get("check_suite") or {}).get("id") in (None, suite)]
     seen = {c.get("name"): c for c in sorted(checks, key=lambda c: c.get("started_at") or "")}
-    text, where = _ci_text(host, repo, sha, mold_id, state_dir, gh)
+    text, where = _ci_text(host, repo, sha, workflow, local_copy, gh)
     required = [x for _, names in required_checks(text) for x in names] if text else []
     running, failed, absent = [], [], []
     for n in required:
@@ -164,12 +192,97 @@ def check(mold_id, commit=None, state_dir=STATE, gh=gh_api):
                         f"not success. That commit is not deployed.", **summary)
     if absent:
         return _verdict("red", mold_id, sha, f"{mold_id}'s CI run for commit {short} finished, but {', '.join(absent[:4])} never reported, "
-                        f"and ci.yml at that commit requires {'them' if len(absent) > 1 else 'it'}. That commit is not deployed.", absent=absent, **summary)
+                        f"and {wname} at that commit requires {'them' if len(absent) > 1 else 'it'}. That commit is not deployed.", absent=absent, **summary)
     if not required and not seen:
-        return _verdict("unverifiable", mold_id, sha, f"the CI run for commit {short} reports no checks and ci.yml could not be read, "
+        return _verdict("unverifiable", mold_id, sha, f"the CI run for commit {short} reports no checks and {wname} could not be read, "
                         f"so nothing says which checks passed.", **summary)
     return _verdict("green", mold_id, sha, f"{mold_id} commit {short}: CI passed ({len(required) or len(seen)} checks"
-                    + (f", the list read from ci.yml in {where}" if where else "") + ").", **summary)
+                    + (f", the list read from {wname} in {where}" if where else "") + ").", **summary)
+
+
+def check_in_tree(mold_id, I, root, commit=None, gh=gh_api):
+    """The verdict for an in-tree mold (lib/intree.py): THIS repository's checks for the commit being deployed (HEAD),
+    with the codebase on disk exactly that commit. Never raises; never writes; fails closed at every step."""
+    head = intree.head(root)
+    sha = commit or head
+    if not sha:
+        return _verdict("unverifiable", mold_id, None, f"{mold_id} is authored in this repository (in-tree), but git cannot name the commit "
+                        f"this checkout is at, so which checks to read cannot be told.", source="factory")
+    short = sha[:7]
+    if not commit or commit == head:
+        try: man = json.load(open(os.path.join(root, "molds", mold_id, "mold.json")))
+        except (OSError, ValueError): man = {}
+        excl = ((man.get("compose") or {}).get("source_excludes") or [])
+        dirty = intree.uncommitted(mold_id, root, excl)
+        if dirty is None:
+            return _verdict("unverifiable", mold_id, sha, f"git could not list changes under molds/{mold_id}/codebase, so whether what "
+                            f"would be deployed is commit {short} cannot be told.", source="factory")
+        if dirty:
+            return _verdict("unverifiable", mold_id, sha, f"molds/{mold_id}/codebase is not exactly commit {short}: {len(dirty)} uncommitted "
+                            f"change(s) ({', '.join(d[3:] for d in dirty[:4])}{' and more' if len(dirty) > 4 else ''}), and checks of a commit "
+                            f"say nothing about files that are not in it. Commit them (and let this repository's checks run), or remove "
+                            f"them, then deploy again.", source="factory", uncommitted=dirty[:40])
+    slug = intree.slug(root)
+    if not slug or slug.count("/") < 2:
+        return _verdict("unverifiable", mold_id, sha, f"{mold_id} is authored in this repository, but this checkout has no GitHub `origin`, "
+                        f"so whether commit {short} passed this repository's checks cannot be asked.", source="factory")
+    host, repo = slug.split("/", 1)
+    workflow = (I.get("ci") or {}).get("workflow")
+    if workflow:
+        v = _judge_workflow(host, repo, sha, mold_id, "this repository's", "this repository", workflow, os.path.join(root, workflow), gh,
+                            "Push that commit, or wait for its run to start, then deploy again.")
+        v["source"] = "factory"; v["reads"] = f"this repository's {workflow} at commit {short}"
+        return v
+    reads = (f"this repository's own GitHub Actions check runs for commit {short}, with any other check or status able only to "
+             f"refuse (no workflow of the in-tree shell is named in molds/{mold_id}/mold.json yet, ticket mold_v0-001, so none of "
+             f"them is the shell's own test)")
+    runs, page, total = [], 1, None
+    while True:                                  # every page: a failed check on page two must never go unread
+        rc, cdoc, err = gh(host, f"repos/{repo}/commits/{sha}/check-runs?per_page=100&page={page}")
+        if rc != 0 or not isinstance(cdoc, dict):
+            return _verdict("unverifiable", mold_id, sha, f"GitHub could not be asked about commit {short} of this repository: {err or 'no answer'}. "
+                            f"Check this machine's sign-in with `gh auth status`.", source="factory", reads=reads)
+        got = cdoc.get("check_runs") or []; runs += got; total = cdoc.get("total_count")
+        if not isinstance(total, int) or len(runs) >= total or not got or page >= 10: break
+        page += 1
+    if isinstance(total, int) and len(runs) < total:
+        return _verdict("unverifiable", mold_id, sha, f"GitHub reports {total} checks for commit {short} of this repository but only "
+                        f"{len(runs)} could be read, so whether the rest passed cannot be told.", source="factory", reads=reads)
+    rc, sdoc, err = gh(host, f"repos/{repo}/commits/{sha}/status")
+    if rc != 0 or not isinstance(sdoc, dict):
+        return _verdict("unverifiable", mold_id, sha, f"GitHub could not be asked about the statuses of commit {short} of this repository: "
+                        f"{err or 'no answer'}.", source="factory", reads=reads)
+    items = [(c.get("name") or "?", c.get("status"), c.get("conclusion")) for c in runs]
+    # Only this repository's OWN checks can make it green: GitHub Actions runs of its workflows that succeeded. A check or
+    # status posted by an outside app (a git-connected deploy service, a bot) can refuse, never pass; skipped never counts.
+    own_ok = [c for c in runs if ((c.get("app") or {}).get("slug") == "github-actions") and c.get("status") == "completed" and c.get("conclusion") == "success"]
+    statuses = sdoc.get("statuses") or []
+    for st in statuses:                          # the commit status API: success, pending, failure, error
+        state = st.get("state")
+        items.append((st.get("context") or "?", "completed" if state in ("success", "failure", "error") else "in_progress", state))
+    if isinstance(sdoc.get("total_count"), int) and sdoc["total_count"] > len(statuses) and sdoc.get("state") != "success":
+        # more statuses than one answer holds: GitHub's combined state stands for the ones not listed
+        items.append(("combined status", "completed" if sdoc.get("state") in ("failure", "error") else "in_progress", sdoc.get("state")))
+    failed = [f"{n} ({c})" for n, s_, c in items if s_ == "completed" and (c or "") not in PASSED]
+    running = [n for n, s_, c in items if s_ != "completed"]
+    extra = {"source": "factory", "reads": reads, "reported": len(items)}
+    if not items or (not own_ok and not [n for n, s_, c in items if s_ != "completed" or (c or "") not in PASSED]):
+        return _verdict("missing", mold_id, sha, f"this repository has no checks of its own (GitHub Actions) that passed for commit {short}"
+                        + (f" ({len(items)} from elsewhere, which cannot stand in for them)" if items else "") + ", so nothing "
+                        f"says it passed. Until the in-tree shell's own workflow exists (mold_v0-001), a {mold_id} deploy needs "
+                        f"{FLAG} \"<reason>\".", **extra)
+    if failed:
+        return _verdict("red", mold_id, sha, f"this repository's checks failed for commit {short}: {', '.join(failed[:4])}"
+                        + (f" and {len(failed) - 4} more" if len(failed) > 4 else "") + ". That commit is not deployed.", failed=failed, **extra)
+    if running:
+        return _verdict("pending", mold_id, sha, f"this repository's checks are still running for commit {short} ({', '.join(running[:4])}"
+                        f"{' and more' if len(running) > 4 else ''}). Wait for them to finish, then deploy again.", running=running, **extra)
+    if not own_ok:
+        return _verdict("missing", mold_id, sha, f"no GitHub Actions check of this repository passed for commit {short}. A {mold_id} deploy "
+                        f"needs {FLAG} \"<reason>\" until one does.", **extra)
+    return _verdict("green", mold_id, sha, f"{mold_id} (in-tree) at commit {short} of this repository: {len(own_ok)} GitHub Actions check(s) "
+                    f"passed and nothing else reported failed or running "
+                    f"(read: {reads}).", **extra)
 
 
 def override_reason(argv):
@@ -243,6 +356,7 @@ open(os.environ["GATE_WORLD"] + ".calls", "a").write(" ".join(a) + "\n")
 if w.get("down"): print("gh: HTTP 502", file=sys.stderr); sys.exit(1)
 if "/actions/runs" in path: print(json.dumps({"workflow_runs": w.get("runs", [])})); sys.exit(0)
 if "/check-runs" in path: print(json.dumps({"check_runs": w.get("checks", [])})); sys.exit(0)
+if path.endswith("/status"): print(json.dumps({"statuses": w.get("statuses", []), "state": w.get("combined", "pending")})); sys.exit(0)
 if "/contents/" in path:
     if w.get("ci"): print(json.dumps({"content": base64.b64encode(w["ci"].encode()).decode()})); sys.exit(0)
     print("gh: Not Found (HTTP 404)", file=sys.stderr); sys.exit(1)
@@ -251,7 +365,7 @@ sys.exit(1)
 
 
 def self_test():
-    import tempfile
+    import shutil, subprocess, tempfile
     import services
     fails, n = [], [0]
     def ok(cond, what, detail=""):
@@ -338,6 +452,95 @@ def self_test():
             v = require("app1", app, infra, adir, ["app1", "--deploy"], state_dir=st, say=said.append)
             rec = json.load(open(os.path.join(adir, "infrastructure.json")))["deploy_gate"]
             ok(v["ok"] and rec["verdict"] == "green" and "override" not in rec, "green: goes on, recorded, no stale override kept", rec)
+            # ---- mold_v0-040: an IN-TREE mold reads THIS repository's checks for the commit being deployed ----
+            ga = lambda name, **k: dict(cr(name, **k), app={"slug": "github-actions"})
+            fr = os.path.join(d, "factory"); fst = os.path.join(fr, "state"); fcb = os.path.join(fr, "molds", "m0", "codebase")
+            os.makedirs(fst); os.makedirs(os.path.join(fcb, "src"))
+            open(os.path.join(fcb, "src", "a.ts"), "w").write("a\n"); open(os.path.join(fcb, ".gitignore"), "w").write("node_modules/\ndist/\n.env\n")
+            json.dump({"molds": [{"mold_id": "m0", "source": {"commit": other}}, {"mold_id": "m1", "source": {"commit": sha}}]}, open(os.path.join(fst, "factory.json"), "w"))
+            mj = {"mold_id": "m0", "source": {"in_tree": True, "since": "x", "ci": {"workflow": None}}, "compose": {"source_excludes": ["node_modules", ".env"]}}
+            json.dump(mj, open(os.path.join(fr, "molds", "m0", "mold.json"), "w"))
+            json.dump({"mold_sources": {"m0": "https://github.com/acme/base.git", "m1": "https://github.com/acme/base.git"}}, open(local, "w"))
+            def g(*argv):
+                r = subprocess.run(["git", "-C", fr, "-c", "user.name=t", "-c", "user.email=t@example.com", *argv], capture_output=True, text=True)
+                assert r.returncode == 0, (argv, r.stderr); return r.stdout.strip()
+            g("init", "-q", "-b", "main"); g("add", "-A"); g("commit", "-qm", "fork"); head = g("rev-parse", "HEAD")
+            open(world + ".calls", "w").close()
+            world_is(checks=[ga("factory self-tests"), cr("lint", conclusion="skipped")], statuses=[], combined="pending")
+            v = check("m0", state_dir=fst)
+            ok(v["state"] == "unverifiable" and "origin" in v["message"] and v.get("source") == "factory" and "/check-runs" not in open(world + ".calls").read(),
+               "in-tree: a checkout with no GitHub origin: unverifiable (never the mold's old source instead)", v)
+            g("remote", "add", "origin", "https://github.com/acme/factory.git"); open(world + ".calls", "w").close()
+            v = check("m0", state_dir=fst); calls = open(world + ".calls").read()
+            ok(v["state"] == "green" and v["commit"] == head and "GitHub Actions" in v["message"] and "mold_v0-001" in v["message"],
+               "in-tree: this repository's checks for HEAD all passed: green, and the verdict says what it read", v)
+            ok(v["state"] == "green" and f"repos/acme/factory/commits/{head}/check-runs" in calls and f"repos/acme/factory/commits/{head}/status" in calls and "acme/base" not in calls,
+               "  ...with an origin: that repository, that commit, check runs and statuses", calls)
+            world_is(checks=[dict(cr("Vercel"), app={"slug": "vercel"})], statuses=[{"context": "deploy-bot", "state": "success"}])
+            ok(check("m0", state_dir=fst)["state"] == "missing", "in-tree: checks and statuses from OUTSIDE apps that passed never make it green: missing")
+            world_is(checks=[ga("factory self-tests", conclusion="skipped")])
+            ok(check("m0", state_dir=fst)["state"] == "missing", "in-tree: only skipped Actions checks: missing, never green")
+            world_is(checks=[ga("factory self-tests"), dict(cr("Vercel", conclusion="failure"), app={"slug": "vercel"})])
+            ok(check("m0", state_dir=fst)["state"] == "red", "in-tree: an outside check that failed still refuses")
+            world_is(checks=[], statuses=[], combined="pending")
+            v = check("m0", state_dir=fst)
+            ok(v["state"] == "missing" and FLAG in v["message"] and "mold_v0-001" in v["message"], "in-tree: no checks at all for the commit: missing, never green", v)
+            world_is(checks=[ga("factory self-tests"), cr("lint", conclusion="failure")])
+            ok(check("m0", state_dir=fst)["state"] == "red", "in-tree: one failed check: red")
+            world_is(checks=[ga("factory self-tests")], statuses=[{"context": "ext", "state": "failure"}])
+            ok(check("m0", state_dir=fst)["state"] == "red", "in-tree: a failed commit status: red")
+            world_is(checks=[ga("factory self-tests")], statuses=[{"context": "ext", "state": "pending"}])
+            ok(check("m0", state_dir=fst)["state"] == "pending", "in-tree: a status still pending: pending")
+            world_is(checks=[ga("factory self-tests", status="in_progress", conclusion=None)])
+            ok(check("m0", state_dir=fst)["state"] == "pending", "in-tree: a check still running: pending")
+            world_is(down=True)
+            ok(check("m0", state_dir=fst)["state"] == "unverifiable", "in-tree: GitHub not answering: unverifiable, never green")
+            world_is(checks=[ga("factory self-tests")])
+            open(os.path.join(fcb, "src", "a.ts"), "w").write("edited, not committed\n"); open(world + ".calls", "w").close()
+            v = check("m0", state_dir=fst)
+            ok(v["state"] == "unverifiable" and "src/a.ts" in v["message"] and "/check-runs" not in open(world + ".calls").read(),
+               "in-tree: an uncommitted edit under the codebase: unverifiable, naming it (the checks of HEAD say nothing about it)", v)
+            g("checkout", "--", "molds/m0/codebase/src/a.ts")
+            os.makedirs(os.path.join(fcb, "dist")); open(os.path.join(fcb, "dist", "x.js"), "w").write("built\n")
+            v = check("m0", state_dir=fst)
+            ok(v["state"] == "unverifiable" and "dist" in v["message"], "in-tree: an ignored file the deploy would carry (not in source_excludes): unverifiable", v)
+            shutil.rmtree(os.path.join(fcb, "dist")); os.makedirs(os.path.join(fcb, "node_modules", "p")); open(os.path.join(fcb, "node_modules", "p", "i.js"), "w").write("1\n")
+            open(os.path.join(fcb, ".env"), "w").write("X=1\n")
+            ok(check("m0", state_dir=fst)["state"] == "green", "in-tree: installed node_modules and a local .env (source_excludes) do not count")
+            open(os.path.join(fcb, "new.ts"), "w").write("n\n")
+            ok(check("m0", state_dir=fst)["state"] == "unverifiable", "in-tree: an untracked new file: unverifiable"); os.remove(os.path.join(fcb, "new.ts"))
+            mj["source"]["ci"]["workflow"] = ".github/workflows/shell.yml"; json.dump(mj, open(os.path.join(fr, "molds", "m0", "mold.json"), "w"))
+            g("add", "-A"); g("commit", "-qm", "name the shell's workflow"); head = g("rev-parse", "HEAD")
+            def frun(**k): return dict(run(head=head, **k), path=".github/workflows/shell.yml")
+            world_is(runs=[frun()], checks=all_green)
+            v = check("m0", state_dir=fst)
+            ok(v["state"] == "green" and v["commit"] == head and "shell.yml" in v["message"] and "shell.yml" in v.get("reads", ""), "in-tree with its workflow named: that workflow's run and jobs at HEAD: green", v)
+            world_is(runs=[dict(run(head=head), path=WORKFLOW)], checks=all_green)
+            ok(check("m0", state_dir=fst)["state"] == "missing", "  ...a run of another workflow never stands in for it")
+            world_is(runs=[frun()], checks=[cr("verify"), cr("eve-runtime 1/2"), cr("build")])
+            ok(check("m0", state_dir=fst)["state"] == "red", "  ...a job of the named workflow that never reported: red")
+            # require(): an in-tree green deploys, recorded with the commit of THIS repository
+            world_is(runs=[frun()], checks=all_green); adir0 = os.path.join(d, "app0"); os.makedirs(adir0); infra0 = {}
+            v = require("app0", {"mold_id": "m0"}, infra0, adir0, ["app0", "--deploy-remote"], state_dir=fst, say=said.append)
+            rec = json.load(open(os.path.join(adir0, "infrastructure.json")))["deploy_gate"]
+            ok(v["ok"] and rec["verdict"] == "green" and rec["commit"] == head and "override" not in rec, "in-tree: require() goes on, recording this repository's commit", rec)
+            mj["source"]["ci"]["workflow"] = None; json.dump(mj, open(os.path.join(fr, "molds", "m0", "mold.json"), "w")); g("add", "-A"); g("commit", "-qm", "unname")
+            world_is(checks=[], statuses=[])
+            try: require("app0", {"mold_id": "m0"}, infra0, adir0, ["app0", "--deploy"], state_dir=fst, say=said.append); ok(False, "in-tree missing refuses")
+            except SystemExit as e: ok("not deploying" in str(e) and "no checks" in str(e), "in-tree: no checks: the deploy is refused", e)
+            v = require("app0", {"mold_id": "m0"}, infra0, adir0, ["app0", "--deploy", FLAG, "no shell CI yet"], state_dir=fst, say=said.append)
+            ok(v["state"] == "missing" and json.load(open(os.path.join(adir0, "infrastructure.json")))["deploy_gate"]["override"]["reason"] == "no shell CI yet",
+               "in-tree: --allow-unverified-mold still works, recorded")
+            # the in-tree flag in state/factory.json alone; an unreadable mold.json; a sourced mold beside it
+            json.dump({"mold_id": "m0"}, open(os.path.join(fr, "molds", "m0", "mold.json"), "w"))
+            fj = json.load(open(os.path.join(fst, "factory.json"))); fj["molds"][0]["source"]["in_tree"] = True; json.dump(fj, open(os.path.join(fst, "factory.json"), "w"))
+            g("add", "-A"); g("commit", "-qm", "flag in factory.json only"); world_is(checks=[ga("factory self-tests")])
+            ok(check("m0", state_dir=fst).get("source") == "factory", "in-tree: state/factory.json alone saying in_tree is enough")
+            open(os.path.join(fr, "molds", "m0", "mold.json"), "w").write("{ broken")
+            ok(check("m0", state_dir=fst)["state"] == "unverifiable", "an unreadable mold.json: unverifiable, never read as a sourced mold")
+            world_is(runs=[run()], checks=all_green); open(world + ".calls", "w").close()
+            v = check("m1", state_dir=fst)
+            ok(v["state"] == "green" and "acme/base" in open(world + ".calls").read() and v.get("source") is None, "a sourced mold beside it still reads its own source's ci.yml", v)
         finally:
             os.environ.clear(); os.environ.update(old_env); services.REHEARSAL = old_reh; services._ACTIVE = False
     if fails:

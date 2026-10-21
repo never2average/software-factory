@@ -582,6 +582,10 @@ def self_test_single(n, fails):
             # what a deploy writes survives a re-run
             d["application"]["status"] = "stamped"; d["application"]["testing"]["context"] = {"status": "pass", "run_at": "2026-10-20T00:00:00+00:00"}
             i.update(deployed_at="2026-10-20T00:00:00+00:00"); i["compose_remote"].update(host="203.0.113.7", production_url="https://shop.example.org", release="20261020T000000Z", health={"app": "healthy", "public": "200"})
+            n += 1   # mold_v0-051: the product has row-level security; its deploy proves it (lib/single_service.py record_rls)
+            if d["datastores"]["postgres"].get("rls") != "fail_closed": fails.append(f"a mold_v0 app asks for the product's row-level security: rls {d['datastores']['postgres'].get('rls')!r}")
+            d["datastores"]["postgres"]["rls_verified"] = {"at": "2026-10-20T00:01:00+00:00", "backend": "self_hosted", "mode": "fail_closed", "running_app": "enforced",
+                                                          "source": "check:rls (npm run check:rls, the product's own), by provision.py --deploy-remote", "running_app_detail": "x"}
             for k, v in d.items(): save(os.path.join(A, "zz_one", k + ".json"), v)
             r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); d2 = docs("zz_one"); n += 1
             if r.returncode or d2 != d: fails.append(f"a same-brief re-run of a deployed mold_v0 app changed its state: {(r.stdout + r.stderr).strip()[-200:]}")

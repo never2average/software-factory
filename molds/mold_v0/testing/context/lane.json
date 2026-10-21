@@ -1,9 +1,9 @@
 {
   "lane": "context",
   "order": 20,
-  "summary": "Tenant isolation as the product itself guards it: its tenant-SQL check, which fails on any new query over a tenant table that neither filters by organisation nor says how it is scoped. (Its per-tool isolation sweep runs in the functional lane's smoke row, which it ends.)",
+  "summary": "Tenant isolation as the product itself guards it: its tenant-SQL check, which fails on any new query over a tenant table that neither filters by organisation nor says how it is scoped, and its row-level security check (every tenant table under a policy for the tenant role, then a live two-organisation probe), run on an embedded throwaway database. (Its per-tool isolation sweep runs in the functional lane's smoke row, which it ends.)",
   "not_covered": [
-    "Row-level security: the product scopes rows in its queries, not with database policies (datastores.postgres.rls is \"off\"). Proving row-level security on every deploy is ticket mold_v0-031.",
+    "check:rls here runs on an embedded throwaway database (PGlite) built by the product's own migrations: it proves the migrations put row-level security in place, not that the deployed database has it. The deployed database is proven by the deploy itself (provision.py runs the same check against it and records datastores.postgres.rls_verified; a failure is a failed health check).",
     "Queries the product's baseline file lists as pending review (scripts/tenant-sql-baseline.json) are reported by the product's own check, not failed."
   ],
   "checks": [
@@ -14,11 +14,29 @@
       "timeout_s": 300,
       "requires": [
         {
-          "else": "Install the product's own dependencies into the snapshot's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
           "path": "{codebase}/node_modules/.bin/tsx"
         }
       ],
       "why": "The product's own `npm run check:tenant-sql`: a query over a tenant table with no organisation filter and no scoping note."
+    },
+    {
+      "name": "check:rls",
+      "run": "d=$(mktemp -d) && env -u CLICKHOUSE_URL DATABASE_URL= PGLITE_DIR=\"$d\" npm run --silent check:rls; s=$?; rm -rf \"$d\"; exit $s",
+      "cwd": "codebase",
+      "timeout_s": 600,
+      "requires": [
+        {
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock",
+          "path": "{codebase}/node_modules/.bin/tsx"
+        }
+      ],
+      "expect": {
+        "stdout": [
+          "RLS CHECK PASS \\(pglite\\)"
+        ]
+      },
+      "why": "The product's own `npm run check:rls` (mold_v0-031) on a fresh embedded database: a tenant table without row-level security or a policy, a tenant role that bypasses it, or one organisation reaching another's rows in the live probe."
     }
   ]
 }

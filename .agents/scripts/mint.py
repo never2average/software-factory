@@ -91,6 +91,12 @@ def docs(app):
     return out["application"], out["infrastructure"]
 
 def mold_commit(mold_id):
+    """The mold version an app built now gets: an in-tree mold's (lib/intree.py: the last commit of this repository that
+    changed its codebase, mold_v0-040), else the pin in state/factory.json. "The mold moved" compares an app with this."""
+    import intree
+    try: v = intree.version(mold_id, ROOT)
+    except intree.Unreadable: v = None
+    if v: return v
     for m in load(os.path.join(ROOT, "state", "factory.json")).get("molds", []):
         if m.get("mold_id") == mold_id: return (m.get("source") or {}).get("commit")
 
@@ -772,6 +778,9 @@ def single_self_test():
     n = 0
     def ok(c, what):
         nonlocal n; n += 1; assert c, what
+    import intree
+    ok(mold_commit("mold_v0") == intree.version("mold_v0", ROOT) and mold_commit("mold_v0") and intree.is_in_tree("mold_v0", ROOT) and not intree.is_in_tree("mold_v1", ROOT),
+       "mold_v0 is in-tree: its version is this repository's (the fork point standing for the commit it was forked from); mold_v1 keeps its pin")
     a = {"app_id": "zz", "mold_id": "mold_v0", "status": "planned", "mold_commit": mold_commit("mold_v0")}
     i = {"target": "compose_remote", "secrets_user": [], "compose_remote": {"domain": "zz.example.org"}}
     saved = dict(globals()); saved_st = list(STATIONS)

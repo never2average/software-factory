@@ -23,4 +23,8 @@ python3 .claude/scripts/mold.py refresh <mold_id>    # move the pin to the sourc
   and the mold's `MOLD.md`; commit those two files. Every deployed application then shows a redeploy due in `mint`.
 - Never edit the snapshot by hand and never fork it (AGENTS.md). What the mold contains, and why some test runs
   write into it, is in `molds/<mold_id>/MOLD.md`.
+- **mold_v0 is in-tree** (mold_v0-040): its codebase is authored in this repository, so there is nothing to fetch or
+  refresh. `refresh mold_v0` refuses and writes nothing, `fetch mold_v0` writes nothing, and `check mold_v0` says
+  "in-tree since <commit>" and lists any uncommitted change under the codebase (a deploy refuses until they are
+  committed). A change to it is a pull request here. `molds/mold_v0/MOLD.md` has the details.
 - `python3 .claude/scripts/mold.py --self-test` runs offline against a local bare repository.

@@ -1,8 +1,9 @@
 # mold_v0 scope: the agent-run shell
 
-**Status:** work in progress. The codebase at `molds/mold_v0/codebase` is a verbatim snapshot of the operator's own
-MCP product, Octillion ([MOLD.md](MOLD.md)). It becomes the general shell described here step by step, authored in
-this repository once mold_v0-040 lands (a recorded exception to "never edit a mold in place").
+**Status:** work in progress. The codebase at `molds/mold_v0/codebase` started as a verbatim snapshot of the operator's
+own MCP product, Octillion ([MOLD.md](MOLD.md)), and is authored in this repository since that snapshot (fork point
+`e8d836532cb7`, mold_v0-040, a recorded exception to "never edit a mold in place"). It becomes the general shell
+described here step by step.
 **Product:** `mcp_product_shell` in `state/products.json`. **Backlog:** `state/tasks/mold_v0.jsonl` (the generalisation
 is mold_v0-038 to 050, with the older tickets that survived re-scoped to it).
 
@@ -32,7 +33,8 @@ dropped or merged into the ones below.
 
 ## Capabilities
 
-Paths are relative to `molds/mold_v0/codebase`. "Today" is the pinned snapshot; "generalised by" is the ticket that
+Paths are relative to `molds/mold_v0/codebase`. "Today" is the codebase as forked (the product with mold_v0-031's
+hardening); "generalised by" is the ticket that
 turns it into shell, or builds it where nothing exists yet.
 
 ### Tenancy and the sign-in adapter
@@ -42,9 +44,12 @@ turns it into shell, or builds it where nothing exists yet.
   an unscoped query. People, memberships, roles and invites live in Clerk (`src/clerk.ts`, `src/session.ts`,
   `web/src/proxy.ts`); account roles are `src/account-roles.ts`, platform admins `src/admin-auth.ts` and
   `src/admin-roles.ts`. Deleting a workspace across every store is `src/tenancy.ts`; `scripts/create-org.ts` and
-  `scripts/delete-org.ts` drive it from the command line. Isolation is by query scoping: the schema has no row-level
-  security yet.
-- **Generalised by.** mold_v0-031 (row-level security proven on every deploy, no static admin token, versioned
+  `scripts/delete-org.ts` drive it from the command line. Isolation is by query scoping and, since mold_v0-031, by
+  Postgres row-level security on every tenant table for a per-database tenant role that fails closed with no
+  organisation set (`sql/migrations/0003_row_level_security.sql`, `src/tenant-scope.ts`, `src/rls.ts`), proven by
+  `npm run check:rls` (the factory runs it on every deploy against the deployed database and in the context lane,
+  mold_v0-051). The schema is versioned migrations (`sql/migrations/`, `src/migrate.ts`, `npm run test:migrations`).
+- **Generalised by.** mold_v0-031 (done: row-level security proven on every deploy, no static admin token, versioned
   migrations), mold_v0-004 (sign-in behind an adapter: Clerk at launch, a built-in emailed code plus Google later).
 
 ### MCP front door with a pack-filled tool registry
