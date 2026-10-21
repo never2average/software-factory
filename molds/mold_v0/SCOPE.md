@@ -129,9 +129,9 @@ status, finding fingerprint, evidence reference).
   private rows (`src/library.ts`, `src/private.ts`, sealed by `src/orgcrypto.ts`), seeded from `vault/` by
   `src/vault.ts`. The console already has a generic table and side peek (`web/src/components/layout/record-view.tsx`,
   `record-filters.tsx`).
-- **Generalised by.** mold_v0-047 (the shell's record areas: a pack declares one and gets a list page, a detail page and
-  MCP list/get with no extra code; workspace scope under row-level security; platform scope read-only to customers),
-  mold_v0-039 (personas and tasks leave the shell for the `octillion` pack), mold_v0-048 (the second app's areas, on
+- **Generalised by.** mold_v0-047, **built** (the shell's record areas: a pack declares one and gets a list page, a
+  detail page and MCP list/get with no extra code; workspace scope under row-level security; platform scope read-only
+  to customers; `src/record-areas.ts`, `platform_records`, `workspace_records`), mold_v0-039 (personas and tasks leave the shell for the `octillion` pack), mold_v0-048 (the second app's areas, on
   this contract).
 
 ### Schedules and notifications

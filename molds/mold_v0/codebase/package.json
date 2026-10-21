@@ -15,6 +15,7 @@
     "gen:packs": "node scripts/gen-packs.mjs",
     "check:packs": "node scripts/gen-packs.mjs --check",
     "test:packs": "tsx scripts/packs-test.ts",
+    "test:record-areas": "tsx scripts/record-areas-test.ts",
     "org:delete": "tsx scripts/delete-org.ts",
     "org:create": "tsx --env-file-if-exists=.env scripts/create-org.ts",
     "admin:token": "tsx --env-file-if-exists=.env scripts/admin-token.ts",

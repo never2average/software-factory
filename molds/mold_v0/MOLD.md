@@ -55,9 +55,22 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
   `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
   pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
-  data route. **jobKinds, recordAreas, credentials, schedules, onboarding** and profile **words** are declared and
-  validated and listed by `packRegistry()`; the run engine (041), record areas (047), credential vault (034),
-  scheduler (035) and checklist (011) wire them.
+  data route. **jobKinds, credentials, schedules, onboarding** and profile **words** are declared and validated and
+  listed by `packRegistry()`; the run engine (041), credential vault (034), scheduler (035) and checklist (011) wire
+  them.
+- **recordAreas** (mold_v0-047, built): a pack declares areas in `definePack` and writes no record code. Their rows
+  live in two shell tables (`sql/migrations/0004_record_areas.sql`): `platform_records` (platform scope: the tenant
+  role may only `SELECT` it, so customers cannot write it whatever the code does; staff write it at
+  `/api/admin/records` with `library`, or a pack's admin route through `ctx.records`) and `workspace_records`
+  (workspace scope: `org_id` under the `tenant_isolation` policy; an `asset` area's title and data are sealed with the
+  workspace data key). `src/record-areas.ts` adds `list_records` and `get_record` to the customer MCP server when at
+  least one area exists (none with zero packs, so the surface is unchanged); `src/record-routes.ts` serves
+  `/api/records` (signed-in people of the workspace, read only) to the console's generic pages
+  (`web/src/app/{app,admin}/records/[area]` and `[area]/[key]`); `gen-packs` loads each pack's definition once (through
+  tsx) to write the areas and a Records sidebar group into `pack-nav.generated.ts`. Area names are unique in a build
+  and links must name a declared area (both refused at build and at start). Handlers get `ctx.records`: reads of every
+  platform area and the workspace's own rows; writes only to the pack's own workspace areas (admin routes: its own
+  platform areas). `check:rls` probes both tables; `npm run test:record-areas` proves it with two workspaces.
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
