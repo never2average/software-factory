@@ -26,7 +26,12 @@
  *                the run targets. Pack code on the server never sees a value: no handler context carries one
  *   onboarding   wired (mold_v0-011): the /app Setup page's pack checklist (src/onboarding.ts, /api/onboarding); each
  *                step's done_when is read for the calling workspace only, from its own events and rows
- *   schedules    declared and validated here, listed by packRegistry(); wired by the scheduler (035)
+ *   schedules    wired (mold_v0-035): each workspace gets the pack's default schedules (a job kind of the pack, a cron
+ *                expression in UTC, the pack's asset records it runs over); owners turn them off and on, change when they
+ *                run and over which assets, and add their own in the console (/app/schedules). The scheduler
+ *                (src/schedules.ts) starts due runs through the run engine; a missed tick runs at most once
+ *   recordAreas  `due` (mold_v0-035): a workspace check area may name a date field; a daily check posts an in-app
+ *                notice and emails the workspace's owners about records due within `within_days`
  *   agentJobKinds, metrics   declared and validated (mold_v0-057); wired by the agent-workspace runner (061) and the
  *                metrics and charts (063)
  *
@@ -41,6 +46,7 @@
 import { z } from "zod";
 import type { AccountPermission, AccountRole } from "./account-roles.js";
 import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.js";
+import { parseCron } from "./cron.js";
 
 export { z };
 
@@ -313,6 +319,13 @@ const jobKindBase = {
   lease_seconds: z.number().int().min(15).max(3600).default(120),
   max_attempts: z.number().int().min(1).max(10).default(3),
   budget_usd: z.number().positive().max(10_000).default(5),
+  /**
+   * Limits per kind (mold_v0-018; src/run-limits.ts): runs of this kind one workspace may have running at once, and this
+   * kind's spend per workspace per calendar month. Absent, the platform's; never above the platform's (src/rate-limits.ts
+   * `runs`), as `budget_usd` is never above its ceiling.
+   */
+  concurrency_per_workspace: z.number().int().min(1).max(100).optional(),
+  month_budget_usd: z.number().positive().max(100_000).optional(),
   egress: z.array(host).max(50).default([]),
   /** The workspace store (mold_v0-033): check the workspace's snapshot out before the run, write it back after. */
   workspace: z.boolean().default(false),
@@ -327,12 +340,6 @@ const jobKindBase = {
    * when a pack's code starts the run (src/packs.ts declaredRuns). Absent: the scope is free, as before.
    */
   args: z.array(field).max(30).optional(),
-  /**
-   * How many runs of this kind one workspace may have queued or running at once (mold_v0-057). Declared and validated;
-   * the run engine's per-workspace cap (OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE) is what holds today, and the engine
-   * takes this per kind when it is next changed (listed in packRegistry()).
-   */
-  concurrency: z.number().int().min(1).max(50).optional(),
 };
 export const JobKindSchema = z.object({
   ...jobKindBase,
@@ -383,6 +390,16 @@ export const RecordAreaSchema = z.object({
   rows: z.string().max(500).optional(),
   /** In words, where a shared row's version comes from (an upstream commit, a date). */
   version: z.string().max(200).optional(),
+  /**
+   * Due dates (wired by mold_v0-035; src/schedules.ts): a check area of workspace scope may name one of its date fields.
+   * Once a day the shell posts an in-app notice for each record whose date falls within `within_days` (today included),
+   * and emails the workspace's people with the `notify` roles (owners by default) a list of them.
+   */
+  due: z.object({
+    field: name,
+    within_days: z.number().int().min(0).max(365).default(7),
+    notify: z.array(z.enum(["owner", "billing", "member", "viewer"])).min(1).max(4).default(["owner"]),
+  }).strict().optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((a, ctx) => {
   const bad = (message: string, ...path: (string | number)[]) => ctx.addIssue({ code: "custom", message, path });
@@ -395,6 +412,8 @@ export const RecordAreaSchema = z.object({
     const f = a.fields.find((x) => x.name === l.field);
     if (f?.type === "reference" && f.to !== l.area) bad(`field ${f.name} refers to ${f.to}; its link names ${l.area}`, "links", i);
   }
+  if (a.due && !(a.role === "check" && a.scope === "workspace")) bad("due is for a check area of workspace scope (each workspace's own dates)", "due");
+  if (a.due && !a.fields.some((f) => f.name === a.due!.field && f.type === "date")) bad("due.field must name one of the area's date fields", "due", "field");
   const p = a.permissions;
   if (p) for (const k of ["create", "update", "move", "delete"] as const) {
     if (a.scope === "platform" && p[k]) bad(`a shared (platform) area is written by platform staff only: declare read alone`, "permissions", k);
@@ -491,12 +510,28 @@ export const CredentialSchema = z.object({
   .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
 
-/** A default schedule per workspace (wired by mold_v0-035). */
+/**
+ * A default schedule (wired by mold_v0-035; src/schedules.ts). Every workspace gets its own copy (per workspace: its own
+ * on/off, time and assets, its own runs), which its owners may change in the console; the pack's later changes reach a
+ * copy no owner has changed.
+ *   job_kind     one of this pack's job kinds: each due time starts runs of it through the run engine
+ *   cron         five fields, UTC (src/cron.ts): at most every 5 minutes
+ *   assets       which asset records of the workspace it runs over: one run per record (targets.asset {area, key}, the
+ *                credentials bound to that asset reach the run); `keys` absent means every record of the area. Without
+ *                `assets`, one run for the workspace
+ *   environment  targets.environment of each run (an environment-bound credential)
+ *   scope        the run's scope (what is checked: source and check record keys), as given to ctx.runs.start
+ *   enabled      false: offered to each workspace but off until an owner turns it on
+ */
 export const ScheduleSchema = z.object({
   name,
+  label: z.string().min(1).max(80).optional(),
   job_kind: name,
-  cron: z.string().regex(/^(\S+\s+){4}\S+$/, "five cron fields"),
+  cron: z.string().max(120).refine((c) => { try { parseCron(c); return true; } catch { return false; } }, "a cron expression: five fields (minute hour day-of-month month day-of-week, UTC), at most every 5 minutes"),
+  assets: z.object({ area: name, keys: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/, "a record key")).min(1).max(50).optional() }).strict().optional(),
+  environment: z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment name: lowercase letters, digits, _ and -").optional(),
   scope: z.record(z.string(), z.unknown()).optional(),
+  enabled: z.boolean().default(true),
 }).strict();
 
 /**
@@ -606,6 +641,9 @@ export function validatePack(p: PackDefinition): PackDefinition {
   const kinds = new Set((p.jobKinds ?? []).map((k) => k.name));
   for (const k of p.agentJobKinds ?? []) if (k?.name && kinds.has(k.name)) problems.push(at(`job kind ${k.name} is declared twice`)); else if (k?.name) kinds.add(k.name);
   for (const s of p.schedules ?? []) if (s?.job_kind && !kinds.has(s.job_kind)) problems.push(at(`schedule ${s.name} names job kind ${s.job_kind}, which this pack does not declare`));
+  // A schedule runs over this pack's own asset records (mold_v0-035), as a credential binds to them.
+  for (const s of p.schedules ?? []) if (s?.assets?.area && !(p.recordAreas ?? []).some((a) => a?.name === s.assets!.area && a.role === "asset"))
+    problems.push(at(`schedule ${s.name} runs over area ${s.assets.area}, which is not one of this pack's asset areas`));
   // A schedule's scope gives only arguments its kind declares (mold_v0-057; what a schedule's run gets is the scheduler's, 035).
   for (const s of p.schedules ?? []) {
     const k = [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])].find((x) => x?.name === s?.job_kind);

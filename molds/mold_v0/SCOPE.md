@@ -63,8 +63,10 @@ turns it into shell, or builds it where nothing exists yet.
 - **Generalised by.** mold_v0-038 (done: pack tools register after the shell's from the registry `gen-packs.mjs`
   generates, `src/packs.ts`; the server name comes from the profile; the shell's own 31 tools stay in `src/server.ts`
   until mold_v0-039), mold_v0-007 (keys header-only, named, revocable, expiring), mold_v0-013 (a built-in MCP OAuth server when
-  Clerk is off), mold_v0-010 (install guides from the profile, tool docs from the registry), mold_v0-018 (MCP rate
-  limits).
+  Clerk is off), mold_v0-010 (install guides from the profile, tool docs from the registry), mold_v0-018, **built** (MCP rate
+  limits per key, member, workspace and address with a 429 and Retry-After, request and answer size caps, requests in
+  flight per workspace, the sign-up, invitation and key endpoints; `src/rate-limits.ts`, numbers from the profile's
+  `limits`, per plan, under the server's environment).
 
 ### Run engine with sandboxed harness runs
 
@@ -78,7 +80,8 @@ turns it into shell, or builds it where nothing exists yet.
   admin Compute page reads `src/compute*.ts`; failure classes are `src/error-classes.ts`.
 - **Generalised by.** mold_v0-041, **built** (a generic `runs` and `run_results` model beside the session queue, a
   workspace-harness runner, per-kind token lifetime and budget, cost per run from gateway usage, the per-run egress
-  allowlist under test; `src/runs.ts`, `src/run-harness.ts`, `/api/worker/runs`), mold_v0-018 (concurrency per workspace and run budget per run kind). Run kinds come from
+  allowlist under test; `src/runs.ts`, `src/run-harness.ts`, `/api/worker/runs`), mold_v0-018, **built** (concurrency per workspace and kind at claim, the kind's month budget per workspace at
+  start and in the gateway, a run's budget, all clamped to the platform's ceilings; `src/run-limits.ts`). Run kinds come from
   packs (mold_v0-038).
 
 ### Inference gateway and metering
@@ -88,7 +91,9 @@ turns it into shell, or builds it where nothing exists yet.
   is priced by `src/usage.ts` from `model_prices` into `gateway_usage` and `gateway_model_usage`; model spend for
   admins is `src/spend.ts` and `src/spend-usage.ts`; per-account budgets and throughput are `src/limits.ts`.
 - **Generalised by.** mold_v0-041, **built** (token lifetime per run kind, so a long run's token does not expire
-  mid-run; cost per run; a run's budget across its attempts), mold_v0-008 (usage pages per run, member and workspace, in neutral words).
+  mid-run; cost per run; a run's budget across its attempts), mold_v0-053, **built** (run spend in the account's month figures, budgets and spend pages; `src/run-spend.ts`),
+  mold_v0-008, **built** (usage pages per run, member and workspace, in neutral words: `src/usage-report.ts`,
+  `/api/usage`, `/app/activity`, `/admin/activity`).
 
 ### Vaults, including per-workspace credentials
 
@@ -139,9 +144,11 @@ status, finding fingerprint, evidence reference).
 - **Today.** Background loops started in `src/http.ts` on a server (the autoscaler, the archiver), and on Vercel one
   cron in `vercel.json` (`/api/cron/autoscale`, guarded by `CRON_SECRET`). Transactional email is `src/email.ts`
   through one provider (`email_log`); daily spend alerts use `usage_alerts`; in-client tips come from
-  `src/journeys.ts`. There are no per-workspace schedules.
-- **Generalised by.** mold_v0-035 (per-workspace schedules with defaults from the pack, editable in the console, a
-  missed tick run at most once; due-date alerts in-app and by email).
+  `src/journeys.ts`. There were no per-workspace schedules before mold_v0-035.
+- **Generalised by.** mold_v0-035 (built): per-workspace schedules with defaults from the pack, editable by owners in
+  the console, a missed tick run at most once, ticked from the existing cron entry on Vercel and a one-minute loop on a
+  server (`src/schedules.ts`, `src/cron.ts`, `src/schedule-routes.ts`, `sql/migrations/0008_schedules.sql`); due-date
+  alerts for check records in-app (`/app/notices`) and by email (`due_soon` in `email_log`), once a day.
 
 ### Console framework
 

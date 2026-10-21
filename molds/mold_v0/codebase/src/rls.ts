@@ -31,7 +31,8 @@ export const PARENT_SCOPED: Record<string, string> = {
   scenarios: "SELECT count(*)::int AS n FROM scenarios c JOIN products p ON p.id = c.product_id WHERE p.org_id = $1",
   product_personas: "SELECT count(*)::int AS n FROM product_personas c JOIN products p ON p.id = c.product_id WHERE p.org_id = $1",
   transcript_events: "SELECT count(*)::int AS n FROM transcript_events c JOIN agent_sessions s ON s.id = c.session_id WHERE s.org_id = $1",
-  gateway_usage: "SELECT count(*)::int AS n FROM gateway_usage c JOIN agent_sessions s ON s.id = c.session_id WHERE s.org_id = $1",
+  // A session's usage, and since mold_v0-053 a run's (sql/migrations/0009_usage_and_limits.sql): the workspace's own.
+  gateway_usage: "SELECT count(*)::int AS n FROM gateway_usage c WHERE EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = c.session_id AND s.org_id = $1) OR EXISTS (SELECT 1 FROM runs x WHERE x.id = c.run_id AND x.org_id = $1)",
   gateway_tokens: "SELECT count(*)::int AS n FROM gateway_tokens c JOIN agent_sessions s ON s.id = c.session_id WHERE s.org_id = $1",
   developer_population_agents: "SELECT count(*)::int AS n FROM developer_population_agents c JOIN developer_populations p ON p.id = c.population_id WHERE p.org_id IS NULL OR p.org_id = $1",
 };
@@ -44,7 +45,11 @@ export const PLATFORM_READONLY = ["library_tasks", "platform_settings", "platfor
 /** Tables a tenant query must never reach (checked live by the probe). */
 export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_log", "admin_tokens", "access_requests", "orchestrators", "email_log",
   // The workspace credential vault (mold_v0-034): not even a workspace's own sealed values reach tenant work.
-  "workspace_credentials"];
+  "workspace_credentials",
+  // Rate-limit counters (mold_v0-018): platform rows.
+  "rate_limit_hits",
+  // The scheduler's own bookkeeping (mold_v0-035): the day the due-date check last ran.
+  "scheduler_marks"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(
@@ -150,11 +155,16 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       await tx.query("INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd) VALUES ($1, $2, 'probe', 'probe', '{}', 1, 60, 60, 1)", [`${tag}-run-${o}`, o]);
       await tx.query("INSERT INTO run_events (run_id, org_id, attempt, type) VALUES ($1, $2, 0, 'probe')", [`${tag}-run-${o}`, o]);
       await tx.query("INSERT INTO run_results (run_id, org_id, check_area, check_key, status) VALUES ($1, $2, 'probe', 'probe', 'pass')", [`${tag}-run-${o}`, o]);
+      // A run's gateway usage (mold_v0-053): readable by its own workspace only.
+      await tx.query("/* tenant: rls probe, the probe org's own run */ INSERT INTO gateway_usage (token_hash, provider, run_id, cost_usd) VALUES ($1, 'probe', $2, 1)", [`${tag}-gw-${o}`, `${tag}-run-${o}`]);
       // The workspace store (mold_v0-033): a snapshot and a lease per organization.
       await tx.query("INSERT INTO workspace_snapshots (org_id, store, version, status, base_version, manifest, manifest_sha256, files, bytes, object_key) VALUES ($1, 'probe', 1, 'committed', 0, '{}', 'x', 0, 0, 'x')", [o]);
       await tx.query("INSERT INTO workspace_leases (org_id, store, run_id, expires_at) VALUES ($1, 'probe', $2, now())", [o, `${tag}-run-${o}`]);
       // The credential vault (mold_v0-034): a sealed value per organization (not readable by tenant work at all).
       await tx.query("INSERT INTO workspace_credentials (org_id, pack, name, bound_to, sealed, last4) VALUES ($1, 'probe', 'probe', 'workspace', 'x', 'xxxx')", [o]);
+      // Schedules and notices (mold_v0-035): a schedule and a notice per organization.
+      await tx.query("INSERT INTO workspace_schedules (org_id, pack, name, job_kind, cron, next_at) VALUES ($1, 'probe', 'probe', 'probe', '0 * * * *', now())", [o]);
+      await tx.query("INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'probe', 'probe', $2, current_date)", [o, tag]);
     }
     await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
@@ -209,6 +219,14 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     // The credential vault (mold_v0-034): tenant work can neither read, write nor replace a sealed value, its own included.
     await refused("workspace_credentials: a tenant writes a value", "INSERT INTO workspace_credentials (org_id, pack, name, bound_to, sealed, last4) VALUES ($1, 'p', 'p', 'workspace', 'x', 'xxxx')", [a]);
     await refused("workspace_credentials: a tenant replaces a value", "/* tenant: rls probe */ UPDATE workspace_credentials SET sealed = 'x'");
+    // Run spend (mold_v0-053): a tenant can neither write a run's usage nor raise a counter (mold_v0-018).
+    await refused("gateway_usage: a tenant writes its own run's usage", "/* tenant: rls probe, as tenant A on purpose */ INSERT INTO gateway_usage (token_hash, provider, run_id) VALUES ($1, 'p', $2)", [`${tag}-gwx`, `${tag}-run-${a}`]);
+    await refused("rate_limit_hits: a tenant resets a counter", "DELETE FROM rate_limit_hits");
+    // Schedules and notices (mold_v0-035): tenant work reads its own and writes none (the shell's code does, for the session's workspace).
+    await refused("workspace_schedules: a tenant adds a schedule", "INSERT INTO workspace_schedules (org_id, pack, name, job_kind, cron, next_at) VALUES ($1, 'p', 'x', 'k', '0 * * * *', now())", [a]);
+    await refused("workspace_schedules: a tenant moves its own schedule on", "/* tenant: rls probe */ UPDATE workspace_schedules SET next_at = now(), seq = seq + 1");
+    await refused("workspace_notices: a tenant posts a notice", "INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'p', 'p', 'x', current_date)", [a]);
+    await refused("workspace_notices: a tenant marks a notice emailed", "/* tenant: rls probe */ UPDATE workspace_notices SET emailed_at = now()");
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 

@@ -271,7 +271,7 @@
       "mold_id": "mold_v0",
       "name": "MCP Product Shell",
       "tagline": "An agent-run shell with an MCP front door: workspaces, sandboxed harness runs, a metered inference gateway, vaults and record areas, with each product's surface in a pack",
-      "stage": "defined",
+      "stage": "stamped",
       "target_model": "any model the inference gateway serves to sandboxed harness runs, metered per run",
       "gates": {
         "stamped": [

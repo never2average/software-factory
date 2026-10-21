@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { orgBudgets, type BudgetSource } from "./billing.js";
 import { team } from "./admin.js";
+import { RUN_USD } from "./run-spend.js";
 
 /**
  * The admin FinOps page's Model spend tab (/admin/finops?section=spend, GET /api/admin/onboarding/spend): what Octillion spends on models across every
@@ -20,7 +21,11 @@ import { team } from "./admin.js";
  *     A day's orchestrator spend is therefore max(metered, attributed).
  *   - Provider and model detail: gateway_model_usage as it is. priced = false means some request's model had no price,
  *     so its cost is understated; the page flags those rows "Unpriced".
- *   - "This month vs allowance" is Billing's figure (session spend this UTC month) against orgBudget's allowance.
+ *   - Run spend (mold_v0-053), per run of the generic run engine (src/runs.ts): GREATEST(runs.cost_usd, sum of its
+ *     gateway_usage.cost_usd), src/run-spend.ts RUN_USD, landing on the day the run was queued (created_at), attributed
+ *     to its account, the member who started it (requested_by) and its kind. Runs are counted as sessions are, in the
+ *     account's spend and its month figure; with no runs every figure is what it was.
+ *   - "This month vs allowance" is Billing's figure (session and run spend this UTC month) against orgBudget's allowance.
  *   - Providers: the model rows summed per provider; its top accounts come from gateway_usage (per-token running totals,
  *     by last request), a session's account or an orchestrator's through its job, the rest Octillion (shared).
  *
@@ -70,7 +75,8 @@ interface OrchCell { org_id: number; day: string; usd: number; last_at: Date | n
 interface ModelDay { day: string; provider: string; model: string; consumer: "session" | "orchestrator"; requests: number; errors: number;
   input_tokens: number; cached_input_tokens: number; output_tokens: number; cost_usd: number; priced: boolean }
 
-interface DayPart { session_usd: number; orchestrator_usd: number; sessions: number; top_model: string | null }
+interface DayPart { session_usd: number; orchestrator_usd: number; run_usd: number; sessions: number; top_model: string | null }
+interface RunCell { org_id: number; day: string; usd: number; runs: number; last_at: Date | null }
 
 /** The session spend CTE: one row per session queued in [$1, $2), its spend as Billing counts it. */
 const SESSIONS = `
@@ -95,6 +101,13 @@ const ORCHESTRATORS = `
       LEFT JOIN product_research pr ON pr.id = os.job_id
      WHERE g.orchestrator_id IS NOT NULL AND g.session_id IS NULL AND g.last_at >= $1 AND g.last_at < $2)`;
 
+/** Runs queued in [$1, $2), each with its spend (src/run-spend.ts RUN_USD). */
+const RUNS = `
+  rr AS (
+    SELECT r.id, r.org_id, r.pack, r.kind, r.requested_by, to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+           ${RUN_USD}::float AS usd, GREATEST(r.created_at, (SELECT max(g.last_at) FROM gateway_usage g WHERE g.run_id = r.id)) AS last_at
+      FROM runs r WHERE r.created_at >= $1 AND r.created_at < $2)`;
+
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 /** Every figure of the Spend page in one round of queries (run together). */
@@ -102,7 +115,7 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
   const R = spendRange(q, now);
   const db = await getDb();
   const w = [R.window.start, R.window.end];
-  const [sesCells, orchCells, modelDays, orgs, provAccounts] = await Promise.all([
+  const [sesCells, orchCells, modelDays, orgs, provAccounts, runCells] = await Promise.all([
     db.query<SessionCell>(`${TENANT} WITH ${SESSIONS}
       SELECT org_id, day, model, sum(usd)::float AS usd, count(*)::int AS sessions, max(last_at) FILTER (WHERE usd > 0) AS last_at
         FROM ses GROUP BY 1, 2, 3`, w),
@@ -116,14 +129,17 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
     // Per provider and account, the gateway's own per-token totals in the range (by last request): a session's account,
     // or an orchestrator's through its job; neither is the shared row (org_id null).
     db.query<{ provider: string; org_id: number | null; usd: number; requests: number }>(`${TENANT}
-      SELECT g.provider, coalesce(s.org_id, sim.org_id, pr.org_id) AS org_id, sum(g.cost_usd)::float AS usd, sum(g.requests)::int AS requests
+      SELECT g.provider, coalesce(s.org_id, run.org_id, sim.org_id, pr.org_id) AS org_id, sum(g.cost_usd)::float AS usd, sum(g.requests)::int AS requests
         FROM gateway_usage g
         LEFT JOIN agent_sessions s ON s.id = g.session_id
+        LEFT JOIN runs run ON run.id = g.run_id
         LEFT JOIN LATERAL (SELECT x.job_id FROM orchestrator_sandboxes x WHERE g.session_id IS NULL AND x.orchestrator_id = g.orchestrator_id AND x.job_id IS NOT NULL
                             ORDER BY x.id DESC LIMIT 1) os ON true
         LEFT JOIN simulations sim ON sim.id = os.job_id
         LEFT JOIN product_research pr ON pr.id = os.job_id
        WHERE g.last_at >= $1 AND g.last_at < $2 GROUP BY 1, 2`, [R.start, R.end]),
+    db.query<RunCell>(`${TENANT} WITH ${RUNS}
+      SELECT org_id, day, sum(usd)::float AS usd, count(*)::int AS runs, max(last_at) FILTER (WHERE usd > 0) AS last_at FROM rr GROUP BY 1, 2`, w),
   ]);
   const budgets = await orgBudgets(orgs.map((o) => Number(o.id)));
   const inRange = (d: string) => d >= R.from && d <= R.to;
@@ -135,7 +151,7 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
   const parts = new Map<string, Map<string, DayPart & { models: Map<string, number> }>>();
   const part = (key: string, day: string) => {
     const m = parts.get(key) ?? new Map(); parts.set(key, m);
-    const p = m.get(day) ?? { session_usd: 0, orchestrator_usd: 0, sessions: 0, top_model: null, models: new Map<string, number>() }; m.set(day, p);
+    const p = m.get(day) ?? { session_usd: 0, orchestrator_usd: 0, run_usd: 0, sessions: 0, top_model: null, models: new Map<string, number>() }; m.set(day, p);
     return p;
   };
   const lastAt = new Map<string, number>();
@@ -149,6 +165,11 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
       seen(key, c.last_at);
       const m = rangeModels.get(key) ?? new Map(); rangeModels.set(key, m); m.set(c.model, (m.get(c.model) ?? 0) + n(c.usd));
     }
+  }
+  for (const c of runCells) {
+    const key = keyOf.get(Number(c.org_id)); if (!key) continue;
+    part(key, c.day).run_usd += n(c.usd);
+    if (inRange(c.day)) seen(key, c.last_at);
   }
   const attributed = new Map<string, number>(); // day -> attributed orchestrator usd
   for (const c of orchCells) {
@@ -183,23 +204,24 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
     const org = shared ? null : orgs.find((o) => o.slug === key)!;
     const daily_session = R.days.map((d) => r6(at(key, d)?.session_usd ?? 0));
     const daily_orchestrator = R.days.map((d) => r6(at(key, d)?.orchestrator_usd ?? 0));
-    const month_daily = R.month.days.map((d) => r6((at(key, d)?.session_usd ?? 0) + (at(key, d)?.orchestrator_usd ?? 0)));
-    // Billing's figure: session spend this month (orchestrator spend is not charged to the allowance).
-    const month_usd = r6(sum(R.month.days.map((d) => at(key, d)?.session_usd ?? 0)));
+    const daily_run = R.days.map((d) => r6(at(key, d)?.run_usd ?? 0));
+    const month_daily = R.month.days.map((d) => r6((at(key, d)?.session_usd ?? 0) + (at(key, d)?.orchestrator_usd ?? 0) + (at(key, d)?.run_usd ?? 0)));
+    // Billing's figure: session and run spend this month (orchestrator spend is not charged to the allowance).
+    const month_usd = r6(sum(R.month.days.map((d) => (at(key, d)?.session_usd ?? 0) + (at(key, d)?.run_usd ?? 0))));
     const b = org ? budgets.get(Number(org.id)) : undefined;
-    const session_usd = r6(sum(daily_session)), orchestrator_usd = r6(sum(daily_orchestrator));
+    const session_usd = r6(sum(daily_session)), orchestrator_usd = r6(sum(daily_orchestrator)), run_usd = r6(sum(daily_run));
     const rangeOrch = new Map<string, number>();
     if (shared) for (const d of R.days) for (const [m, v] of orchModelsByDay.get(d) ?? []) rangeOrch.set(m, (rangeOrch.get(m) ?? 0) + v);
     return {
       key, slug: org?.slug ?? null, name: nameOf.get(key)!, shared,
       allowance: b ? { budget_usd: b.budget, plan: b.plan, source: b.source as BudgetSource } : null,
-      spent_usd: r6(session_usd + orchestrator_usd), session_usd, orchestrator_usd,
+      spent_usd: r6(session_usd + orchestrator_usd + run_usd), session_usd, orchestrator_usd, run_usd,
       month_usd: shared ? r6(sum(month_daily)) : month_usd,
       month_pct: b && b.budget > 0 ? month_usd / b.budget : null,
       sessions: sum(R.days.map((d) => at(key, d)?.sessions ?? 0)),
       top_model: top(shared ? rangeOrch : rangeModels.get(key)),
       last_spend_at: lastAt.has(key) ? new Date(lastAt.get(key)!).toISOString() : null,
-      daily_session, daily_orchestrator, month_daily,
+      daily_session, daily_orchestrator, daily_run, month_daily,
     };
   });
 
@@ -246,11 +268,12 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
   }).sort((a, b) => b.cost_usd - a.cost_usd || a.provider.localeCompare(b.provider));
 
   const totals = {
-    session_usd: r6(sum(accounts.map((a) => a.session_usd))), orchestrator_usd: r6(sum(accounts.map((a) => a.orchestrator_usd))), total_usd: 0,
+    session_usd: r6(sum(accounts.map((a) => a.session_usd))), orchestrator_usd: r6(sum(accounts.map((a) => a.orchestrator_usd))),
+    run_usd: r6(sum(accounts.map((a) => a.run_usd))), total_usd: 0,
     shared_usd: accounts.find((a) => a.shared)!.spent_usd, metered_model_usd: r6(sum(models.map((m) => m.cost_usd))),
     unpriced_requests: sum(models.map((m) => m.unpriced_requests)),
   };
-  totals.total_usd = r6(totals.session_usd + totals.orchestrator_usd);
+  totals.total_usd = r6(totals.session_usd + totals.orchestrator_usd + totals.run_usd);
   return { range: { from: R.from, to: R.to, days: R.days }, month: R.month, totals, accounts, models, providers };
 }
 
@@ -268,18 +291,20 @@ export async function accountSpend(key: string, q: { from?: unknown; to?: unknow
   }
   const [org] = await db.query<{ id: number; slug: string; name: string }>("SELECT id, slug, name FROM organizations WHERE slug = $1", [key]);
   if (!org) throw notFound(`No account ${key}`);
-  const [ses, orch] = await Promise.all([
+  const [ses, orch, runRows] = await Promise.all([
     db.query<{ created_by: string | null; model: string; agent: string; product: string | null; usd: number; sessions: number }>(`WITH ${SESSIONS}
       SELECT r.created_by, ses.model, ses.agent, p.name AS product, sum(ses.usd)::float AS usd, count(*)::int AS sessions
         FROM ses JOIN simulations r ON r.id = ses.simulation_id LEFT JOIN products p ON p.id = ses.product_id
        WHERE ses.org_id = $3 GROUP BY 1, 2, 3, 4`, [...span, org.id]),
     db.query<{ created_by: string | null; research: boolean; usd: number }>(`WITH ${ORCHESTRATORS}
       SELECT created_by, research, sum(usd)::float AS usd FROM orch WHERE org_id = $3 GROUP BY 1, 2`, [...span, org.id]),
+    db.query<{ requested_by: string | null; kind: string; usd: number; runs: number }>(`WITH ${RUNS}
+      SELECT requested_by, pack || '/' || kind AS kind, sum(usd)::float AS usd, count(*)::int AS runs FROM rr WHERE org_id = $3 GROUP BY 1, 2`, [...span, org.id]),
   ]);
   let who = new Map<string, string>();
   try { who = new Map((await team(org.slug)).members.map((m) => [m.user_id, m.email ?? m.name ?? m.user_id])); }
   catch { /* Clerk unreachable or not configured: ids stand in */ }
-  const people = new Map<string, { user_id: string | null; label: string; session_usd: number; orchestrator_usd: number; sessions: number }>();
+  const people = new Map<string, { user_id: string | null; label: string; session_usd: number; orchestrator_usd: number; run_usd?: number; sessions: number }>();
   const person = (id: string | null, research = false) => {
     const k = research ? "research" : id ?? "";
     const p = people.get(k) ?? { user_id: research ? null : id, label: research ? "Product research" : id == null ? "Connector key" : who.get(id) ?? "Former member",
@@ -289,6 +314,7 @@ export async function accountSpend(key: string, q: { from?: unknown; to?: unknow
   };
   for (const r of ses) { const p = person(r.created_by); p.session_usd += n(r.usd); p.sessions += n(r.sessions); }
   for (const r of orch) person(r.research ? null : r.created_by, r.research).orchestrator_usd += n(r.usd);
+  for (const r of runRows) { const p = person(r.requested_by); p.run_usd = (p.run_usd ?? 0) + n(r.usd); }
   const group = (f: (r: (typeof ses)[number]) => string | null) => {
     const m = new Map<string, { usd: number; sessions: number }>();
     for (const r of ses) { const k = f(r) ?? "—"; const x = m.get(k) ?? { usd: 0, sessions: 0 }; x.usd += n(r.usd); x.sessions += n(r.sessions); m.set(k, x); }
@@ -296,11 +322,15 @@ export async function accountSpend(key: string, q: { from?: unknown; to?: unknow
   };
   return {
     key, name: org.name,
-    by_person: [...people.values()].map((p) => ({ ...p, session_usd: r6(p.session_usd), orchestrator_usd: r6(p.orchestrator_usd), usd: r6(p.session_usd + p.orchestrator_usd) }))
+    by_person: [...people.values()].map((p) => ({ ...p, session_usd: r6(p.session_usd), orchestrator_usd: r6(p.orchestrator_usd),
+      ...(p.run_usd != null ? { run_usd: r6(p.run_usd) } : {}), usd: r6(p.session_usd + p.orchestrator_usd + (p.run_usd ?? 0)) }))
       .sort((a, b) => b.usd - a.usd),
     by_model: group((r) => r.model).map(({ k, ...x }) => ({ model: k, provider: null, ...x, requests: null })),
     by_agent: group((r) => r.agent).map(({ k, ...x }) => ({ agent: k, ...x })),
     by_product: group((r) => r.product).map(({ k, ...x }) => ({ product: k, ...x })),
+    // Runs by kind (mold_v0-053), only when the range has any.
+    ...(runRows.length ? { by_run_kind: [...runRows.reduce((m, r) => { const x = m.get(r.kind) ?? { kind: r.kind, usd: 0, runs: 0 }; x.usd = r6(x.usd + n(r.usd)); x.runs += n(r.runs); return m.set(r.kind, x); },
+      new Map<string, { kind: string; usd: number; runs: number }>()).values()].sort((a, b) => b.usd - a.usd) } : {}),
   };
 }
 

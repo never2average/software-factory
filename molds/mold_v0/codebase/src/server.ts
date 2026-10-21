@@ -14,7 +14,8 @@ import { z } from "zod";
 import * as q from "./queries.js";
 import * as research from "./research.js";
 import type { Org } from "./auth.js";
-import { recordMcpEvent } from "./analytics.js";
+import { errorClass, jsonBytes, recordMcpEvent } from "./analytics.js";
+import { limitsFor } from "./rate-limits.js";
 import * as memory from "./context.js";
 import * as vis from "./visibility.js";
 import { registerPackTools, reserveShellTools } from "./packs.js";
@@ -316,17 +317,17 @@ async function runToolInner(org: Org, name: ToolName, args: Record<string, unkno
     if (needs && org.role && !canAccount(org.role, needs)) throw new Error(accountRefusal(needs).message);
     // Row-level security (src/tenant-scope.ts): the tool's queries can reach this organization's rows only.
     const data = await withTenant(org.orgId, () => (handlersFor(org)[name] as (a: unknown) => Promise<Data>)(args ?? {}));
-    recordMcpEvent(org, { method: "tools/call", name, ms: performance.now() - t0 });
     const structured = fitPayload(JSON.parse(JSON.stringify(data))); // Dates -> ISO strings
     const note = structured.truncated
       ? " (Result shortened to fit the host's size limit: page with offset/limit, lower limit, or narrow the filters for the rest.)"
       : "";
     // A journey step waiting for this person (src/journeys.ts): at most one a day; get_started always shows it.
     const nudge = await nudgeForChat(org, { force: name === "get_started" }).catch((e) => { console.error("nudge:", (e as Error).message); return null; });
-    return {
-      content: [{ type: "text", text: `${summarize(structured as Data)}${note}\n\n${JSON.stringify(structured)}${nudge ? chatLine(nudge) : ""}` }],
+    const result = {
+      content: [{ type: "text" as const, text: `${summarize(structured as Data)}${note}\n\n${JSON.stringify(structured)}${nudge ? chatLine(nudge) : ""}` }],
       structuredContent: nudge ? { ...structured, nudge: { message: nudge.message, prompt: nudge.prompt } } : structured,
     };
+    return capResult(org, name, result, t0, args);
   } catch (err) {
     // Database errors (SQLSTATE codes) can echo other rows' values, e.g. a unique-key clash revealing that another
     // organization uses a slug; callers get a generic message, never the raw text.
@@ -336,9 +337,24 @@ async function runToolInner(org: Org, name: ToolName, args: Record<string, unkno
     if (e.code === "42501") console.error(`tool ${name}: refused by the database: ${e.message}`);
     const message = typeof e.code === "string" && /^[0-9A-Z]{5}$/.test(e.code)
       ? `The request could not be completed (database error ${e.code}). Check the arguments and try again.` : e.message;
-    recordMcpEvent(org, { method: "tools/call", name, ok: false, error: message, ms: performance.now() - t0 });
+    recordMcpEvent(org, { method: "tools/call", name, ok: false, error: message, ms: performance.now() - t0, error_class: errorClass(err), req_bytes: jsonBytes(args) });
     return { isError: true, content: [{ type: "text", text: message }] };
   }
+}
+
+/**
+ * The answer's size cap (mold_v0-018, src/rate-limits.ts mcp.max_response_bytes) and the call's record with its sizes
+ * (mold_v0-008): an answer over the cap is refused with a plain error rather than sent, and recorded as a limit.
+ */
+export function capResult(org: Org, name: string, result: CallToolResult, t0: number, args: unknown): CallToolResult {
+  const bytes = jsonBytes(result), max = limitsFor().mcp.max_response_bytes, ms = performance.now() - t0, req_bytes = jsonBytes(args);
+  if (bytes > max) {
+    const error = `The answer is too large (${Math.ceil(bytes / 1024)} KB; at most ${Math.floor(max / 1024)} KB). Ask for less: page, filter or narrow it.`;
+    recordMcpEvent(org, { method: "tools/call", name, ok: false, error, ms, error_class: "limit", req_bytes, res_bytes: bytes });
+    return { isError: true, content: [{ type: "text", text: error }] };
+  }
+  recordMcpEvent(org, { method: "tools/call", name, ms, req_bytes, res_bytes: bytes, ...(result.isError ? { ok: false, error_class: "error" } : {}) });
+  return result;
 }
 
 const WIDGET_DESCRIPTION =
