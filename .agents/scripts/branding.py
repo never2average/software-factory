@@ -279,6 +279,8 @@ def set_brand(target, args):
         p = os.path.join(ST, "application", ident, "application.json"); doc = load(p)
         cur = doc.setdefault("surface", {}).get("branding") or {}
         nb = normalize(cur, opt("--name"), opt("--color"), opt("--logo"), opt("--tagline"))
+        why = name_problem(nb["product_name"], doc.get("mold_id"))
+        if why: sys.exit(why + ". Nothing was written.")
         doc["surface"]["branding"] = nb
         # the workspace tile follows the mark, unless the source deployment already had one
         org = doc.setdefault("workspace", {}).setdefault("org", {})
@@ -357,7 +359,7 @@ def apply_overlay(build_dir, b, rules):
     # vector mark. The mold's own app/icon.svg is replaced or removed, never left behind.
     svg, inner = read_mark(b)
     fav = favicon_lib(); icons, icon_info = fav.build_set(b.get("icon_svg") or "", *mark_inputs(b), node_cwd=build_dir)
-    fav.write_set(build_dir, icons); icon_v = fav.version(icons)
+    fav.write_set(build_dir, icons, rules.get("favicon")); icon_v = fav.version(icons)
     applied.append("icons:" + icon_info["kind"]); apply_overlay.icon_info = icon_info
     mark_src = "/icon.svg" if icon_info["svg"] else f"/icon-192.png?v={icon_v}"
 
@@ -378,11 +380,21 @@ def apply_overlay(build_dir, b, rules):
         if r_.returncode: sys.exit("the deployment profile could not be generated with the brand: " + (r_.stdout + r_.stderr).strip()[-400:])
         applied.append("profile:90-brand")
 
+    # A mold whose names come from a profile FILE the codebase reads (rules "profile"; mold_v0's profile.json, which
+    # scripts/gen-packs.mjs merges into the generated profile modules): the brand's name and words are written into
+    # that file's fields and the mold's own generator is re-run. No source file is rewritten for the name.
+    if rules.get("profile"):
+        applied += write_profile(build_dir, b, rules["profile"])
+
     subs = {"description_literal": esc(b.get("description") or f"{name} — {b.get('tagline', '')}".strip(" —")),
             "tagline": jsx_text(b.get("tagline", "")), "auth_mark_jsx": auth_mark_jsx(inner, mark_src),
             "layout_icons": fav.LAYOUT_ICONS_TS, "manifest_icons": fav.manifest_icons_ts(icon_v)}
+    if b.get("brand_color"): subs["brand_color"] = b["brand_color"]
     for r in rules["replacements"]:
         if profiled and r.get("via_profile"): continue
+        if r.get("needs") and not b.get(r["needs"]): continue        # e.g. a theme colour only when the brand has a colour
+        if r.get("needs") == "brand_color" and not re.fullmatch(r"#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}", str(b["brand_color"])):
+            sys.exit(f"branding rule {r['id']}: the brand colour {b['brand_color']!r} is not a hex colour like #1F6F5C; set it with branding.py <app> set --color")
         p = f(r["file"]); s = open(p).read()
         if r["find"] not in s:
             sys.exit(f"branding rule {r['id']} no longer matches {rules['files'][r['file']]}; the mold moved. "
@@ -409,30 +421,94 @@ def apply_overlay(build_dir, b, rules):
             if i < 0: sys.exit(f"palette block {blk['id']} not found in {rules['files']['globals']}; the mold moved")
             end = s.index("}", i + len(blk["anchor"]))
             seg = s[i:end]
+            only = rules.get("palette_tokens")          # a mold that takes only the brand-carrying tokens keeps its own neutrals
             for tok, val in pal[blk["scheme"]].items():
+                if only and tok not in only: continue
                 # count the substitution, not the text change: a token whose brand value equals the
                 # mold's (destructive red) is still correctly set.
                 seg, n = re.subn(rf"(--{re.escape(tok)}:\s*)[^;]+;", lambda m: m.group(1) + val + ";", seg, count=1)
                 if n != 1 and f"--{tok}:" in seg: sys.exit(f"could not set --{tok} in {blk['id']}")
-            if b.get("radius"): seg = re.sub(r"(--radius:\s*)[^;]+;", lambda m: m.group(1) + b["radius"] + ";", seg, count=1)
+            if b.get("radius") and (not only or "radius" in only): seg = re.sub(r"(--radius:\s*)[^;]+;", lambda m: m.group(1) + b["radius"] + ";", seg, count=1)
             s = s[:i] + seg + s[end:]
         open(p, "w").write(s); applied.append("palette")
     return applied
 
-def build_copy(app_id, mold_dir, force=False):
+def slug_for(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:63] or "app"
+
+def profile_values(b, spec):
+    """{field: value} the brand writes into the mold's profile file. The tagline-derived fields only when the brand has a
+    tagline of its own (not mold_v1's default, which is another mold's words)."""
+    name = b["product_name"]; tag = b.get("tagline") or ""
+    own_tag = bool(tag) and tag != DEFAULT_TAGLINE
+    vals = {"name": name, "slug": slug_for(name), "tagline": tag if own_tag else "",
+            "description": (b.get("description") or "") if own_tag else ""}
+    if spec.get("refuse") and re.search(spec["refuse"], name): sys.exit(name_refused(name, spec))
+    out = {}
+    for field, tmpl in spec["fields"].items():
+        keys = re.findall(r"\{(\w+)\}", tmpl)
+        if any(k not in vals for k in keys): sys.exit(f"branding rules: profile field {field} uses an unknown value ({tmpl})")
+        if any(not vals[k] for k in keys):
+            if field in (spec.get("neutral") or {}): out[field] = spec["neutral"][field]   # never the codebase product's words
+            continue
+        out[field] = tmpl.format(**vals)
+    return out
+
+def name_refused(name, spec):
+    return f"the brand name {name!r} has a character this mold's profile cannot carry (any of < > \" or a line break); choose another name"
+
+def name_problem(name, mold_id):
+    """A sentence when this mold's profile cannot carry the name (molds/<mold>/branding/rules.json profile.refuse), else ''."""
+    p = os.path.join(ROOT, "molds", str(mold_id or ""), "branding", "rules.json")
+    try: spec = (load(p).get("profile") or {}) if os.path.isfile(p) else {}
+    except ValueError: return ""
+    return name_refused(name, spec) if spec.get("refuse") and name and re.search(spec["refuse"], name) else ""
+
+def write_profile(build_dir, b, spec):
+    """Write the brand into the mold's profile file (fields only; every other field kept) and run its generator."""
+    p = os.path.join(build_dir, spec["file"])
+    doc = load(p) if os.path.isfile(p) else {}
+    vals = profile_values(b, spec)
+    doc.update(vals)
+    doc["$comment"] = "Written by the factory's branding step (branding.py): this application's own brand over the mold's profile."
+    if os.path.lexists(p): os.remove(p)                       # never write through a hard link into the mold
+    with open(p, "w") as fh: fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    r = subprocess.run(spec["generator"], cwd=build_dir, capture_output=True, text=True)
+    if r.returncode: sys.exit("the profile could not be generated with the brand: " + (r.stdout + r.stderr).strip()[-400:])
+    return ["profile:" + ",".join(sorted(vals))]
+
+def copy_rules(mold_dir):
+    """molds/<mold>/mold.json "build_copy": the extra paths a build copy leaves out and the node_modules folders it links.
+    None for a mold without one (mold_v1): the copy is made exactly as it always was."""
+    p = os.path.join(os.path.dirname(os.path.abspath(mold_dir)), "mold.json")
+    try: return load(p).get("build_copy") if os.path.isfile(p) else None
+    except ValueError: return None
+
+def build_copy(app_id, mold_dir, force=False, root=None):
     """build/<app_id>/: the per-application copy of the mold that brand and packs are applied to. The mold itself
     is never edited; this is the only place an application's own code exists."""
-    build_dir = os.path.join(ROOT, "build", app_id)
+    build_dir = os.path.join(root or ROOT, "build", app_id)
     if os.path.exists(build_dir) and not force: shutil.rmtree(build_dir)
     os.makedirs(build_dir, exist_ok=True)
+    cr = copy_rules(mold_dir)
     # Source tree only. node_modules is hard-linked (never written, so the mold cannot be touched)
     # and the build artefact directories stay per-app.
     subprocess.run(["rsync", "-a", "--delete", "--exclude", "node_modules", "--exclude", ".next",
                     "--exclude", ".vercel", "--exclude", ".eve", "--exclude", ".env.local",
+                    *[x for e in ((cr or {}).get("exclude") or []) for x in ("--exclude", e)],
                     mold_dir + "/", build_dir + "/"], check=True)
-    nm = os.path.join(build_dir, "node_modules")
-    if not os.path.exists(nm):
-        subprocess.run(["cp", "-al", os.path.join(mold_dir, "node_modules"), nm], check=True)
+    if cr is None:
+        nm = os.path.join(build_dir, "node_modules")
+        if not os.path.exists(nm):
+            subprocess.run(["cp", "-al", os.path.join(mold_dir, "node_modules"), nm], check=True)
+        return build_dir
+    # A mold that names its node_modules folders (mold_v0: the API's and the console's) has each linked when the mold
+    # has it installed; one that is not installed is left out (the image and Vercel builds install their own).
+    for d in cr.get("node_modules") or []:
+        src, nm = os.path.join(mold_dir, d), os.path.join(build_dir, d)
+        if os.path.isdir(src) and not os.path.exists(nm):
+            os.makedirs(os.path.dirname(nm), exist_ok=True)
+            subprocess.run(["cp", "-al", src, nm], check=True)
     return build_dir
 
 def prepare(app_id, app, mold_dir, force=False):
@@ -460,7 +536,18 @@ def check_build(build_dir, b, rules):
     """What is wrong with a prepared copy's brand, as plain sentences ([] when it is right)."""
     name = b.get("product_name"); old = rules["product_name_default"]; bad = []
     gen = os.path.join(build_dir, "lib", "deployment-profile.generated.ts")
-    if name and name != old and os.path.exists(gen):
+    if name and rules.get("profile"):
+        # a profile-file mold (mold_v0): the profile file and every module generated from it carry the brand's values
+        spec = rules["profile"]; want = profile_values(b, spec)
+        p = os.path.join(build_dir, spec["file"])
+        have = load(p) if os.path.isfile(p) else {}
+        for k, v in want.items():
+            if have.get(k) != v: bad.append(f"{spec['file']} says {k} is {have.get(k)!r}, not {v!r}")
+        for g in spec.get("generated") or []:
+            gp = os.path.join(build_dir, g); txt = open(gp).read() if os.path.isfile(gp) else ""
+            for k, v in want.items():
+                if f"{json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}" not in txt: bad.append(f"{g} does not carry {k} {v!r} (the generator was not re-run)")
+    elif name and name != old and os.path.exists(gen):
         # profiled mold: the name lives in the generated profile, and nowhere in source
         if f'"name": {json.dumps(name, ensure_ascii=False)}' not in open(gen).read(): bad.append(f"the generated deployment profile does not carry the product name {name!r}")
     elif name and name != old:
@@ -476,7 +563,8 @@ def check_build(build_dir, b, rules):
         for scheme in ("light", "dark"):
             for tok, val in (b.get("tokens", {}).get(scheme) or {}).items():
                 if tok in pal[scheme]: pal[scheme][tok] = val
-        missing = [f"--{t}" for t in ("background", "primary", "ring") if f"--{t}: {pal['light'][t]};" not in css]
+        only = rules.get("palette_tokens")
+        missing = [f"--{t}" for t in ("background", "primary", "ring") if (not only or t in only) and f"--{t}: {pal['light'][t]};" not in css]
         if missing: bad.append("the light palette does not carry " + ", ".join(missing))
         if f"--primary: {pal['dark']['primary']};" not in css: bad.append("the dark palette does not carry --primary")
     bad += check_icons(build_dir, b, rules)
@@ -488,8 +576,9 @@ def check_icons(build_dir, b, rules):
     fav = favicon_lib()
     kind = fav.read_mark(b.get("icon_svg") or "", *mark_inputs(b))["kind"]
     # a raster logo must ship no icon.svg; whether a vector one does depends on sharp having read it, so either is right
-    bad = fav.check_set(build_dir, expect_svg=False if kind == "raster" else None)
-    has_svg = os.path.isfile(os.path.join(build_dir, fav.ICON_SVG))
+    dirs = rules.get("favicon")
+    bad = fav.check_set(build_dir, expect_svg=False if kind == "raster" else None, **({"dirs": dirs} if dirs else {}))
+    has_svg = os.path.isfile(os.path.join(build_dir, fav.placed(fav.ICON_SVG, dirs)))
     def text(key):
         p = os.path.join(build_dir, rules["files"].get(key, ""))
         return open(p).read() if key in rules["files"] and os.path.isfile(p) else None
@@ -526,9 +615,12 @@ def self_test():
     def ok(c, what):
         checks.append(what)
         if not c: raise AssertionError(what)
+    if subprocess.run(["node", "-v"], capture_output=True).returncode:
+        print("branding: node is not on this machine; the overlay checks were skipped"); return 0
+    v0 = self_test_v0(ok)
     mold = os.path.join(ROOT, "molds", "mold_v1"); code = os.path.join(mold, "codebase")
-    if not os.path.isfile(os.path.join(code, "app", "layout.tsx")) or subprocess.run(["node", "-v"], capture_output=True).returncode:
-        print("branding: the mold is not on this machine (mold.py fetch mold_v1); the overlay checks were skipped"); return 0
+    if not os.path.isfile(os.path.join(code, "app", "layout.tsx")):
+        print(f"branding: {len(checks)} checks passed ({v0} of them: mold_v0's rules); mold_v1 is not on this machine (mold.py fetch mold_v1), so its overlay checks were skipped"); return 0
     rules = load(os.path.join(mold, "branding", "rules.json"))
     logo = fav.png_encode(fav._disc(96, (30, 30, 30), 8))
     def stamp(t, b):
@@ -570,8 +662,72 @@ def self_test():
         html = fav.preview_html(favicon_set(b, None)[1])
         ok('width="16" height="16"' in html and 'width="180" height="180"' in html, "preview: the tab icon at 16 and 32 px and the apple icon")
     ok(all(open(os.path.join(code, rel), "rb").read() == v for rel, v in before.items()), "the mold's own files are untouched")
-    print(f"branding: {len(checks)} checks passed")
+    print(f"branding: {len(checks)} checks passed ({v0} of them: mold_v0's rules, mold_v0-024)")
     return 0
+
+def self_test_v0(ok):
+    """mold_v0's rules (molds/mold_v0/branding/rules.json) on a scratch copy of its codebase: the brand reaches the profile
+    and the modules generated from it, the favicon set lands in the console's web/, the brand colour in its theme's
+    brand tokens only, and NOTHING ELSE changes (no source file is rewritten). Then `prepare` and `check` through the
+    command line, for a throwaway app under a temp factory root. Nothing under the real build/, state/ or the mold."""
+    import tempfile, hashlib
+    seen = []
+    def ok_(c, what): seen.append(what); ok(c, what)
+    mold = os.path.join(ROOT, "molds", "mold_v0"); code = os.path.join(mold, "codebase"); rules = load(os.path.join(mold, "branding", "rules.json"))
+    def tree(d):
+        out = {}
+        for dp, dn, fn in os.walk(d):
+            dn[:] = [x for x in dn if x != "node_modules"]
+            for f in fn: p = os.path.join(dp, f); out[os.path.relpath(p, d)] = hashlib.sha256(open(p, "rb").read()).hexdigest()
+        return out
+    before = tree(code)
+    with tempfile.TemporaryDirectory() as t:
+        b = os.path.join(t, "copy"); subprocess.run(["rsync", "-a", "--exclude", "node_modules", code + "/", b + "/"], check=True)
+        brand = normalize({}, name="Acme Ops", color="#1F6F5C", tagline="Tools for small teams.")
+        applied = apply_overlay(b, brand, rules)
+        ok_(any(x.startswith("profile:") for x in applied) and "manifest_icons" in applied and "manifest_theme_color" in applied and "palette" in applied, f"mold_v0: the profile, the manifest and the palette rules applied: {applied}")
+        prof = load(os.path.join(b, "profile.json"))
+        ok_(prof["name"] == prof["console_title"] == prof["email_sender_name"] == "Acme Ops" and prof["mcp_server_name"] == "acme-ops"
+            and prof["short_description"] == "Tools for small teams." and prof["console_description"].startswith("Acme Ops") and prof["email_from_address"] == load(os.path.join(code, "profile.json"))["email_from_address"],
+            f"mold_v0: the brand's name and words are in profile.json, every other field kept: {prof}")
+        for g in rules["profile"]["generated"]:
+            ok_('"name": "Acme Ops"' in open(os.path.join(b, g)).read(), f"mold_v0: {g} is regenerated with the brand")
+        changed = {k for k, v in tree(b).items() if before.get(k) != v}
+        allowed = {"profile.json", *rules["profile"]["generated"], rules["files"]["manifest"], rules["files"]["globals"]} | {fav for fav in (
+            "web/src/app/favicon.ico", "web/src/app/icon.png", "web/src/app/apple-icon.png", "web/src/app/icon.svg",
+            "web/public/icon-192.png", "web/public/icon-512.png", "web/public/icon-maskable-512.png")}
+        ok_(changed <= allowed and {"profile.json", "web/public/icon-192.png", "web/src/app/favicon.ico", rules["files"]["globals"]} <= changed,
+            f"mold_v0: the overlay changes the profile, its generated modules, the manifest, the theme and the icons, and nothing else: {sorted(changed - allowed)}")
+        css = open(os.path.join(b, rules["files"]["globals"])).read(); css0 = open(os.path.join(code, rules["files"]["globals"])).read()
+        pal = palette(brand["brand_color"], brand["neutral_chroma"])
+        ok_(f"--primary: {pal['light']['primary']};" in css and f"--primary: {pal['dark']['primary']};" in css and "--background: oklch(0.9911 0 0);" in css
+            and len(css.splitlines()) == len(css0.splitlines()), "mold_v0: the theme takes the brand's primary and ring; its neutrals are the mold's")
+        ok_(check_build(b, brand, rules) == [], f"mold_v0: check passes on the branded copy: {check_build(b, brand, rules)}")
+        shutil.copy(os.path.join(code, "profile.json"), os.path.join(b, "profile.json"))
+        ok_(any("profile.json says name" in x for x in check_build(b, brand, rules)), "mold_v0: check finds a profile without the brand")
+        shutil.copy(os.path.join(code, rules["profile"]["generated"][0]), os.path.join(b, rules["profile"]["generated"][0]))
+        ok_(any("the generator was not re-run" in x for x in check_build(b, brand, rules)), "mold_v0: check finds a generated profile that was not regenerated")
+        nb = normalize({}, name="Plain")
+        ok_(profile_values(nb, rules["profile"]) == {"name": "Plain", "console_title": "Plain", "email_sender_name": "Plain", "mcp_server_name": "plain",
+                                                      **rules["profile"]["neutral"]},
+            "mold_v0: with no tagline of its own the descriptions are the shell's neutral words: never mold_v1's default tagline, never the codebase product's")
+        try: profile_values(normalize({}, name='Acme "Ops"'), rules["profile"]); ok_(False, "a name the generator refuses")
+        except SystemExit as e: ok_("cannot carry" in str(e) and name_problem('Acme "Ops"', "mold_v0") and not name_problem('Acme "Ops"', "mold_v1"),
+                                    "mold_v0: a name its profile cannot carry is refused up front (set, intake); mold_v1 unchanged")
+        only_theme = dict(rules, profile=None, palette_blocks=[], replacements=[r for r in rules["replacements"] if r.get("needs") == "brand_color"])
+        try: apply_overlay(os.path.join(t, "copy"), dict(brand, brand_color="#1F6F5C', x: 1, y: '"), only_theme); ok_(False, "a bad colour")
+        except SystemExit as e: ok_("not a hex colour" in str(e), "mold_v0: a brand colour that is not hex is never written into the manifest's code")
+        # the command line, for a throwaway app under a temp factory root (the scripts and the mold linked, read-only)
+        f = os.path.join(t, "factory"); os.makedirs(os.path.join(f, ".claude")); os.makedirs(os.path.join(f, "molds")); os.makedirs(os.path.join(f, "state", "application", "zz_brand"))
+        os.symlink(os.path.dirname(os.path.abspath(__file__)), os.path.join(f, ".claude", "scripts")); os.symlink(mold, os.path.join(f, "molds", "mold_v0"))
+        json.dump({"app_id": "zz_brand", "mold_id": "mold_v0", "status": "planned", "surface": {"branding": brand}}, open(os.path.join(f, "state", "application", "zz_brand", "application.json"), "w"))
+        me = os.path.join(f, ".claude", "scripts", "branding.py")
+        r1 = subprocess.run([sys.executable, me, "zz_brand", "prepare"], capture_output=True, text=True)
+        r2 = subprocess.run([sys.executable, me, "zz_brand", "check"], capture_output=True, text=True)
+        ok_(r1.returncode == 0 and "branded build copy: build/zz_brand" in r1.stdout and r2.returncode == 0 and "branding ok" in r2.stdout,
+            f"mold_v0: branding.py <app> prepare, then check, for an app under a temp factory root: {(r1.stdout + r1.stderr)[-300:]} {(r2.stdout + r2.stderr)[-300:]}")
+    ok_(tree(code) == before, "mold_v0: the mold's own files are untouched")
+    return len(seen)
 
 def main(a):
     if "--self-test" in a: sys.exit(self_test())

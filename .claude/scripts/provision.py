@@ -146,7 +146,8 @@ DNS check, key pair, hidden prompt, env file and firewall rules, reused), and ta
 CI gate applies to its deploys. When its mold.json declares "rls" (mold_v0 since mold_v0-031), the deploy also runs the
 product's own row-level security check against the deployed database and records datastores.postgres.rls_verified
 (mold_v0-051); a failure is a failed health check. It adds --lane-key [--dry-run] [--yes] (an organisation of the app's own for the
-lanes' MCP check). Its --help: python3 .claude/scripts/lib/single_service.py --help
+lanes' MCP check). An app of it with packs or a brand is deployed from build/<app_id>/, made afresh for every deploy by
+branding.py prepare and packs.py apply/verify under the mold's own rules (mold_v0-024). Its --help: python3 .claude/scripts/lib/single_service.py --help
 
 DATABASE: the free path is Neon on the Vercel Marketplace. Supabase's free tier is exhausted;
 Neon's is not, and an unattached Neon resource already sits on this team, so app #2 costs nothing.

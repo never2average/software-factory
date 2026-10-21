@@ -38,8 +38,8 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 
 This is the seam the generalised shell exposes (mold_v0-038, record areas mold_v0-047). **The shell side is built
 (mold_v0-038)**; the product's own tools, pages and tables are still in the shell until mold_v0-039 moves them into
-its pack, and the factory side (`packs.py` for mold_v0) is mold_v0-024, so `mold.json` still says packs are "not
-needed". What 038 wired, in `molds/mold_v0/codebase`:
+its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold_v0 app's packs under the rules in
+[mold.json](mold.json) `packs` (see "In the factory" below). What 038 wired, in `molds/mold_v0/codebase`:
 
 - `scripts/gen-packs.mjs` (`npm run gen:packs`, `npm run check:packs`; the smoke test fails on a stale registry) reads
   every `packs/<id>/pack.json` and `profile.json` and writes `src/packs.generated.ts`, `src/pack-migrations.generated.ts`
@@ -205,11 +205,32 @@ patched locally (changes go upstream by pull request).
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
 `packs.py apply <app>` copies them into `build/<app_id>/`, then runs the mold's generators there; deploys and lanes
-use that build copy, never `molds/mold_v0/codebase`. Today `packs.py` carries mold_v1's rules (where a pack may add
-files, which generator proves the mold supports packs) and refuses mold_v0. mold_v0-024 moves those rules into each
-mold's `mold.json`: the paths a pack may add to under mold_v0 (its pack directory, `{pack}`-named migrations, console
-pages under the pack's route), the generator to run (`gen-packs.mjs`), mold_v0's brand rules, and deploy and lanes from
-the build copy. A pack file that would replace a shell file is refused, as for mold_v1.
+use that build copy, never `molds/mold_v0/codebase`. The rules are this mold's own (mold_v0-024), in [mold.json](mold.json)
+`packs` (a mold without that block, mold_v1, keeps the rules built into `packs.py`): a pack id is the shell's own
+(`^[a-z][a-z0-9_]{1,30}$`, also its table prefix), a pack may add files only under `packs/{pack}/` with `{pack}` its own id
+(its `pack.json`, entry, migrations and run programs; its console pages render through the shell's generic page and need
+no files of their own) and must add `packs/{pack}/pack.json` (no hidden or `node_modules` folder, which `gen-packs.mjs` does not read, and no
+link), the support test is `scripts/gen-packs.mjs`, the generator
+`node scripts/gen-packs.mjs` and the check `node scripts/gen-packs.mjs --check` (`packs.py verify`). A pack file that would
+replace a codebase file is refused, as for mold_v1, and a pack folder left in a build copy by an earlier apply for a pack
+the app no longer names is pruned. `build_copy` in mold.json says what the copy leaves out (the server deploy's own
+excludes) and which installed `node_modules` folders it links (never written).
+
+**Brand.** [branding/rules.json](branding/rules.json): `branding.py <app> set` takes a name, a colour and a logo as for any
+app; `prepare` writes the name and words into the copy's `profile.json` (name, console title, email sender, MCP server
+name, and the descriptions from the brand's own tagline, else the shell's neutral words, never the product's; a name
+with a character the profile cannot carry is refused at `set` and intake; the sender address is kept, a mail-domain
+setting) and re-runs `gen-packs.mjs`, writes the favicon set to
+`web/src/app` and `web/public` and points the web manifest at it, and sets the console theme's brand tokens (primary, its
+foreground, ring) from the colour, its neutrals kept; `check` proves each. It rewrites no source code, so until
+mold_v0-039 moves the product's pages into its pack, the landing page and some console text still carry the product's
+own words.
+
+**Deploy and lanes from the build copy.** An app with packs or a brand is deployed from `build/<app_id>/`, made afresh
+from the codebase for every deploy before anything is created or contacted (`lib/single_service.py` `build_source`:
+`branding.py prepare`, then `packs.py apply` and `verify`); a step that fails stops the deploy with nothing created, and
+the app is not marked reverted. An app with neither deploys from the codebase, as before. The lanes of an app with packs
+run in its unbranded lane copy `build/<app_id>.lane/` (`packs.py lane-copy`), as mold_v1's do.
 
 **Two proofs.**
 
@@ -230,8 +251,9 @@ health check, the row-level security check) is read from the codebase's own `dep
 `deploy/bootstrap.sh`, `Dockerfile` and `package.json` each time.
 
 **Mint.** `mint.py new <app> --brief briefs/<app>.md` (the brief says `Mold: mold_v0`) runs the same ten stations as any
-app. *packs*, *brand*, *workspaces* and *package* are "not needed", each with the reason in mold.json: no pack mechanism
-(until mold_v0-038 and 024) and no brand overlay yet, organisations made in the product's own console, no agent package. `code-request`, `code`
+app. *workspaces* and *package* are "not needed", each with the reason in mold.json: organisations made in the product's
+own console, no agent package. *packs* and *brand* read as for any app (mold_v0-024); intake takes `Packs:` and `Brand:`,
+`Brand colour:`, `Logo:` and `Tagline:` lines from the brief. `code-request`, `code`
 and `reuse-keys` refuse a mold_v0 app.
 
 **Intake.** The same four state files and schemas. It asks only where the app runs, unless the brief says ("its own

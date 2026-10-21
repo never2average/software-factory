@@ -41,6 +41,13 @@ Through provision.py (main_for):
                                                          private file outside the repository. It writes to the app's
                                                          data, so it runs only with --yes (exit 3 asks for the yes)
 
+THE APP'S OWN COPY (mold_v0-024). An app with packs (application.json "packs") or a brand (surface.branding) is deployed
+from build/<app_id>/, made afresh from the codebase at every deploy, before anything is created or contacted:
+branding.py prepare (the brand through the profile, the favicon set, the colours; molds/<mold_id>/branding/rules.json),
+then packs.py apply and verify (the mold's own pack rules, mold.json "packs"). An app with neither is deployed from the
+codebase exactly as before. The lanes grade build/<app_id>.lane/ for an app with packs (packs.py lane-copy), as for
+mold_v1. A step that fails stops the deploy with nothing created, and the app is not marked reverted.
+
 WHAT A compose_remote DEPLOY DOES, in order. Nothing before `up` changes what serves; `up` either ends on a stack that
 answered its health checks or switches `current` back to the release that served before and brings that up again.
    preflight  ON THIS MACHINE: every file the image build copies exists in the snapshot, every name the compose file
@@ -94,6 +101,9 @@ SCRIPTS = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
 TARGETS = ("compose_remote", "vercel")
 Stop = VR.Stop
+class NotBuilt(Stop):
+    """The app's own build copy (its brand, its packs) could not be made: nothing was created or contacted, so the app is
+    not marked reverted (provision.py says why and exits 1)."""
 class NeedsHuman(Stop):
     """Only the operator can do the next thing (a value only they hold). provision.py turns it into exit 3 through the
     `needs` it noted; it never marks the app reverted, because nothing was tried."""
@@ -610,7 +620,7 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
         {"id": "firewall", "title": "ufw: SSH, 80 and 443 only; fail2ban for ssh", "argv": ssh(g(f"bash {S['factory_dir']}/firewall.sh")), "timeout": 300},
         {"id": "names", "title": "which env names the server already holds (names only)", "argv": ssh(f"{S['sudo']}python3 {S['vr_tool']} env-names --file {S['env_file']}"), "timeout": 60},
         {"id": "release-dir", "title": f"a new release directory {R} beside the serving one", "argv": ssh(g(f"install -d -m 755 {R}")), "timeout": 60},
-        {"id": "source", "title": f"the mold's source (not a build) into {R}", "argv": VR.rsync_argv(S, source_dir, R, excludes=excludes, shown=shown), "timeout": 900},
+        {"id": "source", "title": f"the source (not a build) from {os.path.relpath(source_dir, ROOT) if os.path.isabs(source_dir) else source_dir}/ into {R}", "argv": VR.rsync_argv(S, source_dir, R, excludes=excludes, shown=shown), "timeout": 900},
         {"id": "env", "title": f"settings from state ({', '.join(F['config'])}) and the operator's values into {S['env_file']} (root, 600); every name still "
                                f"missing minted ON the server by the mold's own {F['mint'] or 'tool'}, which sees names, never values", "argv": ssh(env_cmd), "stdin": "NAME=value lines", "timeout": 120},
         {"id": "up", "title": f"current -> {rel}; docker compose -p {S['project']} up -d --build --wait (on failure: back to the release that served)",
@@ -683,7 +693,38 @@ def health_verdict(F, kv, public):
 # ---------------------------------------------------------------------------------------------------------
 # compose_remote: check, deploy, set-secret, rollback
 # ---------------------------------------------------------------------------------------------------------
-def source_for(app_id, app, root=None): return codebase(app["mold_id"], root)
+def uses_build(app):
+    """An app with packs or a brand is built from a copy of its own, build/<app_id>/ (mold_v0-024), as mold_v1's apps are;
+    one with neither is deployed from the codebase as it is, exactly as before."""
+    return bool(isinstance(app, dict) and (app.get("packs") or (app.get("surface") or {}).get("branding")))
+
+def source_for(app_id, app, root=None):
+    return os.path.join(root or ROOT, "build", app_id) if uses_build(app) else codebase(app["mold_id"], root)
+
+def build_source(app_id, app, root=None, say=print, run=subprocess.run):
+    """What a deploy ships: the codebase itself, or for an app with packs or a brand build/<app_id>/ made AFRESH from the
+    codebase for this deploy (never a copy left by an earlier run, which could carry a pack the app no longer names or
+    yesterday's codebase): the brand first (branding.py prepare: the profile, the favicon set, the colours), then the packs
+    (packs.py apply: the files, the mold's generators) and their checks (packs.py verify). Raises NotBuilt when a step
+    fails; nothing was created or contacted by then."""
+    if not uses_build(app): return codebase(app["mold_id"], root)
+    if root and run is subprocess.run:   # branding.py and packs.py work in THIS factory's tree, never a temp root's
+        raise NotBuilt(f"{app_id}: build_source with another factory root needs a stand-in runner; nothing was built")
+    build = source_for(app_id, app, root)
+    if os.path.isdir(build) and not os.path.islink(build): shutil.rmtree(build)
+    elif os.path.lexists(build): os.remove(build)
+    steps = []
+    if (app.get("surface") or {}).get("branding"): steps.append(("the brand", [sys.executable, os.path.join(SCRIPTS, "branding.py"), app_id, "prepare"]))
+    if app.get("packs"):
+        steps += [("the packs", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "apply", app_id]),
+                  ("the packs' checks", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "verify", app_id])]
+    for what, cmd in steps:
+        r = run(cmd, capture_output=True, text=True, cwd=root or ROOT)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode: raise NotBuilt(f"{app_id}: {what} could not be applied to build/{app_id}/, so nothing was created or deployed: {out[-400:] or 'no output'}")
+        if out: say("  " + out.splitlines()[-1])
+    if not os.path.isdir(build): raise NotBuilt(f"{app_id}: build/{app_id}/ was not made (no step wrote it), so nothing was created or deployed.")
+    return build
 
 def check(app_id, app, infra, adir, say=print, root=None):
     """Offline and read-only. Exit 0 = ready for --deploy-remote."""
@@ -1090,7 +1131,7 @@ def ensure_projects(app_id, infra, cb, K, P, adir=None, say=print, root=None):
             except SystemExit as e: raise Stop(str(e.code if e.code is not None else e))
     return names
 
-def vercel_plan(app_id, F, infra, man, K=None, cb=None):
+def vercel_plan(app_id, F, infra, man, K=None, cb=None, app=None):
     v = infra.get("vercel") or {}; names = vercel_projects(vercel_project(infra)); team = v.get("team", ""); sc = f" --scope {team}" if team else ""
     K = K or console_facts(cb or codebase(man["mold_id"]), man)
     minted = ", ".join(n for n in infra.get("secrets_derived") or [] if n != "DATABASE_URL")
@@ -1102,7 +1143,9 @@ def vercel_plan(app_id, F, infra, man, K=None, cb=None):
             f"{names.get('api')} only: the app's own Postgres, an empty free Neon database adopted or a new one from the Vercel Marketplace (provision.py's "
             f"Neon provisioning: proven empty in a throwaway project before it is connected); DATABASE_URL is the one the integration writes, never written here",
             f"{names.get('api')} only: minted if absent by the mold's own {F['mint']} in a private temp directory here (values never shown): {minted or 'nothing'}",
-            f"a build copy build/{app_id}/ of the snapshot (no node_modules, no .next); the deployment serving each project now is recorded",
+            (f"build/{app_id}/ made afresh from the codebase with this app's own " + " and ".join(x for x, y in (("brand (branding.py prepare)", (app.get("surface") or {}).get("branding")), ("packs (packs.py apply, then verify)", app.get("packs"))) if y)
+             + ", before anything is created; the deployment serving each project now is recorded" if uses_build(app)
+             else f"a build copy build/{app_id}/ of the snapshot (no node_modules, no .next); the deployment serving each project now is recorded"),
             f"vercel deploy --prod --yes --project {names.get('api')}{sc} from the copy; its address read back from Vercel; PUBLIC_URL set to it (one more deploy when it changed); "
             f"health: <api>{man['health_path']} answers 200 ok",
             f"{names.get('web')}: {K['api_env'] or '<the API-address variable>'} set to the API's address (nothing else of the API's: never DATABASE_URL, never a minted key; "
@@ -1268,7 +1311,7 @@ def _rollback_said(rec, names):
 
 def _stop_text(e): return str(e.code if isinstance(e, SystemExit) and e.code is not None else e)
 
-def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None):
+def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None, build_run=subprocess.run):
     """The two-project deploy: the api project first, then the console pointed at its address; health on both; when
     anything after the first deploy fails, both projects go back to what served before. Raises Stop with the reason."""
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
@@ -1278,6 +1321,8 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     if pre: raise Stop("The console project cannot be deployed from the mold's snapshot as it is; nothing was created:\n  - " + "\n  - ".join(pre))
     why = rls_tools_missing(cb, F.get("rls"))
     if why: raise Stop(f"{why}. Nothing was created or deployed.")
+    # An app with packs or a brand: its own copy, made afresh now, before anything is read or created (NotBuilt).
+    src = build_source(app_id, app, root, say=say, run=build_run)
     refuse_project(app_id, infra, P, root)
     # the values only the operator holds, BEFORE any project is created or renamed: a project that does not exist yet
     # holds no names, so every name it must hold is missing. Exit 3 (needs_human) through provision.py; not reverted.
@@ -1301,9 +1346,10 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     for n, val in mint_values(cb, F, want).items():
         P._set_env(n, val, cb, project=api); say(f"  {api}: {n} minted and written (not shown)")
     build = os.path.join(root or ROOT, "build", app_id); os.makedirs(build, exist_ok=True)
-    r = subprocess.run(["rsync", "-a", "--delete", *[x for e in F["excludes"] + [".next"] for x in ("--exclude", e)],
-                        cb.rstrip("/") + "/", build + "/"], capture_output=True, text=True)
-    if r.returncode: raise Stop(f"the build copy could not be made: {r.stderr.strip()[-200:]}")
+    if os.path.realpath(src) != os.path.realpath(build):    # build_source made build/<app_id>/ itself when the app has packs or a brand
+        r = subprocess.run(["rsync", "-a", "--delete", *[x for e in F["excludes"] + [".next"] for x in ("--exclude", e)],
+                            cb.rstrip("/") + "/", build + "/"], capture_output=True, text=True)
+        if r.returncode: raise Stop(f"the build copy could not be made: {r.stderr.strip()[-200:]}")
     for role, d in (("api", build), ("web", os.path.join(build, K["dir"]))):
         link = P._link_dir(names[role], cb)       # a throwaway temp directory: removed as soon as its link file is copied
         try:
@@ -1463,11 +1509,11 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
                 if dry:
                     say(f"{app_id}: --deploy --dry-run: a deploy would do, in this order (nothing is created by this dry run):")
                     K = console_facts(cb, man)
-                    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K), 1): say(f"  {i}. {l}")
+                    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
                     for p in console_preflight(K): say("  NOT READY (a real deploy refuses here, before anything is created): " + p)
                     return 0
                 try: return vercel_deploy(app_id, app, infra, adir, P, say=say, root=root)
-                except NeedsHuman: raise                      # nothing was tried, so nothing is reverted
+                except (NeedsHuman, NotBuilt): raise          # nothing was tried, so nothing is reverted
                 except Stop as e: revert(adir, app, str(e)); raise
             if "--verify-rls" in a: return verify_rls(app_id, app, infra, adir, P, say=say, root=root)
             for f in ("--rollback", "--smoke", "--verify-db"):
@@ -1496,12 +1542,14 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
         if "--deploy-remote" not in a: return check(app_id, app, infra, adir, say=say, root=root)
         if errs: raise Stop("the state does not validate; nothing was contacted:\n  " + "\n  ".join(errs))
         if dry:
-            print_plan(S, F, plan(S, F, cb), say=say)
+            print_plan(S, F, plan(S, F, source_for(app_id, app, root)), say=say)
+            if uses_build(app): say(f"  (before step 1: build/{app_id}/ made afresh from the codebase with this app's own brand and packs; nothing is contacted until it is)")
             for p in preflight(cb, F, S): say("  NOT READY (a real deploy refuses here, before contact): " + p)
             if "--out" in a: out = a[a.index("--out") + 1]; write_bundle(S, F, out); say(f"bundle written to {out} for reading; nothing was sent anywhere")
             return 0
         _ready_to_contact(S, app_id)
-        try: res = deploy(S, F, cb, say=say)
+        src = build_source(app_id, app, root, say=say)     # the codebase, or build/<app_id>/ afresh (packs, brand); NotBuilt: not reverted
+        try: res = deploy(S, F, src, say=say)
         except Stop as e:
             r_ = getattr(e, "rls", None)
             if r_ and not r_["passed"]:   # the deployed database was measured failing: never leave an older pass standing

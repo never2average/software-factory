@@ -711,6 +711,13 @@ def self_test():
        "  ...the migration test and the RLS check run offline only: no DATABASE_URL (nor MIGRATIONS_PG_URL) reaches them, the RLS check on a throwaway embedded database")
     ok(all(specs[l]["checks"] == [] and "skipped" in specs[l]["summary"] for l in ("load", "accessibility", "responsiveness")),
        "mold_v0's lanes with no harness of the product's own are empty, and say they are skipped, never pass")
+    # mold_v0-024: a mold_v0 app with packs is graded in its unbranded lane copy (mold + packs, packs.py lane-copy), as a
+    # mold_v1 app is; one with a brand only, or nothing, in the codebase itself
+    cv = lambda app: context("zz", "functional", "mold_v0", {"application": app, "infrastructure": cr}, "r.md")
+    ok(cv({"mold_id": "mold_v0", "packs": ["notes"]})["codebase"] == os.path.join(ROOT, "build", "zz.lane")
+       and cv({"mold_id": "mold_v0", "surface": {"branding": {"product_name": "Acme"}}})["codebase"] == os.path.join(ROOT, "molds", "mold_v0", "codebase")
+       and cv({"mold_id": "mold_v0"})["codebase"] == os.path.join(ROOT, "molds", "mold_v0", "codebase"),
+       "mold_v0: the lanes' cwd is build/<app>.lane/ for an app with packs, the codebase otherwise (the brand has its own check)")
     print(f"lanes: {len(checks)} checks passed (--json, exit codes, the lane lock, --background and status; mold_v0's lanes)")
     return 0
 
