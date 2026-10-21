@@ -28,6 +28,8 @@ import { OpsButton, SidePanel } from "./primitives";
 import { TYPE } from "./tokens";
 import { RecordFieldControl } from "./task-area";
 import { ActivityFeed, CommentThread } from "./entity-detail";
+import { RecordWorkflowSection } from "./record-workflow";
+import { areaRunsWorkflow } from "@/lib/record-workflow-view";
 import { TONE_CLASS, areaView, type AreaRow, type RecordAreas, type RecordField, type RecordRole } from "@/agent/lib/record-areas";
 import { RECORD_AREAS } from "@/agent/lib/record-areas.generated";
 import { preparePeriodWrite } from "@/agent/lib/period-area";
@@ -587,6 +589,7 @@ function PeriodDetail({
             })}
           </div>
         ) : null}
+        {areaRunsWorkflow(v.area) ? <RecordWorkflowSection area="periods" record={{ id: row.id }} refreshKey={cycle.updatedAt} /> : null}
         {ui.sections.map(section)}
       </div>
     </div>

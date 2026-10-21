@@ -30,6 +30,7 @@ import { RECORD_AREAS } from "./record-areas.generated.ts";
 import { areaView, type RecordAreas } from "./record-areas.ts";
 import { checkMove, moveEvent } from "./record-lifecycle.ts";
 import { periodDeclared, periodRow, periodStates, systemTarget } from "./period-area.ts";
+import { lockRecordWorkflow, recordWorkflowBound, resyncAfterSystemMove } from "../../lib/record-workflow-moves.ts";
 
 /** A workspace-scoped transaction (or the database handle inside one). */
 export type PeriodTx = Pick<PostgresJsDatabase<typeof schema>, "select" | "insert" | "update" | "delete">;
@@ -261,7 +262,10 @@ export async function rollOverEnded(tx: PeriodTx, orgId: string, wp: WorkPeriods
   for (let pass = 0; pass < 12; pass++) {
     const ended = (await listPeriods(tx, orgId)).filter((c) => !states.isClosed(c.state) && c.endsAt && c.endsAt.getTime() <= now);
     if (!ended.length) break;
-    for (const from of ended) {
+    for (const listed of ended) {
+      // The period's workflow lock BEFORE its row is written, as every door takes it, then the period as it is now.
+      const from = await lockedPeriod(tx, orgId, listed, areas);
+      if (!from || states.isClosed(from.state) || !from.endsAt || from.endsAt.getTime() > now) continue;
       const result = await rollOver(tx, orgId, from.id, { target: "next", actor: "system" }, wp, areas);
       if ("notFound" in result) continue;
       const closed = systemTarget(from.state, "done", areas) ?? states.done;
@@ -274,19 +278,45 @@ export async function rollOverEnded(tx: PeriodTx, orgId: string, wp: WorkPeriods
         event: rolloverSentence(result, wp),
       });
       await systemMove(tx, orgId, from, closed, areas);
+      await keepWorkflowInStep(tx, orgId, from, closed, areas);
       out.push({ from, result });
     }
   }
   // The period that has just begun is the active one.
-  const current = currentPeriod(await listPeriods(tx, orgId), now);
+  const listedCurrent = currentPeriod(await listPeriods(tx, orgId), now);
+  const current = listedCurrent && states.notStarted(listedCurrent.state) ? await lockedPeriod(tx, orgId, listedCurrent, areas) : null;
   if (current && states.notStarted(current.state)) {
     const active = systemTarget(current.state, "active", areas);
     if (active) {
       await tx.update(cycles).set({ state: active, updatedAt: new Date() }).where(and(eq(cycles.id, current.id), eq(cycles.orgId, orgId)));
       await systemMove(tx, orgId, current, active, areas);
+      await keepWorkflowInStep(tx, orgId, current, active, areas);
     }
   }
   return out;
+}
+
+/**
+ * A period the rollover is about to move, when its lifecycle runs a workflow: its workflow lock taken first, then the
+ * row read again (a door may have moved it since it was listed), in the order every door takes them (the lock, then
+ * the row), so a rollover and a door moving the same period never wait on each other in a cycle. null when it is gone.
+ * The row as listed otherwise (no workflow: no lock).
+ */
+async function lockedPeriod(tx: PeriodTx, orgId: string, listed: CycleRow, areas: RecordAreas): Promise<CycleRow | null> {
+  if (!recordWorkflowBound("periods", areas)) return listed;
+  await lockRecordWorkflow(tx as never, orgId, "periods", listed.id);
+  const [row] = await tx.select().from(cycles).where(and(eq(cycles.id, listed.id), eq(cycles.orgId, orgId), isNull(cycles.archivedAt))).limit(1);
+  return row ?? null;
+}
+
+/**
+ * A move the system made (rollover) of a period whose lifecycle runs a workflow: its instance is brought in line with
+ * the period's new state in this same transaction (lib/record-workflow-moves.ts resyncAfterSystemMove), so the
+ * workflow never refuses the period's next move against a step the rollover left behind. Nothing otherwise.
+ */
+async function keepWorkflowInStep(tx: PeriodTx, orgId: string, from: CycleRow, to: string, areas: RecordAreas): Promise<void> {
+  if (from.state === to) return;
+  await resyncAfterSystemMove(tx as never, orgId, "periods", { entityId: from.id, after: periodRow({ ...(from as unknown as Record<string, unknown>), state: to }) }, { areas });
 }
 
 /**

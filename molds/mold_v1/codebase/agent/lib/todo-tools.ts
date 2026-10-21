@@ -105,6 +105,9 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
   const { id, ...fields } = input as typeof input & { cycleId?: string | null; assignee?: string | null; title?: string };
   const orgId = await orgForSession(ctx);
   const actor = callerEmail(ctx);
+  // The evidence a workflow step may demand: the move's, never a field of the task (and no parameter without a workflow).
+  const evidence = WORKFLOW && typeof fields.evidence === "string" && fields.evidence.trim() ? fields.evidence : null;
+  if (WORKFLOW) delete fields.evidence;
   if (!WORK_PERIODS.enabled) delete fields.cycleId;
   if (WORK_PERIODS.individual) {
     if (fields.cycleId === "current") {
@@ -183,7 +186,7 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
     if (wf) {
       // The new task's instance, attached once the service made it; if not now, on its first move.
       const attached = item?.id
-        ? await withOrgDb(orgId, (tx) => attachCreatedRecord(tx, orgId, "tasks", { entityId: item.id, actor, check: prepared.lifecycle ?? null, comment: typeof fields.reason === "string" ? fields.reason : null, readRecord: () => storedTask(tx, orgId, item.id), deliver: (o, fn) => withOrgDb(o, fn as never) })).catch((error) => {
+        ? await withOrgDb(orgId, (tx) => attachCreatedRecord(tx, orgId, "tasks", { entityId: item.id, actor, check: prepared.lifecycle ?? null, comment: typeof fields.reason === "string" ? fields.reason : null, evidence, readRecord: () => storedTask(tx, orgId, item.id), deliver: (o, fn) => withOrgDb(o, fn as never) })).catch((error) => {
             console.error(`[upsert_todo] could not attach the workflow of task ${item.id}:`, error);
             return null;
           })
@@ -199,12 +202,12 @@ async function writeTodo(input: Record<string, unknown> & { id?: string }, ctx: 
   try {
     const comment = typeof fields.reason === "string" ? fields.reason : null;
     const opened = await withOrgDb(orgId, async (tx) => {
-      if (!id) return { lc: lifecycle, session: await openRecordWorkflow(tx, orgId, "tasks", { entityId: null, before: null, actor, comment }) };
+      if (!id) return { lc: lifecycle, session: await openRecordWorkflow(tx, orgId, "tasks", { entityId: null, before: null, actor, comment, evidence }) };
       await lockRecordWorkflow(tx, orgId, "tasks", id);
       const before = await storedTask(tx, orgId, id);
       const from = storedStateOf(TASKS, before);
       const enteredBy = before && from !== null && needsEnteredBy(TASKS, from) ? await whoEntered(tx, orgId, { type: "task", id }, TASKS, before, from) : null;
-      const session = before ? await openRecordWorkflow(tx, orgId, "tasks", { entityId: id, before, actor, comment }) : null;
+      const session = before ? await openRecordWorkflow(tx, orgId, "tasks", { entityId: id, before, actor, comment, evidence }) : null;
       return { lc: { ...lifecycle, before, enteredBy }, session };
     });
     return await run(opened.lc, { session: opened.session });
@@ -317,7 +320,9 @@ export const upsertTodoTool = modelFacing("upsert_todo", !TASKS.redefined
       linkId: z.string().nullable().optional(),
       linkLabel: z.string().nullable().optional().describe("Human label for the link chip."),
       assignee: z.string().nullable().optional().describe(`${TASKS.label("assignee", "Assignee")}: an email${TASKS.field("assignee")?.default === "{me}" ? "; you when omitted on create" : "; null = the creator"}.`),
-      ...(TAKES_COMMENT ? { reason: z.string().max(2000).optional().describe("Why you are making this move: the comment a move may need (sent back, asked for more, set aside).") } : {}),
+      ...(TAKES_COMMENT || WORKFLOW ? { reason: z.string().max(2000).optional().describe(WORKFLOW ? "Why you are making this move: the comment a move, or the workflow step it changes, may need." : "Why you are making this move: the comment a move may need (sent back, asked for more, set aside).") } : {}),
+      // A lifecycle that runs a workflow: a move may change a step that demands evidence (phase 7).
+      ...(WORKFLOW ? { evidence: z.string().max(4000).optional().describe("The evidence a workflow step may demand of this move: a link, or a document's id.") } : {}),
       ...(TASKS.ownFields.some((f) => !f.hidden && !f.computed)
         ? {
             custom: z
@@ -476,6 +481,8 @@ const PERIOD_COLUMNS = PERIOD_FIELDS.filter((f) => f.column);
 const PERIOD_OWN = PERIOD_FIELDS.filter((f) => !f.column);
 /** Some move of a period needs a comment, under an enforced lifecycle: the write tool takes one (`reason`). */
 const PERIOD_TAKES_COMMENT = Boolean(PERIOD_STATE && PERIOD_STATE.enforce !== "off" && (PERIODS.area.lifecycle?.transitions ?? []).some((t) => t.requires_comment));
+/** The period's lifecycle runs a workflow: a move may change a step that demands a comment or evidence (phase 7). */
+const PERIOD_WORKFLOW = PERIODS_DECLARED && recordWorkflowBound("periods");
 /** What a period is here, for the tools' descriptions: the area's card (its states and moves, its own fields, its rules). */
 const PERIOD_CARD = PERIODS_DECLARED ? describeArea("periods", undefined, VOCABULARY.records.account.singular) ?? "" : "";
 /** The words a declared period's tools say about its window and its name. */
@@ -501,7 +508,8 @@ const declaredPeriodParams = PERIODS_DECLARED
               .describe(`The ${PERIODS.noun}'s own fields, by key: only the ones you are changing; null clears one.`),
           }
         : {}),
-      ...(PERIOD_TAKES_COMMENT ? { reason: z.string().max(2000).optional().describe("Why you are making this move: the comment a move may need.") } : {}),
+      ...(PERIOD_TAKES_COMMENT || PERIOD_WORKFLOW ? { reason: z.string().max(2000).optional().describe(PERIOD_WORKFLOW ? "Why you are making this move: the comment a move, or the workflow step it changes, may need." : "Why you are making this move: the comment a move may need.") } : {}),
+      ...(PERIOD_WORKFLOW ? { evidence: z.string().max(4000).optional().describe("The evidence a workflow step may demand of this move: a link, or a document's id.") } : {}),
     }
   : {};
 /** A declared period as the tools answer it: its window, its state, its fields by key, its own ones under `custom`. */
@@ -739,9 +747,10 @@ export const upsertCycleTool = modelFacing("upsert_cycle", !WORK_PERIODS.individ
       const db = requireDb();
       const org = await orgForSession(ctx);
       const actor = callerEmail(ctx).toLowerCase();
-      // A declared period's own fields and state go through its one write path, beside the person's goal below.
+      // A declared period's own fields and state go through its one write path, beside the person's goal below; where
+      // its lifecycle runs a workflow, so does the move's `evidence` (writeDeclaredPeriod takes it out of the body).
       const declared: Record<string, unknown> = PERIODS_DECLARED
-        ? Object.fromEntries(Object.entries(input as Record<string, unknown>).filter(([k, x]) => x !== undefined && (k === "state" || k === "custom" || k === "reason" || PERIOD_COLUMNS.some((f) => f.key === k))))
+        ? Object.fromEntries(Object.entries(input as Record<string, unknown>).filter(([k, x]) => x !== undefined && (k === "state" || k === "custom" || k === "reason" || (PERIOD_WORKFLOW && k === "evidence") || PERIOD_COLUMNS.some((f) => f.key === k))))
         : {};
       const fields: Record<string, unknown> = {};
       if (name !== undefined) fields.name = name;

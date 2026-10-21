@@ -52,6 +52,11 @@ import {
 } from "./workspace-views";
 import { Burndown } from "./burndown";
 import { ActivityFeed, CommentThread } from "./entity-detail";
+import { NextStepLine, RecordWorkflowSection, useNextSteps } from "./record-workflow";
+import { areaRunsWorkflow } from "@/lib/record-workflow-view";
+
+/** A stored task's id (a task being created has none yet: its workflow section waits for it). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import {
   errMessage,
   opsFetch,
@@ -571,6 +576,10 @@ export function TodosPanel({
     return arr;
   }, [filtered, sort, TU, tv]);
   const selected = items?.find((t) => t.id === selectedId) ?? null;
+  // A tasks lifecycle that runs a workflow: each card says who holds the next step (one call for the list in hand).
+  const taskWorkflow = areaRunsWorkflow(areas.tasks);
+  const taskRefs = useMemo(() => (taskWorkflow ? sorted.slice(0, 100).map((t) => ({ id: t.id })) : []), [sorted, taskWorkflow]);
+  const taskNextSteps = useNextSteps("tasks", taskRefs, taskWorkflow);
 
   // Deep-link (`/?ops=todos&id=…`): once todos load, open that task's detail on
   // the Tasks view, then tell the modal it's consumed so switching tabs later
@@ -754,6 +763,7 @@ export function TodosPanel({
                 }}
                 selected={selectedId === t.id}
                 onClick={() => setSelectedId(t.id)}
+                extra={taskWorkflow ? <NextStepLine summary={taskNextSteps[`::${t.id}`]} /> : undefined}
               />
             ),
             kanban: {
@@ -2229,6 +2239,11 @@ function TodoDetail({
         />
       </div>
 
+      {areaRunsWorkflow(view.area) && UUID.test(todo.id) ? (
+        <div className="border-border/60 border-t px-5 py-4">
+          <RecordWorkflowSection area="tasks" record={{ id: todo.id }} refreshKey={todo.updatedAt} />
+        </div>
+      ) : null}
       {/* Activity + Comments render their own section headers. */}
       <div className="flex flex-col gap-4 border-border/60 border-t px-5 py-4">
         <ActivityFeed entity="task" id={todo.id} refreshKey={todo.updatedAt} />

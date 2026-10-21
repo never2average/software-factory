@@ -8,7 +8,7 @@
  *      fixture every section of the surface hashes as it did at upstream main fc2ea3e
  *      (fixtures/record-areas/legacy-surface-hashes.json). With LIVE_PACK_PROFILES=<dir>[:<dir>] the same holds for
  *      those profile directories (no area declared).
- *   2. THE WORKED EXAMPLES COMPILE as the preview page reads them (golden/{filing,coverage,programme,own-state}.areas.json).
+ *   2. THE WORKED EXAMPLES COMPILE as the preview page reads them (golden/{filing,coverage,programme,own-state,workflow}.areas.json).
  *   3. THE SCREEN FROM THE DEFINITION (lib/record-area-ui.ts): words, table columns, board columns and tones, card,
  *      sorts, filters and presets, groups, detail sections, create fields (own fields of every type included).
  *   4. A RECORD READ (agent/lib/record-area-records.ts): the title template, a computed field, the values by key.
@@ -67,6 +67,8 @@ const EXAMPLES = {
   programme: [["50-a.json", join(EX, "programme.json")]],
   // The lifecycle on an OWN field (under `custom`), read by the board, a group, a filter, a sort and a metric.
   "own-state": [["50-a.json", join(EX, "own-state.json")]],
+  // A lifecycle that runs a workflow (docs/WORKFLOW_ENGINE.md phase 7): its cards and detail show the workflow.
+  workflow: [["50-a.json", join(ROOT, "scripts/fixtures/record-workflows/review.json")]],
 };
 const LEGACY = {
   default: [],

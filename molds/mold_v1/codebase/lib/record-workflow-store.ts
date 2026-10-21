@@ -610,6 +610,21 @@ export class RecordWorkflowStore implements WorkflowStore {
   }
 
   /**
+   * The instances on these records WITHOUT their histories (phase 7: a list's cards read each record's next step, its
+   * holders and its due date). Never saved back: `update` refuses an instance carrying less history than is stored.
+   */
+  async listStepsForRecords(entityType: string, entityIds: string[]): Promise<WorkflowInstance[]> {
+    if (entityIds.length === 0) return [];
+    await this.scoped();
+    const rows = await this.tx
+      .select()
+      .from(recordWorkflowInstances)
+      .where(and(eq(recordWorkflowInstances.orgId, this.orgId), eq(recordWorkflowInstances.entityType, entityType), inArray(recordWorkflowInstances.entityId, entityIds)))
+      .orderBy(asc(recordWorkflowInstances.createdAt), asc(recordWorkflowInstances.id));
+    return rows.map((r) => instanceFromRow(r, []));
+  }
+
+  /**
    * Nothing to move: a record holds its own fields (department, business unit) and the workflow reads them from the
    * record (`withRecordData`), so no stored instance carries a copy that could fall out of date.
    */

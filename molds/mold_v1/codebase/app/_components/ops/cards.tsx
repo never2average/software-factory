@@ -170,11 +170,14 @@ export function TaskCard({
   selected,
   onClick,
   testid,
+  extra,
 }: {
   readonly task: TaskCardData;
   readonly selected?: boolean;
   readonly onClick?: () => void;
   readonly testid?: string;
+  /** A line under the card's footer (a workflow's next step: ./record-workflow.tsx NextStepLine). */
+  readonly extra?: React.ReactNode;
 }) {
   const showPriority = task.priority !== "normal" && Boolean(task.priority);
   const hasFooter = Boolean(showPriority || task.cycleLabel || task.containerLabel || task.due || task.assignee || task.fields?.length);
@@ -215,6 +218,7 @@ export function TaskCard({
           </span>
         </div>
       ) : null}
+      {extra}
     </WorkspaceCard>
   );
 }

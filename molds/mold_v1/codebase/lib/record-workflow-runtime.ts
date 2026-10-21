@@ -38,25 +38,30 @@
 import { STEP_STATES, type StepStateValue, type WorkflowDSL } from "./workflow-engine/dsl/types.ts";
 import { isTerminal, runDiff, type StepChange } from "./workflow-engine/engine/src/core/diff.ts";
 import { Directory, offlineEvaluator, type DirectoryUser } from "./workflow-engine/engine/src/core/evaluator.ts";
-import { initInstance } from "./workflow-engine/engine/src/core/init.ts";
+import { initInstance, resolveAssignees } from "./workflow-engine/engine/src/core/init.ts";
 import { Rbac, type ReportingRow, type RoleBoundary } from "./workflow-engine/engine/src/core/rbac.ts";
 import { isMutableStepProperty, setStepProperty, stepPropertyValue, type HistoryEvent, type OutboxEntry, type StepState, type WorkflowInstance } from "./workflow-engine/engine/src/core/state.ts";
 import {
   afterPersonPatch,
   checkContributionLength,
+  checkDueOnChange,
+  checkPatchShape,
+  checkReassign,
   checkStateChange,
   cleanContribution,
+  dueDateExtendedEvent,
   instanceResource,
   patchNeeds,
   stepActResource,
   stepName,
+  type StepRuleRefusal,
 } from "./workflow-step-rules.ts";
 import type { RecordAreaId, RecordTransition } from "../agent/lib/record-areas.generated.ts";
 import type { AreaRow, AreaView, RecordAreas } from "../agent/lib/record-areas.ts";
 import type { BrokenRule, MoveCheck, WorkflowGate } from "../agent/lib/record-lifecycle.ts";
 import type { DirectorySnapshot } from "../agent/lib/people-directory.ts";
 
-export type { HistoryEvent, OutboxEntry, StepState, WorkflowDSL, WorkflowInstance };
+export type { HistoryEvent, OutboxEntry, StepRuleRefusal, StepState, WorkflowDSL, WorkflowInstance };
 
 /** An area's binding to the workflow its lifecycle runs. */
 export interface WorkflowBinding {
@@ -558,4 +563,99 @@ export function takeStepActions(input: { instance: WorkflowInstance; from: { out
   instance.outbox.push(...kept);
   (instance as WorkflowInstance & Kept).fired_actions = [...fired];
   return kept;
+}
+
+// ── a step's holder and due date (phase 7) ─────────────────────────────────────────────────────────────────────────
+
+/** A person's change of a step that is not a move: the outcome, or the step rule's refusal (its status and sentence). */
+export type StepChangeResult = { ok: true; changed: boolean } | StepRuleRefusal;
+
+const refusal = (code: StepRuleRefusal["code"], status: StepRuleRefusal["status"], message: string): StepRuleRefusal => ({ ok: false, code, status, message });
+
+/** The step change after a person's patch, as a move's: its history row, the pin, re-resolution, the workflow's rules. */
+async function afterChange(input: { dsl: WorkflowDSL; instance: WorkflowInstance; directory: Directory; rbac: Rbac; step: StepState; change: StepChange; actorId: string; now: Date; extra?: HistoryEvent[] }): Promise<void> {
+  const { dsl, instance, directory, rbac, step, change, actorId, now } = input;
+  const at = now.toISOString();
+  instance.history.push({ at, type: "step_patched", step_id: step.id, data: change.changed, actor: actorId, source: "user" }, ...(input.extra ?? []));
+  afterPersonPatch({ step, change, dsl, directory, instance, at, actorId, org: rbac });
+  const queued = { outbox: instance.outbox.length, history: instance.history.length };
+  await runDiff(instance, dsl, change, directory, offlineEvaluator, now, actorId, undefined, rbac);
+  takeStepActions({ instance, from: queued, actor: actorId, now });
+  instance.terminal = isTerminal(dsl, instance);
+  instance.updated_at = at;
+}
+
+/**
+ * Who could hold `step`: the people its rule picks (its query without its limit), or, when it names no rule, everyone in
+ * the workspace's directory. What a supervisor is offered when they change who holds it (checkReassign refuses anyone
+ * else, but for an administrator).
+ */
+export function eligibleHolders(input: { dsl: WorkflowDSL; instance: WorkflowInstance; directory: Directory; stepId: string }): string[] {
+  const { dsl, instance, directory } = input;
+  const spec = dsl.init.steps.find((t) => t.id === input.stepId)?.assignee;
+  const org = instance.organization_id;
+  if (spec?.condition?.$or?.query) return resolveAssignees({ ...spec, limit: Infinity }, directory, [], undefined, undefined, org, instance.object.data).ids;
+  return directory.query({}, undefined, org).map((u) => u.id);
+}
+
+/**
+ * A change of who holds a step (the whole new list), by `actor`: the step rules' own (lib/workflow-step-rules.ts
+ * checkReassign): only a supervisor (an owner or an admin, with the workspace's people) chooses who holds a step, someone
+ * who takes it must be able to act on it, and someone newly put on it must be someone its rule could pick (an
+ * administrator may place anyone). The holders named are pinned: the workflow's rule no longer re-picks them. Mutates
+ * `instance` when it goes through.
+ */
+export async function changeStepHolders(input: { dsl: WorkflowDSL; instance: WorkflowInstance; directory: Directory; rbac: Rbac; actor: string; stepId: string; holders: unknown; now: Date }): Promise<StepChangeResult> {
+  const { dsl, instance, directory, rbac, now } = input;
+  const step = instance.steps.find((s) => s.id === input.stepId);
+  if (!step) return refusal("INVALID_VALUE", 422, `This workflow has no step "${input.stepId}".`);
+  const shape = checkPatchShape({ assignee: input.holders });
+  if (!shape.ok) return shape;
+  const org = instance.organization_id;
+  const next = [...new Set((input.holders as string[]).map((h) => h.trim().toLowerCase()).filter(Boolean))];
+  if (!next.length) return refusal("INVALID_VALUE", 422, `${stepName(step)} needs someone to hold it.`);
+  const unknown = next.filter((id) => !directory.get(id, org));
+  if (unknown.length) return refusal("ASSIGNEE_OUTSIDE_RULE", 422, `${unknown.join(", ")} ${unknown.length === 1 ? "is" : "are"} not someone in this workspace.`);
+  const actorId = input.actor.trim().toLowerCase();
+  const person = directory.get(actorId, org);
+  if (!person) return refusal("REASSIGN_NEEDS_SUPERVISOR", 403, `You cannot change who holds ${stepName(step)}. Ask someone who supervises this work, or an administrator.`);
+  const checked = checkReassign({ rbac, actor: person, instance, step, next, dsl, directory, org: rbac });
+  if (!checked.ok) return checked;
+  if (JSON.stringify([...step.assignee].sort()) === JSON.stringify([...next].sort())) return { ok: true, changed: false };
+  const before = [...step.assignee];
+  step.assignee = next;
+  await afterChange({ dsl, instance, directory, rbac, step, change: { stepId: step.id, changed: { assignee: { before, after: next } } }, actorId, now });
+  return { ok: true, changed: true };
+}
+
+/** Whether the step's template bounds a person's due-date change to a one-time extension (`due_on_extension`). */
+export const extensionOf = (dsl: WorkflowDSL, stepId: string) => dsl.init.steps.find((t) => t.id === stepId)?.due_on_extension ?? null;
+
+/**
+ * A change of a step's due date, by `actor`. Only on a step whose template declares `due_on_extension`, and then the
+ * step rules' bounded one-time extension (lib/workflow-step-rules.ts checkDueOnChange: forward only, near the date, within
+ * the cap, once); an owner or an admin corrects it freely (which never spends the holder's extension). The caller needs
+ * write on the record's workflow (a holder of one of its steps, its creator, a holder's supervisor, owner, admin).
+ */
+export async function changeStepDueDate(input: { dsl: WorkflowDSL; instance: WorkflowInstance; directory: Directory; rbac: Rbac; actor: string; stepId: string; dueOn: unknown; now: Date }): Promise<StepChangeResult> {
+  const { dsl, instance, directory, rbac, now } = input;
+  const step = instance.steps.find((s) => s.id === input.stepId);
+  if (!step) return refusal("INVALID_VALUE", 422, `This workflow has no step "${input.stepId}".`);
+  const shape = checkPatchShape({ due_on: input.dueOn });
+  if (!shape.ok) return shape;
+  const org = instance.organization_id;
+  const actorId = input.actor.trim().toLowerCase();
+  const person = directory.get(actorId, org);
+  const isAdmin = person?.role === "owner" || person?.role === "admin";
+  if (!person || !rbac.can(person, "write", instanceResource(instance))) return refusal("REASSIGN_NEEDS_SUPERVISOR", 403, `You cannot change the due date of ${stepName(step)}: only whoever holds a step of this workflow, a holder's supervisor, or an administrator can.`);
+  if (!isAdmin && !extensionOf(dsl, step.id)) return refusal("DUE_ON_INVALID", 422, `The due date of ${stepName(step)} is the workflow's own; ask an administrator to change it.`);
+  const requested = typeof input.dueOn === "string" && !Number.isNaN(Date.parse(input.dueOn)) ? new Date(input.dueOn).toISOString() : input.dueOn;
+  const checked = checkDueOnChange({ dsl, instance, step, requested, isAdmin, now: now.getTime() });
+  if (!checked.ok) return checked;
+  if (requested === step.due_on || (typeof requested === "string" && typeof step.due_on === "string" && Date.parse(requested) === Date.parse(step.due_on))) return { ok: true, changed: false };
+  const before = step.due_on ?? null;
+  if (!setStepProperty(step, "due_on", requested)) return refusal("DUE_ON_INVALID", 422, "due_on must be a valid ISO datetime");
+  const extra = checked.extended ? [dueDateExtendedEvent(step.id, before, requested, actorId, now.toISOString())] : [];
+  await afterChange({ dsl, instance, directory, rbac, step, change: { stepId: step.id, changed: { due_on: { before, after: requested } } }, actorId, now, extra });
+  return { ok: true, changed: true };
 }
