@@ -17,6 +17,8 @@ import type { Org } from "./auth.js";
 import { recordMcpEvent } from "./analytics.js";
 import * as memory from "./context.js";
 import * as vis from "./visibility.js";
+import { registerPackTools, reserveShellTools } from "./packs.js";
+import { PROFILE } from "./profile.js";
 
 /** Hosts (ChatGPT in particular) cache the template by URI: bump the version on breaking HTML/JS changes. */
 export const WIDGET_URI = "ui://octillion/dashboard-v2.html";
@@ -380,11 +382,14 @@ export const TOOL_STATUS: Record<ToolName, [string, string]> = {
 };
 
 export const TOOL_NAMES = Object.keys(handlersFor({ orgId: 0, slug: "", name: "" })) as ToolName[];
+// Pack tools (src/packs.ts) come after these and may not take one of their names.
+reserveShellTools(TOOL_NAMES);
 
 /** `context`: the account's and the person's context (src/context.ts), appended to the instructions. */
 export function createServer(org: Org, context = ""): McpServer {
   const server = new McpServer(
-    { name: "octillion", version: "2.0.0" },
+    // The server's name is the profile's (src/profile.ts), never a word in the code.
+    { name: PROFILE.mcp_server_name, version: "2.0.0" },
     {
       instructions:
         "Octillion is the APO (Agentic Preference Optimization) platform: it measures whether AI coding agents recommend the user's developer-tool product. " +
@@ -768,6 +773,8 @@ export function createServer(org: Org, context = ""): McpServer {
     annotations: read, _meta: meta("search_memory"),
   }, run("search_memory"));
 
+  // Every pack's tools (mold_v0-038), after the shell's own: the order clients list them in.
+  registerPackTools(server, org);
   registerPrompts(server);
   return server;
 }

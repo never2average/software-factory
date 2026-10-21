@@ -4,16 +4,30 @@
 // anything new that is unscoped fails.
 //   npm run check:tenant-sql              check
 //   npm run check:tenant-sql -- --update  rewrite the baseline (only after reviewing what changed)
+// Packs (mold_v0-038): every pack's code under packs/ is checked the same way, with the tables its own migrations create
+// as tenant tables too (a pack table is a workspace table: scripts/gen-packs.mjs refuses one without org_id or RLS).
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const TENANT_TABLES = ["agent_sessions", "simulations", "products", "scenarios", "product_research", "org_task_sets",
+const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scenarios", "product_research", "org_task_sets",
   "org_harnesses", "transcript_events", "gateway_usage", "mcp_events", "worker_tokens", "api_keys", "library_submissions", "visibility_reports"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
-const files = readdirSync(path.join(ROOT, "src")).filter((f) => f.endsWith(".ts")).map((f) => path.join("src", f));
+const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+  e.name === "node_modules" || e.name.startsWith(".") ? [] : e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
+const PACKS = path.join(ROOT, "packs");
+const packFiles = existsSync(PACKS) ? walk(PACKS) : [];
+const PACK_TABLES = [...new Set(packFiles.filter((f) => f.endsWith(".sql")).flatMap((f) =>
+  [...readFileSync(f, "utf8").matchAll(/CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)/gi)].map((m) => m[1]!.toLowerCase())))];
+const TENANT_TABLES = [...SHELL_TENANT_TABLES, ...PACK_TABLES];
+const packCode = packFiles.filter((f) => /\.(m?[jt]sx?)$/.test(f));
+
+const files = [
+  ...readdirSync(path.join(ROOT, "src")).filter((f) => f.endsWith(".ts")).map((f) => path.join("src", f)),
+  ...packCode.map((f) => path.relative(ROOT, f)),
+];
 const offenders: { file: string; line: number; hash: string; sql: string }[] = [];
 const literal = /`([^`]*)`|"((?:[^"\\]|\\.)*)"/g;
 for (const file of files) {
@@ -46,4 +60,4 @@ if (fresh.length) {
   console.error("Add an org_id filter, or a /* tenant: <how it is scoped> */ note if it is scoped another way.");
   process.exit(1);
 }
-console.log(`TENANT SQL CHECK PASS (${offenders.length} baseline quer${offenders.length === 1 ? "y" : "ies"} pending review, 0 new)`);
+console.log(`TENANT SQL CHECK PASS (${offenders.length} baseline quer${offenders.length === 1 ? "y" : "ies"} pending review, 0 new)${packCode.length ? `; packs: ${PACK_TABLES.length} pack table(s) checked` : ""}`);

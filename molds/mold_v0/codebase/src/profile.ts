@@ -1,0 +1,30 @@
+/**
+ * The profile (mold_v0-038): the names a build of the shell shows, so none is written into the code. It is
+ * profile.json at the codebase root over a neutral default, merged by scripts/gen-packs.mjs into
+ * src/profile.generated.ts (and web/src/config/profile.generated.ts for the console). Used for:
+ *
+ *   mcp_server_name    the customer MCP server's name (src/server.ts) and, with "-admin", the admin one (src/admin-mcp.ts)
+ *   email_sender_name  the display name of the default sender (src/settings.ts EMAIL_FROM) and the emails' signature
+ *   email_from_address the default sender's address
+ *   console_title      the console's title (web/src/app/layout.tsx and the /app and /admin layouts, the manifest)
+ *   name, console_description, short_description   the product's name and the console's descriptions
+ *
+ * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
+ * build is exactly what it was; with no profile.json the shell shows only the neutral default.
+ */
+import { GENERATED_PROFILE } from "./profile.generated.js";
+
+export interface Profile {
+  name: string;
+  mcp_server_name: string;
+  console_title: string;
+  console_description: string;
+  short_description: string;
+  email_sender_name: string;
+  email_from_address: string;
+}
+
+export const PROFILE: Readonly<Profile> = Object.freeze({ ...GENERATED_PROFILE });
+
+/** The default sender, as Name <address> (an admin can change it on the Emails settings). */
+export const defaultSender = (p: Profile = PROFILE) => `${p.email_sender_name} <${p.email_from_address}>`;

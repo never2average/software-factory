@@ -1,0 +1,10 @@
+{
+  "$comment": "The names this build shows (src/profile.ts; scripts/gen-packs.mjs writes the generated copies). The product's own until mold_v0-039 moves them into its pack; delete this file for the shell's neutral default.",
+  "name": "Octillion",
+  "mcp_server_name": "octillion",
+  "console_title": "Octillion",
+  "console_description": "Octillion: measure and improve how often AI coding agents pick your developer tool.",
+  "short_description": "Agentic Preference Optimization: see how often coding agents pick your developer tool, and what to change.",
+  "email_sender_name": "Octillion",
+  "email_from_address": "hello@octillion.useimmaculate.com"
+}

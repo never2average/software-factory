@@ -1,10 +1,11 @@
 import type { MetadataRoute } from 'next';
+import { profile } from '@/config/profile.generated';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Octillion',
-    short_name: 'Octillion',
-    description: 'Agentic Preference Optimization: see how often coding agents pick your developer tool, and what to change.',
+    name: profile.console_title,
+    short_name: profile.console_title,
+    description: profile.short_description,
     start_url: '/app',
     display: 'standalone',
     background_color: '#121212',

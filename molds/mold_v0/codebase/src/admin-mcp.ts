@@ -15,6 +15,7 @@
  * Tools reuse the panel's functions; nothing here decides anything a route does not. Secrets never leave: the key
  * vault gives hints, and a legacy API key minted by an approval is reported as issued, never returned.
  */
+import { PROFILE } from "./profile.js";
 import type { Express, Request, Response } from "express";
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -453,7 +454,7 @@ export const adminSkillList = () => Object.entries(ADMIN_SKILLS).map(([name, s])
 
 export function createAdminServer(c: AdminCaller): McpServer {
   const server = new McpServer(
-    { name: "octillion-admin", version: "1.0.0" },
+    { name: `${PROFILE.mcp_server_name}-admin`, version: "1.0.0" },
     { instructions:
         "Octillion's admin panel across every customer account, for Octillion staff. Reads: list_accounts, get_account, list_access_requests, " +
         "health_summary, list_simulations, get_simulation, finops_revenue, finops_plans, finops_experiments, model_spend, analytics_overview, " +
