@@ -18,7 +18,7 @@
  */
 import { getDb } from "./db.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
-import { CredentialSchema, PackError, z } from "./pack-api.js";
+import { CredentialSchema, PackError, RECORD_KEY, z } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { checkKey, getFor } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
@@ -143,7 +143,7 @@ const targetOf = (targets: Record<string, unknown> | null) => {
   const asset = typeof a === "string" ? a : typeof asObj?.key === "string" ? asObj.key : null;
   const area = typeof asObj?.area === "string" ? asObj.area : null;
   const env = typeof t.environment === "string" && ENV.test(t.environment) ? t.environment : null;
-  return { asset: asset && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(asset) ? asset : null, area, environment: env };
+  return { asset: asset && RECORD_KEY.test(asset) ? asset : null, area, environment: env };
 };
 
 /**
@@ -179,6 +179,22 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
     out.credentials.push({ name, ...("env" in spec.deliver_as ? { env: spec.deliver_as.env } : { file: spec.deliver_as.file }), value });
   }
   return out;
+}
+
+/**
+ * One workspace-bound value of a pack's field, for the shell's own use on the server (mold_v0-059: an external API
+ * repository's credential, sent only in its request header). Never reaches pack code or an answer. Null when unset.
+ */
+export async function workspaceCredentialValue(orgId: number, pack: string, name: string): Promise<string | null> {
+  const spec = findCredential(pack, name);
+  if (!spec || spec.bound_to !== "workspace") return null;
+  const s: Slot = { spec, asset: null, environment: null };
+  const [r] = await asPlatform(async () => (await getDb()).query<{ sealed: string }>(
+    `SELECT sealed FROM workspace_credentials WHERE org_id = $1 AND pack = $2 AND name = $3 AND bound_to = 'workspace' AND asset_key IS NULL AND environment IS NULL`,
+    [orgId, spec.pack, spec.name]));
+  if (!r) return null;
+  try { return (await asPlatform(() => openBytes(orgId, Buffer.from(r.sealed, "base64"), aad(orgId, s)))).toString("utf8"); }
+  catch { throw new PackError("the workspace's credential cannot be opened now (the key vault is locked?): try again", 503); }
 }
 
 /** The values a run may have received, for redacting what it writes (src/runs.ts events and completion). */

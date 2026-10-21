@@ -467,14 +467,18 @@ async function checkResults(q: Queryable | null, orgId: number, results: unknown
   return { rows: out.sort((x, y) => x.at - y.at).map((o) => o.row), unresolved };
 }
 
-/** A run whose pack indexes its workspace after each commit (mold_v0-064). */
-const withHook = (r: RunRow | null) => !!r?.spec?.workspace && typeof packs().find((p) => p.id === r.pack)?.definition.onWorkspaceCommit === "function";
+/** A pack whose areas read the workspace store's files (mold_v0-059): the shell re-indexes them after each commit. */
+const indexesFiles = (pack: string) => Object.values(packs().find((p) => p.id === pack)?.definition.repositories ?? {}).some((r) => (r as { kind?: string })?.kind === "workspace_files");
+/** A run whose pack indexes its workspace after each commit (mold_v0-064; the shell's own index, mold_v0-059). */
+const withHook = (r: RunRow | null) => !!r?.spec?.workspace && (typeof packs().find((p) => p.id === r.pack)?.definition.onWorkspaceCommit === "function" || indexesFiles(r.pack));
 
 /** End the current attempt (the lease holder only). Returns the run as it now stands. */
 export async function completeRun(runId: string, leaseToken: string, c: Completion): Promise<RunView> {
   return complete(runId, leaseToken, c);
 }
 
+/** The start of a run's error when the shell's index of its workspace files refused the commit (mold_v0-059). */
+const INDEX_REFUSED = "the index of the workspace's files refused the commit: ";
 /** How long a pack's onWorkspaceCommit hook may take (mold_v0-064). */
 const hookSeconds = () => Math.min(Math.max(Number(process.env.OCTILLION_WORKSPACE_HOOK_SECONDS ?? 120) || 120, 1), 1800);
 
@@ -512,11 +516,20 @@ async function commitThenHook(runId: string, leaseToken: string, secrets: Secret
   if (!wb) return { committed: false, hookError: null }; // nothing staged: no snapshot to hand the hook
   const def = packs().find((p) => p.id === run.pack)?.definition;
   const hook = def?.onWorkspaceCommit;
-  if (!hook) return { committed: true, hookError: null };
+  const index = indexesFiles(run.pack);
+  if (!hook && !index) return { committed: true, hookError: null };
   try {
     const snap = await asPlatform(async () => latestSnapshot(await getDb(), run.org_id, run.pack));
     // No version yet (a first run that wrote an empty workspace): the empty workspace, version 0.
     const files: WorkspaceFile[] = snap ? readBundle(await openSnapshot(snap)).files.map((f) => ({ path: f.path, size: f.body.length, sha256: snap.manifest[f.path]!.sha256, body: f.body })) : [];
+    // The shell's own index first (mold_v0-059): the areas fed by the workspace's files, for the run's own workspace,
+    // all-or-nothing; then the pack's hook sees them indexed. A refused index fails the run as a failed hook does.
+    if (index) {
+      const { indexWorkspaceFiles } = await import("./data-repositories.js");
+      const reports = await indexWorkspaceFiles(run.org_id, run.pack, files).catch((e) => { throw new Error(`${INDEX_REFUSED}${String((e as Error)?.message ?? e)}`); });
+      await event(run.id, run.org_id, run.attempt, "workspace_indexed", { version: snap?.version ?? 0, repositories: reports.map((x) => ({ repository: x.repository, areas: x.areas })) });
+    }
+    if (!hook) return { committed: true, hookError: null };
     // The run's own workspace, from the run row: the hook's records, database and files are that workspace's only.
     const [org] = await asPlatform(async () => (await getDb()).query<{ slug: string; name: string | null }>("SELECT slug, name FROM organizations WHERE id = $1", [run.org_id]));
     const { workspaceDb } = await import("./packs.js");
@@ -529,7 +542,7 @@ async function commitThenHook(runId: string, leaseToken: string, secrets: Secret
       pack: run.pack, workspace: { id: run.org_id, slug: org?.slug ?? "", name: org?.name ?? null, userId: null, role: null },
       db: { query: (sql, params) => alive(() => db.query(sql, params)) },
       records: { list: (a, o) => alive(() => recs.list(a, o)), get: (a, k) => alive(() => recs.get(a, k)), put: (a, k, v) => alive(() => recs.put(a, k, v)),
-        move: (a, k, t) => alive(() => recs.move(a, k, t)), delete: (a, k) => alive(() => recs.delete(a, k)) },
+        move: (a, k, t) => alive(() => recs.move(a, k, t)), delete: (a, k) => alive(() => recs.delete(a, k)), batch: (ops) => alive(() => recs.batch(ops)) },
       run: { id: run.id, kind: run.kind, attempt: run.attempt, scope: run.scope ?? {}, targets: run.targets ?? {} },
       snapshot: { version: snap?.version ?? 0, changed: !wb.unchanged, manifest_sha256: snap?.manifest_sha256 ?? EMPTY_MANIFEST_SHA256 },
     };
@@ -577,7 +590,8 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
     else if (c.outcome === "succeeded" && hooked?.hookError) {
       // The hook failed: the results are not accepted. The snapshot stays committed (it passed the run's validation);
       // the next run's commit calls the hook again.
-      status = "failed"; kind = "run"; error = `the pack's workspace hook (onWorkspaceCommit) failed: ${hooked.hookError}`.slice(0, 2000);
+      status = "failed"; kind = "run";
+      error = (hooked.hookError.startsWith(INDEX_REFUSED) ? hooked.hookError : `the pack's workspace hook (onWorkspaceCommit) failed: ${hooked.hookError}`).slice(0, 2000);
     }
     else if (c.outcome === "succeeded") {
       const { rows: results, unresolved } = await checkResults(tx, run.org_id, Array.isArray(c.results) ? c.results : [], run.spec ?? {});

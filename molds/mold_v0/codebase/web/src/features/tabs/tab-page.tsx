@@ -93,10 +93,27 @@ function useMany(area: RecordAreaSpec) {
 }
 
 function BoardView({ area, by, detail }: { area: RecordAreaSpec; by: string; detail: boolean }) {
-  const { data, error } = useMany(area);
+  const { data, error, reload } = useMany(area);
+  const { role } = useAccountRole();
+  const [moveError, setMoveError] = useState<string | null>(null);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
-  return <BoardColumns area={area} by={by} detail={detail} data={data} />;
+  // Moves go through the generic data API (mold_v0-059: the record store's move, with its roles and transitions).
+  const movable = area.scope === 'workspace' && area.lifecycle?.field === by;
+  const onMove = async (key: string, to: string) => {
+    setMoveError(null);
+    const res = await fetch(`/api/data/${area.name}/${encodeURIComponent(key)}/move`, {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json', 'X-Pack-Request': '1' }, body: JSON.stringify({ to })
+    });
+    if (!res.ok) setMoveError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `The move failed (${res.status})`);
+    await reload();
+  };
+  return (
+    <div className='flex flex-col gap-2'>
+      {moveError && <p role='alert' className='text-destructive text-sm'>{moveError}</p>}
+      <BoardColumns area={area} by={by} detail={detail} data={data} role={role} onMove={movable ? (k, t) => void onMove(k, t) : undefined} />
+    </div>
+  );
 }
 
 

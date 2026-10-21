@@ -428,6 +428,9 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{1,62}$"
           },
+          "sealed": {
+            "type": "boolean"
+          },
           "rows": {
             "type": "string",
             "maxLength": 500
@@ -1195,7 +1198,7 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$"
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:()-]{0,199}$"
                 }
               }
             },
@@ -1791,21 +1794,428 @@
         "pattern": "^[a-z][a-z0-9_]{1,62}$"
       },
       "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_]{1,40}$"
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "shell_tables"
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
           },
-          "$comment": {
-            "type": "string",
-            "maxLength": 2000
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "workspace_files"
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "store": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^(?!\\/)[A-Za-z0-9._/{}*-]{1,300}$"
+              },
+              "dir": {
+                "type": "string",
+                "pattern": "^(?!\\/)[A-Za-z0-9._/{}*-]{1,300}$"
+              },
+              "files": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,62}$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^(?!\\/)[A-Za-z0-9._/{}*-]{1,300}$"
+                }
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "json",
+                  "jsonl",
+                  "text"
+                ]
+              },
+              "identity": {
+                "type": "string",
+                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+              },
+              "append_only": {
+                "type": "boolean"
+              },
+              "latest": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "never_read": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "pattern": "^(any ENC\\[\\.\\.\\.\\] value|\\S+ [A-Za-z_][A-Za-z0-9_]*(\\[\\])?(\\.[A-Za-z_][A-Za-z0-9_]*(\\[\\])?)*)$"
+                }
+              },
+              "map": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{0,62}$"
+                    },
+                    "each": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "fields": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                      }
+                    },
+                    "where": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "key"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "upstream_catalog"
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "upstream": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "pack.json#upstream"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "repo": {
+                        "type": "string",
+                        "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
+                      },
+                      "commit": {
+                        "type": "string",
+                        "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+                      },
+                      "license": {
+                        "type": "string",
+                        "maxLength": 80
+                      }
+                    },
+                    "required": [
+                      "repo",
+                      "commit"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "git",
+                  "github"
+                ]
+              },
+              "files": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,62}$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^(?!\\/)[A-Za-z0-9._/{}*-]{1,300}$"
+                }
+              },
+              "map": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{0,62}$"
+                    },
+                    "each": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "fields": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                      }
+                    },
+                    "where": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "key"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "prune": {
+                "type": "object",
+                "properties": {
+                  "max_fraction": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "allow_empty": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "upstream"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "http_api"
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "base_url": {
+                "type": "string",
+                "pattern": "^https?:\\/\\/[a-z0-9.-]+(:\\d{1,5})?(\\/[A-Za-z0-9._~/-]*)?$"
+              },
+              "egress": {
+                "minItems": 1,
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^(\\*\\.)?(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+                }
+              },
+              "credential": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              },
+              "auth": {
+                "type": "object",
+                "properties": {
+                  "header": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9-]{0,62}$"
+                  },
+                  "scheme": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z]{1,20}$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "list": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^\\/[A-Za-z0-9._~/-]*(\\?[A-Za-z0-9._~=&-]*)?$"
+                  },
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              },
+              "get": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^\\/[A-Za-z0-9._~/{}-]*\\{key\\}[A-Za-z0-9._~/{}-]*$"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              },
+              "map": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "fields": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "key"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "max_items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5000
+              }
+            },
+            "required": [
+              "kind",
+              "base_url",
+              "egress",
+              "list"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "kind"
-        ],
-        "additionalProperties": {}
+        ]
       }
     },
     "run_results": {
