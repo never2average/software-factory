@@ -4,6 +4,10 @@
   "name": "Fixture tracker",
   "version": "0.1.0",
   "description": "A declarative test fixture (mold_v0-057; scripts/declarative-packs-test.ts): a pack.json and nothing else. Never shipped.",
+  "upstream": {
+    "repo": "https://example.org/fixture/library",
+    "commit": "0123456789abcdef0123456789abcdef01234567"
+  },
   "record_areas": [
     {
       "name": "tracker_policies",
@@ -220,8 +224,7 @@
         "delete": [
           "owner"
         ]
-      },
-      "repository": "tracker_ledger"
+      }
     }
   ],
   "repositories": {
