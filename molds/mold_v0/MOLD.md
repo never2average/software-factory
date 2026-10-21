@@ -55,8 +55,8 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
   `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
   pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
-  data route. **credentials, schedules, onboarding** and profile **words** are declared and validated and listed by
-  `packRegistry()`; the credential vault (034), scheduler (035) and checklist (011) wire them.
+  data route. **schedules, onboarding** and profile **words** are declared and validated and listed by
+  `packRegistry()`; the scheduler (035) and checklist (011) wire them. **credentials** are wired (034, below).
 - **recordAreas** (mold_v0-047, built): a pack declares areas in `definePack` and writes no record code. Their rows
   live in two shell tables (`sql/migrations/0004_record_areas.sql`): `platform_records` (platform scope: the tenant
   role may only `SELECT` it, so customers cannot write it whatever the code does; staff write it at
@@ -115,6 +115,27 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots. **Not wired yet:**
   no customer-facing read of a snapshot's files (an evidence viewer), and no retention of old versions (all are kept).
   `npm run test:workspace-store` proves it with two workspaces.
+- **The workspace credential vault** (mold_v0-034, built; merges the old 009): a pack declares credential fields
+  (`definePack({ credentials })`: a label, help, `bound_to` the workspace, an `asset` of one of its asset areas (`area`)
+  or an asset's `environment` (optionally from a list), delivered as an environment variable or a file). A workspace's
+  owners set the values in the console (`/app/credentials`, `src/credential-routes.ts` at `/api/credentials`, mounted
+  only when a field exists; an asset binding must name an asset record of their own workspace); every answer shows only
+  the last 4 characters. Values live in `workspace_credentials` (`sql/migrations/0007_workspace_credentials.sql`),
+  sealed with the workspace data key (`sealBytes`, refused while the vault is locked) and bound by additional data to
+  their workspace, pack, field, asset and environment; the tenant role has no grant on the table (a pack's server code
+  never sees a value; `check:rls` probes it). A job kind names the fields its runs receive (`credentials: [...]`, none
+  by default); the runner fetches them with the run's lease (`GET /api/worker/runs/:id/credentials`), looked up with the
+  run row's own workspace and its `targets.asset` / `targets.environment`, and gives the entry program each value as
+  its declared environment variable or as a file (0400, the run user's) in a private directory on tmpfs
+  (`RUN_CREDENTIALS_DIR`, `/dev/shm`), removed when the program ends; the validator gets none. Everything a run writes
+  (stdout lines, the stderr tail, results, errors) is redacted of the values (as is, JSON-escaped, base64, hex, each line
+  of a multi-line value; `src/credential-redact.ts`) by the harness and again by the engine before it is stored; a
+  workspace that holds a value is not written back. `npm run test:credentials` proves it with two workspaces: same asset
+  key, concurrent runs, 0 cross-workspace injections; a canary grep of every table, the database's files, the object
+  store, the MCP and HTTP answers and the process's logs finds 0. **Not covered:** a program that sends a value out
+  through an allowed host or the model gateway (egress is the run's allowlist; the gateway does not store prompts), or
+  writes part of a value; values replaced while a run is going are redacted only by the harness (which holds what it
+  delivered); no rotation reminder or expiry.
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
@@ -131,7 +152,7 @@ a pack. Each pack exports one `definePack({...})`:
 | `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
 | `jobKinds` | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
 | `recordAreas` | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), fields, list columns and links to other areas | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047) |
-| `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034); only names reach a run's definition |
+| `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `schedules` | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
 | `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |

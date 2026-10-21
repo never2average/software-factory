@@ -15,6 +15,12 @@
  *                  Exit 0: done. Exit 75: an infrastructure failure (the engine retries while attempts remain). Else failed.
  *   4. heartbeat   every lease_seconds / 3; on cancel=true (cancelled, or past the deadline) the program is stopped
  *   5. validate    the kind's validator, a program in the pack, with the workspace and output directories: exit 0 is valid
+ *      credentials (kinds that name credential fields, mold_v0-034) fetched with the lease (GET .../credentials): each
+ *                  an environment variable of the entry program, or a file (mode 0400, the run user's) in a private
+ *                  directory on tmpfs (/dev/shm when there is one) named by RUN_CREDENTIALS_DIR, removed as soon as the
+ *                  entry program ends; the validator gets none. Every line, stderr tail, results file and error the
+ *                  run produces is redacted (src/credential-redact.ts) before it is sent, and the engine redacts again
+ *                  before it stores; a workspace that holds a value is not written back.
  *   6. write back  (workspace kinds) only when the run exited 0 and validation exited 0: the directory is staged and the
  *                  engine commits it as the next version when the run completes as succeeded; any failure leaves the
  *                  workspace's version where it was
@@ -30,13 +36,15 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createSocket } from "node:dgram";
-import { chmodSync, chownSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { proxySource } from "../orchestrator/core/egress.js";
 import type { RunView } from "./pack-api.js";
 import type { Claim, Completion } from "./runs.js";
+import type { RunCredentials } from "./credentials.js";
+import { findSecret, redactJson, redactText, type Secret } from "./credential-redact.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
 
 /** What a runner needs from the engine: in-process (localRunnerClient) or over HTTP (httpRunnerClient). */
@@ -49,6 +57,8 @@ export interface RunnerClient {
   checkout(runId: string, lease: string, dir: string): Promise<{ version: number }>;
   /** Stage `dir` as the next version; the engine commits it only when the run completes as succeeded. */
   stage(runId: string, lease: string, dir: string): Promise<{ manifest_sha256: string; files: number; unchanged: boolean }>;
+  /** The workspace credentials the run receives (mold_v0-034): only for the lease holder, only what its kind names. */
+  credentials(runId: string, lease: string): Promise<RunCredentials>;
 }
 
 /** The engine in this process (a runner on the server itself, and the offline tests). */
@@ -62,6 +72,7 @@ export async function localRunnerClient(workerId: string): Promise<RunnerClient>
     complete: (id, lease, c) => runs.completeRun(id, lease, c),
     checkout: (id, lease, dir) => store.checkoutForRun(id, lease, dir),
     stage: (id, lease, dir) => store.stageForRun(id, lease, dir),
+    credentials: (id, lease) => runs.runCredentialsForLease(id, lease),
   };
 }
 
@@ -89,6 +100,7 @@ export function httpRunnerClient(base: string, workerToken: string, workerId: st
       return { version: Number(res.headers.get("x-workspace-version") ?? 0) };
     },
     stage: (id, lease, dir) => call("PUT", `/${encodeURIComponent(id)}/workspace`, lease, undefined, packBundle(dir).bundle),
+    credentials: (id, lease) => call("GET", `/${encodeURIComponent(id)}/credentials`, lease),
   };
 }
 
@@ -153,6 +165,8 @@ export interface HarnessOptions {
   tmp?: string;
   /** Called with each heartbeat's answer (tests). */
   onHeartbeat?: (h: { cancel: boolean; reason: string | null }) => void;
+  /** Where the private directory of a run's credential files is made: /dev/shm (tmpfs) by default, else the scratch. */
+  secretsBase?: string;
   /** Called with the egress proxy's decision log before the scratch directory is removed (tests, diagnostics). */
   onProxyLog?: (log: string) => void;
 }
@@ -227,17 +241,23 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   const work = path.join(scratch, "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home"), pack = path.join(scratch, "pack");
   for (const d of [work, out, home]) mkdirSync(d, { recursive: true });
   let proxy: RunProxy | null = null;
+  let delivered: RunCredentials | null = null;
   const proc: { child: ChildProcess | null } = { child: null };
   let stopped: "cancelled" | "deadline" | "lease" | null = null;
   const pending: { type: string; data?: Record<string, unknown> }[] = [];
   let leaseLost = false;
+  /** The credential values this run received: whatever it writes is redacted of them before it leaves the harness. */
+  let secrets: Secret[] = [];
+  let secretDir: string | null = null;
+  const dropSecrets = () => { if (secretDir) { rmSync(secretDir, { recursive: true, force: true }); secretDir = null; } };
   const flush = async () => {
     if (!pending.length || leaseLost) return;
-    const batch = pending.splice(0, 500);
+    const batch = pending.splice(0, 500).map((e) => ({ type: e.type, data: redactJson(e.data, secrets) }));
     await client.events(run.id, lease, batch).catch((e) => { if ((e as { status?: number }).status === 409) leaseLost = true; });
   };
-  const complete = async (c: Completion) => {
+  const complete = async (c0: Completion) => {
     if (leaseLost) return null; // another attempt owns the run now: nothing of this one may land
+    const c: Completion = { ...c0, ...(c0.error !== undefined ? { error: redactText(c0.error, secrets) } : {}), ...(c0.results ? { results: redactJson(c0.results, secrets) } : {}) };
     await flush();
     try { return await client.complete(run.id, lease, c); }
     catch (e) {
@@ -279,20 +299,50 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       if (spec.workspace) await client.checkout(run.id, lease, work);
       if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"));
       if (as) { chownTree(pack, as.uid, as.gid); for (const d of [work, out, home]) chownTree(d, as.uid, as.gid); chmodSync(scratch, 0o711); }
+      if (spec.credentials?.length) {
+        delivered = await client.credentials(run.id, lease);
+        secrets = delivered.credentials.map((c) => ({ name: c.name, value: c.value }));
+        const files = delivered.credentials.filter((c) => c.file);
+        if (files.length) {
+          // On tmpfs when there is one: a value never reaches a disk. Only the run's user can enter the directory.
+          const base = opts.secretsBase ?? (existsSync("/dev/shm") && statSync("/dev/shm").isDirectory() ? "/dev/shm" : scratch);
+          secretDir = mkdtempSync(path.join(base, "run-cred-"));
+          chmodSync(secretDir, 0o700);
+          for (const f of files) {
+            const p = path.join(secretDir, path.basename(f.file!));
+            writeFileSync(p, f.value, { mode: 0o400, flag: "wx" });
+            if (as) chownSync(p, as.uid, as.gid);
+          }
+          if (as) chownSync(secretDir, as.uid, as.gid);
+        }
+      }
     } catch (e) {
+      dropSecrets();
       return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` });
     }
-    const env: Record<string, string> = {
+    const base: Record<string, string> = {
       PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, LANG: "C.UTF-8",
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_KIND: run.kind, RUN_OUT: out, RUN_WORKSPACE: work,
       RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
+      ...(secretDir ? { RUN_CREDENTIALS_DIR: secretDir } : {}),
       ...claim.gateway.env, ...(proxy?.env ?? {}),
     };
-    let err = "";
+    // A credential's variable never replaces one the shell sets (a gateway provider's, say): that one is not delivered.
+    const credEnv: Record<string, string> = {};
+    const shadowed: string[] = [];
+    for (const c of delivered?.credentials ?? []) if (c.env) { if (c.env in base) shadowed.push(c.name); else credEnv[c.env] = c.value; }
+    if (shadowed.length) pending.push({ type: "credentials_shadowed", data: { names: shadowed } });
+    const env: Record<string, string> = { ...credEnv, ...base };
+    let err = "", errCut = false;
     const code = await runProgram(entry, [], { cwd: work, env, as, holder: proc,
-      onStdout: (l) => { if (pending.length < 5000) pending.push(lineEvent(l)); }, onStderr: (t) => { err = (err + t).slice(-4000); } });
+      onStdout: (l) => { if (pending.length < 5000) pending.push(lineEvent(redactText(l, secrets))); }, onStderr: (t) => { err += t; if (err.length > 65536) { err = err.slice(-65536); errCut = true; } } });
     if (as) killUser(as); // whatever the program started, in any group or session, ends with it
-    if (err.trim()) pending.push({ type: "stderr", data: { tail: err.slice(-2000) } });
+    dropSecrets(); // the files go with the entry program: the validator and the write-back never see them
+    // Redacted whole, then cut: a cut never leaves part of a value behind (a cut window loses its first, partial line).
+    if (errCut) err = err.includes("\n") ? err.slice(err.indexOf("\n") + 1) : "";
+    let tail = redactText(err, secrets);
+    if (tail.length > 2000) { tail = tail.slice(-2000); tail = tail.includes("\n") ? tail.slice(tail.indexOf("\n") + 1) : ""; }
+    if (tail.trim()) pending.push({ type: "stderr", data: { tail } });
     if (stopped === "lease") return null;
     if (stopped === "cancelled") return await complete({ outcome: "failed", error_kind: "run", error: "cancelled" });
     if (stopped === "deadline") return await complete({ outcome: "failed", error_kind: "timeout", error: "the run reached its deadline" });
@@ -309,10 +359,14 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     let results: unknown[] = [];
     const file = path.join(out, "results.json");
     if (existsSync(file)) {
-      try { results = JSON.parse(readFileSync(file, "utf8")); if (!Array.isArray(results)) throw new Error("not a list"); }
-      catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `results.json: ${(e as Error).message}` }); }
+      try { results = redactJson(JSON.parse(readFileSync(file, "utf8")), secrets); if (!Array.isArray(results)) throw new Error("not a list"); }
+      // A parse error quotes the file (which may hold a value, cut where redaction cannot see it): never its text.
+      catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `results.json: ${e instanceof SyntaxError ? "not valid JSON" : (e as Error).message}` }); }
     }
     if (spec.workspace) {
+      // A credential written into the workspace would outlive the run in its store: such a workspace is not written back.
+      const leaked = secrets.length ? secretIn(work, secrets) : null;
+      if (leaked) return await complete({ outcome: "failed", error_kind: "run", error: `the workspace holds the value of credential ${leaked}: it is not written back` });
       try { await client.stage(run.id, lease, work); }
       catch (e) {
         const status = (e as { status?: number }).status;
@@ -325,10 +379,22 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   } finally {
     clearInterval(beat); clearTimeout(deadline);
     if (as) killUser(as);
+    dropSecrets();
     proxy?.stop();
     if (proxy && opts.onProxyLog) { try { opts.onProxyLog(readFileSync(proxy.log, "utf8")); } catch { opts.onProxyLog(""); } }
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** The name of a credential whose value is in a file under `dir` (links are not followed), or null. */
+function secretIn(dir: string, secrets: Secret[]): string | null {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isSymbolicLink()) continue;
+    const hit = e.isDirectory() ? secretIn(p, secrets) : e.isFile() ? findSecret(readFileSync(p), secrets) : null;
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function killGroup(c: ChildProcess, signal: NodeJS.Signals) {

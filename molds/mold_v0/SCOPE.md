@@ -94,12 +94,12 @@ turns it into shell, or builds it where nothing exists yet.
 
 - **Today.** The platform key vault (`src/keyvault.ts`, `vault_providers` and `vault_credentials`, AES-256-GCM with a
   versioned master key, rekey) holds provider keys; `src/keyvault-env.ts` imports old environment keys once.
-  Per-org data keys (`src/orgcrypto.ts`, `org_keys`) seal an org's private text at rest. There is no store yet for a
-  workspace's own credentials (keys it gives the product to reach its systems).
-- **Generalised by.** mold_v0-034 (a workspace credential vault: fields a pack declares, bound to a workspace, an
-  asset or an environment, sealed with the workspace data key, injected into a run by name only, a canary test that
-  finds no value in transcripts, logs or MCP output), mold_v0-014 (repository access by a GitHub App per workspace,
-  later).
+  Per-org data keys (`src/orgcrypto.ts`, `org_keys`) seal an org's private text at rest.
+- **Generalised by.** mold_v0-034, **built** (the workspace credential vault: fields a pack declares, bound to a
+  workspace, an asset or an environment, sealed with the workspace data key, written in the console with only the
+  last 4 characters shown, injected into a run by name only for its target; a canary test finds no value in events,
+  results, logs, the database, the store or MCP output; `src/credentials.ts`, `workspace_credentials`),
+  mold_v0-014 (repository access by a GitHub App per workspace, later).
 
 ### Storage and the workspace store
 

@@ -352,9 +352,9 @@ const refuse = () => {
 };
 refuse();
 
-// ---------- record areas (mold_v0-047): read from each pack's definePack, checked across packs ----------
+// ---------- record areas (mold_v0-047) and credentials (mold_v0-034): read from each pack's definePack ----------
 
-/** Each pack's record areas, parsed by src/pack-api.ts RecordAreaSchema (defaults filled in), by pack id. */
+/** Each pack's record areas (parsed by src/pack-api.ts RecordAreaSchema, defaults filled in) and credential fields, by pack id. */
 function readRecordAreas() {
   if (!packs.length) return {};
   const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
@@ -364,13 +364,14 @@ function readRecordAreas() {
     const script = path.join(dir, "areas.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 const [api, entries] = JSON.parse(process.argv[2]);
-const { RecordAreaSchema } = await import(pathToFileURL(api).href);
+const { RecordAreaSchema, CredentialSchema } = await import(pathToFileURL(api).href);
 const out = {};
 for (const [id, file] of entries) {
   try {
     const m = await import(pathToFileURL(file).href);
     const def = m.default?.default ?? m.default;
-    out[id] = (def?.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a));
+    out[id] = { areas: (def?.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
+      credentials: (def?.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })) };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 1500) }; }
 }
 process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
@@ -380,14 +381,16 @@ process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
     const line = (r.stdout ?? "").split("\n").find((l) => l.startsWith("RECORD_AREAS "));
     if (r.status !== 0 || !line) { fail("record areas", `loading the packs' definitions failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
     const got = JSON.parse(line.slice("RECORD_AREAS ".length));
-    for (const [id, v] of Object.entries(got)) if (!Array.isArray(v)) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = []; }
+    for (const [id, v] of Object.entries(got)) if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = { areas: [], credentials: [] }; }
     return got;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
-const areasByPack = readRecordAreas();
-const recordAreas = packs.flatMap((p) => (areasByPack[p.id] ?? []).map((a) => ({ pack: p.id, ...a })));
+const defsByPack = readRecordAreas();
+const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
+/** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
+const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
 {
   const owner = new Map();
   for (const a of recordAreas) {
@@ -445,7 +448,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.length ? [{ label: "Records", items: recordAreas.map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
-  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform") ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform").map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n`);
+  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform") ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform").map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  "/** The /app sidebar's Credentials page (mold_v0-034): when any pack declares a credential field. */\n" +
+  `export const credentialPortalNav: NavGroup[] = ${json(credentialFields.length ? [{ label: "Workspace", items: [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] }] : [])};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json(profile)} as const;\n`);
@@ -460,5 +465,5 @@ for (const [file, text] of files) {
   console.log(`wrote ${posix(path.relative(OUT, file))}`);
 }
 if (CHECK && stale) { console.error(`gen-packs: ${stale} generated file(s) differ from the packs and profile: run npm run gen:packs`); process.exit(1); }
-console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((p) => p.id).join(", ")})` : ""}, ${allPages.length} page(s), ${recordAreas.length} record area(s), ` +
+console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((p) => p.id).join(", ")})` : ""}, ${allPages.length} page(s), ${recordAreas.length} record area(s), ${credentialFields.length} credential(s), ` +
   `${packs.filter((p) => p.manifest.migrations).length} with migrations; profile "${profile.name}"${CHECK ? "; generated files are current" : ""}`);

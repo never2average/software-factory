@@ -42,7 +42,9 @@ export const PLATFORM_READONLY = ["library_tasks", "platform_settings", "platfor
   // Record areas at platform scope (mold_v0-047, 0004_record_areas): shared by every workspace, read-only to customers.
   "platform_records"];
 /** Tables a tenant query must never reach (checked live by the probe). */
-export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_log", "admin_tokens", "access_requests", "orchestrators", "email_log"];
+export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_log", "admin_tokens", "access_requests", "orchestrators", "email_log",
+  // The workspace credential vault (mold_v0-034): not even a workspace's own sealed values reach tenant work.
+  "workspace_credentials"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(
@@ -151,6 +153,8 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       // The workspace store (mold_v0-033): a snapshot and a lease per organization.
       await tx.query("INSERT INTO workspace_snapshots (org_id, store, version, status, base_version, manifest, manifest_sha256, files, bytes, object_key) VALUES ($1, 'probe', 1, 'committed', 0, '{}', 'x', 0, 0, 'x')", [o]);
       await tx.query("INSERT INTO workspace_leases (org_id, store, run_id, expires_at) VALUES ($1, 'probe', $2, now())", [o, `${tag}-run-${o}`]);
+      // The credential vault (mold_v0-034): a sealed value per organization (not readable by tenant work at all).
+      await tx.query("INSERT INTO workspace_credentials (org_id, pack, name, bound_to, sealed, last4) VALUES ($1, 'probe', 'probe', 'workspace', 'x', 'xxxx')", [o]);
     }
     await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
@@ -202,6 +206,9 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("run_events: a tenant writes an event", "INSERT INTO run_events (run_id, org_id, attempt, type) VALUES ($1, $2, 0, 'x')", [`${tag}-run-${a}`, a]);
     await refused("workspace_snapshots: a tenant writes a snapshot row", "INSERT INTO workspace_snapshots (org_id, store, version, status, base_version, manifest, manifest_sha256, files, bytes, object_key) VALUES ($1, 'p', 9, 'committed', 0, '{}', 'x', 0, 0, 'x')", [a]);
     await refused("workspace_leases: a tenant takes a store's lease", "/* tenant: rls probe */ UPDATE workspace_leases SET run_id = 'x'");
+    // The credential vault (mold_v0-034): tenant work can neither read, write nor replace a sealed value, its own included.
+    await refused("workspace_credentials: a tenant writes a value", "INSERT INTO workspace_credentials (org_id, pack, name, bound_to, sealed, last4) VALUES ($1, 'p', 'p', 'workspace', 'x', 'xxxx')", [a]);
+    await refused("workspace_credentials: a tenant replaces a value", "/* tenant: rls probe */ UPDATE workspace_credentials SET sealed = 'x'");
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 
