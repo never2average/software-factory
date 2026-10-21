@@ -9,3 +9,4 @@ __pycache__/
 .pglite-preview/
 .vercel
 .env*
+!.env.example
