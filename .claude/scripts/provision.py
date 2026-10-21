@@ -2786,6 +2786,15 @@ def trusted_stdin():
     except OSError: return True
     return "mint.py" in parent
 
+
+def strip_pasted_name(name, value, say=print):
+    """A whole env line pasted at the prompt (NAME=value, maybe quoted) keeps only the value; says so, never shows it."""
+    v = value.strip()
+    if v.startswith(name + "="):
+        v = v[len(name) + 1:].strip(); say(f"  (you pasted the whole line {name}=...; kept only the part after '=')")
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"": v = v[1:-1]
+    return v
+
 def set_secret(app_id, name, infra, mold_dir):
     """Prompt for one credential and write it where this app's secrets live.
     The value is read from the terminal, never passed on a command line and never stored here.
@@ -2803,6 +2812,7 @@ def set_secret(app_id, name, infra, mold_dir):
     if sys.stdin.isatty():
         explain(name)
         value = getpass.getpass(f"{name} (input hidden): ").strip()
+        value = strip_pasted_name(name, value)
     elif trusted_stdin():
         # The factory's own caller (mint.py reuse-keys), handing over a value it read in memory from another of the
         # operator's apps. Nobody typed it, and it is never printed.
