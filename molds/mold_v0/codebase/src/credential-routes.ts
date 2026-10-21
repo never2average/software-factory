@@ -3,7 +3,7 @@
  * console's /app/credentials page. With no pack declaring a credential nothing is mounted.
  *
  *   GET    /api/credentials   a signed-in person of the workspace: the fields the packs declare and, for each stored
- *                             value, its slot and last 4 characters. Never a value.
+ *                             value, its slot (and, for an owner, its last 4 characters). Never a value.
  *   PUT    /api/credentials   {pack, name, asset?, environment?, value}: set or replace one value ("manage": an owner)
  *   DELETE /api/credentials   {pack, name, asset?, environment?}: remove one ("manage")
  *
@@ -47,7 +47,12 @@ export function credentialAppRouter(): Router {
   const who = (res: Response) => `customer:${S(res).email ?? S(res).user ?? S(res).slug}`;
   const slotOf = (b: Record<string, unknown>) => ({ pack: b.pack, name: b.name, asset: b.asset ?? null, environment: b.environment ?? null });
 
-  r.get("/", answer(async (_req, res) => ({ ...(await listCredentials(S(res).org)), can_manage: canAccount(S(res).accountRole, "manage") })));
+  // The last 4 characters go to those who manage the values (owners); everyone else sees which are set.
+  r.get("/", answer(async (_req, res) => {
+    const can = canAccount(S(res).accountRole, "manage");
+    const v = await listCredentials(S(res).org);
+    return { ...v, values: can ? v.values : v.values.map((x) => ({ ...x, last4: null })), can_manage: can };
+  }));
   r.put("/", answer(async (req, res) => {
     manage(res);
     const b = (req.body ?? {}) as Record<string, unknown>;

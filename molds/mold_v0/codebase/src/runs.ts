@@ -329,7 +329,8 @@ export async function appendRunEvents(runId: string, leaseToken: string, events:
     }
     // A value the run received never lands in its events, whatever the program printed (mold_v0-034).
     const secrets = await runSecrets(r);
-    for (const e of events as { type: string; data?: unknown }[]) await event(r.id, r.org_id, r.attempt, e.type, redactJson((e.data ?? {}) as Record<string, unknown>, secrets), db);
+    for (const e of events as { type: string; data?: unknown }[])
+      await event(r.id, r.org_id, r.attempt, redactText(e.type, secrets) === e.type ? e.type : "redacted", redactJson((e.data ?? {}) as Record<string, unknown>, secrets), db);
     return { appended: events.length };
   });
 }

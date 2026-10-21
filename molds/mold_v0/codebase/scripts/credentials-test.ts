@@ -102,7 +102,7 @@ try {
       { name: "db_password", label: "Database password", bound_to: "environment", area: "cred_apps", environments: ["staging", "production"], deliver_as: { env: "FIXTURE_DB_PASSWORD" } },
     ],
     jobKinds: [kind("report"), kind("report_none", { credentials: [] }), kind("report_token", { credentials: ["api_token"] }), kind("leak"),
-      kind("leak_ws", { workspace: true }), kind("leak_bad")] as never,
+      kind("leak_ws", { workspace: true }), kind("leak_wsname", { workspace: true }), kind("leak_bad"), kind("stash")] as never,
     tools: [
       defineTool({ name: "fixture_vault_run", description: "Start a run (test).", inputSchema: { kind: z.string(), targets: z.record(z.string(), z.unknown()).optional() },
         handler: async (_ws, { kind: k, targets }, { runs: r }) => r.start(k, { targets }) }),
@@ -159,9 +159,11 @@ try {
       assert.equal(hits(JSON.stringify(bad.body)), 0, "is refused without quoting it");
       const list = await req("GET", "/api/credentials", bearer(viewerA));
       assert.equal(list.status, 200, "a viewer sees which are set");
-      assert.deepEqual(list.body.values.map((v: { name: string; asset: string | null; environment: string | null; last4: string }) => [v.name, v.asset, v.environment, v.last4]),
-        [["api_token", null, null, CANARY.A_WS.slice(-4)], ["app_key", "app-x", null, CANARY.A_APP.slice(-4)], ["db_password", "app-x", "staging", CANARY.A_DB.slice(-4)]], "A's own values, last 4 only");
+      assert.deepEqual(list.body.values.map((v: { name: string; asset: string | null; environment: string | null; last4: string | null }) => [v.name, v.asset, v.environment, v.last4]),
+        [["api_token", null, null, null], ["app_key", "app-x", null, null], ["db_password", "app-x", "staging", null]], "A's own values: which are set, not even the last 4");
       assert.equal(list.body.can_manage, false);
+      const owned = await req("GET", "/api/credentials", bearer(ownerA));
+      assert.deepEqual(owned.body.values.map((v: { last4: string }) => v.last4), [CANARY.A_WS.slice(-4), CANARY.A_APP.slice(-4), CANARY.A_DB.slice(-4)], "an owner sees the last 4 characters");
       assert.equal(hits(JSON.stringify(list.body)), 0, "no value in the list");
       assert.deepEqual(list.body.fields.map((f: { name: string }) => f.name), ["api_token", "app_key", "db_password"]);
       console.log("✓ console: owners set values per workspace, asset and environment; answers show the last 4 only; members, viewers, cookie writes without the header, other workspaces' assets refused");
@@ -235,6 +237,9 @@ try {
       count(rf);
       assert.deepEqual(rf.sha, { api_token: shaA.api_token, app_key: null, db_password: null }, "targeting B's asset key from A gets none of B's values");
       assert.deepEqual((await credEvent(foreign.id)).missing, ["app_key", "db_password"]);
+      const otherArea = await start(ca, "report", { asset: { area: "elsewhere", key: "app-x" }, environment: "staging" });
+      await runIt(otherArea.id, ["fixture_vault/report"]);
+      assert.deepEqual((await report(otherArea.id)).sha, { api_token: shaA.api_token, app_key: null, db_password: null }, "a target in another area gets no asset-bound value");
       const none = await start(ca, "report", {});
       await runIt(none.id, ["fixture_vault/report"]);
       count(await report(none.id));
@@ -264,6 +269,12 @@ try {
         assert.equal(v?.status, "succeeded", JSON.stringify(v));
         const ri = await report(iso.id);
         assert.deepEqual([ri.uid, ri.file.uid, ri.sha], [65534, 65534, shaA], "as the run's user: its file, its values");
+        // Runs share their user: nothing one leaves in the shared temporary directories survives it.
+        const st = await start(ca, "stash", { asset: "app-x", environment: "staging", mode: "stash" });
+        assert.equal((await runIt(st.id, ["fixture_vault/stash"], { allowSameUser: false, runAs: { uid: 65534, gid: 65534 } }))?.status, "succeeded");
+        const left: string[] = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'stashed'", [st.id]))[0]!.data.left;
+        assert.ok(left.length >= 2, `it did leave copies (${left.join(", ")})`);
+        assert.deepEqual(left.filter((f) => existsSync(f)), [], "and none is there after the run");
         console.log("✓ as a user of its own, the program reads its credential file (0400, owned by that user)");
       } else console.log("- runs as a separate user: skipped (needs a runner started as root)");
       assert.equal(injected.fromB, 0);
@@ -280,6 +291,10 @@ try {
       assert.ok(ev.some((e) => e.type === "stderr" && JSON.stringify(e.data).includes("[credential db_password]")), "stderr too");
       const res = await call(ca, "fixture_vault_results", { id: leak.id });
       assert.equal(res.structuredContent.results[0].detail.token, "[credential api_token]", "results are redacted");
+      assert.ok(ev.some((e) => /authorization: Basic \S{0,8}\[credential/.test(JSON.stringify(e.data))), "a Basic header (base64 of user:value) is redacted");
+      const wsn = await start(ca, "leak_wsname", { mode: "leak_wsname" });
+      const vn = await runIt(wsn.id, ["fixture_vault/leak_wsname"]);
+      assert.deepEqual([vn?.status, vn?.error], ["failed", "the workspace holds the value of credential api_token: it is not written back"], "a file named after a value is caught too");
       const ws = await start(ca, "leak_ws", { asset: "app-x", environment: "staging", mode: "leak_ws" });
       const vw = await runIt(ws.id, ["fixture_vault/leak_ws"]);
       assert.deepEqual([vw?.status, vw?.error], ["failed", "the workspace holds the value of credential api_token: it is not written back"]);
@@ -294,11 +309,24 @@ try {
       const got = await client.credentials(c.run.id, c.lease_token);
       assert.equal(got.credentials.length, 3);
       await runs.appendRunEvents(c.run.id, c.lease_token, [{ type: "log", data: { line: `raw ${CANARY.B_WS}`, [CANARY.B_DB]: Buffer.from(CANARY.B_DB).toString("base64") } }]);
+      await runs.appendRunEvents(c.run.id, c.lease_token, [{ type: CANARY.B_WS, data: {} }]);
+      assert.equal((await db.query("SELECT 1 FROM run_events WHERE run_id = $1 AND type = 'redacted'", [raw.id])).length, 1, "an event whose type is a value is stored as 'redacted'");
       await runs.completeRun(c.run.id, c.lease_token, { outcome: "succeeded", results: [{ check: { area: "cred_checks", key: "k1" }, status: "pass", detail: { x: CANARY.B_APP } }] });
       const stored = JSON.stringify(await db.query("SELECT data FROM run_events WHERE run_id = $1", [raw.id])) + JSON.stringify(await db.query("SELECT detail FROM run_results WHERE run_id = $1", [raw.id]));
       assert.equal(hits(stored), 0, "the engine redacted what the runner sent");
       assert.ok(stored.includes("[credential api_token]") && stored.includes("[credential app_key]"));
-      console.log("✓ leaks: printed, encoded, in results, in stderr, in a workspace file, in a broken results file: stored redacted, not written back, quoted nowhere; the engine redacts on its own");
+      console.log("✓ leaks: printed, encoded, in results, in stderr, in a workspace file or its name, in a broken results file: stored redacted, not written back, quoted nowhere; the engine redacts on its own");
+      // The redaction's forms, one by one (the review's cases).
+      const { redactText, redactJson } = await import("../src/credential-redact.js");
+      const sv = [{ name: "short", value: "abcdefgh" }, { name: "long", value: "abcdefgh-LONGTAIL" }, { name: "pin", value: "1234567890" }, { name: "tok", value: "s3cr+t/Val=ue!" }];
+      for (const k of [0, 1, 2, 3, 4]) {
+        const enc = Buffer.from(`${"x".repeat(k)}${sv[3]!.value}tail`).toString("base64");
+        assert.match(redactText(enc, sv), /\[credential tok\]/, `base64 at byte offset ${k}`);
+      }
+      assert.equal(redactText(`?key=${encodeURIComponent(sv[3]!.value)}`, sv), "?key=[credential tok]", "URL-encoded");
+      assert.equal(redactText("x abcdefgh-LONGTAIL y", sv), "x [credential long] y", "a value inside a longer one: the longer goes first");
+      assert.deepEqual(redactJson({ n: 1234567890 }, sv), { n: "[credential pin]" }, "a number that spells a value");
+      console.log("✓ redaction forms: base64 at any offset, URL encoding, nested values, numbers");
     }
 
     // ---------- 8. row-level security ----------

@@ -1,7 +1,7 @@
 'use client';
 // /app/credentials (mold_v0-034; src/credential-routes.ts): the credential fields the packs declare, each value stored
 // sealed with the workspace's data key. A value is typed once, sent once, and never shown again: the page shows only
-// its last 4 characters. Owners set, replace and remove values; everyone else in the workspace sees which are set.
+// its last 4 characters, to owners. Owners set, replace and remove values; everyone else in the workspace sees which are set.
 import { useState } from 'react';
 import { toast } from 'sonner';
 import PageContainer from '@/components/layout/page-container';
@@ -9,6 +9,7 @@ import { Section } from '@/components/layout/section';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
@@ -17,7 +18,7 @@ interface Field {
   pack: string; name: string; label: string; help: string | null; bound_to: 'workspace' | 'asset' | 'environment';
   area: string | null; environments: string[] | null; deliver_as: { env: string } | { file: string };
 }
-interface Stored { pack: string; name: string; bound_to: string; asset: string | null; environment: string | null; last4: string; updated_at: string; updated_by: string | null }
+interface Stored { pack: string; name: string; bound_to: string; asset: string | null; environment: string | null; last4: string | null; updated_at: string; updated_by: string | null }
 interface Vault { fields: Field[]; values: Stored[]; can_manage: boolean }
 
 async function call<T>(method: string, body?: unknown): Promise<T> {
@@ -86,7 +87,7 @@ function FieldSection({ f, values, canManage, onChanged }: { f: Field; values: S
               <TableRow key={`${v.asset ?? ''}/${v.environment ?? ''}`}>
                 {f.bound_to !== 'workspace' && <TableCell className='font-mono text-sm'>{v.asset}</TableCell>}
                 {f.bound_to === 'environment' && <TableCell>{v.environment}</TableCell>}
-                <TableCell className='font-mono text-sm'>{'••••' + v.last4}</TableCell>
+                <TableCell className='font-mono text-sm'>{v.last4 ? '••••' + v.last4 : 'Set'}</TableCell>
                 <TableCell><When d={v.updated_at} /></TableCell>
                 {canManage && <TableCell className='text-right'><Button variant='ghost' size='sm' onClick={() => void remove(v)}>Remove</Button></TableCell>}
               </TableRow>
@@ -102,7 +103,12 @@ function FieldSection({ f, values, canManage, onChanged }: { f: Field; values: S
               {f.environments.map((x) => <NativeSelectOption key={x} value={x}>{x}</NativeSelectOption>)}
             </NativeSelect>
           ) : <Input className='w-36' placeholder='environment' value={environment} onChange={(e) => setEnvironment(e.target.value)} aria-label='Environment' />)}
-          <Input className='w-72' type='password' autoComplete='off' spellCheck={false} placeholder='Paste the value' value={value} onChange={(e) => setValue(e.target.value)} aria-label={`${f.label} value`} />
+          {'file' in f.deliver_as ? (
+            // A file (a key, a certificate) keeps its line breaks: a text area, not a one-line field.
+            <Textarea className='w-96 font-mono text-xs' rows={4} autoComplete='off' spellCheck={false} placeholder='Paste the file' value={value} onChange={(e) => setValue(e.target.value)} aria-label={`${f.label} value`} />
+          ) : (
+            <Input className='w-72' type='password' autoComplete='off' spellCheck={false} placeholder='Paste the value' value={value} onChange={(e) => setValue(e.target.value)} aria-label={`${f.label} value`} />
+          )}
           <Button type='submit' size='sm' disabled={busy || !value}>{values.length ? 'Save or replace' : 'Save'}</Button>
         </form>
       ) : <p className='text-muted-foreground text-xs'>An owner of this workspace sets these.</p>}

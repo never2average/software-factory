@@ -5,8 +5,11 @@
 //            results: all of it must reach the database redacted
 //   leak_ws  writes a value into its workspace: the workspace must not be written back
 //   leak_bad writes a results.json that is not JSON and holds a value: the run's error must not quote it
+//   leak_wsname  names a workspace file after a value: the workspace must not be written back
+//   stash    copies its credential file and a value into the shared temporary directories (and hard-links the file
+//            there): none of it may be left for the next run
 import { createHash } from "node:crypto";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, linkSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
@@ -28,12 +31,23 @@ if (t.mode === "report" || !t.mode) {
     out({ event: "leak", name: k, value: v, nested: { list: [v], [v]: "as a key" } });
     console.log(`base64 ${Buffer.from(v).toString("base64")} hex ${Buffer.from(v).toString("hex")}`);
     console.error(`stderr ${k}=${v}`);
+    console.log(`authorization: Basic ${Buffer.from(`user:${v}`).toString("base64")} url ?key=${encodeURIComponent(v)}`);
   }
+  if (got.api_token) out({ event: got.api_token, note: "a value as an event type" });
   const v = got.api_token ?? "none";
   writeFileSync(path.join(process.env.RUN_OUT, "results.json"), JSON.stringify([
     { check: { area: "cred_checks", key: "k1" }, status: "fail", evidence_ref: `token ${v}`, detail: { token: v, again: [v] } }]));
 } else if (t.mode === "leak_ws") {
   writeFileSync(path.join(process.env.RUN_WORKSPACE, "config.txt"), `token=${got.api_token}\n`);
+} else if (t.mode === "leak_wsname") {
+  writeFileSync(path.join(process.env.RUN_WORKSPACE, `${got.api_token}.json`), "{}");
+} else if (t.mode === "stash") {
+  const id = process.env.RUN_ID;
+  const left = [];
+  try { copyFileSync(file, `/dev/shm/stash-${id}`); left.push(`/dev/shm/stash-${id}`); } catch {}
+  try { linkSync(file, `/dev/shm/link-${id}`); left.push(`/dev/shm/link-${id}`); } catch {}
+  try { writeFileSync(`/tmp/stash-${id}`, String(got.api_token)); left.push(`/tmp/stash-${id}`); } catch {}
+  out({ event: "stashed", left });
 } else if (t.mode === "leak_bad") {
   writeFileSync(path.join(process.env.RUN_OUT, "results.json"), `[{"check": ${got.api_token}`);
 }

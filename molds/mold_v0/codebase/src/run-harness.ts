@@ -221,12 +221,14 @@ function runProgram(file: string, args: string[], o: { cwd: string; env: Record<
       resolve(c);
     };
     const t = o.timeoutMs ? setTimeout(() => { killGroup(child, "SIGKILL"); }, o.timeoutMs) : setTimeout(() => {}, 0);
-    child.stdout!.on("data", (d: Buffer) => {
-      buf += d.toString("utf8");
+    // Decoded as streams: a character split between two chunks stays whole (else redaction could miss a value).
+    child.stdout!.setEncoding("utf8"); child.stderr!.setEncoding("utf8");
+    child.stdout!.on("data", (d: string) => {
+      buf += d;
       const lines = buf.split("\n"); buf = lines.pop() ?? "";
       for (const l of lines) if (l.trim()) o.onStdout?.(l);
     });
-    child.stderr!.on("data", (d: Buffer) => o.onStderr?.(d.toString("utf8")));
+    child.stderr!.on("data", (d: string) => o.onStderr?.(d));
     child.on("error", () => finish(INFRA_EXIT));
     // "exit", not "close": a grandchild holding stdout open must not keep the run waiting.
     child.on("exit", (c, sig) => setTimeout(() => finish(c ?? (sig ? 128 : null)), 200));
@@ -236,6 +238,7 @@ function runProgram(file: string, args: string[], o: { cwd: string; env: Record<
 /** Carry out one claimed run, from checkout to completion. Never throws for the run's own failures: it completes them. */
 export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, opts: HarnessOptions = {}): Promise<RunView | null> {
   const as = runIsolation(opts);
+  if (as) { killUser(as); sweepUserFiles(as.uid); } // nothing of an earlier run (one whose runner died) is left for this one
   const run = claim.run, spec = run.spec, lease = claim.lease_token;
   const scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `run-${run.id.slice(4, 12)}-`));
   const work = path.join(scratch, "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home"), pack = path.join(scratch, "pack");
@@ -252,7 +255,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   const dropSecrets = () => { if (secretDir) { rmSync(secretDir, { recursive: true, force: true }); secretDir = null; } };
   const flush = async () => {
     if (!pending.length || leaseLost) return;
-    const batch = pending.splice(0, 500).map((e) => ({ type: e.type, data: redactJson(e.data, secrets) }));
+    const batch = pending.splice(0, 500).map((e) => ({ type: redactText(e.type, secrets) === e.type ? e.type : "redacted", data: redactJson(e.data, secrets) }));
     await client.events(run.id, lease, batch).catch((e) => { if ((e as { status?: number }).status === 409) leaseLost = true; });
   };
   const complete = async (c0: Completion) => {
@@ -305,7 +308,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         const files = delivered.credentials.filter((c) => c.file);
         if (files.length) {
           // On tmpfs when there is one: a value never reaches a disk. Only the run's user can enter the directory.
-          const base = opts.secretsBase ?? (existsSync("/dev/shm") && statSync("/dev/shm").isDirectory() ? "/dev/shm" : scratch);
+          const base = opts.secretsBase ?? (existsSync("/dev/shm") && statSync("/dev/shm").isDirectory() ? "/dev/shm" : null);
+          if (!base) throw new Error("credential files need a tmpfs (/dev/shm, or secretsBase): none here, so none is written to disk");
           secretDir = mkdtempSync(path.join(base, "run-cred-"));
           chmodSync(secretDir, 0o700);
           for (const f of files) {
@@ -359,7 +363,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     let results: unknown[] = [];
     const file = path.join(out, "results.json");
     if (existsSync(file)) {
-      try { results = redactJson(JSON.parse(readFileSync(file, "utf8")), secrets); if (!Array.isArray(results)) throw new Error("not a list"); }
+      // Redacted as text first (a value as a number, or in a form a parser would undo), then as values.
+      try { results = redactJson(JSON.parse(redactText(readFileSync(file, "utf8"), secrets)), secrets); if (!Array.isArray(results)) throw new Error("not a list"); }
       // A parse error quotes the file (which may hold a value, cut where redaction cannot see it): never its text.
       catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `results.json: ${e instanceof SyntaxError ? "not valid JSON" : (e as Error).message}` }); }
     }
@@ -378,7 +383,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     return await complete({ outcome: "succeeded", results });
   } finally {
     clearInterval(beat); clearTimeout(deadline);
-    if (as) killUser(as);
+    if (as) { killUser(as); sweepUserFiles(as.uid); }
     dropSecrets();
     proxy?.stop();
     if (proxy && opts.onProxyLog) { try { opts.onProxyLog(readFileSync(proxy.log, "utf8")); } catch { opts.onProxyLog(""); } }
@@ -391,10 +396,32 @@ function secretIn(dir: string, secrets: Secret[]): string | null {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isSymbolicLink()) continue;
-    const hit = e.isDirectory() ? secretIn(p, secrets) : e.isFile() ? findSecret(readFileSync(p), secrets) : null;
+    // Its name too: a file named after a value would carry it in the snapshot's manifest.
+    const hit = findSecret(e.name, secrets) ?? (e.isDirectory() ? secretIn(p, secrets) : e.isFile() ? findSecret(readFileSync(p), secrets) : null);
     if (hit) return hit;
   }
   return null;
+}
+
+/**
+ * Every file the run's user left in the shared temporary directories (/tmp, /var/tmp, /dev/shm), removed. Runs share
+ * that user, so a copy of a credential (or anything else) left there would be readable by the next run, of any
+ * workspace. Done before a run starts (what a runner that died left behind) and after it ends.
+ */
+export function sweepUserFiles(uid: number, roots = ["/tmp", "/var/tmp", "/dev/shm"]) {
+  const sweep = (dir: string, depth: number) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      let st;
+      try { st = lstatSync(p); } catch { continue; }
+      if (st.uid === uid) { rmSync(p, { recursive: true, force: true }); continue; }
+      // Another owner's directory the run's user could still write into (world-writable, like /tmp itself).
+      if (st.isDirectory() && (st.mode & 0o002) && depth < 4) sweep(p, depth + 1);
+    }
+  };
+  for (const r of roots) sweep(r, 0);
 }
 
 function killGroup(c: ChildProcess, signal: NodeJS.Signals) {
