@@ -1,0 +1,77 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_review",
+  "name": "Fixture review",
+  "version": "0.1.0",
+  "description": "A declarative test fixture for the generated MCP tools (mold_v0-060; scripts/mcp-tools-test.ts): areas, a lifecycle, a job kind with a report, a metric and mcp settings, no tools of its own. Never shipped.",
+  "runner": "runner",
+  "words": { "workspace": "team", "run": "review" },
+  "record_areas": [
+    {
+      "name": "review_guides",
+      "label": "Guides",
+      "description": "The shared review guides every team reads.",
+      "role": "source",
+      "scope": "platform",
+      "fields": [{ "name": "summary", "label": "Summary", "type": "text", "required": true, "max_length": 500 }]
+    },
+    {
+      "name": "review_items",
+      "label": "Items",
+      "role": "asset",
+      "scope": "workspace",
+      "fields": [
+        { "name": "url", "label": "Address", "type": "text", "required": true },
+        { "name": "kind", "label": "Kind", "type": "enum", "options": ["app", "api"] }
+      ]
+    },
+    {
+      "name": "review_notes",
+      "label": "Notes",
+      "role": "check",
+      "scope": "workspace",
+      "fields": [
+        { "name": "body", "label": "Note", "type": "text", "required": true, "max_length": 2000 },
+        { "name": "item", "label": "Item", "type": "reference", "to": "review_items", "required": true },
+        { "name": "guide", "label": "Guide", "type": "reference", "to": "review_guides" },
+        { "name": "state", "label": "State", "type": "enum", "options": ["draft", "done", "dropped"] }
+      ],
+      "lifecycle": {
+        "field": "state",
+        "initial": "draft",
+        "transitions": [
+          { "from": ["draft"], "to": "done", "label": "Finish" },
+          { "from": ["draft", "done"], "to": "dropped", "label": "Drop", "roles": ["owner"] }
+        ]
+      },
+      "permissions": { "create": ["member", "owner"], "update": ["member", "owner"] }
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "review_pass",
+      "label": "Review an item",
+      "runner": "workspace-harness",
+      "entry": "runner/review.mjs",
+      "workspace": true,
+      "max_attempts": 1,
+      "lease_seconds": 15,
+      "budget_usd": 1,
+      "args": [
+        { "name": "item", "label": "Item", "type": "reference", "to": "review_items", "required": true },
+        { "name": "depth", "label": "Depth", "type": "number", "min": 1, "max": 3 }
+      ],
+      "report": { "path": "reports/summary.md", "label": "Summary" }
+    }
+  ],
+  "metrics": [
+    { "name": "notes_by_state", "label": "Notes by state", "over": "review_notes", "group_by": "state" }
+  ],
+  "mcp": {
+    "prefix": "review",
+    "rename": { "review_list_review_notes": "review_notes" },
+    "describe": { "review_get_review_items": "One item of this team by its key, with every field." },
+    "exclude": ["review_admin_delete_review_guides"],
+    "admin_only": ["review_cancel_review"]
+  }
+}
