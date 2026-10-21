@@ -160,10 +160,10 @@
           },
           "packs": {
             "type": "array",
-            "description": "Packs every application of this product gets (packs/<pack_id>/). Products differ by pack and brand, never by forking a mold.",
+            "description": "Packs every application of this product gets (packs/<pack_id>/). Products differ by pack and brand, never by forking a mold. The ids are the mold's (as application.json packs): mold_v1's lowercase letters, digits and hyphens; mold_v0's letters, digits and underscores.",
             "items": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9-]{1,40}$"
+              "pattern": "^[a-z][a-z0-9_-]{1,40}$"
             }
           }
         },

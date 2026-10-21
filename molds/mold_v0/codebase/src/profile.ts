@@ -10,6 +10,9 @@
  *   name, console_description, short_description   the product's name and the console's descriptions
  *   limits             optional (mold_v0-018): the build's own rate limits and run ceilings, and per-plan ones
  *                      (src/rate-limits.ts); absent, the shell's defaults
+ *   mcp_server_version optional (mold_v0-060): the customer MCP server's version (absent: the shell's)
+ *   mcp_instructions   optional (mold_v0-060): the customer MCP server's instructions, in place of the shell's; the
+ *                      paragraph for the tools generated from the packs is added after either
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
@@ -26,6 +29,8 @@ export interface Profile {
   email_sender_name: string;
   email_from_address: string;
   limits?: ProfileLimits;
+  mcp_server_version?: string;
+  mcp_instructions?: string;
 }
 
 export const PROFILE: Readonly<Profile> = Object.freeze({ ...(GENERATED_PROFILE as Profile) });

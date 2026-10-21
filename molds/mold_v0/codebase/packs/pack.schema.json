@@ -686,6 +686,33 @@
                 "minimum": 0,
                 "maximum": 5000
               },
+              "report": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^(?!\\/)(?!.*\\/\\/)[A-Za-z0-9._ /-]{1,300}$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "format": {
+                    "default": "markdown",
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "text",
+                      "json"
+                    ]
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
+              },
               "runner": {
                 "type": "string",
                 "const": "workspace-harness"
@@ -901,6 +928,33 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 5000
+              },
+              "report": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^(?!\\/)(?!.*\\/\\/)[A-Za-z0-9._ /-]{1,300}$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "format": {
+                    "default": "markdown",
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "text",
+                      "json"
+                    ]
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "additionalProperties": false
               },
               "runner": {
                 "type": "string",
@@ -2237,8 +2291,66 @@
       "additionalProperties": {}
     },
     "mcp": {
-      "not": {},
-      "description": "Reserved: comes with mold_v0-060."
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "prefix": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,30}$"
+        },
+        "include": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        },
+        "exclude": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        },
+        "rename": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        },
+        "describe": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069<>]*$"
+          }
+        },
+        "admin_only": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [
