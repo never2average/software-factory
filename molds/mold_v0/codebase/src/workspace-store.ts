@@ -72,6 +72,25 @@ export async function latestSnapshot(q: Queryable, orgId: number, store: string)
     `SELECT ${COLS} FROM workspace_snapshots WHERE org_id = $1 AND store = $2 AND status = 'committed' ORDER BY version DESC LIMIT 1`, [orgId, store]);
   return s ?? null;
 }
+/** One committed version of a workspace's store (mold_v0-060: a run's report is read from the version it left). */
+export async function snapshotAt(q: Queryable, orgId: number, store: string, version: number): Promise<Snapshot | null> {
+  const [s] = await q.query<Snapshot>(
+    `SELECT ${COLS} FROM workspace_snapshots WHERE org_id = $1 AND store = $2 AND version = $3 AND status = 'committed'`, [orgId, store, version]);
+  return s ?? null;
+}
+/**
+ * The version a run left (mold_v0-060): the one it committed, else (its write-back changed nothing, so no version was
+ * made) the committed version its write-back was staged on. Read from the store's own rows, which only the platform
+ * writes; null when the run staged nothing.
+ */
+export async function snapshotOfRun(q: Queryable, orgId: number, store: string, runId: string): Promise<Snapshot | null> {
+  const [own] = await q.query<Snapshot>(
+    `SELECT ${COLS} FROM workspace_snapshots WHERE org_id = $1 AND store = $2 AND run_id = $3 AND status = 'committed' ORDER BY version DESC LIMIT 1`, [orgId, store, runId]);
+  if (own) return own;
+  const [staged] = await q.query<{ base_version: number | null }>(
+    "SELECT base_version FROM workspace_snapshots WHERE org_id = $1 AND store = $2 AND run_id = $3 ORDER BY id DESC LIMIT 1", [orgId, store, runId]);
+  return staged?.base_version ? snapshotAt(q, orgId, store, staged.base_version) : null;
+}
 /** A workspace's versions of one store, newest first (its own only: the org_id filter, and row-level security for tenant work). */
 export async function listSnapshots(orgId: number, store: string): Promise<Omit<Snapshot, "manifest">[]> {
   return (await getDb()).query(`SELECT id, org_id, store, version, status, base_version, run_id, attempt, manifest_sha256, files, bytes, object_key, created_at, committed_at

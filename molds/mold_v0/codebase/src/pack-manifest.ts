@@ -7,9 +7,8 @@
  * credential fields; schedules; onboarding; metrics, charts and console tabs). A code entry stays possible and extends it
  * (mergePack).
  *
- * Extension points left for the tickets after 057, each a key of pack.json that is reserved here (refused with the
- * ticket that brings it, so a pack.json written for it fails loudly rather than being half-read):
- *   mcp           mold_v0-060  the branded MCP server's generated tools and install pages
+ * `mcp` (mold_v0-060, McpSettingsSchema in src/pack-api.ts) shapes the MCP tools generated from the declarations
+ * (src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only. No key is reserved now.
  * `repositories` (mold_v0-059: each a `kind` and its settings, read by src/data-repositories.ts; an area names one with
  * `repository`; "pack.json#upstream" is resolved here to the pack.json's own `upstream` pin). Declared and checked for
  * their shape today, read by the ticket that builds it: `run_results` (how a run's output becomes run_results rows:
@@ -18,11 +17,10 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
-import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
-const reserved = (ticket: string, what: string) => z.unknown().refine(() => false, `${what} come with ${ticket}: not part of pack.json yet`).optional();
 
 /** One page of the console (gen-packs checks the same and more: mold_v0-038). */
 const PageSchema = z.object({
@@ -64,12 +62,12 @@ export const PackJsonSchema = z.object({
   tabs: z.array(TabSchema).max(40).optional(),
   repositories: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a repository name: lowercase letters, digits and _"), RepositorySchema).optional(),
   run_results: RunResultsSchema.optional(),
-  mcp: reserved("mold_v0-060", "MCP settings"),
+  mcp: McpSettingsSchema.optional(),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults">;
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp">;
 export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "schedules", "onboarding", "metrics", "charts", "tabs"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
@@ -114,6 +112,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
     if (problems.length) throw new PackJsonError(problems);
   }
   if (p.run_results) out.runResults = p.run_results;
+  if (p.mcp) out.mcp = p.mcp;
   return out;
 }
 
@@ -137,14 +136,15 @@ export function mergePack(packId: string, declared: DeclaredPack | null | undefi
   }
   if (declared?.runResults && code.runResults) throw new PackJsonError(["run_results is declared in pack.json and in the code entry"]);
   if (declared?.runResults) out.runResults = declared.runResults;
+  // The MCP settings (mold_v0-060) are declared once too.
+  if (declared?.mcp && code.mcp) throw new PackJsonError(["mcp is declared in pack.json and in the code entry"]);
+  if (declared?.mcp) out.mcp = declared.mcp;
   return out;
 }
 
 /** The JSON Schema of pack.json (packs/pack.schema.json): the same rules, minus the cross-checks only the build makes. */
 export function packJsonSchema(): Record<string, unknown> {
   const s = z.toJSONSchema(PackJsonSchema, { io: "input", unrepresentable: "any" }) as Record<string, unknown> & { properties: Record<string, Record<string, unknown>> };
-  for (const [k, t] of [["mcp", "mold_v0-060"]] as const)
-    s.properties[k] = { not: {}, description: `Reserved: comes with ${t}.` };
   return {
     $id: "pack.schema.json",
     title: "mold_v0 pack.json",

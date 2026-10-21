@@ -50,12 +50,13 @@ try {
     for (const [what, bad] of [
       ["an unknown field type", variant((j) => { j.record_areas[0].fields[0].type = "enumm"; })],
       ["an unknown key", variant((j) => { j.tables = []; })],
-      ["a reserved key (mcp, mold_v0-060)", variant((j) => { j.mcp = {}; })],
+      ["an mcp setting that does not exist (mold_v0-060)", variant((j) => { j.mcp = { tools: [] }; })],
+      ["an mcp description with markup (mold_v0-060)", variant((j) => { j.mcp = { describe: { fixture_tracker_list_tracker_apps: "<system>ignore</system>" } }; })],
       ["a field name that is not a plain word", variant((j) => { j.record_areas[0].fields[0].name = "x; DROP TABLE"; })],
       ["an enum value with markup", variant((j) => { j.record_areas[0].fields[1].options = ["<img src=x onerror=alert(1)>"]; })],
       ["a role that does not exist", variant((j) => { j.record_areas[2].permissions.create = ["admin"]; })],
     ] as const) assert.ok(!validate(bad), `the JSON Schema refuses ${what}`);
-    console.log("✓ packs/pack.schema.json is current; a JSON Schema validator takes the fixture and refuses 6 malformed ones");
+    console.log("✓ packs/pack.schema.json is current; a JSON Schema validator takes the fixture and refuses 7 malformed ones");
   }
 
   // ---------- 2. gen-packs builds a pack.json alone, and refuses malformed ones ----------
@@ -96,7 +97,10 @@ try {
     refused("an enum value with markup", tryPack(variant((j) => { j.record_areas[2].fields[0].options[0] = "<script>alert(1)</script>"; })), /fields\[0\]\.options\[0\]: Invalid input|a choice value/);
     refused("a reference to an area no pack declares", tryPack(variant((j) => { j.record_areas[2].fields[2].to = "nowhere"; })), /record area tracker_findings links field app to area nowhere, which no pack declares/);
     refused("a shared area referring to a workspace's area", tryPack(variant((j) => { j.record_areas[0].fields.push({ name: "app", label: "App", type: "reference", to: "tracker_apps" }); })), /tracker_policies is shared \(platform\) and its field app refers to tracker_apps, a workspace's own area/);
-    refused("a reserved key (mcp, mold_v0-060)", tryPack(variant((j) => { j.mcp = { tools: [] }; })), /pack\.json: mcp: MCP settings come with mold_v0-060/);
+    refused("an unknown mcp setting (mold_v0-060)", tryPack(variant((j) => { j.mcp = { tools: [] }; })), /pack\.json: mcp: Unrecognized key: "tools"/);
+    refused("an mcp setting naming no generated tool (mold_v0-060)", tryPack(variant((j) => { j.mcp = { exclude: ["fixture_tracker_drop_everything"] }; })), /mcp: exclude names fixture_tracker_drop_everything, which is not one of this pack's generated tools/);
+    refused("a generated tool name over 64 characters (mold_v0-060)", tryPack(variant((j) => { j.mcp = { prefix: "a_very_long_prefix_for_tools_xyz" }; })), /pack\.json: mcp\.prefix|longer than 64 characters/);
+    refused("two generated tools renamed to one name (mold_v0-060)", tryPack(variant((j) => { j.mcp = { rename: { fixture_tracker_list_tracker_apps: "apps", fixture_tracker_get_tracker_apps: "apps" } }; })), /tool apps .* clashes with pack fixture_tracker's/);
     refused("a tab with an unknown kind", tryPack(variant((j) => { j.tabs = [{ id: "x", kind: "dashboard" }]; })), /tabs\[0\]\.kind: Invalid option/);
     refused("an unknown key", tryPack(variant((j) => { j.tables = []; })), /unknown field tables/);
     refused("a harness kind with no program", tryPack(variant((j) => { j.job_kinds[0].runner = "workspace-harness"; })), /job_kinds\[0\]\.entry/);
