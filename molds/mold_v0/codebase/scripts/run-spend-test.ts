@@ -73,6 +73,22 @@ try {
     assert.ok(!JSON.stringify(useB).includes(r1.id) && !JSON.stringify(billB).includes(r1.id), "B's pages never name A's run");
     console.log("✓ the portal's Usage and Billing pages count A's runs; B's pages are as before");
 
+    // ---------- 4b. a schedule's runs (requested_by "schedule:<id>", mold_v0-035) count in the month figures ----------
+    {
+      const before = await orgMonthSpendUsd(B.orgId);
+      await w.start(B.orgId, "metered", "schedule:7");
+      const cs = (await w.claim(["metered"]))!;
+      assert.deepEqual(await w.spend(cs, 1), [200]);
+      await w.complete(cs);
+      near(await orgMonthSpendUsd(B.orgId), before + PER_REQUEST_USD, "a scheduled run's spend counts in its workspace's month figure");
+      const tb2 = await w.http.signIn(B, "owner");
+      const bill = await (await w.http.req("GET", "/api/app/billing/usage", { authorization: `Bearer ${tb2}` })).json() as any;
+      assert.ok(bill.by_person.some((p: any) => p.label === "Schedule"), "and shows as the schedule's, not a former member's");
+      const { monthRunSpendByPerson } = await import("../src/run-spend.js");
+      assert.ok(!(await monthRunSpendByPerson(B.orgId)).has("schedule:7"), "never against a member's own limit");
+      console.log("✓ a schedule's runs count in the month figures (as the schedule's, not a person's)");
+    }
+
     // ---------- 5. budgets that read month spend ----------
     await w.db.query("UPDATE organizations SET budget_override_usd = $2 WHERE id = $1", [A.orgId, 0.3]);
     const r2 = await w.start(A.orgId, "metered", "user_a1");
@@ -82,6 +98,16 @@ try {
     await w.complete(c2);
     await assert.rejects(w.start(A.orgId, "metered"), /account has used/, "and no new run starts");
     assert.ok((await w.start(B.orgId, "metered")).id, "B, with its own month, still starts runs");
+    // No allowance (no plan, no override): no run starts, and a running one stops spending.
+    const Z = (await createOrg(`Spend Z ${STAMP}`)).org;
+    const rz = await w.start(Z.orgId, "metered");
+    for (let c = await w.claim(["metered"]); c; c = await w.claim(["metered"])) {
+      if (c.run.id !== rz.id) { await w.complete(c); continue; }
+      await w.db.query("UPDATE organizations SET budget_override_usd = 0 WHERE id = $1", [Z.orgId]);
+      assert.deepEqual(await w.spend(c, 1), [429], "an account with no allowance: the gateway refuses its run");
+      await w.complete(c);
+    }
+    await assert.rejects(w.start(Z.orgId, "metered"), /no allowance/, "and it starts no run");
     console.log("✓ budgets: with the allowance used by runs, a new run is refused and a running run's next request gets 429");
   } finally {
     await w.close();

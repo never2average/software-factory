@@ -23,7 +23,7 @@ interface Calls {
   clients: { name: string; version: string | null; calls: number }[];
 }
 interface WorkspaceReport extends Calls {
-  members: { label: string; calls: number; errors: number; runs: number; run_tool_calls: number; run_cost_usd: number }[];
+  members: { label: string; calls: number; errors: number; runs: number; run_tool_calls: number; run_cost_usd: number | null }[];
   runs: { runs: number; cost_usd: number; tool_calls: number; requests: number;
     by_kind: { kind: string; runs: number; tool_calls: number; cost_usd: number }[];
     recent: { id: string; kind: string; status: string; by: string; created_at: string; tool_calls: number; requests: number; cost_usd: number }[] };
@@ -107,7 +107,7 @@ export function WorkspaceActivityPage() {
                   <TableHead className='text-right'>{cap(plural(data.words.run))}</TableHead><TableHead className='text-right'>Spend</TableHead></TableRow></TableHeader>
                 <TableBody>{data.members.map((m, i) => (
                   <TableRow key={i}><TableCell>{m.label}</TableCell><TableCell className='text-right tabular-nums'>{num(m.calls)}</TableCell><TableCell className='text-right tabular-nums'>{num(m.errors)}</TableCell>
-                    <TableCell className='text-right tabular-nums'>{num(m.runs)}</TableCell><TableCell className='text-right tabular-nums'>{usd(m.run_cost_usd)}</TableCell></TableRow>))}</TableBody>
+                    <TableCell className='text-right tabular-nums'>{num(m.runs)}</TableCell><TableCell className='text-right tabular-nums'>{m.run_cost_usd == null ? '—' : usd(m.run_cost_usd)}</TableCell></TableRow>))}</TableBody>
               </Table>
             ) : <p className='text-muted-foreground py-10 text-center text-sm'>No activity in this period.</p>}
           </Box>

@@ -24,20 +24,36 @@ export async function orgMonthRunSpendUsd(orgId: number): Promise<number> {
   return Number(r?.usd ?? 0);
 }
 
-/** One kind's run spend in the workspace this month (a kind's month budget, mold_v0-018). */
+/**
+ * One kind's run spend in the workspace for its month budget (mold_v0-018): this month's runs, and runs queued in an
+ * earlier month that are still queued or running (they spend now: a run queued before midnight must not escape the new
+ * month's limit). A limit check only: the month figures place a run in its queued month.
+ */
 export async function kindMonthSpendUsd(orgId: number, pack: string, kind: string): Promise<number> {
   const [r] = await (await getDb()).query<{ usd: number }>(
     `SELECT coalesce(sum(${RUN_USD}), 0)::float AS usd FROM runs r
-      WHERE r.org_id = $1 AND r.pack = $2 AND r.kind = $3 AND r.created_at >= ${MONTH}`, [orgId, pack, kind]);
+      WHERE r.org_id = $1 AND r.pack = $2 AND r.kind = $3 AND (r.created_at >= ${MONTH} OR r.status IN ('queued', 'running'))`, [orgId, pack, kind]);
   return Number(r?.usd ?? 0);
 }
 
-/** This month's run spend per person who started runs (requested_by), and the part still queued or running. */
+/** What the workspace's runs queued in an earlier month and still live have spent (for the allowance check). */
+export async function liveEarlierRunSpendUsd(orgId: number): Promise<number> {
+  const [r] = await (await getDb()).query<{ usd: number }>(
+    `SELECT coalesce(sum(${RUN_USD}), 0)::float AS usd FROM runs r
+      WHERE r.org_id = $1 AND r.created_at < ${MONTH} AND r.status IN ('queued', 'running')`, [orgId]);
+  return Number(r?.usd ?? 0);
+}
+
+/**
+ * This month's run spend per person who started runs (requested_by), and the part still queued or running. A
+ * schedule's runs (requested_by "schedule:<id>", mold_v0-035) are the account's, not a person's: they count in the
+ * account's figures (every run of the workspace does), never against one member's limit.
+ */
 export async function monthRunSpendByPerson(orgId: number): Promise<Map<string, { spent: number; in_flight_usd: number }>> {
   const rows = await (await getDb()).query<{ user_id: string; spent: number; in_flight: number }>(
     `SELECT r.requested_by AS user_id, coalesce(sum(${RUN_USD}), 0)::float AS spent,
             coalesce(sum(${RUN_USD}) FILTER (WHERE r.status IN ('queued', 'running')), 0)::float AS in_flight
-       FROM runs r WHERE r.org_id = $1 AND r.requested_by IS NOT NULL AND r.created_at >= ${MONTH} GROUP BY 1`, [orgId]);
+       FROM runs r WHERE r.org_id = $1 AND r.requested_by IS NOT NULL AND r.requested_by NOT LIKE 'schedule:%' AND r.created_at >= ${MONTH} GROUP BY 1`, [orgId]);
   return new Map(rows.map((x) => [x.user_id, { spent: Number(x.spent), in_flight_usd: Number(x.in_flight) }]));
 }
 

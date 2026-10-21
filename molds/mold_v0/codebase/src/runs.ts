@@ -29,7 +29,7 @@ import { asPlatform } from "./tenant-scope.js";
 import { acquireLease, commitStaged, endAttempt, removeObjects, renewLease } from "./workspace-store.js";
 import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
-import { checkRunStart, effectiveKindLimits, underConcurrency } from "./run-limits.js";
+import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
 
 export type JobKind = z.output<typeof JobKindSchema> & { pack: string };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -93,14 +93,22 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
     "SELECT count(*)::int AS n FROM runs WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]));
   // Limits (mold_v0-018, 053; src/run-limits.ts): the workspace's live runs, the kind's month budget, the account's
   // allowance; the run's budget is the kind's, never above the platform's ceiling.
-  const { budget_usd } = await checkRunStart(orgId, pack, kind, k, n);
+  const { budget_usd, live_per_workspace } = await checkRunStart(orgId, pack, kind, k, n);
   const id = `run_${randomBytes(12).toString("base64url")}`;
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
-  const [r] = await asPlatform(async () => (await getDb()).query<RunRow>(
-    `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${COLS}`,
-    [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
-     k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy]));
+  // The live cap is counted again with the insert, under a lock per workspace, so concurrent starts (a scheduler's
+  // ticks, many tool calls at once) cannot pass it together (mold_v0-018).
+  const [r] = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`runs-live:${orgId}`]);
+    const [{ live }] = await tx.query<{ live: number }>("SELECT count(*)::int AS live FROM runs WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
+    if (live >= live_per_workspace)
+      throw new PackError(`this workspace already has ${live} runs queued or running (at most ${live_per_workspace}): wait for some to finish`, 429);
+    return tx.query<RunRow>(
+      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${COLS}`,
+      [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
+       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy]);
+  }));
   await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy });
   return view(r!);
 }
@@ -239,7 +247,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}
           -- Nor one whose workspace already runs its kind's concurrency (mold_v0-018; rechecked under a lock below).
           AND (SELECT count(*) FROM runs x WHERE x.org_id = runs.org_id AND x.pack = runs.pack AND x.kind = runs.kind AND x.status = 'running')
               < LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2)
-        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, effectiveKindLimits({ budget_usd: 1 }).concurrency]);
+        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, maxRunConcurrency()]);
     for (const c of candidates) {
       if (!findKind(c.pack, c.kind)) continue; // a kind this build no longer has: left queued for a build that has it
       // The kind's concurrency in this workspace (mold_v0-018): over it, the run waits in the queue.

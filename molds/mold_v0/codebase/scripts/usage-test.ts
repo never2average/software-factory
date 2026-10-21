@@ -53,7 +53,7 @@ try {
     await w.complete(c);
 
     // ---------- 2. the workspace's page ----------
-    const ta = await w.http.signIn(A.org, "member"), tb = await w.http.signIn(B.org, "member");
+    const ta = await w.http.signIn(A.org, "owner"), tb = await w.http.signIn(B.org, "member");
     const page = async (t: string, q = "") => { const r = await w.http.req("GET", `/api/usage${q}`, { authorization: `Bearer ${t}` }); assert.equal(r.status, 200, `GET /api/usage: ${r.status}`); return r.json() as Promise<any>; };
     const pa = await page(ta), pb = await page(tb);
     assert.equal(pa.totals.calls, 4); assert.equal(pa.totals.errors, 1); assert.equal(pb.totals.calls, 5, "each workspace counts its own calls only");
@@ -69,6 +69,11 @@ try {
     assert.deepEqual([rr.id, rr.tool_calls, rr.requests], [run.id, 2, 2], "per run: its tool calls (tool_call and tool.* events) and model requests");
     assert.ok(Math.abs(rr.cost_usd - 2 * PER_REQUEST_USD) < 1e-6, "per run: its cost");
     assert.equal(pb.runs.runs, 0, "B has no runs");
+    // Spend per person is for billing roles: a plain member of A sees the workspace's runs but no colleague's spend.
+    const plain = await page(await w.http.signIn(A.org, "member"));
+    assert.equal(plain.members.find((x: any) => x.user_id === "user_a1")?.run_cost_usd, null, "a member sees no colleague's run spend");
+    assert.deepEqual(plain.runs.by_person, [], "nor spend by person");
+    assert.equal(plain.runs.runs, 1, "but the workspace's runs");
     for (const leak of [run.id, "user_a1", "fixture-client"]) assert.ok(!JSON.stringify(pb).includes(leak), `B's page names nothing of A's (${leak})`);
     console.log("✓ the workspace page: calls per tool (errors, p50/p95, sizes), errors by class, clients, members, runs with tool calls, requests and cost; nothing of B");
 

@@ -10,6 +10,7 @@
  * a key with no member is "Key <id>".
  */
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
+import { canAccount } from "./account-roles.js";
 import { customerSession, type Session } from "./app.js";
 import { operatorUsageReport, workspaceUsageReport } from "./usage-report.js";
 
@@ -27,9 +28,13 @@ export function usageAppRouter(): Router {
         names = new Map((await team(s.slug)).members.map((m) => [m.user_id, m.email ?? m.name ?? m.user_id]));
       } catch { /* the team list is unreachable: ids stand in */ }
       const label = (id: string | null, key: number | null) =>
-        id ? (id === s.user ? "You" : names.get(id) ?? "Former member") : key != null ? `Key ${key}` : "Workspace key";
-      res.json({ ...report, members: report.members.map((m) => ({ ...m, label: label(m.user_id, m.key_id) })),
-        runs: { ...report.runs, by_person: report.runs.by_person.map((p) => ({ ...p, label: label(p.user_id, null) })),
+        id?.startsWith("schedule:") ? "Schedule" : id ? (id === s.user ? "You" : names.get(id) ?? "Former member") : key != null ? `Key ${key}` : "Workspace key";
+      // Spend per person is for billing roles (owners, billing managers), as on the Usage and Billing pages: everyone
+      // else sees the workspace's figures, their own spend, and no colleague's.
+      const billing = canAccount(s.accountRole, "billing");
+      const own = (id: string | null) => billing || (id != null && id === s.user);
+      res.json({ ...report, members: report.members.map((m) => ({ ...m, run_cost_usd: own(m.user_id) ? m.run_cost_usd : null, label: label(m.user_id, m.key_id) })),
+        runs: { ...report.runs, by_person: report.runs.by_person.filter((p) => own(p.user_id)).map((p) => ({ ...p, label: label(p.user_id, null) })),
           recent: report.runs.recent.map((x) => ({ ...x, by: label(x.requested_by, null) })) } });
     } catch (e) { next(e); }
   });

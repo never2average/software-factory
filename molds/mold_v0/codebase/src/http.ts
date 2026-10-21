@@ -224,17 +224,25 @@ export function createApp() {
   // Retry-After and a JSON-RPC error whose data says which limit, its number and when to retry; it is recorded as a
   // failed call of class rate_limited, without arguments.
   const rpcId = (body: unknown) => (body && !Array.isArray(body) && typeof body === "object" && "id" in body ? (body as { id: unknown }).id ?? null : null);
+  /** JSON-RPC messages in the body that ask for something (a batch counts each; notifications are free). */
+  const asks = (body: unknown) => (Array.isArray(body) ? body : [body]).filter((m) => m && typeof m === "object" && typeof (m as { method?: unknown }).method === "string" &&
+    !String((m as { method: string }).method).startsWith("notifications/")) as { method: string; params?: { name?: unknown } }[];
   const limited = (req: Request, res: Response, r: Refusal, org?: Org) => {
-    if (org) for (const m of (Array.isArray(req.body) ? req.body : [req.body]) as { method?: unknown; params?: { name?: unknown } }[])
-      if (m && typeof m.method === "string" && !m.method.startsWith("notifications/"))
-        recordMcpEvent(org, { method: m.method, name: typeof m.params?.name === "string" ? m.params.name : null, ok: false, error: refusalMessage(r), error_class: "rate_limited" });
+    // One record per refused request, whatever its size (a batch is never written once per element).
+    const first = asks(req.body)[0];
+    if (org && first) recordMcpEvent(org, { method: first.method, name: typeof first.params?.name === "string" ? first.params.name : null, ok: false, error: refusalMessage(r), error_class: "rate_limited" });
     res.status(429).set("Retry-After", String(r.retry_after)).json({ jsonrpc: "2.0", id: rpcId(req.body),
       error: { code: -32029, message: refusalMessage(r), data: { limit: r.what, per: r.window_seconds >= 3600 ? "hour" : "minute", max: r.limit, retry_after: r.retry_after } } });
   };
-  /** Before sign-in: the address's requests (also bounds key guessing). */
+  /** Before sign-in: a batch's size (the SDK's own cap), then the address's requests (also bounds key guessing). */
+  const MAX_BATCH = 100;
   const ipGate = async (req: Request, res: Response) => {
+    if (Array.isArray(req.body) && req.body.length > MAX_BATCH) {
+      res.status(400).json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: `A batch holds at most ${MAX_BATCH} messages.` } });
+      return false;
+    }
     const L = limitsFor(null);
-    const r = await hit([{ bucket: `mcp:ip:${hashed(req.ip ?? "?")}`, limit: L.mcp.per_ip_per_minute, what: "address" }]);
+    const r = await hit([{ bucket: `mcp:ip:${hashed(req.ip ?? "?")}`, limit: L.mcp.per_ip_per_minute, what: "address" }], 60, Math.max(1, asks(req.body).length));
     if (r) { limited(req, res, r); return false; }
     return true;
   };
@@ -246,13 +254,15 @@ export function createApp() {
       res.status(413).json({ jsonrpc: "2.0", id: rpcId(req.body), error: { code: -32600, message: `The request is too large (${bytes} bytes; at most ${L.mcp.max_request_bytes}).` } });
       return null;
     }
+    // Each message of a batch counts, and takes its own place among the requests in flight.
+    const weight = Math.max(1, asks(req.body).length);
     const r = await hit([
       ...(org.keyId != null ? [{ bucket: `mcp:key:${org.keyId}`, limit: L.mcp.per_key_per_minute, what: "key" }] : []),
       ...(org.userId ? [{ bucket: `mcp:member:${hashed(org.userId)}`, limit: L.mcp.per_member_per_minute, what: "member" }] : []),
       { bucket: `mcp:workspace:${org.orgId}`, limit: L.mcp.per_workspace_per_minute, what: "workspace" },
-    ]);
+    ], 60, weight);
     if (r) { limited(req, res, r, org); return null; }
-    const release = takeSlot(org.orgId, L.mcp.concurrent_per_workspace);
+    const release = takeSlot(org.orgId, L.mcp.concurrent_per_workspace, weight);
     if (!release) {
       limited(req, res, { bucket: `mcp:concurrent:${org.orgId}`, what: "workspace's requests at once", limit: L.mcp.concurrent_per_workspace, retry_after: 1, window_seconds: 0 }, org);
       return null;

@@ -18,6 +18,8 @@ process.env.OCTILLION_REGISTRY = "scripts/fixtures/registry.json";
 process.env.OCTILLION_WORKER_TOKEN ??= `test-worker-${randomBytes(8).toString("hex")}`;
 process.env.REASONS_ENABLED = "off";
 process.env.OCTILLION_AUTOSCALE ??= "off";
+// Every workspace has an allowance unless a test says otherwise: an account with none starts no run (mold_v0-018).
+process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ??= "1000";
 export const STAMP = Date.now().toString(36);
 
 export const cleanup = () => rmSync(TMP, { recursive: true, force: true });
