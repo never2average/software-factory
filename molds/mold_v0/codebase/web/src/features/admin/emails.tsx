@@ -28,7 +28,7 @@ const TONE: Record<Status, Tone> = { sending: 'info', sent: 'ok', skipped: 'neut
 const KIND: Record<string, string> = {
   request_received: 'Request received', request_alert: 'Request alert', request_declined: 'Request declined', request_approved: 'Welcome',
   submission_alert: 'Submission alert', submission_accepted: 'Submission accepted', submission_declined: 'Submission declined',
-  budget_80: 'Budget 80%', budget_100: 'Budget 100%', test: 'Test'
+  budget_80: 'Budget 80%', budget_100: 'Budget 100%', due_soon: 'Due soon', test: 'Test'
 };
 const kindOf = (k: string) => KIND[k] ?? k;
 const muted = (s: string) => <span className='text-muted-foreground'>{s}</span>;
