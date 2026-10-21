@@ -49,7 +49,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // Rate-limit counters (mold_v0-018): platform rows.
   "rate_limit_hits",
   // The scheduler's own bookkeeping (mold_v0-035): the day the due-date check last ran.
-  "scheduler_marks"];
+  "scheduler_marks",
+  // The sandboxes launched for runs (mold_v0-055): platform bookkeeping.
+  "run_sandboxes"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(

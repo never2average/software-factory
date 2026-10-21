@@ -10,7 +10,7 @@
   ],
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{public/**,sql/**,packs/**,harnesses/**,src/ui/**,orchestrator/**}",
+      "includeFiles": "{public/**,sql/**,packs/**,harnesses/**,src/**,orchestrator/**}",
       "maxDuration": 300
     }
   },

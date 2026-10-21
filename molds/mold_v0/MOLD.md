@@ -89,15 +89,15 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   (summed from `gateway_usage.run_id` across attempts) reaches the kind's `budget_usd`, and the run's cost is that sum.
   Egress: the harness starts the sandboxes' own egress proxy (`orchestrator/core/egress.ts`) with the run's list (the
   kind's `egress` plus the gateway's public host; a listed host includes its subdomains, the proxy's rule) and gives the
-  program its proxy settings: **enforced** for every connection through the proxy; **not enforced** for a program that
-  ignores proxy settings, which only the sandbox VM's uid firewall stops, and runs are not yet placed in sandbox VMs.
+  program its proxy settings: **enforced** for every connection through the proxy; a program that ignores proxy settings
+  is stopped by the run sandbox's uid firewall (mold_v0-055, "Runs in sandboxes" below), not by the harness.
   The harness runs a kind's programs only as a user kept for runs (`runAs`, `OCTILLION_RUN_UID`; a runner started as
   root), never the runner's own: the program cannot read the runner's environment through `/proc`, gets its own copy
   of the pack and a private scratch, and every process of that user is killed when the run ends (one run at a time per
   such user). It refuses to run a program as its own user unless told (`allowSameUser`, the offline tests). Starting a
   run applies the account's launch rules for a signed-in person (`src/limits.ts` `checkRun`) and a per-workspace cap
-  on runs queued or running (`runs.live_per_workspace`, 20; below). **Not wired yet:** no process runs runs in
-  a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one).
+  on runs queued or running (`runs.live_per_workspace`, 20; below). In a deployed app runs are carried out in run
+  sandboxes the autoscaler launches (mold_v0-055, below); `drainRuns` is the loop for a runner with the fleet token.
 - **The agent-workspace runner** (mold_v0-061, built; `src/agent-workspace.ts`, its configuration
   `src/agent-workspace-config.ts`, carried out by `src/run-harness.ts`): a job kind with `runner: "agent-workspace"` has no
   program of the pack's own but an `agent` object, plain JSON (the same in pack.json `job_kinds` or `definePack({
@@ -128,7 +128,7 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   `OCTILLION_AGENT_REPO_HOSTS` when the operator lists them. Results are read from a plain file only (never a link or a
   pipe). Everything the run prints, its stderr and results are redacted of its credentials and its gateway token.
   Egress is the run's proxy allowlist (the kind's `egress`), as for every run: enforced for programs that use the proxy
-  settings, not for one that connects directly until runs are placed in sandbox VMs. `npm run test:agent-runner`
+  settings, and for one that connects directly by the run sandbox's firewall (mold_v0-055). `npm run test:agent-runner`
   proves it offline with a fixture agent repository (`scripts/fixtures/agent-repo`) in a local git repository: the pin
   (a branch named like it, the branch's tip, a missing commit, a redirect), validation gating, the time limit, redaction,
   links, egress, two workspaces, and what the adversarial review found (a rewritten validator, a pipe for results, a
@@ -137,6 +137,73 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   itself; the
   agent's own image (tools like a coding agent's CLI) is the runner machine's, not declared per kind; `setup` needs
   the package registry in the kind's `egress`.
+- **Runs in sandboxes** (mold_v0-055, built; `src/run-sandboxes.ts`, the runner `src/run-sandbox-runner.ts`, the
+  compose runner service `src/run-fleet.ts`; operator decision D4: runs go to the sandbox provider the product already
+  uses for its orchestrators). The autoscaler's demand counts queued runs per kind (`demand.runs`), and each tick (on a
+  server its 15-second loop, on Vercel the cron and a kick when a run is queued) launches **one sandbox per run** under
+  its own lease (`runs`): for each run a claim would take now (the kind's concurrency per workspace and the platform's
+  ceiling, one writer per workspace store: `claimableRuns`), a `run_sandboxes` row, a worker token bound to that run and
+  that sandbox (`worker_tokens.run_sandbox_id`; it expires after the run's lifetime and a margin and is revoked with the
+  sandbox), and a sandbox whose runner gets only that token, the API's address, the run user and the pack directory.
+  The runner (root in the sandbox) claims its run, **once** (the run's worker is `sbx-<row>`); a run token is refused
+  everywhere else in the worker API (`src/http.ts`, `src/run-routes.ts`), and the fleet token may not claim as `sbx-`.
+  Then the **lockdown**: the sandbox's egress proxy (`orchestrator/core/egress.ts`) with the run's allowlist from the
+  claim, and the firewall for the run's user (`octirun`, strict rules): everything dropped but the proxy's three
+  loopback ports (so no local resolver, over UDP or TCP, no other local daemon, not the sandbox's own address, no
+  IPv6), TCP 443 and UDP DNS redirected to the proxy from a nat chain ahead of Docker's own; the local resolver's and
+  the system bus's unix sockets denied to the run user where setfacl exists (boat); the run's programs started with
+  no_new_privs (a setuid program or sudo gives nothing); then the probe as that user (it must reach the gateway through the transparent path and must not reach
+  anything else directly). A lockdown or probe that fails fails the attempt as infrastructure (retried in a new
+  sandbox), and the run never starts. Then `src/run-harness.ts` carries the run out as the run's user with egress
+  `system` (that proxy). **Teardown:** completing marks the sandbox for teardown and the next tick deletes it; a tick
+  also deletes a sandbox whose run ended, was taken elsewhere, was queued again after its attempt lapsed (a crashed
+  runner: the sweep requeues the run, a new sandbox carries out the next attempt), that never claimed within
+  `OCTILLION_RUN_BOOT_MINUTES` (10), that died, or that is past its run's deadline (a container also has its own
+  `timeout` at the run's lifetime and a margin); orphans of this deployment (by name prefix, or a label per compose
+  project) go too, never a sandbox of a launch in flight. A sandbox of another provider (the provider changed) is left
+  alone, not reaped blind. The kill switch `OCTILLION_AUTOSCALE=off` stops run launches and deletes as well, and with
+  `OCTILLION_RUN_SANDBOX=off` or no provider nothing is torn down either (tokens still expire; boat sandboxes have the
+  provider's TTL, containers their own deadline). **Cost:** at most `OCTILLION_MAX_RUN_SANDBOXES` (10; 4 on a server) at once and
+  `OCTILLION_RUN_LAUNCHES_PER_TICK` (4) a tick, within the provider plan's free sandboxes; the provider's TTL is the
+  run's lifetime plus a margin; one live sandbox per run (a unique index); a failed start (the launch failed, or the
+  sandbox died, never claimed, or claimed without starting the run) is retried with a back-off and the run fails after
+  `OCTILLION_RUN_LAUNCH_ATTEMPTS` (3) of them. The kind's budget and the account's limits (mold_v0-018, 053) are
+  unchanged: the gateway stops a run's spend.
+  **Providers** (`OCTILLION_RUN_SANDBOX`, default `auto`): `boat` (the orchestrators' provider, its key in the vault: a
+  small sandbox per run, the runner's code uploaded as the orchestrators' is, with the same `npm ci` for tsx; the runner
+  imports only node's modules and its own files, walked from its entry, plus the pack's directory; git and nft are
+  installed in the sandbox when missing; the run user is created); `docker` (a server of its own: the compose project's
+  `runner` service, the only container with the Docker socket, starts a container per run from the app's own image,
+  which has git, nftables and the `octirun` user, on the project's `runs` network, which the API is on and the database
+  is not; every capability dropped but NET_ADMIN, SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER and KILL, no new
+  privileges, no mount, memory, CPU and process limits); `off`. `auto` takes boat when its key is in the vault, else
+  docker when this process has the socket. **With no provider nothing runs unsandboxed:** queued runs wait, each with
+  one `waiting` event that says why, and the tick says so too. `process` (the runner as a child process, no sandbox,
+  no firewall) and a runner told `OCTILLION_RUN_LOCKDOWN=off` are refused unless `OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes`
+  (offline tests only).
+  **What is enforced where.** The run's proxy allowlist: the proxy in the sandbox, for every connection through it.
+  Direct egress (a program ignoring proxy settings, raw sockets to any port, DNS): the sandbox's firewall by the run
+  user's uid, in the sandbox's own kernel (boat) or network namespace (docker); the run user cannot change it (no
+  root, no sudo, no capabilities). The control plane: the run user cannot reach the API's internal address or the
+  database (firewall; on a server the database is not on the runs network) and only reaches the API's public host
+  through the proxy, which is listed as the gateway's host, with nothing but its gateway token; the run token and the
+  lease are root's (the runner's environment, 0600 root, `/proc` of root unreadable to the run user). Scope of a leaked
+  run token: its one run, with its lease, until the sandbox is torn down.
+  **Tested offline** (`npm run test:run-sandboxes`): stand-ins for the providers (a mock of the provider's API that
+  unpacks the uploaded code and starts the runner from exactly those files; a fake Docker Engine API on a unix socket)
+  carry out demand, launch, claim, run and teardown; two workspaces (a token per run, claims once, never the other run
+  or another worker route, results in each own workspace); a crashed runner swept and retried in a new sandbox; caps,
+  failed starts (3 tries, then the run fails) and orphans; the container's security settings; no provider and the flag
+  off (nothing runs). The stand-ins have no firewall: `npm run test:run-firewall` (root, two throwaway network
+  namespaces) runs the same lockdown script and proves the run user's direct TCP (any port), redirected 443 and DNS
+  never leave the sandbox, while root still reaches out. It found that the firewall dropped every redirected packet
+  (`oifname "lo"` does not see the reroute): loopback is now also matched by destination, in the orchestrators'
+  worker sandboxes too. **Not covered offline:** an allowlisted host reached through the proxy from the sandbox (the
+  proxy refuses private addresses, and the test network has no public one); the real provider and a real Docker daemon
+  (never contacted); a named snapshot image for run sandboxes (each launch uploads the code and runs `npm ci`, which on
+  Vercel shares the function's 300 s with the rest of the launch: a launch cut short is a failed start, retried and
+  bounded); the setfacl step and a real boat image (whether a provider daemon listens locally is moot under the strict
+  rules, but the unix-socket denial is best effort).
 - **After a workspace commit** (mold_v0-064, built; `definePack({ onWorkspaceCommit(ctx, files) })`, code packs only):
   when a run of a pack with the hook and a workspace kind succeeds, its snapshot is committed first (in its own
   transaction, the run's and the store's leases extended by the hook's time), then the hook gets every file of the
@@ -626,6 +693,14 @@ typed by hand, and nothing in the snapshot changes:
 `--deploy --dry-run` prints every step; `provision.py <app>` is the read-only check of both projects. The rehearsal in
 `lib/single_service_selftest.py` runs the whole sequence through provision.py against `fixtures/release/fake.py`
 (FACTORY_REHEARSAL): nothing real is contacted.
+
+**Run sandboxes on both targets (mold_v0-055).** On Vercel the api project's cron and a kick when a run is queued
+launch runs into the sandbox provider whose key is in the vault (its function includes `src/**` so it can upload the
+runner); with no key, runs wait and say so. On a server of its own the compose project's `runner` service (the app's
+image, no port, the Docker socket, `OCTILLION_RUN_API_URL=http://octillion:3333`) launches a container per run on the
+`runs` network, or uses the provider when its key is in the vault. Neither needs a new env name: every setting has a
+default (`OCTILLION_RUN_SANDBOX`, `OCTILLION_MAX_RUN_SANDBOXES`); `deploy/rolling-deploy.sh` recreates the runner on the new
+image.
 
 **The console on a server of its own** is still not served the same way: the `Dockerfile` copies `/web/out` from its
 web stage, and the console's `next build` writes no static export (it is a server app). That is the server target's

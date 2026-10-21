@@ -34,6 +34,12 @@ COPY orchestrator/harnesses ./orchestrator/harnesses
 COPY orchestrator/images ./orchestrator/images
 COPY orchestrator/pi-octillion ./orchestrator/pi-octillion
 COPY orchestrator/workspaces ./orchestrator/workspaces
+# Run sandboxes on a server of its own (mold_v0-055, src/run-sandboxes.ts): each run is a container of this same image,
+# started as root only to lock its run user down (nftables) and switch to it. git for agent-workspace runs; the run's
+# user (octirun) and the egress proxy's (octiproxy), neither with a login or sudo. The server itself runs as node.
+RUN apt-get update && apt-get install -y --no-install-recommends git nftables iptables ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd -r -M -u 10001 -s /usr/sbin/nologin octirun && useradd -r -M -s /usr/sbin/nologin octiproxy
 USER node
 EXPOSE 3333
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:3333/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

@@ -30,6 +30,10 @@
  *   timeout_seconds  the agent command's time limit; past it every process of the run is killed and the run fails
  */
 import { z } from "zod";
+import { placeholders } from "./agent-workspace-paths.js";
+
+// Plain helpers with no dependency, so the sandbox runner (src/run-sandbox-runner.ts) loads without zod (mold_v0-055).
+export { globRegex, placeholders } from "./agent-workspace-paths.js";
 
 const segment = (s: string) => s !== "" && s !== "." && s !== "..";
 /** A relative path inside the checkout: forward slashes, no empty, "." or ".." part, no control characters. */
@@ -53,8 +57,6 @@ export const AgentArgSchema = z.object({
   default: z.string().max(200).optional(),
 }).strict();
 
-/** "{name}" placeholders of a string. */
-export const placeholders = (s: string) => [...s.matchAll(/\{([^{}]*)\}/g)].map((m) => m[1]!);
 export const GATEWAY_PLACEHOLDER = /^gateway\.(token|url|([a-z][a-z0-9_-]{1,40})\.base_url)$/;
 
 export const AgentWorkspaceSchema = z.object({
@@ -86,19 +88,3 @@ export const AgentWorkspaceSchema = z.object({
   if (new Set(a.write_back).size !== a.write_back.length) bad("a write_back path is listed twice", "write_back");
 });
 export type AgentWorkspaceConfig = z.output<typeof AgentWorkspaceSchema>;
-
-/** A glob (as `strip` and `record` take it) as a regular expression over relative paths. */
-export function globRegex(g: string): RegExp {
-  let out = "";
-  for (let i = 0; i < g.length; i++) {
-    const c = g[i]!;
-    if (c === "/" && g.slice(i) === "/**") { out += "(?:/.*)?"; break; } // "dir/**": the directory and all under it
-    if (c === "*" && g[i + 1] === "*") {
-      i++;
-      if (g[i + 1] === "/") { i++; out += "(?:.*/)?"; } else out += ".*";
-    } else if (c === "*") out += "[^/]*";
-    else if (c === "?") out += "[^/]";
-    else out += c.replace(/[.+^$()|\\]/g, "\\$&");
-  }
-  return new RegExp(`^${out}$`);
-}
