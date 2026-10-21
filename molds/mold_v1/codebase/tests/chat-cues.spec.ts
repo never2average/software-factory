@@ -12,16 +12,22 @@ const cues = (page: import("@playwright/test").Page) => page.getByTestId("cues")
 test("287: a delegation that finishes on screen settles with the completed mark, briefly, and is announced", async ({ page }) => {
   await page.goto("/preview/user-message");
   const card = page.getByTestId("cue-delegation").locator("[data-delegation]");
-  await expect(card).toContainText("Running");
+  // The status is one icon, named for a screen reader and on hover (mold_v1-297), never a word beside it.
+  await expect(card.getByRole("img", { name: "Running", exact: true })).toBeVisible();
   await expect(card).not.toHaveAttribute("data-just-completed", "");
   await page.getByTestId("cue-finish").click();
-  await expect(card).toContainText("Completed");
+  const done = card.getByRole("img", { name: "Done", exact: true });
+  await expect(done).toBeVisible();
+  await expect(done).toHaveAttribute("title", "Done");
+  // One mark: the settled icon and the brief wash, with no "Done" or "Completed" text beside it.
+  await expect(card).not.toContainText("Done");
+  await expect(card).not.toContainText("Completed");
   await expect(card).toHaveAttribute("data-just-completed", "");
   await expect(cues(page).locator("[data-completion-announcer]")).toHaveText(/completed$/);
   await expect(cues(page).locator("[data-completion-announcer]")).toHaveAttribute("aria-live", "polite");
   // A brief highlight: it goes, the completed mark stays.
   await expect(card).not.toHaveAttribute("data-just-completed", "", { timeout: 6_000 });
-  await expect(card).toContainText("Completed");
+  await expect(card.getByRole("img", { name: "Done", exact: true })).toBeVisible();
 });
 
 test("287: the highlight does not animate for someone who asked for reduced motion", async ({ page }) => {

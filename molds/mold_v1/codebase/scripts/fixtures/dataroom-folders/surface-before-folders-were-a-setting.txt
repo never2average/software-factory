@@ -1534,6 +1534,32 @@ Run the FULL email intake in one deterministic step: read unread inbox mail (las
   }
 }
 
+=== root :: tool :: stop_specialist
+stop_specialist
+Stop one of the specialists you called in this chat that is still working or waiting on the person, when its work is no longer needed or it has gone the wrong way. Give a short reason: the person reads it on the specialist's card. Its result then comes back as stopped; call it again only if the work is still needed. Name it as the chat does: its name, with a number after it for the second and later of the same kind ("<name> 2"). When the name matches none, the answer lists this chat's specialists by name.
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "specialist": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "The specialist to stop, by the name this chat gives it (\"<name> 2\" for the second of a kind), or its kind when only one of that kind is still working."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Why it is stopped, in one short sentence for the person."
+    }
+  },
+  "required": [
+    "specialist",
+    "reason"
+  ]
+}
+
 === root :: tool :: sync_pull
 sync_pull
 Pull one upstream source into the data room's dm.md syncs landing zone (one durable .jsonl stream per domain/source/customer/day), and, for the Customers domain, also record items as interactions in the system of record. Sources per domain: `Customers` {manual_entry, email, slack, granola}; `Platform` {manual_entry, github, aws, slack, miro}; `Deployments` {manual_entry, claude, codex, email, github, aws, azure, gcp, oci, bare_metal_*}; `Tickets` {manual_entry, call, email, slack}; `People` {manual_entry, email, slack, analytics, observability, granola}. manual_entry requires items[]; MCP-mediated sources (slack/github) require items[] fetched via their connection tools first; granola/email fetch themselves and degrade to a structured skip (ok:false) when unconfigured. Gated on approval since it writes the team's data room and possibly the source of truth.

@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlarmClockIcon,
   ArrowUpRightIcon,
-  CheckIcon,
   Bot,
   ExternalLinkIcon,
   GitCompareIcon,
@@ -28,7 +27,6 @@ import {
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CHAT_CUES } from "@/lib/ui-words";
 import { settledWash, useJustSettled } from "./completion-cue";
 import { PromptInputButton } from "@/components/ai-elements/prompt-input";
 import {
@@ -38,13 +36,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { EveMessage } from "eve/react";
+import type { EveDynamicToolPart, EveMessage } from "eve/react";
 import { handbackStates } from "@/lib/chat-turn-state";
 import { type ChildCopyIO, type ChildFeed, type FeedMode, type FeedRow, type FeedStatus, childFeedStore } from "@/lib/child-feed";
 import { specialistStream } from "@/lib/chat-open-timing";
-import { DETACHED_LABEL } from "@/lib/detached-delegation";
 import { SESSION_DELEGATION_HEADER, canMessageSession, delegationFromHeader, refusalText, runControl } from "@/lib/specialist-run-actions";
-import { AgentMessage } from "./agent-message";
+import { AgentMessage, delegationStateFacts } from "./agent-message";
+import { SpecialistStatus } from "./specialist-status";
+import { activitySignature, type ChildActivity, type SpecialistCardFacts, type StateFacts } from "@/lib/specialist-status";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { ChatComposer } from "./composer";
 import { Spinner } from "@/components/ui/spinner";
@@ -59,14 +58,14 @@ import {
 import { ArtifactBody, artifactFromHref, kindOf, useLiveArtifactUrl } from "./artifact-view";
 import { CustomerMark } from "./customer-mark";
 import { SUBAGENT_META } from "./subagent-meta.generated";
-import { subagentDescription, subagentDisplayName, toolCallSummary, toolDisplayName } from "./tool-display";
+import { specialistBaseName, subagentDescription, subagentDisplayName, toolCallSummary, toolDisplayName } from "./tool-display";
 import type { ArtifactItem, CtxItem, Insights, PersonItem, SubagentRun } from "./insights";
 import { deriveInsights, mergeInsights } from "./insights";
 import { RunStatusDot } from "./ops/detail";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { type ApiWorkflowVersion, activeOrg, authToken, opsFetch, type OpsSection, unkebab } from "./ops/lib";
 import { useRecordHub } from "./ops/record-hub";
-import { pickSubagentName } from "@/lib/subagent-names";
+import { specialistNames } from "@/lib/specialist-names";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 import { domainView } from "@/lib/profile-domains";
 import { W, domainLabel } from "@/lib/ui-words";
@@ -122,6 +121,9 @@ export function Cockpit({
   onSteer,
   onStuckHandoffs,
   onHeldHandoffs,
+  onSpecialistActivity,
+  specialistFacts,
+  specialistNames: chatNames,
   onOpenArtifact,
   onOpenOps,
   harvestReady = true,
@@ -149,6 +151,19 @@ export function Cockpit({
   /** Report specialists that FINISHED while a sibling of the same step still works: held by design, the main
    *  thread gets them together (lib/chat-turn-state.ts `handbackStates`) — the status line says so. */
   readonly onHeldHandoffs?: (handoffs: readonly { callId: string; name: string }[]) => void;
+  /**
+   * Each specialist's own stream as this panel follows it (finished, stopped, when it last wrote), by call id, for the
+   * chat's state icons (mold_v1-297). Reported when that could change a card's state, not on every event.
+   */
+  readonly onSpecialistActivity?: (activity: ReadonlyMap<string, ChildActivity>) => void;
+  /** What the chat knows of each specialist that this panel does not (an open question, the main agent's stop). */
+  readonly specialistFacts?: ReadonlyMap<string, SpecialistCardFacts>;
+  /**
+   * What the chat calls each of the main thread's delegations, by call id (lib/specialist-names.ts, the chat's own
+   * order), so a row and its card always say the same name. Runs it does not name (a specialist's own delegations)
+   * are numbered among themselves here.
+   */
+  readonly specialistNames?: ReadonlyMap<string, string>;
   /** Open a PUBLISHED FILE in the chat's artifact preview (the rail swaps to
    *  it), so a file in this rail behaves exactly like an artifact link in the
    *  conversation. Scripts and cron definitions still open in a modal — the
@@ -255,77 +270,75 @@ export function Cockpit({
   );
   const selectedRun = merged.subagents.find((s) => s.callId === selected) ?? null;
 
-  // Persisted codenames for subagent runs — each run gets a distinct name from
-  // the static pool (lib/subagent-names.ts) so two "Research" runs read apart.
-  // The name is deterministic from the run's stable key (so it shows instantly,
-  // no flicker), and is upserted to the DB (first write wins) so it's stable and
-  // authoritative across reloads/clients.
-  const [runLabels, setRunLabels] = useState<Record<string, string>>({});
-  const runMeta = useMemo(
-    () =>
-      merged.subagents.map((s) => ({
-        key: runKeyOf(s),
-        type: s.name,
-        sessionId: s.childSessionId ?? null,
-      })),
-    [merged.subagents],
-  );
-  const runKeysSig = runMeta.map((m) => m.key).join(",");
-  useEffect(() => {
-    const missing = runMeta.filter((m) => !(m.key in runLabels));
-    if (missing.length === 0) return;
-    let alive = true;
-    void (async () => {
-      const keys = missing.map((m) => m.key);
-      let fetched: Record<string, string> = {};
-      try {
-        const d = await opsFetch<{ labels: Record<string, string> }>(
-          `/api/ops/subagent-runs?keys=${encodeURIComponent(keys.join(","))}`,
-        );
-        fetched = d.labels ?? {};
-      } catch {
-        /* table may not exist yet — fall back to deterministic names */
-      }
-      if (!alive) return;
-      const next: Record<string, string> = {};
-      const toPersist: typeof missing = [];
-      for (const m of missing) {
-        if (fetched[m.key]) {
-          next[m.key] = fetched[m.key];
-        } else {
-          next[m.key] = pickSubagentName(m.key);
-          toPersist.push(m);
-        }
-      }
-      setRunLabels((prev) => ({ ...prev, ...next }));
-      // Persist the freshly-minted names; the server returns the stored label
-      // (first write wins), so adopt it if another client got there first.
-      for (const m of toPersist) {
-        void opsFetch<{ label?: string }>("/api/ops/subagent-runs", {
-          method: "POST",
-          body: JSON.stringify({
-            runKey: m.key,
-            sessionId: m.sessionId,
-            subagentType: m.type,
-            label: next[m.key],
-          }),
-        })
-          .then((r) => {
-            if (alive && r?.label && r.label !== next[m.key]) {
-              setRunLabels((prev) => ({ ...prev, [m.key]: r.label as string }));
-            }
-          })
-          .catch(() => {});
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runKeysSig]);
+  // What each run is called (mold_v1-295): its given name from its pack or profile, else its purpose label, and "<name> 2"
+  // for the second of the same kind in this chat, in call order (lib/specialist-names.ts). The chat's cards, the
+  // composer, steering notes and approval rows ask the same function with the same order, so a run has one name
+  // everywhere. (It replaced a robot codename from a static pool that only this rail used.)
+  // The main thread's runs take the chat's names (one source, so the row and the card never disagree); the runs the
+  // chat does not name (nested: a specialist's own delegations, appended after the main ones) are numbered among
+  // themselves, so a later main delegation never renames one already shown.
+  const runNames = useMemo(() => {
+    const own = chatNames && chatNames.size > 0 ? chatNames : null;
+    const rest = own ? merged.subagents.filter((s) => !own.has(s.callId)) : merged.subagents;
+    const numbered = specialistNames(rest.map((s) => ({ callId: s.callId, key: s.name })), specialistBaseName);
+    return own ? new Map([...own, ...numbered]) : numbered;
+  }, [merged.subagents, chatNames]);
   const nameOf = useCallback(
-    (run: SubagentRun) => runLabels[runKeyOf(run)] ?? pickSubagentName(runKeyOf(run)),
-    [runLabels],
+    (run: SubagentRun) => runNames.get(run.callId) ?? specialistBaseName(run.name),
+    [runNames],
+  );
+
+  // What each specialist's own stream says (mold_v1-297), reported to the chat for its cards' state icons, only when
+  // that could change one (finished, stopped, the last progress to the half-minute).
+  const activity = useMemo(() => {
+    const out = new Map<string, ChildActivity>();
+    for (const s of insights.subagents) {
+      const f = s.childSessionId ? feeds[s.childSessionId] : undefined;
+      if (!f) continue;
+      out.set(s.callId, {
+        ...(f.completed ? { childFinished: true } : {}),
+        ...(f.stopped ? { childStopped: true } : {}),
+        ...(f.lastAt !== undefined ? { lastProgressAt: f.lastAt } : {}),
+      });
+    }
+    return out;
+  }, [insights.subagents, feeds]);
+  const activitySig = activitySignature(activity);
+  const onActivityRef = useRef(onSpecialistActivity);
+  onActivityRef.current = onSpecialistActivity;
+  const activityRef = useRef(activity);
+  activityRef.current = activity;
+  useEffect(() => {
+    onActivityRef.current?.(activityRef.current);
+  }, [activitySig]);
+  // Closed (collapsed, or swapped for an artifact preview), this panel follows no stream: what it last reported would
+  // go stale, and a card would read "Stuck" for a specialist still working. Report nothing; a card then reads only what
+  // the chat itself knows (running, waiting, stopped, done), never a quiet it did not measure.
+  useEffect(
+    () => () => {
+      onActivityRef.current?.(new Map());
+    },
+    [],
+  );
+  /** A run's state facts, for its icon (lib/specialist-status.ts): the parent's view, its own feed, the chat's facts. */
+  const factsOf = useCallback(
+    (run: SubagentRun): StateFacts => {
+      const part = run.delegationPart as EveDynamicToolPart | undefined;
+      const known = specialistFacts?.get(run.callId);
+      const f = run.childSessionId ? feeds[run.childSessionId] : undefined;
+      const base = part?.type === "dynamic-tool" ? delegationStateFacts(part, false, known) : {};
+      return {
+        ...base,
+        ...(run.status === "done" && !base.settled ? { settled: "done" as const } : {}),
+        waiting: Boolean(base.waiting) || awaitsInput(run.delegationPart) || Boolean(known?.waiting),
+        stoppedHere: Boolean(base.stoppedHere) || known?.stopReason !== undefined,
+        // Its own feed when this panel reads it; else what the chat knows (the same facts, reported earlier).
+        childFinished: Boolean(f?.completed ?? known?.childFinished),
+        childStopped: Boolean(f?.stopped ?? known?.childStopped),
+        ...((f?.lastAt ?? known?.lastProgressAt) !== undefined ? { lastProgressAt: f?.lastAt ?? known?.lastProgressAt } : {}),
+      };
+    },
+    [feeds, specialistFacts],
   );
 
   // The run whose panel is open in the rail — a delegated subagent OR a workflow
@@ -359,10 +372,10 @@ export function Cockpit({
     }
     const states = handbackStates(insights.subagents, views);
     return {
-      lost: states.lost.map((h) => ({ ...h, name: subagentDisplayName(h.name) })),
+      lost: states.lost.map((h) => ({ ...h, name: runNames.get(h.callId) ?? specialistBaseName(h.name) })),
       held: states.held,
     };
-  }, [insights.subagents, feeds]);
+  }, [insights.subagents, feeds, runNames]);
   const stuckHandoffs = handbacks.lost;
   const heldSig = handbacks.held.map((h) => h.callId).join(",");
   const onHeldRef = useRef(onHeldHandoffs);
@@ -723,23 +736,16 @@ export function Cockpit({
               <ChevronLeftIcon className="size-4 shrink-0 text-muted-foreground" />
               <CustomerMark name={nameOf(selectedRun)} size="sm" />
               <span className="flex min-w-0 items-baseline gap-1 truncate font-medium">
-                <span className="shrink-0 font-mono text-2xs text-muted-foreground">
-                  {subagentDisplayName(selectedRun.name)}/
-                </span>
-                {nameOf(selectedRun)}
+                {/* The purpose beside a given name ("Research/Scout"); a name that IS the purpose is said once. */}
+                {specialistBaseName(selectedRun.name) === subagentDisplayName(selectedRun.name) ? null : (
+                  <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+                    {subagentDisplayName(selectedRun.name)}/
+                  </span>
+                )}
+                <span data-specialist-name>{nameOf(selectedRun)}</span>
               </span>
             </button>
-            {selectedRun.status === "running" ? (
-              <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 font-medium text-2xs text-emerald-800 dark:text-emerald-400">
-                <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                {/* Handed over as "reports later" (lib/detached-delegation.ts): the main agent went on without it. */}
-                {selectedRun.detached ? DETACHED_LABEL : "Running"}
-              </span>
-            ) : (
-              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 font-medium text-2xs text-muted-foreground">
-                Done
-              </span>
-            )}
+            <SpecialistStatus facts={factsOf(selectedRun)} />
           </span>
         ) : stepRun ? (
           // A workflow step opened in the rail — back returns to its run graph.
@@ -1009,7 +1015,7 @@ export function Cockpit({
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
           {merged.subagents.length > 0 ? (
             <Section icon={Bot} title="Subagents" count={merged.subagents.length}>
-              <SubagentList feeds={feeds} runs={merged.subagents} nameOf={nameOf} onSelect={setSelected} onRetry={retry} />
+              <SubagentList feeds={feeds} runs={merged.subagents} nameOf={nameOf} factsOf={factsOf} onSelect={setSelected} onRetry={retry} />
             </Section>
           ) : null}
           {visibleRuns.length > 0 ? (
@@ -1148,22 +1154,19 @@ function Section({
   );
 }
 
-/** The stable identity of a run — its child session id, else the tool-call id.
- *  This is the key its persisted codename is stored under. */
-function runKeyOf(run: SubagentRun): string {
-  return run.childSessionId || run.callId;
-}
-
 function SubagentList({
   feeds,
   runs,
   nameOf,
+  factsOf,
   onSelect,
   onRetry,
 }: {
   readonly feeds: Record<string, ChildFeed>;
   readonly runs: SubagentRun[];
-  /** The run's assigned codename (persisted). */
+  /** What a run's state icon is derived from (mold_v1-297). */
+  readonly factsOf: (run: SubagentRun) => StateFacts;
+  /** What the run is called (lib/specialist-names.ts). */
   readonly nameOf: (run: SubagentRun) => string;
   readonly onSelect: (callId: string) => void;
   /** Read an unavailable specialist's stream again. */
@@ -1172,8 +1175,9 @@ function SubagentList({
   return (
     <ul className="flex flex-col gap-1">
       {runs.map((r) => {
-        const type = subagentDisplayName(r.name);
         const name = nameOf(r);
+        // The purpose, said under a given name; under a name that already is the purpose, not twice.
+        const type = specialistBaseName(r.name) === subagentDisplayName(r.name) ? null : subagentDisplayName(r.name);
         // Live tool-call count straight from the child's own stream — the
         // message parts only carry the delegation brief, so counting those
         // froze at "1 step" forever.
@@ -1193,22 +1197,21 @@ function SubagentList({
               : toolRows.length > 0
                 ? `${doneCount} tool calls done · thinking…`
                 : unavailable
-                  ? "running · details unavailable"
+                  ? "details unavailable"
                   : "starting…"
             : unavailable && toolRows.length === 0
-              ? "done · details unavailable"
-              : `done · ${toolRows.length || r.activity.length || "—"} calls`;
+              ? "details unavailable"
+              : `${toolRows.length || r.activity.length || "—"} calls`; // where it stands is the icon (mold_v1-297)
         return (
           <li key={r.callId} className="flex items-center gap-1" data-feed-status={feed?.status ?? "idle"}>
             <SubagentRowButton done={r.status === "done"} onClick={() => onSelect(r.callId)}>
               <CustomerMark name={name} size="md" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium text-sm">{name}</span>
-                <span className="block truncate text-2xs text-muted-foreground">{`${type} · ${status}`}</span>
+                <span data-specialist-name className="block truncate font-medium text-sm">{name}</span>
+                <span className="block truncate text-2xs text-muted-foreground">{type ? `${type} · ${status}` : status}</span>
               </span>
-              {r.status === "done" ? (
-                <CheckIcon aria-label={CHAT_CUES.completed} className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" />
-              ) : null}
+              {/* Where it stands, as on its card: one icon per state, labelled (mold_v1-297). */}
+              <SpecialistStatus facts={factsOf(r)} />
             </SubagentRowButton>
             {unavailable && r.childSessionId && onRetry ? (
               <button

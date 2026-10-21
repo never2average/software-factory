@@ -34,11 +34,14 @@ import {
 } from "@/components/ui/dialog";
 import { displayText, extractAttachmentRefs, visibleText, type AttachmentRef } from "@/lib/chat-attachments";
 import { partStillWriting } from "@/lib/chat-turn-state";
-import { DETACHED_LABEL, DETACHED_NOTE, isDetachedOutput, isStoppedDelegation } from "@/lib/detached-delegation";
+import { isDetachedOutput, isStoppedDelegation, STOPPED_MESSAGE } from "@/lib/detached-delegation";
+import { stateLabel, type SpecialistCardFacts, type StateFacts } from "@/lib/specialist-status";
+import { stopReasonLine } from "@/lib/specialist-relay";
+import { SpecialistStatusIcon, useSpecialistState } from "./specialist-status";
 import { isPreviewablePdfPath } from "@/lib/pdf-preview";
 import { Dashboard, parseDashboardSpec } from "./ops/dashboard";
 import { ErrorBoundary } from "./error-boundary";
-import { subagentDisplayName, toolCallSummary, toolDisplayName } from "./tool-display";
+import { specialistBaseName, toolCallSummary, toolDisplayName } from "./tool-display";
 import type { SpecialistAnswerView, SteeringNoteView } from "@/lib/specialist-questions";
 import { CodeBlock } from "@/components/ai-elements/code-block";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
@@ -158,6 +161,33 @@ function awaitsUserDecision(part: EveMessagePart): boolean {
   return part.state === "approval-requested" || (Boolean(part.toolMetadata?.eve?.inputRequest) && !hasResponse);
 }
 
+const NO_FACTS: StateFacts = {};
+
+/**
+ * The facts a delegation card's state is derived from (lib/specialist-status.ts): its part (a result, an error, an
+ * open request on it), the chat's Stop record, and what the chat knows beyond the part (its own stream, a question
+ * asked later, the main agent's stop).
+ */
+export function delegationStateFacts(part: EveDynamicToolPart, stoppedHere: boolean, known: SpecialistCardFacts | undefined): StateFacts {
+  const reportsLater = part.state === "output-available" && isDetachedOutput(part.output);
+  const settled: StateFacts["settled"] =
+    part.state === "output-available" && !reportsLater
+      ? "done"
+      : part.state === "output-error"
+        ? isStoppedDelegation(part.errorText)
+          ? "stopped"
+          : "failed"
+        : undefined;
+  return {
+    ...(settled ? { settled } : {}),
+    stoppedHere: stoppedHere || Boolean(known?.stoppedHere) || known?.stopReason !== undefined,
+    waiting: (Boolean(part.toolMetadata?.eve?.inputRequest) && awaitsUserDecision(part)) || Boolean(known?.waiting),
+    childFinished: Boolean(known?.childFinished),
+    childStopped: Boolean(known?.childStopped),
+    ...(known?.lastProgressAt !== undefined ? { lastProgressAt: known.lastProgressAt } : {}),
+  };
+}
+
 function segmentParts(parts: readonly EveMessagePart[]): PartSegment[] {
   const segments: PartSegment[] = [];
   parts.forEach((part, index) => {
@@ -250,6 +280,8 @@ export function AgentMessage({
   message,
   onFocusSubagent,
   stoppedDelegations,
+  specialistNames,
+  specialistFacts,
   specialistAnswers,
   steeringNotes,
   stoppedNote,
@@ -275,6 +307,10 @@ export function AgentMessage({
   readonly onFocusSubagent?: (toolCallId: string) => void;
   /** Delegations a Stop discarded (call id → specialist): their tile reads "Stopped", not "Running". */
   readonly stoppedDelegations?: ReadonlyMap<string, string>;
+  /** What each delegation is called, by call id (mold_v1-295, lib/specialist-names.ts): the same name everywhere. */
+  readonly specialistNames?: ReadonlyMap<string, string>;
+  /** What the chat knows of each delegation beyond its part, by call id (its own stream, an open question, a stop). */
+  readonly specialistFacts?: ReadonlyMap<string, SpecialistCardFacts>;
   /** Specialists' answered questions, by request id, and where each renders (see `SpecialistAnswerView`). */
   readonly specialistAnswers?: ReadonlyMap<string, SpecialistAnswerView>;
   /** Notes the person sent running specialists (mold_v1-235); those placed "card" render under their delegation. */
@@ -353,6 +389,8 @@ export function AgentMessage({
                   messageStreaming={isStreaming}
                   onFocusSubagent={onFocusSubagent}
                   stoppedDelegations={stoppedDelegations}
+                  specialistNames={specialistNames}
+                  specialistFacts={specialistFacts}
                   specialistAnswers={specialistAnswers}
                   steeringNotes={steeringNotes}
                   onInputResponses={onInputResponses}
@@ -620,6 +658,8 @@ function AgentMessagePart({
   messageStreaming,
   onFocusSubagent,
   stoppedDelegations,
+  specialistNames,
+  specialistFacts,
   specialistAnswers,
   steeringNotes,
   onInputResponses,
@@ -636,6 +676,8 @@ function AgentMessagePart({
   /** Hand a delegation tool call off to the Control Panel rail. */
   readonly onFocusSubagent?: (toolCallId: string) => void;
   readonly stoppedDelegations?: ReadonlyMap<string, string>;
+  readonly specialistNames?: ReadonlyMap<string, string>;
+  readonly specialistFacts?: ReadonlyMap<string, SpecialistCardFacts>;
   readonly specialistAnswers?: ReadonlyMap<string, SpecialistAnswerView>;
   readonly steeringNotes?: readonly SteeringNoteView[];
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
@@ -659,9 +701,22 @@ function AgentMessagePart({
     part.toolName.startsWith("eve:subagent:") &&
     part.state === "output-available" &&
     !isDetachedOutput(part.output);
+  /** What a delegation, or the specialist behind a call id, is called (mold_v1-295): one name on every surface. */
+  const nameOf = (callId: string | undefined, key: string) => (callId ? specialistNames?.get(callId) : undefined) ?? specialistBaseName(key);
+  const delegationName =
+    part.type === "dynamic-tool" && part.toolName.startsWith("eve:subagent:")
+      ? nameOf(part.toolCallId, part.toolName.slice("eve:subagent:".length))
+      : "";
+  // The delegation's state (mold_v1-297): from its part, the chat's Stop record, and what its own stream says (the
+  // Control Panel's feeds, `specialistFacts`). A hook, because "stuck" is re-derived when the bound passes.
+  const delegationFacts: StateFacts =
+    part.type === "dynamic-tool" && part.toolName.startsWith("eve:subagent:")
+      ? delegationStateFacts(part, stoppedDelegations?.has(part.toolCallId) ?? false, specialistFacts?.get(part.toolCallId))
+      : NO_FACTS;
+  const delegationState = useSpecialistState(delegationFacts);
   const justSettled = useJustSettled(delegationDone, () => {
     if (part.type !== "dynamic-tool") return;
-    announceCompletion(CHAT_CUES.specialistCompleted(toolDisplayName(part.toolName)));
+    announceCompletion(CHAT_CUES.specialistCompleted(delegationName));
     markTabDone();
   });
   // A subagent-proxied approval never renders in the main thread — pending or
@@ -680,7 +735,7 @@ function AgentMessagePart({
       return placed.where === "inplace" ? (
         <div className="not-prose mb-4 w-full rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
           <SpecialistThread
-            name={subagentDisplayName(placed.name)}
+            name={nameOf(placed.callId, placed.name)}
             prompt={placed.prompt}
             reply={placed.reply}
             progress={placed.progress}
@@ -776,32 +831,30 @@ function AgentMessagePart({
         // and the card mounts before the child's request arrives), which hid
         // the approve buttons entirely.
         const summary = toolCallSummary(part.toolName, part.input);
-        // Explicit handoff status so it's never ambiguous whether the subagent
-        // is starting, running, waiting on you, done, or failed.
-        // A Stop discarded this delegation (eve emits nothing for it): settle the
-        // tile instead of leaving it "Running" for ever.
+        // Where the specialist stands is ONE state with its own icon, labelled with its word (mold_v1-297,
+        // lib/specialist-status.ts): running, waiting on you, stuck, ready to report back, done, failed or stopped. It
+        // replaced a sentence under the card and a generic tool glyph. `delegationState` is derived above (it needs a
+        // hook for the stuck bound).
         const stoppedAs = stoppedDelegations?.get(part.toolCallId);
-        // Handed over to the main agent as "reports later" (lib/detached-delegation.ts): its output is a stand-in, not a
-        // result. The real result (or "stopped") is written over it on this same card when it comes.
-        const reportsLater = part.state === "output-available" && isDetachedOutput(part.output);
         const stoppedResult = part.state === "output-error" && isStoppedDelegation(part.errorText);
-        const delegationStatus: { label: string; className: string } =
-          reportsLater
-            ? { label: DETACHED_LABEL, className: "bg-primary/10 text-primary" }
-            : stoppedResult || (stoppedAs !== undefined && part.state !== "output-available" && part.state !== "output-error")
-            ? { label: "Stopped", className: "bg-muted text-muted-foreground" }
-            : part.state === "output-available"
-            ? { label: "Completed", className: "bg-emerald-500/10 text-emerald-800 dark:text-emerald-400" }
-            : part.state === "output-error"
-              ? { label: "Failed", className: "bg-red-500/10 text-red-800 dark:text-red-400" }
-              : hasInputRequest
-                ? { label: "Needs approval", className: "bg-amber-500/10 text-amber-800 dark:text-amber-400" }
-                : { label: "Running", className: "bg-primary/10 text-primary" };
-        const delegationRunning =
-          reportsLater || (stoppedAs === undefined && part.state !== "output-available" && part.state !== "output-error");
+        const stopReason = specialistFacts?.get(part.toolCallId)?.stopReason;
+        // The icon is the card's only status mark; its word is the accessible name and the tooltip.
+        const stateText = stateLabel(delegationState.state, delegationState.quietMs);
+        // What a stop said, when it said more than the bare fact: the main agent's reason (mold_v1-294), or the
+        // sweep's "no progress for N minutes" — the delegation's own result's message.
+        const stoppedSaid =
+          stopReason !== undefined
+            ? stopReasonLine(stopReason)
+            : stoppedResult && part.errorText && !part.errorText.includes(STOPPED_MESSAGE)
+              ? part.errorText
+              : null;
+        // Everything relayed between the main agent and this specialist sits here, on its card (mold_v1-296).
+        const placedHere = [...(specialistAnswers?.values() ?? [])].filter((a) => a.where === "card" && a.callId === part.toolCallId);
+        const notesHere = (steeringNotes ?? []).filter((n) => n.where === "card" && n.callId === part.toolCallId);
         return (
           <div
             data-delegation={part.toolCallId}
+            data-specialist-state={delegationState.state}
             data-just-completed={justSettled ? "" : undefined}
             className={cn("not-prose mb-4 w-full overflow-hidden rounded-md border", settledWash(justSettled))}
           >
@@ -811,11 +864,9 @@ function AgentMessagePart({
               title="Open in Control Panel"
               className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/40"
             >
-              <span className="shrink-0">
-                <ToolStatusIcon className="size-3.5" state={part.state} />
-              </span>
-              <span className="max-w-56 flex-none truncate font-medium text-sm">
-                {toolDisplayName(part.toolName)}
+              <SpecialistStatusIcon state={delegationState.state} label={stateText} />
+              <span data-specialist-name className="max-w-56 flex-none truncate font-medium text-sm">
+                {delegationName}
               </span>
               {summary ? (
                 <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
@@ -829,28 +880,15 @@ function AgentMessagePart({
               ) : (
                 <span className="flex-1" />
               )}
-              <span
-                className={cn(
-                  "flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-medium text-2xs",
-                  delegationStatus.className,
-                )}
-              >
-                {delegationRunning ? (
-                  <span className="size-1.5 animate-pulse rounded-full bg-current" />
-                ) : delegationStatus.label === "Completed" ? (
-                  <CheckIcon aria-hidden="true" className="size-3" />
-                ) : null}
-                {delegationStatus.label === "Completed" ? CHAT_CUES.completed : delegationStatus.label}
-              </span>
             </button>
-            {stoppedAs !== undefined && delegationStatus.label === "Stopped" ? (
+            {stoppedAs !== undefined && delegationState.state === "stopped" && !stoppedSaid ? (
               <p data-stopped-note className="border-border/60 border-t px-3 py-1.5 text-2xs text-muted-foreground">
                 Stopped. The {stoppedAs} work was discarded.
               </p>
             ) : null}
-            {delegationRunning && !hasInputRequest ? (
-              <p className="border-border/60 border-t px-3 py-1.5 text-2xs text-muted-foreground">
-                {reportsLater ? DETACHED_NOTE : "Working in the Control Panel — the main agent continues once it hands back."}
+            {stoppedSaid && delegationState.state === "stopped" ? (
+              <p data-stop-reason className="border-border/60 border-t px-3 py-1.5 text-2xs text-muted-foreground">
+                {stoppedSaid.length > 240 ? `${stoppedSaid.slice(0, 240)}…` : stoppedSaid}
               </p>
             ) : null}
             {hasInputRequest && part.toolMetadata?.eve?.inputResponse && isApproval(part) ? (
@@ -882,25 +920,34 @@ function AgentMessagePart({
                 />
               </div>
             ) : null}
-            {[...(specialistAnswers?.values() ?? [])]
-              .filter((a) => a.where === "card" && a.callId === part.toolCallId)
-              .map((a) => (
+            {placedHere.map((a) =>
+              a.approval && a.part ? (
+                // An approval the person gave this specialist: its one-line record, here rather than mid-thread.
+                <div key={a.requestId} data-relayed-approval className="border-border/60 border-t px-3 py-2">
+                  <AnsweredApprovalRow part={a.part as EveDynamicToolPart} {...approvalRecord?.(a.requestId)} />
+                </div>
+              ) : (
                 <SpecialistThread
                   key={a.requestId}
                   className="border-border/60 border-t px-3 py-2.5"
-                  name={subagentDisplayName(a.name)}
+                  name={nameOf(a.callId, a.name)}
                   prompt={a.prompt}
                   reply={a.reply}
                   progress={a.progress}
                 />
-              ))}
-            {(steeringNotes ?? []).some((n) => n.where === "card" && n.callId === part.toolCallId) ? (
-              <div className="space-y-2 border-border/60 border-t px-3 py-2.5">
-                {(steeringNotes ?? [])
-                  .filter((n) => n.where === "card" && n.callId === part.toolCallId)
-                  .map((n) => (
-                    <SteeringNoteLine key={n.id} name={subagentDisplayName(n.name)} text={n.text} status={n.status} live={false} />
-                  ))}
+              ),
+            )}
+            {notesHere.length > 0 ? (
+              <div data-relayed-notes className="space-y-2 border-border/60 border-t px-3 py-2.5">
+                {notesHere.map((n) => (
+                  <SteeringNoteLine
+                    key={n.id}
+                    name={nameOf(n.callId, n.name)}
+                    text={n.text}
+                    status={n.status}
+                    live={n.progress === "working" || n.progress === "reports-later"}
+                  />
+                ))}
               </div>
             ) : null}
             {part.errorText && !stoppedResult ? (

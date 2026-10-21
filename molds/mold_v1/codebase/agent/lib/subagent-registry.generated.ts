@@ -29,6 +29,12 @@ export const SUBAGENT_LABELS: Record<string, string> = {
   "workflow-author": "Workflow Author"
 };
 
+/**
+ * The given name per subagent key, for those whose subagent.json declares one ("givenName"): what a person and the
+ * main agent call it (lib/specialist-names.ts). A specialist without one is called by its label above.
+ */
+export const SUBAGENT_GIVEN_NAMES: Record<string, string> = {};
+
 /** One-line summary per subagent key. */
 export const SUBAGENT_SUMMARIES: Record<string, string> = {
   "app-author": "Generate an APP's document — a standing, read-only Markdown report the platform re-renders on a cadence (portfolio digests, on-call boards, workload/health snapshots).",

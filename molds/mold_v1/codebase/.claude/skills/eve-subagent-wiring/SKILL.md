@@ -51,11 +51,13 @@ Next to `agent.ts`. Every field is optional; the file itself is optional.
 | Field | Type | Default when absent | Shows up as |
 |---|---|---|---|
 | `name` | non-empty string | the key, title-cased (`invoice-extraction` becomes "Invoice Extraction") | the Agents tab row, delegation cards, the label in the root's pause/instructions block |
+| `givenName` | one-line string, 1 to 32 characters | none: the `name` | what the person and the main agent call it: delegation cards, the Control Panel's rows, steering notes, approval rows, the main agent's `stop_specialist` answers. A second one of the kind in one chat is "<givenName> 2" (`lib/specialist-names.ts`) |
 | `summary` | non-empty string, one line | the first sentence of the `agent.ts` `description` | the Agents tab description, the info-modal fallback, the `workflows` row description, the workflow-author's list |
 | `dataroomPaths` | list of path templates | none | extra entries appended to `DATAROOM_PATH_TEMPLATES` |
 
 Write a `name` when title-casing gets it wrong (acronyms: `kyc-review` becomes "Kyc
-Review"). Write a `summary` when the description's first sentence is long: it is shown in
+Review"). Write a `givenName` when the pack gives the specialist a name of its own ("Scout"); base specialists
+declare none, so they are called by their `name`. Write a `summary` when the description's first sentence is long: it is shown in
 lists. Any other field fails `npm run check:subagents` (the generator ignores it, so a typo
 such as `"sumary"` would otherwise pass silently).
 

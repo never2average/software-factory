@@ -83,7 +83,7 @@ export function sweepLedger(db: Pick<GateDb, "inOrg">, orgId: string): SweepLedg
         await db.inOrg(orgId, (tx) =>
           tx.execute(sql`
             select call_id, child_session_id, updated_at from specialist_sweeps
-            where org_id = ${orgId} and parent_session_id = ${parentSessionId} and kind = 'frozen'
+            where org_id = ${orgId} and parent_session_id = ${parentSessionId} and kind in ('frozen', 'stopped')
               and status in ('delivered', 'sent', 'stopped') and ended = false`),
         ),
       );
@@ -160,7 +160,7 @@ export async function sweepCandidates(db: Pick<GateDb, "inOrg">, orgId: string, 
         union
         select distinct parent_session_id as id from specialist_sweeps
           where org_id = ${orgId}
-            and (status in ('claimed', 'pending', 'sent', 'surfaced') or (kind = 'frozen' and ended = false))`;
+            and (status in ('claimed', 'pending', 'sent', 'surfaced') or (kind in ('frozen', 'stopped') and ended = false))`;
   let rows: Array<Record<string, unknown>>;
   try {
     rows = rowsOf(
