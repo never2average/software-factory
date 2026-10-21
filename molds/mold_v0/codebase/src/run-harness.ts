@@ -36,7 +36,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createSocket } from "node:dgram";
-import { chmodSync, chownSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, chownSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -46,6 +46,7 @@ import type { Claim, Completion } from "./runs.js";
 import type { RunCredentials } from "./credentials.js";
 import { findSecret, redactJson, redactText, type Secret } from "./credential-redact.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
+import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, recordedFiles, restoreInto, stripPaths, underWriteBack } from "./agent-workspace.js";
 
 /** What a runner needs from the engine: in-process (localRunnerClient) or over HTTP (httpRunnerClient). */
 export interface RunnerClient {
@@ -169,6 +170,10 @@ export interface HarnessOptions {
   secretsBase?: string;
   /** Called with the egress proxy's decision log before the scratch directory is removed (tests, diagnostics). */
   onProxyLog?: (log: string) => void;
+  /** Agent-workspace runs (mold_v0-061): accept a file:/// agent repository (a mirror on this machine; offline tests). */
+  allowFileUpstream?: boolean;
+  /** Agent-workspace runs: accept an http:// agent repository (tests of the redirect refusal only). */
+  allowHttpUpstream?: boolean;
 }
 
 export class HarnessConfigError extends Error {}
@@ -202,12 +207,39 @@ const chownTree = (dir: string, uid: number, gid: number) => {
 };
 /** Every process of the run's user, gone (kill -KILL -1 as that user signals all of its processes but itself). */
 const killUser = (as: { uid: number; gid: number }) => { spawnSync("/bin/kill", ["-KILL", "-1"], { uid: as.uid, gid: as.gid, stdio: "ignore", timeout: 10_000 }); };
+/** The processes of `uid` still alive (from /proc; zombies count as gone). */
+function processesOf(uid: number): number[] {
+  const out: number[] = [];
+  let pids: string[] = [];
+  try { pids = readdirSync("/proc").filter((d) => /^\d+$/.test(d)); } catch { return out; }
+  for (const pid of pids) {
+    try {
+      const st = readFileSync(`/proc/${pid}/status`, "utf8");
+      const u = /^Uid:\s+(\d+)/m.exec(st)?.[1], state = /^State:\s+(\S)/m.exec(st)?.[1];
+      if (Number(u) === uid && state !== "Z" && state !== "X") out.push(Number(pid));
+    } catch { /* gone */ }
+  }
+  return out;
+}
+/**
+ * Before the runner (root) reads what the run's user wrote: every process of that user gone, so nothing can swap a
+ * file for a link between a check and a read. Killed again a few times; still alive, the run stops (infrastructure).
+ */
+function ensureUserGone(as: { uid: number; gid: number }) {
+  for (let i = 0; i < 5; i++) {
+    killUser(as);
+    if (!processesOf(as.uid).length) return;
+    spawnSync("/bin/sleep", ["0.2"]);
+  }
+  throw new HarnessConfigError(`processes of the run's user (${as.uid}) are still running: the run's files are not read`);
+}
 
 /** A program of the run, in its own process group; resolves with its exit code once it and its group are gone. */
-function runProgram(file: string, args: string[], o: { cwd: string; env: Record<string, string>; as: { uid: number; gid: number } | null;
-  onStdout?: (line: string) => void; onStderr?: (text: string) => void; holder: { child: ChildProcess | null }; timeoutMs?: number }): Promise<number | null> {
+function runProgram(cmd: string, args: string[], o: { cwd: string; env: Record<string, string>; as: { uid: number; gid: number } | null;
+  onStdout?: (line: string) => void; onStderr?: (text: string) => void; holder: { child: ChildProcess | null; timedOut?: boolean }; timeoutMs?: number }): Promise<number | null> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [file, ...args], { cwd: o.cwd, env: o.env, stdio: ["ignore", "pipe", "pipe"], detached: true,
+    o.holder.timedOut = false;
+    const child = spawn(cmd, args, { cwd: o.cwd, env: o.env, stdio: ["ignore", "pipe", "pipe"], detached: true,
       ...(o.as ? { uid: o.as.uid, gid: o.as.gid } : {}) });
     o.holder.child = child;
     let buf = "", done = false;
@@ -220,7 +252,7 @@ function runProgram(file: string, args: string[], o: { cwd: string; env: Record<
       child.stdout?.destroy(); child.stderr?.destroy();
       resolve(c);
     };
-    const t = o.timeoutMs ? setTimeout(() => { killGroup(child, "SIGKILL"); }, o.timeoutMs) : setTimeout(() => {}, 0);
+    const t = o.timeoutMs ? setTimeout(() => { o.holder.timedOut = true; killGroup(child, "SIGKILL"); if (o.as) killUser(o.as); }, o.timeoutMs) : setTimeout(() => {}, 0);
     // Decoded as streams: a character split between two chunks stays whole (else redaction could miss a value).
     child.stdout!.setEncoding("utf8"); child.stderr!.setEncoding("utf8");
     child.stdout!.on("data", (d: string) => {
@@ -240,17 +272,27 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   const as = runIsolation(opts);
   if (as) { killUser(as); sweepUserFiles(as.uid); } // nothing of an earlier run (one whose runner died) is left for this one
   const run = claim.run, spec = run.spec, lease = claim.lease_token;
+  /** The agent-workspace runner's configuration (mold_v0-061), or null for a program of the pack's own. */
+  const agent = spec.runner === "agent-workspace" ? spec.agent : null;
   const scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `run-${run.id.slice(4, 12)}-`));
-  const work = path.join(scratch, "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home"), pack = path.join(scratch, "pack");
+  // An agent run's directory is the agent repository's checkout; its snapshot is unpacked beside it, where only the
+  // runner can read it (the run's user gets the write-back paths restored into the checkout, nothing else).
+  const work = path.join(scratch, agent ? "checkout" : "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home"), pack = path.join(scratch, "pack");
+  const snap = path.join(scratch, "snapshot"), stageDir = path.join(scratch, "stage");
+  // The pinned tree as it stood before the agent ran (after setup, without the workspace): the validation runs on a copy
+  // of it with the staged write-back laid over, never on files the agent could have changed (its validator, its deps).
+  const pristine = path.join(scratch, "pristine"), vdir = path.join(scratch, "validate");
   for (const d of [work, out, home]) mkdirSync(d, { recursive: true });
   let proxy: RunProxy | null = null;
   let delivered: RunCredentials | null = null;
-  const proc: { child: ChildProcess | null } = { child: null };
+  const proc: { child: ChildProcess | null; timedOut?: boolean } = { child: null };
   let stopped: "cancelled" | "deadline" | "lease" | null = null;
   const pending: { type: string; data?: Record<string, unknown> }[] = [];
   let leaseLost = false;
   /** The credential values this run received: whatever it writes is redacted of them before it leaves the harness. */
   let secrets: Secret[] = [];
+  // An agent may print its environment: the run's gateway token is redacted like a credential (it is revoked at the end).
+  if (agent && claim.gateway.token) secrets.push({ name: "gateway token", value: claim.gateway.token });
   let secretDir: string | null = null;
   const dropSecrets = () => { if (secretDir) { rmSync(secretDir, { recursive: true, force: true }); secretDir = null; } };
   const flush = async () => {
@@ -289,22 +331,84 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     }
   }, Math.max(1000, (claim.lease_seconds * 1000) / 3));
   const deadline = setTimeout(() => stop("deadline"), Math.max(0, new Date(claim.deadline_at).getTime() - Date.now()));
+  const untilDeadline = () => Math.max(1000, new Date(claim.deadline_at).getTime() - Date.now());
   try {
-    let entry: string, validator: string | null;
+    let cmd: string, cmdArgs: string[], validator: { cmd: string; args: string[]; timeoutMs: number } | null;
+    let declaredEnv: Record<string, string> = {};
+    const t0 = Date.now();
+    const usage: Record<string, unknown> = {};
     try {
-      // The run gets its own copy of the pack's files (the pack directory itself may be unreadable to the run's user).
-      const pdir = path.resolve((opts.packDir ?? (await import("./packs.js")).packDir)(run.pack));
-      inside(pdir, spec.entry); if (spec.validator) inside(pdir, spec.validator);
-      cpSync(pdir, pack, { recursive: true, dereference: false, filter: (src) => !lstatSync(src).isSymbolicLink() });
-      entry = inside(pack, spec.entry);
-      validator = spec.validator ? inside(pack, spec.validator) : null;
-      if (!existsSync(entry)) throw new Error(`the kind's entry ${spec.entry} is not in the pack`);
-      if (spec.workspace) await client.checkout(run.id, lease, work);
+      if (agent) {
+        // mold_v0-061: the agent repository at exactly its pin, the declared paths stripped, the workspace laid over it.
+        const values = argValues(agent, run);
+        const got = await fetchPinned(agent.repository, agent.commit, work, { allowFile: opts.allowFileUpstream, allowHttp: opts.allowHttpUpstream, home: path.join(scratch, "git-home") });
+        const stripped = stripPaths(work, [".git", ...agent.strip]);
+        pending.push({ type: "agent_checkout", data: { commit: got.commit, files: got.files, stripped: stripped.length } });
+        await client.checkout(run.id, lease, snap);
+        chmodSync(snap, 0o700);
+        const r = restoreInto(snap, work, agent.write_back);
+        // Stripped again: a stripped path the workspace carried (under a write-back path) never comes back through it.
+        const again = stripPaths(work, agent.strip);
+        pending.push({ type: "workspace_restored", data: { ...r, ...(again.length ? { stripped: again.length } : {}) } });
+        cmd = agent.command[0] === "node" ? process.execPath : agent.command[0]!;
+        cmdArgs = agent.command.slice(1).map((a) => expand(a, values));
+        const gw: Record<string, string> = { "gateway.url": claim.gateway.gateway_url, ...(claim.gateway.token ? { "gateway.token": claim.gateway.token } : {}),
+          ...Object.fromEntries(Object.entries(claim.gateway.providers).map(([slug, p]) => [`gateway.${slug}.base_url`, p.base_url])) };
+        declaredEnv = Object.fromEntries(Object.entries(agent.env).map(([k, v]) => [k, expand(v, { ...values, ...gw })]));
+        const vcmd = agent.validate.command;
+        validator = { cmd: vcmd[0] === "node" ? process.execPath : vcmd[0]!, args: vcmd.slice(1), timeoutMs: agent.validate.timeout_seconds * 1000 };
+      } else {
+        const hs = spec as Extract<typeof spec, { runner: "workspace-harness" }>;
+        // The run gets its own copy of the pack's files (the pack directory itself may be unreadable to the run's user).
+        const pdir = path.resolve((opts.packDir ?? (await import("./packs.js")).packDir)(run.pack));
+        inside(pdir, hs.entry); if (hs.validator) inside(pdir, hs.validator);
+        cpSync(pdir, pack, { recursive: true, dereference: false, filter: (src) => !lstatSync(src).isSymbolicLink() });
+        const entry = inside(pack, hs.entry);
+        if (!existsSync(entry)) throw new Error(`the kind's entry ${hs.entry} is not in the pack`);
+        cmd = process.execPath; cmdArgs = [entry];
+        validator = hs.validator ? { cmd: process.execPath, args: [inside(pack, hs.validator), work, out], timeoutMs: 600_000 } : null;
+        if (spec.workspace) await client.checkout(run.id, lease, work);
+      }
       if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"));
-      if (as) { chownTree(pack, as.uid, as.gid); for (const d of [work, out, home]) chownTree(d, as.uid, as.gid); chmodSync(scratch, 0o711); }
+      if (as) { if (!agent) chownTree(pack, as.uid, as.gid); for (const d of [work, out, home]) chownTree(d, as.uid, as.gid); chmodSync(scratch, 0o711); }
+    } catch (e) {
+      dropSecrets();
+      const kind = e instanceof AgentRunError ? e.kind : "infrastructure";
+      return await complete({ outcome: "failed", error_kind: kind, error: `prepare: ${(e as Error).message}` });
+    }
+    const runEnv: Record<string, string> = {
+      PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, LANG: "C.UTF-8",
+      RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_KIND: run.kind, RUN_OUT: out, RUN_WORKSPACE: work,
+      RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
+    };
+    if (agent?.setup) {
+      // The repository's own preparation (its dependencies): the run's egress, no credential, no gateway token.
+      const s0 = Date.now();
+      const sc = agent.setup.command;
+      const code = await runProgram(sc[0] === "node" ? process.execPath : sc[0]!, sc.slice(1), { cwd: work, env: { ...runEnv, ...(proxy?.env ?? {}) }, as, holder: proc,
+        timeoutMs: Math.min(agent.setup.timeout_seconds * 1000, untilDeadline()), onStdout: (l) => { if (pending.length < 5000) pending.push(lineEvent(redactText(l, secrets), "setup")); } });
+      if (as) killUser(as);
+      usage.setup_ms = Date.now() - s0;
+      if (stopped === "lease") return null;
+      if (stopped) return await complete({ outcome: "failed", error_kind: stopped === "deadline" ? "timeout" : "run", error: stopped === "deadline" ? "the run reached its deadline" : "cancelled" });
+      if (proc.timedOut) return await complete({ outcome: "failed", error_kind: "timeout", error: `setup ran past its time limit (${agent.setup.timeout_seconds} s)` });
+      if (code !== 0) return await complete({ outcome: "failed", error_kind: "run", error: `setup exited with ${code}` });
+    }
+    if (agent) {
+      // Taken once setup's processes are gone and before the agent runs: the tree the validation will run in.
+      try {
+        if (as) ensureUserGone(as);
+        cpSync(work, pristine, { recursive: true, dereference: false, verbatimSymlinks: true,
+          filter: (src) => { const rel = path.relative(work, src); return !rel || !underWriteBack(rel.split(path.sep).join("/"), agent.write_back); } });
+        chmodSync(pristine, 0o700);
+      } catch (e) {
+        return await complete({ outcome: "failed", error_kind: e instanceof HarnessConfigError ? "infrastructure" : "run", error: `prepare: the checkout could not be kept for validation: ${(e as Error).message}`.slice(0, 1000) });
+      }
+    }
+    try {
       if (spec.credentials?.length) {
         delivered = await client.credentials(run.id, lease);
-        secrets = delivered.credentials.map((c) => ({ name: c.name, value: c.value }));
+        secrets = [...secrets, ...delivered.credentials.map((c) => ({ name: c.name, value: c.value }))];
         const files = delivered.credentials.filter((c) => c.file);
         if (files.length) {
           // On tmpfs when there is one: a value never reaches a disk. Only the run's user can enter the directory.
@@ -325,11 +429,11 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` });
     }
     const base: Record<string, string> = {
-      PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, LANG: "C.UTF-8",
-      RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_KIND: run.kind, RUN_OUT: out, RUN_WORKSPACE: work,
-      RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
+      ...runEnv,
       ...(secretDir ? { RUN_CREDENTIALS_DIR: secretDir } : {}),
-      ...claim.gateway.env, ...(proxy?.env ?? {}),
+      // A program of the pack's own gets the gateway's variables for its kind's providers; an agent exactly what its
+      // configuration declares (its env, with the run's gateway token where it says {gateway.token}).
+      ...(agent ? declaredEnv : claim.gateway.env), ...(proxy?.env ?? {}),
     };
     // A credential's variable never replaces one the shell sets (a gateway provider's, say): that one is not delivered.
     const credEnv: Record<string, string> = {};
@@ -338,41 +442,83 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     if (shadowed.length) pending.push({ type: "credentials_shadowed", data: { names: shadowed } });
     const env: Record<string, string> = { ...credEnv, ...base };
     let err = "", errCut = false;
-    const code = await runProgram(entry, [], { cwd: work, env, as, holder: proc,
+    const c0 = Date.now();
+    const code = await runProgram(cmd, cmdArgs, { cwd: work, env, as, holder: proc,
+      ...(agent ? { timeoutMs: Math.min(agent.timeout_seconds * 1000, untilDeadline()) } : {}),
       onStdout: (l) => { if (pending.length < 5000) pending.push(lineEvent(redactText(l, secrets))); }, onStderr: (t) => { err += t; if (err.length > 65536) { err = err.slice(-65536); errCut = true; } } });
+    const timedOut = !!proc.timedOut;
     if (as) killUser(as); // whatever the program started, in any group or session, ends with it
     dropSecrets(); // the files go with the entry program: the validator and the write-back never see them
+    usage.command_ms = Date.now() - c0; usage.exit = code;
     // Redacted whole, then cut: a cut never leaves part of a value behind (a cut window loses its first, partial line).
     if (errCut) err = err.includes("\n") ? err.slice(err.indexOf("\n") + 1) : "";
     let tail = redactText(err, secrets);
     if (tail.length > 2000) { tail = tail.slice(-2000); tail = tail.includes("\n") ? tail.slice(tail.indexOf("\n") + 1) : ""; }
     if (tail.trim()) pending.push({ type: "stderr", data: { tail } });
+    // The agent's transcript and usage files (record), whatever its outcome: what it did is worth keeping either way.
+    if (agent?.record.length && stopped !== "lease") {
+      try { for (const f of recordedFiles(work, agent.record)) pending.push({ type: "agent_file", data: f }); }
+      catch (e) { pending.push({ type: "agent_file_error", data: { error: (e as Error).message.slice(0, 300) } }); }
+    }
     if (stopped === "lease") return null;
     if (stopped === "cancelled") return await complete({ outcome: "failed", error_kind: "run", error: "cancelled" });
     if (stopped === "deadline") return await complete({ outcome: "failed", error_kind: "timeout", error: "the run reached its deadline" });
+    if (agent && timedOut) { pending.push({ type: "agent_usage", data: usage }); return await complete({ outcome: "failed", error_kind: "timeout", error: `the agent ran past its time limit (${agent.timeout_seconds} s): every process of the run was stopped` }); }
     if (code === INFRA_EXIT) return await complete({ outcome: "failed", error_kind: "infrastructure", error: "the run reported an infrastructure failure (exit 75)" });
-    if (code !== 0) return await complete({ outcome: "failed", error_kind: "run", error: `the run exited with ${code}` });
+    if (code !== 0) { if (agent) pending.push({ type: "agent_usage", data: usage }); return await complete({ outcome: "failed", error_kind: "run", error: `the run exited with ${code}` }); }
+    if (agent) {
+      // What would be written back, collected now (every process of the run is gone), and validated as such: a copy of
+      // the pinned tree with exactly the staged write-back paths laid over it.
+      try {
+        if (as) ensureUserGone(as);
+        const wb = collectWriteBack(work, snap, stageDir, agent.write_back);
+        const stripped = stripPaths(stageDir, agent.strip);
+        if (wb.skipped.length || stripped.length) pending.push({ type: "workspace_skipped", data: { skipped: wb.skipped, ...(stripped.length ? { stripped } : {}) } });
+        cpSync(pristine, vdir, { recursive: true, dereference: false, verbatimSymlinks: true });
+        restoreInto(stageDir, vdir, agent.write_back);
+        if (as) { chownTree(vdir, as.uid, as.gid); }
+      } catch (e) {
+        if (e instanceof HarnessConfigError) return await complete({ outcome: "failed", error_kind: "infrastructure", error: e.message });
+        return await complete({ outcome: "failed", error_kind: "run", error: `write back: ${(e as Error).message}`.slice(0, 1000) });
+      }
+    }
     if (validator) {
-      const v = await runProgram(validator, [work, out], { cwd: work, env: { PATH: env.PATH!, HOME: home, LANG: "C.UTF-8", RUN_ID: run.id }, as, holder: proc,
-        timeoutMs: Math.min(600_000, Math.max(1000, new Date(claim.deadline_at).getTime() - Date.now())) });
+      const v0 = Date.now();
+      const venv: Record<string, string> = agent ? { ...runEnv, RUN_WORKSPACE: vdir, ...(proxy?.env ?? {}) } : { PATH: env.PATH!, HOME: home, LANG: "C.UTF-8", RUN_ID: run.id };
+      const v = await runProgram(validator.cmd, validator.args, { cwd: agent ? vdir : work, env: venv, as, holder: proc,
+        timeoutMs: Math.min(validator.timeoutMs, untilDeadline()),
+        ...(agent ? { onStdout: (l: string) => { if (pending.length < 5000) pending.push(lineEvent(redactText(l, secrets), "validate")); } } : {}) });
+      const vTimedOut = !!proc.timedOut;
       if (as) killUser(as);
+      usage.validate_ms = Date.now() - v0; usage.validate_exit = v;
+      if (agent) pending.push({ type: "agent_usage", data: { ...usage, total_ms: Date.now() - t0 } });
       if (stopped === "lease") return null;
       if (stopped) return await complete({ outcome: "failed", error_kind: stopped === "deadline" ? "timeout" : "run", error: stopped === "deadline" ? "the run reached its deadline" : "cancelled" });
+      if (vTimedOut && agent) return await complete({ outcome: "failed", error_kind: "validation", error: `validation ran past its time limit (${agent.validate.timeout_seconds} s): the workspace is not written back` });
       if (v !== 0) return await complete({ outcome: "failed", error_kind: "validation", error: `validation exited with ${v}: the workspace is not written back` });
     }
     let results: unknown[] = [];
-    const file = path.join(out, "results.json");
-    if (existsSync(file)) {
+    let text: string | null = null;
+    // Read without following a link and only from a plain file (the run's user owns these directories).
+    try {
+      text = agent?.results ? readInside(work, agent.results) : readInside(out, "results.json");
+      if (text === null && agent?.results) throw new Error(`${agent.results} is missing: the agent wrote no results`);
+    }
+    catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `results: ${(e as Error).message}` }); }
+    if (text !== null) {
       // Redacted as text first (a value as a number, or in a form a parser would undo), then as values.
-      try { results = redactJson(JSON.parse(redactText(readFileSync(file, "utf8"), secrets)), secrets); if (!Array.isArray(results)) throw new Error("not a list"); }
+      try { results = redactJson(JSON.parse(redactText(text, secrets)), secrets); if (!Array.isArray(results)) throw new Error("not a list"); }
       // A parse error quotes the file (which may hold a value, cut where redaction cannot see it): never its text.
       catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `results.json: ${e instanceof SyntaxError ? "not valid JSON" : (e as Error).message}` }); }
     }
     if (spec.workspace) {
+      let dir = work;
+      // Only the write-back paths of the checkout (and what the snapshot held outside them), as validated, are staged.
+      if (agent) dir = stageDir;
       // A credential written into the workspace would outlive the run in its store: such a workspace is not written back.
-      const leaked = secrets.length ? secretIn(work, secrets) : null;
+      const leaked = secrets.length ? secretIn(dir, secrets) : null;
       if (leaked) return await complete({ outcome: "failed", error_kind: "run", error: `the workspace holds the value of credential ${leaked}: it is not written back` });
-      try { await client.stage(run.id, lease, work); }
+      try { await client.stage(run.id, lease, dir); }
       catch (e) {
         const status = (e as { status?: number }).status;
         if (status === 409) return null;
@@ -389,6 +535,25 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     if (proxy && opts.onProxyLog) { try { opts.onProxyLog(readFileSync(proxy.log, "utf8")); } catch { opts.onProxyLog(""); } }
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** A file inside `root` read without following a link anywhere on its path (the run's user may have planted one). */
+function readInside(root: string, rel: string): string | null {
+  let cur = root;
+  for (const p of rel.split("/").slice(0, -1)) {
+    cur = path.join(cur, p);
+    let st; try { st = lstatSync(cur); } catch { return null; }
+    if (!st.isDirectory()) throw new Error(`${rel}: ${p} is not a directory`);
+  }
+  let fd: number;
+  try { fd = openSync(path.join(root, rel), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw new Error(`${rel}: ${(e as NodeJS.ErrnoException).code === "ELOOP" ? "a symbolic link" : "unreadable"}`); }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink > 1) throw new Error(`${rel} is not a plain file`);
+    if (st.size > 32 * 1024 * 1024) throw new Error(`${rel} is too big`);
+    return readFileSync(fd, "utf8");
+  } finally { closeSync(fd); }
 }
 
 /** The name of a credential whose value is in a file under `dir` (links are not followed), or null. */
@@ -428,8 +593,10 @@ function killGroup(c: ChildProcess, signal: NodeJS.Signals) {
   try { if (c.pid) process.kill(-c.pid, signal); } catch { /* already gone */ }
 }
 
-function lineEvent(line: string): { type: string; data?: Record<string, unknown> } {
+function lineEvent(line: string, step?: "setup" | "validate"): { type: string; data?: Record<string, unknown> } {
   const l = line.slice(0, 8000);
+  // A setup or validation step's lines are its log, never events of the run (they could not pose as one).
+  if (step) return { type: `${step}_log`, data: { line: l.slice(0, 2000) } };
   if (l.startsWith("{")) {
     try {
       const j = JSON.parse(l);
