@@ -1,0 +1,141 @@
+/**
+ * Declarative packs (mold_v0-057; molds/mold_v0/MOLD.md "Pack and record-area contract"): a pack may be a pack.json and
+ * nothing else. This module is the one definition of pack.json: the zod schema the build validates every pack.json
+ * with (scripts/gen-packs.mjs, through tsx), the JSON Schema written from it for editors and intake
+ * (packs/pack.schema.json, `npm run gen:pack-schema`), and the compiler that turns a pack.json's declarations into the
+ * definition `definePack` would have produced (record areas with typed fields, lifecycles and permissions; job kinds;
+ * credential fields; schedules; onboarding; metrics). A code entry stays possible and extends it (mergePack).
+ *
+ * Extension points left for the tickets after 057, each a key of pack.json that is reserved here (refused with the
+ * ticket that brings it, so a pack.json written for it fails loudly rather than being half-read):
+ *   tabs          mold_v0-058  the console's sidebar and tabs per record area
+ *   mcp           mold_v0-060  the branded MCP server's generated tools and install pages
+ *   charts        mold_v0-063  the charts that show `metrics` (metrics themselves are declared and checked today)
+ * Declared and checked for their shape today, read by the ticket that builds them: `repositories` (each a `kind` and its
+ * settings; an area names one with `repository`: mold_v0-059's adapters), `run_results` (how a run's output becomes
+ * run_results rows: mold_v0-061) and `metrics` (mold_v0-063).
+ * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
+ * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
+ */
+import { AgentJobKindSchema, CredentialSchema, JobKindSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, z, type PackDefinition } from "./pack-api.js";
+
+const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
+const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
+const reserved = (ticket: string, what: string) => z.unknown().refine(() => false, `${what} come with ${ticket}: not part of pack.json yet`).optional();
+
+/** One page of the console (gen-packs checks the same and more: mold_v0-038). */
+const PageSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -"),
+  area: z.enum(["app", "admin"]),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  data: z.string().regex(/^\/[a-z0-9_\-/]*$/i, "a path under the pack's own API, starting with /"),
+  columns: z.array(z.object({ key: z.string(), label: z.string() }).strict()).optional(),
+  nav_group: z.string().optional(),
+  icon: z.string().optional(),
+}).strict();
+
+/** A job kind in pack.json: a program of the pack's (runner "workspace-harness", entry) or the agent-workspace runner's. */
+const JobKindJson = z.discriminatedUnion("runner", [JobKindSchema, AgentJobKindSchema]);
+
+/** pack.json, whole: the manifest (mold_v0-038) and the declarations (mold_v0-057). */
+export const PackJsonSchema = z.object({
+  $schema: z.string().optional(),
+  $comment: z.string().max(2000).optional(),
+  id,
+  name: z.string().trim().min(1, "name is required"),
+  version: z.string().trim().min(1, "version is required"),
+  description: z.string().max(1000).optional(),
+  /** The code entry (a .ts file whose default export is definePack). Optional: a pack.json alone is a whole pack. */
+  entry: z.string().regex(/^[a-z0-9_\-/]+\.ts$/i, "a .ts file inside the pack").refine((p) => !p.includes(".."), "a .ts file inside the pack").optional(),
+  migrations: inside("migrations").optional(),
+  runner: inside("runner").optional(),
+  upstream: z.unknown().optional(),
+  pages: z.array(PageSchema).optional(),
+  words: z.record(z.string().regex(/^[a-z][a-z_]{1,30}$/, "a lowercase shell word"), z.string().trim().min(1).max(40)).optional(),
+  record_areas: z.array(RecordAreaSchema).max(100).optional(),
+  job_kinds: z.array(JobKindJson).max(50).optional(),
+  credentials: z.array(CredentialSchema).max(50).optional(),
+  schedules: z.array(ScheduleSchema).max(50).optional(),
+  onboarding: z.array(OnboardingStepSchema).max(30).optional(),
+  metrics: z.array(MetricSchema).max(100).optional(),
+  repositories: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a repository name: lowercase letters, digits and _"), RepositorySchema).optional(),
+  run_results: RunResultsSchema.optional(),
+  tabs: reserved("mold_v0-058", "tabs"),
+  mcp: reserved("mold_v0-060", "MCP settings"),
+  charts: reserved("mold_v0-063", "charts"),
+}).strict();
+export type PackJson = z.input<typeof PackJsonSchema>;
+
+/** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "schedules" | "onboarding" | "metrics" | "repositories" | "runResults">;
+export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "schedules", "onboarding", "metrics"] as const;
+
+/** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
+const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
+
+export class PackJsonError extends Error {
+  constructor(public problems: string[]) { super(problems.join("\n")); }
+}
+
+/** Check a pack.json against the schema; every problem as "path: message". */
+export function checkPackJson(json: unknown): PackJson {
+  const r = PackJsonSchema.safeParse(json);
+  if (!r.success) throw new PackJsonError(r.error.issues.map((i) => `${where(i.path) || "pack.json"}: ${i.message}`));
+  return json as PackJson;
+}
+
+/** Compile a pack.json's declarations into the definePack fields they stand for. Throws PackJsonError. */
+export function compileDeclarations(json: unknown): DeclaredPack {
+  checkPackJson(json);
+  const p = PackJsonSchema.parse(json);
+  const out: DeclaredPack = {};
+  if (p.record_areas?.length) out.recordAreas = p.record_areas;
+  const harness = (p.job_kinds ?? []).filter((k) => k.runner === "workspace-harness");
+  const agent = (p.job_kinds ?? []).filter((k) => k.runner === "agent-workspace");
+  if (harness.length) out.jobKinds = harness as DeclaredPack["jobKinds"];
+  if (agent.length) out.agentJobKinds = agent as DeclaredPack["agentJobKinds"];
+  if (p.credentials?.length) out.credentials = p.credentials;
+  if (p.schedules?.length) out.schedules = p.schedules;
+  if (p.onboarding?.length) out.onboarding = p.onboarding;
+  if (p.metrics?.length) out.metrics = p.metrics;
+  if (p.repositories && Object.keys(p.repositories).length) out.repositories = p.repositories;
+  if (p.run_results) out.runResults = p.run_results;
+  return out;
+}
+
+/**
+ * A pack's definition: its pack.json's declarations, extended by its code entry when it has one. Lists are joined
+ * (declarations first); a name both declare is refused by validatePack ("declared twice"), so code extends a
+ * declarative pack and never silently replaces part of it. Tools, routes and migrations come from the code.
+ */
+export function mergePack(packId: string, declared: DeclaredPack | null | undefined, code: PackDefinition | null | undefined): PackDefinition {
+  if (!code) return { id: packId, ...(declared ?? {}) };
+  const out: PackDefinition = { ...code };
+  for (const k of DECLARED_KEYS) {
+    const d = (declared?.[k] ?? []) as unknown[], c = (code[k] ?? []) as unknown[];
+    if (d.length || c.length) (out as unknown as Record<string, unknown[]>)[k] = [...d, ...c];
+  }
+  // Repositories join by name (one both declare is refused); the run-results mapping is declared once.
+  if (declared?.repositories || code.repositories) {
+    const both = Object.keys(declared?.repositories ?? {}).filter((k) => Object.hasOwn(code.repositories ?? {}, k));
+    if (both.length) throw new PackJsonError([`repository ${both[0]} is declared in pack.json and in the code entry`]);
+    out.repositories = { ...declared?.repositories, ...code.repositories };
+  }
+  if (declared?.runResults && code.runResults) throw new PackJsonError(["run_results is declared in pack.json and in the code entry"]);
+  if (declared?.runResults) out.runResults = declared.runResults;
+  return out;
+}
+
+/** The JSON Schema of pack.json (packs/pack.schema.json): the same rules, minus the cross-checks only the build makes. */
+export function packJsonSchema(): Record<string, unknown> {
+  const s = z.toJSONSchema(PackJsonSchema, { io: "input", unrepresentable: "any" }) as Record<string, unknown> & { properties: Record<string, Record<string, unknown>> };
+  for (const [k, t] of [["tabs", "mold_v0-058"], ["mcp", "mold_v0-060"], ["charts", "mold_v0-063"]] as const)
+    s.properties[k] = { not: {}, description: `Reserved: comes with ${t}.` };
+  return {
+    $id: "pack.schema.json",
+    title: "mold_v0 pack.json",
+    description: "A mold_v0 pack (molds/mold_v0/MOLD.md, 'Pack and record-area contract'). Generated from src/pack-manifest.ts by npm run gen:pack-schema; do not edit.",
+    ...s,
+  };
+}

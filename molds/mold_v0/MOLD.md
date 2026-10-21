@@ -170,6 +170,59 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
   shell yet, and the product's own setup steps (`src/app.ts`) stay as they are until mold_v0-039 moves them into the
   `octillion` pack.
+- **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
+  `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
+  by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a
+  JSON Schema validator over it). Beside the manifest keys it takes `record_areas`, `job_kinds`, `credentials`,
+  `schedules`, `onboarding`, `metrics`, `repositories` and `run_results`; `gen-packs` validates every pack.json with it
+  (each refusal names its path: `packs/<id>/pack.json: record_areas[2].lifecycle.initial: …`) and compiles the
+  declarations into the `definePack` fields they stand for, carried in `src/packs.generated.ts` as `declared` (no import
+  for a pack with no entry). `src/packs.ts` merges them with the code entry's definition when there is one
+  (`mergePack`: lists joined, a name both declare is refused), so code stays an escape hatch that extends a declarative
+  pack. Without `entry`, `index.ts` is still the entry when the pack has one. What a declaration holds:
+  - **Typed fields** (shared with `definePack`): `text` (`max_length`), `number` (`min`, `max`), `date`, `boolean`,
+    `json`, `enum` (`options`: values or `{value, label}`; values are plain words, never markup or quotes), `person` (a
+    sign-in id), `reference` (`to`: an area; the key must exist **as the writer sees it**, so a workspace never refers to
+    another workspace's record, and a shared area may refer only to shared areas), `file` (`{path, name?, sha256?,
+    size?}`, a path inside the workspace's files), the 047 `link`; `multiple` for enum, person, reference and file;
+    `required`. Checked on every write by the shell's record store (`src/record-areas.ts` `checkRecord`), every problem in
+    one 400. Stored in the 047 tables (`workspace_records`, `platform_records`): no per-pack SQL.
+  - **A lifecycle** (workspace areas): `field` (a single enum field: its options are the states), `initial`,
+    `transitions` (`from`: states or `"*"`, `to`, `label`, `roles`). A new record starts in `initial`; a write never
+    changes the state (it is carried over; a different one is a 409); `records.move(area, key, to)` moves it only along a
+    declared transition and its roles (409 naming the moves there are; 403 for the wrong role). Moves and writes on a
+    lifecycle area change a row only from what they read (compare-and-set on the row's version), so a write racing a move
+    never restores the old state. A row with no state (written before its area had a lifecycle) is in `initial`. The
+    other fields stay editable in every state by whoever may `update`: per-state edit locks are an extension point.
+  - **Permissions** per action (`read`, `create`, `update`, `move`, `delete`) as lists of account roles. Defaults: read
+    every role; create, update, move the roles with the platform's `edit` (member, billing, owner); delete as update, or
+    the owner alone on an area with a lifecycle (else deleting and re-adding a record would put it back in its initial
+    state past the transitions' roles). Every write, move and delete also needs `read` (its answer and refusals show
+    the stored record). A declaration only narrows the platform: a write naming `viewer` is refused at build, a shared area declares `read`
+    only, and at run time a role must hold both. Enforced for the person a call is made for, on `ctx.records`
+    (tools and workspace routes pass the caller's role), `list_records`/`get_record` and `/api/records` (a link into an
+    area the caller may not read is left out). An account API key has no role limits, as for every shell tool.
+  - **Only through the store.** Pack code (server and runner) may not name `workspace_records` or `platform_records`
+    (gen-packs refuses it, beside `asPlatform` and the rest), so the checks above are not bypassed by a raw `ctx.db`
+    query in a reviewed pack; as for every pack rule, this is a lint, not a sandbox (MOLD.md "The runner boundary").
+    A pack with no entry may not carry server code (it would never load); text a database cannot store (NUL, a broken
+    surrogate pair) is a 400 naming the field.
+  - **Schema drift**: a row read under a changed declaration keeps its stored values, drops fields no longer declared
+    from what is shown, and names every field that no longer fits in `drift`; the next write must fit.
+  - **Job kinds**: `runner: "workspace-harness"` (a program of the pack, as before) or `"agent-workspace"` (mold_v0-061:
+    declared with its limits, `args`, `concurrency` and `credentials`, listed as `agentJobKinds`, not taken by the run
+    engine until 061). `args` are typed like fields and checked when a pack's code starts a run (`declaredRuns`, outside
+    the engine); `concurrency` is declared and validated, the engine's per-workspace cap still holds.
+  - **Credentials, schedules, onboarding** as in `definePack`; **metrics** (mold_v0-063: a name, a label, `over` an area
+    or `run_results`, the rest kept for 063); **repositories** (mold_v0-059: a `kind` and its settings; an area names one
+    with `repository`, checked) and **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas,
+    checked). Reserved, refused with the ticket that brings them: `tabs` (058), `mcp` (060), `charts` (063).
+  - `npm run test:declarative-packs` proves it with `scripts/fixtures/packs/fixture_tracker` (a pack.json, no code) and
+    two workspaces; `npm run test:packs` typechecks a build copy with it.
+  - **Not covered yet:** no generic write door (REST/MCP create, update, move) for a pack with no code: that is the
+    generic data API (059), built on the same store functions. A shared library and each workspace's state of it are two
+    areas today (one platform, one workspace, the second's rows keyed by the first's keys and linked to them); a declared
+    "library + per-workspace state" pairing is an extension point for 059 (one area name, two scopes).
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
@@ -178,17 +231,18 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
 
 **In the shell.** A pack is a directory the shell discovers at build time. `gen-packs.mjs` (mold_v0-038) reads every
 pack in the build copy and writes a generated registry the server and the console import; nothing in the shell names
-a pack. Each pack exports one `definePack({...})`:
+a pack. A pack's definition is what its pack.json declares (mold_v0-057; the pack.json key in brackets below), extended
+by its code entry's `definePack({...})` when it has one (tools and routes are code only):
 
 | Field | What the pack declares | Where the shell puts it |
 |---|---|---|
 | `tools` | MCP tools: name, input and output schemas, annotations, a handler that receives the calling workspace first | the tool registry behind `/mcp` (today hand-written in `src/server.ts`) |
 | `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
-| `jobKinds` | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
-| `recordAreas` | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), fields, list columns and links to other areas | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047) |
-| `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
-| `schedules` | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
-| `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
+| `jobKinds` (`job_kinds`) | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
+| `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
+| `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
+| `schedules` (`schedules`) | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
+| `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
 

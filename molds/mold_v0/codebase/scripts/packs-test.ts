@@ -11,6 +11,8 @@
 // 4. A build copy with the fixture pack (scripts/fixtures/packs/fixture_notes) and a fixture profile: gen-packs there,
 //    then scripts/packs-fixture-check.ts there (tool, page and migrated table reachable, RLS, routes, profile), and
 //    the copy's own TypeScript checks (the server with the pack, the console with its page and navigation).
+// 5. A build copy with the declarative fixture pack (scripts/fixtures/packs/fixture_tracker: a pack.json alone, mold_v0-057):
+//    gen-packs there and the copy's TypeScript checks (the registry with no import, the console's typed record areas).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -201,6 +203,26 @@ try {
       console.log("✓ the build copy typechecks: the server with the pack, the console with its page and navigation");
     }
     console.log("✓ a build copy with the fixture pack: tool, page and migrated table reachable, under row-level security");
+  }
+  // ---------- 5. a build copy with the declarative fixture pack (mold_v0-057) ----------
+  {
+    const copy = path.join(tmp, "build-declarative");
+    const skip = new Set(["node_modules", ".pglite", ".pglite-preview", ".transcripts", "vault", ".next", "out", "packs", "dist"]);
+    cpSync(ROOT, copy, { recursive: true, filter: (src) => !skip.has(path.basename(src)) || src === ROOT });
+    for (const nm of ["node_modules", "web/node_modules"]) if (existsSync(path.join(ROOT, nm))) symlinkSync(path.join(ROOT, nm), path.join(copy, nm), "dir");
+    cpSync(path.join(ROOT, "scripts", "fixtures", "packs", "fixture_tracker"), path.join(copy, "packs", "fixture_tracker"), { recursive: true });
+    const g = gen([], copy);
+    assert.equal(g.status, 0, `gen-packs with a pack.json alone: ${g.stderr}`);
+    assert.match(g.stdout, /1 pack\(s\) \(fixture_tracker\), 0 page\(s\), 3 record area\(s\), 1 credential\(s\), 2 onboarding step\(s\), 0 with migrations/);
+    if ((process.env.PACKS_TEST_TYPECHECK ?? "on") !== "off") {
+      const tc = (what: string, cmd: string, cwd: string) => {
+        const r = spawnSync(cmd, ["--noEmit"], { cwd, encoding: "utf8", timeout: 900_000 });
+        assert.equal(r.status, 0, `${what} failed:\n${(r.stdout ?? "").slice(-3000)}\n${(r.stderr ?? "").slice(-3000)}`);
+      };
+      tc("TypeScript (server with a declarative pack)", path.join(ROOT, "node_modules", ".bin", "tsc"), copy);
+      if (existsSync(path.join(ROOT, "web", "node_modules"))) tc("TypeScript (console with typed record areas)", path.join(ROOT, "web", "node_modules", ".bin", "tsc"), path.join(copy, "web"));
+      console.log("✓ a build copy with a pack.json alone typechecks: the server's registry with no import, the console's typed record areas");
+    } else console.log("✓ a build copy with a pack.json alone generates its registry (typecheck skipped)");
   }
   console.log("PACKS TEST PASS");
 } finally {
