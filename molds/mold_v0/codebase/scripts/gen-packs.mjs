@@ -145,6 +145,9 @@ function checkCode(packDir, id, runnerDir) {
     const src = readFileSync(file, "utf8");
     if (runner && !/\.m?js$/.test(file)) fail(where, "runner code runs with node as it is: a .js or .mjs file");
     for (const [re, what] of BANNED_CODE) if (re.test(src)) fail(where, `uses ${what}`);
+    // Server code runs in the server's process: no process object at all, so it can neither read the server's
+    // environment nor change the limits read from it (mold_v0-018, src/rate-limits.ts). Runner code has its own process.
+    if (!runner && /\bprocess\b/.test(src)) fail(where, "uses process (server code may not read or change the server's environment)");
     for (const m of src.matchAll(DYNAMIC_IMPORT)) if (!LITERAL_IMPORT.test(src.slice(m.index))) fail(where, "a dynamic import of anything but one string literal");
     for (const m of src.matchAll(SPECIFIERS)) {
       const spec = m[1] ?? m[2] ?? m[3];

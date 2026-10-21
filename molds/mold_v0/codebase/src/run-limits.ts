@@ -17,11 +17,18 @@
  */
 import type { Queryable } from "./db.js";
 import { PackError } from "./pack-api.js";
-import { limitsFor, planOf } from "./rate-limits.js";
-import { kindMonthSpendUsd } from "./run-spend.js";
+import { limitsFor, planOf, type ProfileLimits } from "./rate-limits.js";
+import { PROFILE } from "./profile.js";
+import { kindMonthSpendUsd, liveEarlierRunSpendUsd } from "./run-spend.js";
 import { asPlatform } from "./tenant-scope.js";
 
 interface KindLimits { budget_usd: number; concurrency_per_workspace?: number; month_budget_usd?: number }
+
+/** The highest run concurrency any plan allows: the claim's first filter, before each workspace's own (on its plan). */
+export function maxRunConcurrency(): number {
+  const plans = Object.keys(((PROFILE as { limits?: ProfileLimits }).limits?.plans) ?? {});
+  return Math.max(limitsFor(null).runs.concurrency_per_workspace, ...plans.map((p) => limitsFor(p).runs.concurrency_per_workspace));
+}
 
 /** A kind's limits in force for a workspace (on `plan`): the kind's own, never above the platform's. */
 export function effectiveKindLimits(k: KindLimits, plan: string | null = null) {
@@ -34,22 +41,27 @@ export function effectiveKindLimits(k: KindLimits, plan: string | null = null) {
   };
 }
 
-/** The account's allowance and month spend (sessions and runs): a refusal when an allowance is set and used up. */
+/**
+ * The account's allowance against its month spend (sessions and runs), plus what its runs queued in an earlier month
+ * and still live are spending now (so a run queued before midnight does not escape the new month's check). No
+ * allowance (0: no plan and no override), no runs, as for the product's own launches (src/queries.ts runSimulation).
+ */
 async function accountRefusal(orgId: number): Promise<string | null> {
   const { orgBudget } = await import("./billing.js");
   const { orgMonthSpendUsd } = await import("./queries.js");
   const budget = await orgBudget(orgId).then((b) => b.budget, () => null);
   if (budget == null) return "the account's allowance could not be checked: try again in a minute";
-  if (!(budget > 0)) return null; // no allowance set: the run's and the kind's budgets are the limits
-  const spent = await orgMonthSpendUsd(orgId);
+  if (!(budget > 0)) return "the account has no allowance (no plan): ask your contact for one";
+  const spent = (await orgMonthSpendUsd(orgId)) + (await liveEarlierRunSpendUsd(orgId));
   return spent >= budget ? `the account has used its $${budget.toFixed(2)} for this month ($${spent.toFixed(2)} spent, runs included)` : null;
 }
 
 /**
  * Before a run is queued (src/runs.ts startRun): the workspace's live runs, the kind's month budget and the account's
- * allowance. Returns the run's budget to freeze (the kind's, clamped). Throws a PackError (429 or 403) with the reason.
+ * allowance. Returns the run's budget to freeze (the kind's, clamped) and the live cap, which startRun checks again
+ * with its insert under a lock per workspace (concurrent starts cannot pass it). Throws a PackError (429 or 403).
  */
-export async function checkRunStart(orgId: number, pack: string, kind: string, k: KindLimits, live: number): Promise<{ budget_usd: number }> {
+export async function checkRunStart(orgId: number, pack: string, kind: string, k: KindLimits, live: number): Promise<{ budget_usd: number; live_per_workspace: number }> {
   return asPlatform(async () => {
     const lim = effectiveKindLimits(k, await planOf(orgId));
     if (live >= lim.live_per_workspace)
@@ -59,7 +71,7 @@ export async function checkRunStart(orgId: number, pack: string, kind: string, k
       throw new PackError(`runs of ${kind} have used this workspace's $${lim.month_budget_usd.toFixed(2)} for this month ($${spent.toFixed(2)} spent)`, 429);
     const account = await accountRefusal(orgId);
     if (account) throw new PackError(`no run can start: ${account}`, 403);
-    return { budget_usd: lim.budget_usd };
+    return { budget_usd: lim.budget_usd, live_per_workspace: lim.live_per_workspace };
   });
 }
 
@@ -69,7 +81,9 @@ export async function checkRunStart(orgId: number, pack: string, kind: string, k
  */
 export async function underConcurrency(tx: Queryable, c: { org_id: number; pack: string; kind: string; concurrency: number | null }): Promise<boolean> {
   const lim = effectiveKindLimits({ budget_usd: 1, concurrency_per_workspace: c.concurrency ?? undefined }, await planOf(c.org_id));
-  await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`run-kind:${c.org_id}:${c.pack}/${c.kind}`]);
+  // Never wait for the lock (two claimers taking candidates in different orders could deadlock): busy means "not now".
+  const [{ ok }] = await tx.query<{ ok: boolean }>("SELECT pg_try_advisory_xact_lock(hashtext($1)) AS ok", [`run-kind:${c.org_id}:${c.pack}/${c.kind}`]);
+  if (!ok) return false;
   const [{ n }] = await tx.query<{ n: number }>(
     "SELECT count(*)::int AS n FROM runs WHERE org_id = $1 AND pack = $2 AND kind = $3 AND status = 'running'", [c.org_id, c.pack, c.kind]);
   return n < lim.concurrency;

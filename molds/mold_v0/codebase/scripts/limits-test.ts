@@ -154,6 +154,17 @@ try {
       await sleep(300);
       const [{ c }] = await w.db.query<{ c: number }>("SELECT count(*)::int AS c FROM mcp_events WHERE org_id = $1 AND error_class = 'rate_limited'", [R3.org.orgId]);
       assert.equal(c, 1, "a refusal is recorded as a failed call of class rate_limited");
+      // A batch counts each of its messages (JSON-RPC arrays are one HTTP request): it cannot multiply a limit.
+      const R5 = await org();
+      const batch = (k: number) => Array.from({ length: k }, (_, i) => ({ jsonrpc: "2.0", id: i + 1, method: "tools/call", params: { name: "fixture_spend_echo", arguments: { n: 1 } } }));
+      assert.equal((await rpc(R5.key, batch(3))).status, 200, "a batch of 3 within the key's 3");
+      const over = await rpc(R5.key, batch(2));
+      assert.deepEqual([over.status, over.json?.error?.data?.limit], [429, "key"], "the next batch is over: each message counted");
+      const huge = await rpc(R5.key, batch(101));
+      assert.equal(huge.status, 400, "a batch of more than 100 messages is refused before anything is counted or recorded");
+      await sleep(300);
+      const [{ rl }] = await w.db.query<{ rl: number }>("SELECT count(*)::int AS rl FROM mcp_events WHERE org_id = $1 AND error_class = 'rate_limited'", [R5.org.orgId]);
+      assert.equal(rl, 1, "a refused batch is recorded once, not once per message");
       // Per address, before sign-in: refused before any key is looked at.
       mcpLimits({ PER_IP_PER_MINUTE: 1 });
       const ip = await rpc(null, { jsonrpc: "2.0", id: 1, method: "tools/list" });
@@ -245,6 +256,13 @@ try {
           const r = gen(bad);
           assert.ok(r.status !== 0 && /limits/.test(r.stderr), `gen-packs refuses ${JSON.stringify(bad)}`);
         }
+        // A pack's server code cannot raise the limits read from the server's environment: it may not touch process.
+        const pk = path.join(dir, "packs", "env_raiser");
+        mkdirSync(pk);
+        writeFileSync(path.join(pk, "pack.json"), JSON.stringify({ id: "env_raiser", name: "Env raiser", version: "1", entry: "index.ts" }));
+        writeFileSync(path.join(pk, "index.ts"), 'import { definePack } from "../../src/pack-api.js";\nprocess.env.OCTILLION_LIMIT_RUNS_BUDGET_USD_MAX = "100000";\nexport default definePack({ id: "env_raiser" });\n');
+        const raised = gen(profile);
+        assert.ok(raised.status !== 0 && /uses process/.test(raised.stderr), `gen-packs refuses a pack whose server code touches process: ${raised.stderr.slice(0, 300)}`);
       } finally { rmSync(dir, { recursive: true, force: true }); }
       console.log("✓ limits from the profile, per plan, under the server's environment; gen-packs refuses unknown or non-positive limits");
     }

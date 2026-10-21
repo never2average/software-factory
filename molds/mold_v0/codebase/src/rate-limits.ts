@@ -88,7 +88,8 @@ let pruneAt = 0;
  * Count one request against every bucket; the first over its limit is the refusal (null: go ahead). `windowSeconds`
  * is 60 (per minute) or 3600 (per hour). Old windows are pruned now and then.
  */
-export async function hit(buckets: Bucket[], windowSeconds = 60): Promise<Refusal | null> {
+export async function hit(buckets: Bucket[], windowSeconds = 60, weight = 1): Promise<Refusal | null> {
+  const w = Math.max(1, Math.floor(weight));
   const live = buckets.filter((b) => Number.isFinite(b.limit) && b.limit > 0);
   if (!live.length) return null;
   try {
@@ -97,10 +98,10 @@ export async function hit(buckets: Bucket[], windowSeconds = 60): Promise<Refusa
       const rows = await db.query<{ bucket: string; hits: number; reset: number }>(
         `/* tenant: internal: rate-limit counters, platform rows named by key, member, workspace or address */
          INSERT INTO rate_limit_hits (bucket, window_start, hits)
-         SELECT b, to_timestamp(floor(extract(epoch FROM now())::float8 / $2::int) * $2::int), 1 FROM unnest($1::text[]) AS b
-         ON CONFLICT (bucket, window_start) DO UPDATE SET hits = rate_limit_hits.hits + 1
+         SELECT b, to_timestamp(floor(extract(epoch FROM now())::float8 / $2::int) * $2::int), $3::int FROM unnest($1::text[]) AS b
+         ON CONFLICT (bucket, window_start) DO UPDATE SET hits = rate_limit_hits.hits + excluded.hits
          RETURNING bucket, hits, extract(epoch FROM window_start + make_interval(secs => $2::int) - now())::float AS reset`,
-        [live.map((b) => `${b.bucket}@${windowSeconds}`), windowSeconds]);
+        [live.map((b) => `${b.bucket}@${windowSeconds}`), windowSeconds, w]);
       if (Date.now() > pruneAt) {
         pruneAt = Date.now() + 60_000;
         void db.query("/* tenant: internal: rate-limit counters */ DELETE FROM rate_limit_hits WHERE window_start < now() - interval '2 hours'").catch(() => {});
@@ -122,15 +123,16 @@ export async function hit(buckets: Bucket[], windowSeconds = 60): Promise<Refusa
 /** Requests in flight per workspace on this instance (the per-workspace concurrency cap). */
 const inFlight = new Map<number, number>();
 /** Take a slot for workspace `orgId`, or null when it already has `cap` in flight; call the returned function when done. */
-export function takeSlot(orgId: number, cap: number): (() => void) | null {
+export function takeSlot(orgId: number, cap: number, weight = 1): (() => void) | null {
+  const k = Math.max(1, Math.floor(weight));
   const n = inFlight.get(orgId) ?? 0;
-  if (n >= cap) return null;
-  inFlight.set(orgId, n + 1);
+  if (n + k > cap && n > 0) return null; // a batch larger than the cap runs only when nothing else does
+  inFlight.set(orgId, n + k);
   let done = false;
   return () => {
     if (done) return;
     done = true;
-    const m = (inFlight.get(orgId) ?? 1) - 1;
+    const m = (inFlight.get(orgId) ?? k) - k;
     if (m <= 0) inFlight.delete(orgId); else inFlight.set(orgId, m);
   };
 }
