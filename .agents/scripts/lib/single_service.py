@@ -1225,7 +1225,10 @@ def ensure_database(app_id, infra, cb, proj, present, P, say=print):
 
 def _read_page(url):
     """(status, why) for one console page, WITHOUT following a redirect: a sign-in redirect is an answer. Read-only."""
-    r = subprocess.run(["curl", "--silent", "--show-error", "--max-time", "20", "-o", "/dev/null", "-w", "%{http_code}", url],
+    # Asked as a browser's page navigation: sign-in middleware (e.g. Clerk's protect()) answers a signed-out page load with
+    # a redirect to sign-in, but a request that does not look like a page load with 404, which would read as broken.
+    r = subprocess.run(["curl", "--silent", "--show-error", "--max-time", "20", "-o", "/dev/null", "-w", "%{http_code}",
+                        "-H", "Accept: text/html,application/xhtml+xml", "-H", "Sec-Fetch-Dest: document", "-H", "Sec-Fetch-Mode: navigate", url],
                        capture_output=True, text=True)
     m = re.search(r"(\d{3})\s*$", r.stdout or "")
     if r.returncode or not m or m.group(1) == "000":
