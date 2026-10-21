@@ -54,7 +54,7 @@ try {
     assert.equal(Object.fromEntries(metrics.map((m: any) => [m.name, m.unit])).pick_rate, "percent");
     assert.equal(Object.fromEntries(metrics.map((m: any) => [m.name, m.unit])).run_spend, "usd", "the sum of a run's cost is money");
 
-    const both = (j: any) => tryPacks([j, fixtureJson("fixture_adoption")]);
+    const both = (j: any) => tryPacks(j.job_kinds ? [j, fixtureJson("fixture_adoption")] : [j]);
     const cases: [string, any, RegExp][] = [
       ["a field the area lacks", vulns((j) => { metricOf(j, "open_by_severity").group_by = "priority"; }), /metric open_by_severity: group_by: area audit_findings has no field priority/],
       ["a field name that is not a plain word", vulns((j) => { metricOf(j, "open_by_severity").group_by = "severity'); DROP TABLE runs; --"; }), /metrics\[2\]\.group_by/],
@@ -80,7 +80,7 @@ try {
       ["a board by a text field", vulns((j) => { j.tabs[1].board_by = "app"; }), /board_by app must name a single-choice enum field/],
       ["a timeline by a state", vulns((j) => { j.tabs[1].timeline_by = "state:open"; }), /timeline_by: a timeline orders records by one of their date fields or by updated/],
       ["a tab no role may read", vulns((j) => { j.tabs[2].roles = ["viewer"]; }), /tab applications: no role may read what it shows/],
-      ["a Schedules tab with nothing scheduled", vulns((j) => { j.tabs.push({ id: "sched", kind: "schedules", group: "Workspace" }); }), /tab sched: the build schedules no job kind/],
+      ["a Schedules tab with nothing to schedule", vulns((j) => { delete j.job_kinds; j.tabs.push({ id: "sched", kind: "schedules", group: "Workspace" }); }), /tab sched: the build has no job kind to schedule/],
       ["an icon outside the set", vulns((j) => { j.tabs[0].icon = "skull"; }), /tabs\[0\]\.icon/],
       ["the same label twice in a group", vulns((j) => { j.tabs[4].label = "Overview"; }), /the sidebar already has "Overview" in Audit/],
       ["a tab id that is a page id", vulns((j) => { j.pages = [{ id: "overview", area: "app", title: "O", data: "/o" }]; j.entry = undefined; }), /tab overview: its id is also a page of the pack/],
@@ -216,6 +216,8 @@ try {
     for (const [t, s, h] of [["t1", "pass", "claude"], ["t2", "fail", "codex"], ["t3", "pass", "claude"]]) await result(A, `run_a1_${STAMP}`, t!, s!, h!, "2026-10-14T12:00:00Z");
     for (const [t, s, h] of [["t1", "pass", "codex"], ["t2", "not_applicable", "codex"], ["t3", "fail", "claude"]]) await result(A, `run_a2_${STAMP}`, t!, s!, h!, "2026-10-20T10:00:00Z");
     for (const t of ["t1", "t2"]) await result(B, `run_b1_${STAMP}`, t, "pass", "claude", "2026-10-20T19:00:00Z");
+    // Two findings on one check (mold_v0-065: a fingerprint is part of a result's identity) are two rows: each counts.
+    for (const fp of ["fp-1", "fp-2"]) await db.query("INSERT INTO run_results (run_id, org_id, check_area, check_key, status, finding_fingerprint, created_at) VALUES ($1, $2, 'adopt_tasks', 't3', 'fail', $3, '2026-10-20T19:00:00Z')", [`run_b1_${STAMP}`, B.orgId, fp]);
     assert.equal((await get(A, "pick_rate")).value, 0.6, "3 picks of 5 pass/fail results (not applicable left out)");
     assert.deepEqual((await get(A, "pick_rate_weekly")).series![0]!.values, [null, null, null, null, 0.666667, 0.5], "per week: no results is no rate, not 0");
     assert.deepEqual(groups(await get(A, "pick_rate_by_task")), [["adopt_tasks/t1", "Install the SDK", 1], ["adopt_tasks/t3", "Fix a failing call", 0.5], ["adopt_tasks/t2", "Call the API", 0]], "by task, named by the task's title");
@@ -224,7 +226,8 @@ try {
     assert.deepEqual((await get(A, "runs_weekly")).series![0]!.values, [0, 0, 0, 0, 1, 2]);
     assert.deepEqual([(await get(A, "run_spend")).value, (await get(A, "run_spend")).unit], [2.25, "usd"]);
     assert.equal((await get(A, "run_hours")).value, 1.5, "(2 h + 1 h) / 2 succeeded runs");
-    assert.deepEqual([(await get(B, "pick_rate")).value, (await get(B, "run_spend")).value, (await get(B, "run_hours")).value], [1, 9, 10], "B's own runs only");
+    assert.deepEqual([(await get(B, "pick_rate")).value, (await get(B, "run_spend")).value, (await get(B, "run_hours")).value], [0.5, 9, 10], "B's own runs only (2 picks of 4: two findings on one check count twice)");
+    assert.deepEqual(groups(await get(B, "results_by_status")).slice(0, 2), [["pass", "Pass", 2], ["fail", "Fail", 2]], "findings, not check x asset pairs");
     console.log("✓ the adoption set from the same code: pick rate 60% (per week, per task, per agent), results by status, runs per week, spend $2.25, 1.5 h per run; B's apart");
   }
 

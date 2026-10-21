@@ -256,7 +256,32 @@
       ],
       "credentials": [
         "audit_token"
-      ]
+      ],
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "audit.mjs",
+          "--app",
+          "{app}"
+        ],
+        "args": {
+          "app": {
+            "from": "scope.app"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "findings"
+        ],
+        "timeout_seconds": 1200
+      }
     }
   ],
   "credentials": [
