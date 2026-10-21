@@ -46,7 +46,8 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   (the ordered pack migration directories), `src/profile.generated.ts`, `web/src/config/pack-nav.generated.ts` and
   `web/src/config/profile.generated.ts`. It refuses a pack whose SQL creates a table without row-level security or
   outside its `<id>_` names, writes grants, policies, roles, functions or DO blocks, or whose code imports any shell
-  module but `src/pack-api.ts`, a database driver, or mentions `asPlatform`, `SET`/`RESET ROLE` or `set_config`.
+  module but `src/pack-api.ts`, a database driver, or mentions `asPlatform`, `SET`/`RESET ROLE` or `set_config`
+  (run programs under the pack's `runner` directory have their own rules: the runner boundary, mold_v0-054, below).
 - `definePack` (`src/pack-api.ts`): **tools** register on the customer MCP server after the shell's (`src/packs.ts`),
   each call run for the calling workspace under row-level security with its account permission; **routes** mount at
   `/api/packs/<id>` (the portal's own session check, `edit` for changes, a CSRF header on cookie writes) and
@@ -55,8 +56,8 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   secured by `shell_pack_tenant_table` (org_id NOT NULL, ON DELETE CASCADE, the workspace policy) or
   `shell_pack_private_table`, and `check:rls` checks every pack table's policy and probes it live; **pages** (in
   pack.json) appear in the `/app` or `/admin` sidebar and render through the shell's generic page from the pack's
-  data route. **credentials, schedules, onboarding** and profile **words** are declared and validated and listed by
-  `packRegistry()`; the credential vault (034), scheduler (035) and checklist (011) wire them.
+  data route. **schedules** and profile **words** are declared and validated and listed by `packRegistry()`; the
+  scheduler (035) wires them. **credentials** (034) and **onboarding** (011) are wired (below).
 - **recordAreas** (mold_v0-047, built): a pack declares areas in `definePack` and writes no record code. Their rows
   live in two shell tables (`sql/migrations/0004_record_areas.sql`): `platform_records` (platform scope: the tenant
   role may only `SELECT` it, so customers cannot write it whatever the code does; staff write it at
@@ -98,8 +99,23 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   on runs queued or running (`OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE`, 20). **Not wired yet:** no process runs runs in
   a deployed app (no runner is launched by the autoscaler; `drainRuns` is there for one); a run's gateway spend is
   limited by its kind's budget but is not yet counted in the account's month figures or spend pages (they read
-  sessions); and `gen-packs` holds a pack's run programs to the server-code import rules (a program that needs
-  `node:child_process` is refused today).
+  sessions).
+- **The runner boundary** (mold_v0-054, built; the import check resolves each pack's real import graph with esbuild,
+  the resolver tsx uses, so spacing, comments, re-exports, extensionless or dot files cannot hide an import; a pack may
+  carry only `.ts`/`.mts`/`.js`/`.mjs` code and plain data files, no `node_modules`, no links): a pack's code is of two kinds, told apart by pack.json `runner` (a
+  directory inside the pack). *Server code* (everything else: the entry, tools, routes, loaded into the server) keeps
+  the strict rules above and may neither import a process API nor the runner's files. *Runner code* (under `runner`:
+  a job kind's programs, run by the harness with node as the run's own user) may also import `node:child_process`,
+  `node:fs`, `node:os`, streams and the other node built-ins a program needs, imports only its own runner files (never
+  `src/pack-api.ts`, the pack's server code or any shell module, and no package), is `.js`/`.mjs` only, and is held to
+  the same text bans (`asPlatform`, `SET`/`RESET ROLE`, `set_config`, the tenant setting, `require`/`createRequire`, a
+  computed import, `eval`). The entry may not sit in the runner directory, and no pack may carry a symbolic link. The
+  processes a program starts run as the run's user and die with the run (`npm run test:runs`, section 12); the import
+  rules keep the runner's code reviewable, while what isolates it at run time is the run user and an environment built
+  from nothing. The same holds for server code: the import rules are a lint, not a sandbox (server code still runs in
+  the server's process and could read its environment), so "values never reach a pack's server code" holds for the
+  shell's API, which gives a handler none, not against a hostile pack. `npm run test:packs` proves both boundaries (a program with `child_process` passes under `runner` and is
+  refused outside it, and 19 ways across the boundary are refused).
   `npm run test:runs` proves the lifecycle offline with fixture kinds (`scripts/fixtures/runs/`).
 - **The workspace store** (mold_v0-033, built): a job kind with `workspace: true` gets versioned snapshots of its
   workspace's files that outlive a run, one store per workspace and pack (`sql/migrations/0006_workspace_store.sql`,
@@ -115,6 +131,45 @@ needed". What 038 wired, in `molds/mold_v0/codebase`:
   link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots. **Not wired yet:**
   no customer-facing read of a snapshot's files (an evidence viewer), and no retention of old versions (all are kept).
   `npm run test:workspace-store` proves it with two workspaces.
+- **The workspace credential vault** (mold_v0-034, built; merges the old 009): a pack declares credential fields
+  (`definePack({ credentials })`: a label, help, `bound_to` the workspace, an `asset` of one of its asset areas (`area`)
+  or an asset's `environment` (optionally from a list), delivered as an environment variable or a file). A workspace's
+  owners set the values in the console (`/app/credentials`, `src/credential-routes.ts` at `/api/credentials`, mounted
+  only when a field exists; an asset binding must name an asset record of their own workspace); no answer carries a
+  value, owners see the last 4 characters and everyone else only which values are set; a file field takes a multi-line
+  value (a key). Values live in `workspace_credentials` (`sql/migrations/0007_workspace_credentials.sql`),
+  sealed with the workspace data key (`sealBytes`, refused while the vault is locked) and bound by additional data to
+  their workspace, pack, field, asset and environment; the tenant role has no grant on the table (a pack's server code
+  never sees a value; `check:rls` probes it). A job kind names the fields its runs receive (`credentials: [...]`, none
+  by default); the runner fetches them with the run's lease (`GET /api/worker/runs/:id/credentials`), looked up with the
+  run row's own workspace and its `targets.asset` / `targets.environment`, and gives the entry program each value as
+  its declared environment variable or as a file (0400, the run user's) in a private directory on tmpfs
+  (`RUN_CREDENTIALS_DIR`, `/dev/shm`; with no tmpfs the run fails rather than write one to disk), removed when the
+  program ends; the validator gets none. Runs share their user, so before and after each run every file that user owns
+  in `/tmp`, `/var/tmp` and `/dev/shm` is removed (a copy or hard link of a value never waits for the next run). A target
+  that names an asset's area gets a value only for the field's own area. Everything a run writes (stdout lines, the
+  stderr tail, results as text and as values, errors, event types) is redacted of the values (as is, JSON-escaped,
+  URL-encoded, hex, base64 at any byte offset, numbers, each line of a multi-line value, longest first across values;
+  `src/credential-redact.ts`) by the harness and again by the engine before it is stored (the engine refuses to store
+  while it cannot open the values); a workspace holding a value in a file or a file name is not written back. `npm run test:credentials` proves it with two workspaces: same asset
+  key, concurrent runs, 0 cross-workspace injections; a canary grep of every table, the database's files, the object
+  store, the MCP and HTTP answers and the process's logs finds 0. **Not covered:** a program that sends a value out
+  through an allowed host or the model gateway (egress is the run's allowlist; the gateway does not store prompts), or
+  writes part of a value; values replaced while a run is going are redacted only by the harness (which holds what it
+  delivered); no rotation reminder or expiry.
+- **The onboarding checklist from packs** (mold_v0-011, built): a pack declares steps (`definePack({ onboarding })`: an
+  id, a label, help, and `done_when`, one of `workspace`, `connected`, `first_call`, `tool:<name>`,
+  `credential:<name>`, `record:<area>`, `run:<kind>`; a credential, a workspace-scope area or a kind must be the pack's
+  own, a tool any tool of the build, all checked when the pack loads). `src/onboarding.ts` reads each condition for the
+  calling workspace only (its id from the session; every query names it and runs under row-level security for it; the
+  credential vault, which tenant work cannot reach, is read with that id), with the time it first held, and serves the
+  list at `/api/onboarding` (signed-in people of the workspace, read only; mounted only when a step exists). The
+  console's Setup page shows it above the shell's own timeline when the build has a step (`packOnboardingSteps` in
+  `pack-nav.generated.ts`); with zero packs it asks nothing and the page is unchanged. `npm run test:onboarding` proves
+  it with two workspaces (everything B does ticks none of A's steps). **Not covered:** the end-to-end browser walk of
+  the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
+  shell yet, and the product's own setup steps (`src/app.ts`) stay as they are until mold_v0-039 moves them into the
+  `octillion` pack.
 - The profile (`profile.json` over a neutral default, `src/profile.ts`) names the MCP server, the email sender and
   the console title. The codebase's `profile.json` carries the product's names until 039; without it the shell is
   "Workspace".
@@ -131,9 +186,9 @@ a pack. Each pack exports one `definePack({...})`:
 | `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
 | `jobKinds` | run kinds: the runner (`workspace-harness`), its `entry` and `validator` programs in the pack, the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store | the run engine (mold_v0-041) |
 | `recordAreas` | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), fields, list columns and links to other areas | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047) |
-| `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034); only names reach a run's definition |
+| `credentials` | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `schedules` | default schedules per workspace (a run kind over a scope) | the scheduler (mold_v0-035), editable per workspace in the console |
-| `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011) |
+| `onboarding` | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
 

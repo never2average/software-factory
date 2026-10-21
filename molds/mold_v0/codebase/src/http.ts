@@ -11,6 +11,8 @@ import * as mail from "./email.js";
 import { appRouter } from "./app.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
+import { credentialAppRouter } from "./credential-routes.js";
+import { onboardingAppRouter } from "./onboarding.js";
 import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
@@ -162,6 +164,10 @@ export function createApp() {
   app.use("/api/packs", packAppRouter());
   // ---------- record areas' list and detail data: /api/records (src/record-areas.ts); with no area nothing is mounted ----------
   app.use("/api/records", recordAppRouter());
+  // ---------- the workspace credential vault: /api/credentials (src/credential-routes.ts); with no field nothing is mounted ----------
+  app.use("/api/credentials", credentialAppRouter());
+  // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
+  app.use("/api/onboarding", onboardingAppRouter());
 
   // ---------- journey webhook: PostHog Workflows queues in-chat nudges (src/journeys.ts) ----------
   // The secret goes in an Authorization header, or in the path for webhook steps that cannot set headers.

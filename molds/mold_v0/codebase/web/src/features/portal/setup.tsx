@@ -18,6 +18,7 @@ import { appApi } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { CopyButton, ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { Allowed } from './role';
+import { packOnboardingSteps } from '@/config/pack-nav.generated';
 
 interface Step { id: string; label: string; done: boolean; at: string | null; help: string; optional?: boolean; prompt?: string | null }
 interface Setup {
@@ -52,6 +53,7 @@ export function SetupPage() {
         <div className='grid w-full gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_24rem]'>
           <div className='order-2 flex min-w-0 flex-col gap-8 lg:order-1'>
             {selected === 'setup' || !journey ? (<>
+              {packOnboardingSteps > 0 && <PackChecklist />}
               <Timeline s={s} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
@@ -366,6 +368,27 @@ function Timeline({ s }: { s: Setup }) {
     <TimelineSection title='Get set up' done={s.done} total={s.total} noun='steps'
       items={s.steps.map((x) => ({ id: x.id, label: x.label.replace(' (team)', ''), done: x.done, body: <StepHelp help={x.help} done={x.done} prompt={x.prompt ?? null} /> }))}
       footer={<>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline-offset-4 hover:underline'>Journeys</a>.</>} />
+  );
+}
+
+interface PackChecklistData { steps: { pack: string; id: string; label: string; help: string | null; done: boolean; at: string | null }[]; done: number; total: number }
+
+/**
+ * The packs' onboarding steps (mold_v0-011; src/onboarding.ts, /api/onboarding), each ticked from what really happened
+ * in this workspace. Shown only when a pack declares a step (packOnboardingSteps): with none the page is the shell's.
+ */
+function PackChecklist() {
+  const { data } = useOrgLoad(async () => {
+    const res = await fetch('/api/onboarding', { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return (await res.json()) as PackChecklistData;
+  });
+  if (!data || !data.total) return null;
+  return (
+    <TimelineSection title='Set up your workspace' done={data.done} total={data.total} noun='steps'
+      items={data.steps.map((x) => ({ id: `${x.pack}/${x.id}`, label: x.label, done: x.done,
+        body: x.done ? <p className='text-muted-foreground text-sm'>Done <When d={x.at} />.</p> : x.help ? <p className='text-muted-foreground text-sm'>{x.help}</p> : null }))}
+      footer={<>These steps tick themselves as you go.</>} />
   );
 }
 

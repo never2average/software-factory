@@ -12,8 +12,16 @@
 //
 // It refuses (exit 1, every problem listed) a pack whose files would get past the seam:
 //   - pack.json: unknown fields, an id that is not the directory's, a missing entry, badly named or numbered migrations
-//   - code: an import of any shell module other than src/pack-api.ts, of a database driver or a process API; any
-//     mention of asPlatform, SET/RESET ROLE, set_config or the tenant setting (leaving the workspace's scope)
+//   - code: the pack has two kinds (mold_v0-054), told apart by pack.json `runner`, a directory inside the pack:
+//       server code  (everything outside `runner`: the entry, its tools and routes, loaded into the server) may import
+//                    its own files (never the runner's) and src/pack-api.ts, and nothing that starts processes or
+//                    reaches a database: no process API, no driver
+//       runner code  (the files under `runner`: a job kind's programs, run by the workspace harness as the run's own
+//                    user with node, src/run-harness.ts) may also start processes and use the file system
+//                    (node:child_process, node:fs, node:os, ...), and imports only its own runner files and node's
+//                    built-ins: never src/pack-api.ts, the server code or any other shell module; .js or .mjs only
+//     neither may mention asPlatform, SET/RESET ROLE, set_config or the tenant setting (leaving the workspace's scope),
+//     nor load a module outside a plain import (require, createRequire, a computed dynamic import, eval)
 //   - SQL: a table, index or statement outside the pack's own `<id>_` names; GRANT, REVOKE, policies, roles, DO blocks,
 //     functions, views, triggers, rules, SECURITY DEFINER, extensions, default privileges, disabling row-level
 //     security; and any table created without row-level security: each CREATE TABLE must be followed, in the pack's
@@ -28,7 +36,8 @@
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
 //   --packs <dir> --out <dir> --profile <file>   another packs directory, output root or profile (tests)
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,12 +68,18 @@ const ID = /^[a-z][a-z0-9_]{1,30}$/;
 const PAGE_ID = /^[a-z][a-z0-9-]{0,40}$/;
 const DATA_PATH = /^\/[a-z0-9_\-/]*$/i;
 const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
-const MANIFEST_KEYS = new Set(["id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream"]);
+const MANIFEST_KEYS = new Set(["id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
   "@modelcontextprotocol/sdk/types.js"]);
-const CODE_EXT = /\.(m?[jt]sx?|cjs|cts)$/;
+/**
+ * What a pack's runner code (pack.json `runner`, mold_v0-054) may import: node's built-ins a run program needs, starting
+ * processes and the file system included. Never a shell module (src/pack-api.ts included) or a package: a program runs
+ * from its own copy of the pack, as the run's user, with nothing of the server's.
+ */
+const RUNNER_BARE = new Set(["node:child_process", "node:fs", "node:fs/promises", "node:path", "node:url", "node:util", "node:buffer", "node:events",
+  "node:crypto", "node:os", "node:stream", "node:stream/promises", "node:readline", "node:timers", "node:timers/promises", "node:zlib", "node:string_decoder"]);
 
 const problems = [];
 const fail = (where, what) => problems.push(`${where}: ${what}`);
@@ -76,16 +91,21 @@ function readJson(file, where) {
   catch (e) { fail(where, `not valid JSON (${e.message})`); return null; }
 }
 
+/** Every entry under a pack, dot files and directories included: nothing a loader could reach is skipped. */
 function walk(dir) {
   const out = [];
   for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === "node_modules" || e.name.startsWith(".")) continue;
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) out.push(...walk(p));
-    else out.push(p);
+    if (e.isSymbolicLink()) out.push({ p, link: true });
+    else if (e.isDirectory()) { out.push({ p, dir: true }); out.push(...walk(p)); }
+    else out.push({ p });
   }
   return out;
 }
+
+/** The files a pack may carry: code (.ts, .mts, .js, .mjs, checked) and data a loader never runs. */
+const CODE_FILE = /\.(ts|mts|js|mjs)$/;
+const DATA_FILE = /\.(json|sql|md|txt|csv|ya?ml|html|css|svg|png|jpe?g|gif|webp|pdf)$/i;
 
 // ---------- code: the import boundary ----------
 
@@ -105,20 +125,99 @@ const BANNED_CODE = [
 const DYNAMIC_IMPORT = /\bimport\s*\(/g;
 const LITERAL_IMPORT = /^import\s*\(\s*(["'])[^"'`$]*\1\s*\)/;
 
-function checkCode(packDir, id) {
-  for (const file of walk(packDir).filter((f) => CODE_EXT.test(f))) {
+const within = (dir, p) => { const r = path.relative(dir, p); return r === "" || (!r.startsWith("..") && !path.isAbsolute(r)); };
+
+/** The import boundary: server code everywhere but `runnerDir`, runner code under it (mold_v0-054). */
+function checkCode(packDir, id, runnerDir) {
+  const code = [];
+  for (const e of walk(packDir)) {
+    const where = `pack ${id}: ${posix(path.relative(packDir, e.p))}`;
+    // A link could make a pack file be a shell module (or a runner file be server code): packs carry plain files only.
+    if (e.link) fail(where, "a symbolic link: a pack carries plain files only");
+    else if (e.dir) { if (path.basename(e.p) === "node_modules") fail(where, "a node_modules directory: a pack carries its own files only, never packages"); }
+    else if (CODE_FILE.test(e.p)) code.push(e.p);
+    else if (!DATA_FILE.test(e.p)) fail(where, "a file a pack may not carry (code is .ts, .mts, .js or .mjs; data .json, .sql, .md, .txt, .csv, .yaml, .html, .css or an image)");
+  }
+  graphJobs.push({ packDir, id, runnerDir, code });
+  for (const file of code) {
     const where = `pack ${id}: ${posix(path.relative(packDir, file))}`;
+    const runner = runnerDir !== null && within(runnerDir, file);
     const src = readFileSync(file, "utf8");
+    if (runner && !/\.m?js$/.test(file)) fail(where, "runner code runs with node as it is: a .js or .mjs file");
     for (const [re, what] of BANNED_CODE) if (re.test(src)) fail(where, `uses ${what}`);
     for (const m of src.matchAll(DYNAMIC_IMPORT)) if (!LITERAL_IMPORT.test(src.slice(m.index))) fail(where, "a dynamic import of anything but one string literal");
     for (const m of src.matchAll(SPECIFIERS)) {
       const spec = m[1] ?? m[2] ?? m[3];
+      if (runner) {
+        if (spec.startsWith(".")) {
+          if (!within(runnerDir, path.resolve(path.dirname(file), spec))) fail(where, `imports ${spec}: runner code may import its own runner files and node's built-ins only (never src/pack-api.ts, the pack's server code or the shell)`);
+        } else if (!RUNNER_BARE.has(spec)) fail(where, `imports ${spec}: not allowed in runner code (allowed: ${[...RUNNER_BARE].join(", ")}, its own runner files)`);
+        continue;
+      }
       if (spec.startsWith(".")) {
-        const target = path.resolve(path.dirname(file), spec).replace(/\.js$/, ".ts");
+        const raw = path.resolve(path.dirname(file), spec);
+        const target = raw.replace(/\.js$/, ".ts");
         if (target === PACK_API) continue;
         const inside = path.relative(packDir, target);
         if (inside.startsWith("..") || path.isAbsolute(inside)) fail(where, `imports ${spec}: a pack may import its own files and src/pack-api.ts only`);
-      } else if (!ALLOWED_BARE.has(spec)) fail(where, `imports ${spec}: not allowed in a pack (allowed: ${[...ALLOWED_BARE].join(", ")}, src/pack-api.ts, its own files)`);
+        else if (runnerDir !== null && (within(runnerDir, raw) || within(runnerDir, target))) fail(where, `imports ${spec}: server code may not import the runner's code (it may start processes)`);
+      } else if (!ALLOWED_BARE.has(spec)) fail(where, `imports ${spec}: not allowed in a pack's server code (allowed: ${[...ALLOWED_BARE].join(", ")}, src/pack-api.ts, its own files${runnerDir !== null ? "; a run program that needs more goes under the pack's runner directory" : ""})`);
+    }
+  }
+}
+
+/**
+ * The import graph, as a loader resolves it (esbuild, which tsx itself uses): every code file of the pack is an entry,
+ * and every import it makes (static, re-export, dynamic) is resolved, extensionless and index files included. A file
+ * outside the pack, a server file reaching the runner's code, a runner file reaching anything but its own runner files
+ * and the built-ins it may use, or a package or built-in outside the lists is refused. The text checks above stay as a
+ * second layer (computed imports, require, the scope-leaving words).
+ */
+const graphJobs = [];
+async function checkGraphs() {
+  if (!graphJobs.length) return;
+  let esbuild;
+  try { esbuild = createRequire(path.join(ROOT, "package.json"))("esbuild"); }
+  catch { fail("packs", "checking the packs' imports needs esbuild (a dependency of tsx): run npm ci"); return; }
+  for (const { packDir, id, runnerDir, code } of graphJobs) {
+    if (!code.length) continue;
+    const API = "pack-api:";
+    const plugin = { name: "pack-boundary", setup(b) {
+      b.onResolve({ filter: /.*/ }, (a) => {
+        if (a.kind === "entry-point") return undefined;
+        if (!a.path.startsWith(".") && !a.path.startsWith("/")) return { path: a.path, external: true };
+        const abs = path.resolve(a.resolveDir, a.path);
+        if (abs === PACK_API || abs.replace(/\.js$/, ".ts") === PACK_API) return { path: API, external: true };
+        return undefined;
+      });
+    } };
+    let meta;
+    try {
+      const r = await esbuild.build({ entryPoints: code, bundle: true, write: false, metafile: true, platform: "node", format: "esm", outdir: path.join(tmpdir(), "gen-packs-graph"),
+        absWorkingDir: packDir, logLevel: "silent", plugins: [plugin], loader: { ".json": "json" } });
+      meta = r.metafile;
+    } catch (e) {
+      const first = e?.errors?.[0];
+      fail(`pack ${id}`, `its code does not resolve: ${first ? `${first.location?.file ?? ""}: ${first.text}` : String(e?.message ?? e).slice(0, 300)}`);
+      continue;
+    }
+    for (const [input, info] of Object.entries(meta.inputs)) {
+      const file = path.resolve(packDir, input);
+      const where = `pack ${id}: ${posix(input)}`;
+      if (!within(packDir, file)) { fail(where, "a file outside the pack is loaded: a pack may import its own files and src/pack-api.ts only"); continue; }
+      const runner = runnerDir !== null && within(runnerDir, file);
+      for (const imp of info.imports ?? []) {
+        const target = imp.external ? null : path.resolve(packDir, imp.path);
+        if (runner) {
+          if (imp.path === API && imp.external) fail(where, "imports src/pack-api.ts: runner code may import its own runner files and node's built-ins only");
+          else if (imp.external && !RUNNER_BARE.has(imp.path)) fail(where, `imports ${imp.path}: not allowed in runner code`);
+          else if (target && !within(runnerDir, target)) fail(where, `imports ${posix(imp.path)}: runner code may import its own runner files and node's built-ins only (never src/pack-api.ts, the pack's server code or the shell)`);
+        } else {
+          if (imp.external && imp.path !== API && !ALLOWED_BARE.has(imp.path)) fail(where, `imports ${imp.path}: not allowed in a pack's server code`);
+          else if (target && runnerDir !== null && within(runnerDir, target)) fail(where, `imports ${posix(imp.path)}: server code may not import the runner's code (it may start processes)`);
+          else if (target && !within(packDir, target)) fail(where, `imports ${posix(imp.path)}: a pack may import its own files and src/pack-api.ts only`);
+        }
+      }
     }
   }
 }
@@ -305,7 +404,19 @@ function loadPack(dirName) {
       else words[k] = v;
     }
   }
-  if (id && ID.test(id)) checkCode(dir, id);
+  // The runner directory (mold_v0-054): a job kind's programs, held to the runner rules instead of the server's.
+  let runnerDir = null;
+  if (m.runner !== undefined) {
+    if (typeof m.runner !== "string" || !/^[a-z0-9_\-/]+$/i.test(m.runner) || m.runner.includes("..") || m.runner.startsWith("/")) fail(where, "runner must be a directory inside the pack");
+    else if (!existsSync(path.join(dir, m.runner)) || !statSync(path.join(dir, m.runner)).isDirectory()) fail(where, `runner directory ${m.runner} does not exist`);
+    else {
+      runnerDir = path.join(dir, m.runner);
+      if (runnerDir === path.resolve(dir)) fail(where, "runner must be a directory under the pack, not the pack itself");
+      if (typeof entry === "string" && within(runnerDir, path.join(dir, entry))) fail(where, `entry ${entry} is inside the runner directory: the server's entry is server code`);
+      if (typeof m.migrations === "string" && within(runnerDir, path.join(dir, m.migrations))) fail(where, "migrations may not be inside the runner directory");
+    }
+  }
+  if (id && ID.test(id)) checkCode(dir, id, runnerDir);
   return { id, dir, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
 }
 
@@ -345,6 +456,8 @@ if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(profile.mcp_server_name)) fail("profile", 
 if (/[<>"\r\n]/.test(profile.email_sender_name)) fail("profile", "email_sender_name may not contain < > \" or line breaks");
 if (!/^[^\s@<>]+@[^\s@<>]+$/.test(profile.email_from_address)) fail("profile", "email_from_address must be an address");
 
+await checkGraphs();
+
 const refuse = () => {
   if (!problems.length) return;
   console.error(`gen-packs: refused (${problems.length} problem${problems.length === 1 ? "" : "s"}):\n  ${problems.join("\n  ")}`);
@@ -352,9 +465,9 @@ const refuse = () => {
 };
 refuse();
 
-// ---------- record areas (mold_v0-047): read from each pack's definePack, checked across packs ----------
+// ---------- record areas (mold_v0-047), credentials (mold_v0-034), onboarding (mold_v0-011): from each pack's definePack ----------
 
-/** Each pack's record areas, parsed by src/pack-api.ts RecordAreaSchema (defaults filled in), by pack id. */
+/** Each pack's record areas (parsed by src/pack-api.ts RecordAreaSchema, defaults filled in) and credential fields, by pack id. */
 function readRecordAreas() {
   if (!packs.length) return {};
   const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
@@ -364,13 +477,15 @@ function readRecordAreas() {
     const script = path.join(dir, "areas.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 const [api, entries] = JSON.parse(process.argv[2]);
-const { RecordAreaSchema } = await import(pathToFileURL(api).href);
+const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema } = await import(pathToFileURL(api).href);
 const out = {};
 for (const [id, file] of entries) {
   try {
     const m = await import(pathToFileURL(file).href);
     const def = m.default?.default ?? m.default;
-    out[id] = (def?.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a));
+    out[id] = { areas: (def?.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
+      credentials: (def?.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
+      onboarding: (def?.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })) };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 1500) }; }
 }
 process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
@@ -380,14 +495,18 @@ process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
     const line = (r.stdout ?? "").split("\n").find((l) => l.startsWith("RECORD_AREAS "));
     if (r.status !== 0 || !line) { fail("record areas", `loading the packs' definitions failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
     const got = JSON.parse(line.slice("RECORD_AREAS ".length));
-    for (const [id, v] of Object.entries(got)) if (!Array.isArray(v)) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = []; }
+    for (const [id, v] of Object.entries(got)) if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = { areas: [], credentials: [], onboarding: [] }; }
     return got;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
-const areasByPack = readRecordAreas();
-const recordAreas = packs.flatMap((p) => (areasByPack[p.id] ?? []).map((a) => ({ pack: p.id, ...a })));
+const defsByPack = readRecordAreas();
+const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
+/** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
+const credentialFields = packs.flatMap((p) => (defsByPack[p.id]?.credentials ?? []).map((c) => ({ pack: p.id, ...c })));
+/** The onboarding steps the packs declare (mold_v0-011): the console's Setup page asks for them only when there is one. */
+const onboardingSteps = packs.flatMap((p) => (defsByPack[p.id]?.onboarding ?? []).map((st) => ({ pack: p.id, ...st })));
 {
   const owner = new Map();
   for (const a of recordAreas) {
@@ -445,7 +564,11 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
   `export const recordPortalNav: NavGroup[] = ${json(recordAreas.length ? [{ label: "Records", items: recordAreas.map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
-  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform") ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform").map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n`);
+  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform") ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform").map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  "/** The /app sidebar's Credentials page (mold_v0-034): when any pack declares a credential field. */\n" +
+  `export const credentialPortalNav: NavGroup[] = ${json(credentialFields.length ? [{ label: "Workspace", items: [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] }] : [])};\n\n` +
+  "/** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */\n" +
+  `export const packOnboardingSteps = ${onboardingSteps.length};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json(profile)} as const;\n`);
@@ -460,5 +583,5 @@ for (const [file, text] of files) {
   console.log(`wrote ${posix(path.relative(OUT, file))}`);
 }
 if (CHECK && stale) { console.error(`gen-packs: ${stale} generated file(s) differ from the packs and profile: run npm run gen:packs`); process.exit(1); }
-console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((p) => p.id).join(", ")})` : ""}, ${allPages.length} page(s), ${recordAreas.length} record area(s), ` +
+console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((p) => p.id).join(", ")})` : ""}, ${allPages.length} page(s), ${recordAreas.length} record area(s), ${credentialFields.length} credential(s), ${onboardingSteps.length} onboarding step(s), ` +
   `${packs.filter((p) => p.manifest.migrations).length} with migrations; profile "${profile.name}"${CHECK ? "; generated files are current" : ""}`);
