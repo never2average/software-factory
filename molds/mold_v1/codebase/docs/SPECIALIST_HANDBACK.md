@@ -581,6 +581,49 @@ model call ends with it as a user message, the first call is a prefix of the sec
 session, one result), `npm run test:session-guard` (who may steer and read, another workspace's rows, the reader's
 retry and workspace rules, as app_rw against fail-closed policies) and tests/specialist-question.spec.ts.
 
+## The main agent stops a specialist (mold_v1-294)
+
+The person could stop a specialist; the main agent could not, so one that went the wrong way, or that the person's
+next message made pointless, ran on until it finished or the sweep found it frozen. `stop_specialist` (root agent only;
+`agent/lib/specialist-stop.ts`, `agent/tools/stop_specialist.ts`) takes the specialist's name as the chat gives it
+("Research 2") and a short reason.
+
+- **The same machinery.** The reason is delivered first as the delegation's own result (`SUBAGENT_STOPPED`, message
+  "Stopped by the main agent: <reason> It returned no result."), through eve's late-result path, exactly once by eve's
+  durable record, as the sweep does for a frozen specialist; then eve's cancel of the specialist's session, the cancel
+  the person's Stop reaches (a running turn cancelled, a parked one stopped through `stop-parked`). eve's own stop
+  report then finds the delegation settled and is dropped.
+- **Once.** The right to act is the sweep's ledger row (`specialist_sweeps`, kind `stopped`): a second call, or a sweep
+  pass racing it, does nothing.
+- **The slot.** A run the cancel did not reach is ended by the sweep's backstop on a later pass (`frozenToEnd` lists
+  kind `frozen` and `stopped`), which frees its sandbox.
+- **Scope.** Only delegations the calling session's own stream announced can be named, read by the session id eve
+  gives the tool, never one from its input: another chat's specialist, or another workspace's, cannot be named. With a
+  database, the calling session's owner record must not name a root (it is a main thread) and the specialist's must
+  name the calling session as its root, in the same workspace. A specialist's own session stops nothing. Only a
+  delegation handed over as "reports later" is stopped here; one the main agent's current step still waits on is the
+  person's Stop to press.
+- **What the person sees.** The card turns to stopped and says "Stopped by the main agent: <reason>". The tool call is
+  not a row of the thread.
+
+Checked by `npm run test:specialist-stop` (scope, names, once, the backstop) and `npm run test:specialist-sweep-db`
+(the ledger rows of kind `stopped`, in one workspace).
+
+## Names, relays and states on the card (mold_v1-295..297)
+
+- **Names** (`lib/specialist-names.ts`): a specialist is called by its pack's given name (subagent.json `givenName`),
+  else its label, and the second of a kind in one chat is "<name> 2", in call order. The card, the Control Panel, the
+  composer, steering notes, approval rows and the main agent's `stop_specialist` answers all say the same name.
+- **Relays** (`lib/specialist-relay.ts`): an approval the person gave a specialist, a note sent to it and the main
+  agent's stop sit on that specialist's card, never as rows of the thread. An open request stays in the stack beside
+  the composer.
+- **States** (`lib/specialist-status.ts`, `app/_components/specialist-status.tsx`): running, waiting on you, stuck,
+  ready to report back, done, failed, stopped, each its own icon, the only visible mark (no word or pill beside it), with the state's word as its accessible name and
+  tooltip, on the card and the Control Panel's row.
+  "Stuck" is derived: nothing on the specialist's own stream for `NEXT_PUBLIC_SPECIALIST_STUCK_MIN` minutes (10). The
+  sentences that used to sit under a card ("Working in the Control Panel …", "Still working in the Control Panel …")
+  are gone. Checked by tests/specialist-status.spec.ts.
+
 ## What this repo adds around that rule
 
 **A stopped specialist hands back** (`agent/lib/specialist-handback.ts`, run by the session guard on

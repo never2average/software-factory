@@ -10,6 +10,8 @@ import { expect, test, type Page } from "@playwright/test";
  * progress shows on the same card, and all of it comes back the same after a reload, from what the chat persisted.
  */
 const root = (page: Page) => page.getByTestId("specialist-question");
+/** Beta's delegation card, by the name the chat gives it (mold_v1-295: the name, not "Beta subagent"). */
+const betaCard = (page: Page) => root(page).locator("[data-delegation]").filter({ has: page.locator("[data-specialist-name]", { hasText: /^Beta$/ }) });
 
 async function fresh(page: Page, query = "") {
   await page.goto(`/preview/specialist-question${query}`);
@@ -83,7 +85,7 @@ test("a specialist's question is labelled, the composer says whom it answers, an
   await expect(root(page)).toHaveAttribute("data-stage", "done");
   await expect(root(page).locator("[data-specialist-answered]")).toHaveCount(0);
   await expectAnsweredCard(page, /Beta finished/);
-  const delegation = root(page).locator("[data-delegation]").filter({ hasText: "Beta subagent" });
+  const delegation = betaCard(page);
   await expect(delegation.locator("[data-specialist-thread]")).toHaveCount(1);
   await page.reload();
   await expect(root(page)).toHaveAttribute("data-stage", "done");
@@ -111,9 +113,9 @@ test("a note to a running specialist: sent from the composer, read at its next s
   await expect(label).toContainText("Note to Beta. It reads it at its next step and carries on.");
   await page.getByRole("textbox", { name: "Message" }).fill("Focus on FY24 only");
   await page.getByRole("button", { name: "Send" }).click();
-  const notes = root(page).locator("[data-specialist-notes]");
-  await expect(notes).toHaveAccessibleName("Your notes to Beta");
-  const note = notes.locator("[data-steering-note]");
+  // The note sits on beta's card while beta works (mold_v1-296: a relay to a specialist is no row of the thread).
+  await expect(root(page).locator("[data-specialist-notes]")).toHaveCount(0);
+  const note = betaCard(page).locator("[data-relayed-notes] [data-steering-note]");
   await expect(note).toContainText("Steered Beta");
   await expect(note).toContainText("Focus on FY24 only");
   await expect(note.locator("[data-steering-status]")).toHaveText("Waiting for its next step");
@@ -129,7 +131,7 @@ test("a note to a running specialist: sent from the composer, read at its next s
 
   // Beta hands back: the note stays with beta's delegation card, and beta is no longer a target.
   await root(page).getByTestId("hand-back").click();
-  const delegation = root(page).locator("[data-delegation]").filter({ hasText: "Beta subagent" });
+  const delegation = betaCard(page);
   await expect(delegation.locator("[data-steering-note]")).toContainText("Focus on FY24 only");
   await expect(root(page).locator("[data-specialist-notes]")).toHaveCount(0);
   await expect(root(page).locator("[data-answering]")).toHaveCount(0);
@@ -143,7 +145,7 @@ test("a note that was never read says so once the specialist has finished", asyn
   await page.getByRole("textbox", { name: "Message" }).fill("Skip the annex");
   await page.getByRole("button", { name: "Send" }).click();
   await root(page).getByTestId("hand-back").click();
-  const status = root(page).locator("[data-delegation]").filter({ hasText: "Beta subagent" }).locator("[data-steering-status]");
+  const status = betaCard(page).locator("[data-steering-status]");
   await expect(status).toHaveText("Not read: Beta finished first. Ask the main agent instead.");
 });
 

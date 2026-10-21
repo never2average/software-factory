@@ -134,6 +134,8 @@ export interface ChildFeed {
   continuationToken?: string;
   /** Sessions this child delegated to in turn (from its own `subagent.called` events). */
   childSessions: string[];
+  /** When its stream last carried anything (the latest event's `meta.at`, ms): what "stuck" is measured from (mold_v1-297). */
+  lastAt?: number;
 }
 
 /**
@@ -353,7 +355,12 @@ export interface FoldView {
   readonly stopped?: boolean;
   readonly continuationToken?: string;
   readonly childSessions: string[];
+  /** The latest event's `meta.at` (ms), deltas included. */
+  readonly lastAt?: number;
 }
+
+/** An event line's own time: its `meta.at`, written last on every line eve sends (`…,"meta":{"at":"…"}}`). */
+const LINE_AT = /"at":"([^"]{10,40})"\}\}?\s*$/;
 
 export interface FoldOptions {
   /** One-line summary of a tool call's input (app/_components/tool-display.ts `toolCallSummary`). */
@@ -382,6 +389,7 @@ export class ChildFold {
   private stopped: boolean | undefined;
   private continuationToken: string | undefined;
   private childSessions: string[] = [];
+  private lastAt: number | undefined;
   /** Every event folded, with its absolute index: what a saved copy is made of (the superseded deltas are not here). */
   private kept: { i: number; e: LooseEvent }[] = [];
   private version = 0;
@@ -399,6 +407,9 @@ export class ChildFold {
   push(line: string): LineEffect {
     if (!line.trim()) return { type: undefined, boundary: null };
     const index = this.cursor++;
+    // Its time, read off the line's tail without parsing it (a superseded delta is never parsed, and still counts).
+    const stamped = LINE_AT.exec(line.slice(-64));
+    if (stamped) this.noteAt(Date.parse(stamped[1]));
     if (this.skip) {
       const peeked = peekDelta(line);
       if (peeked) {
@@ -450,6 +461,12 @@ export class ChildFold {
     return { type: event.type, boundary };
   }
 
+  private noteAt(ms: number): void {
+    if (!Number.isFinite(ms) || (this.lastAt !== undefined && ms <= this.lastAt)) return;
+    this.lastAt = ms;
+    this.version++;
+  }
+
   /** Fold a held delta now (a flush, the end of a read, an abort): it is no longer known to be superseded. */
   foldHeld(): void {
     const held = this.held;
@@ -481,6 +498,7 @@ export class ChildFold {
       ...(this.stopped === undefined ? {} : { stopped: this.stopped }),
       ...(this.continuationToken === undefined ? {} : { continuationToken: this.continuationToken }),
       childSessions: this.childSessions,
+      ...(this.lastAt === undefined ? {} : { lastAt: this.lastAt }),
     };
     return this.lastView;
   }
@@ -549,6 +567,8 @@ export class ChildFold {
 
   private apply(event: LooseEvent, index: number): void {
     this.version++;
+    const at = (event as { meta?: { at?: unknown } }).meta?.at;
+    if (typeof at === "string") this.noteAt(Date.parse(at));
     this.kept.push({ i: index, e: event });
     this.transcript = childReducer.reduce(this.transcript, event as TurnEvent);
     let k = 0;
@@ -1479,6 +1499,7 @@ export class ChildFeedStore {
       ...(view.stopped === undefined ? {} : { stopped: view.stopped }),
       ...(view.continuationToken === undefined ? {} : { continuationToken: view.continuationToken }),
       ...(e.delegated === undefined ? {} : { delegated: e.delegated }),
+      ...(view.lastAt === undefined ? {} : { lastAt: view.lastAt }),
     };
     e.dirty = false;
     const same =

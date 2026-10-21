@@ -56,9 +56,19 @@ export function isDetachedPlaceholderEvent(event: StreamEventLike | null | undef
 }
 
 /** Did a delegation end because it was stopped (its error output, or the error text a client keeps of it)? */
+/**
+ * The stopped results the main thread is handed with a reason in their message (mold_v1-294): the main agent's stop
+ * ("Stopped by the main agent: <reason> …", agent/lib/specialist-stop.ts) and the sweep's ("Stopped by the system: …",
+ * agent/lib/specialist-sweep.ts). A card shows only the message as its error text, so these read as stopped by it.
+ */
+const STOPPED_WITH_REASON = /^\s*Stopped by the (main agent|system)[:.]/;
+
 export function isStoppedDelegation(outputOrText: unknown): boolean {
   if (isRecord(outputOrText)) return outputOrText.code === STOPPED_CODE;
-  return typeof outputOrText === "string" && (outputOrText.includes(STOPPED_CODE) || outputOrText.includes(STOPPED_MESSAGE));
+  return (
+    typeof outputOrText === "string" &&
+    (outputOrText.includes(STOPPED_CODE) || outputOrText.includes(STOPPED_MESSAGE) || STOPPED_WITH_REASON.test(outputOrText))
+  );
 }
 
 /**

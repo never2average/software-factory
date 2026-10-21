@@ -8,6 +8,7 @@ import obligationsRegister from "@/scripts/fixtures/record-hub/50-obligations-re
 import { compileHub } from "@/agent/lib/record-hub";
 import { RECORD_AREAS } from "@/agent/lib/record-areas.generated";
 import { RECORD_HUB_UI, RecordHubProvider, recordHubUi, type RecordHubUi } from "@/app/_components/ops/record-hub";
+import { StatusScene } from "./status-scene";
 
 declare global {
   interface Window {
@@ -64,6 +65,13 @@ function useAskedHub(): { asked: boolean; hub: RecordHubUi } {
 }
 
 export function ControlPanelPreview() {
+  // `?scene=status`: specialists in every state, on their cards and in this panel (./status-scene.tsx).
+  const [scene, setScene] = useState<string | null>(null);
+  useEffect(() => setScene(new URLSearchParams(window.location.search).get("scene")), []);
+  return scene === "status" ? <StatusScene /> : <PanelPreview />;
+}
+
+function PanelPreview() {
   const { asked, hub } = useAskedHub();
   const insights: Insights = useMemo(() => ({ ...deriveInsights([]), subagents: RUNS, ...(asked ? { people: [PERSON] } : {}) }), [asked]);
   const [ready, setReady] = useState(false);

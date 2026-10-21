@@ -11,8 +11,10 @@ export const dynamic = "force-dynamic";
 
 /**
  * Persisted codenames for subagent runs (see lib/subagent-names.ts). The Control
- * Panel derives a stable name per run and upserts it here so the label is
- * authoritative and consistent across reloads and clients.
+ * Panel derived a stable name per run and upserted it here. Since mold_v1-295 it
+ * calls a run what the chat calls it (lib/specialist-names.ts: its given name or
+ * label, "<name> 2" for a second of a kind) and no longer reads or writes these;
+ * the route stays so stored rows and an older client still answer.
  *
  * GET  /api/ops/subagent-runs?keys=a,b,c  → { labels: { [runKey]: label } }
  * POST /api/ops/subagent-runs { runKey, sessionId?, subagentType?, label }

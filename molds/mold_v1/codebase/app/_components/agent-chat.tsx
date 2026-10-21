@@ -342,7 +342,10 @@ import {
 import { cn } from "@/lib/utils";
 import { AgentMessage, PendingApprovalCard, messageRendersContent } from "./agent-message";
 import type { ComposerTarget } from "./specialist-question";
-import { subagentDisplayName } from "./tool-display";
+import { specialistBaseName } from "./tool-display";
+import { callsFromEvents, callsFromMessages, mergeCalls, specialistNames } from "@/lib/specialist-names";
+import { agentStops, withoutStopCalls } from "@/lib/specialist-relay";
+import type { ChildActivity, SpecialistCardFacts } from "@/lib/specialist-status";
 import type { SpecialistAnswerView, SpecialistAsker, SteeringNoteView } from "@/lib/specialist-questions";
 import { useSteering } from "./use-steering";
 import { HandbackNote } from "./handback-note";
@@ -655,6 +658,7 @@ function useSpecialistLib(wanted: boolean): SpecialistLib | null {
 const NO_ASKERS: ReadonlyMap<string, SpecialistAsker> = new Map();
 const NO_ANSWERS: ReadonlyMap<string, SpecialistAnswerView> = new Map();
 const NO_NOTES: readonly SteeringNoteView[] = [];
+const NO_ACTIVITY: ReadonlyMap<string, ChildActivity> = new Map();
 
 interface Presence {
   online: OnlinePerson[];
@@ -2315,7 +2319,8 @@ export function AgentChat({
   );
   /** The transcript as rendered: a specialist's answered question placed on its card is not also in its message. */
   const renderedMessages = useMemo(
-    () => (specialistLib ? specialistLib.withoutPlacedAnswers(viewMessages, specialistAnswers) : viewMessages),
+    // …nor is the main agent's stop of a specialist (mold_v1-296): its reason is said on that specialist's card.
+    () => withoutStopCalls(specialistLib ? specialistLib.withoutPlacedAnswers(viewMessages, specialistAnswers) : viewMessages),
     [viewMessages, specialistAnswers, specialistLib],
   );
   /**
@@ -2333,6 +2338,61 @@ export function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [mergedEvents.length],
   );
+  /**
+   * WHAT EACH SPECIALIST IS CALLED (mold_v1-295, lib/specialist-names.ts): its given name, else its purpose label, and
+   * "<name> 2" for the second of the same kind, in the main thread's call order. The cards, the composer, steering
+   * notes, approval rows and the Control Panel all say the same name; so do the main agent's own tool results.
+   */
+  const specialistNameMap = useMemo(
+    () =>
+      specialistNames(
+        mergeCalls(callsFromEvents(mergedEvents as readonly TurnEvent[]), callsFromMessages(viewMessages as readonly { parts?: readonly unknown[] }[])),
+        specialistBaseName,
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mergedEvents.length, viewMessages],
+  );
+  const nameOfCall = useCallback(
+    (callId: string | undefined, key: string) => (callId ? specialistNameMap.get(callId) : undefined) ?? specialistBaseName(key),
+    [specialistNameMap],
+  );
+  /**
+   * WHAT THE CHAT KNOWS OF EACH SPECIALIST BEYOND ITS CARD'S PART (mold_v1-294/297), by call id: what its own stream
+   * says (the Control Panel's feeds report it, `childActivity`), whether a question or approval it asked is open in
+   * the stack beside the composer, and whether the main agent stopped it, with its reason. The card derives its state
+   * icon from this (lib/specialist-status.ts); the Control Panel's rows read the open questions and stops from it.
+   */
+  const [childActivity, setChildActivity] = useState<ReadonlyMap<string, ChildActivity>>(NO_ACTIVITY);
+  const stopsByMainAgent = useMemo(() => {
+    const byName = new Map([...specialistNameMap].map(([callId, name]) => [name, callId]));
+    return agentStops(viewMessages as readonly { parts?: readonly unknown[] }[], (name) => byName.get(name));
+  }, [viewMessages, specialistNameMap]);
+  /** Specialists with a question or approval open in the stack beside the composer. */
+  const waitingSpecialists = useMemo(() => {
+    const out = new Set<string>();
+    for (const rid of requestsBelow) {
+      const asker = askers.get(rid);
+      if (asker) out.add(asker.callId);
+    }
+    return out;
+  }, [requestsBelow, askers]);
+  const specialistFacts = useMemo(() => {
+    const out = new Map<string, SpecialistCardFacts>();
+    const ids = new Set([...specialistNameMap.keys(), ...childActivity.keys()]);
+    for (const callId of ids) {
+      const a = childActivity.get(callId);
+      const stopReason = stopsByMainAgent.get(callId);
+      out.set(callId, {
+        ...(a?.childFinished ? { childFinished: true } : {}),
+        ...(a?.childStopped ? { childStopped: true } : {}),
+        ...(a?.lastProgressAt !== undefined ? { lastProgressAt: a.lastProgressAt } : {}),
+        ...(waitingSpecialists.has(callId) ? { waiting: true } : {}),
+        ...(stopReason !== undefined ? { stopReason } : {}),
+        ...(stopped.delegations.has(callId) ? { stoppedHere: true } : {}),
+      });
+    }
+    return out;
+  }, [specialistNameMap, childActivity, stopsByMainAgent, waitingSpecialists, stopped]);
   const steering = useSteering({
     sessionId: agent.session?.sessionId ?? liveSessionIdRef.current,
     headers: getAuthHeaders,
@@ -4439,11 +4499,15 @@ export function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [mergedEvents.length, stoppedMarkers, stopStateKey],
   );
-  /** message id → the "Stopped." note said under it (see `stoppedNoteHosts`). */
+  /**
+   * message id → the "Stopped." note said under it (see `stoppedNoteHosts`). Read off the messages AS RENDERED: a turn
+   * whose only part was the main agent's stop call (or an answer placed on a card) renders nothing, so it cannot host
+   * the note (mold_v1-296).
+   */
   const stoppedNoteAt = useMemo(
-    () => stoppedNoteHosts(viewMessages, stoppedNotes, (m) => messageRendersContent(m, true, isProxiedChildApproval)),
+    () => stoppedNoteHosts(renderedMessages, stoppedNotes, (m) => messageRendersContent(m, true, isProxiedChildApproval)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [viewMessages, stoppedNotes],
+    [renderedMessages, stoppedNotes],
   );
   // A stopped turn with NO message on screen (eve has not numbered it yet) has
   // nowhere to put its note: say it above the composer instead, until the next
@@ -4454,8 +4518,9 @@ export function AgentChat({
       if (e.type === "turn.started" || e.type === "turn.completed") return null;
       if (e.type === "turn.cancelled") {
         const id = e.data?.turnId ?? "";
-        // Only a reply with something ON SCREEN can carry the note under it.
-        const shown = viewMessages.some(
+        // Only a reply with something ON SCREEN can carry the note under it (as rendered: without the parts moved to a
+        // specialist's card).
+        const shown = renderedMessages.some(
           (m) =>
             m.role === "assistant" &&
             m.metadata?.turnId === id &&
@@ -4464,13 +4529,13 @@ export function AgentChat({
               return part.type === "dynamic-tool" || (part.type === "text" && Boolean(part.text?.trim()));
             }),
         );
-        const hosted = viewMessages.some((m) => m.metadata?.turnId === id && stoppedNoteAt.has(m.id));
+        const hosted = renderedMessages.some((m) => m.metadata?.turnId === id && stoppedNoteAt.has(m.id));
         return shown || hosted ? null : (stoppedNotes.get(id) ?? null);
       }
     }
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mergedEvents.length, viewMessages, stoppedNotes, stoppedNoteAt]);
+  }, [mergedEvents.length, renderedMessages, stoppedNotes, stoppedNoteAt]);
   /** A way out of a hold that feels stuck — see `stopAvailable`. */
   // The question on screen is a delegated specialist's (it cannot be dismissed).
   const specialistWaiting =
@@ -4721,6 +4786,8 @@ export function AgentChat({
                     // A specialist's answered question placed on its card is taken out of the message (mold_v1-234).
                     message={renderedMessages[index] ?? message}
                     stoppedDelegations={stopped.delegations}
+                    specialistNames={specialistNameMap}
+                    specialistFacts={specialistFacts}
                     specialistAnswers={specialistAnswers}
                     steeringNotes={steeringNotes}
                     stoppedNote={stoppedNoteAt.get(message.id)}
@@ -4794,7 +4861,7 @@ export function AgentChat({
               .map((a) => (
                 <SpecialistAnsweredCard
                   key={`answered-${a.requestId}`}
-                  name={subagentDisplayName(a.name)}
+                  name={nameOfCall(a.callId, a.name)}
                   prompt={a.prompt}
                   reply={a.reply}
                   progress={a.progress}
@@ -4810,7 +4877,7 @@ export function AgentChat({
               return (
                 <SpecialistNotesCard
                   key={`notes-${callId}`}
-                  name={subagentDisplayName(mine[0].name)}
+                  name={nameOfCall(callId, mine[0].name)}
                   notes={mine}
                   progress={mine[0].progress}
                   onOpen={() => {
@@ -5084,7 +5151,7 @@ export function AgentChat({
                   />
                 );
                 return asker ? (
-                  <SpecialistQuestionFrame key={p.toolCallId} name={subagentDisplayName(asker.name)}>
+                  <SpecialistQuestionFrame key={p.toolCallId} name={nameOfCall(asker.callId, asker.name)}>
                     {card}
                   </SpecialistQuestionFrame>
                 ) : (
@@ -5100,13 +5167,13 @@ export function AgentChat({
           {/* Not while a question nobody can attribute is open: typed text answers it, as the hint below says. */}
           {!readOnly && !relayThreadId && composerTargets.length > 1 && !(openInputRequests.length > 0 && !answering) ? (
             <ComposerTargetRow
-              targets={composerTargets.map((t) => (t.name ? { ...t, name: subagentDisplayName(t.name) } : t))}
+              targets={composerTargets.map((t) => (t.name ? { ...t, name: nameOfCall(t.id, t.name) } : t))}
               selected={effectiveTarget.id}
               onSelect={(id) => {
                 setSteerError(null);
                 setComposerTarget(id);
               }}
-              heldFor={answering ? subagentDisplayName(answering.name) : undefined}
+              heldFor={answering ? nameOfCall(answering.callId, answering.name) : undefined}
               error={steerError}
             />
           ) : gate.reason === "awaiting-input" &&
@@ -5201,9 +5268,9 @@ export function AgentChat({
                       : "Your earlier message is waiting its turn on the server — its reply will appear here."
                   : specialistRunning || workingSpecialists.length > 0
                     ? specialistWorkingLine(
-                        workingSpecialists.filter((d) => !d.detached && !heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
-                        workingSpecialists.filter((d) => !d.detached && heldHandoffs.some((h) => h.callId === d.callId)).map((d) => d.name),
-                        workingSpecialists.filter((d) => d.detached).map((d) => d.name),
+                        workingSpecialists.filter((d) => !d.detached && !heldHandoffs.some((h) => h.callId === d.callId)).map((d) => nameOfCall(d.callId, d.name)),
+                        workingSpecialists.filter((d) => !d.detached && heldHandoffs.some((h) => h.callId === d.callId)).map((d) => nameOfCall(d.callId, d.name)),
+                        workingSpecialists.filter((d) => d.detached).map((d) => nameOfCall(d.callId, d.name)),
                       )
                     : attachLive
                       ? // A reader IS on the live stream: the words have to match
@@ -5591,6 +5658,11 @@ export function AgentChat({
               onSteer={relayThreadId || readOnly ? undefined : steering.send}
               onStuckHandoffs={setStuckHandoffs}
               onHeldHandoffs={setHeldHandoffs}
+              // Each specialist's own stream, as the panel follows it, for the cards' state icons (mold_v1-297); and
+              // what the chat knows that the panel does not (an open question, the main agent's stop).
+              onSpecialistActivity={setChildActivity}
+              specialistFacts={specialistFacts}
+              specialistNames={specialistNameMap}
               // A published file in the rail opens in the SAME artifact preview
               // an office link in the chat opens — the rail swaps to it, and
               // closing the preview brings the cockpit back.
