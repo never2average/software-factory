@@ -131,7 +131,7 @@ try {
       email_sender_name: "Fixture Desk", email_from_address: "desk@example.org" }, null, 2));
     const g = gen([], copy);
     assert.equal(g.status, 0, `gen-packs in the build copy: ${g.stderr}`);
-    assert.match(g.stdout, /1 pack\(s\) \(fixture_notes\), 2 page\(s\), 1 with migrations; profile "Fixture Desk"/);
+    assert.match(g.stdout, /1 pack\(s\) \(fixture_notes\), 2 page\(s\), 1 record area\(s\), 1 with migrations; profile "Fixture Desk"/);
     assert.deepEqual(JSON.parse(/PACK_MIGRATION_DIRS[^=]*= (\[[\s\S]*\]);/.exec(readFileSync(path.join(copy, "src", "pack-migrations.generated.ts"), "utf8"))![1]!),
       [{ pack: "fixture_notes", dir: "packs/fixture_notes/migrations" }], "the ordered pack migration directories");
     const env: Record<string, string | undefined> = { ...process.env, PGLITE_DIR: path.join(tmp, "pglite"), OCTILLION_REGISTRY: "scripts/fixtures/registry.json" };

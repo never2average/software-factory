@@ -38,7 +38,9 @@ export const PARENT_SCOPED: Record<string, string> = {
 /** Tables whose rows with no organization are Octillion's shared ones, readable by every tenant. */
 export const SHARED_TABLES = ["developer_profiles", "developer_populations", "journey_templates"];
 /** Platform tables tenant work may read, never write, and that hold nothing of any one organization. */
-export const PLATFORM_READONLY = ["library_tasks", "platform_settings", "platform_harnesses", "model_prices", "schema_migrations", "journey_seed"];
+export const PLATFORM_READONLY = ["library_tasks", "platform_settings", "platform_harnesses", "model_prices", "schema_migrations", "journey_seed",
+  // Record areas at platform scope (mold_v0-047, 0004_record_areas): shared by every workspace, read-only to customers.
+  "platform_records"];
 /** Tables a tenant query must never reach (checked live by the probe). */
 export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_log", "admin_tokens", "access_requests", "orchestrators", "email_log"];
 
@@ -141,6 +143,14 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     for (const o of [a, b]) {
       await tx.query("INSERT INTO api_keys (org_id, label, key_prefix, key_hash) VALUES ($1, $2, 'oct_probe', $3)", [o, tag, `${tag}-${o}`]);
       await tx.query("INSERT INTO mcp_events (org_id, method) VALUES ($1, 'rls/probe')", [o]);
+      await tx.query("INSERT INTO workspace_records (org_id, pack, area, key) VALUES ($1, 'probe', 'probe', $2)", [o, tag]);
+      // Runs (mold_v0-041): a run, an event and a result per organization.
+      await tx.query("INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd) VALUES ($1, $2, 'probe', 'probe', '{}', 1, 60, 60, 1)", [`${tag}-run-${o}`, o]);
+      await tx.query("INSERT INTO run_events (run_id, org_id, attempt, type) VALUES ($1, $2, 0, 'probe')", [`${tag}-run-${o}`, o]);
+      await tx.query("INSERT INTO run_results (run_id, org_id, check_area, check_key, status) VALUES ($1, $2, 'probe', 'probe', 'pass')", [`${tag}-run-${o}`, o]);
+      // The workspace store (mold_v0-033): a snapshot and a lease per organization.
+      await tx.query("INSERT INTO workspace_snapshots (org_id, store, version, status, base_version, manifest, manifest_sha256, files, bytes, object_key) VALUES ($1, 'probe', 1, 'committed', 0, '{}', 'x', 0, 0, 'x')", [o]);
+      await tx.query("INSERT INTO workspace_leases (org_id, store, run_id, expires_at) VALUES ($1, 'probe', $2, now())", [o, `${tag}-run-${o}`]);
     }
     await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
@@ -180,6 +190,18 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("api_keys: A issues itself a key", "INSERT INTO api_keys (org_id, label, key_prefix, key_hash) VALUES ($1, 'x', 'oct_x', $2)", [a, `${tag}-own`]);
     await refused("organizations: A changes its own account", "/* tenant: rls probe */ UPDATE organizations SET name = 'x' WHERE id = $1", [a]);
     for (const t of NO_ACCESS) await refused(`${t}: readable by a tenant query`, `SELECT 1 FROM ${t} LIMIT 1`);
+    // Record areas (mold_v0-047): a platform area is read-only to customers; a workspace area's rows are each workspace's own.
+    await refused("platform_records: a tenant adds a shared record", "INSERT INTO platform_records (pack, area, key) VALUES ('probe', 'probe', $1)", [tag]);
+    await refused("platform_records: a tenant changes a shared record", "UPDATE platform_records SET title = 'x'");
+    await refused("platform_records: a tenant deletes a shared record", "DELETE FROM platform_records");
+    await refused("workspace_records: A writes a record for B", "/* tenant: rls probe */ INSERT INTO workspace_records (org_id, pack, area, key) VALUES ($1, 'probe', 'probe', $2)", [b, tag]);
+    // Runs (mold_v0-041): tenant work reads its own runs, events and results and writes none (the shell's code does).
+    await refused("runs: a tenant queues a run itself", "INSERT INTO runs (id, org_id, pack, kind, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd) VALUES ($1, $2, 'p', 'k', '{}', 1, 60, 60, 1)", [`${tag}-x`, a]);
+    await refused("runs: a tenant changes its own run (budget, status)", "/* tenant: rls probe */ UPDATE runs SET budget_usd = 1000 WHERE id = $1", [`${tag}-run-${a}`]);
+    await refused("run_results: a tenant writes its own result", "INSERT INTO run_results (run_id, org_id, check_area, check_key, status) VALUES ($1, $2, 'p', 'p', 'pass')", [`${tag}-run-${a}`, a]);
+    await refused("run_events: a tenant writes an event", "INSERT INTO run_events (run_id, org_id, attempt, type) VALUES ($1, $2, 0, 'x')", [`${tag}-run-${a}`, a]);
+    await refused("workspace_snapshots: a tenant writes a snapshot row", "INSERT INTO workspace_snapshots (org_id, store, version, status, base_version, manifest, manifest_sha256, files, bytes, object_key) VALUES ($1, 'p', 9, 'committed', 0, '{}', 'x', 0, 0, 'x')", [a]);
+    await refused("workspace_leases: a tenant takes a store's lease", "/* tenant: rls probe */ UPDATE workspace_leases SET run_id = 'x'");
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 

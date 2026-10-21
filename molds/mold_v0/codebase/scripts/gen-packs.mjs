@@ -6,7 +6,8 @@
 //   src/packs.generated.ts               each pack's manifest and its entry module (definePack), in pack order
 //   src/pack-migrations.generated.ts     the ordered list of pack migration directories (no pack code imported)
 //   src/profile.generated.ts             the profile: product name, MCP server name, console title, email sender
-//   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin)
+//   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
+//                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
 //
 // It refuses (exit 1, every problem listed) a pack whose files would get past the seam:
@@ -20,10 +21,15 @@
 //     limits the tenant role to its own workspace, fails closed) or shell_pack_private_table('<table>') (no tenant
 //     access at all). src/migrate.ts checks the same again in the database when it applies them.
 //
+// Record areas are declared in code (definePack({ recordAreas })), so once every check above passes, each pack's entry
+// is loaded once (through tsx, as the server loads it) to read them; with no packs nothing is loaded.
+//
 //   node scripts/gen-packs.mjs            write the files (npm run gen:packs)
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
 //   --packs <dir> --out <dir> --profile <file>   another packs directory, output root or profile (tests)
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -300,7 +306,7 @@ function loadPack(dirName) {
     }
   }
   if (id && ID.test(id)) checkCode(dir, id);
-  return { id, dir, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words }, pages };
+  return { id, dir, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
 }
 
 const packDirs = existsSync(PACKS_DIR) ? readdirSync(PACKS_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : [];
@@ -339,10 +345,59 @@ if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(profile.mcp_server_name)) fail("profile", 
 if (/[<>"\r\n]/.test(profile.email_sender_name)) fail("profile", "email_sender_name may not contain < > \" or line breaks");
 if (!/^[^\s@<>]+@[^\s@<>]+$/.test(profile.email_from_address)) fail("profile", "email_from_address must be an address");
 
-if (problems.length) {
+const refuse = () => {
+  if (!problems.length) return;
   console.error(`gen-packs: refused (${problems.length} problem${problems.length === 1 ? "" : "s"}):\n  ${problems.join("\n  ")}`);
   process.exit(1);
+};
+refuse();
+
+// ---------- record areas (mold_v0-047): read from each pack's definePack, checked across packs ----------
+
+/** Each pack's record areas, parsed by src/pack-api.ts RecordAreaSchema (defaults filled in), by pack id. */
+function readRecordAreas() {
+  if (!packs.length) return {};
+  const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
+  if (!existsSync(tsx)) { fail("record areas", `reading the packs' definitions needs tsx (${rel(tsx)}): run npm ci`); return {}; }
+  const dir = mkdtempSync(path.join(tmpdir(), "gen-packs-"));
+  try {
+    const script = path.join(dir, "areas.mts");
+    writeFileSync(script, `import { pathToFileURL } from "node:url";
+const [api, entries] = JSON.parse(process.argv[2]);
+const { RecordAreaSchema } = await import(pathToFileURL(api).href);
+const out = {};
+for (const [id, file] of entries) {
+  try {
+    const m = await import(pathToFileURL(file).href);
+    const def = m.default?.default ?? m.default;
+    out[id] = (def?.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a));
+  } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 1500) }; }
 }
+process.stdout.write("\\nRECORD_AREAS " + JSON.stringify(out) + "\\n");
+`);
+    const arg = JSON.stringify([PACK_API, packs.map((p) => [p.id, path.join(p.dir, p.manifest.entry)])]);
+    const r = spawnSync(tsx, [script, arg], { cwd: ROOT, encoding: "utf8", timeout: 120_000 });
+    const line = (r.stdout ?? "").split("\n").find((l) => l.startsWith("RECORD_AREAS "));
+    if (r.status !== 0 || !line) { fail("record areas", `loading the packs' definitions failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
+    const got = JSON.parse(line.slice("RECORD_AREAS ".length));
+    for (const [id, v] of Object.entries(got)) if (!Array.isArray(v)) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = []; }
+    return got;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const areasByPack = readRecordAreas();
+const recordAreas = packs.flatMap((p) => (areasByPack[p.id] ?? []).map((a) => ({ pack: p.id, ...a })));
+{
+  const owner = new Map();
+  for (const a of recordAreas) {
+    if (owner.has(a.name)) fail(`packs/${a.pack}`, `record area ${a.name} is already pack ${owner.get(a.name)}'s (area names are unique in a build)`);
+    else owner.set(a.name, a.pack);
+  }
+  for (const a of recordAreas) for (const l of a.links ?? [])
+    if (!owner.has(l.area)) fail(`packs/${a.pack}`, `record area ${a.name} links field ${l.field} to area ${l.area}, which no pack declares`);
+}
+refuse();
 
 // ---------- output ----------
 
@@ -355,7 +410,7 @@ const files = new Map();
 files.set(srcPacks, HEADER +
   packs.map((p, i) => `import pack${i} from ${JSON.stringify(importPath(srcPacks, path.join(p.dir, p.manifest.entry)))};\n`).join("") +
   `\n/** Every pack in this build, in pack order (by id): its pack.json and its definePack export (src/packs.ts checks both). */\n` +
-  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string; migrations: string | null; words: Record<string, string> }; readonly definition: unknown }[] = [` +
+  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string; migrations: string | null; words: Record<string, string>; dir: string }; readonly definition: unknown }[] = [` +
   (packs.length ? `\n${packs.map((p, i) => `  { manifest: ${JSON.stringify(p.manifest)}, definition: pack${i} },`).join("\n")}\n` : "") + "];\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
@@ -381,7 +436,16 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** Sidebar groups the packs add to /app (after the shell's own). */\n" +
   `export const packPortalNav: NavGroup[] = ${json(nav("app"))};\n\n` +
   "/** Sidebar groups the packs add to /admin (after the shell's own). */\n" +
-  `export const packAdminNav: NavGroup[] = ${json(nav("admin"))};\n`);
+  `export const packAdminNav: NavGroup[] = ${json(nav("admin"))};\n\n` +
+  "/** A record area a pack declares (mold_v0-047): the shell's generic list and detail pages (app/{app,admin}/records/[area]). */\n" +
+  "export interface RecordAreaSpec {\n  pack: string;\n  name: string;\n  label: string;\n  description: string | null;\n  role: 'source' | 'check' | 'asset';\n" +
+  "  scope: 'platform' | 'workspace';\n  fields: { name: string; label: string; type: string }[];\n  list_columns: string[];\n  links: { field: string; area: string }[];\n}\n\n" +
+  `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
+    scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: a.links ?? [] })))};\n\n` +
+  "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
+  `export const recordPortalNav: NavGroup[] = ${json(recordAreas.length ? [{ label: "Records", items: recordAreas.map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
+  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform") ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform").map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json(profile)} as const;\n`);
@@ -396,5 +460,5 @@ for (const [file, text] of files) {
   console.log(`wrote ${posix(path.relative(OUT, file))}`);
 }
 if (CHECK && stale) { console.error(`gen-packs: ${stale} generated file(s) differ from the packs and profile: run npm run gen:packs`); process.exit(1); }
-console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((p) => p.id).join(", ")})` : ""}, ${allPages.length} page(s), ` +
+console.log(`gen-packs: ${packs.length} pack(s)${packs.length ? ` (${packs.map((p) => p.id).join(", ")})` : ""}, ${allPages.length} page(s), ${recordAreas.length} record area(s), ` +
   `${packs.filter((p) => p.manifest.migrations).length} with migrations; profile "${profile.name}"${CHECK ? "; generated files are current" : ""}`);
