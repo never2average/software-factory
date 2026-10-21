@@ -30,6 +30,8 @@ export const ORCH_PREFIX = `${BOAT_NAMESPACE}-orch-`;
 export const WORKER_PREFIX = `${BOAT_NAMESPACE}-w-`;
 export const IMAGE_PREFIX = `${BOAT_NAMESPACE}-orch-img-`;
 export const IMAGE_BUILDER_NAME = `${BOAT_NAMESPACE}-img-build`;
+/** Run sandboxes (mold_v0-055, src/run-sandboxes.ts): one per run, "<ns>-run-<row>-<id>". */
+export const RUN_PREFIX = `${BOAT_NAMESPACE}-run-`;
 export const MAX_TTL_SECONDS = 2_592_000; // 30 days: boat's maximum numeric TTL (docs.boat.dev/long-running-tasks)
 export const HOME = "/home/user/octillion";
 /** Unprivileged system user the orchestrator service runs as (no sudo); created by configure(). */
@@ -157,6 +159,47 @@ export function codeFiles(root = REPO_ROOT): string[] {
   return out.sort();
 }
 
+/**
+ * The files a run sandbox needs (mold_v0-055): the orchestrator's (for its tsx, installed by the same `npm ci`), the code's
+ * package.json (its module type only), the run
+ * sandbox runner and every file it imports (static imports, followed from src/run-sandbox-runner.ts; type-only imports
+ * and the harness's in-process dynamic imports are not followed: the sandbox never uses them), and the given pack
+ * directories (relative to the root). Refuses a runner import that is not a relative file or a node built-in.
+ */
+export function runnerCodeFiles(root = REPO_ROOT, packDirs: string[] = []): string[] {
+  const out = new Set(codeFiles(root));
+  const seen = new Set<string>();
+  const visit = (rel: string) => {
+    if (seen.has(rel)) return;
+    seen.add(rel); out.add(rel);
+    const text = readFileSync(path.join(root, rel), "utf8");
+    for (const m of text.matchAll(/^\s*(?:import|export)\s+(?!type\b)(?:[^;'"]*?\sfrom\s+)?["']([^"']+)["']/gm)) {
+      const spec = m[1]!;
+      if (spec.startsWith("node:")) continue;
+      if (!spec.startsWith(".")) throw new Error(`the run sandbox runner imports ${spec} (from ${rel}): it may import only node's modules and its own files`);
+      let dep = path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec));
+      if (dep.endsWith(".js") && statSync(path.join(root, dep.replace(/\.js$/, ".ts")), { throwIfNoEntry: false })) dep = dep.replace(/\.js$/, ".ts");
+      if (dep.startsWith("..")) throw new Error(`the run sandbox runner imports ${spec} outside the code`);
+      visit(dep);
+    }
+  };
+  visit("src/run-sandbox-runner.ts");
+  out.add("package.json"); // the code's module type (ES modules); nothing is installed from it
+  for (const d of packDirs) {
+    const rel = path.posix.normalize(d.split(path.sep).join("/"));
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) throw new Error(`a pack directory outside the code: ${d}`);
+    const walk = (r: string) => {
+      for (const e of readdirSync(path.join(root, r), { withFileTypes: true })) {
+        const x = `${r}/${e.name}`;
+        if (e.name === "node_modules" || e.name === ".git") continue;
+        if (e.isDirectory()) walk(x); else if (e.isFile()) out.add(x);
+      }
+    };
+    walk(rel);
+  }
+  return [...out].sort();
+}
+
 /** Content hash of the orchestrator code: keys the named snapshot image. */
 export function codeHash(root = REPO_ROOT): string {
   const h = createHash("sha256");
@@ -166,9 +209,9 @@ export function codeHash(root = REPO_ROOT): string {
 
 /** A gzipped ustar archive of the code, built in-process: serverless hosts (Vercel) have no `tar` binary. File modes
  *  are kept (the setup scripts are executable); owners, times and order are fixed so the bytes depend on content only. */
-export function tarball(root = REPO_ROOT): Buffer {
+export function tarball(root = REPO_ROOT, files = codeFiles(root)): Buffer {
   const blocks: Buffer[] = [];
-  for (const f of codeFiles(root)) {
+  for (const f of files) {
     const data = readFileSync(path.join(root, f));
     const mode = statSync(path.join(root, f)).mode & 0o777;
     blocks.push(tarHeader(f, data.length, mode), data, Buffer.alloc((512 - (data.length % 512)) % 512));
@@ -196,8 +239,8 @@ function tarHeader(name: string, size: number, mode: number): Buffer {
   return h;
 }
 
-export async function uploadCode(id: string, root = REPO_ROOT): Promise<number> {
-  const tgz = tarball(root);
+export async function uploadCode(id: string, root = REPO_ROOT, files?: string[]): Promise<number> {
+  const tgz = tarball(root, files);
   await run(id, `install -d -m 700 ${HOME} && rm -rf ${HOME}/code.tgz.part*`, 30);
   const parts = Math.ceil(tgz.length / CHUNK);
   for (let i = 0; i < parts; i++) await put(id, `${HOME}/code.tgz.part${String(i).padStart(3, "0")}`, tgz.subarray(i * CHUNK, (i + 1) * CHUNK).toString("base64"), "base64");

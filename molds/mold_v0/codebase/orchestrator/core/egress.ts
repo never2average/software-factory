@@ -242,8 +242,67 @@ process.exit(bad ? 1 : 0);
 /**
  * Root-side setup (runs as the boat user with sudo): proxy user and files, start the proxy, firewall rules for the
  * agent uid. Exits non-zero (fail closed) when node or a firewall tool is missing or the proxy does not come up.
+ * `user`: whose traffic is locked down ("agent" by default; a run sandbox's run user, mold_v0-055). `sudo`: false when
+ * the script already runs as root (a run sandbox's runner). `systemd`: false keeps the proxy a detached process of the
+ * caller rather than a systemd unit (a run sandbox's runner lives as long as the run; a network namespace is not
+ * systemd's). `proxyUser`, `installDir`, `logDir`: the proxy's user and files elsewhere than the defaults (the offline
+ * firewall test, which must not add a user or files to the machine it runs on).
  */
-export function setupScript(dir: string): string {
+export function setupScript(dir: string, opts: { user?: string; sudo?: boolean; systemd?: boolean; proxyUser?: string; installDir?: string; logDir?: string; strict?: boolean } = {}): string {
+  const user = opts.user ?? "agent", proxyUser = opts.proxyUser ?? "octiproxy";
+  const name = /^[a-z_][a-z0-9_-]{0,31}$/, dirOk = /^\/[A-Za-z0-9._\/-]{1,200}$/;
+  if (!name.test(user) || !name.test(proxyUser)) throw new Error(`egress: not a user name: ${user} / ${proxyUser}`);
+  if ((opts.installDir && !dirOk.test(opts.installDir)) || (opts.logDir && !dirOk.test(opts.logDir))) throw new Error("egress: install and log directories are absolute plain paths");
+  let body = setupBody(dir, user);
+  if (opts.strict) body = strictRules(body);
+  if (opts.systemd === false) body = body.replace("if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then", "if false; then");
+  if (opts.installDir) body = body.replace(`D=${EGRESS_DIR};`, `D=${opts.installDir};`);
+  if (opts.logDir) body = body.replaceAll("/var/log/octi-egress.", `${opts.logDir}/octi-egress.`);
+  if (proxyUser !== "octiproxy") body = body.replaceAll("octiproxy", proxyUser);
+  // As root already, "sudo -n" is dropped (a container has no sudo); "-u <proxy user>" runs through runuser instead.
+  return opts.sudo === false ? body.replaceAll(`sudo -n -u ${proxyUser} `, `runuser -u ${proxyUser} -- `).replaceAll("sudo -n ", "") : body;
+}
+/**
+ * A run sandbox's rules (mold_v0-055, `strict`): the run user reaches loopback only at the proxy's three ports, so
+ * neither a local resolver (Docker's 127.0.0.11, systemd-resolved's 127.0.0.53, over UDP or TCP) nor any other local
+ * daemon (on loopback or the sandbox's own address) is a way out; DNS over UDP goes to the proxy's responder from a nat
+ * chain that runs before Docker's own (priority -150), DNS over TCP is dropped; IPv6 is dropped, and the iptables form
+ * fails closed when ip6tables is missing.
+ */
+function strictRules(body: string): string {
+  const nftStart = body.indexOf("table inet octi_egress {"), nftEnd = body.indexOf("\nEOF\n", nftStart);
+  const nft = `table inet octi_egress {
+  chain nat_out {
+    type nat hook output priority -150; policy accept;
+    meta skuid $AUID udp dport 53 redirect to :${EGRESS_DNS_PORT}
+    meta skuid $AUID tcp dport 443 redirect to :${EGRESS_TRANSPARENT_PORT}
+  }
+  chain out {
+    type filter hook output priority 0; policy accept;
+    meta skuid $AUID ip daddr 127.0.0.1 tcp dport { ${EGRESS_PROXY_PORT}, ${EGRESS_TRANSPARENT_PORT} } accept
+    meta skuid $AUID ip daddr 127.0.0.1 udp dport ${EGRESS_DNS_PORT} accept
+    meta skuid $AUID counter drop
+  }
+}`;
+  let out = body.slice(0, nftStart) + nft + body.slice(nftEnd);
+  const ipStart = out.indexOf("elif command -v iptables"), ipEnd = out.indexOf("else\n  echo \"egress: neither nft nor iptables", ipStart);
+  const ipt = `elif command -v iptables >/dev/null 2>&1 && command -v ip6tables >/dev/null 2>&1; then
+  sudo -n iptables -t nat -I OUTPUT 1 -m owner --uid-owner "$AUID" -p udp --dport 53 -j REDIRECT --to-ports ${EGRESS_DNS_PORT}
+  sudo -n iptables -t nat -I OUTPUT 2 -m owner --uid-owner "$AUID" -p tcp --dport 443 -j REDIRECT --to-ports ${EGRESS_TRANSPARENT_PORT}
+  sudo -n iptables -A OUTPUT -d 127.0.0.1 -p tcp --dport ${EGRESS_PROXY_PORT} -m owner --uid-owner "$AUID" -j ACCEPT
+  sudo -n iptables -A OUTPUT -d 127.0.0.1 -p tcp --dport ${EGRESS_TRANSPARENT_PORT} -m owner --uid-owner "$AUID" -j ACCEPT
+  sudo -n iptables -A OUTPUT -d 127.0.0.1 -p udp --dport ${EGRESS_DNS_PORT} -m owner --uid-owner "$AUID" -j ACCEPT
+  sudo -n iptables -A OUTPUT -m owner --uid-owner "$AUID" -j DROP
+  sudo -n ip6tables -A OUTPUT -m owner --uid-owner "$AUID" -j DROP
+elif command -v iptables >/dev/null 2>&1; then
+  echo "egress: iptables without ip6tables would leave IPv6 open" >&2; exit 23
+`;
+  out = out.slice(0, ipStart) + ipt + out.slice(ipEnd);
+  if (!out.includes("priority -150") || !out.includes("exit 23")) throw new Error("egress: strict rules not applied");
+  return out;
+}
+
+function setupBody(dir: string, user: string): string {
   return `set -eu
 D=${EGRESS_DIR}; O=${dir}
 NODE="$(command -v node || true)"; [ -n "$NODE" ] || { echo "egress: node not found" >&2; exit 20; }
@@ -268,7 +327,7 @@ if [ "$up" = 1 ]; then
   up=0; for i in $(seq 1 40); do (exec 3<>/dev/tcp/127.0.0.1/${EGRESS_TRANSPARENT_PORT}) 2>/dev/null && { up=1; break; }; sleep 0.25; done
 fi
 [ "$up" = 1 ] || { echo "egress: proxy did not start: $(sudo -n head -c 600 /var/log/octi-egress.err 2>/dev/null | tr '\\n' ' ')" >&2; exit 22; }
-AUID="$(id -u agent)"
+AUID="$(id -u ${user})"
 if command -v nft >/dev/null 2>&1; then
   sudo -n nft -f - <<EOF
 table inet octi_egress {
@@ -280,6 +339,11 @@ table inet octi_egress {
   chain out {
     type filter hook output priority 0; policy accept;
     meta skuid $AUID oifname "lo" accept
+    # A packet the nat chain redirected to the proxy keeps the output interface it had before (oifname is not updated
+    # by the reroute), so loopback is also matched by its (rewritten) destination: else every redirected 443 and DNS
+    # packet is dropped (found by scripts/run-firewall-test.ts, mold_v0-055).
+    meta skuid $AUID ip daddr 127.0.0.0/8 accept
+    meta skuid $AUID ip6 daddr ::1 accept
     meta skuid $AUID counter drop
   }
 }
@@ -288,14 +352,16 @@ elif command -v iptables >/dev/null 2>&1; then
   sudo -n iptables -t nat -A OUTPUT -m owner --uid-owner "$AUID" -p udp --dport 53 -j REDIRECT --to-ports ${EGRESS_DNS_PORT}
   sudo -n iptables -t nat -A OUTPUT -m owner --uid-owner "$AUID" -p tcp --dport 443 -j REDIRECT --to-ports ${EGRESS_TRANSPARENT_PORT}
   sudo -n iptables -A OUTPUT -o lo -m owner --uid-owner "$AUID" -j ACCEPT
+  sudo -n iptables -A OUTPUT -d 127.0.0.0/8 -m owner --uid-owner "$AUID" -j ACCEPT
   sudo -n iptables -A OUTPUT -m owner --uid-owner "$AUID" -j DROP
   if command -v ip6tables >/dev/null 2>&1; then
     sudo -n ip6tables -A OUTPUT -o lo -m owner --uid-owner "$AUID" -j ACCEPT
+    sudo -n ip6tables -A OUTPUT -d ::1/128 -m owner --uid-owner "$AUID" -j ACCEPT
     sudo -n ip6tables -A OUTPUT -m owner --uid-owner "$AUID" -j DROP
   fi
 else
   echo "egress: neither nft nor iptables is available" >&2; exit 21
 fi
-echo "egress: locked down (agent uid $AUID; proxy on 127.0.0.1:${EGRESS_PROXY_PORT})"
+echo "egress: locked down (${user} uid $AUID; proxy on 127.0.0.1:${EGRESS_PROXY_PORT})"
 `;
 }

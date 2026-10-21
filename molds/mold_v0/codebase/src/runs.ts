@@ -116,6 +116,8 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
        k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy]);
   }));
   await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy });
+  // On Vercel nothing ticks between crons: the run's sandbox is launched now (mold_v0-055; a server's loop ticks itself).
+  if (process.env.VERCEL) void import("./autoscaler.js").then((a) => import("./telemetry.js").then((t) => t.keepAlive(a.kickAutoscaler().catch(() => null)))).catch(() => {});
   return view(r!);
 }
 
@@ -233,9 +235,11 @@ export async function sweepRuns(): Promise<{ requeued: number; failed: number; c
  * Claim the oldest queued run of the given kinds ("pack/kind"; all when empty). Returns null when there is none.
  * The gateway token is minted after the claim commits; if that fails the run goes back to the queue unchanged.
  */
-export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}): Promise<Claim | null> {
+export async function claimRun(workerId: string, opts: { kinds?: string[]; runId?: string } = {}): Promise<Claim | null> {
   if (typeof workerId !== "string" || !/^[A-Za-z0-9._:-]{1,100}$/.test(workerId)) throw new PackError("worker_id: 1-100 letters, digits, . _ : -", 400);
   await sweepRuns();
+  // A run sandbox (mold_v0-055) claims only the run it was launched for.
+  const only = opts.runId === undefined ? null : String(opts.runId);
   // Only kinds this build has (a run of a kind it lacks waits for a build that has it), and only those asked for.
   const known = jobKinds().map((k) => `${k.pack}/${k.name}`);
   const asked = (opts.kinds ?? []).filter((k) => typeof k === "string").slice(0, 50);
@@ -246,7 +250,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}
     const candidates = await tx.query<{ id: string; org_id: number; pack: string; kind: string; workspace: boolean; lease_seconds: number; concurrency: number | null }>(
       `/* tenant: platform claim across workspaces (the workspace comes from the row) */ SELECT id, org_id, pack, kind,
               coalesce((spec->>'workspace')::boolean, false) AS workspace, lease_seconds, (spec->>'concurrency_per_workspace')::int AS concurrency FROM runs
-        WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[])
+        WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[]) AND ($3::text IS NULL OR id = $3)
           -- One writer per workspace store: a run whose store another live run holds is not even a candidate, so a
           -- workspace with many queued runs never hides other workspaces' runs behind its own.
           AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
@@ -254,7 +258,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}
           -- Nor one whose workspace already runs its kind's concurrency (mold_v0-018; rechecked under a lock below).
           AND (SELECT count(*) FROM runs x WHERE x.org_id = runs.org_id AND x.pack = runs.pack AND x.kind = runs.kind AND x.status = 'running')
               < LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2)
-        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, maxRunConcurrency()]);
+        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, maxRunConcurrency(), only]);
     for (const c of candidates) {
       if (!findKind(c.pack, c.kind)) continue; // a kind this build no longer has: left queued for a build that has it
       // The kind's concurrency in this workspace (mold_v0-018): over it, the run waits in the queue.
@@ -288,6 +292,77 @@ export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}
     gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url, token: gateway.token ?? null },
     egress: { hosts: runEgressHosts(row.egress ?? [], gateway.gateway_url) },
   };
+}
+
+/** A queued run the autoscaler may launch a sandbox for (mold_v0-055): what a claim would take now. */
+export interface ClaimableRun { id: string; org_id: number; pack: string; kind: string; attempt: number; token_lifetime_seconds: number; lease_seconds: number; created_at: Date }
+
+/**
+ * Queued runs a claim would take now, oldest first (mold_v0-055: the autoscaler's run demand): of a kind this build has,
+ * whose workspace store no other live run holds, and under the kind's concurrency in its workspace and the platform's
+ * ceiling (mold_v0-018), as claimRun's own candidates. Counts and ids only; nothing is locked or changed.
+ */
+export async function claimableRuns(limit = 200): Promise<ClaimableRun[]> {
+  const known = jobKinds().map((k) => `${k.pack}/${k.name}`);
+  if (!known.length) return [];
+  const rows = await asPlatform(async () => (await getDb()).query<ClaimableRun & { workspace: boolean; running: number; cap: number }>(
+    `/* tenant: internal: the autoscaler's run demand across workspaces, ids go to the run's own sandbox only */
+     SELECT id, org_id, pack, kind, attempt, token_lifetime_seconds, lease_seconds, created_at,
+            coalesce((spec->>'workspace')::boolean, false) AS workspace,
+            (SELECT count(*)::int FROM runs x WHERE x.org_id = runs.org_id AND x.pack = runs.pack AND x.kind = runs.kind AND x.status = 'running') AS running,
+            LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2) AS cap
+       FROM runs
+      WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[]) AND cancel_requested_at IS NULL
+        AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
+                 WHERE l.org_id = runs.org_id AND l.store = runs.pack AND l.expires_at > now() AND l.run_id <> runs.id))
+      ORDER BY created_at, id LIMIT $3`, [known, maxRunConcurrency(), Math.max(1, Math.min(limit, 1000))]));
+  // As a claim would see them one after another: no more of a workspace's queued runs of a kind than it may still run
+  // at once, and one run per workspace store (mold_v0-018, 033). A sandbox launched past that would only wait.
+  const taken = new Map<string, number>(), stores = new Set<string>();
+  const out: ClaimableRun[] = [];
+  for (const r of rows) {
+    if (!findKind(r.pack, r.kind)) continue;
+    const key = `${r.org_id}/${r.pack}/${r.kind}`, n = taken.get(key) ?? 0;
+    if (Number(r.running) + n >= Number(r.cap)) continue;
+    if (r.workspace) { const st = `${r.org_id}/${r.pack}`; if (stores.has(st)) continue; stores.add(st); }
+    taken.set(key, n + 1);
+    out.push({ id: r.id, org_id: r.org_id, pack: r.pack, kind: r.kind, attempt: r.attempt, token_lifetime_seconds: r.token_lifetime_seconds,
+               lease_seconds: r.lease_seconds, created_at: r.created_at });
+  }
+  return out;
+}
+
+/** Queued runs per kind ("pack/kind"), claimable or not (the autoscaler's demand, reported per kind). */
+export async function queuedRunsByKind(): Promise<Record<string, number>> {
+  const rows = await asPlatform(async () => (await getDb()).query<{ k: string; n: number }>(
+    "/* tenant: internal: counts per kind across workspaces, counts only */ SELECT pack || '/' || kind AS k, count(*)::int AS n FROM runs WHERE status = 'queued' GROUP BY 1 ORDER BY 1"));
+  return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
+}
+
+/**
+ * A queued run whose sandbox could not be started, again and again (mold_v0-055): it fails with that reason rather than
+ * waiting forever (or launching forever). Only while it is still queued; a run claimed meanwhile is left alone.
+ */
+export async function failUnlaunchedRun(runId: string, reason: string): Promise<boolean> {
+  const [r] = await asPlatform(async () => (await getDb()).query<{ id: string; org_id: number; attempt: number }>(
+    `/* tenant: internal, by run id (the autoscaler's launch bookkeeping) */ UPDATE runs SET status = 'failed', error_kind = 'infrastructure', error = $2,
+            ended_at = now(), updated_at = now() WHERE id = $1 AND status = 'queued' RETURNING id, org_id, attempt`, [runId, reason.slice(0, 2000)]));
+  if (r) await event(r.id, r.org_id, r.attempt, "failed", { error_kind: "infrastructure", error: reason.slice(0, 2000) });
+  return !!r;
+}
+
+/**
+ * Say once on each queued run why it waits (mold_v0-055): no sandbox to run it in. A `waiting` event with the reason,
+ * written only when the run's last such event gave another reason (or none was written). Returns how many were noted.
+ */
+export async function noteRunsWaiting(reason: string, limit = 200): Promise<number> {
+  const rows = await asPlatform(async () => (await getDb()).query<{ id: string; org_id: number; attempt: number }>(
+    `/* tenant: internal: the autoscaler notes why queued runs wait, on each run's own row */
+     SELECT r.id, r.org_id, r.attempt FROM runs r WHERE r.status = 'queued'
+        AND coalesce((SELECT e.data->>'reason' FROM run_events e WHERE e.run_id = r.id AND e.type = 'waiting' ORDER BY e.id DESC LIMIT 1), '') <> $1
+      ORDER BY r.created_at LIMIT $2`, [reason, limit]));
+  for (const r of rows) await event(r.id, r.org_id, r.attempt, "waiting", { reason });
+  return rows.length;
 }
 
 /** The run, when `leaseToken` is its current attempt's lease and it is running; else a RunLeaseError. */

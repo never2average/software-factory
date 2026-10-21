@@ -358,6 +358,8 @@ export function createApp() {
   worker.use((req, res, next) => {
     resolveWorkerToken(bearer(req.headers.authorization)).then((auth) => {
       if (!auth) return void res.status(401).json({ error: "Invalid worker token" });
+      // A run sandbox's token (mold_v0-055) reaches its run's routes only (src/run-routes.ts checks which run).
+      if (auth.kind === "run" && !/^\/runs(\/|$)/.test(req.path)) return void res.status(403).json({ error: "This worker token is bound to one run" });
       res.locals.worker = auth;
       next();
     }, next);

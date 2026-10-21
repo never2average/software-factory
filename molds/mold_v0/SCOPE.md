@@ -82,6 +82,9 @@ turns it into shell, or builds it where nothing exists yet.
   workspace-harness runner, per-kind token lifetime and budget, cost per run from gateway usage, the per-run egress
   allowlist under test; `src/runs.ts`, `src/run-harness.ts`, `/api/worker/runs`), mold_v0-061, **built** (the agent-workspace
   runner: an agent repository at a pinned commit, a declared command, validation and write-back; `src/agent-workspace.ts`),
+  mold_v0-055, **built** (runs carried out in sandboxes the autoscaler launches, one per run, in the provider the
+  product already uses, or a container per run from the compose runner service; direct egress firewalled by the run
+  user's uid; a token bound to each run; `src/run-sandboxes.ts`, `src/run-sandbox-runner.ts`),
   mold_v0-064, **built** (a pack's hook after a workspace commit, before results are checked), mold_v0-065, **built** (a
   finding fingerprint in a result's identity; drop or downgrade an unresolved reference per kind), mold_v0-018, **built** (concurrency per workspace and kind at claim, the kind's month budget per workspace at
   start and in the gateway, a run's budget, all clamped to the platform's ceilings; `src/run-limits.ts`). Run kinds come from
