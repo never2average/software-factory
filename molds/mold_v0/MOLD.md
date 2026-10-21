@@ -254,7 +254,10 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   - **Job kinds**: `runner: "workspace-harness"` (a program of the pack, as before) or `"agent-workspace"` (mold_v0-061:
     declared with its limits, `args`, `credentials` and the run limits (`budget_usd`, `concurrency_per_workspace`, `month_budget_usd`), listed as `agentJobKinds`, not taken by the run
     engine until 061). `args` are typed like fields and checked when a pack's code starts a run (`declaredRuns`, outside
-    the engine); the run engine applies a harness kind's limits (above).
+    the engine); the run engine applies a harness kind's limits (above). A schedule may name an agent-workspace kind
+    (validated, and its `scope` may give only the kind's `args`); until 061 the scheduler records it as "not in this
+    build" rather than starting it. A schedule's scope values are not yet type-checked against `args` (the scheduler
+    starts runs through the engine, not through `declaredRuns`).
   - **Credentials, schedules, onboarding** as in `definePack`; **metrics** (mold_v0-063: a name, a label, `over` an area
     or `run_results`, the rest kept for 063); **repositories** (mold_v0-059: a `kind` and its settings; an area names one
     with `repository`, checked) and **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas,
