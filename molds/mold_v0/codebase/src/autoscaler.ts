@@ -14,6 +14,8 @@ import { launchFailure, recordComputeEvent } from "./compute-events.js";
 import { pruneComputeHistory, recordTick } from "./autoscaler-ticks.js";
 import { keepAlive } from "./telemetry.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
+import { RunScaler, runSandboxStatus, type RunTick } from "./run-sandboxes.js";
+import { queuedRunsByKind } from "./runs.js";
 
 /**
  * On-demand orchestrators: scale from zero to zero.
@@ -29,6 +31,10 @@ import * as lib from "../orchestrator/deploy/boat-lib.js";
  * (DELETE /api/worker/fleet/:id marks its row `draining`) and exits; the next tick deletes its sandbox. The tick also
  * reaps stale (no fleet check-in for 5 min), stuck-booting (> 10 min), expired and orphan sandboxes, reconciling
  * against boat's own listing by name prefix, so nothing leaks across server restarts.
+ *
+ * Runs (mold_v0-055, src/run-sandboxes.ts): the demand also counts queued runs per kind, and each tick launches one
+ * sandbox per claimable run (its own lease, "runs", so the compose project's runner service can hold it instead when
+ * the run sandboxes are local containers), and tears each down when its run's attempt ends.
  *
  * Kill switch: OCTILLION_AUTOSCALE=off (no launches, no deletes; existing orchestrators keep running and idle out).
  *
@@ -68,6 +74,8 @@ export interface Demand {
   unclaimable_sessions: number;
   /** Claimable sessions queued after `freshSince` (only when computeDemand was given one). */
   fresh_queued_sessions?: number;
+  /** Queued runs per kind, "pack/kind" (mold_v0-055): each gets its own run sandbox (src/run-sandboxes.ts). */
+  runs?: Record<string, number>;
 }
 export interface Row {
   id: number; sandbox_id: string | null; orchestrator_id: string | null; state: "booting" | "running" | "draining" | "deleted";
@@ -96,9 +104,11 @@ export async function computeDemand(freshSince?: Date): Promise<Demand> {
             count(*) FILTER (WHERE status = 'queued' AND ${claimable} AND $2::timestamptz IS NOT NULL AND queued_at > $2) AS fresh
        FROM agent_sessions WHERE status IN ('queued', 'running')`, [agents, freshSince ?? null]);
   const [r] = await db.query<{ n: number }>("/* tenant: internal: autoscaler demand counts across all orgs, counts only */ SELECT count(*) AS n FROM product_research WHERE status IN ('queued', 'running')");
+  const runs = await queuedRunsByKind();
   return {
     sessions: Number(s?.sessions ?? 0), queued_sessions: Number(s?.queued ?? 0), research: Number(r?.n ?? 0),
     unclaimable_sessions: Number(s?.unclaimable ?? 0), ...(freshSince ? { fresh_queued_sessions: Number(s?.fresh ?? 0) } : {}),
+    ...(Object.keys(runs).length ? { runs } : {}),
   };
 }
 
@@ -137,6 +147,8 @@ export interface TickState {
   free?: number;
   /** What `launched` names, as data: the orchestrator row inserted, and its job and pods (per-job mode). */
   launches?: Launch[];
+  /** The run sandboxes' tick (mold_v0-055): demand per kind, launches, teardowns, or why runs wait. */
+  runs?: RunTick;
 }
 export interface Launch { row: number; job_id: string | null; pods: number | null; label: string }
 
@@ -152,7 +164,11 @@ export class Autoscaler {
   private timer: NodeJS.Timeout | null = null;
   last: TickState | null = null;
 
-  constructor(private opts: { log?: (m: string) => void; root?: string } = {}) {}
+  /** One run sandbox per queued run (mold_v0-055). */
+  readonly runs: RunScaler;
+  constructor(private opts: { log?: (m: string) => void; root?: string } = {}) {
+    this.runs = new RunScaler({ log: (m) => this.log(`runs: ${m}`), tickMs: () => AUTOSCALE.tickMs() });
+  }
   private log(m: string) { (this.opts.log ?? ((x: string) => console.error(`autoscaler: ${x}`)))(m); }
 
   start() {
@@ -178,9 +194,10 @@ export class Autoscaler {
   async release(): Promise<void> {
     this.stop();
     await (await getDb()).query("DELETE FROM autoscaler_lease WHERE name = 'autoscaler' AND holder = $1", [this.holder]).catch(() => {});
+    await this.runs.release();
   }
   /** Wait for in-flight launches and image builds (tests; serverless, before the function is frozen). */
-  async settle() { await Promise.allSettled([...this.inflight.values(), this.imageBuild]); }
+  async settle() { await Promise.allSettled([...this.inflight.values(), this.imageBuild, this.runs.settle()]); }
 
   /** Lease row: one leader across replicas; renewed every tick, expires after 3 ticks. */
   async acquireLease(): Promise<boolean> {
@@ -222,6 +239,9 @@ export class Autoscaler {
     await freshPlatformHarnesses(); // demand and pod plans count admin-added harnesses (registry())
     const st: TickState = { at: new Date().toISOString(), enabled: AUTOSCALE.enabled(), leader: false, holder: this.holder };
     if (!st.enabled) { this.last = { ...st, note: "OCTILLION_AUTOSCALE=off" }; return this.last; }
+    // Runs first, under their own lease: they need no orchestrator, and a run's sandbox must not wait on a boat outage
+    // of the orchestrators' (mold_v0-055).
+    st.runs = await this.runs.tick().catch((e) => ({ provider: null, leader: false, error: (e as Error).message }));
     if (!(await this.acquireLease())) { this.last = { ...st, note: "not the leader" }; return this.last; }
     st.leader = true;
     const db = await getDb();
@@ -549,5 +569,6 @@ export async function autoscalerStatus() {
       per_job: AUTOSCALE.perJob(), job_pod_capacity: AUTOSCALE.jobPodCapacity(), max_job_orchestrators: AUTOSCALE.maxJobOrchestrators(),
       pod_capacity: AUTOSCALE.podCapacity(), max_orchestrators: AUTOSCALE.maxOrchestrators(), idle_minutes: AUTOSCALE.idleMinutes(),
       stale_minutes: AUTOSCALE.staleMinutes(), boot_minutes: AUTOSCALE.bootMinutes(), snapshots: AUTOSCALE.snapshots(), tick_seconds: AUTOSCALE.tickMs() / 1000 },
-    leader: lease ? { holder: lease.holder, expires_at: lease.expires_at } : null, last_tick: lease?.state ?? null, sandboxes: rows };
+    leader: lease ? { holder: lease.holder, expires_at: lease.expires_at } : null, last_tick: lease?.state ?? null, sandboxes: rows,
+    run_sandboxes: await runSandboxStatus() };
 }

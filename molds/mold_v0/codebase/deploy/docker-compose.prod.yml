@@ -202,6 +202,38 @@ services:
       POSTHOG_PROJECT_URL: ${POSTHOG_PROJECT_URL:-}
       NEW_RELIC_DASHBOARD_URL: ${NEW_RELIC_DASHBOARD_URL:-}
     expose: ["3333"]
+    # The runs network (below) is where run containers reach this API; the database is not on it.
+    networks: [default, runs]
+
+  # Run sandboxes on this server (mold_v0-055, src/run-fleet.ts): a container per queued run, from the image above, on
+  # the runs network, torn down when its run's attempt ends. The only service with the Docker socket; it serves nothing
+  # and publishes no port. When the sandbox provider's key is in the vault it uses that provider instead
+  # (OCTILLION_RUN_SANDBOX=auto); off disables run sandboxes, and runs then wait (never run unsandboxed).
+  runner:
+    logging: *logging
+    image: ${COMPOSE_PROJECT_NAME:-octillion}-octillion
+    pull_policy: never
+    init: true
+    user: "0"
+    restart: unless-stopped
+    depends_on:
+      octillion: { condition: service_healthy }
+    command: ["node", "--import", "tsx", "src/run-fleet.ts"]
+    environment:
+      NODE_ENV: production
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://octillion.example.com}
+      DATABASE_URL: postgres://octillion:${POSTGRES_PASSWORD}@postgres:5432/octillion
+      OCTILLION_VAULT_KEY: ${OCTILLION_VAULT_KEY:?run bootstrap.sh}
+      OCTILLION_MIGRATE_ON_BOOT: "off"
+      OCTILLION_RUN_SANDBOX: ${OCTILLION_RUN_SANDBOX:-auto}
+      # The kill switch stops run launches and deletes here too.
+      OCTILLION_AUTOSCALE: ${OCTILLION_AUTOSCALE:-on}
+      OCTILLION_RUN_API_URL: http://octillion:3333
+      OCTILLION_MAX_RUN_SANDBOXES: ${OCTILLION_MAX_RUN_SANDBOXES:-4}
+      OCTILLION_AUTOSCALE_TICK_SECONDS: ${OCTILLION_AUTOSCALE_TICK_SECONDS:-15}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [default, runs]
 
   caddy:
     logging: *logging
@@ -219,6 +251,11 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
+
+networks:
+  default:
+  # Run containers and the API only (mold_v0-055): named <project>_runs, which the runner service looks up.
+  runs:
 
 volumes:
   pg_data:

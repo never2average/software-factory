@@ -30,9 +30,10 @@
  * Egress: the run's processes get proxy settings for an egress proxy (orchestrator/core/egress.ts proxySource, the
  * sandboxes' own) that allows only the run's hosts (the kind's `egress` and the gateway's public host). Enforced here:
  * every connection made through the proxy (a process that honours HTTPS_PROXY) to any other host is refused.
- * NOT enforced here: a process that ignores the proxy settings and connects directly. Only the sandbox VM's firewall
- * (setupScript in orchestrator/core/egress.ts: nftables/iptables by the agent's uid) closes that path, and runs are
- * not yet placed in sandbox VMs (this harness runs the program as a child process of the runner).
+ * NOT enforced here: a process that ignores the proxy settings and connects directly. Only the sandbox's firewall
+ * (setupScript in orchestrator/core/egress.ts: nftables/iptables by the run user's uid) closes that path: a run sandbox
+ * (mold_v0-055, src/run-sandbox-runner.ts) locks its run user down to the run's list before the run starts and then runs
+ * the harness with egress "system" (the sandbox's own proxy, which the firewall also sends direct 443 and DNS to).
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createSocket } from "node:dgram";
@@ -40,7 +41,8 @@ import { chmodSync, chownSync, closeSync, constants, cpSync, existsSync, fstatSy
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { proxySource } from "../orchestrator/core/egress.js";
+import { EGRESS_PROXY_PORT, proxyEnv, proxySource } from "../orchestrator/core/egress.js";
+const EGRESS_LOG_DIR = "/var/log"; // where setupScript's proxy logs (orchestrator/core/egress.ts)
 import type { RunView } from "./pack-api.js";
 import type { Claim, Completion } from "./runs.js";
 import type { RunCredentials } from "./credentials.js";
@@ -160,8 +162,11 @@ export interface HarnessOptions {
   allowSameUser?: boolean;
   /** Where a pack's files are (src/packs.ts packDir by default). The run gets its own copy. */
   packDir?: (pack: string) => string;
-  /** "proxy" (default): the run's egress proxy; "off": none (tests without network rules only). */
-  egress?: "proxy" | "off";
+  /**
+   * "proxy" (default): the run's egress proxy, started here; "system": the sandbox's own proxy, already started with the
+   * run's list behind the firewall (src/run-sandbox-runner.ts, mold_v0-055); "off": none (tests without network rules only).
+   */
+  egress?: "proxy" | "system" | "off";
   /** A scratch directory; a fresh one under the system's temp directory by default. Removed afterwards. */
   tmp?: string;
   /** Called with each heartbeat's answer (tests). */
@@ -174,6 +179,11 @@ export interface HarnessOptions {
   allowFileUpstream?: boolean;
   /** Agent-workspace runs: accept an http:// agent repository (tests of the redirect refusal only). */
   allowHttpUpstream?: boolean;
+  /**
+   * Start the run's programs with no_new_privs (setpriv --no-new-privs): a setuid program or sudo in the sandbox gives
+   * the run's user nothing (a run sandbox, mold_v0-055).
+   */
+  noNewPrivs?: boolean;
 }
 
 export class HarnessConfigError extends Error {}
@@ -235,8 +245,9 @@ function ensureUserGone(as: { uid: number; gid: number }) {
 }
 
 /** A program of the run, in its own process group; resolves with its exit code once it and its group are gone. */
-function runProgram(cmd: string, args: string[], o: { cwd: string; env: Record<string, string>; as: { uid: number; gid: number } | null;
+function runProgram(cmd0: string, args0: string[], o: { cwd: string; env: Record<string, string>; as: { uid: number; gid: number } | null; nnp?: boolean;
   onStdout?: (line: string) => void; onStderr?: (text: string) => void; holder: { child: ChildProcess | null; timedOut?: boolean }; timeoutMs?: number }): Promise<number | null> {
+  const [cmd, args] = o.nnp ? ["setpriv", ["--no-new-privs", "--", cmd0, ...args0]] as const : [cmd0, args0] as const;
   return new Promise((resolve) => {
     o.holder.timedOut = false;
     const child = spawn(cmd, args, { cwd: o.cwd, env: o.env, stdio: ["ignore", "pipe", "pipe"], detached: true,
@@ -270,6 +281,7 @@ function runProgram(cmd: string, args: string[], o: { cwd: string; env: Record<s
 /** Carry out one claimed run, from checkout to completion. Never throws for the run's own failures: it completes them. */
 export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, opts: HarnessOptions = {}): Promise<RunView | null> {
   const as = runIsolation(opts);
+  const prog = (cmd: string, args: string[], o: Omit<Parameters<typeof runProgram>[2], "nnp">) => runProgram(cmd, args, { ...o, nnp: !!opts.noNewPrivs });
   if (as) { killUser(as); sweepUserFiles(as.uid); } // nothing of an earlier run (one whose runner died) is left for this one
   const run = claim.run, spec = run.spec, lease = claim.lease_token;
   /** The agent-workspace runner's configuration (mold_v0-061), or null for a program of the pack's own. */
@@ -370,6 +382,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         if (spec.workspace) await client.checkout(run.id, lease, work);
       }
       if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"));
+      else if (opts.egress === "system") proxy = { port: EGRESS_PROXY_PORT, env: proxyEnv(), log: path.join(EGRESS_LOG_DIR, "octi-egress.log"), stop: () => {} };
       if (as) { if (!agent) chownTree(pack, as.uid, as.gid); for (const d of [work, out, home]) chownTree(d, as.uid, as.gid); chmodSync(scratch, 0o711); }
     } catch (e) {
       dropSecrets();
@@ -385,7 +398,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       // The repository's own preparation (its dependencies): the run's egress, no credential, no gateway token.
       const s0 = Date.now();
       const sc = agent.setup.command;
-      const code = await runProgram(sc[0] === "node" ? process.execPath : sc[0]!, sc.slice(1), { cwd: work, env: { ...runEnv, ...(proxy?.env ?? {}) }, as, holder: proc,
+      const code = await prog(sc[0] === "node" ? process.execPath : sc[0]!, sc.slice(1), { cwd: work, env: { ...runEnv, ...(proxy?.env ?? {}) }, as, holder: proc,
         timeoutMs: Math.min(agent.setup.timeout_seconds * 1000, untilDeadline()), onStdout: (l) => { if (pending.length < 5000) pending.push(lineEvent(redactText(l, secrets), "setup")); } });
       if (as) killUser(as);
       usage.setup_ms = Date.now() - s0;
@@ -443,7 +456,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     const env: Record<string, string> = { ...credEnv, ...base };
     let err = "", errCut = false;
     const c0 = Date.now();
-    const code = await runProgram(cmd, cmdArgs, { cwd: work, env, as, holder: proc,
+    const code = await prog(cmd, cmdArgs, { cwd: work, env, as, holder: proc,
       ...(agent ? { timeoutMs: Math.min(agent.timeout_seconds * 1000, untilDeadline()) } : {}),
       onStdout: (l) => { if (pending.length < 5000) pending.push(lineEvent(redactText(l, secrets))); }, onStderr: (t) => { err += t; if (err.length > 65536) { err = err.slice(-65536); errCut = true; } } });
     const timedOut = !!proc.timedOut;
@@ -485,7 +498,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     if (validator) {
       const v0 = Date.now();
       const venv: Record<string, string> = agent ? { ...runEnv, RUN_WORKSPACE: vdir, ...(proxy?.env ?? {}) } : { PATH: env.PATH!, HOME: home, LANG: "C.UTF-8", RUN_ID: run.id };
-      const v = await runProgram(validator.cmd, validator.args, { cwd: agent ? vdir : work, env: venv, as, holder: proc,
+      const v = await prog(validator.cmd, validator.args, { cwd: agent ? vdir : work, env: venv, as, holder: proc,
         timeoutMs: Math.min(validator.timeoutMs, untilDeadline()),
         ...(agent ? { onStdout: (l: string) => { if (pending.length < 5000) pending.push(lineEvent(redactText(l, secrets), "validate")); } } : {}) });
       const vTimedOut = !!proc.timedOut;
@@ -607,7 +620,8 @@ function lineEvent(line: string, step?: "setup" | "validate"): { type: string; d
 }
 
 /**
- * Claim and carry out runs until none is left (the loop a runner process would run; no such process is deployed yet).
+ * Claim and carry out runs until none is left (a runner with the fleet token; a run sandbox's runner carries out its one
+ * run instead, src/run-sandbox-runner.ts).
  * One run's failure to complete (the engine unreachable) never stops the loop: that run's lease lapses and it is retried.
  */
 export async function drainRuns(client: RunnerClient, opts: HarnessOptions & { kinds?: string[]; max?: number } = {}): Promise<number> {
