@@ -4,21 +4,21 @@
  * with (scripts/gen-packs.mjs, through tsx), the JSON Schema written from it for editors and intake
  * (packs/pack.schema.json, `npm run gen:pack-schema`), and the compiler that turns a pack.json's declarations into the
  * definition `definePack` would have produced (record areas with typed fields, lifecycles and permissions; job kinds;
- * credential fields; schedules; onboarding; metrics). A code entry stays possible and extends it (mergePack).
+ * credential fields; schedules; onboarding; metrics, charts and console tabs). A code entry stays possible and extends it
+ * (mergePack).
  *
  * Extension points left for the tickets after 057, each a key of pack.json that is reserved here (refused with the
  * ticket that brings it, so a pack.json written for it fails loudly rather than being half-read):
- *   tabs          mold_v0-058  the console's sidebar and tabs per record area
  *   mcp           mold_v0-060  the branded MCP server's generated tools and install pages
- *   charts        mold_v0-063  the charts that show `metrics` (metrics themselves are declared and checked today)
  * `repositories` (mold_v0-059: each a `kind` and its settings, read by src/data-repositories.ts; an area names one with
  * `repository`; "pack.json#upstream" is resolved here to the pack.json's own `upstream` pin). Declared and checked for
- * their shape today, read by the ticket that builds them: `run_results` (how a run's output becomes run_results rows:
- * mold_v0-061) and `metrics` (mold_v0-063).
+ * their shape today, read by the ticket that builds it: `run_results` (how a run's output becomes run_results rows:
+ * mold_v0-061). `metrics` and `charts` are wired by mold_v0-063 (src/metrics.ts), `tabs` by mold_v0-058 (the console's
+ * sidebar and tab pages); what they name across the build is checked by src/metric-spec.ts.
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
-import { AgentJobKindSchema, CredentialSchema, JobKindSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
+import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
 const inside = (what: string) => z.string().regex(/^[a-z0-9_\-/]+$/i, `${what}: a path inside the pack`).refine((p) => !p.split("/").includes("..") && !p.startsWith("/"), `${what}: a path inside the pack`);
@@ -60,17 +60,17 @@ export const PackJsonSchema = z.object({
   schedules: z.array(ScheduleSchema).max(50).optional(),
   onboarding: z.array(OnboardingStepSchema).max(30).optional(),
   metrics: z.array(MetricSchema).max(100).optional(),
+  charts: z.array(ChartSchema).max(100).optional(),
+  tabs: z.array(TabSchema).max(40).optional(),
   repositories: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a repository name: lowercase letters, digits and _"), RepositorySchema).optional(),
   run_results: RunResultsSchema.optional(),
-  tabs: reserved("mold_v0-058", "tabs"),
   mcp: reserved("mold_v0-060", "MCP settings"),
-  charts: reserved("mold_v0-063", "charts"),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "schedules" | "onboarding" | "metrics" | "repositories" | "runResults">;
-export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "schedules", "onboarding", "metrics"] as const;
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults">;
+export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "schedules", "onboarding", "metrics", "charts", "tabs"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
 const where = (path: readonly PropertyKey[]) => path.reduce<string>((s, p) => (typeof p === "number" ? `${s}[${p}]` : s ? `${s}.${String(p)}` : String(p)), "");
@@ -100,6 +100,8 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   if (p.schedules?.length) out.schedules = p.schedules;
   if (p.onboarding?.length) out.onboarding = p.onboarding;
   if (p.metrics?.length) out.metrics = p.metrics;
+  if (p.charts?.length) out.charts = p.charts;
+  if (p.tabs?.length) out.tabs = p.tabs;
   if (p.repositories && Object.keys(p.repositories).length) {
     // An upstream catalog may point at pack.json's own pin: resolved here, so the definition carries the pin itself.
     const problems: string[] = [];
@@ -141,7 +143,7 @@ export function mergePack(packId: string, declared: DeclaredPack | null | undefi
 /** The JSON Schema of pack.json (packs/pack.schema.json): the same rules, minus the cross-checks only the build makes. */
 export function packJsonSchema(): Record<string, unknown> {
   const s = z.toJSONSchema(PackJsonSchema, { io: "input", unrepresentable: "any" }) as Record<string, unknown> & { properties: Record<string, Record<string, unknown>> };
-  for (const [k, t] of [["tabs", "mold_v0-058"], ["mcp", "mold_v0-060"], ["charts", "mold_v0-063"]] as const)
+  for (const [k, t] of [["mcp", "mold_v0-060"]] as const)
     s.properties[k] = { not: {}, description: `Reserved: comes with ${t}.` };
   return {
     $id: "pack.schema.json",

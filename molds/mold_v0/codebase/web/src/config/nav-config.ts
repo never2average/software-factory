@@ -1,5 +1,5 @@
 import { NavGroup } from '@/types';
-import { workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
+import { workspacePortalNav, packAdminNav, packPortalNav, recordAdminNav, recordPortalNav, tabPortalNav, usageAdminNav, usagePortalNav } from './pack-nav.generated';
 
 /**
  * The modules of each area, shown in the left sidebar and in the Cmd+K bar.
@@ -50,7 +50,8 @@ export const adminNav: NavGroup[] = [
   ...usageAdminNav
 ];
 
-export const portalNav: NavGroup[] = [
+/** The shell's own /app sidebar, with what the packs add after it. */
+const shellPortalNav: NavGroup[] = [
   {
     label: 'Get started',
     items: [{ title: 'Setup & training', url: '/app', icon: 'rocket', shortcut: ['g', 's'], items: [] }]
@@ -93,3 +94,9 @@ export const portalNav: NavGroup[] = [
   ...workspacePortalNav,
   ...usagePortalNav
 ];
+
+/**
+ * The /app sidebar: when packs declare tabs (mold_v0-058), exactly those, in their order and groups (each tab limited to
+ * the roles that may read what it shows); otherwise the shell's own, unchanged.
+ */
+export const portalNav: NavGroup[] = tabPortalNav.length ? tabPortalNav : shellPortalNav;

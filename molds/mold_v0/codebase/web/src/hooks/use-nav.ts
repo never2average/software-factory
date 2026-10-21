@@ -19,6 +19,19 @@
 import { useMemo } from 'react';
 import { useOrganization, useUser } from '@clerk/nextjs';
 import type { NavItem, NavGroup } from '@/types';
+import { tabPortalNav } from '@/config/pack-nav.generated';
+import { useAccountRole } from '@/features/portal/role';
+
+/**
+ * The person's account role, for tabs a pack limits to some roles (mold_v0-058). Asked only in a build whose packs
+ * declare tabs (a constant of the build), so the shell's own sidebar makes no extra request.
+ */
+const useTabRole: () => { role: string | null; loaded: boolean } = tabPortalNav.length
+  ? () => { const r = useAccountRole(); return { role: r.role, loaded: r.loaded }; }
+  : () => ({ role: null, loaded: true });
+/** A tab limited to some roles shows once the role is known and is one of them (the server refuses the rest anyway). */
+const roleAllows = (item: NavItem, me: { role: string | null; loaded: boolean }) =>
+  !item.roles || item.roles.length >= 4 || (me.loaded && me.role !== null && item.roles.includes(me.role));
 
 /**
  * Hook to filter navigation items based on RBAC (fully client-side)
@@ -163,7 +176,8 @@ export function useFilteredNavItems(items: NavItem[]) {
  * @returns Filtered groups (empty groups are removed)
  */
 export function useFilteredNavGroups(groups: NavGroup[]) {
-  const allItems = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const me = useTabRole();
+  const allItems = useMemo(() => groups.flatMap((g) => g.items).filter((item) => roleAllows(item, me)), [groups, me.role, me.loaded]); // eslint-disable-line react-hooks/exhaustive-deps
   const filteredItems = useFilteredNavItems(allItems);
 
   return useMemo(() => {
@@ -172,7 +186,8 @@ export function useFilteredNavGroups(groups: NavGroup[]) {
       .map((group) => ({
         ...group,
         items: filteredItems.filter((item) =>
-          group.items.some((gi) => gi.title === item.title && filteredSet.has(gi.title))
+          // The same title may be in two groups (two packs' "Overview" tabs): an item is its title and its address.
+          group.items.some((gi) => gi.title === item.title && gi.url === item.url && filteredSet.has(gi.title))
         )
       }))
       .filter((group) => group.items.length > 0);

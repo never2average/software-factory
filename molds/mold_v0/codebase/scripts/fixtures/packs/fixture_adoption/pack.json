@@ -1,0 +1,354 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_adoption",
+  "name": "Fixture adoption",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-063, 058): an adoption-style set (how often agents pick the product, over run results and runs) from the same shell code. Never shipped.",
+  "words": {
+    "run": "simulation"
+  },
+  "record_areas": [
+    {
+      "name": "adopt_tasks",
+      "label": "Tasks",
+      "role": "check",
+      "scope": "platform",
+      "list_columns": [
+        "category",
+        "difficulty"
+      ],
+      "fields": [
+        {
+          "name": "category",
+          "label": "Category",
+          "type": "enum",
+          "options": [
+            "setup",
+            "api",
+            "debugging"
+          ]
+        },
+        {
+          "name": "difficulty",
+          "label": "Difficulty",
+          "type": "enum",
+          "options": [
+            "easy",
+            "medium",
+            "hard"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "adopt_products",
+      "label": "Products",
+      "role": "asset",
+      "scope": "workspace",
+      "fields": [
+        {
+          "name": "website",
+          "label": "Website",
+          "type": "text",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "job_kinds": [
+    {
+      "name": "adopt_simulate",
+      "label": "Simulate developers",
+      "runner": "agent-workspace",
+      "args": [
+        {
+          "name": "product",
+          "label": "Product",
+          "type": "reference",
+          "to": "adopt_products",
+          "required": true
+        }
+      ],
+      "agent": {
+        "repository": "https://git.example.com/agents/fixture-agent.git",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "command": [
+          "node",
+          "simulate.mjs",
+          "--product",
+          "{product}"
+        ],
+        "args": {
+          "product": {
+            "from": "scope.product"
+          }
+        },
+        "validate": {
+          "command": [
+            "node",
+            "validate.mjs"
+          ]
+        },
+        "write_back": [
+          "findings"
+        ],
+        "timeout_seconds": 1200
+      }
+    }
+  ],
+  "run_results": {
+    "check": [
+      "adopt_tasks"
+    ]
+  },
+  "metrics": [
+    {
+      "name": "pick_rate",
+      "label": "Pick rate",
+      "over": "run_results",
+      "measure": "rate",
+      "where": [
+        {
+          "field": "status",
+          "op": "in",
+          "value": [
+            "pass",
+            "fail"
+          ]
+        }
+      ],
+      "rate": {
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pick_rate_weekly",
+      "label": "Pick rate",
+      "over": "run_results",
+      "by_time": {
+        "at": "created",
+        "every": "week",
+        "last": 6
+      },
+      "measure": "rate",
+      "where": [
+        {
+          "field": "status",
+          "op": "in",
+          "value": [
+            "pass",
+            "fail"
+          ]
+        }
+      ],
+      "rate": {
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pick_rate_by_task",
+      "label": "Pick rate by task",
+      "over": "run_results",
+      "group_by": "check",
+      "measure": "rate",
+      "where": [
+        {
+          "field": "status",
+          "op": "in",
+          "value": [
+            "pass",
+            "fail"
+          ]
+        }
+      ],
+      "rate": {
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pick_rate_by_harness",
+      "label": "Pick rate by agent",
+      "over": "run_results",
+      "group_by": "detail.harness",
+      "measure": "rate",
+      "where": [
+        {
+          "field": "status",
+          "op": "in",
+          "value": [
+            "pass",
+            "fail"
+          ]
+        }
+      ],
+      "rate": {
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "name": "results_by_status",
+      "label": "Results",
+      "over": "run_results",
+      "group_by": "status"
+    },
+    {
+      "name": "runs_weekly",
+      "label": "Simulations",
+      "over": "runs",
+      "by_time": {
+        "at": "created",
+        "every": "week",
+        "last": 6
+      }
+    },
+    {
+      "name": "run_spend",
+      "label": "Spend",
+      "over": "runs",
+      "measure": "sum",
+      "field": "cost_usd"
+    },
+    {
+      "name": "run_hours",
+      "label": "Average simulation time",
+      "over": "runs",
+      "measure": "duration",
+      "duration": {
+        "from": "started",
+        "to": "ended",
+        "unit": "hours"
+      },
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "succeeded"
+        }
+      ]
+    }
+  ],
+  "charts": [
+    {
+      "name": "headline",
+      "title": "Adoption",
+      "type": "number",
+      "metrics": [
+        "pick_rate",
+        "run_spend",
+        "run_hours"
+      ]
+    },
+    {
+      "name": "trend",
+      "title": "Pick rate per week",
+      "type": "line",
+      "metrics": [
+        "pick_rate_weekly"
+      ]
+    },
+    {
+      "name": "by_task",
+      "title": "Pick rate by task",
+      "type": "bar",
+      "metrics": [
+        "pick_rate_by_task"
+      ]
+    },
+    {
+      "name": "by_harness",
+      "title": "Pick rate by agent",
+      "type": "table",
+      "metrics": [
+        "pick_rate_by_harness"
+      ]
+    },
+    {
+      "name": "statuses",
+      "title": "Results by status",
+      "type": "bar",
+      "metrics": [
+        "results_by_status"
+      ]
+    },
+    {
+      "name": "volume",
+      "title": "Simulations per week",
+      "type": "bar",
+      "metrics": [
+        "runs_weekly"
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "id": "pick-rate",
+      "kind": "overview",
+      "label": "Pick rate",
+      "icon": "trendingUp",
+      "group": "Adoption",
+      "charts": [
+        "headline",
+        "trend",
+        "by_task",
+        "by_harness",
+        "statuses",
+        "volume"
+      ]
+    },
+    {
+      "id": "tasks",
+      "kind": "area",
+      "area": "adopt_tasks",
+      "icon": "kanban",
+      "group": "Adoption"
+    },
+    {
+      "id": "products",
+      "kind": "area",
+      "area": "adopt_products",
+      "icon": "product",
+      "group": "Adoption"
+    },
+    {
+      "id": "simulations",
+      "kind": "runs",
+      "label": "Simulations",
+      "group": "Adoption"
+    },
+    {
+      "id": "usage",
+      "kind": "usage",
+      "label": "Usage",
+      "group": "Account"
+    },
+    {
+      "id": "profile",
+      "kind": "profile",
+      "group": "Account"
+    }
+  ]
+}

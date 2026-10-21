@@ -163,7 +163,10 @@ status, finding fingerprint, evidence reference).
   analytics `src/telemetry.ts`.
 - **Generalised by.** mold_v0-038 (done: pack pages in the sidebar and on a generic page, `web/src/app/{app,admin}/packs/`,
   pack routes at `/api/packs/<id>` and `/api/admin/packs/<id>`, the console title from the profile),
-  mold_v0-020 (the server target serves the console: the `Dockerfile` copies a `/web/out` the console's build never
+  mold_v0-063, **built** (metrics and charts from pack.json, computed per workspace under row-level security:
+  `src/metrics.ts`, `/api/metrics`, `web/src/features/tabs/charts.tsx`), mold_v0-058, **built** (the /app sidebar and
+  tabs from pack.json: overview, a record area's table, board, timeline and detail, runs, reports and the shell's own
+  pages; zero packs or no tabs leave the sidebar as it was), mold_v0-020 (the server target serves the console: the `Dockerfile` copies a `/web/out` the console's build never
   writes).
 
 ### Onboarding

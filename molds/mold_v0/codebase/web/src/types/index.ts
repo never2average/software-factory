@@ -20,6 +20,8 @@ export interface NavItem {
   isActive?: boolean;
   items?: NavItem[];
   access?: PermissionCheck;
+  /** The account roles that see it (a pack's declared tab, mold_v0-058); absent: everyone. */
+  roles?: string[];
 }
 
 export interface NavGroup {

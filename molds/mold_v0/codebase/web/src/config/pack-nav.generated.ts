@@ -67,3 +67,46 @@ export const packOnboardingSteps = 0;
 /** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */
 export const usagePortalNav: NavGroup[] = [];
 export const usageAdminNav: NavGroup[] = [];
+
+/** A metric a pack declares (mold_v0-063): the console asks /api/metrics for its numbers. */
+export interface PackMetricSpec {
+  pack: string;
+  name: string;
+  label: string;
+  unit: 'count' | 'number' | 'usd' | 'percent' | 'days' | 'hours';
+  roles: string[];
+}
+export const packMetrics: PackMetricSpec[] = [];
+
+/** A chart of a pack's metrics (mold_v0-063), drawn by web/src/features/tabs/charts.tsx. */
+export interface PackChartSpec {
+  pack: string;
+  name: string;
+  title: string;
+  description: string | null;
+  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';
+  metrics: string[];
+  palette: 'categorical' | 'ordinal';
+}
+export const packCharts: PackChartSpec[] = [];
+
+/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */
+export interface PackTabSpec {
+  pack: string;
+  id: string;
+  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page';
+  label: string;
+  description: string | null;
+  icon: string;
+  url: string;
+  roles: string[];
+  area?: string;
+  views?: ('table' | 'board' | 'timeline' | 'detail')[];
+  board_by?: string | null;
+  timeline_by?: string;
+  charts: string[];
+}
+export const packTabs: PackTabSpec[] = [];
+
+/** The /app sidebar when packs declare tabs: exactly those, in order (empty: the shell's own sidebar). */
+export const tabPortalNav: NavGroup[] = [];
