@@ -890,7 +890,7 @@ def _hidden_value(app_id, name, P):
     """One value at a hidden prompt, from the operator's own terminal; never from a pipe (exit 3 instead)."""
     import agent_result as AR
     if sys.stdin.isatty():
-        P.explain(name); v = getpass.getpass(f"{name} (input hidden): ").strip()
+        P.explain(name); v = getpass.getpass(f"{name} (input hidden): ").strip(); v = P.strip_pasted_name(name, v)
     elif P.trusted_stdin(): v = sys.stdin.readline().strip()
     else:
         AR.need("secret", name, AR.secret_how(app_id, name))
