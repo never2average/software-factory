@@ -144,9 +144,11 @@ status, finding fingerprint, evidence reference).
 - **Today.** Background loops started in `src/http.ts` on a server (the autoscaler, the archiver), and on Vercel one
   cron in `vercel.json` (`/api/cron/autoscale`, guarded by `CRON_SECRET`). Transactional email is `src/email.ts`
   through one provider (`email_log`); daily spend alerts use `usage_alerts`; in-client tips come from
-  `src/journeys.ts`. There are no per-workspace schedules.
-- **Generalised by.** mold_v0-035 (per-workspace schedules with defaults from the pack, editable in the console, a
-  missed tick run at most once; due-date alerts in-app and by email).
+  `src/journeys.ts`. There were no per-workspace schedules before mold_v0-035.
+- **Generalised by.** mold_v0-035 (built): per-workspace schedules with defaults from the pack, editable by owners in
+  the console, a missed tick run at most once, ticked from the existing cron entry on Vercel and a one-minute loop on a
+  server (`src/schedules.ts`, `src/cron.ts`, `src/schedule-routes.ts`, `sql/migrations/0008_schedules.sql`); due-date
+  alerts for check records in-app (`/app/notices`) and by email (`due_soon` in `email_log`), once a day.
 
 ### Console framework
 

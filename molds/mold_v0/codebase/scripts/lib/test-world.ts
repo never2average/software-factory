@@ -71,5 +71,5 @@ export async function startHttp() {
   const req = (method: string, p: string, h: Record<string, string> = {}, body?: unknown) =>
     fetch(`${base}${p}`, { method, headers: { ...h, ...(body !== undefined ? { "content-type": "application/json" } : {}) }, body: body === undefined ? undefined : typeof body === "string" || body instanceof Uint8Array ? body as BodyInit : JSON.stringify(body) });
   const close = async () => { server.close(); await mock.close(); };
-  return { base, signIn, adminToken, req, close };
+  return { base, signIn, adminToken, req, close, mock };
 }
