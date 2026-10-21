@@ -19,15 +19,19 @@
  * when they may read that record's area, else its key.
  */
 import { getDb } from "./db.js";
-import { openJson } from "./orgcrypto.js";
+import { ensureOrgKey, isSealed, open, openJson } from "./orgcrypto.js";
 import { PackError, type Metric } from "./pack-api.js";
 import { columnOf, metricRoles, metricUnit, pointOf, RUN_SOURCES, viewsOf, type BuildViews, type Column, type RunSource, type SpecArea, type SpecMetric } from "./metric-spec.js";
 import { packs } from "./packs.js";
-import { getFor, type Actor } from "./record-areas.js";
+import { findArea, may, type Actor } from "./record-areas.js";
 import { withTenant } from "./tenant-scope.js";
 
 /** Rows of a sealed area opened and evaluated in code, at most. */
 export const MAX_SEALED_ROWS = 5000;
+/** Bytes of a sealed area's rows opened for one request, at most (a row's data may be up to 256 KB). */
+export const MAX_SEALED_BYTES = 32 * 1024 * 1024;
+/** Metrics one request computes at once (each holds a database connection while it runs). */
+export const METRIC_CONCURRENCY = 4;
 /** One metric query's time on the database, at most. */
 export const METRIC_TIMEOUT_MS = 5000;
 /** Metrics one request may ask for, at most. */
@@ -46,7 +50,7 @@ export interface MetricAnswer {
   series?: { key: string | null; label: string; values: (number | null)[] }[];
   /** Rows the metric read (after `where`). */
   rows: number;
-  /** A sealed area with more rows than MAX_SEALED_ROWS: computed over the first ones only. */
+  /** A sealed area with more rows than MAX_SEALED_ROWS (or MAX_SEALED_BYTES): computed over its newest rows only. */
   partial?: boolean;
   as_of: string;
 }
@@ -90,14 +94,14 @@ export function bucketsOf(by: NonNullable<Metric["by_time"]>, now: Date) {
 
 /**
  * A stored date as a point in time, never failing: YYYY-MM-DD (a day past the month's end rolls over, as the record
- * store's own check reads it) and an optional THH:MM (UTC); anything else is no date. The SQL below is the same rule.
+ * store's own check reads it; years 1000 to 9999) and an optional THH:MM (UTC); anything else is no date. The SQL below is the same rule.
  */
 export function safeTime(s: unknown): number | null {
-  if (typeof s !== "string" || !/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])/.test(s) || s.startsWith("0000")) return null;
+  if (typeof s !== "string" || !/^[1-9]\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])/.test(s)) return null;
   const base = Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, 1) + (Number(s.slice(8, 10)) - 1) * DAY;
   return /^.{10}[T ]([01]\d|2[0-3]):[0-5]\d/.test(s) ? base + Number(s.slice(11, 13)) * 3_600_000 + Number(s.slice(14, 16)) * 60_000 : base;
 }
-const SAFE_TIME_SQL = (s: string) => `(CASE WHEN ${s} ~ '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])' AND substr(${s}, 1, 4) <> '0000'
+const SAFE_TIME_SQL = (s: string) => `(CASE WHEN ${s} ~ '^[1-9]\\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])'
   THEN ((make_date(substr(${s}, 1, 4)::int, substr(${s}, 6, 2)::int, 1) + (substr(${s}, 9, 2)::int - 1))::timestamp
     + CASE WHEN ${s} ~ '^.{10}[T ]([01]\\d|2[0-3]):[0-5]\\d' THEN substr(${s}, 12, 5)::time ELSE time '00:00' END) AT TIME ZONE 'UTC' END)`;
 
@@ -181,7 +185,9 @@ function measureSql(q: Sql, m: SpecMetric, over: SpecArea | RunSource, now: Date
     case "rate": return { agg: `avg(CASE WHEN ${m.rate!.where.map((c) => condSql(q, over, c, now)).join(" AND ")} THEN 1.0 ELSE 0.0 END)::float8`, counted: "count(*)" };
     case "duration": {
       const d = m.duration!;
-      const span = `(EXTRACT(EPOCH FROM (${q.time(pointOf(over, d.to) as Column)} - ${q.time(pointOf(over, d.from) as Column)})) / ${d.unit === "days" ? 86400 : 3600}.0)`;
+      const raw = `(EXTRACT(EPOCH FROM (${q.time(pointOf(over, d.to) as Column)} - ${q.time(pointOf(over, d.from) as Column)})) / ${d.unit === "days" ? 86400 : 3600}.0)`;
+      // A span that ends before it starts (a state entered again since: fixed, reopened, ...) is not a duration.
+      const span = `(CASE WHEN ${raw} >= 0 THEN ${raw} END)`;
       const agg = d.stat === "average" ? `avg(${span})` : d.stat === "max" ? `max(${span})` : `percentile_cont(${d.stat === "median" ? 0.5 : 0.9}) WITHIN GROUP (ORDER BY ${span})`;
       return { agg: `${agg}::float8`, counted: `count(${span})` };
     }
@@ -322,7 +328,7 @@ function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cell[] 
     else {
       const d = m.duration!, from = pointOf(area, d.from) as Column, to = pointOf(area, d.to) as Column;
       const xs = rs.map((r) => { const a = jsTime(from, r), z = jsTime(to, r); return a === null || z === null ? null : (z - a) / (d.unit === "days" ? DAY : 3_600_000); })
-        .filter((x): x is number => x !== null);
+        .filter((x): x is number => x !== null && x >= 0);
       n = xs.length;
       v = !xs.length ? null : d.stat === "average" ? xs.reduce((a, x) => a + x, 0) / xs.length : d.stat === "max" ? Math.max(...xs) : percentile(xs, d.stat === "median" ? 0.5 : 0.9);
     }
@@ -334,14 +340,26 @@ function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cell[] 
   return out;
 }
 
-/** A sealed area's rows, opened with the workspace's key (at most MAX_SEALED_ROWS + 1, to know there are more). */
-async function sealedRows(orgId: number, area: SpecArea): Promise<Row[]> {
+/**
+ * A sealed area's rows, opened with the workspace's key: its newest MAX_SEALED_ROWS, and no more than MAX_SEALED_BYTES
+ * of them (`partial` when either cut). Opened one at a time (the key loaded once), so one request holds one area's rows.
+ */
+type Sealed = { rows: Row[]; partial: boolean };
+async function sealedRows(orgId: number, area: SpecArea): Promise<Sealed> {
   return withTenant(orgId, async () => {
-    const rows = await (await getDb()).query<{ data: unknown; created_at: Date | string; updated_at: Date | string }>(
-      "SELECT data, created_at, updated_at FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 ORDER BY id LIMIT $4",
+    const rows = await (await getDb()).query<{ data: unknown; created_at: Date | string; updated_at: Date | string; bytes: number }>(
+      "SELECT data, created_at, updated_at, octet_length(data::text) AS bytes FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 ORDER BY id DESC LIMIT $4",
       [orgId, area.pack, area.name, MAX_SEALED_ROWS + 1]);
     const iso = (d: Date | string) => (d instanceof Date ? d : new Date(d)).toISOString();
-    return Promise.all(rows.map(async (r) => ({ data: await openJson(orgId, r.data), created_at: iso(r.created_at), updated_at: iso(r.updated_at) })));
+    await ensureOrgKey(orgId);
+    const out: Row[] = [];
+    let bytes = 0;
+    for (const r of rows.slice(0, MAX_SEALED_ROWS)) {
+      bytes += Number(r.bytes);
+      if (bytes > MAX_SEALED_BYTES) break;
+      out.push({ data: await openJson(orgId, r.data), created_at: iso(r.created_at), updated_at: iso(r.updated_at) });
+    }
+    return { rows: out, partial: out.length < rows.length };
   });
 }
 /** Does the workspace hold sealed rows in this area? (An asset area's always are; mold_v0-066 may seal others.) */
@@ -366,17 +384,37 @@ async function labeler(orgId: number, m: SpecMetric, over: SpecArea | RunSource,
   if (col.type === "enum") return (k) => (k === null ? "No value" : col.labels?.[k] ?? k);
   if (col.type === "boolean") return (k) => (k === "true" ? "Yes" : k === "false" ? "No" : "No value");
   if (col.type !== "reference" || (!col.to && typeof over !== "string")) return (k) => (k === null || k === "" ? "No value" : k);
-  const titles = new Map<string, string>();
-  await Promise.all(keys.filter((k): k is string => !!k).slice(0, 51).map(async (k) => {
-    // A reference field's value is a key of its area; a run result's check, asset or source is "area/key".
+  // A reference field's value is a key of its area; a run result's check, asset or source is "area/key".
+  const byArea = new Map<string, string[]>();
+  for (const k of keys.filter((x): x is string => !!x).slice(0, 51)) {
     const [areaName, key] = col.to ? [col.to, k] : [k.slice(0, k.indexOf("/")), k.slice(k.indexOf("/") + 1)];
-    try { const r = await getFor(orgId, areaName!, key!, actor); if (r?.title) titles.set(k, r.title); } catch { /* not readable, or no such area: its key */ }
-  }));
-  return (k) => (k === null ? "No value" : titles.get(k) ?? k);
+    byArea.set(areaName!, [...(byArea.get(areaName!) ?? []), key!]);
+  }
+  const titles = new Map<string, string>(), restricted = new Set<string>();
+  for (const [areaName, ks] of byArea) {
+    const full = (key: string) => (col.to ? key : `${areaName}/${key}`);
+    const a = findArea(areaName);
+    if (!a) continue;
+    // A record the person may not read is named neither by its title nor by its key.
+    if (!may(a, "read", actor)) { for (const key of ks) restricted.add(full(key)); continue; }
+    for (const [key, t] of await titlesOf(orgId, a, ks)) titles.set(full(key), t);
+  }
+  return (k) => (k === null ? "No value" : restricted.has(k) ? "Restricted" : titles.get(k) ?? k);
+}
+
+/** The titles of some records of an area, in one query (a sealed title opened with the workspace's key). */
+async function titlesOf(orgId: number, a: NonNullable<ReturnType<typeof findArea>>, keys: string[]): Promise<Map<string, string>> {
+  const db = await getDb();
+  const rows = a.scope === "platform"
+    ? await withTenant(orgId, () => db.query<{ key: string; title: string | null }>("SELECT key, title FROM platform_records WHERE pack = $1 AND area = $2 AND key = ANY ($3::text[])", [a.pack, a.name, keys]))
+    : await withTenant(orgId, () => db.query<{ key: string; title: string | null }>("SELECT key, title FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND key = ANY ($4::text[])", [orgId, a.pack, a.name, keys]));
+  const out = new Map<string, string>();
+  for (const r of rows) if (r.title) out.set(r.key, isSealed(r.title) ? await withTenant(orgId, () => open(orgId, r.title!)) : r.title);
+  return out;
 }
 
 /** One metric for one workspace, as `actor` may read it. `now` fixes "today" (tests pass their own clock). */
-export async function computeMetric(orgId: number, name: string, actor: Actor, now = new Date(), opts: { forceCode?: boolean } = {}): Promise<MetricAnswer> {
+export async function computeMetric(orgId: number, name: string, actor: Actor, now = new Date(), opts: { forceCode?: boolean; sealed?: Map<string, Promise<Sealed>> } = {}): Promise<MetricAnswer> {
   const m = findMetric(name);
   if (!m) throw new PackError(`no metric ${JSON.stringify(String(name).slice(0, 64))}`, 404);
   if (actor.role !== null && !metricRoles(m, buildViews().areas).includes(actor.role)) throw new PackError(`Your role can't read ${m.label}.`, 403);
@@ -384,15 +422,20 @@ export async function computeMetric(orgId: number, name: string, actor: Actor, n
   const over = overOf(src);
   let cells: Cell[], partial = false;
   if ("area" in src && (opts.forceCode || (await hasSealed(orgId, src.area)))) {
-    const rows = await sealedRows(orgId, src.area);
-    partial = rows.length > MAX_SEALED_ROWS;
-    cells = jsCells(m, src.area, rows.slice(0, MAX_SEALED_ROWS), now);
+    // One read of an area's sealed rows per request, shared by its metrics.
+    const cache = opts.sealed ?? new Map<string, Promise<Sealed>>();
+    if (!cache.has(src.area.name)) cache.set(src.area.name, sealedRows(orgId, src.area));
+    const got = await cache.get(src.area.name)!;
+    partial = got.partial;
+    cells = jsCells(m, src.area, got.rows, now);
   } else cells = await runSql(orgId, m, src, now);
 
   const base = { name: m.name, label: m.label, description: m.description ?? null, unit: metricUnit(m, over), measure: m.measure, as_of: now.toISOString(), ...(partial ? { partial } : {}) };
   const rows = cells.reduce((a, c) => a + Number(c.n), 0);
   const empty = m.measure === "count" || m.measure === "sum" ? 0 : null;
   const label = await labeler(orgId, m, over, [...new Set(cells.map((c) => c.k))], actor);
+  /** A group the person may not read is shown without its key too. */
+  const hide = (k: string | null, i: number) => (k !== null && label(k) === "Restricted" ? `restricted-${i}` : k);
   const col = typeof m.group_by === "string" ? (columnOf(over, m.group_by) as Column) : null;
   /** Group keys in their order: an enum's options (then any stored value no longer one), true/false, due buckets; else by value. */
   const ordered = (keys: (string | null)[]): (string | null)[] => {
@@ -407,22 +450,23 @@ export async function computeMetric(orgId: number, name: string, actor: Actor, n
     // An enum's options and the due buckets show at zero; a stored value outside them only when it has rows.
     if (typeof m.group_by === "object" || col?.type === "enum" || col?.type === "boolean") keys = keys.filter((k) => byKey.has(k) || (k !== null && (typeof m.group_by === "object" ? k !== "none" : true)));
     const more = keys.length > m.limit;
-    return { ...base, kind: "groups", groups: keys.slice(0, m.limit).map((k) => ({ key: k, label: label(k), value: round(byKey.get(k)?.v ?? empty) })), more, rows };
+    return { ...base, kind: "groups", groups: keys.slice(0, m.limit).map((k, i) => ({ key: hide(k, i), label: label(k), value: round(byKey.get(k)?.v ?? empty) })), more, rows };
   }
   const { days } = bucketsOf(m.by_time, now);
   const keys = m.group_by === undefined ? [null] : ordered([...new Set(cells.map((c) => c.k))]).filter((k) => col?.type === "enum" || col?.type === "boolean" ? k !== null || cells.some((c) => c.k === null) : true);
   const at = new Map(cells.map((c) => [JSON.stringify([c.k, c.b]), c.v]));
   return {
     ...base, kind: "series", buckets: days, rows,
-    series: keys.map((k) => ({ key: k, label: m.group_by === undefined ? m.label : label(k), values: days.map((d) => round(at.get(JSON.stringify([k, d])) ?? empty)) })),
+    series: keys.map((k, i) => ({ key: hide(k, i), label: m.group_by === undefined ? m.label : label(k), values: days.map((d) => round(at.get(JSON.stringify([k, d])) ?? empty)) })),
   };
 }
 
 /** Several metrics at once (the console's charts): each answer, or its refusal, by name. */
 export async function computeMetrics(orgId: number, names: string[], actor: Actor, now = new Date()): Promise<MetricResult[]> {
   if (names.length > MAX_METRICS_PER_REQUEST) throw new PackError(`at most ${MAX_METRICS_PER_REQUEST} metrics at once`, 400);
-  return Promise.all([...new Set(names)].map(async (n): Promise<MetricResult> => {
-    try { return await computeMetric(orgId, n, actor, now); }
+  const sealed = new Map<string, Promise<Sealed>>();
+  const one = async (n: string): Promise<MetricResult> => {
+    try { return await computeMetric(orgId, n, actor, now, { sealed }); }
     catch (e) {
       if (e instanceof PackError) return { name: n, error: e.message, status: e.status };
       // A database error can echo row values: its code only (as the record tools do).
@@ -430,5 +474,12 @@ export async function computeMetrics(orgId: number, names: string[], actor: Acto
       console.error(`metric ${n}: ${(e as Error).message}`);
       return { name: n, error: typeof code === "string" && /^[0-9A-Z]{5}$/.test(code) ? `The metric could not be computed (database error ${code}).` : "The metric could not be computed.", status: 500 };
     }
+  };
+  // A few at a time: one request never holds more than METRIC_CONCURRENCY database connections.
+  const list = [...new Set(names)], out: MetricResult[] = new Array(list.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(METRIC_CONCURRENCY, list.length) }, async () => {
+    while (next < list.length) { const i = next++; out[i] = await one(list[i]!); }
   }));
+  return out;
 }

@@ -178,14 +178,27 @@ try {
 
     // Who may read: a viewer may not read applications, so not their metric, and sees keys where titles would be.
     await assert.rejects(get(A, "apps_by_environment", VIEWER), (e: { status?: number }) => e.status === 403, "a viewer may not read a metric of an area they may not read");
-    assert.deepEqual(groups(await get(A, "open_by_app", VIEWER)), [["web", "web", 3], ["api", "api", 1]], "and sees an application's key, not its title");
+    assert.deepEqual(groups(await get(A, "open_by_app", VIEWER)), [["restricted-0", "Restricted", 3], ["restricted-1", "Restricted", 1]], "and sees neither an application's title nor its key");
     assert.deepEqual(groups(await get(A, "open_by_app", MEMBER)), [["web", "Web app", 3], ["api", "API", 1]]);
     // A metric's own roles narrow further (checked on the server, whatever the console shows).
     install(vulns((j) => { metricOf(j, "fix_rate").roles = ["owner"]; }));
     await assert.rejects(get(A, "fix_rate", MEMBER), (e: { status?: number }) => e.status === 403);
     assert.equal((await get(A, "fix_rate", { role: "owner", userId: "o" })).value, 0.375);
     install();
-    console.log("✓ roles: an area's read permission and a metric's roles hold on the server; a referenced record's title only for those who may read it");
+    console.log("✓ roles: an area's read permission and a metric's roles hold on the server; a referenced record is named (title or key) only for those who may read it");
+
+    // Durations: a span that ends before it starts (a state entered again since) is left out.
+    install(vulns((j) => {
+      j.metrics.push({ name: "found_to_fixed_all", label: "Found to fixed", over: "audit_findings", measure: "duration", duration: { from: "created", to: "state:fixed" } });
+      j.metrics.push({ name: "reopened_to_fixed", label: "Reopened to fixed", over: "audit_findings", measure: "duration", duration: { from: "state:reopened", to: "state:fixed" } });
+    }));
+    const all = await get(A, "found_to_fixed_all");
+    assert.deepEqual([all.value, all.rows], [5.25, 4], "found to (last) fixed over f3 f5 f7 f8: (10 + 4 + 5 + 2) / 4, whatever their state now");
+    const back = await get(A, "reopened_to_fixed");
+    assert.deepEqual([back.value, back.rows], [null, 0], "f7 was fixed before it was reopened: no negative duration");
+    assert.deepEqual(await get(A, "reopened_to_fixed", API, { forceCode: true }), back, "the code path agrees");
+    install();
+    console.log("✓ durations leave out spans that end before they start (fixed, then reopened)");
 
     // A hostile value is data: it reaches the query as a bound parameter (field names never do: they are plain words).
     install(fixtureJson("fixture_vulns"), (() => { const j = fixtureJson("fixture_adoption"); j.metrics.push({ name: "probe", label: "Probe", over: "run_results", where: [{ field: "detail.harness", op: "eq", value: "x) OR (TRUE" }] }); return j; })());
@@ -226,6 +239,8 @@ try {
     assert.deepEqual((await get(A, "runs_weekly")).series![0]!.values, [0, 0, 0, 0, 1, 2]);
     assert.deepEqual([(await get(A, "run_spend")).value, (await get(A, "run_spend")).unit], [2.25, "usd"]);
     assert.equal((await get(A, "run_hours")).value, 1.5, "(2 h + 1 h) / 2 succeeded runs");
+    await assert.rejects(get(A, "pick_rate", VIEWER), (e: { status?: number }) => e.status === 403, "run results name applications, which a viewer may not read here");
+    assert.equal((await get(A, "pick_rate", MEMBER)).value, 0.6);
     assert.deepEqual([(await get(B, "pick_rate")).value, (await get(B, "run_spend")).value, (await get(B, "run_hours")).value], [0.5, 9, 10], "B's own runs only (2 picks of 4: two findings on one check count twice)");
     assert.deepEqual(groups(await get(B, "results_by_status")).slice(0, 2), [["pass", "Pass", 2], ["fail", "Fail", 2]], "findings, not check x asset pairs");
     console.log("✓ the adoption set from the same code: pick rate 60% (per week, per task, per agent), results by status, runs per week, spend $2.25, 1.5 h per run; B's apart");

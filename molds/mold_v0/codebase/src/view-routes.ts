@@ -65,7 +65,13 @@ export function runAppRouter(): Router {
     if (!/^run_[A-Za-z0-9_-]{1,80}$/.test(id)) throw new PackError("Not found", 404);
     const run = await getRun(session(res).org, id);
     if (!run) throw new PackError("Not found", 404);
-    return { run, results: (await runResults(session(res).org, id)).slice(0, 2000) };
+    // A result names records: one whose check the person may not read is left out; an asset or source they may not read
+    // is not named (the read permission of each area, mold_v0-057, as on /api/records).
+    const { findArea, may } = await import("./record-areas.js");
+    const readable = (x: { area: string } | null) => !x || (() => { const a = findArea(x.area); return !!a && may(a, "read", actor(res)); })();
+    const results = (await runResults(session(res).org, id)).filter((x) => readable(x.check)).slice(0, 2000)
+      .map((x) => ({ ...x, asset: readable(x.asset) ? x.asset : null, source: readable(x.source) ? x.source : null }));
+    return { run, results };
   }));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;

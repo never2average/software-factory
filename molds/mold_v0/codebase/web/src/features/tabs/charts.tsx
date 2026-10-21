@@ -88,8 +88,8 @@ function Legend({ items }: { items: { label: string; color: string }[] }) {
   if (items.length < 2) return null;
   return (
     <ul className='text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs' aria-label='Legend'>
-      {items.map((it) => (
-        <li key={it.label} className='flex items-center gap-1.5'>
+      {items.map((it, i) => (
+        <li key={i} className='flex items-center gap-1.5'>
           <span aria-hidden className='inline-block h-2 w-3 rounded-sm' style={{ background: it.color }} />
           {it.label}
         </li>
@@ -180,7 +180,7 @@ function Plot({ chart, f, width }: { chart: PackChartSpec; f: Frame; width?: num
     const height = Math.max(120, f.categories.length * 32 + 24);
     return (
       <Sized width={width} height={height}>
-        <BarChart data={data} layout='vertical' margin={{ left: 0, right: 48, top: 4, bottom: 0 }} barCategoryGap={8}>
+        <BarChart accessibilityLayer={false} data={data} layout='vertical' margin={{ left: 0, right: 48, top: 4, bottom: 0 }} barCategoryGap={8}>
           <CartesianGrid horizontal={false} stroke='var(--viz-grid)' strokeWidth={1} />
           <XAxis type='number' tickFormatter={tick} tick={AXIS} axisLine={false} tickLine={false} allowDecimals={f.unit !== 'count'} />
           <YAxis type='category' dataKey='name' width={132} tick={AXIS} axisLine={{ stroke: 'var(--viz-axis)' }} tickLine={false}
@@ -204,7 +204,7 @@ function Plot({ chart, f, width }: { chart: PackChartSpec; f: Frame; width?: num
   if (chart.type === 'bar' || stacked) {
     return (
       <Sized width={width} height={220}>
-        <BarChart data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }} barCategoryGap='25%'>
+        <BarChart accessibilityLayer={false} data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }} barCategoryGap='25%'>
           {grid}{x}{y}
           <Tooltip cursor={{ fill: 'var(--muted)', opacity: 0.5 }} content={tip} />
           {f.series.map((s, si) => (
@@ -218,7 +218,7 @@ function Plot({ chart, f, width }: { chart: PackChartSpec; f: Frame; width?: num
   if (chart.type === 'area') {
     return (
       <Sized width={width} height={220}>
-        <AreaChart data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+        <AreaChart accessibilityLayer={false} data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
           {grid}{x}{y}
           <Tooltip cursor={{ stroke: 'var(--viz-axis)' }} content={tip} />
           {f.series.map((s) => (
@@ -231,7 +231,7 @@ function Plot({ chart, f, width }: { chart: PackChartSpec; f: Frame; width?: num
   }
   return (
     <Sized width={width} height={220}>
-      <LineChart data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+      <LineChart accessibilityLayer={false} data={data} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
         {grid}{x}{y}
         <Tooltip cursor={{ stroke: 'var(--viz-axis)' }} content={tip} />
         {f.series.map((s) => (
