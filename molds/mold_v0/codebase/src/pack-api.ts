@@ -47,6 +47,8 @@
  *   the data API wired (mold_v0-059; src/data-api.ts, src/data-routes.ts): list (filter, sort, paging), get, create,
  *                update, move, delete and batch for every area, at /api/data and /api/admin/data, through the same
  *                record store as ctx.records
+ *   mcp          wired (mold_v0-060; src/mcp-tools.ts): MCP tools generated from the declarations above, over the data
+ *                API and the run engine, shaped by the pack's `mcp` settings (McpSettingsSchema)
  *
  * Declarative packs (mold_v0-057): everything above but tools and routes can be written in pack.json instead
  * (src/pack-manifest.ts, the schema at packs/pack.schema.json), with no entry at all. gen-packs compiles it into this
@@ -411,6 +413,17 @@ const jobKindBase = {
   args: z.array(field).max(30).optional(),
   unresolved_references: z.enum(["reject", "drop", "downgrade"]).default("reject"),
   max_unresolved: z.number().int().min(0).max(5000).default(100),
+  /**
+   * The run's report (mold_v0-060): a file the run writes into its workspace (a workspace kind only; for an agent kind,
+   * under one of its write-back paths). The generated MCP tools (src/mcp-tools.ts) add get_<kind>_report, which reads it
+   * from the snapshot the run committed, for the run's own workspace only.
+   */
+  report: z.object({
+    path: z.string().regex(/^(?!\/)(?!.*\/\/)[A-Za-z0-9._ /-]{1,300}$/, "a path inside the workspace's files")
+      .refine((p) => !p.split("/").some((s) => s === "." || s === ".." || s === ""), "a path inside the workspace's files"),
+    label: z.string().min(1).max(80).optional(),
+    format: z.enum(["markdown", "text", "json"]).default("markdown"),
+  }).strict().optional(),
 };
 export const JobKindSchema = z.object({
   ...jobKindBase,
@@ -419,7 +432,8 @@ export const JobKindSchema = z.object({
   entry: packFile,
   validator: packFile.optional(),
 }).strict()
-  .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice");
+  .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice")
+  .refine((k) => !k.report || k.workspace, { message: "a report is a file of the run's workspace: the kind needs workspace: true", path: ["report"] });
 
 /**
  * A job kind for the built-in agent-workspace runner (mold_v0-061: an agent repository at a pinned commit, a declared
@@ -436,6 +450,8 @@ export const AgentJobKindSchema = z.object({
   agent: AgentWorkspaceSchema,
 }).strict().superRefine((k, ctx) => {
   if (new Set((k.args ?? []).map((a) => a.name)).size !== (k.args ?? []).length) ctx.addIssue({ code: "custom", message: "an argument is declared twice", path: ["args"] });
+  if (k.report && !k.agent.write_back.some((w) => k.report!.path === w || k.report!.path.startsWith(`${w.replace(/\/+$/, "")}/`)))
+    ctx.addIssue({ code: "custom", message: "the report must be under one of agent.write_back (only those paths are kept in the workspace)", path: ["report", "path"] });
   if (k.agent.timeout_seconds > k.token_lifetime_seconds)
     ctx.addIssue({ code: "custom", message: "agent.timeout_seconds is longer than token_lifetime_seconds (the run's deadline)", path: ["agent", "timeout_seconds"] });
   for (const [name, v] of Object.entries(k.agent.env)) for (const p of placeholders(v)) {
@@ -912,6 +928,32 @@ export const OnboardingStepSchema = z.object({
   done_when: z.string().regex(ONBOARDING_CONDITION, "done_when: workspace, connected, first_call, tool:<name>, credential:<name>, record:<area> or run:<kind>"),
 }).strict();
 
+/**
+ * The pack's MCP settings (mold_v0-060; pack.json `mcp`, or definePack({ mcp })). Every pack gets MCP tools generated
+ * from its declarations (src/mcp-tools.ts): list_/get_ for each record area, create_/update_/move_ where the area takes
+ * writes, start_<kind> per job kind with the run tools, a report tool per kind with a report file, and on the admin MCP
+ * the shared areas' staff tools. This block shapes them; every name in it is a generated tool's name before `rename`:
+ *   prefix      the tools' prefix (default: the pack's id), so `<prefix>_list_<area>`
+ *   include     only these generated tools (default: all of them)
+ *   exclude     none of these
+ *   rename      generated name -> the name clients see (lowercase letters, digits and _, at most 64)
+ *   describe    generated name -> the description clients see (plain text, one paragraph)
+ *   admin_only  customer tools moved to the admin MCP (platform staff with "accounts", naming the workspace); never on
+ *               the customer MCP (only the MCP tool moves: the data API and the console still serve the workspace)
+ */
+const mcpToolName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "a tool name: lowercase letters, digits and _, starting with a letter, at most 64");
+export const McpSettingsSchema = z.object({
+  $comment: z.string().max(2000).optional(),
+  prefix: z.string().regex(/^[a-z][a-z0-9_]{0,30}$/, "1-31 lowercase letters, digits or _, starting with a letter").optional(),
+  include: z.array(mcpToolName).max(500).optional(),
+  exclude: z.array(mcpToolName).max(500).optional(),
+  rename: z.record(mcpToolName, mcpToolName).optional(),
+  describe: z.record(mcpToolName, z.string().trim().min(1).max(1000)
+    .regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>]*$/, "plain text: no control or direction characters, no < or >")).optional(),
+  admin_only: z.array(mcpToolName).max(500).optional(),
+}).strict();
+export type McpSettings = z.output<typeof McpSettingsSchema>;
+
 export interface PackDefinition {
   id: string;
   tools?: PackTool<any>[];
@@ -935,6 +977,8 @@ export interface PackDefinition {
   loaders?: Record<string, RepositoryLoader>;
   /** How a run's output becomes run_results rows (mold_v0-061; declared and validated since 057). */
   runResults?: z.input<typeof RunResultsSchema>;
+  /** The generated MCP tools' settings (mold_v0-060; src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only. */
+  mcp?: z.input<typeof McpSettingsSchema>;
   /**
    * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
@@ -1026,6 +1070,10 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   for (const a of p.recordAreas ?? []) if (a?.repository !== undefined && !Object.hasOwn(repos, a.repository))
     problems.push(at(`record area ${a.name} reads from repository ${a.repository}, which this pack does not declare`));
   problems.push(...repositoryProblems(p, partial).map(at));
+  if (p.mcp !== undefined) {
+    const v = McpSettingsSchema.safeParse(p.mcp);
+    if (!v.success) problems.push(at(`mcp: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));
+  }
   if (p.runResults !== undefined) {
     const v = RunResultsSchema.safeParse(p.runResults);
     if (!v.success) problems.push(at(`runResults: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));

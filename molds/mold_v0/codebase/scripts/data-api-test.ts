@@ -37,7 +37,10 @@ try {
   setPacksForTest([fx]);
   {
     const c = await connect((await createOrg(`Data tools ${STAMP}`)).org);
-    assert.deepEqual((await c.client.listTools()).tools.map((t) => t.name).sort(), [...TOOL_NAMES, "get_record", "list_records"].sort(), "with areas: only the 047 record tools (the data API adds no MCP tool: 060's)");
+    const { generatedTools } = await import("../src/mcp-tools.js");
+    const generated = generatedTools().filter((t) => t.door === "workspace" && !t.admin_only).map((t) => t.name);
+    assert.ok(generated.length > 0, "the areas get generated MCP tools (mold_v0-060), over these operations");
+    assert.deepEqual((await c.client.listTools()).tools.map((t) => t.name).sort(), [...TOOL_NAMES, "get_record", "list_records", ...generated].sort(), "with areas: the 047 record tools and the tools generated over the data API (060)");
     await c.close();
   }
   const A = (await createOrg(`Data A ${STAMP}`)).org, B = (await createOrg(`Data B ${STAMP}`)).org;

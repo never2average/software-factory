@@ -19,6 +19,7 @@ import { limitsFor } from "./rate-limits.js";
 import * as memory from "./context.js";
 import * as vis from "./visibility.js";
 import { registerPackTools, reserveShellTools } from "./packs.js";
+import { generatedInstructions } from "./mcp-tools.js";
 import { PROFILE } from "./profile.js";
 
 /** Hosts (ChatGPT in particular) cache the template by URI: bump the version on breaking HTML/JS changes. */
@@ -404,10 +405,12 @@ reserveShellTools(TOOL_NAMES);
 /** `context`: the account's and the person's context (src/context.ts), appended to the instructions. */
 export function createServer(org: Org, context = ""): McpServer {
   const server = new McpServer(
-    // The server's name is the profile's (src/profile.ts), never a word in the code.
-    { name: PROFILE.mcp_server_name, version: "2.0.0" },
+    // The server's name and version are the profile's (src/profile.ts), never a word in the code (mold_v0-038, 060).
+    { name: PROFILE.mcp_server_name, version: PROFILE.mcp_server_version ?? "2.0.0" },
     {
-      instructions:
+      // The profile's instructions when it has its own (mold_v0-060), then a paragraph for the tools generated from the
+      // packs that this caller may use (none with zero packs: the instructions are unchanged), then the context.
+      instructions: (PROFILE.mcp_instructions ??
         "Octillion is the APO (Agentic Preference Optimization) platform: it measures whether AI coding agents recommend the user's developer-tool product. " +
         "FIRST: when the user has not asked for something specific (a greeting, 'what is this', 'what can you do', 'get me started'), or this " +
         "is the first Octillion request of the conversation, call get_started and tell the user their one next step with the exact prompt to type. " +
@@ -421,7 +424,8 @@ export function createServer(org: Org, context = ""): McpServer {
         "browse_task_library offers curated real-world tasks to turn into scenarios; list_developer_profiles lists the developer " +
         "personas the orchestrator role-plays when a sub-agent asks questions (pass them to run_simulation as profiles). " +
         "Memory: when the user states a lasting fact, decision or preference about their company, product or themselves (or says 'remember'), " +
-        "save it with save_to_memory; before answering questions about past decisions or how the team works, check search_memory." + context,
+        "save it with save_to_memory; before answering questions about past decisions or how the team works, check search_memory.") +
+        generatedInstructions(org) + context,
     },
   );
 

@@ -14,6 +14,8 @@ import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { areaLinks, PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace, type WorkspaceRuns } from "./pack-api.js";
 import { mergePack, type DeclaredPack } from "./pack-manifest.js";
+import { generateCatalog } from "./mcp-catalog.js";
+import { registerGeneratedTools } from "./mcp-tools.js";
 import { checkViews, viewsOf } from "./metric-spec.js";
 import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
@@ -43,7 +45,7 @@ export interface InstalledPack { id: string; manifest: PackManifest; definition:
  * packs (pack ids, tool names, record area names). `reservedTools` are the shell's own tool names, which a pack may not
  * take; nor may it take the record areas' tools (list_records, get_record), which the shell adds when an area exists.
  */
-export function installPacks(list: readonly GeneratedPack[], reservedTools: readonly string[] = []): InstalledPack[] {
+export function installPacks(list: readonly GeneratedPack[], reservedTools: readonly string[] = [], reservedAdmin: readonly string[] = []): InstalledPack[] {
   const problems: string[] = [];
   const out: InstalledPack[] = [];
   const ids = new Set<string>();
@@ -73,10 +75,17 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     }
     out.push({ id: m.id, manifest: m, definition: def });
   }
-  // An onboarding step's tool:<name> names a tool of this build: the shell's, the record tools, or a pack's (mold_v0-011).
+  // The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts): the packs' mcp settings name real
+  // tools, and no generated name takes the shell's, a pack's own or the admin MCP's.
+  const catalog = generateCatalog(out.map((p) => ({ id: p.id, name: p.manifest.name, words: p.manifest.words, definition: p.definition })),
+    { customer: [...reservedTools, ...RECORD_TOOL_NAMES], admin: reservedAdmin });
+  problems.push(...catalog.problems);
+  const generated = new Set(catalog.tools.filter((t) => t.door === "workspace" && !t.admin_only).map((t) => t.name));
+  // An onboarding step's tool:<name> names a tool of this build: the shell's, the record tools, a pack's (mold_v0-011),
+  // or one generated for the customer MCP (mold_v0-060).
   for (const p of out) for (const st of p.definition.onboarding ?? []) {
     const [what, arg] = st.done_when.split(":", 2);
-    if (what === "tool" && arg && !toolOwner.has(arg)) problems.push(`pack ${p.id}: onboarding step ${st.id} names no tool ${arg} (not the shell's nor any pack's)`);
+    if (what === "tool" && arg && !toolOwner.has(arg) && !generated.has(arg)) problems.push(`pack ${p.id}: onboarding step ${st.id} names no tool ${arg} (not the shell's nor any pack's)`);
   }
   // A link or reference names an area some pack in this build declares; a shared (platform) area's rows are every
   // workspace's, so they may refer only to shared areas, never to one workspace's records (mold_v0-057).
@@ -112,12 +121,18 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let installed: InstalledPack[] | null = null;
 let reserved: readonly string[] = [];
+let reservedAdmin: readonly string[] = [];
+/** A test's packs stay installed when a server module loads later and reserves its names: checked again against them. */
+let testList: readonly GeneratedPack[] | null = null;
+const reinstall = () => { installed = testList ? installPacks(testList, reserved, reservedAdmin) : null; };
 /** The shell's own tool names, set by src/server.ts before any pack is used, so a pack cannot shadow one. */
-export function reserveShellTools(names: readonly string[]) { reserved = names; installed = null; }
+export function reserveShellTools(names: readonly string[]) { reserved = names; reinstall(); }
+/** The admin MCP's own tool names (src/admin-mcp.ts), which a generated admin tool may not take (mold_v0-060). */
+export function reserveAdminTools(names: readonly string[]) { reservedAdmin = names; reinstall(); }
 /** The installed packs (the generated registry, checked on first use; a bad pack fails the process at start). */
-export const packs = (): InstalledPack[] => (installed ??= installPacks(PACKS as readonly GeneratedPack[], reserved));
+export const packs = (): InstalledPack[] => (installed ??= installPacks(PACKS as readonly GeneratedPack[], reserved, reservedAdmin));
 /** Tests only: install another set of packs (a fixture) in place of the generated registry; null goes back to it. */
-export function setPacksForTest(list: readonly GeneratedPack[] | null) { installed = list ? installPacks(list, reserved) : null; }
+export function setPacksForTest(list: readonly GeneratedPack[] | null) { installed = list ? installPacks(list, reserved, reservedAdmin) : null; testList = list; }
 
 /** Everything the packs declare, by kind: what is wired today and what later tickets pick up. */
 export function packRegistry() {
@@ -217,8 +232,9 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
 
 /**
  * Register every pack's tools on a customer MCP server bound to one workspace, after the shell's own; then, when any
- * pack declares a record area, the shell's list_records and get_record (src/record-areas.ts). With no packs nothing
- * is added: the surface is exactly the shell's.
+ * pack declares a record area, the shell's list_records and get_record (src/record-areas.ts); then the tools generated
+ * from the packs' declarations that the caller may use (mold_v0-060, src/mcp-tools.ts). With no packs nothing is
+ * added: the surface is exactly the shell's.
  */
 export function registerPackTools(server: McpServer, org: Org) {
   for (const p of packs()) {
@@ -234,4 +250,5 @@ export function registerPackTools(server: McpServer, org: Org) {
     }
   }
   registerRecordTools(server, (t, args) => runPackTool(org, "records", t, args));
+  registerGeneratedTools(server, org);
 }
