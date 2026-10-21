@@ -122,7 +122,8 @@ export interface SweepClaim {
   readonly callId: string;
   readonly childSessionId: string;
   readonly name: string;
-  readonly kind: FindingKind;
+  /** "stopped": the main agent stopped it (agent/lib/specialist-stop.ts), through the same ledger. */
+  readonly kind: FindingKind | "stopped";
   readonly since: number;
   readonly facts: Readonly<Record<string, string | number>>;
 }
@@ -136,7 +137,7 @@ export interface SweepLedger {
   surfaceWaiting(row: SweepClaim): Promise<void>;
   /** The waiting notes of this main thread whose delegation no longer waits are cleared. */
   clearWaiting(parentSessionId: string, stillWaiting: readonly string[]): Promise<void>;
-  /** Frozen delegations of this main thread whose run may still have to be ended, and when the sweep stopped them. */
+  /** Frozen delegations of this main thread, and ones the main agent stopped (kind "stopped"), whose run may still have to be ended, and when they were stopped. */
   frozenToEnd(parentSessionId: string): Promise<ReadonlyArray<{ readonly callId: string; readonly childSessionId: string; readonly stoppedAt: number }>>;
   /** That run is at rest (or ended): nothing more to do for it. */
   ended(parentSessionId: string, callId: string): Promise<void>;

@@ -45,7 +45,8 @@ GENERATED_REGISTRY = "agent/lib/subagent-registry.generated.ts"
 MIN_SKILLS = 6
 SHARED_DIR = "scripts/subagent-shared"
 KEY_OK = re.compile(r"^[a-z][a-z0-9-]{0,79}$")  # the same shape setup/workspace-mcp.mjs accepts
-DECL_FIELDS = ("name", "summary", "dataroomPaths")
+DECL_FIELDS = ("name", "givenName", "summary", "dataroomPaths")
+GIVEN_NAME_MAX = 32  # lib/specialist-names.ts GIVEN_NAME_MAX
 # Kept identical to TEMPLATE_OK in scripts/gen-subagent-meta.mjs.
 TEMPLATE_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/(\{[a-z_]+\}|[A-Za-z0-9_.{}-]+))*/(\*\*|[A-Za-z0-9_.{}-]+)$")
 
@@ -105,7 +106,7 @@ def _json_after(text, marker):
 def generated_registry(root):
     """What scripts/gen-subagent-meta.mjs last wrote: {"meta": {key: {...}} | None, "keys": [...] | None,
     "labels": {...}, "summaries": {...}, "templates": [...]}."""
-    out = {"meta": None, "keys": None, "labels": {}, "summaries": {}, "templates": []}
+    out = {"meta": None, "keys": None, "labels": {}, "given": {}, "summaries": {}, "templates": []}
     path = os.path.join(root, GENERATED_META)
     if os.path.isfile(path):
         out["meta"] = _json_after(read(path), "export const SUBAGENT_META")
@@ -115,6 +116,7 @@ def generated_registry(root):
         out["keys"] = _json_after(text, "export const SUBAGENT_KEYS")
         out["labels"] = _json_after(text, "export const SUBAGENT_LABELS") or {}
         out["summaries"] = _json_after(text, "export const SUBAGENT_SUMMARIES") or {}
+        out["given"] = _json_after(text, "export const SUBAGENT_GIVEN_NAMES") or {}
         out["templates"] = _json_after(text, "export const EXTRA_DATAROOM_PATH_TEMPLATES") or []
     return out
 
@@ -206,6 +208,10 @@ def check_declaration(r, root, key, reg, grammar):
     for f in ("name", "summary"):
         if f in decl:
             r.check(isinstance(decl[f], str) and decl[f].strip() != "", "subagent.json \"%s\" must be a non-empty string" % f)
+    if "givenName" in decl:
+        g = decl["givenName"]
+        r.check(isinstance(g, str) and 0 < len(g.strip()) <= GIVEN_NAME_MAX and "\n" not in g,
+                "subagent.json \"givenName\" must be a one-line name of 1 to %d characters" % GIVEN_NAME_MAX)
     paths = decl.get("dataroomPaths", [])
     if r.check(isinstance(paths, list), "subagent.json \"dataroomPaths\" must be a list of path templates"):
         folders = stored_folders(root)
@@ -216,9 +222,9 @@ def check_declaration(r, root, key, reg, grammar):
                 r.check(t in reg["templates"],
                         "dataroomPaths entry %s is not in %s - run: npm run build:subagent-meta" % (json.dumps(declared), GENERATED_REGISTRY))
     # A declared name/summary that the generated files do not carry means they are stale.
-    for f, table in (("name", reg["labels"]), ("summary", reg["summaries"])):
-        if isinstance(decl.get(f), str) and decl[f].strip() and key in table:
-            r.check(table[key] == decl[f].strip(),
+    for f, table in (("name", reg["labels"]), ("givenName", reg["given"]), ("summary", reg["summaries"])):
+        if isinstance(decl.get(f), str) and decl[f].strip() and (key in table or f == "givenName"):
+            r.check(table.get(key) == decl[f].strip(),
                     "subagent.json \"%s\" differs from %s - run: npm run build:subagent-meta" % (f, GENERATED_REGISTRY))
 
 

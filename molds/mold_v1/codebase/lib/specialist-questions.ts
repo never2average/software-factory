@@ -17,6 +17,7 @@
  *
  * Pure; no React, no eve import. The UI says the names (app/_components/specialist-question.tsx).
  */
+import { isApproval } from "./approval-record.ts";
 import { isDetachedResult, isStoppedDelegation } from "./detached-delegation.ts";
 
 /** Which delegation asked: its call id on the main thread, the specialist's registry name, its own session (run). */
@@ -230,10 +231,12 @@ export function respondedInputMarkers(
 }
 
 /**
- * A specialist's answered question, as the chat places it. `where`: "tail" while the specialist works on the reply
- * (under the conversation, where the question was asked), "card" once it has handed back (under its delegation card,
- * in the history), "inplace" when no delegation card is on screen (where eve put the part). An answer whose asker is
- * unknown is not placed at all: it renders as it always has.
+ * A specialist's answered question or approval, as the chat places it. `where`: "tail" while the specialist works on
+ * a question's reply (under the conversation, where the question was asked), "card" once it has handed back (under its
+ * delegation card, in the history), "inplace" when no delegation card is on screen (where eve put the part). An
+ * APPROVAL is relayed plumbing, not a reply (mold_v1-296): it goes on the card whenever the card is on screen, working
+ * or not, and never stands as a row of the main thread. An answer whose asker is unknown is not placed at all: it
+ * renders as it always has.
  */
 export interface SpecialistAnswerView {
   readonly requestId: string;
@@ -245,6 +248,10 @@ export interface SpecialistAnswerView {
   readonly reply: string;
   readonly progress: SpecialistProgress;
   readonly where: "tail" | "card" | "inplace";
+  /** An approval the person gave (allowed or denied), not a question they answered: the card shows its one-line record. */
+  readonly approval?: true;
+  /** The answered part itself (the approval's record reads it). */
+  readonly part?: unknown;
 }
 
 /** Every attributed, answered question in the projected transcript, by request id, with where it renders. */
@@ -278,12 +285,17 @@ export function placeSpecialistAnswers(input: {
         progress = delegationProgress(input.events, asker.callId, input.stopped);
         progressOf.set(asker.callId, progress);
       }
-      answered.push({ requestId, callId: asker.callId, name: asker.name, prompt: str(req.prompt) ?? "", reply, progress });
+      // An approval (allow or deny a tool call), not a question: the same test the chat's approval record uses.
+      const approval = isApproval(p as unknown as Parameters<typeof isApproval>[0]);
+      answered.push({ requestId, callId: asker.callId, name: asker.name, prompt: str(req.prompt) ?? "", reply, progress, ...(approval ? { approval: true as const, part: p } : {}) });
     }
   }
   const out = new Map<string, SpecialistAnswerView>();
   for (const a of answered) {
-    out.set(a.requestId, { ...a, where: progressIsLive(a.progress) ? "tail" : cards.has(a.callId) ? "card" : "inplace" });
+    // An approval is relayed plumbing (mold_v1-296): on its specialist's card whenever that is on screen. A question's
+    // reply is the person's own words to the specialist: at the tail while it works on it, then on its card.
+    const onCard = a.approval ? cards.has(a.callId) : !progressIsLive(a.progress) && cards.has(a.callId);
+    out.set(a.requestId, { ...a, where: onCard ? "card" : progressIsLive(a.progress) ? "tail" : "inplace" });
   }
   return out;
 }
@@ -312,7 +324,7 @@ export interface SteeringNoteView {
   /** "delivered": the specialist read it at a step; "pending": not yet. */
   readonly status: "pending" | "delivered";
   readonly progress: SpecialistProgress;
-  /** "tail" while the specialist works; "card" under its delegation card once it has handed back (or none is shown). */
+  /** "card" under its delegation card whenever that is on screen (mold_v1-296); "tail" only when no card is. */
   readonly where: "tail" | "card";
 }
 
@@ -348,7 +360,7 @@ export function placeSteeringNotes(input: {
       text: n.text,
       status: n.status,
       progress,
-      where: progressIsLive(progress) || !input.cards.has(n.callId) ? "tail" : "card",
+      where: input.cards.has(n.callId) ? "card" : "tail",
     });
   }
   return out;
@@ -369,6 +381,10 @@ export function withoutPlacedAnswers<M extends { readonly parts?: readonly unkno
     const parts = m.parts ?? [];
     const kept = parts.filter((p) => {
       if (!isRecord(p) || p.type !== "dynamic-tool") return true;
+      // A delegation's own card is never taken out: eve carries the request it relays from its specialist on the
+      // delegation part itself (its approval-requested state), and once answered that part is still the card the
+      // answer is placed on (mold_v1-296). Only a request's own part (a forwarded tool call, a question) moves.
+      if (str(p.toolName)?.startsWith("eve:subagent:")) return true;
       const meta = isRecord(p.toolMetadata) && isRecord(p.toolMetadata.eve) ? p.toolMetadata.eve : undefined;
       const rid = meta && isRecord(meta.inputRequest) ? str(meta.inputRequest.requestId) : undefined;
       const where = rid ? placed.get(rid)?.where : undefined;

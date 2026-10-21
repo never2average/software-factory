@@ -4,6 +4,7 @@
  * transcript never shows raw identifiers like "eve:subagent:research".
  */
 import { SUBAGENT_META } from "./subagent-meta.generated";
+import { CURATED_LABELS } from "@/lib/specialist-names";
 import { DEPLOYMENT_PROFILE } from "@/lib/deployment-profile.generated";
 // The agent's model-facing tool names follow the profile (`get_company` for `get_customer`): look up by base name.
 import { baseNameAmong, canonicalToolName, modelToolName, speakIdentifier } from "@/agent/lib/agent-vocabulary";
@@ -43,9 +44,7 @@ function sentenceCase(text: string): string {
 /** Curated display names where the title-cased key reads wrong. Every other declared subagent is named by
  *  SUBAGENT_META (subagent.json "name", else the title-cased key) — generated in the deployment profile's words,
  *  so a relabelled deployment never reads a base word in a specialist's name; an unknown id title-cases below. */
-const SUBAGENT_NAMES: Record<string, string> = {
-  "follow-ups": "Follow-ups",
-};
+const SUBAGENT_NAMES: Readonly<Record<string, string>> = CURATED_LABELS;
 
 /** Info-modal copy for a subagent: what it declares (SUBAGENT_META, in the profile's words); generic fallback for
  *  unknown ids. */
@@ -64,6 +63,15 @@ export function subagentDisplayName(name: string): string {
     .filter(Boolean)
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(" ");
+}
+
+/**
+ * What a person calls a specialist (mold_v1-295): the given name its pack or profile declares (subagent.json
+ * "givenName"), else its display name above. Two of the same kind in one chat are told apart by
+ * lib/specialist-names.ts, which takes this as the base.
+ */
+export function specialistBaseName(name: string): string {
+  return SUBAGENT_META[name]?.givenName ?? subagentDisplayName(name);
 }
 
 /** "eve:subagent:research" -> "Research subagent"; known tools get a curated

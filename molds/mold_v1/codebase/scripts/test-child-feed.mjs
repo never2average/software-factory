@@ -1054,5 +1054,19 @@ const noToken = (json) => json?.replace(/,?"continuationToken":"[^"]*"/, "");
   check("cockpit.tsx: the page's feed store keeps saved copies through /api/ops/chat-snapshots (kind=child)", /copies:\s*childCopyIO/.test(storeDecl) && /kind=child/.test(cockpit), storeDecl.slice(0, 600));
 }
 
+{
+  // mold_v1-297: when a specialist's own stream last carried anything — what "stuck" is measured from. The last line's
+  // `meta.at`, a superseded delta's included (it is never parsed), the same with or without skipping, and the same
+  // folded from a saved copy.
+  const lines = specialistStream({ seed: 21, steps: 2, reasoningChars: 2_000, end: "running" });
+  const last = Date.parse(JSON.parse(lines[lines.length - 1]).meta.at);
+  const skipping = foldLines(lines, { summarize }).view();
+  const reference = foldLines(lines, { summarize, skipSuperseded: false }).view();
+  check("lastAt is the last line's own time", skipping.lastAt === last && reference.lastAt === last, { skipping: skipping.lastAt, reference: reference.lastAt, last });
+  const head = foldLines(lines.slice(0, 3), { summarize }).view();
+  check("…and moves only forward as lines arrive", head.lastAt <= last && head.lastAt === Date.parse(JSON.parse(lines[2]).meta.at), head.lastAt);
+  check("a stream with no lines has none", foldLines([], { summarize }).view().lastAt === undefined);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

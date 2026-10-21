@@ -130,6 +130,23 @@ try {
   await a.ended(P, "c2");
   check("…and not after", (await a.frozenToEnd(P)).length === 0);
 
+  console.log("\na specialist the main agent stopped (mold_v1-294, agent/lib/specialist-stop.ts):");
+  const Q = `wrun_sw_q_${process.pid}`;
+  check("the main agent's stop claims the delegation like a sweep does", (await a.claim({ ...claimRow(Q, "s1"), kind: "stopped", facts: { name: "Research 2", reason: "not needed" } })) === "won");
+  check("…and a sweep pass racing it is held off", (await a.claim({ ...claimRow(Q, "s1"), kind: "unreported" })) === "held");
+  await a.settle(Q, "s1", "sent");
+  check("a stopped one is listed for the backstop until its run is ended (its sandbox is freed)", JSON.stringify((await a.frozenToEnd(Q)).map((r) => r.callId)) === '["s1"]');
+  check("…its main thread stays a candidate of the scheduled sweep until then", (await sweepCandidates(db, ORG_A, 3_600_000)).includes(Q));
+  check("…in its own workspace only", (await b.frozenToEnd(Q)).length === 0 && !(await sweepCandidates(db, ORG_B, 3_600_000)).includes(Q));
+  await admin`update specialist_sweeps set updated_at = now() - interval '5 minutes' where parent_session_id = ${Q} and call_id = 's1'`;
+  check("a stale unread stop is retaken by a sweep and keeps its kind (its reason is what the main agent reads)", (await a.claim({ ...claimRow(Q, "s1"), kind: "unreported" })) === "won" && (await admin`select kind from specialist_sweeps where parent_session_id = ${Q} and call_id = 's1'`)[0]?.kind === "stopped");
+  await a.settle(Q, "s1", "delivered");
+  await a.ended(Q, "s1");
+  check("…and once ended it is not listed again", (await a.frozenToEnd(Q)).length === 0 && !(await sweepCandidates(db, ORG_A, 3_600_000)).includes(Q));
+  const stopNotes = await sweepNotes(db, ORG_A, Q);
+  const { readSweepNotes } = await import("../lib/specialist-sweep-client.ts");
+  check("the chat shows no sweep note for it (lib/specialist-sweep-client.ts keeps the four sweep kinds): its card says it", stopNotes.length === 1 && readSweepNotes({ notes: stopNotes }).length === 0, stopNotes);
+
   console.log("\nthe waiting note (d):");
   await a.surfaceWaiting(row("c3", "waiting"));
   await a.surfaceWaiting(row("c3", "waiting"));

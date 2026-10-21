@@ -96,6 +96,10 @@ but its runs and tokens are not recorded and it has no operator override.
 
 - `name`: the display name. Default: the key, title-cased. Set it when that is wrong
   (`kyc-review` would become "Kyc Review").
+- `givenName`: a name of its own ("Scout"), one line of at most 32 characters. It is what the person and the main
+  agent call the specialist everywhere: its delegation cards, its Control Panel rows, steering notes, approval rows and
+  the main agent's `stop_specialist` answers; a second one of the kind in one chat is "Scout 2"
+  (`lib/specialist-names.ts`). Default: none, and the specialist is called by its `name`.
 - `summary`: one line for lists, the Agents tab and the provisioned `workflows` row.
   Default: the first sentence of the `agent.ts` `description`.
 - `dataroomPaths`: path templates the subagent may read and write, beyond the built-in
@@ -227,7 +231,7 @@ invoices-pack/
     subagents/
       invoice-extraction/
         agent.ts                               description = routing hint; compaction: compactionFor("invoice-extraction", <role>)
-        subagent.json                          name, summary, dataroomPaths
+        subagent.json                          name, givenName, summary, dataroomPaths
         instructions.md                        the contract: sources, precedence, output, skills table, scripts table
         instructions/00-mode.ts                copied verbatim from agent/subagents/research/
         instructions/operator-override.ts      copied, keyed "invoice-extraction"
