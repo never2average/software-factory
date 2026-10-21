@@ -564,6 +564,8 @@ def _rls_claim_single(app_id, docs, want, ev):
         out.append(f"{w} but the evidence was measured on backend {ev['backend']!r} while postgres.provider is {pg['provider']!r}. {fix}")
     ra = ev.get("running_app")
     if ra == "not_enforced": out.append(f"{w} but the app serving traffic was read as failing it ({str(ev.get('running_app_detail'))[:160]}). {redeploy}")
+    elif ra == "unmeasured" and t != "vercel":
+        out.append(f"{w} but rls_verified.running_app is 'unmeasured', which only a Vercel function can be (its own server's check runs with the serving image). {fix}")
     elif ra not in ("enforced", "unmeasured"): out.append(f"{w} but rls_verified.running_app is {ra!r}. {fix}")
     at = str(ev.get("at") or ""); atd = _ts(at); dep = str(infra.get("deployed_at") or "")
     if not atd: out.append(f"{w} but rls_verified.at is {at[:60]!r}, which is not {TS_FORM}. {fix}")
@@ -1067,7 +1069,10 @@ def self_test():
     inf0 = {"target": "compose_remote", "deployed_at": "2026-10-21T09:59:00+00:00", "compose_remote": {"production_url": "https://a.example.org"}}
     claim = lambda ev: _rls_claim("x", {"application": app0, "infrastructure": inf0, "datastores": ds(ev)})
     ok(claim(good) == [], "validate: a mold_v0 app with the product's own RLS check passed after its deploy validates")
-    ok(claim(dict(good, running_app="unmeasured")) == [], "  ...unmeasured from the app serving traffic is accepted for it (the Vercel function's probe), never turned into enforced")
+    ok(claim(dict(good, running_app="unmeasured")), "  ...unmeasured on its own server (where the check runs with the serving image) is refused")
+    ok(_rls_claim("x", {"application": app0, "infrastructure": {"target": "vercel", "deployed_at": inf0["deployed_at"], "vercel": {"api_url": "https://a-api.example.org"}},
+                        "datastores": {"postgres": {"provider": "neon", "rls": "fail_closed", "rls_verified": dict(good, backend="neon", running_app="unmeasured")}}}) == [],
+       "  ...on Vercel unmeasured (the function's own probe not run yet) is accepted, never turned into enforced")
     ok(claim(None) and "--verify-rls" in claim(None)[0], "validate: fail_closed with no evidence: refused, with --verify-rls")
     ok(claim(dict(good, mode="off", running_app="not_enforced", source=good["source"] + "; FAILED: x")), "validate: a failed check: refused")
     ok(claim(dict(good, source="provision.py --verify-rls (mold_v1)")), "validate: evidence that is not the product's own check: refused")

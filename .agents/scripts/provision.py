@@ -98,8 +98,8 @@ the mold commit the build is made from (state/factory.json molds[].source.commit
 ci.yml, for exactly that commit; red, still running or unknown refuses with one plain sentence naming the check, unless
 --allow-unverified-mold "<reason>" (kept in infrastructure.json deploy_gate.override). An IN-TREE mold (authored in this
 repository; today mold_v0, mold_v0-040) is judged on THIS repository's checks for the commit being deployed (HEAD, with
-its codebase exactly that commit): the workflow its mold.json names, or until one is named every check GitHub reports
-for that commit (none at all refuses). On Vercel the deploy then records
+its codebase exactly that commit): the workflow its mold.json names, or until one is named at least one GitHub Actions
+check of this repository that succeeded and nothing failed or running (outside apps' checks can only refuse). On Vercel the deploy then records
 which deployment serves each project, and after the three deploys runs the health gate and the smoke test
 (lib/smoke.py: one chat as the operator, in the operator's own workspace, answered in time). Either failing points
 every project back at its recorded deployment, reads health again and ends failed, "rolled back" (see RELEASES below:

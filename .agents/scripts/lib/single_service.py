@@ -179,7 +179,10 @@ def rls_vercel(P, cb, api, spec, health_doc, rls_run=None):
     it. -> (passed, said, running_app, detail). Raises Stop when the database address cannot be read back."""
     import agent_result as AR
     vals = P.pull_env(cb, api, required=False); url = vals.get("DATABASE_URL")
-    if not url or url == "[SENSITIVE]": raise Stop(f"DATABASE_URL could not be read back from {api}, so row-level security could not be checked")
+    if not url or url == "[SENSITIVE]":
+        raise Stop(f"DATABASE_URL could not be read back from {api} (absent, or marked Sensitive on Vercel, which hides it from every "
+                   f"reader), so row-level security could not be checked and the deploy cannot finish. Tell the operator; nothing "
+                   f"here changes how the database address is stored")
     AR.forbid(url)
     rc, out = (rls_run or rls_local)(cb, url, spec)
     passed, said = rls_passed(rc, out, spec), rls_said(out, spec)
@@ -707,9 +710,9 @@ def check(app_id, app, infra, adir, say=print, root=None):
         todo.append(f"make the SSH key named {S['key_ref']} and add its public half at the server provider: python3 .claude/scripts/provision.py {app_id} --remote-key")
     if errs: todo.append("fix the state problem(s) above, then run: python3 .claude/scripts/factory.py validate")
     gone = missing_build_inputs(cb, F)
-    if gone: todo.append(f"the mold's snapshot lacks {', '.join(gone)}, which its image build copies: commit it in the mold's source, then "
-                         f"python3 .claude/scripts/mold.py refresh {app['mold_id']} (nothing for this app's state to change)")
-    elif pre: todo.append("the mold's snapshot cannot be deployed as it is (see 'not ready' above): a change to the mold's source, then mold.py refresh")
+    if gone: todo.append(f"the mold's codebase lacks {', '.join(gone)}, which its image build copies. " + _codebase_fix(app["mold_id"], "commit the file")
+                         + " (nothing for this app's state to change)")
+    elif pre: todo.append("the mold's codebase cannot be deployed as it is (see 'not ready' above). " + _codebase_fix(app["mold_id"], "see above"))
     say("check only, offline and read-only: nothing was contacted and nothing was created. " +
         ("Still to do:" if todo else f"Ready. See every command first: python3 .claude/scripts/provision.py {app_id} --deploy-remote --dry-run"))
     for t in todo: say("  - " + t)
@@ -795,7 +798,8 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
             what = (f"the server switched back by itself to {bk['ROLLED_BACK']}, which serves again" if rb.returncode == 0 and bk.get("ROLLED_BACK") else
                     f"there was no earlier release to switch back to, so {release} is still in place" if rb.returncode == 0 and bk.get("NOTHING") else
                     f"the switch back to {bk.get('ROLLBACK_FAILED') or 'the earlier release'} FAILED too; try: python3 .claude/scripts/provision.py {S['app_id']} --rollback-remote")
-            raise Stop(f"release {release} came up but does not serve as it should: " + "; ".join(bad) + f". {what}. Fix the cause and deploy again.")
+            e = Stop(f"release {release} came up but does not serve as it should: " + "; ".join(bad) + f". {what}. Fix the cause and deploy again.")
+            e.rls = rls; raise e
         say(f"[public] {url} answered 200 ok")
         run("keep", check=False)
         return {"release": release, "facts": facts,
@@ -997,7 +1001,7 @@ def console_preflight(K):
                    f"The console project is pointed at the API through that variable")
     if not K["lockfile"]:
         bad.append(f"{K['dir']}/package-lock.json is not committed in the mold's snapshot, so Vercel cannot install the console's exact dependencies "
-                   f"(a change to the mold's source, then mold.py refresh)")
+                   f"(commit it: for an in-tree mold such as mold_v0, in this repository by pull request; otherwise in the mold's source, then mold.py refresh)")
     return bad
 
 def api_names(F):
@@ -1327,7 +1331,9 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         rls = None
         if F.get("rls"):
             rls = rls_vercel(P, cb, api, F["rls"], res[1], rls_run)
-            if not rls[0]: raise Stop(f"{api}: the product's row-level security check failed on its database: {rls[1] or 'no output'}")
+            if not rls[0]:
+                record_rls(adir, F["rls"], False, rls[1], "by provision.py --deploy (both projects rolled back)", rls[2], rls[3])
+                raise Stop(f"{api}: the product's row-level security check failed on its database: {rls[1] or 'no output'}")
             say(f"  {api}: {rls[1]}")
         if P.pull_env(cb, web, required=False).get(K["api_env"]) != api_url:
             P._set_env(K["api_env"], api_url, cb, project=web); say(f"  {web}: {K['api_env']} set to the API's address {api_url}")
@@ -1496,7 +1502,12 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
             return 0
         _ready_to_contact(S, app_id)
         try: res = deploy(S, F, cb, say=say)
-        except Stop as e: revert(adir, app, str(e)); raise
+        except Stop as e:
+            r_ = getattr(e, "rls", None)
+            if r_ and not r_["passed"]:   # the deployed database was measured failing: never leave an older pass standing
+                record_rls(adir, F["rls"], False, r_["said"], "by provision.py --deploy-remote (the release was rolled back)", "not_enforced",
+                           "ran in a one-off container of the new release's image, with the server's env file.")
+            revert(adir, app, str(e)); raise
         record(adir, app, infra, S, res, mold_commit(app["mold_id"], root))
         if res.get("rls"):
             record_rls(adir, F["rls"], True, res["rls"]["said"], f"by provision.py --deploy-remote in a one-off container of release {res['release']}",

@@ -32,7 +32,7 @@
     },
     {
       "name": "test:migrations",
-      "run": "env -u DATABASE_URL -u MIGRATIONS_PG_URL npm run --silent test:migrations",
+      "run": "env -u MIGRATIONS_PG_URL DATABASE_URL= npm run --silent test:migrations",
       "cwd": "codebase",
       "timeout_s": 900,
       "requires": [
