@@ -125,10 +125,11 @@ export async function getRun(orgId: number, id: string): Promise<RunView | null>
   const [r] = await (await getDb()).query<RunRow>(`SELECT ${COLS} FROM runs WHERE org_id = $1 AND id = $2`, [orgId, String(id)]);
   return r ? view(r) : null;
 }
-export async function listRuns(orgId: number, opts: { pack?: string; limit?: number } = {}): Promise<RunView[]> {
+export async function listRuns(orgId: number, opts: { pack?: string; kind?: string; limit?: number } = {}): Promise<RunView[]> {
   const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 50), 1), 200);
   const rows = await (await getDb()).query<RunRow>(
-    `SELECT ${COLS} FROM runs WHERE org_id = $1 AND ($2::text IS NULL OR pack = $2) ORDER BY created_at DESC, id DESC LIMIT $3`, [orgId, opts.pack ?? null, limit]);
+    `SELECT ${COLS} FROM runs WHERE org_id = $1 AND ($2::text IS NULL OR pack = $2) AND ($4::text IS NULL OR kind = $4) ORDER BY created_at DESC, id DESC LIMIT $3`,
+    [orgId, opts.pack ?? null, limit, opts.kind ?? null]);
   return rows.map(view);
 }
 export async function runResults(orgId: number, id: string): Promise<RunResultRow[]> {

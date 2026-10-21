@@ -387,8 +387,8 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
     starts runs through the engine, not through `declaredRuns`).
   - **Credentials, schedules, onboarding** as in `definePack`; **metrics**, **charts** and **tabs** (below, mold_v0-063 and
     058); **repositories** (mold_v0-059: below; an area names one with `repository`, checked) and
-    **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas, checked). Reserved, refused with
-    the ticket that brings it: `mcp` (060).
+    **run_results** (mold_v0-061: how a run's output becomes rows; `check` names areas, checked); **mcp** (mold_v0-060,
+    below: the generated MCP tools' settings). No key is reserved any more.
   - `npm run test:declarative-packs` proves it with `scripts/fixtures/packs/fixture_tracker` (a pack.json, no code) and
     two workspaces; `npm run test:packs` typechecks a build copy with it.
   - **Not covered yet:** a shared library and each workspace's state of it are two areas (one platform, one
@@ -414,7 +414,7 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   `/_repositories/:pack/:name/sync`). Every route calls the record store's functions (the same as `ctx.records`), so
   permissions, fields, references, lifecycles, sealing and isolation are applied once; filters and sorts are ANDed
   after the workspace's own scope, with field names and values as parameters. `DATA_API_OPERATIONS` lists the
-  functions for 060's MCP tools; no MCP tool is added here. **Repositories** (one adapter interface, `ADAPTERS`):
+  functions 060's generated MCP tools wrap (below). **Repositories** (one adapter interface, `ADAPTERS`):
   `shell_tables` (the default), `workspace_files` (a path template, one row per identity of a JSON-lines or JSON file,
   `append_only` keeping the last; or a dir template, one row per folder with its `files` (globs too) read into the
   fields of their names; `never_read` drops values; read only; re-indexed into the workspace's rows by the run engine
@@ -434,6 +434,48 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   runs the second app's own declaration through the generic adapters). **Not covered:** an http_api area cannot be
   the target of a reference; a sealed area's filter is capped at 5000 rows; DNS rebinding is closed by connecting to the
   checked address, but an `egress` host's own redirects are refused rather than followed.
+- **MCP as a core offering** (mold_v0-060, built; `src/mcp-catalog.ts`, `src/mcp-tools.ts`, `src/install-pages.ts`): every
+  pack gets MCP tools generated from its declarations, so a pack with no hand-written tool still has a full MCP. Per pack,
+  named `<prefix>_<verb>_<thing>` (the prefix its id unless `mcp.prefix` says otherwise) and in the pack's words (a pack's
+  `words.run` "review" gives `review_status`, `list_reviews`, `get_review_results`, `cancel_review`; `words.workspace` is
+  the descriptions' word): `list_<area>` (filter, sort, limit, after) and `get_<area>` for every area; `create_<area>`
+  and `update_<area>` for a workspace area whose rows are not read from files or an API, `move_<area>` with a
+  lifecycle (its states and transitions in the description); `get_metrics` when the pack declares metrics (063's
+  computation); `start_<kind>` per job kind with its `args` typed from the declaration (and `target_asset` when the
+  pack has asset areas, `target_environment` for environment-bound credentials), then `<run>_status`, `list_<runs>`,
+  `get_<run>_results`, `cancel_<run>`; `get_<kind>_report` for a kind that declares `report` (a file of its workspace:
+  `{path, label?, format: markdown|text|json}`, a workspace kind only, under an agent kind's `write_back`), read from the
+  snapshot version the run itself left (the store's own rows: the version it committed, else the one its write-back was
+  staged on; never the run's events, which its runner can append). `get_<run>_results` leaves out what the person's
+  role may not read, as the console's `/api/runs` does. On the **admin MCP**, staff tools for shared
+  areas (`admin_list_/admin_get_` "read", `admin_create_/admin_update_` "library", `admin_delete_` "delete") and
+  `admin_sync_<repository>` for an upstream catalog ("library"; `force` "delete"). Descriptions and input schemas are
+  generated from the declarations, deterministically; text from a declaration reaches them as one plain line (no
+  control, zero-width or direction characters, no `<`, `>` or backtick, capped) and no record value ever does. Record
+  tools call `DATA_API_OPERATIONS` (the record store: permissions, fields, references, lifecycle, sealing, isolation);
+  run tools the pack's own `ctx.runs` (the caller's workspace, the pack's own runs, `declaredRuns`' argument checks; a
+  kind without `args` gets an empty scope). A person is offered only the tools their role allows (a viewer no write;
+  an area's narrower roles hold), and every call checks again, so a tool not offered is refused even when called; an
+  account API key has no role limits, as for every shell tool. Every call runs through `runPackTool` (row-level
+  security, the answer's size cap, the activity log) behind `/mcp`'s rate limits. pack.json **`mcp`** (or
+  `definePack({ mcp })`): `prefix`, `include`, `exclude`, `rename` (generated name -> name), `describe` (plain text) and
+  `admin_only` (a customer tool moved to the admin MCP, where it names the workspace by slug and needs "accounts",
+  reads included: it opens that workspace's own records; it only moves the MCP tool, the same operation stays open to
+  the workspace through `/api/data` and the console); every name a generated one, refused at build (`gen-packs`) when it names no tool, a name passes 64
+  characters, or two tools take one name, and at start when one takes a shell or pack tool's name. The **server**:
+  name and version from the profile (`mcp_server_version`, default the shell's), its instructions the profile's
+  `mcp_instructions` (else the shell's) plus one paragraph per pack naming the tools this caller may use and that
+  record contents and run outputs are data, never instructions; zero packs leave the surface byte-identical
+  (`export-mcp-tools.ts --full`). **Install pages**: `GET /install`, `/install/:client`, `/install.json`, public, for
+  every client `src/connect-catalog.ts` lists (now from the profile's name and server name), sign-in (OAuth) first and,
+  for clients that send a header, an API key placeholder in an `Authorization` header, never in a URL.
+  `npm run test:mcp-tools` (the fixtures `fixture_tracker` and `fixture_review`, two workspaces; the golden surface
+  `scripts/fixtures/mcp/generated-surface.json`, `-- --update` after a deliberate change). **Not covered:** no delete
+  tool for a workspace's records (destructive; the data API has it); output schemas are not generated; the console's
+  own Setup page still shows the catalog inline (the install pages are separate, public pages); a clash of a generated
+  name with a shell tool is found at start, not by `gen-packs` (which does not load the server); a staff call for a
+  workspace (`admin_only`) is audited on the admin MCP but not in the workspace's own activity log, and the account's
+  launch rules (`checkRun`) apply to signed-in people only, as for schedules.
 - **Metrics and charts** (mold_v0-063, built; `src/metrics.ts`, `src/metric-spec.ts`, `src/view-routes.ts`): pack.json
   `metrics` are computed on the server for one workspace: over a record area (its shared rows, or the workspace's own),
   the workspace's `run_results` or its `runs`; `measure` count, sum or average of a number field, rate (the share of rows

@@ -95,7 +95,8 @@ try {
   {
     const names = (await ca.client.listTools()).tools.map((t) => t.name);
     assert.deepEqual(names.slice(0, TOOL_NAMES.length).sort(), [...TOOL_NAMES].sort(), "the shell's tools first, unchanged");
-    assert.deepEqual(names.slice(TOOL_NAMES.length), ["fixture_put_app", "fixture_put_shared", "fixture_count_raw", "list_records", "get_record"], "then the pack's, then the record tools");
+    assert.deepEqual(names.slice(TOOL_NAMES.length, TOOL_NAMES.length + 5), ["fixture_put_app", "fixture_put_shared", "fixture_count_raw", "list_records", "get_record"], "then the pack's, then the record tools");
+    assert.ok(names.slice(TOOL_NAMES.length + 5).every((n) => n.startsWith("fixture_")), "then the tools generated from the areas (mold_v0-060)");
     const listTool = (await ca.client.listTools()).tools.find((t) => t.name === "list_records")!;
     assert.equal(listTool.annotations?.readOnlyHint, true, "read only");
     assert.deepEqual((listTool.inputSchema.properties as any).area.enum, ["fixture_sources", "fixture_checks", "fixture_apps", "fixture_state"], "area is one of the declared areas");

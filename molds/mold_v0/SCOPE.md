@@ -66,7 +66,10 @@ turns it into shell, or builds it where nothing exists yet.
   Clerk is off), mold_v0-010 (install guides from the profile, tool docs from the registry), mold_v0-018, **built** (MCP rate
   limits per key, member, workspace and address with a 429 and Retry-After, request and answer size caps, requests in
   flight per workspace, the sign-up, invitation and key endpoints; `src/rate-limits.ts`, numbers from the profile's
-  `limits`, per plan, under the server's environment).
+  `limits`, per plan, under the server's environment), mold_v0-060, **built** (MCP as a core offering: tools generated from every pack's declarations
+  over the data API and the run engine, shaped by pack.json `mcp`, admin-only tools on the admin MCP, the server's
+  name, version and instructions from the profile, public install pages per client at `/install`;
+  `src/mcp-catalog.ts`, `src/mcp-tools.ts`, `src/install-pages.ts`).
 
 ### Run engine with sandboxed harness runs
 
