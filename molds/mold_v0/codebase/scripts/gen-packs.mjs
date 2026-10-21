@@ -12,8 +12,16 @@
 //
 // It refuses (exit 1, every problem listed) a pack whose files would get past the seam:
 //   - pack.json: unknown fields, an id that is not the directory's, a missing entry, badly named or numbered migrations
-//   - code: an import of any shell module other than src/pack-api.ts, of a database driver or a process API; any
-//     mention of asPlatform, SET/RESET ROLE, set_config or the tenant setting (leaving the workspace's scope)
+//   - code: the pack has two kinds (mold_v0-054), told apart by pack.json `runner`, a directory inside the pack:
+//       server code  (everything outside `runner`: the entry, its tools and routes, loaded into the server) may import
+//                    its own files (never the runner's) and src/pack-api.ts, and nothing that starts processes or
+//                    reaches a database: no process API, no driver
+//       runner code  (the files under `runner`: a job kind's programs, run by the workspace harness as the run's own
+//                    user with node, src/run-harness.ts) may also start processes and use the file system
+//                    (node:child_process, node:fs, node:os, ...), and imports only its own runner files and node's
+//                    built-ins: never src/pack-api.ts, the server code or any other shell module; .js or .mjs only
+//     neither may mention asPlatform, SET/RESET ROLE, set_config or the tenant setting (leaving the workspace's scope),
+//     nor load a module outside a plain import (require, createRequire, a computed dynamic import, eval)
 //   - SQL: a table, index or statement outside the pack's own `<id>_` names; GRANT, REVOKE, policies, roles, DO blocks,
 //     functions, views, triggers, rules, SECURITY DEFINER, extensions, default privileges, disabling row-level
 //     security; and any table created without row-level security: each CREATE TABLE must be followed, in the pack's
@@ -28,7 +36,7 @@
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
 //   --packs <dir> --out <dir> --profile <file>   another packs directory, output root or profile (tests)
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,11 +67,18 @@ const ID = /^[a-z][a-z0-9_]{1,30}$/;
 const PAGE_ID = /^[a-z][a-z0-9-]{0,40}$/;
 const DATA_PATH = /^\/[a-z0-9_\-/]*$/i;
 const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
-const MANIFEST_KEYS = new Set(["id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream"]);
+const MANIFEST_KEYS = new Set(["id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
   "@modelcontextprotocol/sdk/types.js"]);
+/**
+ * What a pack's runner code (pack.json `runner`, mold_v0-054) may import: node's built-ins a run program needs, starting
+ * processes and the file system included. Never a shell module (src/pack-api.ts included) or a package: a program runs
+ * from its own copy of the pack, as the run's user, with nothing of the server's.
+ */
+const RUNNER_BARE = new Set(["node:child_process", "node:fs", "node:fs/promises", "node:path", "node:url", "node:util", "node:buffer", "node:events",
+  "node:crypto", "node:os", "node:stream", "node:stream/promises", "node:readline", "node:timers", "node:timers/promises", "node:zlib", "node:string_decoder"]);
 const CODE_EXT = /\.(m?[jt]sx?|cjs|cts)$/;
 
 const problems = [];
@@ -87,6 +102,17 @@ function walk(dir) {
   return out;
 }
 
+function links(dir) {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === "node_modules") continue;
+    const p = path.join(dir, e.name);
+    if (e.isSymbolicLink()) out.push(p);
+    else if (e.isDirectory()) out.push(...links(p));
+  }
+  return out;
+}
+
 // ---------- code: the import boundary ----------
 
 const SPECIFIERS = /\b(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\sfrom\s*)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\brequire\s*\(\s*["']([^"']+)["']\s*\)/g;
@@ -105,20 +131,35 @@ const BANNED_CODE = [
 const DYNAMIC_IMPORT = /\bimport\s*\(/g;
 const LITERAL_IMPORT = /^import\s*\(\s*(["'])[^"'`$]*\1\s*\)/;
 
-function checkCode(packDir, id) {
-  for (const file of walk(packDir).filter((f) => CODE_EXT.test(f))) {
+const within = (dir, p) => { const r = path.relative(dir, p); return r === "" || (!r.startsWith("..") && !path.isAbsolute(r)); };
+
+/** The import boundary: server code everywhere but `runnerDir`, runner code under it (mold_v0-054). */
+function checkCode(packDir, id, runnerDir) {
+  // A link could make a pack file be a shell module (or a runner file be server code): packs carry plain files only.
+  for (const l of links(packDir)) fail(`pack ${id}: ${posix(path.relative(packDir, l))}`, "a symbolic link: a pack carries plain files only");
+  for (const file of walk(packDir).filter((f) => CODE_EXT.test(f) && !lstatSync(f).isSymbolicLink())) {
     const where = `pack ${id}: ${posix(path.relative(packDir, file))}`;
+    const runner = runnerDir !== null && within(runnerDir, file);
     const src = readFileSync(file, "utf8");
+    if (runner && !/\.m?js$/.test(file)) fail(where, "runner code runs with node as it is: a .js or .mjs file");
     for (const [re, what] of BANNED_CODE) if (re.test(src)) fail(where, `uses ${what}`);
     for (const m of src.matchAll(DYNAMIC_IMPORT)) if (!LITERAL_IMPORT.test(src.slice(m.index))) fail(where, "a dynamic import of anything but one string literal");
     for (const m of src.matchAll(SPECIFIERS)) {
       const spec = m[1] ?? m[2] ?? m[3];
+      if (runner) {
+        if (spec.startsWith(".")) {
+          if (!within(runnerDir, path.resolve(path.dirname(file), spec))) fail(where, `imports ${spec}: runner code may import its own runner files and node's built-ins only (never src/pack-api.ts, the pack's server code or the shell)`);
+        } else if (!RUNNER_BARE.has(spec)) fail(where, `imports ${spec}: not allowed in runner code (allowed: ${[...RUNNER_BARE].join(", ")}, its own runner files)`);
+        continue;
+      }
       if (spec.startsWith(".")) {
-        const target = path.resolve(path.dirname(file), spec).replace(/\.js$/, ".ts");
+        const raw = path.resolve(path.dirname(file), spec);
+        const target = raw.replace(/\.js$/, ".ts");
         if (target === PACK_API) continue;
         const inside = path.relative(packDir, target);
         if (inside.startsWith("..") || path.isAbsolute(inside)) fail(where, `imports ${spec}: a pack may import its own files and src/pack-api.ts only`);
-      } else if (!ALLOWED_BARE.has(spec)) fail(where, `imports ${spec}: not allowed in a pack (allowed: ${[...ALLOWED_BARE].join(", ")}, src/pack-api.ts, its own files)`);
+        else if (runnerDir !== null && (within(runnerDir, raw) || within(runnerDir, target))) fail(where, `imports ${spec}: server code may not import the runner's code (it may start processes)`);
+      } else if (!ALLOWED_BARE.has(spec)) fail(where, `imports ${spec}: not allowed in a pack's server code (allowed: ${[...ALLOWED_BARE].join(", ")}, src/pack-api.ts, its own files${runnerDir !== null ? "; a run program that needs more goes under the pack's runner directory" : ""})`);
     }
   }
 }
@@ -305,7 +346,19 @@ function loadPack(dirName) {
       else words[k] = v;
     }
   }
-  if (id && ID.test(id)) checkCode(dir, id);
+  // The runner directory (mold_v0-054): a job kind's programs, held to the runner rules instead of the server's.
+  let runnerDir = null;
+  if (m.runner !== undefined) {
+    if (typeof m.runner !== "string" || !/^[a-z0-9_\-/]+$/i.test(m.runner) || m.runner.includes("..") || m.runner.startsWith("/")) fail(where, "runner must be a directory inside the pack");
+    else if (!existsSync(path.join(dir, m.runner)) || !statSync(path.join(dir, m.runner)).isDirectory()) fail(where, `runner directory ${m.runner} does not exist`);
+    else {
+      runnerDir = path.join(dir, m.runner);
+      if (runnerDir === path.resolve(dir)) fail(where, "runner must be a directory under the pack, not the pack itself");
+      if (typeof entry === "string" && within(runnerDir, path.join(dir, entry))) fail(where, `entry ${entry} is inside the runner directory: the server's entry is server code`);
+      if (typeof m.migrations === "string" && within(runnerDir, path.join(dir, m.migrations))) fail(where, "migrations may not be inside the runner directory");
+    }
+  }
+  if (id && ID.test(id)) checkCode(dir, id, runnerDir);
   return { id, dir, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
 }
 

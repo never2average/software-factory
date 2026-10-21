@@ -189,7 +189,9 @@ const packFile = z.string().regex(/^[a-z0-9_\-][a-z0-9_\-/.]*\.m?js$/i, "a .js o
  * across all its attempts, enforced by the gateway.
  *   runner     "workspace-harness": the harness checks the workspace out (when `workspace`), runs `entry` with node in
  *              it, then `validator` (exit 0 means valid), and writes the workspace back only then (mold_v0-033)
- *   entry      the run's program, a file inside the pack; exit 0 done, 75 an infrastructure failure (retried), else failed
+ *   entry      the run's program, a file inside the pack; exit 0 done, 75 an infrastructure failure (retried), else failed.
+ *              Put it under the pack's runner directory (pack.json `runner`, mold_v0-054) when it starts processes or
+ *              needs more of node than server code may import: scripts/gen-packs.mjs holds runner code to its own rules
  *   egress     the hosts the run may reach besides the gateway, through the run's egress proxy
  */
 export const JobKindSchema = z.object({
