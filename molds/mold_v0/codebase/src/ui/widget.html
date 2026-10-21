@@ -688,8 +688,18 @@
     const s = d.simulation, t = d.totals;
     const finished = ["completed", "failed", "timeout", "cancelled"].reduce((a, k) => a + (d.status[k] || 0), 0);
     const cellColor = (c) => (c.hit_rate == null ? "var(--surface-2)" : `color-mix(in srgb, var(--good) ${Math.round(c.hit_rate * 45)}%, color-mix(in srgb, var(--critical) ${Math.round((1 - c.hit_rate) * 25)}%, var(--surface)))`);
+    // Execution modes: plan then execute vs direct (paired sessions when the run compared both).
+    const modes = d.by_mode || [];
+    const MODE = { plan: "Plan → execute", direct: "Direct" };
+    const plan = modes.find((m) => m.mode === "plan"), direct = modes.find((m) => m.mode === "direct");
+    const delta = (a, b) => (a == null || b == null ? "–" : `${a >= b ? "+" : "−"}${Math.abs(Math.round((a - b) * 100))} pts`);
+    const modeCard = plan && direct ? `<div class="card"><h2>Plan → execute vs direct</h2><div class="table-wrap"><table>
+        <thead><tr><th>Agent</th><th class="num">Plan → execute</th><th class="num">Direct</th><th class="num">Difference</th></tr></thead>
+        <tbody><tr><td><strong>All agents</strong></td><td class="num">${pct(plan.hit_rate)} <span class="muted">n=${plan.scored}</span></td><td class="num">${pct(direct.hit_rate)} <span class="muted">n=${direct.scored}</span></td><td class="num">${delta(plan.hit_rate, direct.hit_rate)}</td></tr>
+        ${plan.by_agent.map((a) => { const b = direct.by_agent.find((x) => x.agent_id === a.agent_id) || {}; return `<tr><td>${esc(a.label)}</td><td class="num">${pct(a.hit_rate)} <span class="muted">n=${a.scored}</span></td><td class="num">${pct(b.hit_rate)} <span class="muted">n=${b.scored ?? 0}</span></td><td class="num">${delta(a.hit_rate, b.hit_rate)}</td></tr>`; }).join("")}</tbody>
+      </table></div><div class="muted" style="margin-top:8px">Same tasks, personas and agents in both modes. Plan → execute: each agent plans first and implements once the developer approves.</div></div>` : "";
     return `<div class="stack">
-      <div class="spread"><div><h1>${esc(s.name)}</h1><div class="sub">${esc(s.product)} · ${s.mode === "representative" ? `${s.repeats} sessions per scenario, agents mixed by developer adoption` : `${s.repeats}× per scenario and agent`}</div></div>
+      <div class="spread"><div><h1>${esc(s.name)}</h1><div class="sub">${esc(s.product)} · ${s.mode === "representative" ? `${s.repeats} sessions per scenario, agents mixed by developer adoption` : `${s.repeats}× per scenario and agent`}${modes.length ? ` · ${modes.map((m) => MODE[m.mode]).join(" and ")}` : ""}</div></div>
         <div class="row">${statusPill(s.status)}${s.status === "queued" || s.status === "running" ? go("get_simulation", { simulation_id: s.id }, "↻ Refresh") : ""}</div></div>
       <div class="card"><div class="spread"><h2>Progress</h2><span class="muted">${finished}/${t.sessions} sessions finished</span></div>
         <div class="meter"><span style="width:${(finished / Math.max(1, t.sessions)) * 100}%"></span></div>
@@ -700,14 +710,15 @@
         ${tile("Agent spend", usd(t.cost_usd))}
       </div>
       ${d.by_profile.length ? `<div class="grid">${d.by_profile.map((p) => tile(p.profile, pct(p.hit_rate), `${ci(p.hit_ci)} n=${p.scored}`)).join("")}</div>` : ""}
+      ${modeCard}
       <div class="card"><h2>Scenario × agent</h2><div class="table-wrap"><table>
         <thead><tr><th>Scenario</th>${(d.matrix[0]?.cells || []).map((c) => `<th class="num">${esc(c.label)}</th>`).join("")}</tr></thead>
         <tbody>${d.matrix.map((r) => `<tr><td>${esc(r.scenario)}${r.expectation === "avoid" ? ' <span class="badge">avoid</span>' : ""}</td>${r.cells.map((c) => `<td><div class="cell" style="background:${cellColor(c)}" data-tip="${esc(c.label)}: ${c.hits} hits of ${c.scored} scored (${c.sessions} sessions)">${c.sessions ? (c.scored ? `${c.hits}/${c.scored}` : "…") : "–"}</div></td>`).join("")}</tr>`).join("")}</tbody>
       </table></div></div>
       <div class="card"><h2>Agent sessions</h2><div class="table-wrap"><table>
-        <thead><tr><th>Scenario</th><th>Agent</th><th>Profile</th><th>#</th><th>Status</th><th>Verdict</th><th>Went with</th></tr></thead>
+        <thead><tr><th>Scenario</th><th>Agent</th>${modes.length > 1 ? "<th>Mode</th>" : ""}<th>Profile</th><th>#</th><th>Status</th><th>Verdict</th><th>Went with</th></tr></thead>
         <tbody>${d.sessions.map((x) => `<tr class="clickable" data-tool="get_agent_session" data-args="${args({ session_id: x.id })}">
-          <td>${esc(x.scenario)}</td><td class="muted">${esc(x.agent_id || x.model)}</td><td class="muted">${esc(x.profile || "–")}</td><td class="muted">${x.attempt}</td><td>${statusPill(x.status)}</td><td>${x.verdict ? verdict(x.verdict) : '<span class="muted">–</span>'}</td><td>${esc(x.winner || "–")}</td></tr>`).join("")}</tbody>
+          <td>${esc(x.scenario)}</td><td class="muted">${esc(x.agent_id || x.model)}</td>${modes.length > 1 ? `<td class="muted">${esc(MODE[x.exec_mode] || x.exec_mode)}</td>` : ""}<td class="muted">${esc(x.profile || "–")}</td><td class="muted">${x.attempt}</td><td>${statusPill(x.status)}</td><td>${x.verdict ? verdict(x.verdict) : '<span class="muted">–</span>'}</td><td>${esc(x.winner || "–")}</td></tr>`).join("")}</tbody>
       </table></div></div>
     </div>`;
   }

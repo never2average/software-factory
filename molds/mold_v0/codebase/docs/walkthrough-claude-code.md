@@ -17,13 +17,13 @@ behaves, it is not a benchmark of the products named.
 
 ## 1. Set up the workspace
 
-An empty directory with one file. The connector URL contains the organization's API key, so keep the file private and
-out of version control.
+An empty directory with one file. The file holds the organization's API key (sent as a header, never in the URL), so
+keep it private and out of version control.
 
 ```bash
 mkdir octillion-demo && cd octillion-demo
 cat > .mcp.json <<'EOF'
-{ "mcpServers": { "octillion": { "type": "http", "url": "https://<host>/mcp/<api key>" } } }
+{ "mcpServers": { "octillion": { "type": "http", "url": "https://<host>/mcp", "headers": { "Authorization": "Bearer <api key>" } } } }
 EOF
 chmod 600 .mcp.json
 ```
@@ -168,8 +168,9 @@ Four of the 30 sessions also failed on platform errors, not on the agents' work.
 
 ## Notes for other clients
 
-- **Claude and ChatGPT** render Octillion's dashboard inline for every tool result. Add the same URL under
-  Settings -> Connectors -> Add custom connector (Claude) or as a custom MCP server in developer mode (ChatGPT).
-- **Cursor and other IDE hosts** show the tool list and text results, no dashboard. Paste the URL into the MCP
-  settings, make sure the tools are enabled, and type the first prompt in agent chat.
+- **Claude and ChatGPT** render Octillion's dashboard inline for every tool result. Add `https://<host>/mcp`
+  under Settings -> Connectors -> Add custom connector (Claude) or as a custom MCP server with OAuth in developer mode
+  (ChatGPT) and sign in: these apps cannot send an API key header.
+- **Cursor and other IDE hosts** show the tool list and text results, no dashboard. Add the URL with a `headers` entry
+  (`"Authorization": "Bearer <api key>"`) in the MCP settings, make sure the tools are enabled, and type the first prompt in agent chat.
 - In every client the first prompt can be "Get me started with Octillion."

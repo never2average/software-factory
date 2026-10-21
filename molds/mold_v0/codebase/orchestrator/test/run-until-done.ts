@@ -137,6 +137,36 @@ try {
     !!nudge && evA.some((e) => e.type === "session_end" && e.completed_reason === "done") && evA.some((e) => e.type === "file_edit" && /src\/validate\.ts/.test(e.content ?? "")),
     nudge?.content ?? "(none)");
 
+  // 5a2. plan-then-execute (exec_mode "plan"): codex has no headless plan mode, so the plan is asked for in the task;
+  // the first report is the plan phase, the developer's go-ahead is the approval, then it implements.
+  const { PLAN_FIRST } = await import("../harnesses/adapters.js");
+  const pj = await WorkerSession.start({ ...job("ses_planmode", "plan_then_code"), exec_mode: "plan" } as any, localRunner);
+  const p1 = await pj.waitForTurn();
+  check("plan mode: first run is the plan phase, asked for in the task (prompted), must_continue",
+    p1.phase === "plan" && p1.must_continue && pj.planMode === "prompted" && /Plan:/.test(p1.last_assistant_text), `phase ${p1.phase}, mode ${pj.planMode}`);
+  check("plan mode: the fallback developer approves the plan", /go ahead/i.test(defaultNudge(p1, 0)) && /looks good|makes sense|sounds good/i.test(defaultNudge(p1, 0)), defaultNudge(p1, 0));
+  const p2 = await driveToDone(pj);
+  await pj.finish({});
+  const cp = completes.get("ses_planmode");
+  const evP = events.get("ses_planmode") ?? [];
+  check("plan mode: approved, implemented, execute phase after the go-ahead",
+    p2.phase === "execute" && cp?.completed_reason === "done" && evP.some((e) => e.type === "exec_mode" && e.plan === "prompted")
+    && evP.some((e) => e.type === "simulated_user" && e.phase === "plan_approval"), `phase ${p2.phase}, reason ${cp?.completed_reason}`);
+  check("plan mode: metadata records the mode, that it waited, and the plan",
+    cp?.metadata?.exec_mode === "plan" && cp?.metadata?.plan_mode === "prompted" && cp?.metadata?.plan_waited === true && /Plan:/.test(cp?.metadata?.plan_text ?? ""),
+    JSON.stringify({ m: cp?.metadata?.exec_mode, w: cp?.metadata?.plan_waited }));
+  check("direct mode: metadata says direct", ca?.metadata?.exec_mode === "direct" && !("plan_text" in (ca?.metadata ?? {})));
+  check("plan mode (prompted): the task carries the plan-first line", /waiting for your go-ahead/.test(p1.last_assistant_text) && PLAN_FIRST.includes("go-ahead"), p1.last_assistant_text.slice(-60));
+  const o = { model: "m", workdir: "/w" };
+  const dg = getAdapter("claude-code").newDigest();
+  dg.observe({ type: "assistant", message: { content: [{ type: "tool_use", name: "ExitPlanMode", input: { plan: "1. Add a validation module.\n2. Wire it in." } }] } });
+  dg.observe({ type: "result", subtype: "success", result: "I've written up the plan above." });
+  check("claude plan mode: the digest carries the ExitPlanMode plan", /Add a validation module/.test(dg.result().lastText) && /written up the plan/.test(dg.result().lastText));
+  const cpa = getAdapter("claude-code").planArgv!(o), cua = getAdapter("cursor").planArgv!(o);
+  check("native plan modes: claude --permission-mode plan (no bypass), cursor --mode plan; codex has none",
+    cpa.join(" ").includes("--permission-mode plan") && !cpa.includes("--dangerously-skip-permissions") && cua.join(" ").includes("--mode plan")
+    && !getAdapter("codex").planArgv, cpa.join(" "));
+
   // 5b. docs-only first run is not done
   const b = await WorkerSession.start(job("ses_docs", "docs_then_code") as any, localRunner);
   const rb1 = await b.waitForTurn();

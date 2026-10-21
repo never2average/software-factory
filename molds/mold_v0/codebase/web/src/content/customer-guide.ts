@@ -98,6 +98,13 @@ Ask your client to run a simulation (or call \`run_simulation\`). By default a r
 - Each scenario starts with a few sessions per developer persona and keeps sampling until its result is stable (a
   narrow 95% interval) or it reaches the per-scenario cap. Tasks where agents agree stop early; contested ones get more.
 - Every session runs in its own fresh sandbox.
+- Agents **plan, then execute**: each agent first plans in its own plan mode (Claude Code, Cursor; other agents are
+  asked to plan and wait), the simulated developer approves the plan, then the agent implements it. This is how most
+  developers work with coding agents, and the plan shows what the agent weighed before it chose.
+
+To see whether planning changes what agents pick, run with **execution "both"**: every session runs once planning
+first and once executing directly (same task, persona and agent), and the results and the Pick rate page show the two
+side by side. \`execution: "direct"\` runs agents without the plan step.
 
 You can narrow a run to some scenarios, one platform (web, mobile, backend, ...), one of your task sets, chosen
 personas, or your own harness mix. To test specific agents or models, name them instead: each runs a fixed number of

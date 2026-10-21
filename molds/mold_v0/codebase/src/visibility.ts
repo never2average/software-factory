@@ -40,6 +40,7 @@ import type { Org } from "./auth.js";
 
 export interface VisFilters { competitor: string[]; persona: number[]; task: number[]; product: number | null }
 const LIMIT = 200;
+export const EXEC_MODE_LABEL = { plan: "Plan → execute", direct: "Direct execution" } as const;
 const NOT_EXPLAINED = "not_explained";
 const many = (v: unknown): string[] => (Array.isArray(v) ? v : v == null || v === "" ? [] : [v]).map((x) => String(x));
 const ints = (v: unknown) => [...new Set(many(v).flatMap((x) => x.split(",")).map((x) => Number(x.trim())).filter((n) => Number.isInteger(n) && n > 0 && n < 2 ** 31))].slice(0, LIMIT);
@@ -125,10 +126,12 @@ export async function visibilityCharts(orgId: number, range: Range, f: VisFilter
          FROM ${from} WHERE ${where} GROUP BY 1`, vp),
     db.query<{ week: string; winner: string; n: N }>(
       `SELECT ${wk} AS week, s.winner, count(*) AS n FROM ${from} WHERE ${where} AND s.verdict = 'competitor' AND s.winner IS NOT NULL GROUP BY 1, 2`, vp),
-    db.query<{ dim: "agent" | "harness" | "model"; key: string; scored: N; hits: N }>(
+    db.query<{ dim: "agent" | "harness" | "model" | "mode" | "agent_mode"; key: string; scored: N; hits: N }>(
       `SELECT 'agent' AS dim, coalesce(s.agent_id, s.model) AS key, ${recRate} FROM ${from} WHERE ${where} GROUP BY 2
        UNION ALL SELECT 'harness', s.harness, ${recRate} FROM ${from} WHERE ${where} GROUP BY 2
-       UNION ALL SELECT 'model', s.model, ${recRate} FROM ${from} WHERE ${where} GROUP BY 2`, vp),
+       UNION ALL SELECT 'model', s.model, ${recRate} FROM ${from} WHERE ${where} GROUP BY 2
+       UNION ALL SELECT 'mode', s.exec_mode, ${recRate} FROM ${from} WHERE ${where} GROUP BY 2
+       UNION ALL SELECT 'agent_mode', s.exec_mode || ' ' || coalesce(s.agent_id, s.model), ${recRate} FROM ${from} WHERE ${where} GROUP BY 2`, vp),
     db.query<{ id: number; title: string; expectation: string; platform: string; scored: N; hits: N; picked: N }>(
       `SELECT sc.id, sc.title, sc.expectation, coalesce(sc.platform, 'unspecified') AS platform, count(*) AS scored,
               count(*) FILTER (WHERE ${HIT}) AS hits, count(*) FILTER (WHERE ${PICKED}) AS picked
@@ -226,6 +229,14 @@ export async function visibilityCharts(orgId: number, range: Range, f: VisFilter
                top_competitor: topName ? winners.filter((x) => x.week === week && x.winner === topName).reduce((a, x) => a + Number(x.n), 0) : 0 };
     }),
     by_agent: dim("agent"), by_harness: dim("harness"), by_model: dim("model"),
+    // Execution mode (sql/migrations/0001_baseline.sql exec_mode): plan then execute vs direct, overall and per agent.
+    by_mode: (["plan", "direct"] as const).flatMap((mode) => {
+      const g = groups.find((x) => x.dim === "mode" && x.key === mode);
+      if (!g || !Number(g.scored)) return [];
+      const agents = groups.filter((x) => x.dim === "agent_mode" && x.key.startsWith(`${mode} `) && Number(x.scored) > 0)
+        .map((x) => { const key = x.key.slice(mode.length + 1); return rateRow({ key, name: agentLabel(key) }, Number(x.hits), Number(x.scored)); }).sort(byRate);
+      return [rateRow({ mode, name: EXEC_MODE_LABEL[mode], agents }, Number(g.hits), Number(g.scored))];
+    }),
     competitors,
     cloud,
     head_to_head: tools.map((t) => ({ name: t.tool, won: Number(t.won), lost: Number(t.lost) })).filter((t) => t.won + t.lost > 0)
@@ -286,6 +297,7 @@ export const SECTIONS = [
   { id: "by_agent", label: "Pick rate by agent" },
   { id: "by_harness", label: "Pick rate by harness" },
   { id: "by_model", label: "Pick rate by model" },
+  { id: "by_mode", label: "Plan → execute vs direct" },
   { id: "competitors", label: "Competitor share" },
   { id: "cloud", label: "Competitor word cloud (list)" },
   { id: "by_task", label: "Pick rate by task" },
@@ -320,6 +332,8 @@ export function tables(v: Visibility, sections: SectionId[]): Table[] {
     by_agent: () => ({ columns: ["key", "name", ...rate], rows: v.by_agent.map((x) => [x.key, x.name, ...r(x)]) }),
     by_harness: () => ({ columns: ["key", "name", ...rate], rows: v.by_harness.map((x) => [x.key, x.name, ...r(x)]) }),
     by_model: () => ({ columns: ["key", "name", ...rate], rows: v.by_model.map((x) => [x.key, x.name, ...r(x)]) }),
+    by_mode: () => ({ columns: ["mode", "agent", ...rate],
+      rows: v.by_mode.flatMap((m) => [[m.mode, "all", ...r(m)] as Cell[], ...m.agents.map((a) => [m.mode, a.key, ...r(a)] as Cell[])]) }),
     competitors: () => ({ columns: ["name", "sessions", "share_pct"], rows: v.competitors.map((c) => [c.name, c.sessions, c.share_pct]) }),
     cloud: () => ({ columns: ["name", "kind", "weight", "chosen", "mentioned", "installed"], rows: v.cloud.map((c) => [c.name, c.kind, c.weight, c.chosen, c.mentioned, c.installed]) }),
     by_task: () => ({ columns: ["id", "title", "expectation", ...rate], rows: v.by_task.map((x) => [x.id, x.title, x.expectation, ...r(x)]) }),

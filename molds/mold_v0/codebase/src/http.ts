@@ -10,18 +10,21 @@ import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
 import { appRouter } from "./app.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
-import { adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
+import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
+import { mcpOriginGuard } from "./origin.js";
 import * as roles from "./admin-roles.js";
+import * as adminTokens from "./admin-tokens.js";
 const { need } = roles;
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, runTool, TOOL_NAMES, WIDGET_HTML, type ToolName } from "./server.js";
 import { connectorEvents, recordMcpEvent } from "./analytics.js";
-import { bearer, isWorkerToken, resolveKey, resolveUserToken, type Org } from "./auth.js";
+import { bearer, cronSecretOk, headerCredential, isWorkerToken, resolveKey, resolveUserToken, urlKeysAllowed, type Org } from "./auth.js";
 import { clerkEnabled, ClerkError, frontendApi, mcpAudience } from "./clerk.js";
 import { StripeError } from "./billing.js";
 import { getDb } from "./db.js";
+import { probeFromCron, rlsProbeState } from "./rls.js";
 import { parseJsonl, transcripts, type RawEvent } from "./transcripts.js";
 import { appendEvents, claimJobs, completeSession, heartbeat } from "./worker.js";
 import { fleetCheckin, fleetLeave, fleetStatus } from "./fleet.js";
@@ -66,14 +69,18 @@ export function createApp() {
   const app = express();
   app.set("trust proxy", true);
   app.disable("x-powered-by");
+  // Origin first (src/origin.ts, DNS-rebinding protection): a browser page from a foreign origin gets a 403 on every MCP
+  // endpoint, the admin MCP included, before any credential is looked at and before any database read.
+  app.use(["/mcp", ...ADMIN_MCP_PATHS], mcpOriginGuard);
   // Provider keys still set as environment variables go into the key vault once, before anything reads a key.
   void importEnvKeysOnce();
+  adminTokens.warnRetiredAdminToken();
   app.use((_req, _res, next) => void importEnvKeysOnce().then(() => next()));
 
   app.get("/healthz", async (_req, res) => {
     if (draining) return void res.status(503).json({ ok: false, draining: true }); // rolling deploy: stop routing here
     await (await getDb()).query("SELECT 1");
-    res.json({ ok: true, transcripts: transcripts().kind });
+    res.json({ ok: true, transcripts: transcripts().kind, rls_probe: rlsProbeState() });
   });
 
   // ---------- inference gateway: /gw/<provider>/... (ogw_ session tokens, real keys from the vault) ----------
@@ -93,13 +100,15 @@ export function createApp() {
   // 5-minute backstop for the event-driven autoscaler on Vercel (vercel.json crons; Vercel sends CRON_SECRET as a
   // bearer). It also prunes the autoscaler's history (src/autoscaler-ticks.ts), which a VM does from its ticking loop.
   app.get("/api/cron/autoscale", async (req, res) => {
-    const secret = process.env.CRON_SECRET || process.env.OCTILLION_ADMIN_TOKEN;
-    if (!secret || req.headers.authorization !== `Bearer ${secret}`) return void res.status(401).json({ error: "unauthorized" });
+    // CRON_SECRET only (Vercel sends it): no fallback to an admin credential.
+    if (!cronSecretOk(req.headers.authorization)) return void res.status(401).json({ error: "unauthorized" });
     const tick = await kickAutoscaler();
     const pruned = await pruneComputeHistory().catch((e) => ({ error: (e as Error).message }));
     // Loss reasons queued while nothing drained them (src/reasons.ts): a short batch, within the daily cap.
     const reasons = await (await import("./reasons.js")).drainReasons(30).catch((e) => ({ error: (e as Error).message }));
-    res.json({ tick, pruned, reasons });
+    // Row-level security, proven on the live database (src/rls.ts): Vercel has no release step to run check:rls in.
+    const rls = await probeFromCron(getDb);
+    res.json({ tick, pruned, reasons, rls });
   });
 
   const recent = new Map<string, number[]>();
@@ -182,8 +191,8 @@ export function createApp() {
   });
 
   // ---------- MCP (Clerk OAuth sign-in, or a per-organization API key) ----------
-  // Keys arrive as `Authorization: Bearer oct_...` or in the connector URL, /mcp/oct_..., for hosts that
-  // only take a URL. Stateless: a fresh server per request, bound to the caller's org.
+  // Keys arrive in a header, `Authorization: Bearer oct_...` or `X-API-Key: oct_...`; hosts that only take a URL sign
+  // in with OAuth. The old connector URL with the key in it (/mcp/oct_...) is deprecated (OCTILLION_URL_KEYS). Stateless: a fresh server per request, bound to the caller's org.
   // One access-log line per connector request (also the ones analytics never sees: bad keys, GET/DELETE probes,
   // rejected Accept headers), so "connected but nothing happened" can be diagnosed. The key is never logged.
   app.use("/mcp", (req, res, next) => {
@@ -194,7 +203,8 @@ export function createApp() {
       const rpc = msgs.map((m: any) => (m?.method === "tools/call" ? `tools/call:${m?.params?.name}` : m?.method)).filter(Boolean).join(",");
       // On Vercel nothing ticks the autoscaler: a tool call may have queued work (onboarding, a simulation, an approval).
       if (rpc.includes("tools/call")) serverlessTick();
-      console.error(`mcp ${req.method} ${res.statusCode} org=${res.locals.org ?? "-"} rpc=${rpc || "-"} ${Date.now() - t0}ms ua="${String(req.get("user-agent") ?? "").slice(0, 80)}"`);
+      const origin = req.get("origin");
+      console.error(`mcp ${req.method} ${res.statusCode} org=${res.locals.org ?? "-"} rpc=${rpc || "-"} ${Date.now() - t0}ms ua="${String(req.get("user-agent") ?? "").slice(0, 80)}"${origin ? ` origin=${JSON.stringify(origin.slice(0, 120))}` : ""}`);
     });
     next();
   });
@@ -208,24 +218,49 @@ export function createApp() {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   };
+  const wwwAuthenticate = () => oauthServer()
+    ? `Bearer error="unauthorized", error_description="Sign in to Octillion", resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`
+    : 'Bearer realm="octillion"';
   const unauthorized = (res: Response) =>
-    res.status(401).set("WWW-Authenticate", oauthServer()
-      ? `Bearer error="unauthorized", error_description="Sign in to Octillion", resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`
-      : 'Bearer realm="octillion"').json({
+    res.status(401).set("WWW-Authenticate", wwwAuthenticate()).json({
       jsonrpc: "2.0", id: null,
       error: { code: -32001, message: `Sign in to Octillion (or send a valid API key). Request access at ${PUBLIC_URL}` },
     });
+  // One log line per legacy URL key per process and hour: enough to know who to move, without a line per request.
+  const urlKeySeen = new Map<string, number>();
+  const noteUrlKey = (slug: string, prefix: string) => {
+    const k = `${slug} ${prefix}`, now = Date.now();
+    if (now - (urlKeySeen.get(k) ?? 0) < 3_600_000) return;
+    urlKeySeen.set(k, now);
+    console.error(`mcp url-key deprecated org=${slug} key=${prefix}… (move this client to a header or sign-in)`);
+  };
   const methodNotAllowed = (_req: Request, res: Response) =>
     void res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed" }, id: null });
 
   app.post("/mcp", express.json({ limit: "4mb" }), async (req, res) => {
-    const token = bearer(req.headers.authorization);
-    const org = token?.startsWith("oct_") ? await resolveKey(token) : token ? await resolveUserToken(token) : null;
+    const token = headerCredential(req.headers);
+    const viaBearer = Boolean(bearer(req.headers.authorization));
+    const org = token?.startsWith("oct_") ? await resolveKey(token) : token && viaBearer ? await resolveUserToken(token) : null;
     org ? await mcp(req, res, org) : unauthorized(res);
   });
+  // Deprecated: a key in the connector URL (see urlKeysAllowed in src/auth.ts). Logged by account and key prefix,
+  // never the key, so whoever still uses one can be moved to a header or to sign-in before OCTILLION_URL_KEYS=off.
   app.post("/mcp/:key", express.json({ limit: "4mb" }), async (req, res) => {
-    const org = await resolveKey(String(req.params.key));
-    org ? await mcp(req, res, org) : unauthorized(res);
+    const key = String(req.params.key);
+    if (!urlKeysAllowed()) {
+      console.error("mcp url-key refused (OCTILLION_URL_KEYS=off)");
+      // The same WWW-Authenticate as any 401, so a connector holding the old URL can fall into sign-in (OAuth).
+      return void res.status(401).set("WWW-Authenticate", wwwAuthenticate()).json({
+        jsonrpc: "2.0", id: null,
+        error: { code: -32001, message: `API keys in the connector URL are no longer accepted. Connect to ${PUBLIC_URL}/mcp and send the key in a header (Authorization: Bearer <key>), or sign in.` },
+      });
+    }
+    const org = await resolveKey(key);
+    if (!org) return unauthorized(res);
+    // RFC 9745: deprecated since 2026-10-20 (a structured date); the successor is the plain /mcp with a header.
+    res.set({ Deprecation: "@1792454400", Link: `<${PUBLIC_URL}/mcp>; rel="successor-version"` });
+    noteUrlKey(org.slug, key.slice(0, 10));
+    await mcp(req, res, org);
   });
   app.all(["/mcp", "/mcp/:key"], methodNotAllowed);
   // The admin panel as MCP (src/admin-mcp.ts): platform admins only, each tool with its route's permission. Before
@@ -354,10 +389,13 @@ export function createApp() {
   app.use(adminAuthRouter());
   const admin = express.Router();
   admin.use(requirePlatformAdmin);
+  /** Routes only a signed-in person may use, not an admin token (requirePlatformAdmin sets adminUserId for Clerk sessions). */
+  const signedIn = (_req: Request, res: Response, next: NextFunction) =>
+    res.locals.adminUserId ? next() : void res.status(403).json({ error: "Sign in to do this: an admin token cannot mint tokens or change who is an admin", code: "signed_in_only" });
   // Every staff request is logged (who, what, when, outcome); never the body, which can hold secrets.
   admin.use((req, res, next) => {
     res.on("finish", () => {
-      const actor = String(res.locals.adminActor ?? req.headers["x-octillion-actor"] ?? "admin-token").replace(/[^\w.@ -]/g, "").slice(0, 80) || "admin-token";
+      const actor = String(res.locals.adminActor ?? "unknown").replace(/[^\w.@ :-]/g, "").slice(0, 80) || "unknown";
       void getDb().then((db) => db.query("INSERT INTO admin_access_log (actor, method, path, status, ip) VALUES ($1, $2, $3, $4, $5)",
         [actor, req.method, req.originalUrl.split("?")[0]!.slice(0, 300), res.statusCode, String(req.ip ?? "").slice(0, 64)])).catch(() => {});
     });
@@ -386,7 +424,7 @@ export function createApp() {
   });
   admin.get("/gateway/usage", async (_req, res) => {
     const rows = await (await getDb()).query(
-      `/* tenant: admin-only (OCTILLION_ADMIN_TOKEN): global gateway usage */ SELECT provider, coalesce(session_id, orchestrator_id) AS consumer, requests, errors, input_tokens, output_tokens, bytes, last_at
+      `/* tenant: admin-only (platform admins and admin tokens): global gateway usage */ SELECT provider, coalesce(session_id, orchestrator_id) AS consumer, requests, errors, input_tokens, output_tokens, bytes, last_at
          FROM gateway_usage ORDER BY last_at DESC LIMIT 500`);
     res.json({ usage: rows });
   });
@@ -408,8 +446,24 @@ export function createApp() {
   });
   admin.post("/populations/:slug/default", need("harnesses"), async (req, res) => void res.json(await populations.setDefaultPopulation(String(req.params.slug))));
   admin.get("/autoscaler", async (_req, res) => void res.json(await autoscalerStatus()));
+  // Admin tokens for scripts (src/admin-tokens.ts): owners list, mint and revoke them. Minting, and changing who is an
+  // admin, need a signed-in owner (signedIn), never a token: a leaked token cannot renew itself or make its holder an owner.
+  const tokenErr = (res: Response, e: unknown) => {
+    if (!(e instanceof adminTokens.AdminTokenError)) throw e;
+    res.status(e.status).json({ error: e.message });
+  };
+  admin.get("/tokens", need("admins"), async (_req, res) => void res.set("Cache-Control", "no-store").json({ tokens: await adminTokens.listAdminTokens(), max_days: adminTokens.ADMIN_TOKEN_MAX_DAYS }));
+  admin.post("/tokens", need("admins"), signedIn, async (req, res) => {
+    try {
+      const { token, ...row } = await adminTokens.createAdminToken({ label: req.body?.label, role: req.body?.role, days: req.body?.days === undefined ? undefined : Number(req.body.days), createdBy: adminActor(req, res) });
+      res.set("Cache-Control", "no-store").status(201).json({ token, ...row });
+    } catch (e) { tokenErr(res, e); }
+  });
+  admin.delete("/tokens/:id", need("admins"), async (req, res) => {
+    try { res.status((await adminTokens.revokeAdminToken(Number(req.params.id))) ? 204 : 404).end(); } catch (e) { tokenErr(res, e); }
+  });
   // Onboarding console (web/app/admin, src/admin.ts): requests, accounts, people (Clerk), billing (Stripe), legacy keys.
-  // X-Admin-Actor names the person in the log lines; the token is shared, so it is a label, not an identity.
+  // A signed-in admin is logged by email, an admin token as token:<label>.
   const ob = express.Router();
   ob.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); }); // responses can carry a new key
   const slug = (req: Request) => String(req.params.slug);
@@ -542,17 +596,17 @@ export function createApp() {
   ob.get("/mcp", (_req, res) => void res.json({ url: adminMcpResource(), tools: adminToolList(), skills: adminSkillList() }));
   ob.get("/admins", async (_req, res) => void res.json({ admins: await roles.listAdmins(), roles: roles.PLATFORM_ROLES.map((r) => ({ id: r, label: roles.ROLE_LABELS[r], help: roles.ROLE_HELP[r] })),
     me: (res.locals.adminUserId as string | undefined) ?? null }));
-  ob.post("/admins", need("admins"), async (req, res) => {
+  ob.post("/admins", need("admins"), signedIn, async (req, res) => {
     const r = await roles.addAdmin(changer(req, res), req.body?.email, req.body?.role);
     onboarding.log(adminActor(req, res), "admin.add", null, { email: req.body?.email, role: req.body?.role, created: r.created });
     res.status(201).json(r);
   });
-  ob.post("/admins/:id/role", need("admins"), async (req, res) => {
+  ob.post("/admins/:id/role", need("admins"), signedIn, async (req, res) => {
     const a = await roles.setAdminRole(changer(req, res), String(req.params.id), req.body?.role);
     onboarding.log(adminActor(req, res), "admin.role", null, { user: req.params.id, role: a.role });
     res.json({ admin: a });
   });
-  ob.delete("/admins/:id", need("admins"), async (req, res) => {
+  ob.delete("/admins/:id", need("admins"), signedIn, async (req, res) => {
     await roles.removeAdmin(changer(req, res), String(req.params.id));
     onboarding.log(adminActor(req, res), "admin.remove", null, { user: req.params.id });
     res.status(204).end();
@@ -620,7 +674,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const server = createApp().listen(PORT, HOST, () => {
     console.error(`octillion (${db.kind}, transcripts in ${transcripts().kind}) listening on http://${HOST}:${PORT}`);
     console.error(`  landing page  ${PUBLIC_URL}/`);
-    console.error(`  MCP endpoint  ${PUBLIC_URL}/mcp/<api key>   (or /mcp with Authorization: Bearer <api key>)`);
+    console.error(`  MCP endpoint  ${PUBLIC_URL}/mcp   (sign in, or send Authorization: Bearer <api key>)`);
     console.error(`  worker API    ${PUBLIC_URL}/api/worker/*${process.env.OCTILLION_WORKER_TOKEN ? "" : "   (disabled: set OCTILLION_WORKER_TOKEN)"}`);
     // On-demand orchestrators (boat sandboxes launched/reaped by the server). Needs the public https URL the
     // sandboxes reach us on, the worker token and a boat key in the vault. OCTILLION_AUTOSCALE=off disables it.

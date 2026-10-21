@@ -84,6 +84,9 @@ export function segments(raw: RawEvent): { kind: "message" | "action"; text: str
     else if (Array.isArray(content))
       for (const b of content as { type?: string; text?: string; name?: string; input?: unknown; arguments?: unknown }[]) {
         if (b?.type === "text") out.push({ kind: "message", text: b.text ?? "" });
+        // Claude Code's plan (plan mode, ExitPlanMode): what the agent proposes to do, scored as its words, not as
+        // something it ran. "I'll use X" in a plan is a recommendation; only the execution's installs adopt.
+        else if (b?.type === "tool_use" && b.name === "ExitPlanMode") out.push({ kind: "message", text: str((b.input as { plan?: unknown } | undefined)?.plan ?? b.input) });
         else if (b?.type === "tool_use") out.push({ kind: "action", text: `${b.name ?? ""}\n${str(b.input)}` });
         else if (b?.type === "toolCall") out.push({ kind: "action", text: `${b.name ?? ""}\n${str(b.arguments)}` }); // Pi
       }

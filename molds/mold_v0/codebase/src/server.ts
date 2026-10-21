@@ -1,4 +1,5 @@
 import * as priv from "./private.js";
+import { withTenant } from "./tenant-scope.js";
 import * as contributions from "./contributions.js";
 import { accountRefusal, canAccount, type AccountPermission } from "./account-roles.js";
 import { readFileSync } from "node:fs";
@@ -107,7 +108,14 @@ function summarize(d: Data): string {
         : ` Adaptive sampling (up to ${s.max_samples} per scenario): ${count("settled")} scenario(s) settled, ${count("cap reached")} at the cap, ${count("sampling more")} still being sampled${sampling.some((x) => x.status.startsWith("stopped")) ? `, ${sampling.filter((x) => x.status.startsWith("stopped")).length} stopped by a limit` : ""}.`;
       const base = `Simulation ${s.id} "${s.name}" for ${s.product}: ${s.status}. ${d.totals.sessions} agent sessions (${Object.entries(d.status).map(([k, v]) => `${v} ${k}`).join(", ")}). Hit rate ${pct(d.totals.hit_rate)} over ${d.totals.scored} scored. Verdicts: ${Object.entries(d.verdicts).map(([k, v]) => `${k} ${v}`).join(", ") || "none yet"}.${Object.keys(d.completed_reasons ?? {}).length ? ` Ended: ${Object.entries(d.completed_reasons).map(([k, v]) => `${k} ${v}`).join(", ")}.` : ""} By agent: ${d.by_agent.map((a: any) => `${a.label} ${pct(a.hit_rate)} (n=${a.scored})`).join(", ")}.${d.capacity ? ` Capacity: ${d.capacity.message}` : ""}`;
       const budget = d.budget ? ` Budget: ${d.budget.line}${d.budget.warning ? ` ${d.budget.warning}` : ""}` : "";
-      return base + adaptive + budget;
+      // Execution modes: plan-then-execute vs direct, when the run compared them (paired sessions).
+      const modeName = { plan: "plan then execute", direct: "direct execution" } as Record<string, string>;
+      const modes = d.by_mode.length > 1
+        ? ` By execution mode: ${d.by_mode.map((m: any) => `${modeName[m.mode]} ${pct(m.hit_rate)} (${m.hits}/${m.scored})`).join(" vs ")}; per agent: ${
+            [...new Set(d.by_mode.flatMap((m: any) => m.by_agent.map((a: any) => a.label)))].map((label) =>
+              `${label} ${d.by_mode.map((m: any) => pct(m.by_agent.find((a: any) => a.label === label)?.hit_rate ?? null)).join(" vs ")}`).join("; ")}.`
+        : d.by_mode.length === 1 ? ` Execution: ${modeName[d.by_mode[0].mode]}.` : "";
+      return base + modes + adaptive + budget;
     }
     case "report":
       return reportMarkdown(d);
@@ -304,7 +312,8 @@ async function runToolInner(org: Org, name: ToolName, args: Record<string, unkno
   try {
     const needs = TOOL_NEEDS[name];
     if (needs && org.role && !canAccount(org.role, needs)) throw new Error(accountRefusal(needs).message);
-    const data = await (handlersFor(org)[name] as (a: unknown) => Promise<Data>)(args ?? {});
+    // Row-level security (src/tenant-scope.ts): the tool's queries can reach this organization's rows only.
+    const data = await withTenant(org.orgId, () => (handlersFor(org)[name] as (a: unknown) => Promise<Data>)(args ?? {}));
     recordMcpEvent(org, { method: "tools/call", name, ms: performance.now() - t0 });
     const structured = fitPayload(JSON.parse(JSON.stringify(data))); // Dates -> ISO strings
     const note = structured.truncated
@@ -320,6 +329,9 @@ async function runToolInner(org: Org, name: ToolName, args: Record<string, unkno
     // Database errors (SQLSTATE codes) can echo other rows' values, e.g. a unique-key clash revealing that another
     // organization uses a slug; callers get a generic message, never the raw text.
     const e = err as Error & { code?: unknown };
+    // Refused by row-level security or the tenant role's grants (src/tenant-scope.ts): a platform bug to see in the log.
+    // The message names a table or policy, never row values.
+    if (e.code === "42501") console.error(`tool ${name}: refused by the database: ${e.message}`);
     const message = typeof e.code === "string" && /^[0-9A-Z]{5}$/.test(e.code)
       ? `The request could not be completed (database error ${e.code}). Check the arguments and try again.` : e.message;
     recordMcpEvent(org, { method: "tools/call", name, ok: false, error: message, ms: performance.now() - t0 });
@@ -524,6 +536,7 @@ export function createServer(org: Org, context = ""): McpServer {
       population: z.string().optional().describe("Developer population whose coding-agent mix to sample (list_agents); default population if omitted"),
       profiles: z.array(z.string()).optional().describe("Developer profile slugs (list_developer_profiles); every scenario runs once per profile. Omit to use the product's personas (its own and the library personas research linked to it); pass [] for a generic developer"),
       repeats: z.number().int().min(1).max(10).optional().describe("Explicit mode: runs per scenario and agent (default 3)"),
+      execution: z.enum(["plan", "direct", "both"]).optional().describe("How the coding agents work. 'plan' (default): each agent plans first, in its own plan mode where it has one, the developer approves, then it implements. 'direct': it implements straight away. 'both': every session runs once in each mode, paired, so the results compare plan-then-execute with direct execution (twice the sessions)"),
       name: z.string().optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }, _meta: meta("run_simulation"),

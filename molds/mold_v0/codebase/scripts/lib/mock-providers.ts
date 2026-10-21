@@ -3,7 +3,7 @@
 // Not a simulator of either product: only the fields Octillion reads, with the same shapes.
 // Test hooks: POST /_mock/clerk/users {email, first_name?, verified?, platform_admin?, platform_role?}, POST /_mock/invitations/:id/accept
 // {first_name?}, POST /_mock/clerk/memberships {org_id, user_id, role?, public_metadata?}, POST /_mock/session {user_id, org_id?, org_role?,
-// azp?, expired?, v1?} -> a Clerk session token, POST /_mock/oauth {user_id, jwt?, revoked?, expired?} -> an OAuth
+// azp?, expired?, v1?} -> a Clerk session token, POST /_mock/oauth {user_id, jwt?, revoked?, expired?, aud?, iss?} -> an OAuth
 // access token, GET /_mock/public-key -> {pem} for CLERK_JWT_KEY, POST /_mock/subscriptions {customer, price, status?, start_date?, trial_end?,
 // ended_at?, canceled_at?, cancel_at_period_end?, current_period_end?, quantity?, invoice? (default true: one paid invoice now)},
 // POST /_mock/prices {id, unit_amount, interval, ...} (an archived price: not listed with active=true), POST /v1/products and
@@ -201,7 +201,7 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
     const t = s.oauth.get(String(req.body?.access_token ?? ""));
     if (!t) return clerkErr(res, 404, "OAuth access token not found", "resource_not_found");
     res.json({ object: "clerk_idp_oauth_access_token", id: t.id, client_id: "mock_client", type: "oauth_token", subject: t.user_id, scopes: ["profile", "email"],
-      revoked: Boolean(t.revoked), expired: Boolean(t.expired), expiration: ms() + 3_600_000, created_at: t.created_at, updated_at: t.created_at });
+      revoked: Boolean(t.revoked), expired: Boolean(t.expired), expiration: ms() + 3_600_000, created_at: t.created_at, updated_at: t.created_at, ...(t.aud ? { aud: t.aud } : {}) });
   });
 
   // ---------- Stripe (form-encoded) ----------
@@ -347,12 +347,12 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
   app.post("/_mock/oauth", async (req, res) => {
     const b = req.body ?? {};
     if (b.jwt) {
-      const t = new SignJWT({ scp: "profile email", client_id: "mock_client" }).setProtectedHeader({ alg: "RS256", kid: "mock-1", typ: "at+jwt" })
-        .setIssuer(getBase()).setSubject(b.user_id).setIssuedAt().setExpirationTime(b.expired ? Math.floor(Date.now() / 1000) - 60 : "5m");
+      const t = new SignJWT({ scp: "profile email", client_id: "mock_client", ...(b.aud ? { aud: b.aud } : {}) }).setProtectedHeader({ alg: "RS256", kid: "mock-1", typ: "at+jwt" })
+        .setIssuer(b.iss ?? getBase()).setSubject(b.user_id).setIssuedAt().setExpirationTime(b.expired ? Math.floor(Date.now() / 1000) - 60 : "5m");
       return void res.json({ access_token: await t.sign(privateKey) });
     }
     const token = `oat_${randomBytes(18).toString("hex")}`;
-    s.oauth.set(token, { id: id("oat"), user_id: b.user_id, revoked: Boolean(b.revoked), expired: Boolean(b.expired), created_at: ms() });
+    s.oauth.set(token, { id: id("oat"), user_id: b.user_id, revoked: Boolean(b.revoked), expired: Boolean(b.expired), aud: b.aud ?? null, created_at: ms() });
     res.json({ access_token: token });
   });
   const invoice = (b: { customer: string; amount: number; status?: string; created?: number; paid_at?: number | null; subscription?: string | null; number?: string }) => {

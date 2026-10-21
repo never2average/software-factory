@@ -1,21 +1,27 @@
 // End-to-end connector check against a live server, the way Claude / ChatGPT use it: connect, list tools, prompts and
 // the dashboard resource, then call every read-only tool. Never launches runs or spends inference.
-//   npm run mcp:check -- <connector URL file or URL>
+//   OCTILLION_API_KEY=oct_... npm run mcp:check -- <https://host/mcp>
+// The key is read from the environment (or, for old setups, from a legacy connector URL or a file holding one) and
+// always sent as an Authorization header to <host>/mcp: it never goes in a request URL.
 import { readFileSync, existsSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const arg = process.argv[2];
-if (!arg) throw new Error("Usage: npm run mcp:check -- <connector URL or a file containing it>");
-const url = existsSync(arg) ? readFileSync(arg, "utf8").match(/https?:\/\/\S+\/mcp\/oct_[\w-]+/)?.[0] : arg;
-if (!url) throw new Error("No connector URL found");
+if (!arg) throw new Error("Usage: OCTILLION_API_KEY=oct_... npm run mcp:check -- <https://host/mcp, or a file containing a connector URL>");
+const text = existsSync(arg) ? readFileSync(arg, "utf8") : arg;
+const found = text.match(/https?:\/\/[^\s"']+?\/mcp(?:\/(oct_[\w-]+))?(?=[\s"']|$)/);
+if (!found) throw new Error("No connector URL found");
+const url = found[0].replace(/\/mcp\/oct_[\w-]+$/, "/mcp");
+const key = process.env.OCTILLION_API_KEY || found[1];
+if (!key) throw new Error("Set OCTILLION_API_KEY to the account's API key");
 
 let failures = 0;
 const ok = (what: string, detail = "") => console.log(`✓ ${what}${detail ? `  ${detail}` : ""}`);
 const bad = (what: string, detail: string) => { failures++; console.log(`✗ ${what}  ${detail}`); };
 
 const client = new Client({ name: "octillion-mcp-check", version: "1" });
-await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${key}` } } }));
 const info = client.getServerVersion();
 ok("initialize", `${info?.name} ${info?.version}`);
 

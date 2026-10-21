@@ -39,6 +39,8 @@ export interface Job {
   agent: { id: string; harness: string; model: string; label: string; harness_version?: string; event_format?: string; image?: { docker?: string; boat_snapshot?: string };
            requires_env?: string[]; cli?: string; worker_adapter?: string; boat_preinstalled?: boolean; resume?: boolean; origin?: string; base_agent?: string } | null;
   prompt: string; repo_url: string | null; language: string | null; max_user_turns: number;
+  /** How the agent works (sql/migrations/0001_baseline.sql exec_mode): plan first and implement once approved, or execute directly. */
+  exec_mode: "plan" | "direct";
   /** Starter workspace hint + scenario tags/title (the orchestrator picks a template when repo_url is null). */
   template: string | null; tags: string[]; title: string;
   /** A private run (the org's own tasks or personas): the orchestrator locks down the agent's network (core/egress.ts). */
@@ -80,7 +82,7 @@ export async function claimJobs(workerId: string, opts: { limit?: number; models
                          FROM agent_sessions q WHERE q.status = 'queued' ${filter}) ranked
                       ORDER BY pos, queued_at, id LIMIT $2)
                  FOR UPDATE SKIP LOCKED)
-        RETURNING s.id AS session_id, s.simulation_id, s.org_id, s.product_id, s.model, s.harness, s.agent_id, s.attempt, s.profile_id, s.scenario_id,
+        RETURNING s.id AS session_id, s.simulation_id, s.org_id, s.product_id, s.model, s.harness, s.agent_id, s.attempt, s.profile_id, s.scenario_id, s.exec_mode,
                   sc.prompt, sc.prompt_variants, sc.repo_url, sc.language, sc.template, sc.tags, sc.title,
                   (SELECT prompts FROM simulations WHERE id = s.simulation_id) AS run_prompts,
                   coalesce((SELECT private FROM simulations WHERE id = s.simulation_id), false) AS private`,
@@ -237,7 +239,11 @@ export async function completeSession(sessionId: string, input: CompleteInput = 
     finished = (await db.query(
       `/* tenant: session checked against the job token in http.ts, or internal stale sweep */ UPDATE agent_sessions SET status = $2, ended_at = now(), error_message = $3, sandbox_id = coalesce($4, sandbox_id),
               tokens_in = coalesce($5, tokens_in), tokens_out = coalesce($6, tokens_out), cost_usd = coalesce($7, cost_usd),
-              metadata = metadata || $8::jsonb, completed_reason = coalesce($9, completed_reason)
+              metadata = metadata || $8::jsonb, completed_reason = coalesce($9, completed_reason),
+              -- The mode the session actually ran in: a plan session finished by an orchestrator that ran it directly
+              -- (a harness that can't resume, or an orchestrator from before plan mode, which reports no exec_mode).
+              exec_mode = CASE WHEN exec_mode = 'plan' AND $8::jsonb ? 'harness_runs' AND coalesce($8::jsonb->>'exec_mode', 'direct') <> 'plan'
+                               THEN 'direct' ELSE exec_mode END
         WHERE id = $1 AND status IN ('queued', 'running') RETURNING id`,
       [sessionId, input.status ?? "completed", input.error_message ?? null, input.sandbox_id ?? null, input.tokens_in ?? null,
        input.tokens_out ?? null, input.cost_usd ?? null, JSON.stringify(input.metadata ?? {}),

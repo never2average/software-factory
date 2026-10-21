@@ -1,4 +1,3 @@
-import { Fragment } from 'react';
 import Link from 'next/link';
 import {
   IconBolt, IconCode, IconEyeOff, IconGitCompare, IconMessageChatbot, IconSearch, IconTerminal2
@@ -238,12 +237,12 @@ export function WhyNow() {
 
 // ---------- what is APO ----------
 
+/** Each channel's win and the steps that still stand between it and an install (the last step is the install). */
 const ERAS = [
-  { icon: IconSearch, short: 'SEO', who: 'People', win: 'A click', next: 'A visit, then maybe a signup', measure: 'Rankings' },
-  { icon: IconMessageChatbot, short: 'GEO', who: 'Chatbots', win: 'A mention', next: 'Maybe a search, then a visit', measure: 'Citations' },
-  { icon: IconTerminal2, short: 'APO', who: 'Coding agents', win: 'An install', next: 'Nothing: it’s already in their code', measure: 'Pick rate per agent', current: true }
+  { icon: IconSearch, short: 'SEO', who: 'People decide', win: 'A click', path: ['Click', 'Visit', 'Signup', 'Install'], measure: 'Rankings' },
+  { icon: IconMessageChatbot, short: 'GEO', who: 'Chatbots decide', win: 'A mention', path: ['Mention', 'Search', 'Visit', 'Signup', 'Install'], measure: 'Citations' },
+  { icon: IconTerminal2, short: 'APO', who: 'Coding agents decide', win: 'An install', path: ['Install'], measure: 'Pick rate per agent', current: true }
 ];
-const ERA_ROWS: [string, 'who' | 'win' | 'next' | 'measure'][] = [['Who decides', 'who'], ['You win', 'win'], ['Still to go', 'next'], ['You measure', 'measure']];
 
 export function WhatIsApo() {
   return (
@@ -259,24 +258,53 @@ export function ClosestToRevenue() {
   return (
     <Section id='convert' eyebrow='Why APO converts' title='The step closest to revenue.'
       lead='A click still has to become a signup, and a mention still has to become a visit. When a coding agent picks you, the install has already happened: your product is in the codebase, the step every other channel is working toward.'>
-      <div className='mx-auto grid max-w-3xl grid-cols-[auto_1fr_1fr_1fr] text-sm'>
-        <span />
-        {ERAS.map((e) => (
-          <div key={e.short} className={cn('flex flex-col items-center gap-2 rounded-t-xl px-2 pt-4 pb-3', e.current && 'bg-primary/10 border-primary/40 border-x border-t')}>
-            <e.icon className={cn('size-6', e.current ? 'text-primary' : 'text-muted-foreground')} stroke={1.5} />
-            <span className={cn('font-mono text-xl font-semibold', e.current ? 'text-primary' : 'text-foreground/80')}>{e.short}</span>
-          </div>
-        ))}
-        {ERA_ROWS.map(([label, key], r) => (<Fragment key={key}>
-          <span className='text-muted-foreground border-t py-4 pr-4 text-xs leading-tight sm:text-sm'>{label}</span>
-          {ERAS.map((e) => (
-            <span key={`${key}-${e.short}`} className={cn('border-t px-2 py-4 text-center leading-tight',
-              e.current ? cn('bg-primary/10 border-x-primary/40 border-x font-medium', r === ERA_ROWS.length - 1 && 'border-b-primary/40 rounded-b-xl border-b') : 'text-muted-foreground')}>
-              {e[key]}
-            </span>
-          ))}
-        </Fragment>))}
-      </div>
+      <ol className='grid gap-4 md:grid-cols-3'>
+        {ERAS.map((e) => {
+          const togo = e.path.length - 1;
+          return (
+            <li key={e.short} className={cn('flex flex-col gap-5 rounded-2xl border p-5',
+              e.current ? 'border-primary/50 bg-primary/10 shadow-[0_0_40px_-12px] shadow-primary/40' : 'bg-card/40')}>
+              <div className='flex items-center gap-3'>
+                <span className={cn('flex size-9 items-center justify-center rounded-lg border', e.current ? 'border-primary/50 text-primary' : 'text-muted-foreground')}>
+                  <e.icon className='size-5' stroke={1.5} />
+                </span>
+                <span className='flex flex-col'>
+                  <span className={cn('font-mono text-lg leading-tight font-semibold', e.current ? 'text-primary' : 'text-foreground/80')}>{e.short}</span>
+                  <span className='text-muted-foreground text-xs'>{e.who}</span>
+                </span>
+              </div>
+              <div>
+                <div className='text-muted-foreground text-xs'>You win</div>
+                <div className={cn('text-xl font-semibold', !e.current && 'text-foreground/80')}>{e.win}</div>
+              </div>
+              <div className='flex flex-col gap-2'>
+                <div className={cn('text-sm font-medium', e.current ? 'text-primary' : 'text-muted-foreground')}>
+                  {togo ? `${togo} steps to an install` : 'Already installed'}
+                </div>
+                <ol className='flex flex-wrap items-center gap-1.5' aria-label={`${e.short}: ${e.path.join(', then ')}`}>
+                  {e.path.map((step, i) => {
+                    const install = i === e.path.length - 1;
+                    return (
+                      <li key={step} className='flex items-center gap-1.5'>
+                        {i > 0 && <span className='text-muted-foreground/60 text-xs' aria-hidden='true'>→</span>}
+                        <span className={cn('rounded-full px-2.5 py-1 text-xs',
+                          i === 0 && !install && 'bg-foreground/10 text-foreground',
+                          i > 0 && !install && 'text-muted-foreground border border-dashed',
+                          install && (e.current ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground border border-dashed'))}>
+                          {install && e.current ? '✓ Install' : step}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+              <div className='text-muted-foreground mt-auto border-t pt-3 text-xs'>
+                You measure <span className={cn('font-medium', e.current ? 'text-foreground' : 'text-foreground/80')}>{e.measure}</span>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
     </Section>
   );
 }

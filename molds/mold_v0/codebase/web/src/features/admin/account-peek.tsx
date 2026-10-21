@@ -203,7 +203,7 @@ function AccountDialog({ kind, orgs, run, show, close }: { kind: Kind; orgs: Org
       act: async () => { if (await run(() => post(`${p}/allowance`, { usd: a.trim() === '' ? null : Number(a) }), a.trim() ? 'Allowance set' : 'Allowance cleared') !== undefined) close(); }
     },
     key: {
-      title: 'Issue a key', description: 'A secret connector link, shown once. One per person.', submit: 'Issue key', ok: true,
+      title: 'Issue a key', description: 'A secret API key, sent in a header (never in the URL), shown once. One per person.', submit: 'Issue key', ok: true,
       body: <Input autoFocus placeholder='Email or a label' aria-label='Key label' value={a} onChange={(e) => setA(e.target.value)} />,
       act: async () => { const r = await run(() => post<InviteResult>(`${p}/keys`, { label: a.trim() || undefined })); if (r) { close(); show(r, `New key for ${r.org.name}`); } }
     }

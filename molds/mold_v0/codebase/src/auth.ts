@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getDb } from "./db.js";
-import { clerkEnabled, isSuspended, memberships, onMembershipChange, organizations, verifyOAuthToken } from "./clerk.js";
+import { clerkEnabled, isSuspended, mcpAudiences, memberships, onMembershipChange, organizations, verifyOAuthToken } from "./clerk.js";
 import { accountRoleOf, type AccountRole } from "./account-roles.js";
 
 /** The tenant a request acts for. Every query in queries.ts is scoped by orgId. */
@@ -71,10 +71,39 @@ export function isWorkerToken(token: string | undefined | null): boolean {
   return timingSafeEqual(a, b);
 }
 
+/** The Vercel cron's bearer (CRON_SECRET), in constant time. Nothing else opens /api/cron/*. */
+export function cronSecretOk(authorization: string | undefined): boolean {
+  const want = process.env.CRON_SECRET, got = bearer(authorization);
+  if (!want || !got) return false;
+  return timingSafeEqual(Buffer.from(sha256(got)), Buffer.from(sha256(want)));
+}
+
 export function bearer(header: string | undefined): string | null {
   const m = header?.match(/^Bearer\s+(\S+)$/i);
   return m ? m[1] : null;
 }
+
+/**
+ * The credential an MCP request carries in a header: `Authorization: Bearer <oct_ key or OAuth token>`, else
+ * `X-API-Key: oct_...` (for clients whose header setting is a plain name/value pair). Never read from the URL: a URL
+ * ends up in proxy and access logs, browser history, Referer headers and screenshots.
+ */
+export function headerCredential(headers: Record<string, string | string[] | undefined>): string | null {
+  const auth = bearer(typeof headers.authorization === "string" ? headers.authorization : undefined);
+  if (auth) return auth;
+  const x = headers["x-api-key"];
+  const v = (Array.isArray(x) ? x[0] : x)?.trim();
+  return v && /^\S+$/.test(v) ? v : null;
+}
+
+/**
+ * Legacy connector URLs (/mcp/oct_...) put the key in the URL. OCTILLION_URL_KEYS:
+ *   allow (default)  still accepted, deprecated: each response says so (Deprecation header) and the server logs which
+ *                    account and key used one, so those people can be moved to a header or to sign-in
+ *   off              refused with a 401 that says how to send the key instead
+ * New keys are never issued as URLs (src/admin.ts connectInfo).
+ */
+export const urlKeysAllowed = () => (process.env.OCTILLION_URL_KEYS ?? "allow").trim().toLowerCase() !== "off";
 
 // ---------- Clerk users on /mcp (OAuth) ----------
 
@@ -82,11 +111,11 @@ const tokenOrgs = new Map<string, { org: Org; at: number }>();
 onMembershipChange((userId) => tokenOrgs.delete(userId)); // a suspended person is cut off at once, not after the cache
 
 /**
- * Resolve a Clerk OAuth access token to the organization the user acts for: their oldest Clerk membership that is not
+ * Resolve a Clerk OAuth access token issued for /mcp (its audience is checked, src/clerk.ts) to the organization the user acts for: their oldest Clerk membership that is not
  * suspended. A Clerk organization created in the Clerk dashboard gets its Octillion row on first use.
  */
 export async function resolveUserToken(token: string): Promise<Org | null> {
-  const claims = await verifyOAuthToken(token);
+  const claims = await verifyOAuthToken(token, mcpAudiences()); // issued for /mcp, not another resource
   if (!claims) return null;
   const hit = tokenOrgs.get(claims.userId);
   if (hit && Date.now() - hit.at < 60_000) return hit.org;

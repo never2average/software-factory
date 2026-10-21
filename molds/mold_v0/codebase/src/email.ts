@@ -20,6 +20,7 @@
  *  - Plain text first; the HTML is the same words, with links, no images and no tracking. Signed "— Octillion".
  */
 import { createHash, randomUUID } from "node:crypto";
+import { asPlatform } from "./tenant-scope.js";
 import { getDb } from "./db.js";
 import { getProvider, useCredential } from "./keyvault.js";
 import { freshSettings, settingText } from "./settings.js";
@@ -65,7 +66,8 @@ export async function emailStatus(): Promise<{ enabled: boolean; connected: bool
 
 /** Send one email (or record why not). Never throws. */
 export async function send(m: Email): Promise<EmailResult> {
-  try { return await attempt(m); }
+  // Email bookkeeping (email_log) and the provider key are the platform's, whoever triggers the email (src/tenant-scope.ts).
+  try { return await asPlatform(() => attempt(m)); }
   catch (e) {
     console.error(`email ${m.kind}: not recorded: ${(e as Error).message}`);
     return { status: "failed", error: (e as Error).message };
@@ -80,9 +82,12 @@ export function fire(p: Promise<unknown>): void {
 
 /** send() without waiting: after the caller's own writes, kept alive on Vercel. Resolves to the result, never rejects. */
 export function sendLater(m: Email): Promise<EmailResult> {
+  // Email bookkeeping (email_log) and the provider key are the platform's (src/tenant-scope.ts).
+  return asPlatform(() => {
   const p = send(m);
   telemetry.keepAlive(p);
   return p;
+});
 }
 
 async function attempt(m: Email): Promise<EmailResult> {

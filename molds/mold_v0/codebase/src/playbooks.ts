@@ -11,6 +11,7 @@
  * (shipping a docs change) are marked by the person.
  */
 import { getDb } from "./db.js";
+import { asPlatform } from "./tenant-scope.js";
 import { capture, keepAlive } from "./telemetry.js";
 
 export interface Stage {
@@ -279,6 +280,8 @@ const FIRST_BUILT_INS = ["baseline", "fix-loss", "head-to-head", "agent-audit", 
 export const __resetSeed = () => { seeded = false; };
 
 async function ensureSeeded() {
+  // Seeds Octillion's built-in journeys: shared rows, the platform's (src/tenant-scope.ts).
+  return asPlatform(async () => {
   if (seeded) return;
   const db = await getDb();
   const [{ n }] = await db.query<{ n: number }>("SELECT count(*) AS n FROM journey_seed");
@@ -301,6 +304,7 @@ async function ensureSeeded() {
     await db.query("INSERT INTO journey_seed (id) VALUES ($1) ON CONFLICT DO NOTHING", [p.id]);
   }
   seeded = true;
+});
 }
 
 /** Global templates (promoted only, if asked), plus with `orgId` that account's own use cases. */

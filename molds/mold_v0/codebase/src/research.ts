@@ -1,5 +1,6 @@
 import { urlKey, webSearchEnabled } from "./websearch.js";
 import { registryLinks } from "./registry-meta.js";
+import { asPlatform } from "./tenant-scope.js";
 import { isIP } from "node:net";
 import { getDb } from "./db.js";
 import { checkLaunchRole } from "./limits.js";
@@ -476,6 +477,8 @@ export function onboardingFailure(job: { note?: string | null; error?: string | 
 
 /** The first run, offered concretely: the exact call, how many sessions, roughly what it costs. */
 export async function firstRunOffer(product: string, tasks: number, profiles: string[]) {
+  // Averages across every organization's runs (src/tenant-scope.ts).
+  return asPlatform(async () => {
   const db = await getDb();
   const [{ avg }] = await db.query<{ avg: number | null }>(
     "/* tenant: aggregate average across all completed sessions, no rows of any org returned */ SELECT avg(cost_usd)::float AS avg FROM agent_sessions WHERE status = 'completed' AND ended_at > now() - interval '30 days' AND cost_usd > 0");
@@ -490,6 +493,7 @@ export async function firstRunOffer(product: string, tasks: number, profiles: st
     cost_estimate_usd: [usd(first * perSession), usd(most * perSession)] as [number, number],
     message: `Run it now: about ${first} agent sessions to start (up to ${most} as results settle), roughly $${usd(first * perSession)}-${usd(most * perSession)}.`,
   };
+});
 }
 
 /** Approve or reject the draft tasks research proposed for gaps in the library (only approved drafts ever run). */

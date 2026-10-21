@@ -22,7 +22,8 @@ if (args[0] === "--key") {
 console.log(`Organization: ${name}
 API key (shown once): ${key}
 
-Connector URL for Claude (Settings > Connectors > Add custom connector) and ChatGPT (developer mode):
-  ${base}/mcp/${key}
-Or: POST ${base}/mcp with header  Authorization: Bearer ${key}`);
+Connector URL: ${base}/mcp
+Send the key in a header, never in the URL:  Authorization: Bearer ${key}
+  Claude Code: claude mcp add --transport http octillion ${base}/mcp --header "Authorization: Bearer ${key}"
+Claude and ChatGPT's apps cannot send a header: they need sign-in (an invitation from /admin, where Clerk is set up).`);
 await db.close();

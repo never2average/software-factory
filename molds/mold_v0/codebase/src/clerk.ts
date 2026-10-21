@@ -10,7 +10,11 @@
  *   CLERK_PUBLISHABLE_KEY       pk_... (or NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY): names the Frontend API, the OAuth server
  *   CLERK_JWT_KEY               optional PEM public key: verify session tokens without calling Clerk (else JWKS)
  *   CLERK_AUTHORIZED_PARTIES    origins allowed in a session token's azp (default: PUBLIC_URL's origin)
- *   CLERK_API_URL, CLERK_FRONTEND_API_URL  overrides for the smoke test only (it points them at its local mock, scripts/lib/mock-providers.ts)
+ *   CLERK_MCP_AUDIENCE          the /mcp resource URI(s) OAuth tokens must be issued for, comma-separated (default PUBLIC_URL/mcp)
+ *   OCTILLION_OAUTH_AUDIENCE    auto (default), enforce or report: see audienceOk
+ *   CLERK_API_URL               override for the smoke test only (it points it at its local mock, scripts/lib/mock-providers.ts)
+ *   CLERK_FRONTEND_API_URL      the Frontend API (the OAuth server and the issuer of its JWTs); set it in production when
+ *                               Clerk runs behind a proxy URL, whose address then appears as the tokens' issuer
  *
  * Suspending a person: Clerk memberships have no "deactivated" state, so suspension is the membership's
  * public_metadata.suspended = true, which Octillion enforces on /mcp and /api/app; removing a member deletes the
@@ -206,23 +210,100 @@ export async function verifySessionToken(token: string | null | undefined): Prom
 }
 
 /**
- * An OAuth access token Clerk issued to an MCP client: opaque (oat_…, checked with the Backend API) or JWT (typ
- * at+jwt, checked against the instance's keys). Returns the user and scopes, or null.
+ * The audience check (RFC 8707 / the MCP authorization spec: a server accepts only tokens issued for it). Without it,
+ * an access token the same Clerk instance issued for another resource (another product on the instance, or the admin
+ * MCP's token on /mcp and the other way round) would be accepted. A JWT's issuer must also be the instance's Frontend
+ * API, always. OCTILLION_OAUTH_AUDIENCE:
+ *   auto (default)  a token that names an audience (a JWT's `aud`; for an opaque token an aud/audience/resource field
+ *                   in the verify response) must name this resource; a token that names none is accepted and logged,
+ *                   because Clerk does not document putting the resource (RFC 8707) into its tokens
+ *   enforce         also refuses tokens that name no audience: turn it on once the logs show the tokens carry it
+ *   report          refuses nothing on audience, logs mismatches (the issuer is still checked)
+ * Log lines carry the claims (audience, issuer, client), never the token, once per client and outcome per 10 minutes.
  */
-export async function verifyOAuthToken(token: string): Promise<{ userId: string; scopes: string[]; clientId: string | null } | null> {
+type AudienceMode = "auto" | "enforce" | "report";
+const audienceMode = (): AudienceMode => {
+  const v = (process.env.OCTILLION_OAUTH_AUDIENCE ?? "").trim().toLowerCase();
+  return v === "enforce" || v === "report" ? v : "auto";
+};
+/** A resource URI in comparable form: scheme and host lower-cased, default port and trailing slash dropped, query kept. */
+export function canonicalResource(u: string): string {
+  try {
+    const x = new URL(u.trim());
+    return `${x.protocol}//${x.host}`.toLowerCase() + x.pathname.replace(/\/+$/, "") + x.search;
+  } catch {
+    return u.trim().replace(/\/+$/, "");
+  }
+}
+/** A JWT `aud` is one StringOrURI or an array of them: never split a string. */
+const audiencesOf = (v: unknown): string[] =>
+  (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string" && x.length > 0);
+
+const audienceLogged = new Map<string, number>();
+/** Forget which lines were logged (tests). */
+export const resetAudienceLog = () => audienceLogged.clear();
+function audienceLog(key: string, line: string) {
+  const now = Date.now();
+  if (now - (audienceLogged.get(key) ?? 0) < 600_000) return;
+  if (audienceLogged.size > 1000) audienceLogged.clear();
+  audienceLogged.set(key, now);
+  console.error(line);
+}
+
+/** Whether a token's audiences (and a JWT's issuer) fit the expected resources, per OCTILLION_OAUTH_AUDIENCE. */
+function audienceOk(gotRaw: string[], expected: string[], extra: { jwt: boolean; iss?: unknown; client?: string | null }): boolean {
+  const want = new Set(expected.map(canonicalResource));
+  // Only absolute http(s) URIs name a resource. Some servers put the client id or their own address in `aud`: that names
+  // no resource, so it is treated like no audience (auto accepts and logs it; enforce refuses).
+  const notResource = new Set([extra.client, extra.iss, frontendApi()].filter(Boolean).map((x) => canonicalResource(String(x))));
+  const got = gotRaw.filter((a) => /^https?:\/\//i.test(a) && !notResource.has(canonicalResource(a)));
+  const client = extra.client ?? "-";
+  if (extra.jwt) {
+    const issuer = frontendApi();
+    // No known issuer means no way to tell this instance's tokens from another's: refuse.
+    if (!issuer || canonicalResource(String(extra.iss ?? "")) !== canonicalResource(issuer)) {
+      audienceLog(`iss ${client}`, `oauth issuer mismatch on ${expected[0]}: iss=${JSON.stringify(String(extra.iss ?? "").slice(0, 120))} expected=${JSON.stringify(issuer)} client=${client} (refused)`);
+      return false;
+    }
+  }
+  const mode = audienceMode();
+  const detail = `on ${expected[0]}: aud=${JSON.stringify(gotRaw.slice(0, 4))} expected=${JSON.stringify([...want])} client=${JSON.stringify(client)}`;
+  if (!got.length) {
+    if (mode === "enforce") { audienceLog(`none ${mode} ${client}`, `oauth audience missing ${detail} (refused: OCTILLION_OAUTH_AUDIENCE=enforce)`); return false; }
+    audienceLog(`none ${mode} ${client}`, `oauth audience missing ${detail} (accepted: the token names no audience)`);
+    return true;
+  }
+  if (got.some((a) => want.has(canonicalResource(a)))) return true;
+  if (mode === "report") { audienceLog(`bad ${mode} ${client}`, `oauth audience mismatch ${detail} (accepted: OCTILLION_OAUTH_AUDIENCE=report)`); return true; }
+  audienceLog(`bad ${mode} ${client}`, `oauth audience mismatch ${detail} (refused)`);
+  return false;
+}
+
+/**
+ * An OAuth access token Clerk issued to an MCP client for `audience` (one resource URI, or several equivalent ones):
+ * opaque (oat_…, checked with the Backend API) or JWT (typ at+jwt, checked against the instance's keys). Returns the
+ * user and scopes, or null (invalid, revoked, expired, or issued for another resource).
+ */
+export async function verifyOAuthToken(token: string, audience: string | string[]): Promise<{ userId: string; scopes: string[]; clientId: string | null } | null> {
   if (!clerkEnabled()) return null;
+  const expected = (Array.isArray(audience) ? audience : [audience]).filter(Boolean);
+  if (!expected.length) return null;
   try {
     if (token.startsWith("oat_")) {
-      const r = await call<{ subject?: string; scopes?: string[]; client_id?: string; revoked?: boolean; expired?: boolean }>(
+      const r = await call<{ subject?: string; scopes?: string[]; client_id?: string; revoked?: boolean; expired?: boolean; aud?: unknown; audience?: unknown; resource?: unknown; resources?: unknown }>(
         "POST", "/oauth_applications/access_tokens/verify", { access_token: token });
       if (!r.subject || r.revoked || r.expired) return null;
+      const got = [...audiencesOf(r.aud), ...audiencesOf(r.audience), ...audiencesOf(r.resource), ...audiencesOf(r.resources)];
+      if (!audienceOk(got, expected, { jwt: false, client: r.client_id ?? null })) return null;
       return { userId: r.subject, scopes: r.scopes ?? [], clientId: r.client_id ?? null };
     }
     if (token.split(".").length === 3 && OAUTH_JWT_TYPES.includes(String(decodeProtectedHeader(token).typ ?? ""))) {
       const p = await verifyJwt(token);
       if (!p.sub) return null;
+      const clientId = (p.client_id ?? p.azp ?? null) as string | null;
+      if (!audienceOk(audiencesOf(p.aud), expected, { jwt: true, iss: p.iss, client: clientId })) return null;
       const scopes = typeof p.scp === "string" ? p.scp.split(" ") : Array.isArray(p.scp) ? p.scp : typeof p.scope === "string" ? p.scope.split(" ") : [];
-      return { userId: p.sub, scopes, clientId: (p.client_id ?? p.azp ?? null) as string | null };
+      return { userId: p.sub, scopes, clientId };
     }
   } catch {
     return null;
@@ -245,7 +326,13 @@ export function frontendApi(): string | null {
     return null;
   }
 }
-export const mcpAudience = () => process.env.CLERK_MCP_AUDIENCE || `${publicUrl()}/mcp`;
+/** Every resource URI a /mcp token may be issued for: CLERK_MCP_AUDIENCE may list more than one (a second domain). */
+export const mcpAudiences = () => {
+  const list = (process.env.CLERK_MCP_AUDIENCE ?? "").split(",").map((x) => x.trim().replace(/\/+$/, "")).filter(Boolean);
+  return list.length ? list : [`${publicUrl()}/mcp`];
+};
+/** The customer /mcp's resource URI (what its protected-resource metadata names): the first of mcpAudiences. */
+export const mcpAudience = () => mcpAudiences()[0]!;
 
 // ---------- platform admins ----------
 

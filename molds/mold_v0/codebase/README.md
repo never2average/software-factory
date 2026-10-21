@@ -176,7 +176,7 @@ People live in **Clerk**, billing in **Stripe**, product analytics in **PostHog*
 **New Relic** (OpenTelemetry). Octillion keeps only the links to them. Setup and the funnel are in
 **[docs/accounts.md](docs/accounts.md)**.
 
-- **`/admin`** (`OCTILLION_ADMIN_TOKEN`) is the onboarding console. It handles access requests (approve creates the
+- **`/admin`** (platform admins sign in with Clerk; scripts use `npm run admin:token` tokens) is the onboarding console. It handles access requests (approve creates the
   Clerk organization, Stripe customer and invitation), the funnel from invite to first report, who is stuck and why,
   members (roles, suspension) and invitations, plans and checkout/portal links, and legacy keys.
 - **`/app`** is the customer page, behind Clerk sign-in (the account is the session's active Clerk organization). It has a setup checklist with a live connection test,
@@ -202,13 +202,18 @@ npm run access:list                     # who asked for access on the landing pa
 npm run org:create -- "Acme Inc"        # prints the API key (once) and the connector URL
 ```
 
-Give them the connector URL `https://<host>/mcp/<api key>`:
-- **Claude:** Settings → Connectors → *Add custom connector*. On Team/Enterprise plans an owner adds it once for the org.
-- **ChatGPT:** add a custom MCP server and choose no authentication. Business, Enterprise and Edu workspaces need an admin to allow custom MCP.
-- **Claude Code:** `{"mcpServers": {"octillion": {"type": "http", "url": "https://<host>/mcp/<api key>"}}}` in `.mcp.json`.
-- **Cursor and other IDE hosts:** paste the URL into the MCP settings and enable the tools. They show text results, not the dashboard.
+Give them the connector URL `https://<host>/mcp` and the key, which their client sends in a header,
+`Authorization: Bearer <api key>` (or `X-API-Key: <api key>`). The key never goes in the URL: URLs end up in proxy
+logs, browser history and screenshots.
+- **Claude Code:** `claude mcp add --transport http octillion https://<host>/mcp --header "Authorization: Bearer <api key>"`.
+- **Cursor and other IDE hosts:** add the URL with a `headers` entry in their MCP config and enable the tools. They show text results, not the dashboard.
+- **Claude and ChatGPT's apps** cannot send a header: invite the person with sign-in (Clerk) instead.
 
-Clients that can send headers can use `POST /mcp` with `Authorization: Bearer <api key>` instead.
+The old connector URL with the key in it, `https://<host>/mcp/<api key>`, is deprecated: it still works while
+`OCTILLION_URL_KEYS` is unset (`allow`), answers with a `Deprecation` header (RFC 9745), and the server logs
+`mcp url-key deprecated org=<slug> key=<prefix>…` once an hour per key so those people can be moved. Set
+`OCTILLION_URL_KEYS=off` to refuse it.
+
 The beta guide for testers is [docs/beta-guide.md](docs/beta-guide.md). Then they just talk to it. The first prompt can be *"Get me started with Octillion"*: the `get_started` tool (listed
 first) answers with the account's one next step. Or go straight to it: *"Onboard my product: Acme Queue,
 https://acme.dev, https://docs.acme.dev. It is a job queue for Node."*
@@ -291,7 +296,7 @@ npm run population -- share global codex/default 0.21
 npm run population -- pause global cursor/auto "no credentials yet"   # resume global cursor/auto
 npm run population -- create enterprise "Enterprise developers" --from global
 ```
-Admin API: `/api/admin/populations[/:slug[/agents/:agent]]` with `OCTILLION_ADMIN_TOKEN`.
+Admin API: `/api/admin/populations[/:slug[/agents/:agent]]` with an admin token (`npm run admin:token -- create --label <purpose> --role operator`).
 
 ## Orchestrators and the pod fleet
 
@@ -332,7 +337,7 @@ src/limits.ts        per-account usage limits: budget split, teams, rollout, thr
 src/context.ts       company, personal and product context for the AI client and research
 src/insights.ts      platform analytics and health for /admin (replicated from the event log)
 src/journeys.ts      journey tips: PostHog Workflows webhook, in-chat and /app delivery, recipes
-src/admin-auth.ts    platform-admin guard for /api/admin (Clerk session + allowlist, or the admin token)
+src/admin-auth.ts    platform-admin guard for /api/admin (Clerk session + allowlist, or a scoped admin token)
 src/session.ts       reads the Clerk session from a request (Bearer or __session cookie)
 src/clerk.ts         Clerk Backend API client, session and OAuth token verification, platform-admin check
 src/billing.ts       Stripe REST client: plans, subscriptions, checkout, portal, budgets, spend meter

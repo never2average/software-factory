@@ -24,7 +24,9 @@ export function ResultDialog({ result, title, onClose }: { result: InviteResult 
   }, [result]);
   const legacy = Boolean(result?.key);
   const c = result?.clients[Number(client)];
-  const mailto = result?.email.to ? `mailto:${encodeURIComponent(result.email.to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null;
+  // A mailto link is a URL (webmail opens it as an https one): the key never goes in it; paste it into the mail yourself.
+  const mailBody = result?.key ? body.replaceAll(result.key, '[paste the API key here]') : body;
+  const mailto = result?.email.to ? `mailto:${encodeURIComponent(result.email.to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(mailBody)}` : null;
   return (
     <Dialog open={Boolean(result)} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
@@ -36,7 +38,7 @@ export function ResultDialog({ result, title, onClose }: { result: InviteResult 
           <div className='grid gap-4'>
             {legacy && (
               <Notice>
-                <b>Shown once.</b> Only a hash is stored. Copy the link or the email now; if it is lost, rotate the key.
+                <b>Shown once.</b> Only a hash is stored. Copy the key or the email now; if it is lost, rotate the key. The key goes in a header (each client's setup below), never in the URL.
               </Notice>
             )}
             {result.invitation ? (
@@ -60,6 +62,12 @@ export function ResultDialog({ result, title, onClose }: { result: InviteResult 
               <Label>Connector URL</Label>
               <CopyField value={result.connector_url} />
             </div>
+            {result.key && (
+              <div className='grid gap-1.5'>
+                <Label>API key</Label>
+                <CopyField value={result.key} />
+              </div>
+            )}
             <div className='grid gap-2'>
               <Label>Client setup</Label>
               <Tabs value={client} onValueChange={(v) => setClient(String(v))}>
@@ -79,7 +87,7 @@ export function ResultDialog({ result, title, onClose }: { result: InviteResult 
               )}
             </div>
             <div className='grid gap-1.5'>
-              <Label htmlFor='rd-subject'>{legacy ? 'Email with the link (send it yourself)' : 'Optional follow-up email (Clerk already sent the invitation)'}</Label>
+              <Label htmlFor='rd-subject'>{legacy ? 'Email with the key (send it yourself)' : 'Optional follow-up email (Clerk already sent the invitation)'}</Label>
               <Input id='rd-subject' value={subject} onChange={(e) => setSubject(e.target.value)} />
               <Textarea aria-label='Email body' className='min-h-56 font-mono text-xs' value={body} onChange={(e) => setBody(e.target.value)} />
             </div>

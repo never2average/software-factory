@@ -8,6 +8,7 @@
  * people from Clerk and the plan from Stripe, through src/admin.ts.
  */
 import express, { type NextFunction, type Request, type Response } from "express";
+import { withTenant } from "./tenant-scope.js";
 import { z } from "zod";
 import * as admin from "./admin.js";
 import { orgForClerk } from "./auth.js";
@@ -399,7 +400,8 @@ export function appRouter() {
     }
     res.locals.session = s;
     res.locals.memberships = ms;
-    next();
+    // Row-level security (src/tenant-scope.ts): the rest of the request reaches this organization's rows only.
+    withTenant(org.orgId, () => next());
   });
   const S = (res: Response) => res.locals.session as Session;
   /** Refuse unless the person's role has the permission: 403 in plain words, with a code and the role it needs. */

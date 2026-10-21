@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
+import { asPlatform } from "./tenant-scope.js";
 
 /**
  * Key vault: provider credentials (Anthropic, OpenAI, boat.dev, ...) encrypted at rest with AES-256-GCM.
@@ -88,15 +89,21 @@ export function checkServiceAccount(secret: string): ServiceAccountInfo {
 // ---------- providers ----------
 
 export async function listProviders(): Promise<ProviderRow[]> {
+  // The vault is platform data, out of a tenant's reach (src/tenant-scope.ts): read as the platform.
+  return asPlatform(async () => {
   return (await getDb()).query<ProviderRow>("SELECT slug, mode, upstream_url, auth_header, auth_prefix, env_vars, enabled, backend, backend_config FROM vault_providers ORDER BY slug");
+});
 }
 
 export async function getProvider(slug: string): Promise<ProviderRow | null> {
+  // The vault is platform data, out of a tenant's reach (src/tenant-scope.ts): read as the platform.
+  return asPlatform(async () => {
   const [row] = await (await getDb()).query<ProviderRow>(
     "SELECT slug, mode, upstream_url, auth_header, auth_prefix, env_vars, enabled, backend, backend_config FROM vault_providers WHERE slug = $1",
     [slug],
   );
   return row ?? null;
+});
 }
 
 export async function upsertProvider(p: Partial<ProviderRow> & { slug: string }) {
@@ -127,11 +134,14 @@ export async function upsertProvider(p: Partial<ProviderRow> & { slug: string })
 
 /** Providers that satisfy a list of required env var names (registry `requires_env`). */
 export async function providersForEnv(envVars: string[]): Promise<ProviderRow[]> {
+  // The vault is platform data, out of a tenant's reach (src/tenant-scope.ts): read as the platform.
+  return asPlatform(async () => {
   if (!envVars.length) return [];
   return (await getDb()).query<ProviderRow>(
     "SELECT slug, mode, upstream_url, auth_header, auth_prefix, env_vars, enabled, backend, backend_config FROM vault_providers WHERE enabled AND env_vars && $1 ORDER BY slug",
     [envVars],
   );
+});
 }
 
 // ---------- credentials ----------
@@ -205,6 +215,8 @@ export async function deleteCredential(id: number) {
 export const VERTEX_LABEL = "vertex";
 
 export async function useCredential(provider: string, opts: { label?: string; excludeLabel?: string } = {}): Promise<{ id: number; secret: string }> {
+  // The vault is platform data, out of a tenant's reach (src/tenant-scope.ts): read as the platform.
+  return asPlatform(async () => {
   const db = await getDb();
   const [row] = await db.query<{ id: number; ciphertext: string; iv: string; tag: string; key_id: string }>(
     `UPDATE vault_credentials SET uses = uses + 1, last_used_at = now()
@@ -218,6 +230,7 @@ export async function useCredential(provider: string, opts: { label?: string; ex
     ? `No Vertex service-account key for ${provider}: store one with label "${VERTEX_LABEL}" (keyvault set ${provider} --label ${VERTEX_LABEL} < key.json)`
     : `No ${provider} credential in the vault`), { status: 503 });
   return { id: row.id, secret: decrypt(row) };
+});
 }
 
 /**
@@ -225,6 +238,8 @@ export async function useCredential(provider: string, opts: { label?: string; ex
  * when one is named, else the provider's own "vertex" key (older setups), else the vault's Vertex AI provider.
  */
 export async function useVertexCredential(slug: string, credentialProvider?: string): Promise<{ id: number; secret: string }> {
+  // The vault is platform data, out of a tenant's reach (src/tenant-scope.ts): read as the platform.
+  return asPlatform(async () => {
   if (credentialProvider && credentialProvider !== VERTEX_PROVIDER) return useCredential(credentialProvider, { label: VERTEX_LABEL });
   if (!credentialProvider && slug !== VERTEX_PROVIDER) {
     const own = await useCredential(slug, { label: VERTEX_LABEL }).catch(() => null);
@@ -233,6 +248,7 @@ export async function useVertexCredential(slug: string, credentialProvider?: str
   return useCredential(VERTEX_PROVIDER).catch(() => {
     throw Object.assign(new Error("No Vertex service-account key in the vault: add one to the Vertex AI provider on Key vault"), { status: 503 });
   });
+});
 }
 
 /** Re-encrypt every credential with the current master key (after rotating OCTILLION_VAULT_KEY). */

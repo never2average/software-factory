@@ -24,7 +24,7 @@ import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
 export let otelFlush: () => Promise<void> = async () => {};
 
 if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT && process.env.OTEL_SDK_DISABLED !== "true") {
-  // Keys travel in the connector URL path (/mcp/oct_...) and the gateway carries session tokens: never record those paths.
+  // Deprecated connector URLs carry a key in the path (/mcp/oct_...) and the gateway carries session tokens: never record those paths.
   const redact = (path: string) => path.replace(/\/mcp\/oct_[^/?]+/, "/mcp/:key").replace(/\/api\/journeys\/nudges\/[^/?]+/, "/api/journeys/nudges/:secret").replace(/\?.*$/, "");
   const sdk = new NodeSDK({
     resource: resourceFromAttributes({
@@ -40,7 +40,12 @@ if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT && process.env.OTEL_SDK_DISABLED !==
         // The span name and url attributes come from the request: rewrite the key out of them.
         requestHook: (span, req) => {
           const url = "url" in req && typeof req.url === "string" ? req.url : undefined;
-          if (url && /\/mcp\/oct_|\/api\/journeys\/nudges\/./.test(url)) { span.setAttribute("url.path", redact(url)); span.setAttribute("http.target", redact(url)); }
+          if (url && /\/mcp\/oct_|\/api\/journeys\/nudges\/./.test(url)) {
+            // Every attribute that can carry the path, old and stable semantic conventions alike.
+            const host = "headers" in req ? String((req.headers as Record<string, unknown>).host ?? "") : "";
+            for (const k of ["url.path", "http.target"]) span.setAttribute(k, redact(url));
+            for (const k of ["http.url", "url.full"]) span.setAttribute(k, `${host ? `//${host}` : ""}${redact(url)}`);
+          }
         },
         headersToSpanAttributes: { server: { requestHeaders: ["user-agent"] } },
       }),

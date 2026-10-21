@@ -492,7 +492,7 @@ function Keys({ d, path, onResult }: { d: Detail; path: string; onResult: (r: In
   return (
     <Section
       title={`Legacy API keys (${active} active)`}
-      description='Secret connector links from before Clerk sign-in, and for clients that can only send a header. One per person.'
+      description='API keys from before Clerk sign-in, for clients that send a header (never in the URL). One per person.'
     >
       <DataList
         rows={d.keys}

@@ -29,7 +29,7 @@ vault once (`src/keyvault-env.ts`, label `imported from environment`, one marker
 only when that provider has no enabled vault key, never overwriting one, and never again after the marker. The Key
 vault page notes "Also set in the server environment — safe to delete there" for each such variable. Environment
 variables that stay: `OCTILLION_VAULT_KEY` (the vault's own master key), infra secrets (`DATABASE_URL`,
-`OCTILLION_WORKER_TOKEN`, `OCTILLION_ADMIN_TOKEN`, `CLERK_*`, `STRIPE_*`, `NEW_RELIC_*`, `POSTHOG_*`) and non-secret
+`OCTILLION_WORKER_TOKEN`, `CRON_SECRET`, `CLERK_*`, `STRIPE_*`, `NEW_RELIC_*`, `POSTHOG_*`) and non-secret
 config (URLs, model names, limits, `CLOUDFLARE_ACCOUNT_ID`).
 
 `mode: gateway`: the sub-agent gets `base_url = {PUBLIC_URL}/gw/<provider>` and `api_key = ogw_…`. The gateway

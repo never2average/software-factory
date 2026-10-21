@@ -10,6 +10,7 @@
  *    built in isolation (phase 2).
  */
 import { ensureOrgKey, open as openText, openJson, openRows, seal, sealJson } from "./orgcrypto.js";
+import { asPlatform } from "./tenant-scope.js";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
@@ -382,7 +383,8 @@ export function harnessSpecIssues(s: any, gatewayProviders: string[]): string[] 
 
 export async function registerHarness(org: Org, spec: HarnessSpec) {
   const db = await getDb();
-  const gateway = (await db.query<{ slug: string }>("SELECT slug FROM vault_providers WHERE mode = 'gateway' AND enabled ORDER BY slug")).map((r) => r.slug);
+  // Which providers the gateway serves is platform data (the vault is out of a tenant's reach): read as the platform.
+  const gateway = (await asPlatform(() => db.query<{ slug: string }>("SELECT slug FROM vault_providers WHERE mode = 'gateway' AND enabled ORDER BY slug"))).map((r) => r.slug);
   const issues = harnessSpecIssues(spec, gateway);
   if (issues.length) throw new Error(`Invalid harness spec: ${issues.join("; ")}`);
   const needsReview = Boolean(spec.allow_install_scripts) || Boolean(spec.egress_hosts?.length);
