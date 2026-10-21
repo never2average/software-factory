@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { accountRefusal, canAccount } from "./account-roles.js";
-import { recordMcpEvent } from "./analytics.js";
+import { errorClass, jsonBytes, recordMcpEvent } from "./analytics.js";
 import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { PackDefinitionError, PackError, validatePack, type PackDb, type PackDefinition, type PackTool, type Workspace } from "./pack-api.js";
@@ -145,8 +145,9 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
     const { workspaceRuns } = await import("./runs.js");
     const ctx = { pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(pack, org.orgId), runs: workspaceRuns(pack, org.orgId, org.userId ?? null, org) };
     const value = await withTenant(org.orgId, () => t.handler(ws, args ?? {}, ctx));
-    recordMcpEvent(org, { method: "tools/call", name: t.name, ms: performance.now() - t0 });
-    return toToolResult(value);
+    // The size cap and the call's record with its sizes (mold_v0-018, 008).
+    const { capResult } = await import("./server.js");
+    return capResult(org, t.name, toToolResult(value), t0, args);
   } catch (err) {
     // As for the shell's tools (src/server.ts runToolInner): a database error can echo another row's values, so the
     // caller gets its code, never its text.
@@ -154,7 +155,7 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
     if (e.code === "42501") console.error(`pack ${pack} tool ${t.name}: refused by the database: ${e.message}`);
     const message = typeof e.code === "string" && /^[0-9A-Z]{5}$/.test(e.code)
       ? `The request could not be completed (database error ${e.code}). Check the arguments and try again.` : e.message;
-    recordMcpEvent(org, { method: "tools/call", name: t.name, ok: false, error: message, ms: performance.now() - t0 });
+    recordMcpEvent(org, { method: "tools/call", name: t.name, ok: false, error: message, ms: performance.now() - t0, error_class: errorClass(err), req_bytes: jsonBytes(args) });
     return { isError: true, content: [{ type: "text", text: message }] };
   }
 }

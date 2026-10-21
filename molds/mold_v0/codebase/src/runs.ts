@@ -29,6 +29,7 @@ import { asPlatform } from "./tenant-scope.js";
 import { acquireLease, commitStaged, endAttempt, removeObjects, renewLease } from "./workspace-store.js";
 import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
+import { checkRunStart, effectiveKindLimits, underConcurrency } from "./run-limits.js";
 
 export type JobKind = z.output<typeof JobKindSchema> & { pack: string };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -73,9 +74,6 @@ const jsonObject = (v: unknown, what: string) => {
 
 // ---------- the workspace's side: start, read, cancel ----------
 
-/** Runs a workspace may have queued or running at once (every kind): one workspace cannot fill the queue. */
-const MAX_LIVE = () => Number(process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE ?? 20);
-
 /**
  * Queue a run of `pack`'s job kind for workspace `orgId` (the caller's own workspace, from its session). When the
  * caller is a signed-in person (`org.userId`), the account's own launch rules apply first (src/limits.ts checkRun:
@@ -93,14 +91,16 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
   }
   const [{ n }] = await asPlatform(async () => (await getDb()).query<{ n: number }>(
     "SELECT count(*)::int AS n FROM runs WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]));
-  if (n >= MAX_LIVE()) throw new PackError(`this workspace already has ${n} runs queued or running (at most ${MAX_LIVE()}): wait for some to finish`, 429);
+  // Limits (mold_v0-018, 053; src/run-limits.ts): the workspace's live runs, the kind's month budget, the account's
+  // allowance; the run's budget is the kind's, never above the platform's ceiling.
+  const { budget_usd } = await checkRunStart(orgId, pack, kind, k, n);
   const id = `run_${randomBytes(12).toString("base64url")}`;
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
   const [r] = await asPlatform(async () => (await getDb()).query<RunRow>(
     `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${COLS}`,
     [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
-     k.lease_seconds, k.budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy]));
+     k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy]));
   await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy });
   return view(r!);
 }
@@ -228,17 +228,22 @@ export async function claimRun(workerId: string, opts: { kinds?: string[] } = {}
   if (!kinds.length) return null;
   const lease = `orl_${randomBytes(24).toString("base64url")}`;
   const row = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
-    const candidates = await tx.query<{ id: string; org_id: number; pack: string; kind: string; workspace: boolean; lease_seconds: number }>(
+    const candidates = await tx.query<{ id: string; org_id: number; pack: string; kind: string; workspace: boolean; lease_seconds: number; concurrency: number | null }>(
       `/* tenant: platform claim across workspaces (the workspace comes from the row) */ SELECT id, org_id, pack, kind,
-              coalesce((spec->>'workspace')::boolean, false) AS workspace, lease_seconds FROM runs
+              coalesce((spec->>'workspace')::boolean, false) AS workspace, lease_seconds, (spec->>'concurrency_per_workspace')::int AS concurrency FROM runs
         WHERE status = 'queued' AND pack || '/' || kind = ANY ($1::text[])
           -- One writer per workspace store: a run whose store another live run holds is not even a candidate, so a
           -- workspace with many queued runs never hides other workspaces' runs behind its own.
           AND NOT (coalesce((spec->>'workspace')::boolean, false) AND EXISTS (SELECT 1 FROM workspace_leases l
                    WHERE l.org_id = runs.org_id AND l.store = runs.pack AND l.expires_at > now() AND l.run_id <> runs.id))
-        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds]);
+          -- Nor one whose workspace already runs its kind's concurrency (mold_v0-018; rechecked under a lock below).
+          AND (SELECT count(*) FROM runs x WHERE x.org_id = runs.org_id AND x.pack = runs.pack AND x.kind = runs.kind AND x.status = 'running')
+              < LEAST(coalesce((spec->>'concurrency_per_workspace')::int, $2), $2)
+        ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED`, [kinds, effectiveKindLimits({ budget_usd: 1 }).concurrency]);
     for (const c of candidates) {
       if (!findKind(c.pack, c.kind)) continue; // a kind this build no longer has: left queued for a build that has it
+      // The kind's concurrency in this workspace (mold_v0-018): over it, the run waits in the queue.
+      if (!(await underConcurrency(tx, c))) continue;
       // One writer per workspace store (mold_v0-033): while another run of this workspace and pack holds the store's
       // lease, this one waits in the queue.
       if (c.workspace && !(await acquireLease(tx, c.org_id, c.pack, c.id, c.lease_seconds))) continue;

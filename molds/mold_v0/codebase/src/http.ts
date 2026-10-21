@@ -13,6 +13,7 @@ import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { credentialAppRouter } from "./credential-routes.js";
 import { onboardingAppRouter } from "./onboarding.js";
+import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
@@ -25,6 +26,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, runTool, TOOL_NAMES, WIDGET_HTML, type ToolName } from "./server.js";
 import { connectorEvents, recordMcpEvent } from "./analytics.js";
+import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
 import { bearer, cronSecretOk, headerCredential, isWorkerToken, resolveKey, resolveUserToken, urlKeysAllowed, type Org } from "./auth.js";
 import { clerkEnabled, ClerkError, frontendApi, mcpAudience } from "./clerk.js";
 import { StripeError } from "./billing.js";
@@ -116,14 +118,8 @@ export function createApp() {
     res.json({ tick, pruned, reasons, rls });
   });
 
-  const recent = new Map<string, number[]>();
-  app.post("/api/access-requests", express.json({ limit: "16kb" }), async (req, res) => {
-    const ip = req.ip ?? "?";
-    const now = Date.now();
-    const hits = (recent.get(ip) ?? []).filter((t) => now - t < 60 * 60_000);
-    if (hits.length >= 5) return void res.status(429).json({ error: "Too many requests, try again later." });
-    recent.set(ip, [...hits, now]);
-
+  // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
+  app.post("/api/access-requests", express.json({ limit: "16kb" }), endpointLimit("signup", (req) => req.ip ?? "?") as express.RequestHandler, async (req, res) => {
     const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
     const email = s(req.body?.email, 200), company = s(req.body?.company, 200);
     const productUrl = s(req.body?.product_url, 500), message = s(req.body?.message, 4000);
@@ -168,6 +164,8 @@ export function createApp() {
   app.use("/api/credentials", credentialAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
   app.use("/api/onboarding", onboardingAppRouter());
+  // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------
+  app.use("/api/usage", usageAppRouter());
 
   // ---------- journey webhook: PostHog Workflows queues in-chat nudges (src/journeys.ts) ----------
   // The secret goes in an Authorization header, or in the path for webhook steps that cannot set headers.
@@ -221,7 +219,55 @@ export function createApp() {
     });
     next();
   });
-  const mcp = async (req: Request, res: Response, org: Org) => {
+  // ---------- MCP limits (mold_v0-018, src/rate-limits.ts): per address before sign-in; per key, member and workspace,
+  // the request's size and the workspace's requests in flight after it. A refusal is HTTP 429 (413 for size) with
+  // Retry-After and a JSON-RPC error whose data says which limit, its number and when to retry; it is recorded as a
+  // failed call of class rate_limited, without arguments.
+  const rpcId = (body: unknown) => (body && !Array.isArray(body) && typeof body === "object" && "id" in body ? (body as { id: unknown }).id ?? null : null);
+  const limited = (req: Request, res: Response, r: Refusal, org?: Org) => {
+    if (org) for (const m of (Array.isArray(req.body) ? req.body : [req.body]) as { method?: unknown; params?: { name?: unknown } }[])
+      if (m && typeof m.method === "string" && !m.method.startsWith("notifications/"))
+        recordMcpEvent(org, { method: m.method, name: typeof m.params?.name === "string" ? m.params.name : null, ok: false, error: refusalMessage(r), error_class: "rate_limited" });
+    res.status(429).set("Retry-After", String(r.retry_after)).json({ jsonrpc: "2.0", id: rpcId(req.body),
+      error: { code: -32029, message: refusalMessage(r), data: { limit: r.what, per: r.window_seconds >= 3600 ? "hour" : "minute", max: r.limit, retry_after: r.retry_after } } });
+  };
+  /** Before sign-in: the address's requests (also bounds key guessing). */
+  const ipGate = async (req: Request, res: Response) => {
+    const L = limitsFor(null);
+    const r = await hit([{ bucket: `mcp:ip:${hashed(req.ip ?? "?")}`, limit: L.mcp.per_ip_per_minute, what: "address" }]);
+    if (r) { limited(req, res, r); return false; }
+    return true;
+  };
+  /** After sign-in: size, then key, member and workspace counts, then a slot among the workspace's requests in flight. */
+  const mcpGate = async (req: Request, res: Response, org: Org): Promise<(() => void) | null> => {
+    const L = limitsFor(await planOf(org.orgId));
+    const bytes = Number(req.get("content-length")) || Buffer.byteLength(JSON.stringify(req.body ?? null));
+    if (bytes > L.mcp.max_request_bytes) {
+      res.status(413).json({ jsonrpc: "2.0", id: rpcId(req.body), error: { code: -32600, message: `The request is too large (${bytes} bytes; at most ${L.mcp.max_request_bytes}).` } });
+      return null;
+    }
+    const r = await hit([
+      ...(org.keyId != null ? [{ bucket: `mcp:key:${org.keyId}`, limit: L.mcp.per_key_per_minute, what: "key" }] : []),
+      ...(org.userId ? [{ bucket: `mcp:member:${hashed(org.userId)}`, limit: L.mcp.per_member_per_minute, what: "member" }] : []),
+      { bucket: `mcp:workspace:${org.orgId}`, limit: L.mcp.per_workspace_per_minute, what: "workspace" },
+    ]);
+    if (r) { limited(req, res, r, org); return null; }
+    const release = takeSlot(org.orgId, L.mcp.concurrent_per_workspace);
+    if (!release) {
+      limited(req, res, { bucket: `mcp:concurrent:${org.orgId}`, what: "workspace's requests at once", limit: L.mcp.concurrent_per_workspace, retry_after: 1, window_seconds: 0 }, org);
+      return null;
+    }
+    res.on("close", release); res.on("finish", release);
+    return release;
+  };
+  const clientOf = (ua: string | undefined) => {
+    const m = /^\s*([A-Za-z0-9@._+-]{1,80})(?:\/([A-Za-z0-9._+-]{1,40}))?/.exec(ua ?? "");
+    return { name: m?.[1] ?? null, version: m?.[2] ?? null };
+  };
+
+  const mcp = async (req: Request, res: Response, org0: Org) => {
+    if (!(await mcpGate(req, res, org0))) return;
+    const org: Org = { ...org0, client: clientOf(req.get("user-agent")) };
     res.locals.org = org.slug;
     transcripts().warm(); // a user is here: have transcript search awake by the time they ask for evidence
     for (const e of connectorEvents(req.body, req.get("user-agent"))) recordMcpEvent(org, e);
@@ -251,6 +297,7 @@ export function createApp() {
     void res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed" }, id: null });
 
   app.post("/mcp", express.json({ limit: "4mb" }), async (req, res) => {
+    if (!(await ipGate(req, res))) return;
     const token = headerCredential(req.headers);
     const viaBearer = Boolean(bearer(req.headers.authorization));
     const org = token?.startsWith("oct_") ? await resolveKey(token) : token && viaBearer ? await resolveUserToken(token) : null;
@@ -259,6 +306,7 @@ export function createApp() {
   // Deprecated: a key in the connector URL (see urlKeysAllowed in src/auth.ts). Logged by account and key prefix,
   // never the key, so whoever still uses one can be moved to a header or to sign-in before OCTILLION_URL_KEYS=off.
   app.post("/mcp/:key", express.json({ limit: "4mb" }), async (req, res) => {
+    if (!(await ipGate(req, res))) return;
     const key = String(req.params.key);
     if (!urlKeysAllowed()) {
       console.error("mcp url-key refused (OCTILLION_URL_KEYS=off)");
@@ -499,7 +547,7 @@ export function createApp() {
   ob.post("/orgs", need("requests"), async (req, res) => void res.status(201).json(await onboarding.createAccount(adminActor(req, res), req.body ?? {})));
   ob.get("/orgs/:slug", async (req, res) => void res.json(await onboarding.orgDetail(slug(req))));
   ob.patch("/orgs/:slug", need("accounts"), async (req, res) => void res.json(await onboarding.renameOrg(adminActor(req, res), slug(req), req.body?.name)));
-  ob.post("/orgs/:slug/invitations", need("invite"), async (req, res) => void res.status(201).json(await onboarding.invite(adminActor(req, res), slug(req), req.body?.email, req.body?.role)));
+  ob.post("/orgs/:slug/invitations", need("invite"), endpointLimit("invite", (req) => String(req.params.slug)) as express.RequestHandler, async (req, res) => void res.status(201).json(await onboarding.invite(adminActor(req, res), slug(req), req.body?.email, req.body?.role)));
   ob.post("/orgs/:slug/invitations/:id/resend", need("invite"), async (req, res) => void res.status(201).json(await onboarding.resendInvitation(adminActor(req, res), slug(req), String(req.params.id))));
   ob.post("/orgs/:slug/invitations/:id/revoke", need("invite"), async (req, res) => done(res, await onboarding.revokeInvitation(adminActor(req, res), slug(req), String(req.params.id))));
   ob.post("/orgs/:slug/members/:id/deactivate", need("accounts"), async (req, res) => done(res, await onboarding.setMemberActive(adminActor(req, res), slug(req), String(req.params.id), false)));
@@ -516,11 +564,13 @@ export function createApp() {
   ob.post("/plans", need("plans"), async (req, res) => void res.status(201).json(await onboarding.createPlan(adminActor(req, res), req.body ?? {})));
   ob.post("/plans/:price_id/experiment", need("plans"), async (req, res) => void res.json(await onboarding.setPlanExperiment(adminActor(req, res), String(req.params.price_id), req.body ?? {})));
   ob.post("/plans/:price_id/archive", need("plans"), async (req, res) => void res.json(await onboarding.archivePlan(adminActor(req, res), String(req.params.price_id))));
-  ob.post("/orgs/:slug/keys", need("accounts"), async (req, res) => void res.status(201).json(await onboarding.issueKey(adminActor(req, res), slug(req), req.body?.label)));
+  ob.post("/orgs/:slug/keys", need("accounts"), endpointLimit("key", (req) => String(req.params.slug)) as express.RequestHandler, async (req, res) => void res.status(201).json(await onboarding.issueKey(adminActor(req, res), slug(req), req.body?.label)));
   ob.post("/orgs/:slug/keys/:id/revoke", need("delete"), async (req, res) => done(res, await onboarding.revokeKey(adminActor(req, res), slug(req), Number(req.params.id))));
-  ob.post("/orgs/:slug/keys/:id/rotate", need("delete"), async (req, res) => void res.status(201).json(await onboarding.rotateKey(adminActor(req, res), slug(req), Number(req.params.id))));
+  ob.post("/orgs/:slug/keys/:id/rotate", need("delete"), endpointLimit("key", (req) => String(req.params.slug)) as express.RequestHandler, async (req, res) => void res.status(201).json(await onboarding.rotateKey(adminActor(req, res), slug(req), Number(req.params.id))));
   // Platform analytics and health across every account (src/insights.ts).
   ob.get("/analytics", async (req, res) => void res.json(await platformAnalytics(req.query)));
+  // Usage in neutral words, every workspace (mold_v0-008, src/usage-routes.ts): read only.
+  ob.get("/usage", usageAdminRoute());
   // Every failure in the period, paged: ?kind=tool|session|onboarding&offset&limit, plus the /analytics filters.
   ob.get("/analytics/errors", async (req, res) => void res.json(await platformErrors(req.query)));
   // Customer journeys (src/playbooks.ts): the use-case pipelines on /app Setup. Admins write them, promote the ones
