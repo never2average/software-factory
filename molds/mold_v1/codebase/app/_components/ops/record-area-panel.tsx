@@ -32,6 +32,8 @@ import type { RecordAccess } from "@/agent/lib/record-permissions";
 import type { RecordMetric } from "@/agent/lib/record-metrics";
 import { useRecordAccess } from "./record-access";
 import { RecordMetricStrip } from "./record-metrics-strip";
+import { NextStepLine, RecordWorkflowSection, useNextSteps } from "./record-workflow";
+import { areaRunsWorkflow } from "@/lib/record-workflow-view";
 
 /**
  * A list row as GET /api/ops/<area> returns it for a declared area, once read through listRowOf
@@ -245,6 +247,10 @@ export function RecordAreaPanel({
   }, [load]);
   const refetch = () => void load();
   const selected = rows?.find((r) => r.id === selId) ?? null;
+  // A lifecycle that runs a workflow: each card says who holds the next step (one call for the page in hand).
+  const runsWorkflow = areaRunsWorkflow(areas[area]);
+  const workflowRefs = useMemo(() => (runsWorkflow ? (rows ?? []).map((r) => ({ id: r.recordId ?? r.id, customerId: r.customer })) : []), [rows, runsWorkflow]);
+  const nextSteps = useNextSteps(area, workflowRefs, runsWorkflow);
 
   const patch = async (row: RecordAreaRow, body: Record<string, unknown>) => {
     setBusy(true);
@@ -299,6 +305,7 @@ export function RecordAreaPanel({
             </span>
           ))}
         </div>
+        {runsWorkflow ? <NextStepLine summary={nextSteps[`${r.customer ?? ""}::${r.recordId ?? r.id}`]} /> : null}
       </WorkspaceCard>
     ),
     kanban: {
@@ -424,7 +431,7 @@ export function RecordAreaPanel({
           </SidePanel>
         ) : selected ? (
           <SidePanel onClose={() => setSelId(null)} actions={renderActions(selected, () => { setSelId(null); refetch(); }, { delete: access.delete(rowOf(selected)) })}>
-            <RecordDetail ui={ui} row={selected} busy={busy} chrome={chrome} access={access} onPatch={(body) => void patch(selected, body)} related={renderRelated(selected)} />
+            <RecordDetail ui={ui} row={selected} busy={busy} chrome={chrome} access={access} onPatch={(body) => void patch(selected, body)} related={renderRelated(selected)} workflow={runsWorkflow ? refetch : undefined} />
           </SidePanel>
         ) : null}
       </div>
@@ -441,6 +448,7 @@ function RecordDetail({
   access,
   onPatch,
   related,
+  workflow,
 }: {
   readonly ui: RecordAreaUi;
   readonly row: RecordAreaRow;
@@ -450,6 +458,8 @@ function RecordDetail({
   readonly access: RecordAccess;
   readonly onPatch: (body: Record<string, unknown>) => void;
   readonly related: React.ReactNode;
+  /** The lifecycle runs a workflow: its section is shown, and this is called when a step's holder or due date changed. */
+  readonly workflow?: () => void;
 }) {
   const v = ui.view;
   const lc = ui.lifecycle;
@@ -494,6 +504,7 @@ function RecordDetail({
             ))}
           </div>
         ) : null}
+        {workflow ? <RecordWorkflowSection area={ui.id} record={{ id: row.recordId ?? row.id, customerId: row.customer }} refreshKey={row} onChanged={workflow} /> : null}
         {ui.sections.filter((s) => s.fields.length).map((s, i) => (
           <PanelSection key={`${s.label ?? ""}:${i}`} label={s.label ?? "Properties"}>
             <div className="grid grid-cols-2 gap-x-3 gap-y-4">

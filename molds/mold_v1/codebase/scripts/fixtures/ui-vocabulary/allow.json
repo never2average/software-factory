@@ -52,8 +52,8 @@
   },
   {
     "source": ".*",
-    "literal": "^(/api/ops/(customers|deployments|implementations)/?|\\?customerId=)$",
-    "why": "An ops API route and its query parameter. Routes never move; the UI only fetches them."
+    "literal": "^(/api/ops/(customers|deployments|implementations)/?|[?&]customerId=)$",
+    "why": "An ops API route and its query parameter (first or later in the query string). Routes never move; the UI only fetches them."
   },
   {
     "source": ".*",

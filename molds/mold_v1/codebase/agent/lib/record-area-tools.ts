@@ -148,12 +148,20 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
       ...(id === "deployments" ? { deploymentId: z.string().min(1).describe(`"${v.area.id?.label ?? "Id"}"${v.area.id?.placeholder ? `, for example ${v.area.id.placeholder}` : ""}.`) } : {}),
       ...(many ? { [IMPLEMENTATION_ID]: z.string().min(1).optional().describe(`The ${v.noun}'s id, from \`list_implementations\`, to change it. Leave it out to create a new one.`) } : {}),
       values,
+      // A lifecycle that runs a workflow: a move may change a step that demands a comment or evidence (phase 7).
+      ...(bound
+        ? {
+            reason: z.string().max(4000).optional().describe(`Why you are making this move: the comment a move, or the workflow step it changes, may need.`),
+            evidence: z.string().max(4000).optional().describe(`The evidence a workflow step may demand of this move: a link, or a document's id.`),
+          }
+        : {}),
     }),
     async execute(input, ctx) {
       if (!getDb()) throw new Error("Writing needs the database, and none is configured.");
       const orgId = await orgForSession(ctx);
       const actor = callerEmail(ctx);
-      const { customerId, values: given } = input as { customerId: string; deploymentId?: string; values: Record<string, unknown> };
+      const { customerId, values: given, reason, evidence } = input as { customerId: string; deploymentId?: string; values: Record<string, unknown>; reason?: string; evidence?: string };
+      const comment = bound && typeof reason === "string" && reason.trim() ? reason : null;
       const named = many ? namedImplementationId((input as Record<string, unknown>)[IMPLEMENTATION_ID]) : { id: null };
       if ("error" in named) throw new Error(`Nothing was written. ${named.error}`);
       const recordId = id === "deployments" ? (input as { deploymentId?: string }).deploymentId : many ? named.id ?? newImplementationId() : undefined;
@@ -171,6 +179,7 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
         if (many && before && (before as AreaRow).customerId !== customerId) throw new Error(`Nothing was written. ${IMPLEMENTATION_ID} ${recordId} is another ${VOCABULARY.records.account.singular}'s ${areaView(id, areas).noun}, not ${customerId}'s.`);
         const body = Object.fromEntries(Object.entries(given ?? {}).filter(([, x]) => x !== undefined));
         if (id === "deployments" && !before) body.deploymentId = recordId;
+        if (comment) body.reason = comment;
         // The lifecycle (agent/lib/record-lifecycle.ts), as the routes keep it: who entered the stored state, for four
         // eyes; a refused move throws the rule book's sentence; the move goes to the activity feed with the write.
         const v = areaView(id, areas);
@@ -182,7 +191,7 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
         const enteredBy = await enteredByOf(tx, orgId, v, entity, (before as AreaRow | undefined) ?? null);
         // A lifecycle that runs a workflow: the record's instance and the step rules (lib/record-workflow-moves.ts), in
         // this transaction; none otherwise.
-        const workflow = bound ? await openRecordWorkflow(tx, orgId, id, { entityId: before ? locked!.key : null, feedId: entity.id, before: (before as AreaRow | undefined) ?? null, actor }, { areas }) : null;
+        const workflow = bound ? await openRecordWorkflow(tx, orgId, id, { entityId: before ? locked!.key : null, feedId: entity.id, before: (before as AreaRow | undefined) ?? null, actor, comment, evidence: bound && typeof evidence === "string" ? evidence : null }, { areas }) : null;
         const prepared = prepareRecordWrite(id, before ? "update" : "create", body, { actor, role, before: (before as AreaRow | undefined) ?? null, enteredBy, ...(workflow?.gate ? { workflow: workflow.gate } : {}) }, areas);
         if (!prepared.ok) throw new Error(prepared.conflict ? prepared.conflict.error : `Nothing was written. ${prepared.errors.join(" ")}`);
         const delta = prepared.customDelta ? ({ ...prepared.customDelta } as unknown as CustomDelta) : null;
@@ -207,7 +216,7 @@ export function upsertAreaTool(id: AccountAreaId, areas: RecordAreas = RECORD_AR
           }
         }
         if (!row) throw new Error("It was removed while it was being written; send it again.");
-        await writeOutcome(tx, orgId, bound ? { ...entity, id: recordEntityId(id, row as AreaRow) } : entity, actor, v, prepared.lifecycle);
+        await writeOutcome(tx, orgId, bound ? { ...entity, id: recordEntityId(id, row as AreaRow) } : entity, actor, v, prepared.lifecycle, ...(comment ? [comment] : []));
         if (workflow) await commitRecordWorkflow(workflow, { entityId: workflowRecordKey(id, row)!, created: !before, check: prepared.lifecycle, after: row as AreaRow, deliver: (org, fn) => withOrgDb(org, fn as never) });
         return { [before ? "updated" : "created"]: true, record: rowForModel(id, row as AreaRow, areas), ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}) };
       });

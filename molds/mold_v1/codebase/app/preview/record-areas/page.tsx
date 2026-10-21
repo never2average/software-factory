@@ -16,6 +16,8 @@
  *              (tests/record-area-panels.spec.ts)
  *   period     a "Regulatory filing" period (examples/filing-period.json): own fields, declared states, a board, a
  *              calendar, metrics, contained tasks (tests/period-area.spec.ts)
+ *   workflow   the maker-checker review (scripts/fixtures/record-workflows/review.json): lifecycles that run a workflow,
+ *              their cards and details showing who holds the next step (tests/record-workflow-surfaces.spec.ts)
  * Without it, this build's own definitions (the default's: today's lists). `&view=deployments|implementations|tasks|<the period view key, PERIOD_VIEW in lib/work-periods-ui.ts>`.
  */
 import { Suspense, useEffect, useState } from "react";
@@ -27,6 +29,7 @@ import programme from "@/scripts/fixtures/record-areas/golden/programme.areas.js
 import permissions from "@/scripts/fixtures/record-areas/golden/permissions.areas.json";
 import period from "@/scripts/fixtures/record-areas/golden/filing-period.areas.json";
 import ownState from "@/scripts/fixtures/record-areas/golden/own-state.areas.json";
+import workflow from "@/scripts/fixtures/record-areas/golden/workflow.areas.json";
 import type { RecordAreas } from "@/agent/lib/record-areas";
 import { TodosPanel } from "@/app/_components/ops/todos-panel";
 
@@ -37,6 +40,7 @@ const PROFILES: Record<string, RecordAreas> = {
   permissions: permissions as unknown as RecordAreas,
   period: period as unknown as RecordAreas,
   "own-state": ownState as unknown as RecordAreas,
+  workflow: workflow as unknown as RecordAreas,
 };
 
 function Preview() {

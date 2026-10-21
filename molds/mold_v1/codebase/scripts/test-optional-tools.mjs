@@ -4,7 +4,8 @@
  * Some of the agent's own tools exist only when the deployment turns them on: the record-area tools
  * (`list_deployments`, `upsert_deployment`, `list_implementations`, `upsert_implementation`: the profile's
  * `records.areas.<area>.agent.tools`), the work-period tools (`list_cycles`, `upsert_cycle`: `work_periods.mode`
- * not "off") and `read_image` (ENABLE_VISION / the vision model). Each file exports `disableTool()` when its tool is
+ * not "off"), `read_image` (ENABLE_VISION / the vision model) and a record's workflow tools (`get_record_workflow`,
+ * `reassign_step`, `extend_step`: a record area's lifecycle runs a workflow). Each file exports `disableTool()` when its tool is
  * off. eve 0.25.1 accepts that sentinel only on one of ITS OWN tool names (`web_search`, `bash`, ...): on any other it
  * threw at runtime agent resolution, `agent/tools/list_deployments.ts exports disableTool() but "list_deployments" is
  * not a framework tool`, so no agent could be resolved: every runtime start and every `npm run sandbox:prewarm` of a
@@ -18,7 +19,7 @@
  *      both ways in part 2.
  *   2. The real agent graph (two real `eve build`s of a copy of the checkout, a few minutes): built with every optional
  *      tool OFF (work periods "off", no record-area tools, ENABLE_VISION=false, ENABLE_WEB_SEARCH=false) and with every
- *      one ON, then resolved the way eve's runtime resolves it (runtime/resolve-agent-graph.js) and read by
+ *      one ON (a record area's lifecycle running a workflow: scripts/fixtures/record-workflows/review.json), then resolved the way eve's runtime resolves it (runtime/resolve-agent-graph.js) and read by
  *      `sandbox:prewarm --plan`. Off: the graph resolves, and each tool is absent from the node that has the file.
  *      On: each is present. Nothing is started.
  *
@@ -89,6 +90,9 @@ const OPTIONAL = [
   { file: "agent/tools/list_cycles.ts", node: "root", tool: "list_cycles", framework: false, off: 'profile: work_periods.mode "off"' },
   { file: "agent/tools/upsert_cycle.ts", node: "root", tool: "upsert_cycle", framework: false, off: 'profile: work_periods.mode "off"' },
   { file: "agent/tools/read_image.ts", node: "root", tool: "read_image", framework: false, off: "ENABLE_VISION=false" },
+  { file: "agent/tools/get_record_workflow.ts", node: "root", tool: "get_record_workflow", framework: false, off: "profile: no record area's lifecycle runs a workflow (the default)" },
+  { file: "agent/tools/reassign_step.ts", node: "root", tool: "reassign_step", framework: false, off: "profile: no record area's lifecycle runs a workflow (the default)" },
+  { file: "agent/tools/extend_step.ts", node: "root", tool: "extend_step", framework: false, off: "profile: no record area's lifecycle runs a workflow (the default)" },
   { file: "agent/tools/web_search.ts", node: "root", tool: "web_search", framework: true, off: "ENABLE_WEB_SEARCH=false" },
   { file: "agent/subagents/research/tools/web_search.ts", node: "subagents/research", tool: "web_search", framework: true, off: "ENABLE_WEB_SEARCH=false" },
   { file: "agent/subagents/app-author/tools/web_search.ts", node: "subagents/app-author", tool: "web_search", framework: true, off: "ENABLE_WEB_SEARCH=false" },
@@ -141,12 +145,13 @@ async function partGraph() {
   const { copyWithProfiles } = await import(pathToFileURL(join(ROOT, "scripts/lib/profile-copy.mjs")).href);
   const builds = [
     { label: "OFF", profile: PROFILE_OFF, env: ENV_OFF },
-    { label: "ON", profile: PROFILE_ON, env: {} },
+    // ON: a record area's lifecycle runs a workflow too (the neutral maker-checker review fixture), under the tools' layer.
+    { label: "ON", profile: PROFILE_ON, env: {}, under: [["49-record-workflow.json", JSON.parse(readFileSync(join(ROOT, "scripts/fixtures/record-workflows/review.json"), "utf8"))]] },
   ];
   const results = {};
   for (const b of builds) {
     console.log(`\nEvery optional tool ${b.label} (a real \`eve build\` of a copy; nothing is started):`);
-    const copy = copyWithProfiles(ROOT, [["50-optional-tools.json", b.profile]]);
+    const copy = copyWithProfiles(ROOT, [...(b.under ?? []), ["50-optional-tools.json", b.profile]]);
     try {
       const env = { ...process.env, ...b.env };
       for (const k of ["SANDBOX_BACKEND", "VERCEL"]) delete env[k];

@@ -230,6 +230,8 @@
     "test:record-workflow-runtime-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-runtime-db.mjs",
     "test:record-workflow-actions": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-actions.mjs",
     "test:record-workflow-actions-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-actions-db.mjs",
+    "test:record-workflow-surfaces": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-surfaces.mjs",
+    "test:record-workflow-surfaces-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-record-workflow-surfaces-db.mjs",
     "test:new-database-db": "node scripts/test-new-database-db.mjs",
     "test:off-vercel-defaults": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-off-vercel-defaults.mjs",
     "test:deployment-upsert-db": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/test-deployment-upsert-db.mjs",

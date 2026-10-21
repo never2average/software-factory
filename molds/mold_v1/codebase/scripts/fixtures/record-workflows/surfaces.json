@@ -1,0 +1,7 @@
+{
+  "$comment": "Due dates for the neutral maker-checker review's steps (docs/WORKFLOW_ENGINE.md phase 7 \"Surfaces\"; scripts/test-record-workflow-surfaces.mjs, scripts/test-record-workflow-surfaces-db.mjs): merged into scripts/fixtures/record-workflows/review.json's steps by the tests, never on their own. The review is due five days after the workflow starts and may be extended once, by at most seven days, from ten days before it is due; the preparation is due in three days and its date is the workflow's own.",
+  "steps": {
+    "prepare": { "due_on": { "$delta": { "days": 3 } } },
+    "review": { "due_on": { "$delta": { "days": 5 } }, "due_on_extension": { "max_days": 7, "window_days": 10, "once": true } }
+  }
+}

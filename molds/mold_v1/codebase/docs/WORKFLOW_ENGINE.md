@@ -35,7 +35,7 @@ what it was. What follows, each its own change:
 | 4 | people data: the directory, roles and reporting lines from the mold's own records |
 | 5 | runtime wiring: attaching a workflow to a record, a person's change through the step rules (this; "Runtime" below) |
 | 6 | step actions: the emails and agent runs the rules queue, as the app's own notifications and tasks for the assistant (this; "Step actions" below) |
-| 7 | surfaces: the screens and the agent's tools |
+| 7 | surfaces: the screens and the agent's tools (this; "Surfaces" below) |
 | 8 | a pilot on one pack |
 
 ## Storage
@@ -165,12 +165,9 @@ field.
 `org_members` read in the write's transaction: owner and admin may do everything (`All`), engineers and members act on
 what they hold or created and on what their reportees hold (supervisors by `manager_email`).
 
-**Not in this phase.** Email and agent actions run from phase 6 ("Step actions" below). Rules guarded on other records
-(cohorts) do not run.
-Changing a step's holder or due date has no door yet (the step rules for both are in `lib/workflow-step-rules.ts`; the
-surfaces are ticket 282). The agent's tools take a move's
-comment but no evidence. `describeMoves` says which step a move changes and that only whoever holds it may make it;
-the full screens are ticket 282.
+**Not in this phase.** Email and agent actions run from phase 6 ("Step actions" below); the screens, the holder and
+due-date doors and the agent's `evidence` from phase 7 ("Surfaces" below). Rules guarded on other records (cohorts) do
+not run. `describeMoves` says which step a move changes and that only whoever holds it may make it.
 
 Tests: `npm run test:record-workflow-runtime` (offline) and `npm run test:record-workflow-runtime-db` (the real routes
 and tools, as app_rw, fail-closed, two workspaces: strict, warn and off), on the neutral fixture
@@ -235,6 +232,57 @@ Every read and write is in the record's workspace (`withOrgRls` in the web app, 
 Tests: `npm run test:record-workflow-actions` (offline) and `npm run test:record-workflow-actions-db` (the real routes
 and the tasks' door, as app_rw, fail-closed, two workspaces), on the review fixture with the actions of
 `scripts/fixtures/record-workflows/actions.json` added.
+
+## Surfaces
+
+Phase 7. Where a record area's lifecycle runs a workflow, the record's screens and the agent show it, and two step
+changes that are not moves get a door. Where none runs, nothing here is drawn, fetched, registered or answered: the
+screens are what they were, the agent's surface is byte for byte the default one (`npm run check:agent-vocabulary`),
+and `/api/ops/record-workflow` answers 404.
+
+| Piece | What it is |
+|---|---|
+| `lib/record-workflow-view.ts` | Pure: the next step (the first open step in the workflow's order), its holders and due date, every step, the step timeline, the cards' line. People as the reader may see them: names on the roster; emails only for an owner or an admin. |
+| `lib/record-workflow-doors.ts` | The doors the routes and the tools share, in the caller's workspace: read (under the record's lock; re-synced and saved when the record moved without the engine, attached where it stands when it never was, and the step actions such a save fires delivered after the commit), change a holder or a due date, the cards' lines for a page (read only: no lock, nothing saved). A record is named by its id; an implementation may be named by its account only while the account has exactly one. |
+| `app/api/ops/record-workflow` | `GET ?area=&id=[&customerId=]` the record's workflow and what the caller may change; `GET ?area=&refs=[…]` the cards' lines; `POST …/holder` and `POST …/due` (`lib/record-workflow-routes.ts`). |
+| `app/_components/ops/record-workflow.tsx` | The card's line (the next step, who holds it, when it is due, red when past) and the detail's section (the next step, the steps, the timeline, the holder and due-date controls the server offers). On the record-area panels, the tasks and the periods. |
+| `agent/lib/record-workflow-tools.ts` | `get_record_workflow`, `reassign_step`, `extend_step`, for the person in the chat; the areas named by the profile's plural nouns. |
+
+**Who holds a step** (`changeStepHolders`): the step rules' `checkReassign`. Only a supervisor chooses who holds a step;
+with the workspace's people that is an owner or an admin (a holder, the record's creator, a holder's supervisor on the
+roster are not). Someone who takes a step must be able to act on it; someone newly put on it must be someone its rule
+could pick (an administrator may place anyone in the workspace); nobody outside the workspace. The holders named are
+pinned. Admins are offered the people the step's rule could pick.
+
+**A step's due date** (`changeStepDueDate`): only on a step whose template declares `due_on_extension`, the step rules'
+bounded one-time extension (`checkDueOnChange`: forward only, near the date, within the cap, once), by someone with write
+on the record's workflow (a holder of one of its steps, its creator, a holder's supervisor). An owner or an admin
+corrects any date freely, which never spends the holder's extension. A step without the declaration: its date is the
+workflow's own.
+
+Both are saved like a move's step change (history rows, the workflow's own rules, step actions delivered after the
+commit; compare-and-swap, a 409 on a stale revision).
+
+**Moves through the agent.** Where a lifecycle runs a workflow, `upsert_<area>`, `upsert_todo` and `upsert_cycle` take
+the move's `reason` (its comment) and `evidence`, so the agent can complete a step that demands them.
+
+**System moves.** A record a system move changed is never refused against a step it left behind:
+
+- a period's rollover (`rollOverEnded`) brings the period's instance in line in the rollover's own transaction
+  (`resyncAfterSystemMove`, `provisioning` rows by the system). It takes the period's workflow lock before it writes the
+  period's row and reads the row again under it, in the order every door takes them, so a rollover and a door moving the
+  same period never deadlock;
+- a record written outside the doors (an import or a bulk write straight to its table) is re-synced on its next read
+  (the detail, saved under the lock), its next move (as before), and shown re-synced on the cards (in memory); one whose
+  workflow was never attached is attached on its first read, where it stands, so later reads show the same steps and
+  due dates;
+- a nested move through `upsert_customer` (the operator's backfills) is refused with a reason, as before; a record such
+  an import creates is attached on its first move, where it then stands.
+
+Tests: `npm run test:record-workflow-surfaces` (offline), `npm run test:record-workflow-surfaces-db` (the routes and
+tools as app_rw, fail-closed, two workspaces) and `tests/record-workflow-surfaces.spec.ts` (the screens, on
+`/preview/record-areas?profile=workflow`), on the review fixture with `scripts/fixtures/record-workflows/surfaces.json`'s
+due dates.
 
 ## Where it came from
 

@@ -415,6 +415,14 @@ jobs:
         if: always()
         run: npm run test:record-workflow-actions
 
+      # A RECORD'S WORKFLOW ON ITS SURFACES, OFFLINE (lib/record-workflow-view.ts, the holder and due-date changes; phase 7):
+      # the next step, its holders (names for a member, emails for an admin) and due date, the timeline; holder changes by
+      # supervisors only; the one-time due-date extension; under the default profile none of the three tools, no
+      # `evidence` on the record tools, and the ops route answers 404.
+      - name: Record workflow surfaces (offline; who holds the next step, reassignment, extension, default parity)
+        if: always()
+        run: npm run test:record-workflow-surfaces
+
       # A choice column's values live in one place, the zod enums in agent/lib/customer-schema.ts. The meanings base
       # code gives a value (defaults, what counts as attention), the Ops API's check and the MCP tools' text are all
       # read from it; a hand-made copy of each had drifted (mold_v1-251). The routes against a database are below.
@@ -1819,6 +1827,17 @@ jobs:
           ADMIN_URL="$ADMIN_URL" \
           DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
           npm run test:record-workflow-actions-db
+
+      # SURFACES AGAINST A FAIL-CLOSED POSTGRES: the ops routes and the agent's tools read who holds the next step (no
+      # email for a member), change a step's holder (supervisors only) and extend its due date once; upsert_deployment,
+      # upsert_todo and upsert_cycle take `evidence`; a record moved outside the doors is re-synced on its next read and a
+      # period's rollover keeps its workflow in step; workspace B reaches none of A's.
+      - name: Record workflow surfaces (routes and tools, system moves kept in step, two workspaces), against a fail-closed Postgres
+        if: always()
+        run: |
+          ADMIN_URL="$ADMIN_URL" \
+          DATABASE_URL="postgres://app_rw:app_rw_test_password@127.0.0.1:5432/workspace_test" \
+          npm run test:record-workflow-surfaces-db
 
       - name: Chat list mirror (ownership, markers, deploy order), against a real Postgres
         if: always()
