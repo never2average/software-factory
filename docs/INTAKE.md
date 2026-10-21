@@ -128,7 +128,7 @@ app's own pack in the `## ` sections below. `intake.py` turns them, deterministi
   charts against their metrics' shapes, tabs, schedules, credentials, onboarding), and the codebase's own zod check
   when its `node_modules` are installed; then `packs.py check <pack_id> --mold mold_v0`;
 - `packs/<pack_id>/pack.json`: the factory's manifest, with an `intake` record (the brief and its hash, the hash of
-  the pack.json intake wrote, the answers, the defaults it applied, the brief's `## MCP` lines);
+  the pack.json intake wrote, the answers, the defaults it applied);
 - `application.json` `packs: [<pack_id>]`.
 
 `Pack: <id>` names the pack (the whole value must be `^[a-z][a-z0-9_]{1,30}$`, also its table prefix; anything else is refused, never shortened); without it the app id is the pack id. A `packs/<id>/` that already holds files intake did not write (no manifest, or a manifest without an `intake` record, or one made for another app) is refused.
@@ -148,7 +148,7 @@ literal one). Names are lowercase letters, digits and `_` (2 to 63); tab ids use
 | `## Schedules` | `- <name>: <Label> \| <job> \| 0 3 * * * \| over <asset area> [keys a, b] \| environment prod \| off` (cron in UTC, at most every 5 minutes) |
 | `## Onboarding` | `- <id>: <Label> \| record <area>` (or `run <job>`, `credential <name>`, `tool <name>`, `connected`, `first call`, `workspace`) `\| help …` |
 | `## Words` | `- run: audit` (the shell's word on the left) |
-| `## MCP` | `- <setting>: <value>`. The shell reserves pack.json `mcp` until mold_v0-060, so these lines are kept in the manifest's `intake.mcp` and the MCP server is the platform's own (named by the brand). |
+| `## MCP` | pack.json `mcp` (mold_v0-060): `- prefix: vd`, `- include: <tool>, <tool>`, `- exclude: <tool>`, `- admin only: <tool>` (moved to the staff MCP), `- rename <tool>: <new name>`, `- describe <tool>: <one paragraph>`. Tools are the generated ones (`<prefix>_list_<area>`, `_get_`, `_create_`, `_update_`, `_move_`, `_get_metrics`, `_start_<job>`, the run tools named by `## Words`' run, and staff `_admin_*` tools for shared areas); a name may be written without the prefix. Without the section every generated tool is served under the pack id's prefix, and the server is named by the brand. |
 
 Field types: `text [max 500]`, `number [0..10]`, `date`, `boolean`, `json`, `link`, `person`, `file`,
 `enum low, high` or `enum open=Open, wont_fix=Won't fix` (values: letters, digits, spaces and `_ . : / ( ) & -`),
@@ -168,6 +168,8 @@ the run's `scope.<name>`; a credential reaches a run as the variable of its name
 are the platform's defaults (read: every role; write: the roles with edit) unless the brief narrows them; `## Metrics`
 without `## Charts` draws each metric by its shape; a job's results name the pack's check areas (`run_results`);
 version 0.1.0; a job runs on the built-in agent-workspace runner. An answer is one plain line: it sets the one thing asked, never anything else.
+
+**MCP checks** (src/mcp-catalog.ts's, ported): every tool named must be one the pack generates; a final name is at most 64 lowercase letters, digits and `_`; two tools may not end up with one name on the same MCP server; `admin only` cannot name a tool already on the staff MCP; a description is plain text (no `<` `>`, no control, zero-width or direction characters, at most 1000 characters); a job argument may not be named `target_asset` or `target_environment` where the start tool uses them. Not ported: clashes with the shell's own tool names and with other packs' (the build checks them).
 
 **Refused, with the brief's line:** a viewer that writes or moves; a shared (platform) area anyone but staff writes;
 an unknown role; a branch, tag or short id as a commit; a repository that is not `https://`; the shell's own run

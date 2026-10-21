@@ -114,7 +114,11 @@ A desk where each workspace tracks the vulnerabilities found in its own applicat
 - run: audit
 
 ## MCP
-- tools: generated from the declarations
+- prefix: vd
+- exclude: cancel_audit
+- admin only: vd_start_audit_scan
+- rename list_audit_findings: list_vulnerabilities
+- describe vd_get_audit_findings: One vulnerability by its key, with its application and control.
 """
 
 # No ## Tabs, ## Credentials, ## Schedules or ## Onboarding, and no brand: each is a question.
@@ -167,6 +171,9 @@ Pack: adoption
 """
 
 
+MCP_WANT = {"prefix": "vd", "exclude": ["vd_cancel_audit"], "admin_only": ["vd_start_audit_scan"], "rename": {"vd_list_audit_findings": "list_vulnerabilities"}, "describe": {"vd_get_audit_findings": "One vulnerability by its key, with its application and control."}}
+
+
 def run(n=0, fails=None):
     fails = [] if fails is None else fails
     T = tempfile.mkdtemp(prefix="brief-pack-selftest-")
@@ -213,11 +220,11 @@ def run(n=0, fails=None):
             f = pj["record_areas"][2]; ag = pj["job_kinds"][0]["agent"]; n += 1
             if f["lifecycle"]["transitions"][2] != {"from": ["open", "triaged"], "to": "accepted", "label": "Accept the risk", "roles": ["owner"]} \
                or ag["command"] != ["node", "audit.mjs", "--app", "{app}"] or ag["args"] != {"app": {"from": "scope.app"}} or ag["timeout_seconds"] != 1200 \
-               or pj["metrics"][1]["where"][1] != {"field": "due", "op": "lt", "value": "today"} or pj["words"] != {"run": "audit"} or "mcp" in pj:
+               or pj["metrics"][1]["where"][1] != {"field": "due", "op": "lt", "value": "today"} or pj["words"] != {"run": "audit"} or pj.get("mcp") != MCP_WANT:
                 fails.append(f"vulnerability pack details: {f['lifecycle']['transitions'][2]} {ag} {pj['metrics'][1]}")
             man = json.load(open(os.path.join(P, "vuln_desk", "pack.json"))); n += 1
-            if man.get("intake", {}).get("pack_json_sha256") != BP.sha(open(shell("vuln_desk"), "rb").read()) or man["intake"].get("mcp") != {"tools": "generated from the declarations"} \
-               or "kept_sha256" in man["intake"] or "reserves pack.json `mcp`" not in out(r):
+            if man.get("intake", {}).get("pack_json_sha256") != BP.sha(open(shell("vuln_desk"), "rb").read()) or "mcp" in man["intake"] \
+               or "kept_sha256" in man["intake"] or "mcp: cancel_audit is the generated tool vd_cancel_audit" not in out(r):
                 fails.append(f"the manifest records the written pack.json's hash and the reserved MCP lines: {man.get('intake')}")
             # 3. idempotent: the same brief again changes no byte and no modification time, state included
             before = snap("vuln_desk"); st = {k: open(os.path.join(A, "zz_vulns", k)).read() for k in os.listdir(os.path.join(A, "zz_vulns"))}
@@ -380,6 +387,21 @@ def run(n=0, fails=None):
         r = go("zz_rv6", HEAD.replace("Mold: mold_v0", "") + "Pack: rv_mold\n\n## Records\nMold: mold_v0\n"); n += 1
         if r.returncode == 0 or "packs/rv_mold/pack.json does not exist" not in out(r) or os.path.exists(os.path.join(P, "rv_mold")):   # read as mold_v1's brief: no pack made
             fails.append(f"a Mold: line inside a pack section never picks the mold: rc={r.returncode} {out(r)[-200:]}")
+
+        # pack.json `mcp` (mold_v0-060, 068): the generator's own checks, each refused before anything is written
+        long_area = "a" * 60
+        for what, brief, want in (("a tool that is not generated", VULNS.replace("- exclude: cancel_audit", "- exclude: cancel_everything"), "not one of this pack's generated tools"),
+                                  ("two tools under one name", VULNS.replace("- rename list_audit_findings: list_vulnerabilities", "- rename list_audit_findings: vd_get_audit_findings"), "clashes with"),
+                                  ("a name past 64 characters", VULNS.replace("- prefix: vd", "- prefix: " + "p" * 31).replace("### audit_controls: Controls", "### " + long_area + ": Controls")
+                                       .replace("reference audit_controls", "reference " + long_area).replace("area audit_controls", "area " + long_area)
+                                       .replace("- admin only: vd_start_audit_scan\n", "").replace("- rename list_audit_findings: list_vulnerabilities\n", "").replace("- describe vd_get_audit_findings", "- describe get_audit_findings"), "longer than 64"),
+                                  ("an invisible character in a description", VULNS.replace("with its application", "with its\u200b application"), "zero-width"),
+                                  ("markup in a description", VULNS.replace("with its application", "with <b>its</b> application"), "no < or >"),
+                                  ("an admin tool moved to the admin MCP", VULNS.replace("- admin only: vd_start_audit_scan", "- admin only: vd_admin_list_audit_controls"), "on the admin MCP already"),
+                                  ("an unknown setting", VULNS.replace("- prefix: vd", "- prefix: vd\n- tools: generated"), "unknown MCP setting")):
+            r = go("zz_mcp", brief.replace("Pack: vuln_desk", "Pack: mcp_bad")); n += 1
+            if r.returncode == 0 or want not in out(r) or "Traceback" in out(r) or os.path.exists(os.path.join(P, "mcp_bad")):
+                fails.append(f"mcp, {what}: rc={r.returncode} {out(r)[-400:]}")
     finally:
         shutil.rmtree(T, ignore_errors=True)
     return n, fails

@@ -13,7 +13,7 @@ docs/INTAKE.md ("mold_v0: the brief's pack sections"); in short, these `## ` sec
   ## Schedules     - <name>: <Label> | <job kind> | 0 3 * * * | over <area>
   ## Onboarding    - <id>: <Label> | record <area>
   ## Words         - run: audit
-  ## MCP           - <key>: <value>   (kept in the factory manifest until the mold takes pack.json `mcp`, mold_v0-060)
+  ## MCP           - prefix: vd, - exclude: <tool>, - admin only: <tool>, - rename <tool>: <name>, - describe <tool>: <text>  (pack.json `mcp`)
 
 Whatever the brief leaves open becomes a question (the intake questions mechanism: an id, a plain question, options and
 a suggested answer), never a silent guess. Defaults that change nothing about who may see or do what (a label from a
@@ -575,14 +575,113 @@ def parse_words(lines, c):
     return out
 
 
+TOOL = re.compile(r"[a-z][a-z0-9_]{0,63}")
+DESCRIBE_BAD = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>]")
+
 def parse_mcp(lines, c):
+    """pack.json `mcp` (mold_v0-060, McpSettingsSchema): prefix, include, exclude, admin only, rename <tool>: <name>,
+    describe <tool>: <text>. Tool names are the generated ones (src/mcp-catalog.ts), with or without the prefix."""
     out = {}
     for n, body in _bullets(lines, c, "MCP"):
-        k, _, v = body.partition(":")
-        k = re.sub(r"\s+", "_", k.strip().lower())
-        if not re.fullmatch(r"[a-z][a-z0-9_]{0,40}", k): c.err(n, "an MCP line is `- <setting>: <value>`"); continue
-        out[k] = v.strip()
+        k, _, v = body.partition(":"); k = re.sub(r"\s+", " ", k.strip().lower()); v = v.strip()
+        c.lines[("mcp", k)] = n
+        if k == "prefix":
+            if not re.fullmatch(r"[a-z][a-z0-9_]{0,30}", v): c.err(n, f"prefix is 1-31 lowercase letters, digits or _, starting with a letter (got {v!r})")
+            else: out["prefix"] = v
+        elif k in ("include", "exclude", "admin only", "admin_only"):
+            names = _list(v); key = "admin_only" if k.startswith("admin") else k
+            for x in names:
+                if not TOOL.fullmatch(x): c.err(n, f"{k}: {x!r} is not a tool name (lowercase letters, digits and _, at most 64)")
+            if key in out: c.err(n, f"{k} is given twice; list every tool on one line")
+            out[key] = names
+        elif k.startswith("rename ") or k.startswith("describe "):
+            what, tool = k.split(" ", 1); tool = tool.strip()
+            if not TOOL.fullmatch(tool): c.err(n, f"{what}: {tool!r} is not a tool name"); continue
+            if what == "rename":
+                if not TOOL.fullmatch(v): c.err(n, f"rename {tool}: {v!r} is not a tool name (lowercase letters, digits and _, starting with a letter, at most 64)"); continue
+            elif not v or len(v) > 1000 or DESCRIBE_BAD.search(v): c.err(n, f"describe {tool}: one paragraph of plain text, at most 1000 characters, no < or > and no control, zero-width or direction characters"); continue
+            d = out.setdefault(what, {})
+            if tool in d: c.err(n, f"{what} {tool} is given twice")
+            d[tool] = v
+        else: c.err(n, f"unknown MCP setting {k!r} (prefix, include, exclude, admin only, rename <tool>: <new name>, describe <tool>: <text>)")
     return out
+
+
+def mcp_tools(p):
+    """The tools src/mcp-catalog.ts generates for a pack made from a brief: [(generated name, door, takes a workspace arg)].
+    Repositories, reports and code tools are never in a brief's pack, so they are not generated here."""
+    prefix = (p.get("mcp") or {}).get("prefix") or p.get("id") or ""
+    words = p.get("words") or {}
+    def token(x, d):
+        import unicodedata
+        return re.sub(r"^_+|_+$", "", re.sub(r"[^a-z0-9]+", "_", unicodedata.normalize("NFKD", str(x).lower()))) or d
+    plural = lambda w: w + "es" if re.search(r"(s|x|z|ch|sh)$", w) else w[:-1] + "ies" if re.search(r"[^aeiou]y$", w) else w + "s"
+    n = lambda verb, thing=None: f"{prefix}_{verb}" + (f"_{thing}" if thing else "")
+    out = []
+    for a in p.get("record_areas") or []:
+        out += [(n("list", a["name"]), "workspace"), (n("get", a["name"]), "workspace")]
+        if a.get("scope") != "platform":
+            out += [(n("create", a["name"]), "workspace"), (n("update", a["name"]), "workspace")]
+            if a.get("lifecycle"): out.append((n("move", a["name"]), "workspace"))
+    if p.get("metrics"): out.append((n("get", "metrics"), "workspace"))
+    kinds = p.get("job_kinds") or []
+    for k in kinds: out.append((n("start", k["name"]), "workspace"))
+    if kinds:
+        run_tok = token(words.get("run", "run"), "run"); runs_tok = token(words.get("runs") or plural(run_tok), "runs")
+        out += [(n(f"{run_tok}_status"), "workspace"), (n("list", runs_tok), "workspace"), (n("get", f"{run_tok}_results"), "workspace"), (n("cancel", run_tok), "workspace")]
+    for a in p.get("record_areas") or []:
+        if a.get("scope") == "platform":
+            out += [(n(f"admin_{v}", a["name"]), "admin") for v in ("list", "get", "create", "update", "delete")]
+    return out
+
+
+def apply_mcp(pack, mcp, defaults, line=None):
+    """Put the brief's `## MCP` block into pack.json, naming each tool as the generator does: a name written without the
+    prefix (`list_audit_findings`) is the generated `<prefix>_list_audit_findings` when that tool exists, and said."""
+    if not mcp: return pack
+    m = json.loads(json.dumps(mcp)); pack["mcp"] = m
+    gen = {t for t, _ in mcp_tools(pack)}; prefix = m.get("prefix") or pack.get("id")
+    def fix(x):
+        if x not in gen and f"{prefix}_{x}" in gen:
+            defaults.append(f"mcp: {x} is the generated tool {prefix}_{x}"); return f"{prefix}_{x}"
+        return x
+    for k in ("include", "exclude", "admin_only"):
+        if k in m: m[k] = [fix(x) for x in m[k]]
+    for k in ("rename", "describe"):
+        if k in m: m[k] = {fix(x): v for x, v in m[k].items()}
+    return pack
+
+
+def mcp_errors(p):
+    """src/mcp-catalog.ts generateCatalog's checks on a pack's `mcp` block, for one pack."""
+    m = p.get("mcp")
+    if not isinstance(m, dict): return []
+    errs = []; E = lambda x: errs.append(f"mcp: {x}")
+    tools = mcp_tools(p); gen = {t for t, _ in tools}; door = dict(tools)
+    for key in ("include", "exclude", "admin_only"):
+        for x in m.get(key) or []:
+            if x not in gen: E(f"{key} names {x}, which is not one of this pack's generated tools ({', '.join(sorted(gen)) or 'none'})")
+    for key in ("rename", "describe"):
+        for x in (m.get(key) or {}):
+            if x not in gen: E(f"{key} names {x}, which is not one of this pack's generated tools ({', '.join(sorted(gen)) or 'none'})")
+    inc = set(m["include"]) if "include" in m else None; exc = set(m.get("exclude") or []); adm = set(m.get("admin_only") or [])
+    seen = {}
+    assets = any(a.get("role") == "asset" for a in p.get("record_areas") or [])
+    for k in p.get("job_kinds") or []:
+        if assets and any(a.get("name") == "target_asset" for a in k.get("args") or []): E(f"job kind {k['name']} has an argument named target_asset, which its start tool uses for the target")
+        envc = [c for c in p.get("credentials") or [] if c.get("name") in (k.get("credentials") or []) and c.get("bound_to") == "environment"]
+        if envc and any(a.get("name") == "target_environment" for a in k.get("args") or []): E(f"job kind {k['name']} has an argument named target_environment, which its start tool uses for the target")
+    for t, d in tools:
+        if (inc is not None and t not in inc) or t in exc: continue
+        server = d
+        if t in adm:
+            if d == "admin": E(f"admin_only names {t}, which is on the admin MCP already"); continue
+            server = "admin"
+        name = (m.get("rename") or {}).get(t, t)
+        if len(name) > 64 or not TOOL.fullmatch(name): E(f"tool {name} is longer than 64 characters (MCP clients refuse it): set a shorter prefix, or rename it")
+        if (server, name) in seen: E(f"tool {name} ({t}) clashes with {seen[(server, name)]} on the {server} MCP: rename it or set prefix")
+        else: seen[(server, name)] = t
+    return errs
 
 
 def parse(text):
@@ -1164,6 +1263,7 @@ def cross_errors(p):
         if k == "area" and t.get("area") in areas:
             rd = set((areas[t["area"]].get("permissions") or {}).get("read") or ROLES)
             if t.get("roles") and not rd & set(t["roles"]): E(f"{w}: no role may read what it shows")
+    errs += mcp_errors(p)
     return errs
 
 
