@@ -9,14 +9,17 @@
  *   admin tokens (adm_…)       for scripts: minted per purpose with a role and an expiry, revocable (src/admin-tokens.ts).
  *                              The old static OCTILLION_ADMIN_TOKEN is no longer accepted.
  *
- * Requests authenticated by Clerk's session cookie that change something must carry `X-Octillion-Admin: 1`, which a
+ * Under the built-in sign-in (mold_v0-004, src/builtin-auth.ts) the same roles are the person's public_metadata in
+ * auth_users, and OCTILLION_PLATFORM_ADMINS addresses count once the person has signed in with them (a verified address).
+ *
+ * Requests authenticated by a session cookie (Clerk's or the built-in one) that change something must carry `X-Octillion-Admin: 1`, which a
  * cross-site form cannot send, so the cookie cannot be ridden (CSRF). Bearer-token requests need no extra header.
  */
 import express, { type NextFunction, type Request, type Response } from "express";
 import { bearer } from "./auth.js";
 import { clerkEnabled } from "./clerk.js";
 import { adminContext, PERMISSIONS, permissionsOf, platformRoleFor, ROLE_LABELS, type PlatformRole } from "./admin-roles.js";
-import { clerkSession } from "./session.js";
+import { people, signedIn } from "./people.js";
 import { resolveAdminToken } from "./admin-tokens.js";
 
 /**
@@ -27,8 +30,9 @@ export async function requirePlatformAdmin(req: Request, res: Response, next: Ne
   const go = (role: PlatformRole) => { res.locals.adminRole = role; adminContext.run({ role }, () => next()); };
   const tok = await resolveAdminToken(bearer(req.headers.authorization));
   if (tok) { res.locals.adminActor = `token:${tok.label}`; return go(tok.role); }
-  const s = await clerkSession(req);
-  if (!s) return void res.status(401).json({ error: "Sign in as a platform admin", sign_in_url: "/sign-in" });
+  // The server's sign-in (src/people.ts): a Clerk session, or the built-in session cookie (mold_v0-004).
+  const s = await signedIn(req);
+  if (!s) return void res.status(401).json({ error: "Sign in as a platform admin", sign_in_url: people().provider === "clerk" ? "/sign-in" : "/auth/sign-in" });
   const { email, role } = await platformRoleFor(s.userId).catch(() => ({ email: null, role: null }));
   if (!role) return void res.status(403).json({ error: `${email ?? "This account"} is not a platform admin` });
   if (s.viaCookie && req.method !== "GET" && req.get("x-octillion-admin") !== "1") return void res.status(403).json({ error: "Missing X-Octillion-Admin header" });
@@ -41,16 +45,21 @@ export async function requirePlatformAdmin(req: Request, res: Response, next: Ne
 export const adminActor = (req: Request, res: Response) =>
   (res.locals.adminActor as string | undefined) ?? (String(req.get("x-admin-actor") ?? "admin").trim().slice(0, 80) || "admin");
 
+/** The built-in sign-in says so in /admin/session (the console's sign-out and profile follow it); Clerk's answer is unchanged. */
+const builtinMark = (p: string) => (p === "builtin" ? { auth_provider: "builtin" } : {});
+
 export function adminAuthRouter() {
   const r = express.Router();
-  // For the admin UI: who is signed in, their role and what it permits (src/admin-roles.ts). Sign-in and sign-out are Clerk's.
+  // For the admin UI: who is signed in, their role and what it permits (src/admin-roles.ts). Sign-in and sign-out are the
+  // provider's (Clerk's UI, or /api/auth for the built-in sign-in).
   r.get("/admin/session", async (req, res) => {
     res.set("Cache-Control", "no-store");
-    const s = clerkEnabled() ? await clerkSession(req) : null;
-    if (!s) return void res.json({ signed_in: false, email: null, is_platform_admin: false, clerk: clerkEnabled() });
+    const dir = people();
+    const s = dir.enabled() ? await signedIn(req) : null;
+    if (!s) return void res.json({ signed_in: false, email: null, is_platform_admin: false, clerk: clerkEnabled(), ...builtinMark(dir.provider) });
     const { email, role } = await platformRoleFor(s.userId).catch(() => ({ email: null, role: null }));
     res.json({ signed_in: true, user_id: s.userId, email, is_platform_admin: role != null, role, role_label: role ? ROLE_LABELS[role] : null,
-               permissions: permissionsOf(role), needs: PERMISSIONS, clerk: true });
+               permissions: permissionsOf(role), needs: PERMISSIONS, clerk: dir.provider === "clerk", ...builtinMark(dir.provider) });
   });
   return r;
 }

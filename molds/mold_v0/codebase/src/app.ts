@@ -28,7 +28,7 @@ import { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
 import { capture, identifyPerson } from "./telemetry.js";
 import * as limits from "./limits.js";
 import * as clerk from "./clerk.js";
-import { clerkSession } from "./session.js";
+import { people, signedIn } from "./people.js";
 import * as roles from "./account-roles.js";
 import { answerDocs, sseStart, streamDocsAnswer, type DocsStreamEvent } from "./docs-answers.js";
 
@@ -377,23 +377,25 @@ async function billingUsage(s: Session) {
  * for that account (withTenant).
  */
 export async function customerSession(req: Request, res: Response, next: NextFunction) {
-  if (!clerk.clerkEnabled()) return void res.status(503).json({ error: "Sign-in is not configured (CLERK_SECRET_KEY)" });
-  const c = await clerkSession(req);
-  if (!c) return void res.status(401).json({ error: "Sign in", sign_in_url: "/sign-in" });
-  const ms = (await clerk.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
+  // The server's sign-in (src/people.ts): Clerk's session, or the built-in session cookie (mold_v0-004).
+  const dir = people();
+  if (!dir.enabled()) return void res.status(503).json({ error: "Sign-in is not configured (CLERK_SECRET_KEY)" });
+  const c = await signedIn(req);
+  if (!c) return void res.status(401).json({ error: "Sign in", sign_in_url: dir.provider === "clerk" ? "/sign-in" : "/auth/sign-in" });
+  const ms = (await dir.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
   // The session's active organization; without one, the person's oldest membership that is not suspended.
   const m = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : ms.find((x) => !clerk.isSuspended(x));
   if (!m) return void res.status(403).json({ error: `You are not in ${an(PROFILE.name)} account yet. Ask your admin to invite you.`, code: "no_account" });
   if (clerk.isSuspended(m)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
   const org = await orgForClerk(m.organization!.id);
   if (!org) return void res.status(403).json({ error: `This organization is not ${an(PROFILE.name)} account. ${PROFILE.name} is invite-only for now: ask your ${PROFILE.name} contact for an invitation.`, code: "no_account" });
-  const user = await clerk.users.get(c.userId);
+  const user = await dir.users.get(c.userId);
   const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
     accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };
   if (!identified.has(c.userId)) {
     identified.add(c.userId);
     identifyPerson(c.userId, { email: s.email ?? undefined, name: clerk.displayName(user) ?? undefined, account: org.slug, account_name: org.name, role: s.accountRole });
-    capture({ distinctId: c.userId, orgSlug: org.slug }, "app_signed_in", { method: "clerk" });
+    capture({ distinctId: c.userId, orgSlug: org.slug }, "app_signed_in", { method: dir.provider });
   }
   res.locals.session = s;
   res.locals.memberships = ms;
@@ -413,6 +415,10 @@ export function appRouter() {
   api.use((req, res, next) => (hosts().some((h) => h.routes?.appLargeBody?.(req)) ? next() : small(req, res, next)));
   api.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   api.use(customerSession);
+  // Under the built-in sign-in (a long-lived cookie, mold_v0-004) a change riding the cookie carries X-Pack-Request: 1,
+  // which a page on another site cannot send (CSRF), as the data, keys and pack routes already ask. Clerk's is unchanged.
+  api.use((req, res, next) => (people().provider === "builtin" && res.locals.viaCookie && req.method !== "GET" && req.method !== "HEAD" && req.get("x-pack-request") !== "1"
+    ? void res.status(403).json({ error: "Missing X-Pack-Request header" }) : next()));
   const S = (res: Response) => res.locals.session as Session;
   /** Refuse unless the person's role has the permission: 403 in plain words, with a code and the role it needs. */
   const need = (res: Response, p: roles.AccountPermission) => {
@@ -435,9 +441,9 @@ export function appRouter() {
     res.json({ email: s.email, user_id: s.user, role: s.role, org_role: `org:${s.role}`, account: { name: f.name, slug: f.slug, clerk_org_id: s.clerkOrgId },
                account_role: s.accountRole, role_label: roles.ACCOUNT_ROLE_LABELS[s.accountRole], permissions: perms(res), needs: roles.ACCOUNT_PERMISSIONS,
                roles: [...roles.ACCOUNT_ROLES].reverse().map((r) => ({ id: r, label: roles.ACCOUNT_ROLE_LABELS[r], help: roles.ACCOUNT_ROLE_HELP[r] })),
-               via: "clerk", organizations: ms.map((m) => ({ clerk_org_id: m.organization!.id, name: m.organization!.name, role: clerk.roleOf(m.role),
+               via: people().provider, organizations: ms.map((m) => ({ clerk_org_id: m.organization!.id, name: m.organization!.name, role: clerk.roleOf(m.role),
                  account_role: roles.accountRoleOf(m), suspended: clerk.isSuspended(m) })),
-               integrations: { clerk: true, stripe: billing.stripeEnabled() } });
+               integrations: { clerk: people().provider === "clerk", stripe: billing.stripeEnabled() } });
   });
   api.get("/setup", async (req, res) => void res.json(await setup(S(res), typeof req.query.since === "string" ? req.query.since : undefined)));
   // Forget an AI client in your own list (a test script, an old machine): its connections stop counting as a client.
@@ -476,6 +482,13 @@ export function appRouter() {
       await admin.setMemberActive(actor(res), S(res).slug, String(req.params.id), on);
       res.status(204).end();
     });
+  // Remove someone from the account (mold_v0-004): their membership, their sessions in it and their member keys go.
+  api.post("/team/members/:id/remove", async (req, res) => {
+    need(res, "team");
+    const t = await admin.team(S(res).slug, true);
+    if (t.members.find((m) => m.id === req.params.id)?.user_id === S(res).user) throw new AppError("You cannot remove yourself");
+    res.json(await admin.removeMember(actor(res), S(res).slug, String(req.params.id)));
+  });
   api.post("/team/members/:id/role", async (req, res) => {
     need(res, "team");
     if (String(req.params.id) === S(res).user) throw new AppError("Ask another owner to change your own role");
