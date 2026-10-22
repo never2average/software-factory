@@ -37,6 +37,13 @@ test('a Vercel app probes web, api and workflow; a self-hosted one web and api; 
   expect(healthChecks({ status: 'retired' }, vercel)).toEqual([])
 })
 
+test('a single-service app (two Vercel projects, or its own compose server) probes /healthz', async () => {
+  const two = { target: 'vercel', vercel: { production_url: 'https://o.app', api_url: 'https://o-api.app', projects: { api: 'o-api', web: 'o' } } }
+  expect(healthChecks({ status: 'stamped' }, two).map(c => c.url)).toEqual(['https://o.app/healthz', 'https://o-api.app/healthz'])
+  const compose = { target: 'compose_remote', compose_remote: { production_url: 'https://s.example' } }
+  expect(healthChecks({ status: 'stamped' }, compose).map(c => c.url)).toEqual(['https://s.example/healthz'])
+})
+
 test('an app row says whether it runs the current mold snapshot, and its RLS proof', async () => {
   const row = appRow(
     'x',
