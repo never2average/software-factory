@@ -30,8 +30,9 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
   Clerk is an optional adapter (`AUTH_PROVIDER=clerk`), kept unchanged for apps already on it: with `AUTH_PROVIDER` unset
   a server with `CLERK_SECRET_KEY` (a console with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`) runs Clerk. One adapter
   (`src/people.ts`, Clerk's shapes) serves the portal's and the admin console's sessions, team management, member keys
-  and the workspace emails under either. Under the built-in sign-in MCP clients use keys in a header (a member's own
-  key, or the workspace's); its OAuth server is mold_v0-013. `npm run test:sign-in` runs one suite through both
+  and the workspace emails under either. Under the built-in sign-in the server is its own OAuth 2.1 authorization
+  server for `/mcp` (mold_v0-013, `src/mcp-oauth.ts`), so connectors that only sign in connect; other MCP clients may use
+  keys in a header (a member's own key, or the workspace's). `npm run test:sign-in` runs one suite through both
   adapters. Details: `codebase/docs/accounts.md`, "Sign-in: built-in or Clerk".
 - The source has no licence constraints (a hackathon project).
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).

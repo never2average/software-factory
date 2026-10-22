@@ -23,6 +23,8 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   "run_charges",
   // mold_v0-004 the built-in sign-in's memberships and invitations (platform-only tables that carry org_id)
   "auth_memberships", "auth_invitations",
+  // mold_v0-013 the built-in MCP authorization server's grants (a person in one workspace; platform-only, carries org_id)
+  "oauth_grants",
   // mold_v0-079 approvals of previews, mold_v0-075 a company's egress hosts
   "run_approvals", "workspace_egress_hosts"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");

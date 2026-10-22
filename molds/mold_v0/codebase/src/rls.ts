@@ -69,6 +69,8 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // Built-in sign-in (mold_v0-004, 0015_builtin_sign_in): people, sessions, codes and Google sign-ins in flight are the
   // platform's; memberships and invitations carry org_id and are closed to tenant work as well.
   "auth_users", "auth_sessions", "auth_codes", "auth_oauth_states", "auth_memberships", "auth_invitations",
+  // The built-in MCP authorization server (mold_v0-013, 0018_mcp_oauth): clients, requests, grants, codes and tokens.
+  "oauth_clients", "oauth_requests", "oauth_grants", "oauth_codes", "oauth_tokens",
   // Approvals of previews (mold_v0-079) and a company's egress hosts (mold_v0-075): the shell's code only.
   "run_approvals", "workspace_egress_hosts"];
 
