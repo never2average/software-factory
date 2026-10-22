@@ -298,7 +298,7 @@ export function RecordView<T>({
                     return (
                       <TableHead key={c.key} className={cn('px-3', c.className)} aria-sort={d === 'asc' ? 'ascending' : d === 'desc' ? 'descending' : undefined}>
                         {typed(c) ? (
-                          <button type='button' onClick={() => cycle(c.key)} className='hover:text-foreground inline-flex items-center gap-1 leading-none'>
+                          <button type='button' onClick={() => cycle(c.key)} className='hover:text-foreground inline-flex min-h-6 items-center gap-1 leading-none'>
                             {c.label}{d === 'asc' ? <IconArrowUp className='size-3' /> : d === 'desc' ? <IconArrowDown className='size-3' /> : null}
                           </button>
                         ) : c.label}
@@ -327,7 +327,7 @@ export function RecordView<T>({
                       {head && it.g && (
                         <TableRow className='bg-muted/30 hover:bg-muted/30'>
                           <TableCell colSpan={span} className='py-1.5'>
-                            <button type='button' className='flex items-center gap-1.5 text-xs font-medium leading-none'
+                            <button type='button' className='flex min-h-6 items-center gap-1.5 text-xs font-medium leading-none'
                               onClick={() => setCollapsed((s) => { const n = new Set(s); if (!n.delete(it.g!.value)) n.add(it.g!.value); return n; })}>
                               <Icons.chevronRight className={cn('size-3.5 transition-transform', !collapsed.has(it.g.value) && 'rotate-90')} />
                               {it.g.label}<span className='text-muted-foreground tabular-nums'>{it.g.rows.length}</span>
