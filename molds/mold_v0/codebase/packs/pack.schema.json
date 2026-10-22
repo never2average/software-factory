@@ -2031,6 +2031,13 @@
               }
             ]
           },
+          "group_by_list": {
+            "type": "string",
+            "enum": [
+              "first",
+              "each"
+            ]
+          },
           "by_time": {
             "type": "object",
             "properties": {
@@ -2373,7 +2380,8 @@
               },
               "identity": {
                 "type": "string",
-                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                "maxLength": 300,
+                "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
               },
               "append_only": {
                 "type": "boolean"
@@ -2426,14 +2434,16 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                        "maxLength": 300,
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
                       }
                     },
                     "where": {
                       "type": "object",
                       "propertyNames": {
                         "type": "string",
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                        "maxLength": 300,
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
                       },
                       "additionalProperties": {
                         "anyOf": [
@@ -2557,14 +2567,16 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                        "maxLength": 300,
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
                       }
                     },
                     "where": {
                       "type": "object",
                       "propertyNames": {
                         "type": "string",
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                        "maxLength": 300,
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
                       },
                       "additionalProperties": {
                         "anyOf": [
@@ -2708,7 +2720,8 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\\.|$))(\\$\\.|@)?[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                        "maxLength": 300,
+                        "pattern": "^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|(\\$\\.)?[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*(\\.[A-Za-z_][A-Za-z0-9_]*(\\[(0|[1-9][0-9]{0,2})\\])*)*)$"
                       }
                     }
                   },

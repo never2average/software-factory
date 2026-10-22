@@ -90,7 +90,7 @@ export function noticeAppRouter(): Router {
   const r = express.Router();
   if (!dueAreas().length) return r; // no due area: nothing is mounted, nothing answers
   base(r);
-  r.get("/", answer(async (req, res) => ({ notices: await listNotices(S(res).org, { all: req.query.all === "1" }) })));
+  r.get("/", answer(async (req, res) => ({ notices: await listNotices(S(res).org, { all: req.query.all === "1", actor: { role: S(res).accountRole, userId: S(res).user } }) })));
   r.post("/:id/dismiss", answer(async (req, res) => {
     may(res, "edit");
     if (!(await dismissNotice(S(res).org, String(req.params.id), who(res)))) throw new PackError("no such notice", 404);

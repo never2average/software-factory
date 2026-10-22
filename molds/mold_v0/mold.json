@@ -33,6 +33,19 @@
       "PUBLIC_URL": "https://{domain}"
     },
     "dockerfile": "Dockerfile",
+    "console": {
+      "$comment": "The web console on a server of its own (mold_v0-020): the compose service built from web/Dockerfile (Next.js standalone output) behind the stack's Caddy, which sends the API's own paths to the API service and everything else to the console. Health: the API's health path answers 200 ok THROUGH the console (so its API-address variable reaches the API), and these pages answer without following a redirect (a page, its sign-in redirect, or 401/403; never a 5xx or nothing). operator_env: the names in the server's env file the console needs from the operator (its sign-in; the API reads the same two), asked for at a hidden prompt during the deploy when the server lacks them.",
+      "service": "console",
+      "proxied_health": "/healthz",
+      "pages": [
+        "/admin",
+        "/app"
+      ],
+      "operator_env": {
+        "CLERK_PUBLISHABLE_KEY": "required",
+        "CLERK_SECRET_KEY": "required"
+      }
+    },
     "source_excludes": [
       "node_modules",
       ".git",
