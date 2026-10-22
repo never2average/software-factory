@@ -39,7 +39,7 @@ try {
 
   // ---------- 1. declarations ----------
   {
-    const k = (name: string, x: Record<string, unknown> = {}) => ({ name, runner: "workspace-harness", entry: "x.mjs", ...x });
+    const k = (name: string, x: Record<string, unknown> = {}) => ({ name, runner: "workspace-harness", entry: "x.mjs", max_attempts: 1, ...x });
     const pack = (kinds: unknown[], extra: Record<string, unknown> = {}) => definePack({ id: "pk", jobKinds: kinds as never, ...extra });
     assert.doesNotThrow(() => pack([k("pv"), k("wr", { workspace: true, approval: { preview: "pv" } })]));
     assert.throws(() => pack([k("wr", { approval: { preview: "nope" } })]), /its preview nope is not a kind of this pack/);
@@ -47,6 +47,7 @@ try {
     assert.throws(() => pack([k("pv", { approval: { preview: "wr" } }), k("wr", { approval: { preview: "pv" } })]), /waits for an approval itself/);
     assert.throws(() => pack([k("pv"), k("wr", { approval: { preview: "pv", by: "anyone" } })]), /approval/);
     assert.throws(() => pack([k("pv"), k("wr", { approval: { preview: "pv", expires_minutes: 1 } })]), /approval/);
+    assert.throws(() => pack([k("pv"), k("wr", { approval: { preview: "pv" }, max_attempts: 3 })]), /max_attempts must be 1/, "(review) a gated write is never retried on one yes");
     assert.throws(() => pack([k("pv"), k("wr", { approval: { preview: "pv" } })], { schedules: [{ name: "nightly", label: "Nightly", job_kind: "wr", cron: "0 3 * * *" }] }), /a schedule cannot start it/);
     console.log("✓ declarations: the preview is another, ungated kind of the pack; a schedule never starts a gated kind");
   }
@@ -99,6 +100,7 @@ try {
       assert.deepEqual(v.approve_for.map((x: { kind: string; by: string }) => `${x.kind}:${x.by}`).sort(), ["add:owner", "add_op:operator"], "what it may be approved for, and by whom");
       assert.equal(v.output.results[0].detail.would_add, "acme", "the approver is shown the preview's output");
       assert.equal((await approve(p1, "add", "0".repeat(64))).status, 409, "another sha256 than the output's: refused");
+      assert.equal((await call("GET", `/api/runs/${p1}/approval`, tokA.member)).status, 403, "(review) only the approver sees the whole preview to approve");
       assert.equal((await approve(p1, "add", v.sha256, tokA.member)).status, 403, "a member does not approve");
       assert.equal((await approve(p1, "add", v.sha256, ownerB)).status, 404, "another workspace's owner does not see the run");
       assert.equal((await approve(p1, "add_op", v.sha256)).status, 403, "a kind the operator approves: not the owner");
@@ -132,6 +134,17 @@ try {
       assert.deepEqual(await filesOf(A.orgId), ["catalogs/acme.json"], "the write wrote what the preview showed");
       const used = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'approval_used'", [w.id]))[0]!.data;
       assert.equal(used.approval, approvalId); assert.equal(used.preview_run_id, p1);
+      // (review) the write is given the output that was approved, to apply exactly that.
+      const given = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'given'", [w.id]))[0]!.data;
+      assert.equal(given.sha256, (await shown(p1)).sha256); assert.equal(given.would_add, "acme");
+      // (review) an approval that expires while its write waits in the queue: the write does not run.
+      const pq = await preview(A.orgId, "queued");
+      const aq = (await approve(pq, "add", (await shown(pq)).sha256)).body.approval.id;
+      const wq = await start(A.orgId, "add", { scope: { catalog: "queued" }, approval: aq });
+      await db.query("UPDATE run_approvals SET expires_at = now() - interval '1 second' WHERE id = $1", [aq]);
+      const vq = await carry(wq.id, "add");
+      assert.equal(vq.status, "failed"); assert.match(vq.error ?? "", /approval expired before it could run/);
+      assert.ok(!(await filesOf(A.orgId)).includes("catalogs/queued.json"));
       // Expired.
       const p2 = await preview(A.orgId, "beta");
       const a2 = (await approve(p2, "add", (await shown(p2)).sha256)).body.approval.id;

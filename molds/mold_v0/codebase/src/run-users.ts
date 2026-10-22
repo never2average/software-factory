@@ -10,8 +10,8 @@
  *   lease      a file per uid in a directory only root can enter (OCTILLION_RUN_UID_DIR, default /run/octi-run-uids,
  *              cleared at boot with the processes it guards), naming the process that holds it (pid and start time,
  *              so a reused pid is not mistaken for it), a random token and the run. Taken and given back under a
- *              host-wide mutex (an abstract unix socket: released by the kernel when its holder dies, so a crashed
- *              runner never wedges the others), so two runners never take one uid.
+ *              host-wide lock (flock on a file of that directory, held by a child process: released by the kernel
+ *              when its holder dies, and out of reach of anyone but root), so two runners never take one uid.
  *   order      round robin over the range: a released uid is taken again only after every other free one was, which
  *              keeps a uid's next run far from its last.
  *   reclaim    a lease whose holder is gone (a runner that died) is taken over only after every process of that uid is
@@ -28,10 +28,9 @@
  *
  * Only node's own modules: the run sandbox's runner imports this (orchestrator/deploy/boat-lib.ts runnerCodeFiles).
  */
-import { spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -102,6 +101,10 @@ export const SWEPT_DIRS = ["/tmp", "/var/tmp", "/dev/shm", "/run/lock", "/dev/mq
  * run that is given the same uid.
  */
 export function sweepUserFiles(uid: number, roots = SWEPT_DIRS) {
+  // The user's kernel keyrings (user and user-session): a key a run stored there
+  // outlives its processes and would be the next holder's (found by the review of mold_v0-078). Best effort: keyctl may
+  // be missing (then a run sandbox, which lives one run, or docker's seccomp, which denies keyctl, is what keeps it apart).
+  for (const k of ["@u", "@us"]) spawnSync("keyctl", ["clear", k], { uid, gid: uid, stdio: "ignore", timeout: 5000 });
   const sweep = (dir: string, depth: number) => {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -158,24 +161,27 @@ function accountUids(): Set<number> {
 
 // ---------- the host-wide mutex ----------
 
-/** Held while leases are read and written: an abstract unix socket, which only one process can bind and the kernel frees. */
+/**
+ * Held while leases are read and written: flock(1) on a file in the lease directory (root's, 0700), held by a child
+ * process for as long as its stdin is open, so the kernel frees it when the holder dies and nobody without access to the
+ * directory can take or block it. (An abstract unix socket, the first version, could be bound by any local user, a
+ * run's program included, and so block every runner: found by the review of mold_v0-078.)
+ */
 async function withMutex<T>(dir: string, fn: () => T | Promise<T>, waitMs = 60_000): Promise<T> {
-  const name = `\0octi-run-uids:${createHash("sha256").update(path.resolve(dir)).digest("hex").slice(0, 24)}`;
-  const t0 = Date.now();
-  let srv: net.Server | null = null;
-  for (;;) {
-    const s = net.createServer();
-    const got = await new Promise<boolean>((resolve, reject) => {
-      s.once("error", (e: NodeJS.ErrnoException) => (e.code === "EADDRINUSE" ? resolve(false) : reject(e)));
-      s.listen(name, () => resolve(true));
-    });
-    if (got) { srv = s; break; }
-    if (Date.now() - t0 > waitMs) throw new RunUserError("the run users' lock is held too long by another runner", "busy");
-    await new Promise((r) => setTimeout(r, 5 + Math.floor(Math.random() * 20)));
-  }
-  srv.unref();
+  const lock = path.join(dir, "mutex");
+  const child = spawn("flock", ["-x", "-w", String(Math.ceil(waitMs / 1000)), lock, "sh", "-c", "echo locked; exec cat >/dev/null"],
+    { stdio: ["pipe", "pipe", "ignore"] });
+  const got = await new Promise<boolean>((resolve) => {
+    let out = "";
+    child.stdout!.on("data", (d) => { out += d; if (out.includes("locked")) resolve(true); });
+    child.on("error", () => resolve(false));
+    child.on("exit", () => resolve(false));
+  });
+  if (!got) { child.kill("SIGKILL"); throw new RunUserError("the run users' lock could not be taken (flock missing, or held too long by another runner)", "busy"); }
   try { return await fn(); }
-  finally { await new Promise<void>((r) => srv!.close(() => r())); }
+  finally {
+    await new Promise<void>((r) => { child.once("exit", () => r()); child.stdin!.end(); setTimeout(() => { child.kill("SIGKILL"); }, 5000).unref(); });
+  }
 }
 
 /** The lease directory: made root's 0700, never through a link, refused when someone else owns it. */
@@ -230,7 +236,8 @@ export async function leaseRunUser(run: string, o: LeaseOptions = {}): Promise<R
     // An earlier holder that is gone (a runner that died): what it left of the user goes before anyone gets it again.
     if (!killUntilGone({ uid, gid })) { o.note?.("run_user_skipped", { uid, reason: "processes of an earlier run would not die" }); return false; }
     sweepUserFiles(uid);
-    if (l?.pid) o.note?.("run_user_reclaimed", { uid, from_run: l.run ?? null });
+    // Which run held it is the runner's to know (another workspace's run, maybe): never in this run's events.
+    if (l?.pid) { o.note?.("run_user_reclaimed", { uid }); console.error(`run user ${uid}: reclaimed from ${l.run ?? "?"} (its runner is gone)`); }
     return true;
   };
   const leased = await withMutex(dir, () => {

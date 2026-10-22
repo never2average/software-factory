@@ -70,6 +70,8 @@ export function runAppRouter(): Router {
   if (packs().some((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].some((k) => (k as { approval?: unknown }).approval))) {
     r.use(express.json({ limit: "4kb" }));
     r.get("/:id/approval", answer(async (req, res) => {
+      // The whole output (every result, unfiltered by the areas' read roles: the digest covers all of it): the approver's.
+      if (session(res).accountRole !== "owner") throw new PackError("Only the workspace's owner sees a preview to approve", 403);
       const id = String(req.params.id);
       if (!/^run_[A-Za-z0-9_-]{1,80}$/.test(id)) throw new PackError("Not found", 404);
       const { approvalView } = await import("./run-approvals.js");

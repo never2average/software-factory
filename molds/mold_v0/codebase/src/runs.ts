@@ -33,7 +33,7 @@ import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
 import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
 import { runCompanyHosts } from "./egress-hosts.js";
-import { APPROVAL_ID, approvalStale, takeApproval } from "./run-approvals.js";
+import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -211,6 +211,8 @@ export interface Claim {
    * subdomains); `exact`, the company's own hosts (mold_v0-075, src/egress-hosts.ts), each exactly.
    */
   egress: { hosts: string[]; exact?: string[] };
+  /** A gated write (mold_v0-079): its approval and the preview's output that was approved (what it is to write). */
+  approval?: { id: string; preview_run_id: string; sha256: string; approved_by: string; role: string; output: Record<string, unknown> | null } | null;
 }
 
 /** Hosts a run may reach: the kind's own, plus the gateway's public host. An IP address or localhost is never listed. */
@@ -322,12 +324,14 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
   }
   // mold_v0-075: the company's own hosts (the run row's workspace, the asset it targets), each allowed exactly.
   const exact = await runCompanyHosts(row);
+  const approval = row.approval_id ? await asPlatform(async () => approvedPreview(await getDb(), row)) : null;
   await event(row.id, row.org_id, row.attempt, "claimed", { worker_id: workerId, deadline_at: iso(row.deadline_at), ...(exact.length ? { company_hosts: exact } : {}) });
   return {
     run: { ...view(row), org_id: row.org_id, spec: row.spec },
     lease_token: lease, lease_seconds: row.lease_seconds, lease_expires_at: iso(row.lease_expires_at)!, deadline_at: iso(row.deadline_at)!,
     gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url, token: gateway.token ?? null },
     egress: { hosts: runEgressHosts(row.egress ?? [], gateway.gateway_url), exact },
+    ...(approval ? { approval } : {}),
   };
 }
 

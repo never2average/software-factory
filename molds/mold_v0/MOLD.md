@@ -410,7 +410,8 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   the shared temporary directories removed) was host-wide: a concurrent run on the same host lost its steps (exit 128).
   Leases are files in a root-only directory (`OCTILLION_RUN_UID_DIR`, default `/run/octi-run-uids`) naming the holding
   process (pid and start time, so a reused pid is not mistaken for it) and its run, taken and given back under a
-  host-wide mutex (an abstract unix socket the kernel frees when its holder dies), round robin (a released uid comes
+  host-wide lock (flock on a file of that directory, held by a child process: the kernel frees it when its holder dies,
+  and no run's user can reach it), round robin (a released uid comes
   back only after every other free one). A lease whose runner died is taken over only after every process of that uid
   is killed and its files swept; a uid with processes this runner never leased is skipped and left alone; a uid whose
   processes will not die stays out of use ("quarantined") while its holder lives. A fixed `runAs` (tests, older setups)
@@ -418,7 +419,9 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   first. In a run sandbox (boat, docker: one run per sandbox) the runner leases the uid inside the sandbox, gives it an
   account (`octirun-<uid>`), and the lockdown firewall matches it by number (`setupScript` `uid`); the unix sockets of
   the local resolver and the system bus are denied to that uid (setfacl, best effort). Each run records its uid
-  (`run_user` event). `npm run test:run-users` (root) proves it: leases (one per run, held never handed out, round robin,
+  (`run_user` event; a program's own line claiming a harness or engine event type is a log line). A run's directories
+  are 0700, its user's alone; the sweep also clears its user's kernel keyrings (`keyctl clear @u @us`, where keyctl
+  exists). `npm run test:run-users` (root) proves it: leases (one per run, held never handed out, round robin,
   a dead runner's uid only after its leftovers are gone, foreign processes left alone, a fixed uid in use refused, eight
   runner processes at once get eight uids), and the bug: two runs at once on one host in two runner processes, one ends
   early and its sweep runs while the other keeps running; the other keeps its processes and files and finishes (on the
@@ -426,16 +429,18 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   leased uid with no account down by number; `test:run-sandboxes` sees two concurrent sandbox runs as two uids.
   **Not covered:** uids are per PID namespace and host: two docker run containers lease independently, so two of them
   may hold the same uid (their processes and files are apart, their per-uid kernel limits and keyrings are not); files
-  the run user leaves outside the swept directories (another world-writable directory) are not found; a runner in
-  another network namespace on the same host shares the leases' directory but not the mutex.
+  the run user leaves outside the swept directories (another world-writable directory) are not found; without keyctl a
+  host runner does not clear a uid's keyrings; on a host runner (not a sandbox) the checkout cache's trees (074) are
+  readable by any user while their workspace's run is open; a uid whose processes would not die stays quarantined
+  until its runner exits.
 - **Run credentials and egress per company** (mold_v0-075, built): a file credential's path in a declared variable
   (`deliver_as: {file, path_env}`, above); **operator credentials**: a pack declares `operatorCredentials`
   (`operator_credentials` in pack.json: name, label, help, `deliver_as` as a field's) and a kind names those its runs
-  receive (`operator_credentials`); the values are the platform's, in the key vault (provider `pack_credentials`,
+  receive (`operator_credentials`; never with `company_egress`, so no host a workspace chose reaches them); the values are the platform's, in the key vault (provider `pack_credentials`,
   label `<pack>.<name>`, set by an owner of the platform on `/admin` key vault; `sql/migrations/0014_run_approvals_egress.sql`
   adds the provider, direct mode with no environment names, so no session is ever given one); the runner fetches them with
-  the run's lease beside the workspace's (`src/credentials.ts`), delivered as declared (the command gets them by default,
-  a step only when it names them). A workspace never sees one: no console or API lists them (the console's fields are
+  the run's lease beside the workspace's (`src/credentials.ts`), delivered as declared (a pack's own program gets them; an
+  agent's command and steps only when their `credentials` name them: an agent reads the workspace's files). A workspace never sees one: no console or API lists them (the console's fields are
   the workspace's own), the run's events name them but never carry a value, and everything the run writes is redacted
   of them and refused in the workspace's write-back and inputs, as a workspace credential. **Per-company egress
   hosts** (`src/egress-hosts.ts`, table `workspace_egress_hosts`, no tenant access): a kind with `company_egress: true`
@@ -450,20 +455,25 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   fetches (the agent repository, checkout steps and git credentials need the kind's own egress), so they never receive a
   credential the runner holds. `npm run test:run-credentials` proves the three; `test:run-firewall` proves the exact
   match in the sandbox's own proxy. **Not covered:** a program that sends an operator credential out through an allowed
-  host or encodes it past the redaction (as for a workspace credential); no console page for the hosts yet (the API only).
+  host of the kind's own egress or encodes it past the redaction (as for a workspace credential); the proxy matches a
+  company host by the CONNECT name, not the TLS server name inside the tunnel, and does not refuse the platform's own
+  addresses by number (a name pointing at them passes the name check); no console page for the hosts yet (the API only).
 - **Approval-gated writes** (mold_v0-079, built; `src/run-approvals.ts`): a kind that writes declares
   `approval: {preview, by, expires_minutes}` (`preview`: an ungated kind of the same pack, its dry run; `by`: `owner`, the
-  workspace's owner, default, or `operator`, the platform's; `expires_minutes` 5 to 10080, default 1440). No schedule
-  may start it. A run of it starts only with an approval (`approval: "apr_…"` in `ctx.runs.start`, and in its generated
+  workspace's owner, default, or `operator`, the platform's; `expires_minutes` 5 to 10080, default 1440) and
+  `max_attempts: 1` (a yes is one write: never retried). No schedule may start it. A run of it starts only with an approval (`approval: "apr_…"` in `ctx.runs.start`, and in its generated
   start tool, where it is required). The approver is shown the preview's output and its sha256
-  (`GET /api/runs/:id/approval`, or `/api/admin/runs/:id/approval`): the run, its scope and targets, its results and the
+  (`GET /api/runs/:id/approval`, the owner only, or `/api/admin/runs/:id/approval`): the run, its scope and targets, its results and the
   files it recorded; they approve that sha256 (`POST /api/runs/:id/approve` {kind, sha256}, a signed-in owner, never a
   key; `POST /api/admin/runs/:id/approve`, an operator); another sha256, another role, a preview that did not succeed or
   is older than the approval's life, and a second approval of one preview for one kind are refused. Starting the write
   takes the approval in the transaction that queues it: unused, unexpired, this workspace's, pack's and kind's (used once:
   no replay); the run's scope and targets must be the preview's; the preview's output must still hash to the approved
-  sha256. When the write is claimed its workspace must still be at the version it had when the preview was approved
-  (another run changed it: the write fails, not retried). No MCP tool approves. `npm run test:run-approvals`.
+  sha256. When the write is claimed the approval must not have expired and its workspace must still be at the version it
+  had when the preview was approved (else the write fails, not retried); the write is given the approved output (the
+  file `RUN_APPROVED_PREVIEW` names: the approval, the sha256, the preview's run, results and recorded files) to apply
+  exactly that. No MCP tool approves. **Not covered:** that the write applies only what it was given is the program's
+  (a write that recomputes may write something else); a preview's own program chooses what it prints and records. `npm run test:run-approvals`.
   Also in 079: `strip` applies at checkout only (above); and a metric `unit` `percent_100` for values already 0 to 100
   (an average of percentages a run measured), shown as they are (`percent` stays a share from 0 to 1, shown times 100).
 - **The onboarding checklist from packs** (mold_v0-011, built): a pack declares steps (`definePack({ onboarding })`: an

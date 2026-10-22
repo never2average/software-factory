@@ -260,7 +260,7 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
       }
       add({ generated: n("start", k.name), op: "start", door: "workspace", kind: k.name, needs: "launch", admin_needs: "accounts",
         title: `Start ${label}`,
-        description: `Start a ${run} (${label}) for this ${ws}.${about}${args.length ? ` Arguments: ${args.map((f) => `${f.name}${f.required ? " (required)" : ""}`).join(", ")}.` : ""} ${gate ? `It writes only what a ${gate.preview} ${run} showed, once that output is approved by the ${gate.by === "operator" ? "platform's operator" : `${ws}'s owner`} (approval), with the same arguments. ` : ""}It is queued and runs in a sandbox, spending at most $${k.budget_usd} of model use; it answers with the ${run}'s id at once. Follow it with ${statusName} and read its results with ${resultsName}.`,
+        description: `Start a ${run} (${label}) for this ${ws}.${about}${args.length ? ` Arguments: ${args.map((f) => `${f.name}${f.required ? " (required)" : ""}`).join(", ")}.` : ""} ${gate ? `It starts only with the approval (by the ${gate.by === "operator" ? "platform's operator" : `${ws}'s owner`}) of a ${gate.preview} ${run}'s output, with that ${run}'s arguments, and is given that approved output. ` : ""}It is queued and runs in a sandbox, spending at most $${k.budget_usd} of model use; it answers with the ${run}'s id at once. Follow it with ${statusName} and read its results with ${resultsName}.`,
         input: shape, annotations: WRITE(false, false, true) });
     }
     if (kinds.length) {

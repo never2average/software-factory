@@ -119,12 +119,28 @@ export async function takeApproval(tx: Queryable, a: { id: unknown; orgId: numbe
   return r;
 }
 
+/**
+ * What a claimed write run is given (src/runs.ts claimRun): the approval and the preview's output that was approved,
+ * so the write can apply exactly that (the harness writes it to a file named by RUN_APPROVED_PREVIEW).
+ */
+export async function approvedPreview(q: Queryable, run: { org_id: number; approval_id?: string | null }) {
+  if (!run.approval_id) return null;
+  const [a] = await q.query<{ id: string; preview_run_id: string; output_sha256: string; approved_by: string; approver_role: string }>(
+    "SELECT id, preview_run_id, output_sha256, approved_by, approver_role FROM run_approvals WHERE id = $1 AND org_id = $2", [run.approval_id, run.org_id]);
+  if (!a) return null;
+  const d = await previewDigest(q, run.org_id, a.preview_run_id);
+  return { id: a.id, preview_run_id: a.preview_run_id, sha256: a.output_sha256, approved_by: a.approved_by, role: a.approver_role, output: d?.output ?? null };
+}
+
 /** When a write run is claimed: its workspace must still be at the version its preview was approved at. Null: fine. */
 export async function approvalStale(tx: Queryable, run: { id: string; org_id: number; pack: string; approval_id?: string | null }): Promise<string | null> {
   if (!run.approval_id) return null;
   const { latestSnapshot } = await import("./workspace-store.js");
-  const [a] = await tx.query<{ workspace_version: number | null }>("SELECT workspace_version FROM run_approvals WHERE id = $1 AND org_id = $2 AND used_by_run_id = $3", [run.approval_id, run.org_id, run.id]);
+  const [a] = await tx.query<{ workspace_version: number | null; live: boolean }>(
+    "SELECT workspace_version, expires_at > now() AS live FROM run_approvals WHERE id = $1 AND org_id = $2 AND used_by_run_id = $3", [run.approval_id, run.org_id, run.id]);
   if (!a) return "the run's approval is not there";
+  // Expired while the write waited in the queue: it does not run on an old yes.
+  if (!a.live) return "the run's approval expired before it could run: approve its preview again";
   if (a.workspace_version === null) return null;
   const now = (await latestSnapshot(tx, run.org_id, run.pack))?.version ?? 0;
   return now === a.workspace_version ? null : `the workspace changed after its preview was approved (version ${a.workspace_version}, now ${now}): run the preview again`;

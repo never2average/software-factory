@@ -53,7 +53,11 @@ try {
     assert.throws(() => pack({ credentials: [file("kube", "kubeconfig", "KUBECONFIG"), { name: "tok", label: "t", bound_to: "workspace", deliver_as: { env: "KUBECONFIG" } }] }), /both deliver to env KUBECONFIG/);
     const op = { name: "catalogue_login", label: "Catalogue login", deliver_as: { env: "CATALOGUE_LOGIN" } };
     const k = (x: Record<string, unknown> = {}) => ({ name: "kk", runner: "workspace-harness", entry: "x.mjs", ...x });
-    assert.doesNotThrow(() => pack({ operatorCredentials: [op], jobKinds: [k({ operator_credentials: ["catalogue_login"], company_egress: true })] }));
+    assert.doesNotThrow(() => pack({ operatorCredentials: [op], jobKinds: [k({ operator_credentials: ["catalogue_login"] }), k({ name: "k2", company_egress: true })] }));
+    // (review) an operator's credential never goes where a workspace chose: not with company_egress, either runner.
+    assert.throws(() => pack({ operatorCredentials: [op], jobKinds: [k({ operator_credentials: ["catalogue_login"], company_egress: true })] }), /cannot take company_egress/);
+    assert.throws(() => pack({ operatorCredentials: [op], agentJobKinds: [{ name: "ak", runner: "agent-workspace", operator_credentials: ["catalogue_login"], company_egress: true,
+      agent: { repository: "https://example.com/a.git", commit: "a".repeat(40), command: ["node", "a.mjs"], validate: { command: ["node", "v.mjs"] }, write_back: ["data"] } }] }), /cannot take company_egress/);
     assert.throws(() => pack({ operatorCredentials: [op], jobKinds: [k({ operator_credentials: ["nope"] })] }), /names operator credential nope/);
     assert.throws(() => pack({ jobKinds: [k({ operator_credentials: ["catalogue_login"] })] }), /names operator credential catalogue_login/);
     assert.throws(() => pack({ operatorCredentials: [op], credentials: [{ name: "catalogue_login", label: "x", bound_to: "workspace", deliver_as: { env: "OTHER_X" } }] }), /both as a workspace's and as an operator's/);
