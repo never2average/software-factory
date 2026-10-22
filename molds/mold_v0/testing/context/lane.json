@@ -1,10 +1,11 @@
 {
   "lane": "context",
   "order": 20,
-  "summary": "Tenant isolation as the product itself guards it: its tenant-SQL check, which fails on any new query over a tenant table that neither filters by organisation nor says how it is scoped, and its row-level security check (every tenant table under a policy for the tenant role, then a live two-organisation probe), run on an embedded throwaway database. (Its per-tool isolation sweep runs in the functional lane's smoke row, which it ends.)",
+  "summary": "Tenant isolation as the product itself guards it: its tenant-SQL check, which fails on any new query over a tenant table that neither filters by organisation nor says how it is scoped, and its row-level security check (every tenant table under a policy for the tenant role, then a live two-organisation probe), run on an embedded throwaway database. (Its per-tool isolation sweep runs in the functional lane's smoke row, which it ends.) Then a row per pack (packs.tables): every table a pack creates under row-level security, forced, with a policy.",
   "not_covered": [
     "check:rls here runs on an embedded throwaway database (PGlite) built by the product's own migrations: it proves the migrations put row-level security in place, not that the deployed database has it. The deployed database is proven by the deploy itself (provision.py runs the same check against it and records datastores.postgres.rls_verified; a failure is a failed health check).",
-    "Queries the product's baseline file lists as pending review (scripts/tenant-sql-baseline.json) are reported by the product's own check, not failed."
+    "Queries the product's baseline file lists as pending review (scripts/tenant-sql-baseline.json) are reported by the product's own check, not failed.",
+    "packs.tables reads the catalog per pack; the live two-workspace probe of the same tables is check:rls. A host pack's tables are still the shell's base schema (mold_v0-049), so its row says it has none of its own, not-covered rather than pass."
   ],
   "checks": [
     {
@@ -37,6 +38,32 @@
         ]
       },
       "why": "The product's own `npm run check:rls` (mold_v0-031) on a fresh embedded database: a tenant table without row-level security or a policy, a tenant role that bypasses it, or one organisation reaching another's rows in the live probe."
+    },
+    {
+      "name": "packs.tables",
+      "run": "node_modules/.bin/tsx {testing}/console/pack-rows.mts . tables",
+      "cwd": "codebase",
+      "timeout_s": 600,
+      "emits": "markdown_table",
+      "requires": [
+        {
+          "path": "{codebase}/node_modules/.bin/tsx",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock"
+        },
+        {
+          "path": "{codebase}/scripts/lib/test-world.ts",
+          "else": "This lane copy has no scripts/lib/test-world.ts (the shell's throwaway world), which the per-pack rows run on. Restore it from git (git checkout molds/mold_v0/codebase/scripts/lib) and run the lane again."
+        }
+      ],
+      "expect": {
+        "stdout": [
+          "rows: [0-9]+ \\(0 failed\\)"
+        ],
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "why": "A row per pack (mold_v0-021): every table a pack's migrations create (<pack id>_*) has row-level security on, forced, and a policy, after every migration on an embedded throwaway database, so a pack that ships an unsecured table fails on its own row. check:rls beside it probes those tables live across two workspaces."
     }
   ]
 }

@@ -1,12 +1,13 @@
 {
   "lane": "functional",
   "order": 10,
-  "summary": "The product's own checks, run exactly as the product runs them: its typecheck (server, orchestrator, web), its migration test (versioned migrations on embedded throwaway databases: a schema-on-boot database upgrades to the same schema with its rows, each migration applies once, and edited, missing or out-of-order files are refused), its end-to-end smoke test on an embedded throwaway Postgres (every MCP tool, the worker API, scoring, API-key auth, the landing page and access requests, ending in its per-tool tenant-isolation sweep: every MCP tool called as a second organisation with every identifier of the first), and its MCP connector check against the deployed address.",
+  "summary": "The product's own checks, run exactly as the product runs them: its typecheck (server, orchestrator, web), its migration test (versioned migrations on embedded throwaway databases: a schema-on-boot database upgrades to the same schema with its rows, each migration applies once, and edited, missing or out-of-order files are refused), its end-to-end smoke test on an embedded throwaway Postgres (every MCP tool, the worker API, scoring, API-key auth, the landing page and access requests, ending in its per-tool tenant-isolation sweep: every MCP tool called as a second organisation with every identifier of the first), and its MCP connector check against the deployed address. Then a row per pack (packs.tools): each pack's MCP tools listed for a fresh workspace and its read-only, argument-free tools called, on an embedded throwaway database.",
   "not_covered": [
     "The smoke test runs on this machine against an embedded Postgres, not against the deployed database: it proves the code, and the deployed stack is graded by the mcp.check row and the deploy's own health step.",
     "test:migrations upgrades from older versions of sql/schema.sql taken from git history; this repository's history holds one version of that file (the product's earlier history is not here), so that part of the test has nothing to run and is skipped by the product's own rule. Its other proofs run in full.",
     "mcp.check calls the read-only tools only (the product's own scripts/mcp-check.ts): it never launches a simulation or spends inference.",
-    "Signed-in pages (/admin, /app) behind the product's own sign-in provider are not driven by any row here."
+    "Signed-in pages (/admin, /app) behind the product's own sign-in provider are not driven by any row here; the accessibility and responsiveness lanes render them from the lane copy.",
+    "packs.tools calls only a pack's read-only tools that need no argument, on an empty workspace: a tool that answers with its own message (\"nothing here yet\", a result marked isError) has worked; one that throws or answers the shell's internal-error text fails its pack's row. Tools that need an identifier or change data are proven by the product's own smoke test, not per pack."
   ],
   "checks": [
     {
@@ -88,6 +89,32 @@
         ]
       },
       "why": "The product's own `npm run mcp:check` against the deployed address, as a client would connect: initialize, tools, prompts, the dashboard resource and every read-only tool."
+    },
+    {
+      "name": "packs.tools",
+      "run": "node_modules/.bin/tsx {testing}/console/pack-rows.mts . tools",
+      "cwd": "codebase",
+      "timeout_s": 600,
+      "emits": "markdown_table",
+      "requires": [
+        {
+          "path": "{codebase}/node_modules/.bin/tsx",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock"
+        },
+        {
+          "path": "{codebase}/scripts/lib/test-world.ts",
+          "else": "This lane copy has no scripts/lib/test-world.ts (the shell's throwaway world), which the per-pack rows run on. Restore it from git (git checkout molds/mold_v0/codebase/scripts/lib) and run the lane again."
+        }
+      ],
+      "expect": {
+        "stdout": [
+          "rows: [1-9][0-9]* \\(0 failed\\)"
+        ],
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "why": "A row per pack (mold_v0-021): for one fresh workspace's owner on an embedded throwaway database, the customer MCP server lists every tool the pack declares, and each of its read-only tools that needs no argument answers without an internal error, so one pack's broken tool is visible on its own row."
     }
   ]
 }
