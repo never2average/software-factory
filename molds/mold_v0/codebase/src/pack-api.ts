@@ -385,6 +385,28 @@ export type RecordAction = keyof z.output<typeof PermissionsSchema>;
  * more than `max_unresolved` of them (default 100) and the run's results are refused as with "reject". A reference to
  * an area that is not declared, or not of the role it is used in, is a mistake in the pack: always refused.
  */
+/**
+ * Price per run (mold_v0-019; src/run-charges.ts): what one run of the kind is charged when it ends, in `currency`
+ * (ISO 4217, lower case: the app's billing currency). `fixed` is an amount in major units (2.5 is $2.50);
+ * `cost_plus_percent` charges the run's metered model cost (USD, from the gateway, never a figure the run reports) plus
+ * that percent, so it needs `currency` usd. Either or both. A succeeded run pays both. `on_failure` says what a failed
+ * run pays ("free", the default; "cost": the cost-plus part; "full") and `on_cancel` a cancelled one ("free" or
+ * "cost"); a run the platform failed (infrastructure) is never charged. A price does nothing unless the app's profile
+ * turns billing on (profile.json `billing`), and the profile's rules bound it: the currency must be the app's, the
+ * fixed amount and the percent are clamped to its ceilings, and a failed or cancelled run is charged only when the
+ * profile allows it. A pack can price its runs; it can never raise what the platform allows.
+ */
+export const RunPriceSchema = z.object({
+  currency: z.string().regex(/^[a-z]{3}$/, "a currency code in lower case, e.g. usd"),
+  fixed: z.number().min(0).max(1_000_000).optional(),
+  cost_plus_percent: z.number().min(0).max(10_000).optional(),
+  on_failure: z.enum(["free", "cost", "full"]).default("free"),
+  on_cancel: z.enum(["free", "cost"]).default("free"),
+}).strict()
+  .refine((p) => p.fixed !== undefined || p.cost_plus_percent !== undefined, "a price needs fixed, cost_plus_percent or both")
+  .refine((p) => p.cost_plus_percent === undefined || p.currency === "usd", { message: "cost_plus_percent charges model cost, which is in usd: the price's currency must be usd", path: ["cost_plus_percent"] })
+  .refine((p) => (p.on_failure !== "cost" && p.on_cancel !== "cost") || p.cost_plus_percent !== undefined, { message: "\"cost\" charges the cost-plus part: declare cost_plus_percent", path: ["on_failure"] });
+
 const jobKindBase = {
   name,
   label: z.string().min(1).max(80).optional(),
@@ -401,6 +423,7 @@ const jobKindBase = {
    */
   concurrency_per_workspace: z.number().int().min(1).max(100).optional(),
   month_budget_usd: z.number().positive().max(100_000).optional(),
+  price: RunPriceSchema.optional(),
   egress: z.array(host).max(50).default([]),
   /** The workspace store (mold_v0-033): check the workspace's snapshot out before the run, write it back after. */
   workspace: z.boolean().default(false),
