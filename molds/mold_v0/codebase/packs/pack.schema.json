@@ -40,7 +40,28 @@
       "type": "string",
       "pattern": "^[a-z0-9_\\-/]+$"
     },
-    "upstream": {},
+    "upstream": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^(https:\\/\\/[a-z0-9.-]+(:\\d{1,5})?\\/[A-Za-z0-9._~/-]+|file:\\/\\/\\/[A-Za-z0-9._~/-]+)$"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "license": {
+          "type": "string",
+          "pattern": "^(?=.{1,80}$)\\(?[A-Za-z0-9][A-Za-z0-9.+-]*\\)?( (AND|OR|WITH) \\(?[A-Za-z0-9][A-Za-z0-9.+-]*\\)?)*$"
+        }
+      },
+      "required": [
+        "repo",
+        "commit"
+      ],
+      "additionalProperties": false
+    },
     "host": {
       "type": "object",
       "properties": {
@@ -2731,7 +2752,7 @@
                       },
                       "license": {
                         "type": "string",
-                        "maxLength": 80
+                        "pattern": "^(?=.{1,80}$)\\(?[A-Za-z0-9][A-Za-z0-9.+-]*\\)?( (AND|OR|WITH) \\(?[A-Za-z0-9][A-Za-z0-9.+-]*\\)?)*$"
                       }
                     },
                     "required": [

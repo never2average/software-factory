@@ -923,6 +923,22 @@ A pack that wraps an upstream project (the second app's audit-agent pack, for on
 and runs it at a process boundary inside the run's sandbox; it is never vendored into the pack or the shell, and never
 patched locally (changes go upstream by pull request).
 
+**Source offer and data map (mold_v0-050).** A pack's `upstream` pin (`{repo, commit, license}`, the licence an SPDX id)
+is offered when its licence is copyleft (AGPL, GPL, LGPL, MPL, EUPL, ...): the customer MCP server adds a "Source code:"
+paragraph to its instructions, and the root page and every install page end with a footer, each naming the project, its
+licence and the exact commit's address (`src/source-offer.ts`); an agent kind that runs the same repository at another
+commit is refused, so the commit offered is the one that runs. The build's own source is the profile's `source_offer`:
+`{"app": {"url", "license"}}` offers it; `{"app": "licensor_exception"}` (the factory's LICENSE-EXCEPTION.md
+permission covers whoever runs this deployment; the factory writes it from `defaults.source_offer`) offers no link and
+says why; absent, the build says nothing about its own source. With zero packs and no setting nothing changes. The
+data-flow and residency statement (`src/data-map.ts`) maps, per pack, where the code runs, where data is stored, the
+credentials by name, where model calls go and which hosts runs may reach, from the packs' declarations and the deploy
+facts the factory writes into the build copy (`deploy-facts.json`, names and places only, checked by gen-packs); it is
+`DATA-MAP.md` in the build copy (`scripts/data-map.ts`) and the console's About page (`/app/about`, `/admin/about`,
+linked from the sidebar's footer), which adds what the running server measures (its region, its database's provider and
+region, the object store, where each model provider's calls go now). Never a secret value: names, providers, regions and
+hosts only.
+
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
 `packs.py apply <app>` copies them into `build/<app_id>/`, then runs the mold's generators there; deploys and lanes
