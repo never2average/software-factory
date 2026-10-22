@@ -7,6 +7,7 @@
  * credential fields; schedules; onboarding; metrics, charts and console tabs). A code entry stays possible and extends it
  * (mergePack).
  *
+ * `workspace_store` (mold_v0-056, src/workspace-store-policy.ts): the store's retention and the file viewer's secret paths.
  * `mcp` (mold_v0-060, McpSettingsSchema in src/pack-api.ts) shapes the MCP tools generated from the declarations
  * (src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only. No key is reserved now.
  * `repositories` (mold_v0-059: each a `kind` and its settings, read by src/data-repositories.ts; an area names one with
@@ -17,6 +18,7 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
+import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
 const id = z.string().regex(/^[a-z][a-z0-9_]{1,30}$/, "2-31 lowercase letters, digits or _, starting with a letter");
@@ -79,11 +81,13 @@ export const PackJsonSchema = z.object({
   repositories: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a repository name: lowercase letters, digits and _"), RepositorySchema).optional(),
   run_results: RunResultsSchema.optional(),
   mcp: McpSettingsSchema.optional(),
+  /** The workspace store's retention and the viewer's secret paths (mold_v0-056; src/workspace-store-policy.ts). */
+  workspace_store: WorkspaceStoreSchema.optional(),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;
 
 /** What a pack.json declares, compiled: the definePack fields it stands for (defaults filled in). */
-export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp">;
+export type DeclaredPack = Pick<PackDefinition, "recordAreas" | "jobKinds" | "agentJobKinds" | "credentials" | "schedules" | "onboarding" | "metrics" | "charts" | "tabs" | "repositories" | "runResults" | "mcp" | "workspaceStore">;
 export const DECLARED_KEYS = ["recordAreas", "jobKinds", "agentJobKinds", "credentials", "schedules", "onboarding", "metrics", "charts", "tabs"] as const;
 
 /** A zod issue path as a reader writes it: record_areas[0].fields[2].type. */
@@ -129,6 +133,7 @@ export function compileDeclarations(json: unknown): DeclaredPack {
   }
   if (p.run_results) out.runResults = p.run_results;
   if (p.mcp) out.mcp = p.mcp;
+  if (p.workspace_store) out.workspaceStore = p.workspace_store;
   return out;
 }
 
@@ -155,6 +160,9 @@ export function mergePack(packId: string, declared: DeclaredPack | null | undefi
   // The MCP settings (mold_v0-060) are declared once too.
   if (declared?.mcp && code.mcp) throw new PackJsonError(["mcp is declared in pack.json and in the code entry"]);
   if (declared?.mcp) out.mcp = declared.mcp;
+  // The workspace store's settings (mold_v0-056) too.
+  if (declared?.workspaceStore && code.workspaceStore) throw new PackJsonError(["workspace_store is declared in pack.json and in the code entry"]);
+  if (declared?.workspaceStore) out.workspaceStore = declared.workspaceStore;
   return out;
 }
 

@@ -1,5 +1,7 @@
 'use client';
 import { ClerkProvider } from '@clerk/nextjs';
+import { BuiltinAuthProvider } from '@/lib/auth/builtin-client';
+import { CLERK } from '@/lib/auth/provider';
 import React from 'react';
 import { ActiveThemeProvider } from '../themes/active-theme';
 import QueryProvider from './query-provider';
@@ -16,7 +18,8 @@ export default function Providers({
   return (
     <>
       <ActiveThemeProvider initialTheme={activeThemeValue}>
-        <ClerkProvider
+        {/* The built-in sign-in (mold_v0-004) needs no provider's script: one read of /api/auth/session. */}
+        {!CLERK ? <BuiltinAuthProvider><QueryProvider>{children}</QueryProvider></BuiltinAuthProvider> : <ClerkProvider
           localization={{
             signIn: { start: { title: `Sign in to ${profile.name}`, subtitle: 'Welcome back' } },
             signUp: { start: { title: `Create your ${profile.name} account`, subtitle: hostSignUpSubtitle() ?? profile.short_description } }
@@ -39,7 +42,7 @@ export default function Providers({
           }}
         >
           <QueryProvider>{children}</QueryProvider>
-        </ClerkProvider>
+        </ClerkProvider>}
       </ActiveThemeProvider>
     </>
   );
