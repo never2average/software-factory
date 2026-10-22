@@ -14,6 +14,7 @@ import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
 import { metricAppRouter, runAppRouter } from "./view-routes.js";
+import { workspaceFileAppRouter } from "./workspace-files.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { startChargeDelivery, stopChargeDelivery } from "./run-charges.js";
 import { runWorkerRouter } from "./run-routes.js";
@@ -205,6 +206,8 @@ export function createApp() {
   // ---------- metrics and the runs the console's tabs read: /api/metrics, /api/runs (src/view-routes.ts); with no metric or job kind nothing is mounted ----------
   app.use("/api/metrics", metricAppRouter());
   app.use("/api/runs", runAppRouter());
+  // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
+  app.use("/api/workspace-files", workspaceFileAppRouter());
 
   // ---------- a host pack's public routes (src/host.ts; the product's journeys webhook) ----------
   for (const h of hosts()) h.routes?.public?.(app);

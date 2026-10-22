@@ -139,6 +139,8 @@ export interface BuildViews {
   credentials: number;
   dueAreas: number;
   pages?: Record<string, string[]>;
+  /** The packs with a workspace store (a kind with workspace: true, or an agent-workspace kind): the files tab (mold_v0-056). */
+  stores?: readonly string[];
 }
 
 /** Every problem with the build's metrics, charts and tabs, each naming its pack. Empty when they are sound. */
@@ -263,6 +265,7 @@ export function checkViews(b: BuildViews): string[] {
     if (t.kind === "schedules" && !b.jobKinds) at(p, `${w}: the build has no job kind to schedule, so it has no Schedules page`);
     if (t.kind === "credentials" && !b.credentials) at(p, `${w}: the build declares no credential field, so it has no Credentials page`);
     if (t.kind === "notices" && !b.dueAreas) at(p, `${w}: the build has no due dates, so it has no Notices page`);
+    if (t.kind === "files" && !(b.stores ?? []).includes(p)) at(p, `${w}: the pack has no workspace store (no kind with workspace: true), so it has no files to show`);
     if (t.kind === "page" && b.pages && !(b.pages[p] ?? []).includes(t.page!)) at(p, `${w}: the pack has no app page ${t.page}`);
     if (tabRoles(t, b).length === 0) at(p, `${w}: no role may read what it shows (its roles, its area's read permission or its metrics' roles leave none)`);
     for (const n of t.charts ?? []) if (!chart(p, n)) at(p, `${w} shows chart ${n}, which the pack does not declare`);
@@ -280,7 +283,7 @@ export function checkViews(b: BuildViews): string[] {
 /** The shell's word for each tab kind (a tab's label when it gives none and shows no area). */
 export const TAB_KIND_LABELS: Record<Tab["kind"], string> = {
   overview: "Overview", area: "Records", runs: "Runs", reports: "Reports", credentials: "Credentials", usage: "Activity", schedules: "Schedules",
-  notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", page: "Page",
+  notices: "Notices", setup: "Setup", billing: "Billing", profile: "Profile", page: "Page", files: "Files",
 };
 export const tabLabel = (t: Tab, b: Pick<BuildViews, "areas">) => t.label ?? (t.kind === "area" ? b.areas.find((a) => a.name === t.area)?.label : undefined) ?? TAB_KIND_LABELS[t.kind];
 
@@ -295,6 +298,8 @@ export function tabRoles(t: Tab & { pack: string }, b: Pick<BuildViews, "areas" 
     const a = b.areas.find((x) => x.name === t.area);
     roles = a ? roles.filter((r) => areaReadRoles(a).includes(r)) : [];
   }
+  // A files tab (mold_v0-056): the roles that may read every area of the pack (src/workspace-files.ts storeReadable).
+  if (t.kind === "files") roles = roles.filter((r) => b.areas.filter((a) => a.pack === t.pack).every((a) => areaReadRoles(a).includes(r)));
   if (t.kind === "overview") {
     const readable = new Set((t.charts ?? []).flatMap((n) => b.charts.find((c) => c.pack === t.pack && c.name === n)?.metrics ?? [])
       .flatMap((n) => { const m = b.metrics.find((x) => x.name === n); return m ? metricRoles(m, b.areas) : []; }));
@@ -313,6 +318,7 @@ export function viewsOf(packs: readonly { id: string; definition: { recordAreas?
     jobKinds: packs.reduce((n, p) => n + (p.definition.jobKinds?.length ?? 0) + (p.definition.agentJobKinds?.length ?? 0), 0),
     credentials: packs.reduce((n, p) => n + (p.definition.credentials?.length ?? 0), 0),
     dueAreas: areas.filter((a) => a.due).length,
+    stores: packs.filter((p) => (p.definition.agentJobKinds?.length ?? 0) > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace === true)).map((p) => p.id),
     ...(pages ? { pages } : {}),
   };
 }
