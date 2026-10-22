@@ -897,14 +897,31 @@ answers, once) or reloads it otherwise. The factory's `up.sh` does the same for 
 previous release mounted (the Caddyfile is mounted through `current`, a path every release shares), and a rollback to
 a release from before the console builds only the services that release has.
 
-**Lanes** (`molds/mold_v0/testing/`, run by `lanes.py` as for any mold): *functional* runs the product's
+**Lanes** (`molds/mold_v0/testing/`, run by `lanes.py` as for any mold, in the app's lane copy `build/<app_id>.lane/`
+with its packs; mold_v0-021): every lane has a harness, and every lane prints **a row per pack** (the shell's, each host
+pack's, each pack's), so one pack's failure is visible on its own. *functional* runs the product's
 `npm run typecheck`, `npm run test:migrations` (embedded throwaway databases only; `MIGRATIONS_PG_URL` unset), `npm run
 smoke` (embedded throwaway Postgres; it must reach its per-tool tenant-isolation sweep) and `npm run mcp:check` against
-the deployed address; *context* runs `npm run check:tenant-sql` and `npm run check:rls` on a throwaway embedded
-database (the deployed database is proven by the deploy itself, above). `test:migrations` also upgrades from older
+the deployed address, then `packs.tools` (each pack's MCP tools listed for a fresh workspace's owner and its read-only,
+argument-free tools called, on an embedded database); *context* runs `npm run check:tenant-sql` and `npm run check:rls`
+on a throwaway embedded database (the deployed database is proven by the deploy itself, above), then `packs.tables`
+(every `<pack>_*` table under row-level security, forced, with a policy). `test:migrations` also upgrades from older
 versions of `sql/schema.sql` found in git history; this repository holds one version of that file, so that part has
-nothing to run here (the lane says so). *load*, *accessibility* and
-*responsiveness* have no harness in the product and are recorded `skipped`, never `pass`. The MCP check needs an
+nothing to run here (the lane says so). *load* (`load/load.py`) is the one lane that contacts the deployed app: after a
+warm-up, 30 seconds of 4 clients under 8 requests a second and 240 requests, over `tools/list`, every read-only tool
+that needs no argument (the lane-check organisation's key) and the console's public pages; per pack and overall, errors
+at most 1%, p50 at most 1500 ms, p95 at most 5000 ms, and a tripped threshold is measured once more before the lane
+fails. It sends nothing until both addresses are proven the app's own (Vercel: one of the app's projects serves it;
+its own server: the address its deploy recorded). *accessibility* (axe-core 4.13.0, WCAG 2.2 A/AA, serious and critical
+fail) and *responsiveness* (phone 390, tablet 820, desktop 1440: sideways scroll and 24px tap targets) grade the
+console's pages **from the lane copy, served on the factory machine** (`testing/console/`): `render.py` builds
+`build/<app_id>.lane-console/` (the lane copy's `web/`, `next build --webpack`, with a lane stand-in for
+`@clerk/nextjs` in that build only, since a local copy cannot reach Clerk with the app's keys), and `world.mts` serves it
+on 127.0.0.1 against the lane copy's API on an embedded throwaway database behind the shell's offline Clerk
+(`scripts/lib/test-world.ts`, `mock-providers.ts`), signed in as one workspace's owner who is also platform staff; every
+request a page makes off the machine is aborted. The pages are read from the build (`console/surface.mts`): the shell's
+own, each host pack's `routes.json` and each pack's tabs, pages and record areas. Clerk's own widgets and the deployed
+console's bytes are not graded (each lane's `not_covered` says what is not). The MCP check needs an
 organisation of the app's own: `provision.py <app> --lane-key --dry-run`, then `--lane-key --yes` once the operator
 says yes. It runs the product's `scripts/create-org.ts` and keeps the connector address in a private file outside
 the repository (mode 600, never shown).

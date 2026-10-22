@@ -51,6 +51,18 @@ stream carries the computed line. For any other target that check is not listed,
 `lane.json` names the deploy command with `{deploy}` (`--deploy`, or `--deploy-remote` for vm_remote). A check that needs the app's `DATABASE_URL` on this VM is `skipped` there (the
 value never leaves the server); the functional `rls` row measures isolation on the server instead.
 
+**mold_v0 apps (single-service; mold_v0-021).** All five lanes have a harness and each prints a row per pack, so one
+pack's failure shows on its own row. *accessibility* (axe) and *responsiveness* (phone 390, tablet 820, desktop 1440:
+sideways scroll, 24px tap targets) never touch a deployed address: `console/render.py` builds the app's lane copy's
+console (`build/<app_id>.lane-console/`, a lane stand-in for `@clerk/nextjs` in that build only) and `console/world.mts`
+serves it on 127.0.0.1 with the lane copy's API on an embedded throwaway database behind the shell's offline Clerk, one
+workspace owner who is also platform staff; pages come from the build (the shell's, each host pack's `routes.json`, each
+pack's tabs, pages and record areas). *load* is the only lane that sends anything to the deployed app: read-only MCP
+calls (with the lane-check organisation's key, `provision.py <app> --lane-key`) and public console pages, bounded (30 s,
+4 clients, 8 requests/s, 240 requests), only after `load/load.py <app> --check-addresses` proves both addresses the
+app's own. *functional* and *context* add `packs.tools` and `packs.tables` (embedded database). Heavy: the console build
+takes several minutes the first time (it is reused while the lane copy's console is unchanged).
+
 Anything richer than an exit code belongs in a harness script in the lane folder that prints a
 markdown table and exits 0/1 — like `functional/tenant-isolation.py` — with `"emits":
 "markdown_table"`. Budgets, viewport matrices and axe rule sets live there, not in `lane.json`.
