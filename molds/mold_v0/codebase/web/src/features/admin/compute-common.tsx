@@ -140,10 +140,10 @@ export function UrlTabs({ tabs, tab, base, right }: { tabs: readonly (readonly [
   return (
     <div className='flex shrink-0 flex-wrap items-end gap-x-6 gap-y-2 border-b'>
       {/* On a narrow screen the row of tabs scrolls inside itself; the page never scrolls sideways. */}
-      <nav className='-mb-px flex max-w-full min-w-0 gap-6 overflow-x-auto text-sm' aria-label='Sections'>
+      <nav className='-mb-px flex max-w-full min-w-0 gap-6 overflow-x-auto text-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' aria-label='Sections'>
         {tabs.map(([id, label], i) => (
           <button key={id} type='button' aria-current={id === tab ? 'page' : undefined} onClick={() => id !== tab && router.replace(i === 0 ? base : `${base}?section=${id}`, { scroll: false })}
-            className={cn('shrink-0 border-b-2 pb-2 font-medium whitespace-nowrap', id === tab ? 'border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground border-transparent')}>
+            className={cn('shrink-0 border-b-2 pb-2 font-medium whitespace-nowrap focus-visible:outline-offset-[-2px]', id === tab ? 'border-foreground text-foreground' : 'text-muted-foreground hover:text-foreground border-transparent')}>
             {label}
           </button>
         ))}

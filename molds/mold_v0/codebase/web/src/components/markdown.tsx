@@ -67,7 +67,7 @@ const ELEMENTS: Components = {
   // A wide table scrolls inside its frame, which takes keyboard focus so it can be scrolled without a pointer (axe
   // `scrollable-region-focusable`).
   table: ({ node: _n, ...p }) => (
-    <div tabIndex={0} className='focus-visible:ring-ring/50 my-6 w-full overflow-x-auto rounded-lg border outline-none focus-visible:ring-[3px]'>
+    <div tabIndex={0} role='region' aria-label='Table' className='focus-visible:ring-ring/50 my-6 w-full overflow-x-auto rounded-lg border outline-none focus-visible:ring-[3px]'>
       <table className='w-full border-collapse text-sm' {...p} />
     </div>
   ),

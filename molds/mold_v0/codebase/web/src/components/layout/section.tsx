@@ -34,7 +34,7 @@ export function StatStrip({ items, className }: {
         const body = (
           <>
             <dt className='text-muted-foreground text-xs font-medium'>
-              {it.href ? <a href={it.href} className='outline-none after:absolute after:inset-0 group-hover:underline'>{it.label}</a> : it.label}
+              {it.href ? <a href={it.href} className='outline-hidden after:absolute after:inset-0 group-hover:underline'>{it.label}</a> : it.label}
             </dt>
             <dd className='mt-1 flex items-end justify-between gap-3'>
               <span className='text-2xl font-semibold tabular-nums tracking-tight'>{it.value}</span>
