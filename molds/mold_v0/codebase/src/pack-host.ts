@@ -76,6 +76,10 @@ export { orchestratorBrain } from "./gateway.js";
 
 // ---------- the session engine (src/worker.ts, src/autoscaler.ts) and transcripts ----------
 export { capacityStatus, kickAutoscaler } from "./autoscaler.js";
+// The Compute page's job reads and its session cancel, behind the host pack's admin MCP job tools (mold_v0-049).
+export { jobDetail, listJobs } from "./compute-jobs.js";
+export { listSessions } from "./compute-records.js";
+export { cancelSession } from "./compute-actions.js";
 export { HIT, PICKED, SCENARIO_ROWS, orgMonthSpendUsd, wilson } from "./session-engine.js";
 export { SIMULATED_USER, allEvents } from "./worker.js";
 export { RUN_USD } from "./run-spend.js";

@@ -138,6 +138,51 @@ try {
       refused("node:module from server code", tryPack("pk", { "index.ts": IDX(`import*as m from"node:module";`) }, R), /imports node:module/);
       console.log("✓ the runner boundary: run programs under the runner directory may start processes; server code may not, nor import them; runner code reaches no shell module and never leaves the workspace's scope");
     }
+    // A host pack's own schema (mold_v0-049): tables under the names they had in the shell's base schema, its functions
+    // and the shell migrations it adopts, declared in pack.json host.schema; only a host pack of the build may have one.
+    {
+      const HOST = "hp";
+      const tryHost = (files: Record<string, string>, schema: unknown, host = true) => {
+        const dir = path.join(tmp, `host-${++n}`), pdir = path.join(dir, HOST);
+        mkdirSync(path.join(pdir, "migrations"), { recursive: true });
+        const hostApi = path.relative(pdir, path.join(ROOT, "src", "pack-host.js")).split(path.sep).join("/");
+        writeFileSync(path.join(pdir, "pack.json"), JSON.stringify({ id: HOST, name: "Host", version: "1", migrations: "migrations", host: { entry: "host.ts", ...(schema === undefined ? {} : { schema }) } }));
+        writeFileSync(path.join(pdir, "host.ts"), `import { defineHost } from "${hostApi}";
+export default defineHost({ id: "${HOST}" });
+`);
+        for (const [f, text] of Object.entries(files)) writeFileSync(path.join(pdir, f), text);
+        writeFileSync(path.join(dir, "profile.json"), JSON.stringify(host ? { host_packs: [HOST] } : {}));
+        return gen(["--packs", dir, "--out", path.join(dir, "out"), "--profile", path.join(dir, "profile.json")]);
+      };
+      const W = "CREATE TABLE IF NOT EXISTS widgets (id SERIAL PRIMARY KEY, org_id INT NOT NULL REFERENCES organizations (id) ON DELETE CASCADE, name TEXT);\n" +
+        "CREATE INDEX IF NOT EXISTS widgets_org_idx ON widgets (org_id);\n";
+      const SEC = "DO $mig$\nDECLARE r TEXT := octillion_tenant_role();\nBEGIN\n  ALTER TABLE widgets ENABLE ROW LEVEL SECURITY;\n" +
+        "  EXECUTE format('CREATE POLICY tenant_isolation ON widgets TO %I USING (org_id = octillion_tenant_org())', r);\n" +
+        "  EXECUTE format('GRANT SELECT ON widgets TO %I', r);\nEND $mig$;\n";
+      const FN = "CREATE OR REPLACE FUNCTION widget_score(n TEXT) RETURNS INT LANGUAGE sql IMMUTABLE AS $$ SELECT length(n) $$;\n";
+      const S = { tables: ["widgets"], functions: ["widget_score"], adopts: { "0001_widgets": "0001_baseline" } };
+      const good = tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, S);
+      assert.equal(good.status, 0, `a host pack's own tables, policies, DO blocks and declared function pass: ${good.stderr}`);
+      const genFile = readFileSync(path.join(tmp, `host-${n}`, "out", "src", "pack-migrations.generated.ts"), "utf8");
+      assert.match(genFile, /"tables": \[\s*"widgets"\s*\]/, "the generated registry carries the host schema (src/migrate.ts reads it)");
+      refused("host.schema in a pack that is not a host pack of the build", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, S, false), /not a host pack of this build/);
+      refused("a table it does not declare", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE TABLE gadgets (id INT);\n" }, S), /table gadgets must be named hp_… or declared in pack.json host.schema.tables/);
+      refused("a function it does not declare", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE FUNCTION other_fn() RETURNS INT LANGUAGE sql AS $$ SELECT 1 $$;\n" }, S), /defines function other_fn, which pack.json host.schema.functions does not declare/);
+      refused("a declared table that is the shell's", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE TABLE IF NOT EXISTS api_keys (id INT);\n" }, { ...S, tables: ["widgets", "api_keys"] }), /host.schema.tables: api_keys is a shell table/);
+      refused("a declared function that is the shell's", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "CREATE OR REPLACE FUNCTION octillion_tenant_org() RETURNS INT LANGUAGE sql AS $$ SELECT 1 $$;\n" }, { ...S, functions: ["widget_score", "octillion_tenant_org"] }), /host.schema.functions: octillion_tenant_org is a shell function/);
+      refused("a declared table no migration creates", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, { ...S, tables: ["widgets", "gizmos"] }), /names gizmos, which no migration here creates/);
+      refused("SET ROLE inside a DO block", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "DO $$ BEGIN EXECUTE 'SET ROLE postgres'; END $$;\n" }, S), /SET\/RESET ROLE/);
+      refused("SECURITY DEFINER", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN.replace("IMMUTABLE", "IMMUTABLE SECURITY DEFINER") }, S), /SECURITY DEFINER/);
+      refused("a trigger inside a DO block", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "DO $$ BEGIN EXECUTE 'CREATE TRIGGER t AFTER INSERT ON api_keys FOR EACH ROW EXECUTE FUNCTION widget_score()'; END $$;\n" }, S), /triggers, rules, views/);
+      refused("a role", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "DO $$ BEGIN CREATE ROLE sneaky; END $$;\n" }, S), /uses roles/);
+      refused("disabling row-level security in a DO block", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN + "DO $$ BEGIN ALTER TABLE widgets DISABLE ROW LEVEL SECURITY; END $$;\n" }, S), /DISABLE ROW LEVEL SECURITY/);
+      refused("adopting a migration it does not have", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, { ...S, adopts: { "0002_more": "0001_baseline" } }), /adopts names 0002_more, which is not one of its migrations/);
+      refused("adopting a shell migration that does not exist", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, { ...S, adopts: { "0001_widgets": "0099_nothing" } }), /0099_nothing, which is not a shell migration/);
+      refused("a platform library that is not one of its tables", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, { ...S, platform_read: ["gadgets"] }), /platform_read: gadgets is not one of host.schema.tables/);
+      refused("an unknown host.schema field", tryHost({ "migrations/0001_widgets.sql": W + SEC + FN }, { ...S, views: [] }), /host.schema: unknown field views/);
+      refused("a DO block in an ordinary pack still", tryPack("pk", { "migrations/0001_x.sql": `${T}SELECT shell_pack_tenant_table('pk_notes');\nDO $$ BEGIN NULL; END $$;\n` }), /dollar-quoted/);
+      console.log("✓ a host pack's own schema (mold_v0-049): declared tables, functions and adopted migrations pass; undeclared names, the shell's names, roles, triggers, SET ROLE and SECURITY DEFINER are refused");
+    }
     refused("a page in no area", tryPack("pk", {}, { pages: [{ id: "x", area: "elsewhere", title: "X", data: "/x" }] }), /area must be/);
     console.log(`✓ gen-packs refuses ${n - 1} kinds of pack that would get past the seam, and passes a good one`);
     // No profile.json: the neutral default, no product's names.

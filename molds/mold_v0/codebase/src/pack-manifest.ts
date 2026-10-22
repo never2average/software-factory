@@ -59,6 +59,24 @@ export const PackJsonSchema = z.object({
     entry: z.string().regex(/^[a-z0-9_\-/]+\.ts$/i, "a .ts file inside the pack").refine((p) => !p.includes(".."), "a .ts file inside the pack"),
     scripts: inside("scripts").optional(),
     profile: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * The host pack's own tables when they keep the names they had in the shell's base schema (mold_v0-049; MOLD.md
+     * "Host packs"): `tables` (outside the pack's `<id>_` prefix, never a shell table), `functions` its migrations
+     * define (never a shell function), and `adopts`: which of its migrations a database that ran the shell's earlier
+     * version of a split migration already has (pack migration file name -> shell migration file name, both without
+     * .sql), recorded as applied there without running; `platform_read`: those of its tables that are platform
+     * libraries every workspace reads, as they were in the shell (no row-level security, no org_id, the tenant role may
+     * only SELECT them). src/migrate.ts holds every other pack table to row-level security and every other object of
+     * the database to unchanged.
+     */
+    schema: z.object({
+      tables: z.array(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name")).min(1).max(200),
+      platform_read: z.array(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name")).max(20).optional(),
+      /** References from a shell table's column to one of its tables ("gateway_tokens.session_id": "agent_sessions"), the only change it may make to a shell table. */
+      references: z.record(z.string().regex(/^[a-z][a-z0-9_]{1,62}\.[a-z][a-z0-9_]{1,62}$/, "table.column"), z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a table name")).optional(),
+      functions: z.array(z.string().regex(/^[a-z][a-z0-9_]{1,62}$/, "a function name")).max(50).optional(),
+      adopts: z.record(z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a pack migration (NNNN_name)"), z.string().regex(/^\d{4}_[a-z0-9_]+$/, "a shell migration (NNNN_name)")).optional(),
+    }).strict().optional(),
   }).strict().optional(),
   pages: z.array(PageSchema).optional(),
   words: z.record(z.string().regex(/^[a-z][a-z_]{1,30}$/, "a lowercase shell word"), z.string().trim().min(1).max(40)).optional(),

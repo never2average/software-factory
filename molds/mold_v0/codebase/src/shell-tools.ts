@@ -16,12 +16,15 @@ export type ShellToolName = (typeof SHELL_TOOL_NAMES)[number];
 /** The MCP tools the shell adds when at least one record area is declared (src/record-areas.ts). */
 export const RECORD_TOOL_NAMES = ["list_records", "get_record"] as const;
 
-/** The admin MCP's own tools (src/admin-mcp.ts ADMIN_TOOLS). */
+/**
+ * The admin MCP's own tools (src/admin-mcp.ts ADMIN_TOOLS). The session engine's job tools (its simulations: list, get,
+ * cancel) are its host pack's since mold_v0-049, added through src/host.ts at the same places.
+ */
 export const ADMIN_SHELL_TOOL_NAMES = [
-  "list_accounts", "get_account", "list_access_requests", "health_summary", "list_simulations", "get_simulation", "finops_revenue",
+  "list_accounts", "get_account", "list_access_requests", "health_summary", "finops_revenue",
   "finops_plans", "finops_experiments", "model_spend", "analytics_overview", "list_settings", "key_vault_status",
   "approve_access_request", "decline_access_request", "set_account_allowance", "allow_prepaid_plans", "create_plan", "archive_plan",
-  "set_plan_experiment", "update_setting", "cancel_simulation",
+  "set_plan_experiment", "update_setting",
 ] as const;
 export type AdminShellToolName = (typeof ADMIN_SHELL_TOOL_NAMES)[number];
 

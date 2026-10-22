@@ -2,6 +2,7 @@ import { getDb } from "./db.js";
 import { orgBudgets, type BudgetSource } from "./billing.js";
 import { team } from "./admin.js";
 import { RUN_USD } from "./run-spend.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 
 /**
  * The admin FinOps page's Model spend tab (/admin/finops?section=spend, GET /api/admin/onboarding/spend): what Octillion spends on models across every
@@ -78,8 +79,13 @@ interface ModelDay { day: string; provider: string; model: string; consumer: "se
 interface DayPart { session_usd: number; orchestrator_usd: number; run_usd: number; sessions: number; top_model: string | null }
 interface RunCell { org_id: number; day: string; usd: number; runs: number; last_at: Date | null }
 
-/** The session spend CTE: one row per session queued in [$1, $2), its spend as Billing counts it. */
-const SESSIONS = `
+/**
+ * The session spend CTE: one row per session queued in [$1, $2), its spend as Billing counts it. The session engine's
+ * tables are a host pack's (mold_v0-049): in a build without them, no rows (the same columns).
+ */
+const SESSIONS = () => !sessionEngine() ? `
+  ses AS (SELECT NULL::text AS id, NULL::int AS org_id, NULL::text AS simulation_id, NULL::int AS product_id, NULL::text AS model, NULL::text AS agent,
+                 NULL::text AS day, NULL::float AS usd, NULL::timestamptz AS last_at WHERE false AND $1::timestamptz IS NULL AND $2::timestamptz IS NULL)` : `
   ses AS (
     SELECT s.id, s.org_id, s.simulation_id, s.product_id, s.model, coalesce(s.agent_id, s.harness || '/' || s.model) AS agent,
            to_char(s.queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
@@ -89,17 +95,23 @@ const SESSIONS = `
       LEFT JOIN LATERAL (SELECT sum(x.cost_usd) AS usd, max(x.last_at) AS last_at FROM gateway_usage x WHERE x.session_id = s.id) g ON true
      WHERE s.queued_at >= $1 AND s.queued_at < $2)`;
 
-/** Orchestrator gateway rows tied to an account through their job, in [$1, $2) by last request. */
-const ORCHESTRATORS = `
+/**
+ * Orchestrator gateway rows tied to an account through their job, in [$1, $2) by last request. A job is a simulation
+ * or research, the session engine's (a host pack's tables, mold_v0-049): without them no row has an account.
+ */
+const ORCHESTRATORS = () => `
   orch AS (
     SELECT g.cost_usd::float AS usd, g.last_at, to_char(g.last_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, os.job_id,
-           coalesce(sim.org_id, pr.org_id) AS org_id, sim.created_by, (pr.id IS NOT NULL) AS research
+           ${jobJoins().org} AS org_id, ${sessionEngine() ? "sim.created_by" : "NULL::text"} AS created_by, ${researchJobs() ? "(pr.id IS NOT NULL)" : "false"} AS research
       FROM gateway_usage g
       LEFT JOIN LATERAL (SELECT x.job_id FROM orchestrator_sandboxes x WHERE x.orchestrator_id = g.orchestrator_id AND x.job_id IS NOT NULL
-                          ORDER BY x.id DESC LIMIT 1) os ON true
-      LEFT JOIN simulations sim ON sim.id = os.job_id
-      LEFT JOIN product_research pr ON pr.id = os.job_id
+                          ORDER BY x.id DESC LIMIT 1) os ON true${jobJoins().joins}
      WHERE g.orchestrator_id IS NOT NULL AND g.session_id IS NULL AND g.last_at >= $1 AND g.last_at < $2)`;
+/** The joins from an orchestrator's job (os.job_id) to its simulation and research, with the account they give. */
+const jobJoins = () => ({
+  joins: (sessionEngine() ? "\n      LEFT JOIN simulations sim ON sim.id = os.job_id" : "") + (researchJobs() ? "\n      LEFT JOIN product_research pr ON pr.id = os.job_id" : ""),
+  org: sessionEngine() && researchJobs() ? "coalesce(sim.org_id, pr.org_id)" : sessionEngine() ? "sim.org_id" : "NULL::int",
+});
 
 /** Runs queued in [$1, $2), each with its spend (src/run-spend.ts RUN_USD). */
 const RUNS = `
@@ -116,10 +128,10 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
   const db = await getDb();
   const w = [R.window.start, R.window.end];
   const [sesCells, orchCells, modelDays, orgs, provAccounts, runCells] = await Promise.all([
-    db.query<SessionCell>(`${TENANT} WITH ${SESSIONS}
+    db.query<SessionCell>(`${TENANT} WITH ${SESSIONS()}
       SELECT org_id, day, model, sum(usd)::float AS usd, count(*)::int AS sessions, max(last_at) FILTER (WHERE usd > 0) AS last_at
         FROM ses GROUP BY 1, 2, 3`, w),
-    db.query<OrchCell>(`${TENANT} WITH ${ORCHESTRATORS}
+    db.query<OrchCell>(`${TENANT} WITH ${ORCHESTRATORS()}
       SELECT org_id, day, sum(usd)::float AS usd, max(last_at) AS last_at FROM orch WHERE org_id IS NOT NULL GROUP BY 1, 2`, w),
     db.query<ModelDay>(`${TENANT} SELECT to_char(day, 'YYYY-MM-DD') AS day, provider, model, consumer, requests::int AS requests, errors::int AS errors,
         input_tokens::float AS input_tokens, cached_input_tokens::float AS cached_input_tokens, output_tokens::float AS output_tokens,
@@ -129,14 +141,11 @@ export async function spendReport(q: { from?: unknown; to?: unknown } = {}, now 
     // Per provider and account, the gateway's own per-token totals in the range (by last request): a session's account,
     // or an orchestrator's through its job; neither is the shared row (org_id null).
     db.query<{ provider: string; org_id: number | null; usd: number; requests: number }>(`${TENANT}
-      SELECT g.provider, coalesce(s.org_id, run.org_id, sim.org_id, pr.org_id) AS org_id, sum(g.cost_usd)::float AS usd, sum(g.requests)::int AS requests
-        FROM gateway_usage g
-        LEFT JOIN agent_sessions s ON s.id = g.session_id
+      SELECT g.provider, coalesce(${sessionEngine() ? "s.org_id, " : ""}run.org_id, ${jobJoins().org}) AS org_id, sum(g.cost_usd)::float AS usd, sum(g.requests)::int AS requests
+        FROM gateway_usage g${sessionEngine() ? "\n        LEFT JOIN agent_sessions s ON s.id = g.session_id" : ""}
         LEFT JOIN runs run ON run.id = g.run_id
         LEFT JOIN LATERAL (SELECT x.job_id FROM orchestrator_sandboxes x WHERE g.session_id IS NULL AND x.orchestrator_id = g.orchestrator_id AND x.job_id IS NOT NULL
-                            ORDER BY x.id DESC LIMIT 1) os ON true
-        LEFT JOIN simulations sim ON sim.id = os.job_id
-        LEFT JOIN product_research pr ON pr.id = os.job_id
+                            ORDER BY x.id DESC LIMIT 1) os ON true${jobJoins().joins}
        WHERE g.last_at >= $1 AND g.last_at < $2 GROUP BY 1, 2`, [R.start, R.end]),
     db.query<RunCell>(`${TENANT} WITH ${RUNS}
       SELECT org_id, day, sum(usd)::float AS usd, count(*)::int AS runs, max(last_at) FILTER (WHERE usd > 0) AS last_at FROM rr GROUP BY 1, 2`, w),
@@ -292,11 +301,12 @@ export async function accountSpend(key: string, q: { from?: unknown; to?: unknow
   const [org] = await db.query<{ id: number; slug: string; name: string }>("SELECT id, slug, name FROM organizations WHERE slug = $1", [key]);
   if (!org) throw notFound(`No account ${key}`);
   const [ses, orch, runRows] = await Promise.all([
-    db.query<{ created_by: string | null; model: string; agent: string; product: string | null; usd: number; sessions: number }>(`WITH ${SESSIONS}
+    !sessionEngine() ? Promise.resolve([] as { created_by: string | null; model: string; agent: string; product: string | null; usd: number; sessions: number }[])
+    : db.query<{ created_by: string | null; model: string; agent: string; product: string | null; usd: number; sessions: number }>(`WITH ${SESSIONS()}
       SELECT r.created_by, ses.model, ses.agent, p.name AS product, sum(ses.usd)::float AS usd, count(*)::int AS sessions
         FROM ses JOIN simulations r ON r.id = ses.simulation_id LEFT JOIN products p ON p.id = ses.product_id
        WHERE ses.org_id = $3 GROUP BY 1, 2, 3, 4`, [...span, org.id]),
-    db.query<{ created_by: string | null; research: boolean; usd: number }>(`WITH ${ORCHESTRATORS}
+    db.query<{ created_by: string | null; research: boolean; usd: number }>(`WITH ${ORCHESTRATORS()}
       SELECT created_by, research, sum(usd)::float AS usd FROM orch WHERE org_id = $3 GROUP BY 1, 2`, [...span, org.id]),
     db.query<{ requested_by: string | null; kind: string; usd: number; runs: number }>(`WITH ${RUNS}
       SELECT requested_by, pack || '/' || kind AS kind, sum(usd)::float AS usd, count(*)::int AS runs FROM rr WHERE org_id = $3 GROUP BY 1, 2`, [...span, org.id]),

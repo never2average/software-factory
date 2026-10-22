@@ -13,6 +13,10 @@
  *
  * A failing catalog check does not stop the process (the worker API and admin stay up): tenant-scoped queries are
  * refused instead (src/db.ts), so customers get errors, never another organization's rows.
+ *
+ * The product's tables (products, scenarios, sessions, personas, populations, ...) are its host pack's since mold_v0-049,
+ * created by its migrations: each check about one of them runs when the database has it, so a shell with no packs is
+ * checked on its own tables, a build with the host pack (or a database built before the move) on those too.
  */
 import { randomBytes } from "node:crypto";
 import type { Db, Queryable } from "./db.js";
@@ -26,17 +30,27 @@ export async function loadTenantRole(db: Queryable): Promise<string | null> {
   setTenantRole(r);
   return r;
 }
-/** Tenant tables without their own org_id: scoped through a parent row. `own` selects the rows whose parent is $1's. */
-export const PARENT_SCOPED: Record<string, string> = {
-  scenarios: "SELECT count(*)::int AS n FROM scenarios c JOIN products p ON p.id = c.product_id WHERE p.org_id = $1",
-  product_personas: "SELECT count(*)::int AS n FROM product_personas c JOIN products p ON p.id = c.product_id WHERE p.org_id = $1",
-  transcript_events: "SELECT count(*)::int AS n FROM transcript_events c JOIN agent_sessions s ON s.id = c.session_id WHERE s.org_id = $1",
-  // A session's usage, and since mold_v0-053 a run's (sql/migrations/0009_usage_and_limits.sql): the workspace's own.
-  gateway_usage: "SELECT count(*)::int AS n FROM gateway_usage c WHERE EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = c.session_id AND s.org_id = $1) OR EXISTS (SELECT 1 FROM runs x WHERE x.id = c.run_id AND x.org_id = $1)",
-  gateway_tokens: "SELECT count(*)::int AS n FROM gateway_tokens c JOIN agent_sessions s ON s.id = c.session_id WHERE s.org_id = $1",
-  developer_population_agents: "SELECT count(*)::int AS n FROM developer_population_agents c JOIN developer_populations p ON p.id = c.population_id WHERE p.org_id IS NULL OR p.org_id = $1",
-};
-/** Tables whose rows with no organization are Octillion's shared ones, readable by every tenant. */
+/** The tables this database has (the product's are a host pack's: present with it, or left from before mold_v0-049). */
+export async function presentTables(db: Queryable): Promise<Set<string>> {
+  return new Set((await db.query<{ t: string }>("SELECT relname AS t FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')")).map((r) => r.t));
+}
+/**
+ * Tenant tables without their own org_id: scoped through a parent row, each the SQL that counts the rows whose parent
+ * is $1's. The gateway's tables are the shell's; a session's rows count only where the sessions table is.
+ */
+export function parentScoped(has: Set<string>): Record<string, string> {
+  const sessions = has.has("agent_sessions");
+  return {
+    ...(has.has("scenarios") ? { scenarios: "SELECT count(*)::int AS n FROM scenarios c JOIN products p ON p.id = c.product_id WHERE p.org_id = $1" } : {}),
+    ...(has.has("product_personas") ? { product_personas: "SELECT count(*)::int AS n FROM product_personas c JOIN products p ON p.id = c.product_id WHERE p.org_id = $1" } : {}),
+    ...(has.has("transcript_events") ? { transcript_events: "SELECT count(*)::int AS n FROM transcript_events c JOIN agent_sessions s ON s.id = c.session_id WHERE s.org_id = $1" } : {}),
+    // A session's usage, and since mold_v0-053 a run's (sql/migrations/0009_usage_and_limits.sql): the workspace's own.
+    gateway_usage: `SELECT count(*)::int AS n FROM gateway_usage c WHERE ${sessions ? "EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = c.session_id AND s.org_id = $1) OR " : ""}EXISTS (SELECT 1 FROM runs x WHERE x.id = c.run_id AND x.org_id = $1)`,
+    gateway_tokens: sessions ? "SELECT count(*)::int AS n FROM gateway_tokens c JOIN agent_sessions s ON s.id = c.session_id WHERE s.org_id = $1" : "SELECT 0 AS n WHERE $1::int IS NOT NULL",
+    ...(has.has("developer_population_agents") ? { developer_population_agents: "SELECT count(*)::int AS n FROM developer_population_agents c JOIN developer_populations p ON p.id = c.population_id WHERE p.org_id IS NULL OR p.org_id = $1" } : {}),
+  };
+}
+/** Tables whose rows with no organization are the platform's shared ones, readable by every tenant (the host pack's libraries). */
 export const SHARED_TABLES = ["developer_profiles", "developer_populations", "journey_templates"];
 /** Platform tables tenant work may read, never write, and that hold nothing of any one organization. */
 export const PLATFORM_READONLY = ["library_tasks", "platform_settings", "platform_harnesses", "model_prices", "schema_migrations", "journey_seed",
@@ -57,7 +71,7 @@ export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(
     `SELECT c.table_name FROM information_schema.columns c JOIN information_schema.tables t USING (table_schema, table_name)
       WHERE c.table_schema = 'public' AND c.column_name = 'org_id' AND t.table_type = 'BASE TABLE' ORDER BY 1`);
-  return [...new Set([...rows.map((r) => r.table_name), "organizations", ...Object.keys(PARENT_SCOPED)])].sort();
+  return [...new Set([...rows.map((r) => r.table_name), "organizations", ...Object.keys(parentScoped(await presentTables(db)))])].sort();
 }
 
 /** What is missing for RLS to hold; empty when it is in place. */
@@ -124,6 +138,7 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
   const problems: string[] = [];
   let checked = 0;
   const tables = await tenantTables(db);
+  const has = await presentTables(db), PARENT_SCOPED = parentScoped(has);
   /** Pack workspace tables: the ones the shell's helper secured (src/migrate.ts shell_pack_tenant_table). */
   const packTables = (await db.query<{ t: string }>(
     "SELECT DISTINCT tablename AS t FROM pg_policies WHERE schemaname = 'public' AND policyname = 'pack_tenant_isolation' ORDER BY 1")).map((r) => r.t)
@@ -147,8 +162,10 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     };
     const org = async (k: string) => (await one<{ id: number }>("INSERT INTO organizations (slug, name) VALUES ($1, $1) RETURNING id", [`${tag}-${k}`])).id;
     const a = await org("a"), b = await org("b");
+    // The product's tables (a host pack's since mold_v0-049): probed when this database has them.
+    const product = has.has("products") && has.has("scenarios");
     const prod = async (o: number, k: string) => (await one<{ id: number }>("INSERT INTO products (org_id, slug, name) VALUES ($1, $2, $2) RETURNING id", [o, `${tag}-${k}`])).id;
-    const pa = await prod(a, "pa"), pb = await prod(b, "pb");
+    const pa = product ? await prod(a, "pa") : 0, pb = product ? await prod(b, "pb") : 0;
     for (const o of [a, b]) {
       await tx.query("INSERT INTO api_keys (org_id, label, key_prefix, key_hash) VALUES ($1, $2, 'oct_probe', $3)", [o, tag, `${tag}-${o}`]);
       await tx.query("INSERT INTO mcp_events (org_id, method) VALUES ($1, 'rls/probe')", [o]);
@@ -168,7 +185,7 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       await tx.query("INSERT INTO workspace_schedules (org_id, pack, name, job_kind, cron, next_at) VALUES ($1, 'probe', 'probe', 'probe', '0 * * * *', now())", [o]);
       await tx.query("INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'probe', 'probe', $2, current_date)", [o, tag]);
     }
-    await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
+    if (product) await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
     const expected: Record<string, number> = {};
     for (const [t, sql] of Object.entries(PARENT_SCOPED)) expected[t] = (await one<{ n: number }>(sql, [a])).n;
@@ -193,16 +210,18 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       }
       checked++;
     }
-    if ((await tx.query("/* tenant: rls probe, as tenant A on purpose */ SELECT 1 FROM products WHERE id = $1", [pb])).length) problems.push("products: A reads B's product by id");
-    if (!(await tx.query("/* tenant: rls probe, as tenant A on purpose */ SELECT 1 FROM products WHERE id = $1", [pa])).length) problems.push("products: A cannot read its own product");
-    if ((await tx.query("/* tenant: rls probe, as tenant A on purpose */ UPDATE products SET name = 'rls probe' WHERE id = $1 RETURNING id", [pb])).length) problems.push("products: A updated B's product");
-    if ((await tx.query("/* tenant: rls probe */ DELETE FROM scenarios WHERE product_id = $1 RETURNING id", [pb])).length) problems.push("scenarios: A deleted B's scenario");
-    checked += 4;
-    await refused("products: A inserts a row for B", "INSERT INTO products (org_id, slug, name) VALUES ($1, $2, $2)", [b, `${tag}-x`]);
-    await refused("products: A moves its product to B", "/* tenant: rls probe */ UPDATE products SET org_id = $2 WHERE id = $1", [pa, b]);
-    await refused("scenarios: A adds a scenario to B's product", "/* tenant: rls probe, as tenant A on purpose */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, 'x', 'x')", [pb]);
-    await refused("simulations: A points its own run at B's product", "/* tenant: rls probe */ INSERT INTO simulations (org_id, product_id, name, models, harness, repeats) VALUES ($1, $2, 'x', '{x}', 'x', 1)", [a, pb]);
-    await refused("org_task_sets: A attaches its own task set to B's product", "/* tenant: rls probe */ INSERT INTO org_task_sets (public_id, org_id, product_id, name) VALUES ($1, $2, $3, 'x')", [`${tag}-ts`, a, pb]);
+    if (product) {
+      if ((await tx.query("/* tenant: rls probe, as tenant A on purpose */ SELECT 1 FROM products WHERE id = $1", [pb])).length) problems.push("products: A reads B's product by id");
+      if (!(await tx.query("/* tenant: rls probe, as tenant A on purpose */ SELECT 1 FROM products WHERE id = $1", [pa])).length) problems.push("products: A cannot read its own product");
+      if ((await tx.query("/* tenant: rls probe, as tenant A on purpose */ UPDATE products SET name = 'rls probe' WHERE id = $1 RETURNING id", [pb])).length) problems.push("products: A updated B's product");
+      if ((await tx.query("/* tenant: rls probe */ DELETE FROM scenarios WHERE product_id = $1 RETURNING id", [pb])).length) problems.push("scenarios: A deleted B's scenario");
+      checked += 4;
+      await refused("products: A inserts a row for B", "INSERT INTO products (org_id, slug, name) VALUES ($1, $2, $2)", [b, `${tag}-x`]);
+      await refused("products: A moves its product to B", "/* tenant: rls probe */ UPDATE products SET org_id = $2 WHERE id = $1", [pa, b]);
+      await refused("scenarios: A adds a scenario to B's product", "/* tenant: rls probe, as tenant A on purpose */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, 'x', 'x')", [pb]);
+      if (has.has("simulations")) await refused("simulations: A points its own run at B's product", "/* tenant: rls probe */ INSERT INTO simulations (org_id, product_id, name, models, harness, repeats) VALUES ($1, $2, 'x', '{x}', 'x', 1)", [a, pb]);
+      if (has.has("org_task_sets")) await refused("org_task_sets: A attaches its own task set to B's product", "/* tenant: rls probe */ INSERT INTO org_task_sets (public_id, org_id, product_id, name) VALUES ($1, $2, $3, 'x')", [`${tag}-ts`, a, pb]);
+    }
     await refused("api_keys: A issues itself a key", "INSERT INTO api_keys (org_id, label, key_prefix, key_hash) VALUES ($1, 'x', 'oct_x', $2)", [a, `${tag}-own`]);
     // Member keys (mold_v0-007): tenant work cannot bring a revoked or expired key back, nor widen one.
     await refused("api_keys: A un-revokes or extends its own key", "UPDATE api_keys SET revoked_at = NULL, expires_at = NULL, scoped = false WHERE org_id = $1", [a]);
@@ -235,7 +254,7 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 
     await as(null);
-    for (const t of ["products", "api_keys", "mcp_events", "organizations", "scenarios"]) {
+    for (const t of ["products", "api_keys", "mcp_events", "organizations", "scenarios"].filter((x) => has.has(x))) {
       const { n } = await one<{ n: number }>(`SELECT count(*)::int AS n FROM ${t}`);
       if (n) problems.push(`${t}: with no organization set the tenant role still sees ${n} row(s)`);
       checked++;

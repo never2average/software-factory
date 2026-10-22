@@ -55,7 +55,16 @@ export interface HostDefinition {
     widgetHtml?: string;
   };
   /** The admin MCP server (src/admin-mcp.ts): tools and prompts the host adds, in the shell's order. */
-  adminMcp?: { tools?: Record<string, HostAdminTool> };
+  adminMcp?: {
+    tools?: Record<string, HostAdminTool>;
+    /**
+     * A shell tool's description and summary in the product's words (mold_v0-049: an account's products, research and
+     * simulations are the host pack's). Never its input, its permission or what it runs.
+     */
+    reword?: Record<string, { description?: string; summary?: (d: any, a: Record<string, any>) => string }>;
+    /** A shell skill's text (an admin MCP prompt) with the host's own tools in it (mold_v0-049). */
+    skills?: Record<string, (text: string) => string>;
+  };
   /** HTTP routes at the product's own paths (the shell's are unchanged). Each is mounted where the shell's sit. */
   routes?: {
     /** Public routes on the app itself (webhooks), before the portal's. */
@@ -77,7 +86,7 @@ export interface HostDefinition {
     /** The orchestrators' /api/worker/* routes (src/http.ts), behind the worker token. */
     worker?(worker: Router, h: WorkerHelpers): void;
   };
-  /** The session engine (src/worker.ts, the autoscaler): the product's job queue, kept in the shell until mold_v0-049. */
+  /** The session engine (src/worker.ts, the autoscaler): the shell's, over the host pack's own tables (mold_v0-049; src/host-tables.ts). */
   sessions?: {
     /** After a session completes: score it (a verdict for the product's reports). */
     score?(sessionId: string): Promise<unknown>;

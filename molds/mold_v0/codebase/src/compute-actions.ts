@@ -7,6 +7,7 @@
 //                                      sandbox and does not report it complete (orchestrator/core/session.ts).
 import { AdminError, log } from "./admin.js";
 import { getDb } from "./db.js";
+import { sessionEngine } from "./host-tables.js";
 import { runTickNow } from "./autoscaler.js";
 import { finishSimulationIfDone } from "./worker.js";
 import { recordComputeEvent } from "./compute-events.js";
@@ -41,6 +42,7 @@ export async function runTick(actor: string): Promise<TickResult> {
  * session of its run, the run finishes, but never samples more: an adaptive run is not extended by a cancel.
  */
 export async function cancelSession(actor: string, id: string) {
+  if (!sessionEngine()) throw new AdminError(`No session ${id}`, 404); // no session engine tables in this build (mold_v0-049)
   const db = await getDb();
   const row = await db.transaction(async (tx) => {
     const [s] = await tx.query<{ status: string; simulation_id: string; worker_id: string | null; sandbox_id: string | null; slug: string | null }>(

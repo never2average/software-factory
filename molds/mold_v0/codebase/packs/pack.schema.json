@@ -58,6 +58,62 @@
             "type": "string"
           },
           "additionalProperties": {}
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "tables": {
+              "minItems": 1,
+              "maxItems": 200,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              }
+            },
+            "platform_read": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              }
+            },
+            "references": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}\\.[a-z][a-z0-9_]{1,62}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              }
+            },
+            "functions": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+              }
+            },
+            "adopts": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^\\d{4}_[a-z0-9_]+$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^\\d{4}_[a-z0-9_]+$"
+              }
+            }
+          },
+          "required": [
+            "tables"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

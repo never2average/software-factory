@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { hostTable, researchJobs, sessionEngine } from "./host-tables.js";
 import { spendRange, SHARED, SHARED_NAME } from "./spend.js";
 import { transcripts } from "./transcripts.js";
 
@@ -51,18 +52,27 @@ async function orgIndex() {
 // ====================================================================== Compute hours
 
 const DAYS = `d AS (SELECT g AS d0, g + interval '1 day' AS d1 FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 day', interval '1 day') g)`;
-const ORCH_IV = `oiv AS (
+/**
+ * An orchestrator's job is a simulation or research, and a session the agent sandbox: the session engine's, a host
+ * pack's tables (mold_v0-049). In a build without them, no job is known and there is no session (the same columns).
+ */
+const ORCH_IV = () => {
+  const sim = sessionEngine(), pr = researchJobs();
+  return `oiv AS (
     SELECT * FROM (
-      SELECT o.id, o.job_id, o.pods, coalesce(sim.org_id, pr.org_id) AS org_id,
-             CASE WHEN sim.id IS NOT NULL THEN 'simulation' WHEN pr.id IS NOT NULL THEN 'research' END AS job_kind,
-             coalesce(sim.name, pr.input->>'name') AS job_name, o.created_at AS t0,
+      SELECT o.id, o.job_id, o.pods, ${sim && pr ? "coalesce(sim.org_id, pr.org_id)" : sim ? "sim.org_id" : "NULL::int"} AS org_id,
+             ${sim || pr ? `CASE ${sim ? "WHEN sim.id IS NOT NULL THEN 'simulation' " : ""}${pr ? "WHEN pr.id IS NOT NULL THEN 'research' " : ""}END` : "NULL::text"} AS job_kind,
+             ${sim && pr ? "coalesce(sim.name, pr.input->>'name')" : sim ? "sim.name" : "NULL::text"} AS job_name, o.created_at AS t0,
              greatest(o.created_at, coalesce(o.deleted_at, CASE WHEN o.state = 'deleted' THEN coalesce(o.last_seen, o.created_at) ELSE now() END)) AS t1
-        FROM orchestrator_sandboxes o
-        LEFT JOIN simulations sim ON sim.id = o.job_id
-        LEFT JOIN product_research pr ON pr.id = o.job_id
+        FROM orchestrator_sandboxes o${sim ? `
+        LEFT JOIN simulations sim ON sim.id = o.job_id` : ""}${pr ? `
+        LEFT JOIN product_research pr ON pr.id = o.job_id` : ""}
        WHERE o.created_at < $2) x
      WHERE t1 > $1)`;
-const SES_IV = `siv AS (
+};
+const SES_IV = () => !sessionEngine() ? `siv AS (
+    SELECT NULL::text AS id, NULL::int AS org_id, NULL::text AS job_id, NULL::text AS job_name, NULL::text AS agent, NULL::text AS runner,
+           NULL::text AS sandbox_type, NULL::timestamptz AS t0, NULL::timestamptz AS t1 WHERE false AND $1::timestamptz IS NULL AND $2::timestamptz IS NULL)` : `siv AS (
     SELECT * FROM (
       SELECT s.id, s.org_id, s.simulation_id AS job_id, sim.name AS job_name, coalesce(s.agent_id, s.harness || '/' || s.model) AS agent,
              coalesce(s.metadata->>'runner', 'boat') AS runner, s.metadata->>'boat_sandbox_type' AS sandbox_type, s.started_at AS t0,
@@ -83,23 +93,23 @@ export async function computeReport(q: { from?: unknown; to?: unknown } = {}, no
   const span = [R.start, R.end];
   const [orchDays, sesDays, sesStats, peaks, idx, orchType] = await Promise.all([
     db.query<{ org_id: number | null; job_id: string | null; job_kind: string | null; job_name: string | null; day: string; secs: number; launched: number }>(`${TENANT}
-      WITH ${DAYS}, ${ORCH_IV}
+      WITH ${DAYS}, ${ORCH_IV()}
       SELECT org_id, job_id, job_kind, job_name, ${DAY_OF} AS day, sum(${OVERLAP})::float AS secs, count(*) FILTER (WHERE t0 >= d0 AND t0 < d1)::int AS launched
         FROM oiv JOIN d ON t0 < d1 AND t1 > d0 GROUP BY 1, 2, 3, 4, 5`, span),
     db.query<{ org_id: number; job_id: string; job_name: string | null; agent: string; runner: string; day: string; secs: number }>(`${TENANT}
-      WITH ${DAYS}, ${SES_IV}
+      WITH ${DAYS}, ${SES_IV()}
       SELECT org_id, job_id, job_name, agent, runner, ${DAY_OF} AS day, sum(${OVERLAP})::float AS secs
         FROM siv JOIN d ON t0 < d1 AND t1 > d0 GROUP BY 1, 2, 3, 4, 5, 6`, span),
     // Per session that ran in the range: its whole length (not clipped), for the average and the longest.
     db.query<{ org_id: number; agent: string; runner: string; sandbox_type: string | null; sessions: number; secs: number; longest: number }>(`${TENANT}
-      WITH ${SES_IV}
+      WITH ${SES_IV()}
       SELECT org_id, agent, runner, sandbox_type, count(*)::int AS sessions, sum(extract(epoch FROM t1 - t0))::float AS secs,
              max(extract(epoch FROM t1 - t0))::float AS longest
         FROM siv GROUP BY 1, 2, 3, 4`, span),
     // Most sandboxes running at once each day: +1 at every start, -1 at every end (ends first at a tie), and a 0 at
     // each midnight so a day with no start or end still reads what was running through it.
     db.query<{ day: string; peak: number }>(`${TENANT}
-      WITH ${DAYS}, ${ORCH_IV}, ${SES_IV},
+      WITH ${DAYS}, ${ORCH_IV()}, ${SES_IV()},
       iv AS (SELECT greatest(t0, $1) AS t0, least(t1, $2) AS t1 FROM oiv UNION ALL SELECT greatest(t0, $1), least(t1, $2) FROM siv),
       ev AS (SELECT t0 AS t, 1 AS dl FROM iv WHERE t1 > t0 UNION ALL SELECT t1, -1 FROM iv WHERE t1 > t0 UNION ALL SELECT d0, 0 FROM d),
       run AS (SELECT t, sum(dl) OVER (ORDER BY t, dl ROWS UNBOUNDED PRECEDING) AS c FROM ev)
@@ -215,7 +225,7 @@ export async function computeReport(q: { from?: unknown; to?: unknown } = {}, no
  * timestamp (default: created), and how a row belongs to an account. Every count is exact (count(*)).
  */
 interface TableDef { table: string; label: string; created?: string; written?: string; org?: string; from?: string; where?: string }
-const TABLES: TableDef[] = [
+const ALL_TABLES: TableDef[] = [
   { table: "organizations", label: "Accounts", created: "created_at" },
   { table: "api_keys", label: "API keys", created: "created_at", written: "greatest(created_at, last_used_at, revoked_at)", org: "org_id" },
   { table: "products", label: "Products", created: "created_at", written: "greatest(created_at, updated_at)", org: "org_id" },
@@ -266,6 +276,17 @@ const TABLES: TableDef[] = [
   { table: "platform_harnesses", label: "Platform harnesses", created: "created_at", written: "greatest(created_at, updated_at)" },
 ];
 
+/**
+ * The tables of this build: the shell's, and a host pack's only when this build has it (mold_v0-049: the product's
+ * tables are its host pack's, created by its migrations; listed here so the Storage page names them when present).
+ */
+const HOST_TABLE_NAMES = new Set(["products", "scenarios", "simulations", "agent_sessions", "transcript_events", "developer_profiles", "library_tasks",
+  "developer_populations", "developer_population_agents", "product_research", "nudges", "nudge_prefs", "account_context", "user_context",
+  "journey_templates", "journey_progress", "journey_seed", "context_memories", "adoption_help", "org_task_sets", "org_harnesses"]);
+const TABLES = ALL_TABLES.filter((t) => !HOST_TABLE_NAMES.has(t.table) || hostTable(t.table)
+  // scenarios is read through products (its account): both must be there
+  && (t.table !== "scenarios" || hostTable("products")));
+
 /** One scan per table: rows per (account, created day in the range, or null outside it), and the latest write. */
 const COUNTS = TABLES.map((t) => {
   const c = t.created, w = t.written ?? c;
@@ -287,28 +308,29 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
     safe(db.query<{ t: string; bytes: number }>(`SELECT c.relname AS t, pg_total_relation_size(c.oid)::float AS bytes
         FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = current_schema() AND c.relkind IN ('r', 'p')`), null),
     // Transcript events by session (the counter the worker keeps, agent_sessions.events), by account and queued day.
-    db.query<{ org_id: number; day: string | null; events: number }>(`${TENANT}
+    !sessionEngine() ? Promise.resolve([] as { org_id: number; day: string | null; events: number }[]) : db.query<{ org_id: number; day: string | null; events: number }>(`${TENANT}
       SELECT org_id, CASE WHEN queued_at >= $1 AND queued_at < $2 THEN to_char(queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') END AS day, sum(events)::float AS events
         FROM agent_sessions GROUP BY 1, 2`, span),
     db.query<{ provider: string; org_id: number | null; day: string | null; bytes: number; requests: number; last: Date | null }>(`${TENANT}
-      SELECT g.provider, coalesce(s.org_id, sim.org_id, pr.org_id) AS org_id,
+      SELECT g.provider, ${!sessionEngine() ? "NULL::int" : researchJobs() ? "coalesce(s.org_id, sim.org_id, pr.org_id)" : "coalesce(s.org_id, sim.org_id)"} AS org_id,
              CASE WHEN g.last_at >= $1 AND g.last_at < $2 THEN to_char(g.last_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') END AS day,
              sum(g.bytes)::float AS bytes, sum(g.requests)::float AS requests, max(g.last_at) AS last
-        FROM gateway_usage g
+        FROM gateway_usage g${sessionEngine() ? `
         LEFT JOIN agent_sessions s ON s.id = g.session_id
         LEFT JOIN LATERAL (SELECT x.job_id FROM orchestrator_sandboxes x WHERE g.session_id IS NULL AND x.orchestrator_id = g.orchestrator_id AND x.job_id IS NOT NULL
                             ORDER BY x.id DESC LIMIT 1) os ON true
-        LEFT JOIN simulations sim ON sim.id = os.job_id
-        LEFT JOIN product_research pr ON pr.id = os.job_id
+        LEFT JOIN simulations sim ON sim.id = os.job_id` : ""}${researchJobs() ? `
+        LEFT JOIN product_research pr ON pr.id = os.job_id` : ""}
        GROUP BY 1, 2, 3`, span),
-    db.query<{ what: string; day: string | null; n: number; events: number; last: Date | null }>(`${TENANT}
+    !sessionEngine() ? Promise.resolve([] as { what: string; day: string | null; n: number; events: number; last: Date | null }[])
+    : db.query<{ what: string; day: string | null; n: number; events: number; last: Date | null }>(`${TENANT}
       SELECT 'sessions' AS what, CASE WHEN archived_at >= $1 AND archived_at < $2 THEN to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') END AS day,
              count(*)::float AS n, sum(coalesce(archive_events, 0))::float AS events, max(archived_at) AS last
-        FROM agent_sessions WHERE archived_at IS NOT NULL GROUP BY 1, 2
+        FROM agent_sessions WHERE archived_at IS NOT NULL GROUP BY 1, 2${researchJobs() ? `
       UNION ALL
       SELECT 'research', CASE WHEN archived_at >= $1 AND archived_at < $2 THEN to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') END,
              count(*)::float, 0::float, max(archived_at)
-        FROM product_research WHERE archived_at IS NOT NULL GROUP BY 1, 2`, span),
+        FROM product_research WHERE archived_at IS NOT NULL GROUP BY 1, 2` : ""}`, span),
     orgIndex(),
     // A paused ClickHouse Cloud service can take ~15 s to wake: give up after 5 s and show the store without its size.
     safe(Promise.race([store.stats(), new Promise<null>((ok) => setTimeout(() => ok(null), 5_000).unref())]), null),
@@ -355,7 +377,9 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
     a.events += k;
     if (i != null) { a.new_events += k; a.daily_events[i] += k; evDaily[i] += k; }
   }
-  const pgTranscripts = store.kind === "postgres", te = tables.find((t) => t.name === "transcript_events")!;
+  // Without the session engine's tables (mold_v0-049) there is no transcript table: an empty one stands in.
+  const pgTranscripts = store.kind === "postgres", te = tables.find((t) => t.name === "transcript_events")
+    ?? { bytes: null, rows: 0, new_rows: 0, daily_new: zeros(), last_write: null };
   const transcriptStore = {
     key: "transcripts", kind: "transcripts" as const, name: pgTranscripts ? "Transcripts (Postgres)" : "Transcripts (ClickHouse)",
     detail: pgTranscripts ? "transcript_events" : "octillion.transcript_events",
@@ -363,7 +387,7 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
     rows: pgTranscripts ? te.rows : storeStats?.rows ?? null,
     // Postgres: events by their own timestamp. ClickHouse: the sessions' event counters by queued day (no scan of the store).
     new_rows: pgTranscripts ? te.new_rows : sum(evDaily), daily_new: pgTranscripts ? te.daily_new : evDaily,
-    last_write: pgTranscripts ? te.last_write : tab.get("agent_sessions")!.last,
+    last_write: pgTranscripts ? te.last_write : tab.get("agent_sessions")?.last ?? null,
     parts: [] as { name: string; label: string; bytes: number | null; rows: number; new_rows: number; last_write: string | null }[],
   };
 

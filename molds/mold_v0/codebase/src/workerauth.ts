@@ -12,6 +12,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import { isWorkerToken } from "./auth.js";
 
 export type WorkerAuth =
@@ -24,6 +25,8 @@ const TOKEN_HOURS = () => Number(process.env.OCTILLION_JOB_TOKEN_HOURS ?? 48);
 
 /** The organization a job belongs to (a simulation or an onboarding research). */
 async function orgOfJob(jobId: string): Promise<number | null> {
+  // Jobs are the session engine's, a host pack's tables (mold_v0-049): a build without them has no job.
+  if (!(jobId.startsWith("rsh_") ? researchJobs() : sessionEngine())) return null;
   const db = await getDb();
   const [r] = jobId.startsWith("rsh_")
     ? await db.query<{ org_id: number }>("SELECT org_id FROM product_research WHERE id = $1", [jobId])
@@ -83,6 +86,7 @@ export async function revokeSandboxWorkerTokens(sandboxRowId: number): Promise<v
 export async function canActOnSession(auth: WorkerAuth, sessionId: string): Promise<boolean> {
   if (auth.kind === "fleet") return true;
   if (auth.kind !== "job") return false; // a run token acts on its run only
+  if (!sessionEngine()) return false;
   const [s] = await (await getDb()).query<{ simulation_id: string }>("/* tenant: compared with the job the token is bound to */ SELECT simulation_id FROM agent_sessions WHERE id = $1", [sessionId]);
   return !!s && s.simulation_id === auth.jobId;
 }

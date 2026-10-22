@@ -14,6 +14,7 @@
  */
 import { forgetOrgKey } from "./orgcrypto.js";
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import { keys, listKeys, deleteKeys, objectStore, storageEnabled } from "./storage.js";
 import { baseTranscripts } from "./transcripts.js";
 import { forgetArchivedOrg } from "./archive.js";
@@ -36,11 +37,13 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
   const objects = storageEnabled()
     ? (await Promise.all(PREFIX_KINDS.map((k) => listKeys(keys.orgPrefix(k, orgId))))).flat()
     : [];
+  // The session engine's tables are a host pack's (mold_v0-049): with none in this build there is none of its work.
+  const engine = sessionEngine(), research = researchJobs();
   const counts = {
     api_keys: await count("SELECT count(*) AS n FROM api_keys WHERE org_id = $1"),
-    simulations: await count("SELECT count(*) AS n FROM simulations WHERE org_id = $1"),
-    sessions: await count("SELECT count(*) AS n FROM agent_sessions WHERE org_id = $1"),
-    research: await count("SELECT count(*) AS n FROM product_research WHERE org_id = $1"),
+    simulations: engine ? await count("SELECT count(*) AS n FROM simulations WHERE org_id = $1") : 0,
+    sessions: engine ? await count("SELECT count(*) AS n FROM agent_sessions WHERE org_id = $1") : 0,
+    research: research ? await count("SELECT count(*) AS n FROM product_research WHERE org_id = $1") : 0,
     objects: objects.length,
   };
   const out: OrgDeletion = { org_id: orgId, dry_run: !!opts.dryRun, found: !!org, counts };
@@ -50,12 +53,14 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
   await db.transaction(async (tx) => {
     await tx.query("DELETE FROM api_keys WHERE org_id = $1", [orgId]);
     await tx.query("UPDATE worker_tokens SET revoked_at = now() WHERE org_id = $1 AND revoked_at IS NULL", [orgId]);
-    await tx.query(
-      `UPDATE gateway_tokens SET revoked_at = now()
-        WHERE revoked_at IS NULL AND session_id IN (SELECT id FROM agent_sessions WHERE org_id = $1)`, [orgId]);
-    await tx.query("UPDATE agent_sessions SET status = 'cancelled', ended_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
-    await tx.query("UPDATE simulations SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
-    await tx.query("UPDATE product_research SET status = 'failed', error = 'organization deleted', finished_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
+    if (engine) {
+      await tx.query(
+        `UPDATE gateway_tokens SET revoked_at = now()
+          WHERE revoked_at IS NULL AND session_id IN (SELECT id FROM agent_sessions WHERE org_id = $1)`, [orgId]);
+      await tx.query("UPDATE agent_sessions SET status = 'cancelled', ended_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
+      await tx.query("UPDATE simulations SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
+    }
+    if (research) await tx.query("UPDATE product_research SET status = 'failed', error = 'organization deleted', finished_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
     // Runs (mold_v0-041): no more spending, no more claims.
     await tx.query("UPDATE gateway_tokens SET revoked_at = now() WHERE revoked_at IS NULL AND run_id IN (SELECT id FROM runs WHERE org_id = $1)", [orgId]);
     await tx.query("UPDATE runs SET status = 'cancelled', error_kind = 'cancelled', error = 'organization deleted', cancel_requested_at = now(), ended_at = now() WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
