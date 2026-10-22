@@ -32,7 +32,11 @@ interface Plan { price_id: string; name: string; amount: number | null; currency
   /** Usage pricing, one line per metric (model spend, agent sessions, simulations, sandbox hours), in words. */
   usage?: { metric: string; summary: string }[] }
 interface Billing { enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
-  contributions?: Contributions }
+  contributions?: Contributions; run_charges?: RunCharges }
+/** Price per run (mold_v0-019): this month's run charges and credits per currency, and the latest rows. Only when the app bills runs. */
+interface RunCharges { enabled: boolean; currency: string;
+  month: { currency: string; charged: number; credited: number; net: number; runs: number; charged_runs: number; pending: number }[];
+  recent: { id: string; run_id: string; kind: 'charge' | 'credit'; job_kind: string; run_status: string; currency: string; amount: number; reason: string | null; created_at: string }[] }
 /** Credits for personas and tasks the platform accepted into its library: from Stripe's balance transactions, plus accepted ones Stripe hasn't taken yet. */
 interface Contributions { credits: { id: string; amount_usd: number; description: string | null; created: string; submission_id: string }[]; total_usd: number; error: string | null;
   pending: { id: string; kind: 'persona' | 'task'; title: string; credit_usd: number; decided_at: string | null }[] }
@@ -182,6 +186,7 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
         </ul>
       )}
       {b.contributions && <ContributionCredits c={b.contributions} />}
+      {b.run_charges && <RunChargesList c={b.run_charges} />}
     </Block>
   );
 }
@@ -212,6 +217,33 @@ function ContributionCredits({ c }: { c: Contributions }) {
         ))}
       </ul>
       {c.error && <p className='text-muted-foreground text-xs'>Stripe could not list the credits just now.</p>}
+    </section>
+  );
+}
+
+/** "Run charges": what finished runs were charged this month (price per run), credits, and the latest runs with what each paid. */
+function RunChargesList({ c }: { c: RunCharges }) {
+  const fmt = (v: number, cur: string) => v.toLocaleString(undefined, { style: 'currency', currency: cur.toUpperCase() });
+  if (!c.month.length && !c.recent.length) return null;
+  return (
+    <section className='flex flex-col gap-2'>
+      <div className='flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-none'>
+        <span className='font-medium'>Run charges</span>
+        {c.month.map((m) => (
+          <span key={m.currency} className='text-muted-foreground tabular-nums'>
+            {fmt(m.net, m.currency)} this month · {m.charged_runs} of {m.runs} runs charged{m.credited ? ` · ${fmt(-m.credited, m.currency)} credited` : ''}
+          </span>
+        ))}
+      </div>
+      <ul className='divide-y border-y text-sm'>
+        {c.recent.map((x) => (
+          <li key={x.id} className={cn('flex items-center gap-3 py-2 leading-none', x.amount === 0 && 'text-muted-foreground')}>
+            <span className='min-w-0 flex-1 truncate' title={x.run_id}>{x.kind === 'credit' ? 'Credit: ' : ''}{x.job_kind}{x.reason ? <span className='text-muted-foreground'> · {x.reason}</span> : null}</span>
+            <span className='text-muted-foreground text-xs'>{new Date(x.created_at).toLocaleDateString()}</span>
+            <span className='w-24 text-right tabular-nums'>{fmt(x.amount, x.currency)}</span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

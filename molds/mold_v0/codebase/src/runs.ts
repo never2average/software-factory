@@ -34,6 +34,7 @@ import { runCredentials, runSecrets, type RunCredentials } from "./credentials.j
 import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
 import { runCompanyHosts } from "./egress-hosts.js";
 import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
+import { priceForStart } from "./run-charges.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -115,6 +116,9 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
   // Limits (mold_v0-018, 053; src/run-limits.ts): the workspace's live runs, the kind's month budget, the account's
   // allowance; the run's budget is the kind's, never above the platform's ceiling.
   const { budget_usd, live_per_workspace } = await checkRunStart(orgId, pack, kind, k, n);
+  // Price per run (mold_v0-019, src/run-charges.ts): what the platform allows of the kind's price, frozen into the run
+  // (null with billing off: the run is never charged). Its charge is written when the run ends (0014_run_charges.sql).
+  const price = priceForStart({ pack, name: k.name, price: (k as { price?: unknown }).price });
   const id = `run_${randomBytes(12).toString("base64url")}`;
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
   // The live cap is counted again with the insert, under a lock per workspace, so concurrent starts (a scheduler's
@@ -127,10 +131,10 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
     // The approval is taken in this transaction (used once): a refusal below undoes it with the run.
     const approval = gated ? await takeApproval(tx, { id: input.approval, orgId, pack, kind, runId: id, scope, targets }) : null;
     const rows = await tx.query<RunRow>(
-      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, approval_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING ${COLS}`,
+      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING ${COLS}`,
       [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
-       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, approval?.id ?? null]);
+       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null, approval?.id ?? null]);
     if (approval) await event(id, orgId, 0, "approval_used", { approval: approval.id, preview_run_id: approval.preview_run_id, sha256: approval.output_sha256,
       approved_by: approval.approved_by, role: approval.approver_role }, tx);
     return rows;

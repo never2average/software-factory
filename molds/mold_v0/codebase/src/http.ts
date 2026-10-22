@@ -15,6 +15,7 @@ import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
 import { metricAppRouter, runAppRouter } from "./view-routes.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
+import { startChargeDelivery, stopChargeDelivery } from "./run-charges.js";
 import { runWorkerRouter } from "./run-routes.js";
 import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.js";
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
@@ -134,7 +135,10 @@ export function createApp() {
     // The packs' schedules and the daily due-date check (mold_v0-035, src/schedules.ts): a server ticks them from its own
     // loop (startScheduler); on Vercel this cron entry is the tick. Nothing is read with no job kind and no due area.
     const schedules = await schedulerTick().catch((e) => ({ error: (e as Error).message }));
-    res.json({ tick, pruned, ...host, rls, schedules });
+    // Price per run (mold_v0-019, src/run-charges.ts): pending charges handed on, only when the app bills runs.
+    const rc = await import("./run-charges.js");
+    const charges = rc.runBillingOn() ? { run_charges: await rc.deliverCharges().catch((e) => ({ error: (e as Error).message })) } : {};
+    res.json({ tick, pruned, ...host, rls, schedules, ...charges });
   });
 
   // Sign-up requests: at most so many an hour per address, counted across instances (mold_v0-018, src/rate-limits.ts).
@@ -603,6 +607,21 @@ export function createApp() {
   // FinOps › Revenue (src/revenue.ts): Stripe subscriptions and invoices against metered model spend; Stripe off or down is a 200 that says so.
   ob.get("/spend/revenue", async (req, res) => void res.json(await (await import("./revenue.js")).revenueReport(req.query)));
   ob.get("/spend/experiments", async (req, res) => void res.json(await (await import("./experiments.js")).experimentsReport(req.query)));
+  // FinOps › Run charges (mold_v0-019, src/run-charges.ts): every account's run charges and credits in the range (read,
+  // any admin role), and one credit per charged run (operators: billing actions, in the admin log).
+  ob.get("/spend/run-charges", async (req, res) => {
+    const rc = await import("./run-charges.js");
+    const account = typeof req.query.account === "string" && req.query.account ? req.query.account : undefined;
+    res.json((await rc.adminCharges(spend.spendRange(req.query), { account })) ?? { enabled: false });
+  });
+  ob.post("/spend/run-charges/:run_id/credit", need("accounts"), async (req, res) => {
+    const rc = await import("./run-charges.js");
+    try {
+      const credit = await rc.creditRun(String(req.params.run_id), adminActor(req, res), req.body?.reason);
+      onboarding.log(adminActor(req, res), "billing.run_credit", null, { run: credit.run_id, amount_minor: credit.amount_minor, currency: credit.currency });
+      res.status(201).json(credit);
+    } catch (e) { if (e instanceof rc.ChargeError) throw new onboarding.AdminError(e.message, e.status); throw e; }
+  });
   // The page's only two actions (src/compute-actions.ts), both in the admin audit log: run one autoscaler tick now, and
   // cancel a queued or running session (its orchestrator stops the sandbox at the next heartbeat).
   ob.post("/compute/tick", need("compute"), async (req, res) => void res.json(await actions.runTick(adminActor(req, res))));
@@ -727,6 +746,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(`  archive       ${storageEnabled() ? "on (traces + research to R2)" : "off (R2_* not set)"}`);
     // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; OCTILLION_SCHEDULER=off disables.
     if (startScheduler()) console.error("  scheduler     on (every minute; OCTILLION_SCHEDULER=off to disable)");
+    // Price per run (mold_v0-019): pending run charges to Stripe or the ledger, every minute, only when the app bills runs.
+    if (startChargeDelivery()) console.error("  run charges   on (every minute; the profile's billing, OCTILLION_RUN_BILLING=off to disable)");
   });
   // Graceful drain (deploys, restarts): stop accepting connections, let in-flight requests finish (gateway streams
   // are sandboxed agents' model calls; cutting them fails the sessions), then exit. A rolling deploy starts the new
@@ -739,6 +760,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void stopAutoscaler();
     stopArchiver();
     stopScheduler();
+    stopChargeDelivery();
     void telemetry.flush();
     server.close(() => { console.error("drained, exiting"); process.exit(0); });
     server.closeIdleConnections();
