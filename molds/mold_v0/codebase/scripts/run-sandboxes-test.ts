@@ -65,7 +65,7 @@ function startRunner(cwd: string, bin: string[], env: Record<string, string>, ta
 }
 const killTree = (c: ChildProcess | undefined) => { if (c?.pid && c.exitCode === null && c.signalCode === null) { try { process.kill(-c.pid, "SIGKILL"); } catch { /* gone */ } } };
 
-interface Sb { id: string; name: string; state: string; createdAt: string; files: Map<string, string>; dir: string; child?: ChildProcess; create: Record<string, unknown> }
+interface Sb { id: string; name: string; state: string; createdAt: string; files: Map<string, string>; dir: string; child?: ChildProcess; create: Record<string, unknown>; commands: string[] }
 const sbs = new Map<string, Sb>();
 let creates = 0, failCreates = false;
 const envFiles: Record<string, Record<string, string>> = {};
@@ -86,7 +86,7 @@ const boat = http.createServer((req, res) => {
       creates++;
       const dir = path.join(TMP, "boat", id);
       mkdirSync(dir, { recursive: true });
-      sbs.set(id, { id, name: "", state: "ready", createdAt: new Date().toISOString(), files: new Map(), dir, create: b });
+      sbs.set(id, { id, name: "", state: "ready", createdAt: new Date().toISOString(), files: new Map(), dir, create: b, commands: [] });
       return json(res, 202, { ok: true, sandbox: { id, state: "provisioning" } });
     }
     if (u.startsWith("/named-snapshots")) return json(res, 404, { ok: false, code: "not_found" });
@@ -100,6 +100,7 @@ const boat = http.createServer((req, res) => {
     if (req.method === "PUT" && rest === "/files") { sb.files.set(b.path, b.content); return json(res, 200, { ok: true }); }
     if (req.method === "POST" && rest === "/commands") {
       const cmd = String(b.command);
+      sb.commands.push(cmd);
       if (cmd.includes("tar -xzf code.tgz")) {
         // The upload: exactly the parts that were sent, unpacked; tsx is the orchestrator's (its `npm ci` there).
         const parts = [...sb.files.keys()].filter((k) => /code\.tgz\.part\d+$/.test(k)).sort();
@@ -272,6 +273,9 @@ try {
     // The uploaded code is the runner's import graph, the pack and the orchestrator: no server code.
     const uploaded = spawnSync("tar", ["-tzf", path.join(sb.dir, "code.tgz")], { encoding: "utf8" }).stdout.split("\n");
     for (const f of ["src/run-sandbox-runner.ts", "src/run-harness.ts", "orchestrator/core/egress.ts", "scripts/fixtures/runs/ok.mjs"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
+    // mold_v0-072: the run tools' installer and the build's list go too, and the set-up runs it (as root, before the runner).
+    for (const f of ["src/run-tools.ts", "scripts/install-run-tools.ts", "src/run-tools.generated.json"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
+    assert.ok(sb.commands.some((c) => /sudo -n env PATH=\S+ \S+\/tsx scripts\/install-run-tools\.ts --from src\/run-tools\.generated\.json --dir \/opt\/octi-tools/.test(c)), "the set-up installs the run tools");
     for (const f of ["src/db.ts", "src/runs.ts", "src/keyvault.ts", "src/http.ts", ".env"]) assert.ok(!uploaded.includes(f), `${f} not uploaded`);
     await waitFor("the run to end", ended(id));
     const r1 = await runRow(id);
@@ -380,7 +384,7 @@ try {
     const evs = await db.query<{ kind: string }>("SELECT kind FROM compute_events WHERE job_id = $1", [c]);
     assert.equal(evs.filter((x) => x.kind === "launch_failed").length, 3);
     // Orphans: ours (by name) without a row go; another deployment's stay.
-    const mk = (name: string) => { const id = `bx_${randomBytes(4).toString("hex")}`; sbs.set(id, { id, name, state: "ready", createdAt: new Date().toISOString(), files: new Map(), dir: TMP, create: {} }); return id; };
+    const mk = (name: string) => { const id = `bx_${randomBytes(4).toString("hex")}`; sbs.set(id, { id, name, state: "ready", createdAt: new Date().toISOString(), files: new Map(), dir: TMP, create: {}, commands: [] }); return id; };
     const orphan = mk("octi-run-9999-abcdef"), other = mk("octv-run-1-abcdef");
     await rs.tick();
     assert.ok(!sbs.has(orphan) && sbs.has(other));
