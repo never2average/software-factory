@@ -32,7 +32,12 @@ front.use(mock);
 const server = front.listen(0, "127.0.0.1");
 await new Promise((r) => server.once("listening", r));
 url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_race", STRIPE_API_URL: url });
+Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_race", STRIPE_API_URL: url, OCTILLION_RUN_CHARGE_GRACE_SECONDS: "0" });
+const post = async (p: string, body: Record<string, string>) =>
+  (await fetch(`${url}${p}`, { method: "POST", headers: { authorization: "Bearer sk_test_race", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(body) })).json() as Promise<any>;
+const meter = await post("/v1/billing/meters", { event_name: "run_charges", display_name: "Run charges" });
+const product = await post("/v1/products", { name: "Runs" });
+const price = (await post("/v1/prices", { product: product.id, currency: "usd", unit_amount: "1", "recurring[interval]": "month", "recurring[usage_type]": "metered", "recurring[meter]": meter.id })).id;
 
 const { getDb } = await import("../src/db.js");
 const db = await getDb();
@@ -53,6 +58,7 @@ for (let round = 0; round < ROUNDS; round++) {
   const { org } = await createOrg(`Charges race ${Date.now().toString(36)} ${round}`);
   const cus = (await billing.createCustomer({ name: org.name, slug: org.slug })).id;
   await db.query("UPDATE organizations SET stripe_customer_id = $2 WHERE id = $1", [org.orgId, cus]);
+  await fetch(`${url}/_mock/subscriptions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ customer: cus, price, invoice: false }) });
   const ids: string[] = [];
   for (let i = 0; i < N; i++) ids.push((await runs.startRun(org.orgId, "fixture_charges", "priced")).id);
   const claims = [];

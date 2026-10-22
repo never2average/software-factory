@@ -32,7 +32,7 @@ import type { Secret } from "./credential-redact.js";
 import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
 import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
-import { kickRunCharge, priceForStart } from "./run-charges.js";
+import { priceForStart } from "./run-charges.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -168,7 +168,6 @@ export async function cancelRun(orgId: number, id: string, by: string | null = n
   // Spending stops now, whatever the runner does next.
   await asPlatform(() => revokeRunTokens(r.id));
   await event(r.id, orgId, r.attempt, "cancel_requested", { by });
-  if (r.status === "cancelled") kickRunCharge(r.id);
   return view(r);
 }
 
@@ -723,7 +722,5 @@ async function complete(runId: string, leaseToken: string, c0: Completion): Prom
     return u!;
   }));
   await removeObjects(gone);
-  // Price per run (mold_v0-019): the charge was written with the run's end; hand it on now (a no-op with billing off).
-  if (r.status !== "queued") kickRunCharge(r.id);
   return view(r);
 }
