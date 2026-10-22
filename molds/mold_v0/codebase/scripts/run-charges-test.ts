@@ -46,7 +46,19 @@ front.use(mockApp);
 const stripeServer = front.listen(0, "127.0.0.1");
 await new Promise((r) => stripeServer.once("listening", r));
 stripeUrl = `http://127.0.0.1:${(stripeServer.address() as AddressInfo).port}`;
-Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_runcharges", STRIPE_API_URL: stripeUrl, CRON_SECRET: "cron-test-secret" });
+// No grace period after a run ends (the late-usage refresh is tested directly below).
+Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_runcharges", STRIPE_API_URL: stripeUrl, CRON_SECRET: "cron-test-secret", OCTILLION_RUN_CHARGE_GRACE_SECONDS: "0" });
+/** Stripe's side of metered billing, made in the stand-in: the meter, a metered price on it, a customer's subscription to it. */
+const stripePost = async (p: string, body: Record<string, string>) =>
+  (await fetch(`${stripeUrl}${p}`, { method: "POST", headers: { authorization: "Bearer sk_test_runcharges", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(body) })).json() as Promise<any>;
+let meteredPrice = "";
+const makeMeter = async () => {
+  const m = await stripePost("/v1/billing/meters", { event_name: "run_charges", display_name: "Run charges" });
+  const prod = await stripePost("/v1/products", { name: "Runs" });
+  meteredPrice = (await stripePost("/v1/prices", { product: prod.id, currency: "usd", unit_amount: "1", "recurring[interval]": "month", "recurring[usage_type]": "metered", "recurring[meter]": m.id })).id;
+};
+const subscribe = async (customer: string) =>
+  (await fetch(`${stripeUrl}/_mock/subscriptions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ customer, price: meteredPrice, invoice: false }) })).json();
 const meterPosts = (run?: string) => posted.filter((p) => p.path === "/v1/billing/meter_events" && (!run || p.body.identifier === `run_charge:${run}`));
 
 const RULES = { enabled: true, currency: "usd", max_fixed: 10, max_cost_plus_percent: 100, charge_failed_runs: true, charge_cancelled_runs: true };
@@ -124,6 +136,32 @@ try {
     const cusA = (await billing.createCustomer({ name: A.name, slug: A.slug })).id;
     await w.db.query("UPDATE organizations SET stripe_customer_id = $2 WHERE id = $1", [A.orgId, cusA]);
     const cents = (usd: number) => Math.round(usd * 100);
+    const unclaim = (run: string) => w.db.query("UPDATE run_charges SET claimed_until = NULL WHERE run_id = $1", [run]);
+    // Where a charge goes, before Stripe is set up for it: no meter yet, it waits (said why); a meter but no subscription
+    // priced on it, the ledger (said why: Stripe would never invoice it); Stripe not configured on the server, it waits.
+    const m1 = await startClaim(A.orgId, "flat");
+    await w.complete(m1);
+    await drain();
+    let [m1row] = await w.db.query<{ delivery: string; delivery_error: string | null; delivery_ref: string | null }>("SELECT delivery, delivery_error, delivery_ref FROM run_charges WHERE run_id = $1", [m1.run.id]);
+    assert.ok(m1row!.delivery === "pending" && /no active billing meter named run_charges/.test(m1row!.delivery_error ?? ""), `no meter in Stripe: the charge waits, saying why (${m1row!.delivery_error})`);
+    await makeMeter();
+    await unclaim(m1.run.id);
+    await drain();
+    [m1row] = await w.db.query("SELECT delivery, delivery_error, delivery_ref FROM run_charges WHERE run_id = $1", [m1.run.id]);
+    assert.ok(m1row!.delivery === "ledger" && /no live subscription/.test(m1row!.delivery_ref ?? ""), "a customer with no subscription on the meter: the ledger, saying why");
+    assert.equal(meterPosts(m1.run.id).length, 0, "and nothing is sent that Stripe would never invoice");
+    await subscribe(cusA);
+    const key = process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_SECRET_KEY;
+    const m2 = await startClaim(A.orgId, "flat");
+    await w.complete(m2);
+    await drain();
+    const [m2row] = await w.db.query<{ delivery: string; delivery_error: string | null }>("SELECT delivery, delivery_error FROM run_charges WHERE run_id = $1", [m2.run.id]);
+    assert.ok(m2row!.delivery === "pending" && /not configured/.test(m2row!.delivery_error ?? ""), "Stripe's key missing on the server: a customer's charge waits, never dropped to the ledger");
+    process.env.STRIPE_SECRET_KEY = key;
+    await unclaim(m2.run.id);
+    await drain();
+    assert.equal((await charge(m2.run.id)).delivery, "stripe", "and goes once the key is back");
     // A succeeded fixed-price run: its fixed amount, to A's Stripe customer.
     const flat = await startClaim(A.orgId, "flat", "user_a1");
     await w.complete(flat);
@@ -204,6 +242,7 @@ try {
     // ---------- 3. exactly once ----------
     // Retries: an infrastructure failure with attempts left requeues the run (no charge); the attempt that ends it charges once.
     const rt = await startClaim(A.orgId, "plus");
+    assert.deepEqual(await w.spend(rt, 2), [200, 200], "the first attempt spends, then the platform fails it");
     await fail(rt, "infrastructure");
     assert.equal((await charges(rt.run.id)).length, 0, "a retried attempt charges nothing");
     let rt2 = await w.claim(["plus"]);
@@ -212,6 +251,18 @@ try {
     await w.complete(rt2!);
     ch = await charge(rt.run.id);
     assert.equal(ch.attempt, 2, "charged once, for the attempt that ended the run");
+    assert.equal(Number(ch.amount_minor), 100, "and only that attempt's model cost: the attempt the platform failed is never charged");
+    // Model usage metered after the run ended (a response still streaming) is refreshed into the charge before it is sent.
+    const late = await startClaim(A.orgId, "plus");
+    assert.deepEqual(await w.spend(late, 1), [200]);
+    await w.complete(late);
+    const lateBefore = Number((await charge(late.run.id)).amount_minor);
+    await w.db.query("UPDATE gateway_usage SET cost_usd = cost_usd + 0.12 WHERE run_id = $1", [late.run.id]);
+    await unclaim(late.run.id);
+    await drain();
+    ch = await charge(late.run.id);
+    assert.equal(Number(ch.amount_minor), lateBefore + Math.round(12 * 1.5), "late usage is in the charge that was sent");
+    assert.equal(meterPosts(late.run.id)[0]?.body.payload.value, String(ch.amount_minor));
     // A lapsed lease swept back to the queue, then succeeding: still one charge.
     const sw = await startClaim(A.orgId, "plus");
     await w.db.query("UPDATE runs SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [sw.run.id]);
@@ -257,6 +308,7 @@ try {
     const dn = await startClaim(B.orgId, "flat");
     const cusB = (await billing.createCustomer({ name: B.name, slug: B.slug })).id;
     await w.db.query("UPDATE organizations SET stripe_customer_id = $2 WHERE id = $1", [B.orgId, cusB]);
+    await subscribe(cusB);
     await w.complete(dn);
     await drain();
     const [down] = await w.db.query<{ delivery: string; delivery_error: string | null; claimed_until: Date | null }>("SELECT delivery, delivery_error, claimed_until FROM run_charges WHERE run_id = $1", [dn.run.id]);
@@ -316,6 +368,10 @@ try {
     assert.deepEqual(txn.map((t: any) => [t.customer, t.amount, t.currency]), [[cusA, -250, "usd"]], "to A's Stripe balance");
     assert.equal(posted.find((p) => p.path.endsWith("/balance_transactions") && p.body.metadata?.octillion_run_id === flat.run.id)?.key, `run_credit:${flat.run.id}`, "keyed by the run");
     assert.equal((await credit(operator, flat.run.id, "again")).status, 409, "a run is credited once");
+    assert.equal((await credit(operator, m1.run.id, "kept in the ledger")).status, 201);
+    await drain();
+    assert.deepEqual((await charges(m1.run.id)).map((r) => [r.kind, r.delivery]), [["charge", "ledger"], ["credit", "ledger"]], "a ledger charge's credit stays in the ledger");
+    assert.ok(!stripe.balanceTxns.some((t: any) => t.metadata?.octillion_run_id === m1.run.id), "and is not sent to Stripe");
     assert.equal((await credit(operator, q.id, "free run")).status, 409, "a run that paid nothing has nothing to credit");
     assert.equal((await credit(operator, "run_nosuchrun", "x")).status, 404);
     const rev = await (await w.http.req("GET", "/api/admin/onboarding/spend/revenue", { authorization: `Bearer ${viewer}` })).json() as any;

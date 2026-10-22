@@ -148,7 +148,7 @@ interface ChargeTotals { currency: string; charged: number; credited: number; ne
 interface ChargeRow {
   id: string; run_id: string; kind: 'charge' | 'credit'; pack: string; job_kind: string; attempt: number; run_status: string; requested_by: string | null;
   currency: string; amount_minor: number; amount: number; model_cost_usd: number; reason: string | null;
-  delivery: 'pending' | 'stripe' | 'ledger' | 'none'; delivery_error: string | null; created_at: string; delivered_at: string | null;
+  delivery: 'pending' | 'stripe' | 'ledger' | 'none'; delivery_error: string | null; delivery_note?: string | null; created_at: string; delivered_at: string | null;
   account: { slug: string; name: string | null };
 }
 interface RunCharges {
@@ -896,7 +896,7 @@ function ChargesTab({ data, loading, bar, off }: TabProps<RunCharges> & { off: b
     { key: 'cost', label: 'Model cost', className: 'text-right', hidden: true, type: 'number', value: (r) => r.model_cost_usd, render: (r) => num(cents(r.model_cost_usd)) },
     { key: 'amount', label: 'Amount', className: 'text-right', keep: true, type: 'number', value: (r) => r.amount, render: (r) => twoLine(amountOf(r.amount, r.currency), r.reason) },
     { key: 'delivery', label: 'Billed to', type: 'select', value: (r) => DELIVERY[r.delivery], render: (r) => (
-      <span className={cn(r.delivery === 'pending' && r.delivery_error && AMBER)} title={r.delivery_error ?? undefined}>{DELIVERY[r.delivery]}{r.delivery === 'pending' && r.delivery_error ? ' (retrying)' : ''}</span>) }
+      <span className={cn(r.delivery === 'pending' && r.delivery_error && AMBER)} title={r.delivery_error ?? r.delivery_note ?? undefined}>{DELIVERY[r.delivery]}{r.delivery === 'pending' && r.delivery_error ? ' (retrying)' : ''}</span>) }
   ];
   return (<>
     <RecordView id='finops-run-charges' rows={rows} loading={loading} rowKey={(r) => r.id} cols={cols} noun='charges' initialSize={50} compact summary={cards}
