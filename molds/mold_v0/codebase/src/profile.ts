@@ -15,12 +15,18 @@
  *                      paragraph for the tools generated from the packs is added after either
  *   install_clients    optional (mold_v0-010): the clients the install pages and a member's key setup offer, by id
  *                      (src/connect-catalog.ts); absent, every client
+ *   source_offer       optional (mold_v0-050): where this build's own source is offered, {app: {url, license}}, or
+ *                      {app: "licensor_exception"} when the shell's licensor (or an affiliate) runs it under the additional
+ *                      permission that does not require the offer, which the build then says (src/source-offer.ts);
+ *                      absent, the build says nothing about its own source (its packs' copyleft upstreams are offered
+ *                      either way)
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
  */
 import { GENERATED_PROFILE } from "./profile.generated.js";
 import type { ProfileLimits } from "./rate-limits.js";
+import type { SourceOfferSetting } from "./source-offer.js";
 
 export interface Profile {
   name: string;
@@ -34,6 +40,7 @@ export interface Profile {
   mcp_server_version?: string;
   mcp_instructions?: string;
   install_clients?: readonly string[];
+  source_offer?: SourceOfferSetting;
 }
 
 export const PROFILE: Readonly<Profile> = Object.freeze({ ...(GENERATED_PROFILE as Profile) });

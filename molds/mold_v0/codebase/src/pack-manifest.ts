@@ -49,7 +49,13 @@ export const PackJsonSchema = z.object({
   entry: z.string().regex(/^[a-z0-9_\-/]+\.ts$/i, "a .ts file inside the pack").refine((p) => !p.includes(".."), "a .ts file inside the pack").optional(),
   migrations: inside("migrations").optional(),
   runner: inside("runner").optional(),
-  upstream: z.unknown().optional(),
+  /**
+   * The upstream project the pack runs or reads, pinned by a full commit (mold_v0-050): its repository, the commit and its
+   * licence (an SPDX id). A copyleft licence makes the build offer that project's source at that commit (src/source-offer.ts:
+   * the console's About page and footer, the install pages and the MCP server's instructions); an agent repository a job
+   * kind runs from the same repository must be at the same commit, so the offer names what runs.
+   */
+  upstream: UpstreamSchema.optional(),
   /**
    * A host pack (mold_v0-039; src/host.ts): its server entry (defineHost), its operator scripts' directory and the profile
    * it brings under the build's profile.json. Only a pack the build's profile.json lists in `host_packs` may have one

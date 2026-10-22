@@ -14,6 +14,10 @@
  *                             tool a pack excluded or moved to the admin MCP, nor a staff tool. With no pack tool these
  *                             two are not mounted and the pages above are byte for byte what they were.
  *
+ * The source offer (mold_v0-050, src/source-offer.ts): when a pack runs a copyleft upstream project, or the profile offers
+ * the app's own source, every page ends with a "Source code" footer naming each project, its licence and the exact
+ * commit's address, and /install.json carries the same sentences as `source_code`. Without one, nothing changes.
+ *
  * The profile's `install_clients` (optional) narrows the clients to those it names. A signed-in member's own setup,
  * with their new key in each client's header (never a URL), is memberSetup below (the console's API keys page,
  * src/member-keys.ts).
@@ -27,6 +31,8 @@ import { plain } from "./mcp-catalog.js";
 import { generatedTools, permitted } from "./mcp-tools.js";
 import { packs } from "./packs.js";
 import { PROFILE, type Profile } from "./profile.js";
+import { currentOffer } from "./data-map.js";
+import { offerFooterHtml, offerSentences } from "./source-offer.js";
 
 /** What the key placeholder reads as in a header: never a key, never in a URL. */
 export const KEY_PLACEHOLDER = "<your API key>";
@@ -52,7 +58,9 @@ export function installGuide(publicUrl: string, profile: Pick<Profile, "install_
   });
   return { name: PROFILE.name, server: PROFILE.mcp_server_name, url, sign_in: signInAvailable, clients,
     // Only when the packs add tools (mold_v0-010): absent, the guide is exactly what it was.
-    ...(toolReference().packs.length ? { tool_reference: "/install/tools" } : {}) };
+    ...(toolReference().packs.length ? { tool_reference: "/install/tools" } : {}),
+    // The source offer (mold_v0-050), only when there is one: a copyleft upstream of a pack, or the app's own source.
+    ...(currentOffer().offered ? { source_code: offerSentences(currentOffer()) } : {}) };
 }
 
 /**
@@ -122,7 +130,7 @@ main{max-width:760px;margin:0 auto;padding:32px 16px}
 a{color:inherit}h1{font-size:1.6rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}.muted{color:var(--muted)}
 pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
 ul{padding-left:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0}
-</style></head><body><main>${body}</main></body></html>`;
+</style></head><body><main>${body}${offerFooterHtml(currentOffer())}</main></body></html>`;
 
 const block = (v: { steps: string; command?: string | null; file?: string | null; snippet?: string | null; install_url?: string | null }) =>
   `<p>${esc(v.steps)}</p>` +
