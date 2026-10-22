@@ -16,10 +16,21 @@ interface PackRoutes {
   rewrites: { source: string; destination: string }[];
   redirects: { source: string; destination: string; permanent: boolean }[];
 }
+/**
+ * Which sign-in the console runs (mold_v0-004; src/lib/auth/provider.ts), fixed at build time: AUTH_PROVIDER (or
+ * NEXT_PUBLIC_AUTH_PROVIDER) when it says builtin or clerk, else clerk when a Clerk publishable key is set (an app already
+ * on Clerk keeps it), else builtin. The API server applies the same rule to its own environment (src/auth-provider.ts).
+ */
+const AUTH_PROVIDER = (() => {
+  const v = (process.env.NEXT_PUBLIC_AUTH_PROVIDER || process.env.AUTH_PROVIDER || '').trim().toLowerCase();
+  if (v === 'clerk' || v === 'builtin') return v;
+  return process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? 'clerk' : 'builtin';
+})();
 const packRoutes = JSON.parse(readFileSync(path.join(process.cwd(), 'src', 'config', 'pack-routes.generated.json'), 'utf8')) as PackRoutes;
 
 const config: NextConfig = {
   output: process.env.BUILD_STANDALONE === 'true' ? 'standalone' : undefined,
+  env: { NEXT_PUBLIC_AUTH_PROVIDER: AUTH_PROVIDER },
   images: { remotePatterns: [{ protocol: 'https', hostname: 'img.clerk.com' }] },
   compiler: { removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error'] } : false },
   async redirects() {

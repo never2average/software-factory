@@ -79,6 +79,12 @@
      "url": "/app/credentials",
      "icon": "lock",
      "items": []
+    },
+    {
+     "title": "Files",
+     "url": "/app/files",
+     "icon": "page",
+     "items": []
     }
    ]
   },
