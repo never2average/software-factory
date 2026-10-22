@@ -41,7 +41,7 @@ of them. Three merged files were rewritten once for it, the only time: `0001_bas
 it no longer names the sessions table). `src/migrate.ts` `SPLIT_MIGRATIONS` lists each file's earlier checksum: a
 database that applied the earlier version keeps it, and it is not reported as edited. That database already has the
 product's tables with their rows, so the host pack's migrations that took them over (`host.schema.adopts`) are recorded
-there without running; nothing in them touches its rows. `0016_gateway_session_policies` gives an older database the
+there without running; nothing in them touches its rows. `0017_gateway_session_policies` gives an older database the
 same gateway policies a new one gets. `scripts/fixtures/pre-049-migrations/` keeps the three earlier files: `npm run
 test:migrations` builds databases at the older versions from them (with rows in every table) and upgrades each.
 Any other edit of a merged file is still refused.

@@ -832,7 +832,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     split file has the product's part already, rows and all: the host pack's migration that adopts it is recorded there
     without running (its one-time repairs, which already ran, never run again), and refused if its tables are missing.
     Elsewhere it runs (on a schema-on-boot database too, as its baseline did once more before). The gateway's session rule no longer names `agent_sessions` (`octillion_session_org()`, 0003,
-    0009 and `0016_gateway_session_policies`, which rewrites it the same way on a database from before), so the shell's
+    0009 and `0017_gateway_session_policies`, which rewrites it the same way on a database from before), so the shell's
     own policies hold with or without the pack.
   The session engine stays in the shell and reads those tables only in a build whose host pack has them
   (`src/host-tables.ts`, from the build's registry, never from the database); with none it is dormant: no demand, no

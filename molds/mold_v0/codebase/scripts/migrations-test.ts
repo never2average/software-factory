@@ -172,7 +172,7 @@ async function suite(kind: "pglite" | "postgres") {
   if (ownsAll) {
     // From scratch, the differences from the earlier schema are only: the runner's own record of pack migrations and
     // its two helpers (every build with pack migrations has them), and the gateway's session rule through a function
-    // (0003, 0009, 0016). Every table, column, default, constraint, index, policy and grant of the product is the same.
+    // (0003, 0009, 0017). Every table, column, default, constraint, index, policy and grant of the product is the same.
     const diff = (Object.keys(want) as (keyof typeof want)[]).flatMap((k) => [...want[k].filter((x) => !mainCatalog[k].includes(x)).map((x) => `+${k} ${x}`),
       ...mainCatalog[k].filter((x) => !want[k].includes(x)).map((x) => `-${k} ${x}`)]);
     const why = (d: string) => /pack_schema_migrations|shell_pack_(tenant|private)_table/.test(d) ? "pack bookkeeping"
