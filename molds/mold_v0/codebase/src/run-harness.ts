@@ -36,6 +36,7 @@
  * the harness with egress "system" (the sandbox's own proxy, which the firewall also sends direct 443 and DNS to).
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { chmodSync, chownSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
@@ -49,6 +50,8 @@ import type { RunCredentials } from "./credentials.js";
 import { findSecret, redactJson, redactText, type Secret } from "./credential-redact.js";
 import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, recordedFiles, restoreInto, stripPaths, underWriteBack } from "./agent-workspace.js";
+import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
+import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
 
 /** What a runner needs from the engine: in-process (localRunnerClient) or over HTTP (httpRunnerClient). */
 export interface RunnerClient {
@@ -184,7 +187,20 @@ export interface HarnessOptions {
    * the run's user nothing (a run sandbox, mold_v0-055).
    */
   noNewPrivs?: boolean;
+  /** The run tools (mold_v0-072): where the image installed them (OCTILLION_RUN_TOOLS_DIR, /opt/octi-tools) and, for the offline tests only, another catalogue. */
+  runTools?: { dir?: string; catalog?: ToolCatalog };
+  /**
+   * The checkout cache's directory (mold_v0-074): OCTILLION_RUN_CACHE_DIR, else /var/cache/octi-checkouts for a runner
+   * started as root, else one under the system's temp directory. Per workspace inside it, capped at
+   * OCTILLION_RUN_CACHE_MAX_BYTES (2 GiB) per workspace, entries unused for OCTILLION_RUN_CACHE_DAYS (7) removed.
+   */
+  cacheDir?: string;
 }
+
+/** The checkout cache's settings (mold_v0-074). */
+const cacheBase = (o: HarnessOptions) => o.cacheDir ?? process.env.OCTILLION_RUN_CACHE_DIR ?? (process.getuid?.() === 0 ? "/var/cache/octi-checkouts" : path.join(tmpdir(), `octi-checkouts-${process.getuid?.() ?? 0}`));
+const cacheMaxBytes = () => Math.max(1024 * 1024, Number(process.env.OCTILLION_RUN_CACHE_MAX_BYTES ?? 2 * 1024 ** 3) || 2 * 1024 ** 3);
+const cacheDays = () => Math.max(0, Number(process.env.OCTILLION_RUN_CACHE_DAYS ?? 7) || 7);
 
 export class HarnessConfigError extends Error {}
 /** The isolation a runner uses: a dedicated user, or (tests) an explicit opt-out. Throws when neither. */
@@ -307,6 +323,10 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   if (agent && claim.gateway.token) secrets.push({ name: "gateway token", value: claim.gateway.token });
   let secretDir: string | null = null;
   const dropSecrets = () => { if (secretDir) { rmSync(secretDir, { recursive: true, force: true }); secretDir = null; } };
+  /** mold_v0-074: the checkout cache (entered for this run's workspace only) and the links it put into the checkout. */
+  let cache: CheckoutCache | null = null;
+  const mounts: { at: string; target: string }[] = [];
+  let toolBin: string | null = null;
   const flush = async () => {
     if (!pending.length || leaseLost) return;
     const batch = pending.splice(0, 500).map((e) => ({ type: redactText(e.type, secrets) === e.type ? e.type : "redacted", data: redactJson(e.data, secrets) }));
@@ -344,6 +364,74 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   }, Math.max(1000, (claim.lease_seconds * 1000) / 3));
   const deadline = setTimeout(() => stop("deadline"), Math.max(0, new Date(claim.deadline_at).getTime() - Date.now()));
   const untilDeadline = () => Math.max(1000, new Date(claim.deadline_at).getTime() - Date.now());
+  /**
+   * mold_v0-074: the runner's own checkout step. The manifests (files of the checkout, read as root without following a
+   * link, once every process of the run's user is gone) name repositories: each on one of the step's hosts, at a full
+   * commit id. Each is fetched at exactly that commit (fetchPinned, outside the run's proxy as the agent repository is,
+   * with the step's credential through git's credential helper for that host only) into the workspace's checkout cache,
+   * and linked read-only at its mount in the checkout. The links are removed before the write-back is collected.
+   */
+  const checkoutStep = async (stepName: string, c: NonNullable<NonNullable<typeof agent>["steps"][number]["checkout"]>, values: Record<string, string>, timeoutMs: number) => {
+    const t0 = Date.now();
+    const glob = expand(c.manifests, values);
+    if (glob.split("/").includes("..") || glob.startsWith("/")) throw new AgentRunError(`the manifests ${glob} are outside the checkout`);
+    // By default from the workspace as restored (what earlier, validated runs committed), never from what this run's
+    // programs wrote: they do not choose what the runner fetches with the step's credential (`source: "checkout"` lets them).
+    const found = readManifests(c.source === "checkout" ? work : snap, glob, c.max_repos);
+    const kindHosts = (spec.egress ?? []).map((h: string) => h.replace(/^\*\./, "").toLowerCase());
+    const onHost = (h: string, list: string[]) => list.some((x) => h === x || h.endsWith(`.${x}`));
+    const repos = found.map((m) => {
+      const url = field(m.json, c.url), commit = field(m.json, c.commit), name = field(m.json, c.name);
+      if (!url || !commit || !name) throw new AgentRunError(`${m.path}: no ${!url ? c.url : !commit ? c.commit : c.name}`);
+      if (!/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) throw new AgentRunError(`${m.path}: ${c.commit} is not a full commit id`);
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || name === "." || name === "..") throw new AgentRunError(`${m.path}: ${c.name} is not a plain name`);
+      let u: URL;
+      try { u = new URL(url); } catch { throw new AgentRunError(`${m.path}: ${c.url} is not an address`); }
+      const local = (opts.allowFileUpstream && u.protocol === "file:") || (opts.allowHttpUpstream && u.protocol === "http:" && ["127.0.0.1", "localhost"].includes(u.hostname));
+      if (!local) {
+        if (!/^https:\/\/[A-Za-z0-9.-]+(:443)?\/[A-Za-z0-9._~\/-]+$/.test(url)) throw new AgentRunError(`${m.path}: ${c.url} must be an https:// address with no user, query or fragment`);
+        const h = u.hostname.toLowerCase();
+        // Exactly one of the step's hosts (never a subdomain: the token is offered to that host alone).
+        if (!c.hosts.includes(h)) throw new AgentRunError(`${m.path}: ${h} is not one of the step's hosts (${c.hosts.join(", ")})`);
+        if (!onHost(h, kindHosts)) throw new AgentRunError(`${m.path}: ${h} is not in the kind's egress`);
+      }
+      const mount = expand(c.mount, { ...values, name });
+      if (!mount || mount.startsWith("/") || mount.split("/").some((x) => x === "" || x === "." || x === "..") || /[\u0000-\u001f*?]/.test(mount)) throw new AgentRunError(`mount ${mount}: not a plain path inside the checkout`);
+      return { url, commit, name, mount, at: m.path, proto: u.protocol.replace(/:$/, ""), host: u.host.toLowerCase() };
+    });
+    if (new Set(repos.map((r) => r.mount)).size !== repos.length) throw new AgentRunError("two repositories have the same mount");
+    // A mount never replaces the workspace's own files (they would not be written back).
+    for (const r of repos) { let st = null; try { st = lstatSync(path.join(snap, r.mount)); } catch { /* none */ } if (st) throw new AgentRunError(`the workspace holds files at ${r.mount}: a checkout is not mounted over them`); }
+    if (!repos.length) { pending.push({ type: "agent_checkout_repos", data: { step: stepName, repos: [] } }); return; }
+    if (!cache) { cache = new CheckoutCache(cacheBase(opts), run.org_id, { maxBytes: cacheMaxBytes(), maxAgeDays: cacheDays(), runUser: !!as }); cache.open(); }
+    const cred = c.credential ? (delivered?.credentials ?? []).find((x) => x.name === c.credential) : undefined;
+    if (c.credential && !cred) pending.push({ type: "git_credentials_missing", data: { names: [c.credential] } });
+    const report: Record<string, unknown>[] = [];
+    for (const r of repos) {
+      if (Date.now() - t0 > timeoutMs) throw new AgentRunError(`ran past its time limit (${Math.round(timeoutMs / 1000)} s)`);
+      const entry = await cache.get(r.url, r.commit, c.max_bytes, async (dest) => {
+        let helperDir: string | null = null;
+        try {
+          let credentialHelper: { scope: string; script: string } | undefined;
+          if (cred && r.proto !== "file") {
+            const tmpfs = opts.secretsBase ?? (existsSync("/dev/shm") && statSync("/dev/shm").isDirectory() ? "/dev/shm" : null);
+            if (!tmpfs) throw new AgentRunError("a credentialed checkout needs a tmpfs (/dev/shm)", "infrastructure");
+            helperDir = mkdtempSync(path.join(tmpfs, "run-git-"));
+            chmodSync(helperDir, 0o700);
+            const g = gitCredentialFiles(helperDir, [{ protocol: r.proto as "https" | "http", host: r.host, username: c.username, value: cred.value }], null);
+            credentialHelper = { scope: g.scopes[0]!, script: g.helper };
+          }
+          await fetchPinned(r.url, r.commit, dest, { allowFile: opts.allowFileUpstream, allowHttp: opts.allowHttpUpstream, home: path.join(scratch, "git-home-checkout"),
+            timeoutMs: Math.max(1000, timeoutMs - (Date.now() - t0)), credentialHelper, maxTreeBytes: c.max_bytes });
+        } finally { if (helperDir) rmSync(helperDir, { recursive: true, force: true }); }
+      });
+      const target = entry.tree;
+      const { replaced } = mountInto(work, r.mount, target, as);
+      mounts.push({ at: path.join(work, r.mount), target });
+      report.push({ name: r.name, url: r.url, commit: r.commit, mount: r.mount, cached: entry.hit, bytes: entry.bytes, files: entry.files, ...(replaced ? { replaced: true } : {}) });
+    }
+    pending.push({ type: "agent_checkout_repos", data: { step: stepName, repos: report } });
+  };
   try {
     let cmd: string, cmdArgs: string[], validator: { cmd: string; args: string[]; timeoutMs: number } | null;
     let declaredEnv: Record<string, string> = {};
@@ -362,6 +450,13 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         // Stripped again: a stripped path the workspace carried (under a write-back path) never comes back through it.
         const again = stripPaths(work, agent.strip);
         pending.push({ type: "workspace_restored", data: { ...r, ...(again.length ? { stripped: again.length } : {}) } });
+        // mold_v0-072: the kind's tools, as pinned, from the image (never downloaded now), first on the run's PATH.
+        if (agent.tools.length) {
+          const catalog = opts.runTools?.catalog ?? RUN_TOOL_CATALOG;
+          try { toolBin = linkTools(verifyTools(agent.tools, { dir: opts.runTools?.dir, catalog }), path.join(scratch, "tools-bin")); }
+          catch (e) { throw e instanceof RunToolError ? new AgentRunError(`${e.message}: the runner image is not built for this kind (scripts/install-run-tools.ts)`) : e; }
+          pending.push({ type: "agent_tools", data: { tools: agent.tools.map((t) => `${t} ${catalog[t]?.version ?? "?"}`) } });
+        }
         cmd = agent.command[0] === "node" ? process.execPath : agent.command[0]!;
         cmdArgs = agent.command.slice(1).map((a) => expand(a, values));
         const gw: Record<string, string> = { "gateway.url": claim.gateway.gateway_url, ...(claim.gateway.token ? { "gateway.token": claim.gateway.token } : {}),
@@ -390,7 +485,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       return await complete({ outcome: "failed", error_kind: kind, error: `prepare: ${(e as Error).message}` });
     }
     const runEnv: Record<string, string> = {
-      PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, LANG: "C.UTF-8",
+      PATH: `${toolBin ? `${toolBin}:` : ""}${process.env.PATH ?? "/usr/bin:/bin"}`, HOME: home, LANG: "C.UTF-8",
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_KIND: run.kind, RUN_OUT: out, RUN_WORKSPACE: work,
       RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
     };
@@ -422,38 +517,131 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       if (spec.credentials?.length) {
         delivered = await client.credentials(run.id, lease);
         secrets = [...secrets, ...delivered.credentials.map((c) => ({ name: c.name, value: c.value }))];
-        const files = delivered.credentials.filter((c) => c.file);
-        if (files.length) {
-          // On tmpfs when there is one: a value never reaches a disk. Only the run's user can enter the directory.
-          const base = opts.secretsBase ?? (existsSync("/dev/shm") && statSync("/dev/shm").isDirectory() ? "/dev/shm" : null);
-          if (!base) throw new Error("credential files need a tmpfs (/dev/shm, or secretsBase): none here, so none is written to disk");
-          secretDir = mkdtempSync(path.join(base, "run-cred-"));
-          chmodSync(secretDir, 0o700);
-          for (const f of files) {
-            const p = path.join(secretDir, path.basename(f.file!));
-            writeFileSync(p, f.value, { mode: 0o400, flag: "wx" });
-            if (as) chownSync(p, as.uid, as.gid);
-          }
-          if (as) chownSync(secretDir, as.uid, as.gid);
-        }
       }
     } catch (e) {
-      dropSecrets();
       return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` });
     }
     const base: Record<string, string> = {
       ...runEnv,
-      ...(secretDir ? { RUN_CREDENTIALS_DIR: secretDir } : {}),
       // A program of the pack's own gets the gateway's variables for its kind's providers; an agent exactly what its
       // configuration declares (its env, with the run's gateway token where it says {gateway.token}).
       ...(agent ? declaredEnv : claim.gateway.env), ...(proxy?.env ?? {}),
     };
-    // A credential's variable never replaces one the shell sets (a gateway provider's, say): that one is not delivered.
-    const credEnv: Record<string, string> = {};
-    const shadowed: string[] = [];
-    for (const c of delivered?.credentials ?? []) if (c.env) { if (c.env in base) shadowed.push(c.name); else credEnv[c.env] = c.value; }
-    if (shadowed.length) pending.push({ type: "credentials_shadowed", data: { names: shadowed } });
-    const env: Record<string, string> = { ...credEnv, ...base };
+    /**
+     * The credentials one program receives (mold_v0-034; per step since mold_v0-074): those it names (null: all the
+     * kind's), each as its field delivers it (a variable, or a 0400 file in a private directory on tmpfs), and git's
+     * credential helper for its git_credentials (gitCredentialFiles). The directory goes when the program ends.
+     */
+    const stepBase: Record<string, string> = { ...runEnv, ...(proxy?.env ?? {}) };
+    const deliver = (names: string[] | null, git: { credential: string; host: string; username: string }[], env: Record<string, string> = base): Record<string, string> => {
+      const chosen = (delivered?.credentials ?? []).filter((c) => names === null || names.includes(c.name));
+      const files = chosen.filter((c) => c.file);
+      const gits: GitCredential[] = [];
+      const missing: string[] = [];
+      for (const g of git) {
+        const c = (delivered?.credentials ?? []).find((x) => x.name === g.credential);
+        if (c) gits.push({ protocol: "https", host: g.host, username: g.username, value: c.value }); else missing.push(g.credential);
+      }
+      if (missing.length) pending.push({ type: "git_credentials_missing", data: { names: missing } });
+      const extra: Record<string, string> = {};
+      if (files.length || gits.length) {
+        // On tmpfs when there is one: a value never reaches a disk. Only the run's user can enter the directory.
+        const tmpfs = opts.secretsBase ?? (existsSync("/dev/shm") && statSync("/dev/shm").isDirectory() ? "/dev/shm" : null);
+        if (!tmpfs) throw new Error("credential files need a tmpfs (/dev/shm, or secretsBase): none here, so none is written to disk");
+        secretDir = mkdtempSync(path.join(tmpfs, "run-cred-"));
+        chmodSync(secretDir, 0o700);
+        for (const f of files) {
+          const p = path.join(secretDir, path.basename(f.file!));
+          writeFileSync(p, f.value, { mode: 0o400, flag: "wx" });
+          if (as) chownSync(p, as.uid, as.gid);
+        }
+        if (files.length) extra.RUN_CREDENTIALS_DIR = secretDir;
+        if (gits.length) Object.assign(extra, gitCredentialFiles(secretDir, gits, as).env);
+        if (as) chownSync(secretDir, as.uid, as.gid);
+      }
+      // A credential's variable never replaces one the shell sets (a gateway provider's, say): that one is not delivered.
+      const credEnv: Record<string, string> = {};
+      const shadowed: string[] = [];
+      for (const c of chosen) if (c.env) { if (c.env in env || c.env in extra) shadowed.push(c.name); else credEnv[c.env] = c.value; }
+      if (shadowed.length) pending.push({ type: "credentials_shadowed", data: { names: shadowed } });
+      return { ...credEnv, ...env, ...extra };
+    };
+    /** Programs' stderr, redacted whole and then cut (a cut never leaves part of a value behind). */
+    const stderrTail = (err: string, cut: boolean, data: Record<string, unknown> = {}) => {
+      if (cut) err = err.includes("\n") ? err.slice(err.indexOf("\n") + 1) : "";
+      let tail = redactText(err, secrets);
+      if (tail.length > 2000) { tail = tail.slice(-2000); tail = tail.includes("\n") ? tail.slice(tail.indexOf("\n") + 1) : ""; }
+      if (tail.trim()) pending.push({ type: "stderr", data: { ...data, tail } });
+    };
+    const values = agent ? argValues(agent, run) : {};
+    if (agent) {
+      // mold_v0-073: the declared inputs, each a new file of the checkout (checked, capped, never a credential's value).
+      try {
+        const written: Record<string, unknown>[] = [];
+        for (const [name, inp] of Object.entries(agent.inputs)) {
+          const [root, ...rest] = inp.from.split(".");
+          const v = rest.reduce<unknown>((o, k) => (o && typeof o === "object" && !Array.isArray(o) && Object.hasOwn(o, k) ? (o as Record<string, unknown>)[k] : undefined), root === "scope" ? run.scope : run.targets);
+          if (v === undefined) throw new AgentRunError(`input ${name}: the run gives no ${inp.from}`);
+          if (inp.format === "text" && typeof v !== "string") throw new AgentRunError(`input ${name}: a text input takes a string`);
+          const body = Buffer.from(inp.format === "text" ? (v as string) : `${JSON.stringify(v, null, 2)}\n`, "utf8");
+          // The size first: the schema's patterns never see more than the cap allows.
+          if (body.length > inp.max_bytes) throw new AgentRunError(`input ${name} is ${body.length} bytes, more than its ${inp.max_bytes}`);
+          const problems = checkInput(v, inp.schema as InputSchema);
+          if (problems.length) throw new AgentRunError(`input ${name} does not match its schema: ${problems.slice(0, 5).join("; ").slice(0, 600)}`);
+          // Never a secret: a value of the run's credentials or its gateway token is not written into the checkout.
+          const hit = findSecret(body, secrets);
+          if (hit) throw new AgentRunError(`input ${name} holds the value of credential ${hit}: it is not written`);
+          writeInputFile(work, inp.path, body, as);
+          written.push({ name, path: inp.path, bytes: body.length, sha256: createHash("sha256").update(body).digest("hex") });
+        }
+        if (written.length) pending.push({ type: "agent_inputs", data: { inputs: written } });
+      } catch (e) {
+        return await complete({ outcome: "failed", error_kind: "run", error: `inputs: ${(e as Error).message}`.slice(0, 1000) });
+      }
+      // mold_v0-074: the steps before the command, in order.
+      for (const step of agent.steps) {
+        const s0 = Date.now();
+        if (step.checkout) {
+          try {
+            if (as) ensureUserGone(as);
+            await checkoutStep(step.name, step.checkout, values, Math.min(step.timeout_seconds * 1000, untilDeadline()));
+          } catch (e) {
+            if (e instanceof HarnessConfigError) return await complete({ outcome: "failed", error_kind: "infrastructure", error: e.message });
+            const kind = e instanceof AgentRunError ? e.kind : "infrastructure";
+            return await complete({ outcome: "failed", error_kind: kind, error: redactText(`step ${step.name}: ${(e as Error).message}`, secrets).slice(0, 1000) });
+          }
+          usage[`step_${step.name}_ms`] = Date.now() - s0;
+          if (stopped === "lease") return null;
+          if (stopped) return await complete({ outcome: "failed", error_kind: stopped === "deadline" ? "timeout" : "run", error: stopped === "deadline" ? "the run reached its deadline" : "cancelled" });
+          continue;
+        }
+        let env: Record<string, string>;
+        // A step gets the run's own variables and only what it names: the kind's env (the gateway token) only with env: true.
+        try { env = deliver(step.credentials, step.git_credentials, step.env ? base : stepBase); }
+        catch (e) { dropSecrets(); return await complete({ outcome: "failed", error_kind: e instanceof AgentRunError ? e.kind : "infrastructure", error: `step ${step.name}: ${(e as Error).message}` }); }
+        const sc = step.command!;
+        let serr = "", scut = false;
+        const code = await prog(sc[0] === "node" ? process.execPath : sc[0]!, sc.slice(1).map((a) => expand(a, values)), { cwd: work, env, as, holder: proc,
+          timeoutMs: Math.min(step.timeout_seconds * 1000, untilDeadline()),
+          onStdout: (l) => { if (pending.length < 5000) pending.push({ type: "step_log", data: { step: step.name, line: redactText(l, secrets).slice(0, 2000) } }); },
+          onStderr: (t) => { serr += t; if (serr.length > 65536) { serr = serr.slice(-65536); scut = true; } } });
+        const stepTimedOut = !!proc.timedOut;
+        if (as) killUser(as);
+        dropSecrets(); // a step's credential files and git's helper go with it: the next step gets only its own
+        usage[`step_${step.name}_ms`] = Date.now() - s0;
+        stderrTail(serr, scut, { step: step.name });
+        if (stopped === "lease") return null;
+        if (stopped) return await complete({ outcome: "failed", error_kind: stopped === "deadline" ? "timeout" : "run", error: stopped === "deadline" ? "the run reached its deadline" : "cancelled" });
+        if (stepTimedOut) return await complete({ outcome: "failed", error_kind: "timeout", error: `step ${step.name} ran past its time limit (${step.timeout_seconds} s): every process of the run was stopped` });
+        if (code === INFRA_EXIT) return await complete({ outcome: "failed", error_kind: "infrastructure", error: `step ${step.name} reported an infrastructure failure (exit 75)` });
+        if (code !== 0) return await complete({ outcome: "failed", error_kind: "run", error: `step ${step.name} exited with ${code}` });
+      }
+    }
+    let env: Record<string, string>;
+    // The command: the credentials it names, else all the kind's but a checkout's (that one is the runner's own).
+    const checkoutCreds = new Set((agent?.steps ?? []).flatMap((st) => st.checkout?.credential ? [st.checkout.credential] : []));
+    try { env = agent ? deliver(agent.credentials ?? (spec.credentials ?? []).filter((n: string) => !checkoutCreds.has(n)), agent.git_credentials) : deliver(null, []); }
+    catch (e) { dropSecrets(); return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` }); }
     let err = "", errCut = false;
     const c0 = Date.now();
     const code = await prog(cmd, cmdArgs, { cwd: work, env, as, holder: proc,
@@ -464,13 +652,15 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     dropSecrets(); // the files go with the entry program: the validator and the write-back never see them
     usage.command_ms = Date.now() - c0; usage.exit = code;
     // Redacted whole, then cut: a cut never leaves part of a value behind (a cut window loses its first, partial line).
-    if (errCut) err = err.includes("\n") ? err.slice(err.indexOf("\n") + 1) : "";
-    let tail = redactText(err, secrets);
-    if (tail.length > 2000) { tail = tail.slice(-2000); tail = tail.includes("\n") ? tail.slice(tail.indexOf("\n") + 1) : ""; }
-    if (tail.trim()) pending.push({ type: "stderr", data: { tail } });
+    stderrTail(err, errCut);
     // The agent's transcript and usage files (record), whatever its outcome: what it did is worth keeping either way.
     if (agent?.record.length && stopped !== "lease") {
-      try { for (const f of recordedFiles(work, agent.record)) pending.push({ type: "agent_file", data: f }); }
+      try { if (as) ensureUserGone(as); for (const f of recordedFiles(work, agent.record)) pending.push({ type: "agent_file", data: f }); }
+      catch (e) { pending.push({ type: "agent_file_error", data: { error: (e as Error).message.slice(0, 300) } }); }
+    }
+    // mold_v0-071: every file the run wrote under its output directory (a result file, a report), recorded the same way.
+    if (agent && stopped !== "lease") {
+      try { if (as) ensureUserGone(as); for (const f of recordedFiles(out, ["**"])) pending.push({ type: "agent_output", data: f }); }
       catch (e) { pending.push({ type: "agent_file_error", data: { error: (e as Error).message.slice(0, 300) } }); }
     }
     if (stopped === "lease") return null;
@@ -484,6 +674,16 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       // the pinned tree with exactly the staged write-back paths laid over it.
       try {
         if (as) ensureUserGone(as);
+        // The checkout cache's links (mold_v0-074) are never part of the workspace: gone before the write-back is read.
+        // Each only where every directory on its way is still a real one of the checkout (the run may have swapped one for a link).
+        for (const m of mounts) {
+          try {
+            const rel = path.relative(work, m.at).split(path.sep);
+            let cur = work, real = true;
+            for (const p of rel.slice(0, -1)) { cur = path.join(cur, p); if (!lstatSync(cur).isDirectory()) { real = false; break; } }
+            if (real && lstatSync(m.at).isSymbolicLink()) rmSync(m.at, { force: true });
+          } catch { /* gone */ }
+        }
         const wb = collectWriteBack(work, snap, stageDir, agent.write_back);
         const stripped = stripPaths(stageDir, agent.strip);
         if (wb.skipped.length || stripped.length) pending.push({ type: "workspace_skipped", data: { skipped: wb.skipped, ...(stripped.length ? { stripped } : {}) } });
@@ -513,12 +713,32 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     let results: unknown[] = [];
     let text: string | null = null;
     // Read without following a link and only from a plain file (the run's user owns these directories).
+    const rf = agent?.results_from as ResultsFrom | undefined;
     try {
-      text = agent?.results ? readInside(work, agent.results) : readInside(out, "results.json");
+      if (as) ensureUserGone(as);
+      text = rf ? readInside(out, rf.file) : agent?.results ? readInside(work, agent.results) : readInside(out, "results.json");
+      if (text === null && rf) throw new Error(`results_from: ${rf.file} is missing: the program wrote no result file`);
       if (text === null && agent?.results) throw new Error(`${agent.results} is missing: the agent wrote no results`);
     }
     catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `results: ${(e as Error).message}` }); }
-    if (text !== null) {
+    if (text !== null && rf) {
+      // mold_v0-071: the program's own result file, mapped; redacted as text first, as a results list is. Every result
+      // is checked again by the engine (references in the run's own workspace, status, fingerprint, sizes).
+      try {
+        let doc: unknown;
+        try { doc = JSON.parse(redactText(text, secrets)); } catch { throw new AgentRunError(`results_from: ${rf.file} is not valid JSON`); }
+        // Redacted again once parsed (a value written with escapes the text form hid), before anything is cut.
+        const m = mapResults(JSON.stringify(redactJson(doc, secrets)), rf, values);
+        const mode = spec.unresolved_references ?? "reject";
+        pending.push({ type: "results_mapped", data: { file: rf.file, items: m.items, results: m.results.length, skipped: m.skipped, unmapped: m.unmapped.length } });
+        if (m.unmapped.length) {
+          if (mode === "reject") throw new AgentRunError(`results_from: item ${m.unmapped[0]!.item} does not map (${m.unmapped[0]!.reason})${m.unmapped.length > 1 ? ` and ${m.unmapped.length - 1} more` : ""}`);
+          pending.push({ type: "result_unmapped", data: { count: m.unmapped.length, items: m.unmapped.slice(0, 20) } });
+          if (m.unmapped.length > (spec.max_unresolved ?? 100)) throw new AgentRunError(`results_from: ${m.unmapped.length} items do not map (this kind accepts at most ${spec.max_unresolved ?? 100})`);
+        }
+        results = redactJson(m.results, secrets) as unknown[];
+      } catch (e) { return await complete({ outcome: "failed", error_kind: "run", error: `results: ${(e as Error).message}`.slice(0, 1000) }); }
+    } else if (text !== null) {
       // Redacted as text first (a value as a number, or in a form a parser would undo), then as values.
       try { results = redactJson(JSON.parse(redactText(text, secrets)), secrets); if (!Array.isArray(results)) throw new Error("not a list"); }
       // A parse error quotes the file (which may hold a value, cut where redaction cannot see it): never its text.
@@ -544,6 +764,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     clearInterval(beat); clearTimeout(deadline);
     if (as) { killUser(as); sweepUserFiles(as.uid); }
     dropSecrets();
+    (cache as CheckoutCache | null)?.close();
     proxy?.stop();
     if (proxy && opts.onProxyLog) { try { opts.onProxyLog(readFileSync(proxy.log, "utf8")); } catch { opts.onProxyLog(""); } }
     rmSync(scratch, { recursive: true, force: true });

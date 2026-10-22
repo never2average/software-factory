@@ -599,6 +599,46 @@
                 "exclusiveMinimum": 0,
                 "maximum": 100000
               },
+              "price": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "pattern": "^[a-z]{3}$"
+                  },
+                  "fixed": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "cost_plus_percent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10000
+                  },
+                  "on_failure": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost",
+                      "full"
+                    ]
+                  },
+                  "on_cancel": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost"
+                    ]
+                  }
+                },
+                "required": [
+                  "currency"
+                ],
+                "additionalProperties": false
+              },
               "egress": {
                 "default": [],
                 "maxItems": 50,
@@ -840,6 +880,46 @@
                 "type": "number",
                 "exclusiveMinimum": 0,
                 "maximum": 100000
+              },
+              "price": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "pattern": "^[a-z]{3}$"
+                  },
+                  "fixed": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "cost_plus_percent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10000
+                  },
+                  "on_failure": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost",
+                      "full"
+                    ]
+                  },
+                  "on_cancel": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost"
+                    ]
+                  }
+                },
+                "required": [
+                  "currency"
+                ],
+                "additionalProperties": false
               },
               "egress": {
                 "default": [],
@@ -1159,6 +1239,445 @@
                     "type": "integer",
                     "minimum": 10,
                     "maximum": 86400
+                  },
+                  "results_from": {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "pointer": {
+                        "default": "",
+                        "type": "string",
+                        "maxLength": 300,
+                        "pattern": "^(\\/([^~/]|~[01])*)*$"
+                      },
+                      "check": {
+                        "type": "object",
+                        "properties": {
+                          "area": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{1,40}$"
+                          },
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300
+                          }
+                        },
+                        "required": [
+                          "area",
+                          "key"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "asset": {
+                        "type": "object",
+                        "properties": {
+                          "area": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{1,40}$"
+                          },
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300
+                          }
+                        },
+                        "required": [
+                          "area",
+                          "key"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "source": {
+                        "type": "object",
+                        "properties": {
+                          "area": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{1,40}$"
+                          },
+                          "key": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300
+                          }
+                        },
+                        "required": [
+                          "area",
+                          "key"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "pass",
+                              "fail",
+                              "error",
+                              "not_applicable",
+                              "unknown"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "from": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,7}$"
+                              },
+                              "map": {
+                                "default": {},
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "maxLength": 100
+                                },
+                                "additionalProperties": {
+                                  "type": "string",
+                                  "enum": [
+                                    "pass",
+                                    "fail",
+                                    "error",
+                                    "not_applicable",
+                                    "unknown"
+                                  ]
+                                }
+                              },
+                              "default": {
+                                "type": "string",
+                                "enum": [
+                                  "pass",
+                                  "fail",
+                                  "error",
+                                  "not_applicable",
+                                  "unknown"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "from"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "fingerprint": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                      },
+                      "detail": {
+                        "default": {},
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{0,39}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300
+                        }
+                      },
+                      "where": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,7}$"
+                          },
+                          "in": {
+                            "minItems": 1,
+                            "maxItems": 50,
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 100
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "in"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "file",
+                      "check",
+                      "status"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "tools": {
+                    "default": [],
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "git",
+                        "claude-code",
+                        "sops",
+                        "age",
+                        "kubectl",
+                        "aws"
+                      ]
+                    }
+                  },
+                  "inputs": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{0,39}$"
+                    },
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string",
+                          "pattern": "^(scope|targets)(\\.[A-Za-z0-9_-]{1,64}){1,4}$"
+                        },
+                        "path": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300
+                        },
+                        "schema": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "format": {
+                          "default": "json",
+                          "type": "string",
+                          "enum": [
+                            "json",
+                            "text"
+                          ]
+                        },
+                        "max_bytes": {
+                          "default": 65536,
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1048576
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "path",
+                        "schema"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "steps": {
+                    "default": [],
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,39}$"
+                        },
+                        "command": {
+                          "minItems": 1,
+                          "maxItems": 64,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500
+                          }
+                        },
+                        "checkout": {
+                          "type": "object",
+                          "properties": {
+                            "manifests": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 300
+                            },
+                            "url": {
+                              "default": "url",
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,3}$"
+                            },
+                            "commit": {
+                              "default": "commit",
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,3}$"
+                            },
+                            "name": {
+                              "default": "name",
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,64}(\\.[A-Za-z0-9_-]{1,64}){0,3}$"
+                            },
+                            "mount": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 300
+                            },
+                            "hosts": {
+                              "minItems": 1,
+                              "maxItems": 10,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "pattern": "^(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+                              }
+                            },
+                            "source": {
+                              "default": "workspace",
+                              "type": "string",
+                              "enum": [
+                                "workspace",
+                                "checkout"
+                              ]
+                            },
+                            "credential": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                            },
+                            "username": {
+                              "default": "x-access-token",
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9._@+-]{1,100}$"
+                            },
+                            "max_repos": {
+                              "default": 20,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 50
+                            },
+                            "max_bytes": {
+                              "default": 536870912,
+                              "type": "integer",
+                              "minimum": 1048576,
+                              "maximum": 4294967296
+                            }
+                          },
+                          "required": [
+                            "manifests",
+                            "mount",
+                            "hosts"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "timeout_seconds": {
+                          "default": 600,
+                          "type": "integer",
+                          "minimum": 10,
+                          "maximum": 86400
+                        },
+                        "credentials": {
+                          "default": [],
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                          }
+                        },
+                        "git_credentials": {
+                          "default": [],
+                          "maxItems": 5,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "credential": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                              },
+                              "host": {
+                                "type": "string",
+                                "maxLength": 253,
+                                "pattern": "^(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+                              },
+                              "username": {
+                                "default": "x-access-token",
+                                "type": "string",
+                                "pattern": "^[A-Za-z0-9._@+-]{1,100}$"
+                              }
+                            },
+                            "required": [
+                              "credential",
+                              "host"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "env": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "credentials": {
+                    "maxItems": 20,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                    }
+                  },
+                  "git_credentials": {
+                    "default": [],
+                    "maxItems": 5,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "credential": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                        },
+                        "host": {
+                          "type": "string",
+                          "maxLength": 253,
+                          "pattern": "^(?=[a-z0-9.-]*[a-z])[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+                        },
+                        "username": {
+                          "default": "x-access-token",
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9._@+-]{1,100}$"
+                        }
+                      },
+                      "required": [
+                        "credential",
+                        "host"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
@@ -2416,5 +2935,131 @@
     "name",
     "version"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "string",
+                "number",
+                "integer",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            },
+            {
+              "minItems": 1,
+              "maxItems": 7,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "string",
+                  "number",
+                  "integer",
+                  "boolean",
+                  "object",
+                  "array",
+                  "null"
+                ]
+              }
+            }
+          ]
+        },
+        "properties": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": {
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/__schema0"
+            }
+          ]
+        },
+        "items": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "enum": {
+          "minItems": 1,
+          "maxItems": 200,
+          "type": "array",
+          "items": {}
+        },
+        "const": {},
+        "pattern": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "minLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxProperties": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "$comment": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      },
+      "additionalProperties": false
+    }
+  }
 }
