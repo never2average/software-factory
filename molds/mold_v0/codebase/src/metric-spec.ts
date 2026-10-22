@@ -125,7 +125,7 @@ export function metricUnit(m: Metric, over: SpecArea | RunSource | null): "count
 
 /** The shape of a metric's answer: one value, a value per group, a series (per group), for the charts' checks. */
 const shapeOf = (m: Metric) => (m.by_time ? (m.group_by ? "series_by_group" : "series") : m.group_by ? "groups" : "single");
-const groupKey = (m: Metric) => JSON.stringify(m.group_by ?? null);
+const groupKey = (m: Metric) => JSON.stringify([m.group_by ?? null, m.group_by_list ?? null]);
 /** Series share their buckets when they share `every` and `last` (each may read its own point in time). */
 const timeKey = (m: Metric) => JSON.stringify(m.by_time ? [m.by_time.every, m.by_time.last] : null);
 
@@ -188,7 +188,8 @@ export function checkViews(b: BuildViews): string[] {
       } else {
         const k = col(m.group_by, "group_by");
         if (k) {
-          if (k.multiple) at(p, `${w}: group_by: ${m.group_by} holds a list: group by a single-valued field`);
+          if (k.multiple && !m.group_by_list) at(p, `${w}: group_by: ${m.group_by} holds a list: group by a single-valued field, or declare group_by_list (first: its first item; each: a row in the group of every item)`);
+          else if (!k.multiple && m.group_by_list) at(p, `${w}: group_by_list: ${m.group_by} holds one value, not a list: drop group_by_list`);
           else if (k.type === "time" || k.type === "number") at(p, `${w}: group_by: ${m.group_by} is a ${k.type === "time" ? "date" : "number"}: group by a word field (use by_time for dates)`);
           else if (m.by_time && !(k.type === "boolean" || (k.type === "enum" && k.options!.length <= 8) || (typeof over === "string" && m.group_by === "kind" && b.jobKinds <= 8)))
             at(p, `${w}: a series grouped by ${m.group_by} could have many groups: group a series by an enum of at most 8 options, a true/false field, a status, or a kind (in a build of at most 8)`);
