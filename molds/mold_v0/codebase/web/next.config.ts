@@ -33,6 +33,10 @@ const config: NextConfig = {
   env: { NEXT_PUBLIC_AUTH_PROVIDER: AUTH_PROVIDER },
   images: { remotePatterns: [{ protocol: 'https', hostname: 'img.clerk.com' }] },
   compiler: { removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error'] } : false },
+  // The consent screen of the built-in MCP authorization server (mold_v0-013) is never framed (clickjacking).
+  async headers() {
+    return [{ source: '/auth/consent', headers: [{ key: 'X-Frame-Options', value: 'DENY' }, { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" }] }];
+  },
   async redirects() {
     return packRoutes.redirects;
   },

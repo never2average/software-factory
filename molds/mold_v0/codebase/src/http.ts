@@ -28,6 +28,7 @@ import { currentOffer } from "./data-map.js";
 import { offerFooterHtml } from "./source-offer.js";
 import { memberKeyAppRouter } from "./member-keys.js";
 import { builtinAuthRouter } from "./builtin-auth.js";
+import * as mcpOAuth from "./mcp-oauth.js";
 import * as roles from "./admin-roles.js";
 import * as adminTokens from "./admin-tokens.js";
 const { need } = roles;
@@ -115,6 +116,8 @@ export function createApp() {
   // Mounted before any body parser: requests and responses stream straight through.
   app.use("/gw/:provider", (req, res, next) => void gatewayHandler(req, res).catch(next));
 
+  // The consent screen of the built-in MCP authorization server (mold_v0-013, web/src/app/auth/consent) is never framed.
+  app.use("/auth/consent", (_req, res, next) => { res.set({ "X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'" }); next(); });
   // ---------- landing page + access requests ----------
   app.use(express.static(WEB_DIR, {
     extensions: ["html"], maxAge: "5m",
@@ -186,6 +189,9 @@ export function createApp() {
   // ---------- built-in sign-in: /api/auth (src/builtin-auth.ts, mold_v0-004): an emailed code or Google, sessions,
   // sign-out (everywhere); under Clerk only /api/auth/config answers (it names the provider) ----------
   app.use("/api/auth", builtinAuthRouter());
+  // ---------- the built-in MCP authorization server (src/mcp-oauth.ts, mold_v0-013): /oauth/* and the consent page's
+  // /api/oauth/*, under built-in sign-in only (with Clerk every route passes on, unanswered) ----------
+  app.use(mcpOAuth.mcpOAuthRouter());
   // ---------- customer page: sign-in, setup check, usage, team, billing (src/app.ts, web/app/app) ----------
   // The customer portal can start work too (approvals, re-runs): tick after any write there (Vercel only).
   app.use("/api/app", (req, _res, next) => { if (req.method !== "GET") _res.on("finish", () => serverlessTick()); next(); });
@@ -220,9 +226,10 @@ export function createApp() {
   // ---------- a host pack's public routes (src/host.ts; the product's journeys webhook) ----------
   for (const h of hosts()) h.routes?.public?.(app);
 
-  // ---------- OAuth discovery (Clerk is the authorization server; src/clerk.ts) ----------
-  // MCP clients (Claude, ChatGPT, Claude Code, Cursor) find Clerk from the 401 below, register (CIMD or DCR) and sign
-  // the user in. Public and CORS-open, as browser-based MCP clients read them too.
+  // ---------- OAuth discovery (Clerk is the authorization server, src/clerk.ts; under built-in sign-in this server is,
+  // src/mcp-oauth.ts) ----------
+  // MCP clients (Claude, ChatGPT, Claude Code, Cursor) find the authorization server from the 401 below, register (CIMD
+  // or DCR) and sign the user in. Public and CORS-open, as browser-based MCP clients read them too.
   const oauthServer = () => (clerkEnabled() ? frontendApi() : null);
   const openCors = (req: Request, res: Response, next: NextFunction) => {
     res.set({ "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "*" });
@@ -231,6 +238,8 @@ export function createApp() {
   };
   app.use("/.well-known", openCors);
   const resourceMetadata = (_req: Request, res: Response) => {
+    // Built-in sign-in: this server is the authorization server (src/mcp-oauth.ts).
+    if (mcpOAuth.oauthOn()) return void res.json(mcpOAuth.protectedResourceMetadata());
     const as = oauthServer();
     if (!as) return void res.status(404).json({ error: "OAuth is not configured" });
     res.json({ resource: mcpAudience(), authorization_servers: [as], bearer_methods_supported: ["header"], scopes_supported: ["profile", "email"], resource_name: PROFILE.name });
@@ -238,11 +247,14 @@ export function createApp() {
   app.get(["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"], resourceMetadata);
   // For clients that only look for authorization-server metadata on the resource's own origin (older MCP spec).
   app.get("/.well-known/oauth-authorization-server", async (_req, res) => {
+    if (mcpOAuth.oauthOn()) return void res.json(mcpOAuth.authorizationServerMetadata());
     const as = oauthServer();
     if (!as) return void res.status(404).json({ error: "OAuth is not configured" });
     const r = await fetch(`${as}/.well-known/oauth-authorization-server`, { signal: AbortSignal.timeout(10_000) });
     res.status(r.status).type("application/json").send(await r.text());
   });
+  // OIDC discovery, for clients that look there first (the MCP spec has them try both): built-in sign-in only.
+  app.get("/.well-known/openid-configuration", (_req, res, next) => (mcpOAuth.oauthOn() ? void res.json(mcpOAuth.authorizationServerMetadata()) : next()));
 
   // ---------- MCP (Clerk OAuth sign-in, or a per-organization API key) ----------
   // Keys arrive in a header, `Authorization: Bearer oct_...` or `X-API-Key: oct_...`; hosts that only take a URL sign
@@ -332,11 +344,11 @@ export function createApp() {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   };
-  const wwwAuthenticate = () => oauthServer()
+  const wwwAuthenticate = (tokenSent = false) => mcpOAuth.oauthOn() ? mcpOAuth.wwwAuthenticate(tokenSent ? "invalid_token" : undefined) : oauthServer()
     ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name}", resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`
     : 'Bearer realm="octillion"';
-  const unauthorized = (res: Response) =>
-    res.status(401).set("WWW-Authenticate", wwwAuthenticate()).json({
+  const unauthorized = (res: Response, tokenSent = false) =>
+    res.status(401).set("WWW-Authenticate", wwwAuthenticate(tokenSent)).json({
       jsonrpc: "2.0", id: null,
       error: { code: -32001, message: `Sign in to ${PROFILE.name} (or send a valid API key). Request access at ${PUBLIC_URL}` },
     });
@@ -355,8 +367,15 @@ export function createApp() {
     if (!(await ipGate(req, res))) return;
     const token = headerCredential(req.headers);
     const viaBearer = Boolean(bearer(req.headers.authorization));
+    // Built-in sign-in's OAuth access tokens (src/mcp-oauth.ts): audience, expiry, revocation and membership checked.
+    if (viaBearer && mcpOAuth.oauthOn() && mcpOAuth.isOAuthAccessToken(token)) {
+      const t = await mcpOAuth.resolveOAuthAccessToken(token!);
+      if (t && "scope" in t) return void res.status(403).set("WWW-Authenticate", mcpOAuth.wwwAuthenticate("insufficient_scope")).json({
+        jsonrpc: "2.0", id: null, error: { code: -32001, message: `This sign-in does not allow ${PROFILE.name}'s tools: connect again and allow access` } });
+      return t ? await mcp(req, res, t.org) : unauthorized(res, true);
+    }
     const org = token?.startsWith("oct_") ? await resolveKey(token) : token && viaBearer ? await resolveUserToken(token) : null;
-    org ? await mcp(req, res, org) : unauthorized(res);
+    org ? await mcp(req, res, org) : unauthorized(res, Boolean(token));
   });
   // Deprecated: a key in the connector URL (see urlKeysAllowed in src/auth.ts). Logged by account and key prefix,
   // never the key, so whoever still uses one can be moved to a header or to sign-in before OCTILLION_URL_KEYS=off.
