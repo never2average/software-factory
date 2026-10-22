@@ -270,6 +270,33 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   live counts in the current month too. The per-address count trusts `X-Forwarded-For` as the server's `trust proxy` does: behind no proxy, a
   client can vary it, and the key, member and workspace limits still hold. `npm run test:limits` (with a load test: one
   workspace's 120 requests at once leave another's error rate at 0).
+- **Price per run** (mold_v0-019, built; `src/run-charges.ts`, `sql/migrations/0014_run_charges.sql`): a billing usage
+  event per finished run, **off by default**. Only the app's own `profile.json` turns it on (`billing: { enabled: true,
+  currency, max_fixed, max_cost_plus_percent, charge_failed_runs, charge_cancelled_runs, stripe_meter }`; gen-packs
+  refuses a typo, and refuses `billing` in a host pack's profile); `OCTILLION_RUN_BILLING=off` turns it off on a server,
+  never on. A job kind may declare `price: { currency, fixed, cost_plus_percent, on_failure, on_cancel }`: a fixed
+  amount and/or the run's metered model cost (the gateway's, never a figure the run reports) plus a percent (usd only).
+  When a run is queued the platform freezes what it allows into `runs.price`: the app's currency only (another
+  currency refuses the start), the fixed amount and the percent clamped to the profile's ceilings (defaults 1000 and
+  100), and a failed or cancelled run free unless the profile allows charging it. With billing off every run's price
+  is NULL and nothing below happens. *Exactly once:* a trigger on `runs` writes the charge in the same transaction as
+  the run's move into an ended state, whichever code moved it (completion, the lease sweep, a cancel, a launch that
+  never happened); attempts retried after an infrastructure failure never end the run, so they never charge; `UNIQUE
+  (run_id, kind)` makes any second write a no-op, and a backstop writes a charge the trigger could not. A succeeded run
+  pays fixed + cost-plus; a failed one as `on_failure` (`free`, `cost`, `full`) unless the platform failed it
+  (`infrastructure`: never charged); a cancelled one as `on_cancel` (`free`, `cost`). *Delivery:* each charge is an
+  outbox row, claimed (`FOR UPDATE SKIP LOCKED` and a claim time) before it is sent: to Stripe metered billing (one
+  meter event on `stripe_meter`, value in the currency's minor unit, identifier and idempotency key
+  `run_charge:<run id>`, so a resend after a lost answer counts once) when Stripe is configured and the workspace has a
+  Stripe customer, else the `run_charges` table is the ledger. Failures back off (1 minute doubling to an hour) and are
+  retried by the server's loop and the cron entry. *Credits:* an operator may give a charged run's charge back once
+  (FinOps › Run charges, with a reason; to the customer's Stripe balance keyed `run_credit:<run id>` when the charge went
+  to Stripe, else the ledger). The workspace's Billing page (a member sees their own runs, billing roles everyone's) and
+  FinOps (Revenue's `run_charges`, the Run charges tab) show charges only when the app bills runs; otherwise their
+  answers are exactly as before. `run_charges` is under RLS: tenant work reads its own workspace's rows and writes none,
+  nor may it call the function that writes them (`check:rls` probes both). `npm run test:run-charges` (offline, the
+  product's Stripe stand-in) and `npm run test:run-charges-race` (a real Postgres: every run ended by two completions,
+  a failure, a cancel and the sweep at once, with deliverers racing: one charge each, one meter event each).
 - **The runner boundary** (mold_v0-054, built; the import check resolves each pack's real import graph with esbuild,
   the resolver tsx uses, so spacing, comments, re-exports, extensionless or dot files cannot hide an import; a pack may
   carry only `.ts`/`.mts`/`.js`/`.mjs` code and plain data files, no `node_modules`, no links): a pack's code is of two kinds, told apart by pack.json `runner` (a
