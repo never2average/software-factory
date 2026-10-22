@@ -37,12 +37,15 @@ import { claimableRuns, claimRun, failUnlaunchedRun, findKind, noteRunsWaiting, 
 import { mintRunWorkerToken, revokeRunSandboxTokens } from "./workerauth.js";
 import { recordComputeEvent } from "./compute-events.js";
 import { keepAlive } from "./telemetry.js";
+import { DEFAULT_RUN_UIDS } from "./run-users.js";
 
 const env = process.env;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
-/** The run's user in a sandbox (the image creates it; a boat sandbox's launch creates it). */
+/** The image's fixed run account (kept for an older runner); runs now lease a uid of their own per run (mold_v0-078). */
 export const RUN_USER = "octirun";
+/** The range a sandbox's runner leases its run's user from (mold_v0-078, src/run-users.ts). */
+const runUids = () => env.OCTILLION_RUN_UIDS || DEFAULT_RUN_UIDS;
 
 export const RUN_SANDBOXES = {
   mode: () => (env.OCTILLION_RUN_SANDBOX ?? "auto").toLowerCase(),
@@ -129,11 +132,8 @@ real="$(readlink -f /usr/local/bin/node 2>/dev/null || true)"
 case "$real" in /home/*|/root/*) sudo -n cp --remove-destination "$real" /usr/local/bin/node && sudo -n chmod 0755 /usr/local/bin/node ;; esac
 # What agent-workspace runs need (git) and the firewall the lockdown sets (nft or iptables), and setfacl for the step below: installed when missing.
 command -v setfacl >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq acl >/dev/null 2>&1 || true
-# The local resolver's and the system bus's sockets: the run's user may not ask them to resolve names (netfilter never
-# sees a unix socket). Best effort: where setfacl is missing, the firewall still keeps every packet in.
-for s in /run/systemd/resolve/io.systemd.Resolve /run/systemd/resolve/io.systemd.Resolve.Monitor /run/dbus/system_bus_socket; do
-  [ -e "$s" ] && command -v setfacl >/dev/null 2>&1 && sudo -n setfacl -m u:${RUN_USER}:--- "$s" || true
-done
+# The local resolver's and the system bus's sockets are denied to the run's user by the runner's lockdown, once it has
+# leased the run's uid (mold_v0-078; src/run-sandbox-runner.ts), with the setfacl installed above.
 command -v git >/dev/null 2>&1 || { sudo -n apt-get update -qq && sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; } >/dev/null 2>&1 || true
 command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables >/dev/null 2>&1 || true
 command -v git >/dev/null 2>&1 || { echo "git is missing in the run sandbox" >&2; exit 30; }
@@ -270,7 +270,10 @@ export function processProvider(apiUrl: string): RunSandboxProvider {
     async launch(spec, onCreated) {
       const id = `proc-${randomBytes(4).toString("hex")}`;
       await onCreated(id);
-      const runAs = env.OCTILLION_RUN_UID ? { OCTILLION_RUN_UID: env.OCTILLION_RUN_UID, OCTILLION_RUN_GID: env.OCTILLION_RUN_GID ?? env.OCTILLION_RUN_UID } : { OCTILLION_RUN_SAME_USER: "yes" };
+      // As root, the runner leases its run's own user (mold_v0-078) as a sandbox's does; else it runs as this user (tests).
+      const runAs: Record<string, string> = process.getuid?.() === 0
+        ? Object.fromEntries((["OCTILLION_RUN_UIDS", "OCTILLION_RUN_UID_DIR"] as const).flatMap((k) => (env[k] ? [[k, env[k]!]] : [])))
+        : { OCTILLION_RUN_SAME_USER: "yes" };
       const { OCTILLION_RUN_USER: _u, ...rest } = spec.env;
       const child = spawn(process.execPath, ["--import", "tsx", "src/run-sandbox-runner.ts"], { cwd: ROOT, detached: true, stdio: ["ignore", "ignore", "pipe"],
         env: { PATH: env.PATH ?? "/usr/bin:/bin", ...rest, ...runAs, OCTILLION_RUN_LOCKDOWN: "off", OCTILLION_ALLOW_UNSANDBOXED_RUNS: "yes" } });
@@ -531,7 +534,7 @@ export class RunScaler {
     const token = await mintRunWorkerToken(run.id, run.org_id, id, life + 600);
     const spec: RunSandboxSpec = {
       rowId: id, runId: run.id, name: `${p.name === "boat" ? (await import("../orchestrator/deploy/boat-lib.js")).RUN_PREFIX : `${namespace()}-run-`}${id}-${randomBytes(3).toString("hex")}`,
-      env: { OCTILLION_URL: p.apiUrl(), OCTILLION_WORKER_TOKEN: token, OCTILLION_RUN_ID: run.id, OCTILLION_RUN_USER: RUN_USER,
+      env: { OCTILLION_URL: p.apiUrl(), OCTILLION_WORKER_TOKEN: token, OCTILLION_RUN_ID: run.id, OCTILLION_RUN_UIDS: runUids(),
              OCTILLION_RUN_PACK_DIR: packRel, OCTILLION_RUN_LOCKDOWN: "on" },
       ttlSeconds: life + 1800, packDirs: packRel ? [packRel] : [], log: (m) => this.log(m),
     };
