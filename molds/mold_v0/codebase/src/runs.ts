@@ -32,6 +32,8 @@ import type { Secret } from "./credential-redact.js";
 import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
 import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
+import { runCompanyHosts } from "./egress-hosts.js";
+import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
 import { priceForStart } from "./run-charges.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
@@ -60,9 +62,11 @@ interface RunRow {
   spec: JobKind; attempt: number; max_attempts: number; token_lifetime_seconds: number; lease_seconds: number; budget_usd: number; egress: string[];
   worker_id: string | null; lease_expires_at: Date | null; deadline_at: Date | null; cancel_requested_at: Date | null; cost_usd: number;
   error_kind: string | null; error: string | null; created_at: Date; started_at: Date | null; ended_at: Date | null;
+  /** The approval a write run was started with (mold_v0-079). */
+  approval_id: string | null;
 }
 const COLS = `id, org_id, pack, kind, status, scope, targets, spec, attempt, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress,
-  worker_id, lease_expires_at, deadline_at, cancel_requested_at, cost_usd, error_kind, error, created_at, started_at, ended_at`;
+  worker_id, lease_expires_at, deadline_at, cancel_requested_at, cost_usd, error_kind, error, created_at, started_at, ended_at, approval_id`;
 const iso = (d: Date | string | null) => (d ? new Date(d).toISOString() : null);
 
 export const view = (r: RunRow): RunView => ({
@@ -87,11 +91,16 @@ const jsonObject = (v: unknown, what: string) => {
  * a viewer cannot launch, a blocked member or account cannot, the account's allowance and concurrency); when it is
  * platform staff acting for the workspace (`org.staff`, mold_v0-067), the account's rules with no person (checkAccountRun).
  */
-export async function startRun(orgId: number, pack: string, kind: string, input: { scope?: unknown; targets?: unknown } = {}, requestedBy: string | null = null,
+export async function startRun(orgId: number, pack: string, kind: string, input: { scope?: unknown; targets?: unknown; approval?: unknown } = {}, requestedBy: string | null = null,
                                org?: import("./auth.js").Org): Promise<RunView> {
   const k = findKind(pack, kind);
   if (!k) throw new PackError(`pack ${pack} has no job kind ${JSON.stringify(String(kind).slice(0, 64))}`, 404);
   const scope = jsonObject(input.scope, "scope"), targets = jsonObject(input.targets, "targets");
+  // mold_v0-079: a write that waits for an approval of its preview starts only with one; any other kind takes none.
+  const gated = (k as { approval?: unknown }).approval;
+  if (!gated && input.approval !== undefined && input.approval !== null) throw new PackError(`${kind} does not wait for an approval: start it without one`, 400);
+  if (gated && (typeof input.approval !== "string" || !APPROVAL_ID.test(input.approval)))
+    throw new PackError(`${kind} writes only after its preview is approved: give the approval (apr_…) of the preview run to write`, 403);
   if (org?.userId) {
     const { checkRun, LimitError } = await import("./limits.js");
     try { await asPlatform(() => checkRun(org)); }
@@ -119,11 +128,16 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
     const [{ live }] = await tx.query<{ live: number }>("SELECT count(*)::int AS live FROM runs WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]);
     if (live >= live_per_workspace)
       throw new PackError(`this workspace already has ${live} runs queued or running (at most ${live_per_workspace}): wait for some to finish`, 429);
-    return tx.query<RunRow>(
-      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING ${COLS}`,
+    // The approval is taken in this transaction (used once): a refusal below undoes it with the run.
+    const approval = gated ? await takeApproval(tx, { id: input.approval, orgId, pack, kind, runId: id, scope, targets }) : null;
+    const rows = await tx.query<RunRow>(
+      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price, approval_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING ${COLS}`,
       [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
-       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null]);
+       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null, approval?.id ?? null]);
+    if (approval) await event(id, orgId, 0, "approval_used", { approval: approval.id, preview_run_id: approval.preview_run_id, sha256: approval.output_sha256,
+      approved_by: approval.approved_by, role: approval.approver_role }, tx);
+    return rows;
   }));
   await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy });
   // On Vercel nothing ticks between crons: the run's sandbox is launched now (mold_v0-055; a server's loop ticks itself).
@@ -196,8 +210,13 @@ export interface Claim {
   deadline_at: string;
   /** `token`: the run's gateway token itself (also in `env`), for an agent-workspace kind's declared variables (mold_v0-061). */
   gateway: { expires_at: string; env: Record<string, string>; providers: Record<string, { base_url: string }>; gateway_url: string; token: string | null };
-  /** Hosts the run's egress proxy allows: the gateway's (when it is a public HTTPS host) and the kind's. */
-  egress: { hosts: string[] };
+  /**
+   * Hosts the run's egress proxy allows: the gateway's (when it is a public HTTPS host) and the kind's (each with its
+   * subdomains); `exact`, the company's own hosts (mold_v0-075, src/egress-hosts.ts), each exactly.
+   */
+  egress: { hosts: string[]; exact?: string[] };
+  /** A gated write (mold_v0-079): its approval and the preview's output that was approved (what it is to write). */
+  approval?: { id: string; preview_run_id: string; sha256: string; approved_by: string; role: string; output: Record<string, unknown> | null } | null;
 }
 
 /** Hosts a run may reach: the kind's own, plus the gateway's public host. An IP address or localhost is never listed. */
@@ -257,6 +276,7 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
   const kinds = asked.length ? known.filter((k) => asked.includes(k)) : known;
   if (!kinds.length) return null;
   const lease = `orl_${randomBytes(24).toString("base64url")}`;
+  const staleGone: string[] = [];
   const row = await asPlatform(async () => (await getDb()).transaction(async (tx) => {
     const candidates = await tx.query<{ id: string; org_id: number; pack: string; kind: string; workspace: boolean; lease_seconds: number; concurrency: number | null }>(
       `/* tenant: platform claim across workspaces (the workspace comes from the row) */ SELECT id, org_id, pack, kind,
@@ -283,10 +303,20 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
                 deadline_at = now() + make_interval(secs => token_lifetime_seconds), started_at = coalesce(started_at, now()),
                 error_kind = NULL, error = NULL, updated_at = now()
           WHERE id = $1 AND status = 'queued' RETURNING ${COLS}`, [c.id, workerId, sha256(lease)]);
+      // mold_v0-079: a write runs only on the workspace its preview was approved for; changed since, it fails (not retried).
+      const stale = r ? await approvalStale(tx, r) : null;
+      if (r && stale) {
+        await tx.query(`/* tenant: the claimed run, by id */ UPDATE runs SET status = 'failed', error_kind = 'run', error = $2, ended_at = now(), worker_id = NULL,
+                lease_token_hash = NULL, lease_expires_at = NULL, updated_at = now() WHERE id = $1`, [r.id, stale]);
+        await event(r.id, r.org_id, r.attempt, "failed", { error_kind: "run", error: stale }, tx);
+        staleGone.push(...(await endAttempt(tx, r.id)));
+        continue;
+      }
       if (r) return r;
     }
     return null;
   }));
+  await removeObjects(staleGone);
   if (!row) return null;
   let gateway;
   try {
@@ -296,12 +326,16 @@ export async function claimRun(workerId: string, opts: { kinds?: string[]; runId
     await complete(row.id, lease, { outcome: "failed", error_kind: "run", error: `gateway credentials: ${(e as Error).message}` });
     throw e;
   }
-  await event(row.id, row.org_id, row.attempt, "claimed", { worker_id: workerId, deadline_at: iso(row.deadline_at) });
+  // mold_v0-075: the company's own hosts (the run row's workspace, the asset it targets), each allowed exactly.
+  const exact = await runCompanyHosts(row);
+  const approval = row.approval_id ? await asPlatform(async () => approvedPreview(await getDb(), row)) : null;
+  await event(row.id, row.org_id, row.attempt, "claimed", { worker_id: workerId, deadline_at: iso(row.deadline_at), ...(exact.length ? { company_hosts: exact } : {}) });
   return {
     run: { ...view(row), org_id: row.org_id, spec: row.spec },
     lease_token: lease, lease_seconds: row.lease_seconds, lease_expires_at: iso(row.lease_expires_at)!, deadline_at: iso(row.deadline_at)!,
     gateway: { expires_at: gateway.expires_at, env: gateway.env, providers: gateway.providers, gateway_url: gateway.gateway_url, token: gateway.token ?? null },
-    egress: { hosts: runEgressHosts(row.egress ?? [], gateway.gateway_url) },
+    egress: { hosts: runEgressHosts(row.egress ?? [], gateway.gateway_url), exact },
+    ...(approval ? { approval } : {}),
   };
 }
 
@@ -397,7 +431,7 @@ export const leasedRun = (runId: string, leaseToken: string) => asPlatform(async
 export async function runCredentialsForLease(runId: string, leaseToken: string): Promise<RunCredentials> {
   const r = await leasedRun(runId, leaseToken);
   const out = await runCredentials(r);
-  if (r.spec?.credentials?.length)
+  if (r.spec?.credentials?.length || r.spec?.operator_credentials?.length)
     await event(r.id, r.org_id, r.attempt, "credentials", { delivered: out.credentials.map((c) => c.name), missing: out.missing });
   return out;
 }

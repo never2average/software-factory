@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import type { PackChartSpec } from '@/config/pack-nav.generated';
 import { Skeleton } from '@/components/ui/skeleton';
 
-export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'days' | 'hours';
+export type Unit = 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours';
 export interface MetricAnswer {
   name: string; label: string; description: string | null; unit: Unit; measure: string;
   kind: 'single' | 'groups' | 'series';
@@ -41,6 +41,8 @@ export function formatValue(v: number | null | undefined, unit: Unit, short = fa
   if (v === null || v === undefined) return '—';
   switch (unit) {
     case 'percent': return `${plain.format(Math.round(v * 1000) / 10)}%`;
+    // A value already 0 to 100 (mold_v0-079): shown as it is.
+    case 'percent_100': return `${plain.format(Math.round(v * 10) / 10)}%`;
     case 'usd': return `$${v >= 1000 && short ? compact.format(v) : v.toFixed(2)}`;
     case 'days': return `${plain.format(Math.round(v * 10) / 10)} ${short ? 'd' : Math.round(v * 10) / 10 === 1 ? 'day' : 'days'}`;
     case 'hours': return `${plain.format(Math.round(v * 10) / 10)} ${short ? 'h' : Math.round(v * 10) / 10 === 1 ? 'hour' : 'hours'}`;

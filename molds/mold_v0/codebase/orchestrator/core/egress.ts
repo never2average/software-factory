@@ -63,7 +63,10 @@ export function proxyEnv(): Record<string, string> {
 export function proxySource(): string {
   return `// Octillion egress proxy (orchestrator/core/egress.ts): CONNECT to allowlisted hosts on 443 only.
 import http from "node:http"; import net from "node:net"; import dns from "node:dns/promises"; import fs from "node:fs";
-const allow = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).hosts;
+const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const allow = cfg.hosts;
+// Hosts allowed exactly, never a subdomain (a company's own hosts, mold_v0-075); "hosts" also allow their subdomains.
+const exact = new Set(Array.isArray(cfg.exact) ? cfg.exact : []);
 const logf = process.argv[3];
 const log = (o) => { try { fs.appendFileSync(logf, JSON.stringify({ t: new Date().toISOString(), ...o }) + "\\n"); } catch {} };
 // A bug in one connection must never take the whole proxy (and with it the agent's only way out) down: record it, carry on.
@@ -86,7 +89,7 @@ function blocked(ip) {
   }
   return true;
 }
-const listed = (h) => allow.some((b) => h === b || h.endsWith("." + b));
+const listed = (h) => exact.has(h) || allow.some((b) => h === b || h.endsWith("." + b));
 const srv = http.createServer((req, res) => { log({ deny: String(req.url).slice(0, 200), why: "plain http" }); res.writeHead(403); res.end("egress: HTTPS via CONNECT only\\n"); });
 srv.on("connect", async (req, sock, head) => {
   const deny = (why) => { log({ deny: String(req.url).slice(0, 200), why }); sock.end("HTTP/1.1 403 Forbidden\\r\\n\\r\\n"); };
@@ -248,12 +251,15 @@ process.exit(bad ? 1 : 0);
  * systemd's). `proxyUser`, `installDir`, `logDir`: the proxy's user and files elsewhere than the defaults (the offline
  * firewall test, which must not add a user or files to the machine it runs on).
  */
-export function setupScript(dir: string, opts: { user?: string; sudo?: boolean; systemd?: boolean; proxyUser?: string; installDir?: string; logDir?: string; strict?: boolean } = {}): string {
+export function setupScript(dir: string, opts: { user?: string; uid?: number; sudo?: boolean; systemd?: boolean; proxyUser?: string; installDir?: string; logDir?: string; strict?: boolean } = {}): string {
   const user = opts.user ?? "agent", proxyUser = opts.proxyUser ?? "octiproxy";
   const name = /^[a-z_][a-z0-9_-]{0,31}$/, dirOk = /^\/[A-Za-z0-9._\/-]{1,200}$/;
   if (!name.test(user) || !name.test(proxyUser)) throw new Error(`egress: not a user name: ${user} / ${proxyUser}`);
   if ((opts.installDir && !dirOk.test(opts.installDir)) || (opts.logDir && !dirOk.test(opts.logDir))) throw new Error("egress: install and log directories are absolute plain paths");
+  // `uid`: the user by number (a run sandbox's run user, leased per run: mold_v0-078), whether or not an account names it.
+  if (opts.uid !== undefined && !(Number.isSafeInteger(opts.uid) && opts.uid > 0 && opts.uid < 2 ** 31 - 1)) throw new Error("egress: uid is a number other than root");
   let body = setupBody(dir, user);
+  if (opts.uid !== undefined) body = body.replace(`AUID="$(id -u ${user})"`, `AUID=${opts.uid}`);
   if (opts.strict) body = strictRules(body);
   if (opts.systemd === false) body = body.replace("if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then", "if false; then");
   if (opts.installDir) body = body.replace(`D=${EGRESS_DIR};`, `D=${opts.installDir};`);

@@ -251,9 +251,16 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
         shape.target_environment = (listed.length && envs.every((c) => c.environments) ? z.enum(listed as [string, ...string[]]) : z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/))
           .optional().describe(`The environment the ${run} is for (its credentials bound to that environment reach the ${run})`);
       }
+      // mold_v0-079: a write that waits for its preview's approval names that approval.
+      const gate = (k as { approval?: { preview: string; by: string } }).approval;
+      if (gate) {
+        if ("approval" in shape) problems.push(at(`job kind ${k.name} has an argument named approval, which its start tool uses for the preview's approval`));
+        shape.approval = z.string().regex(/^apr_[A-Za-z0-9_-]{16,40}$/, "an approval id: apr_…")
+          .describe(`The approval (apr_…) the ${gate.by === "operator" ? "platform's operator" : `${ws}'s owner`} gave to a ${gate.preview} ${run}'s output; used once`);
+      }
       add({ generated: n("start", k.name), op: "start", door: "workspace", kind: k.name, needs: "launch", admin_needs: "accounts",
         title: `Start ${label}`,
-        description: `Start a ${run} (${label}) for this ${ws}.${about}${args.length ? ` Arguments: ${args.map((f) => `${f.name}${f.required ? " (required)" : ""}`).join(", ")}.` : ""} It is queued and runs in a sandbox, spending at most $${k.budget_usd} of model use; it answers with the ${run}'s id at once. Follow it with ${statusName} and read its results with ${resultsName}.`,
+        description: `Start a ${run} (${label}) for this ${ws}.${about}${args.length ? ` Arguments: ${args.map((f) => `${f.name}${f.required ? " (required)" : ""}`).join(", ")}.` : ""} ${gate ? `It starts only with the approval (by the ${gate.by === "operator" ? "platform's operator" : `${ws}'s owner`}) of a ${gate.preview} ${run}'s output, with that ${run}'s arguments, and is given that approved output. ` : ""}It is queued and runs in a sandbox, spending at most $${k.budget_usd} of model use; it answers with the ${run}'s id at once. Follow it with ${statusName} and read its results with ${resultsName}.`,
         input: shape, annotations: WRITE(false, false, true) });
     }
     if (kinds.length) {

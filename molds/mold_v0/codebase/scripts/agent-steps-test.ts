@@ -243,7 +243,8 @@ try {
   };
   const client = await harness.localRunnerClient("w-steps");
   const asRoot = process.getuid?.() === 0;
-  const iso = asRoot ? { runAs: { uid: 65534, gid: 65534 } } : { allowSameUser: true };
+  // As root, each run leases a user of its own (mold_v0-078, the harness's default); else the test's own user.
+  const iso = asRoot ? {} : { allowSameUser: true };
   // Outside the test's own directory (0700): the run's user must be able to traverse to the cache, as under /var/cache.
   const cacheRoot = mkdtempSync(path.join(tmpdir(), "steps-cache-"));
   chmodSync(cacheRoot, 0o711);

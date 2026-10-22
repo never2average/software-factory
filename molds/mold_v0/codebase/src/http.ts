@@ -8,7 +8,8 @@ import { appRouter } from "./app.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
 import { dataAdminRouter, dataAppRouter } from "./data-routes.js";
-import { credentialAppRouter } from "./credential-routes.js";
+import { credentialAppRouter, egressHostAppRouter } from "./credential-routes.js";
+import { PackError } from "./pack-api.js";
 import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
@@ -191,6 +192,8 @@ export function createApp() {
   app.use("/api/data", dataAppRouter());
   // ---------- the workspace credential vault: /api/credentials (src/credential-routes.ts); with no field nothing is mounted ----------
   app.use("/api/credentials", credentialAppRouter());
+  // Per-company egress hosts (mold_v0-075): only when a kind takes them.
+  app.use("/api/egress-hosts", egressHostAppRouter());
   // ---------- the packs' onboarding checklist: /api/onboarding (src/onboarding.ts); with no step nothing is mounted ----------
   app.use("/api/onboarding", onboardingAppRouter());
   // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------
@@ -496,6 +499,29 @@ export function createApp() {
   // A host pack's admin routes (src/host.ts; the product's developer populations), behind the same guard and log.
   for (const h of hosts()) h.routes?.admin?.(admin, { need, actor: adminActor });
   admin.get("/autoscaler", async (_req, res) => void res.json(await autoscalerStatus()));
+  // mold_v0-079: a preview's approval by the platform's operator (a kind that declares approval.by "operator"), for the
+  // run's own workspace (from the run row). The digest the operator was shown is required (approvePreview).
+  const runOrg = async (id: string) => {
+    if (!/^run_[A-Za-z0-9_-]{1,80}$/.test(id)) return null;
+    const [r] = await (await getDb()).query<{ org_id: number }>("/* tenant: admin-only (platform operators): the run's own workspace, by run id */ SELECT org_id FROM runs WHERE id = $1", [id]);
+    return r?.org_id ?? null;
+  };
+  admin.get("/runs/:id/approval", async (req, res, next) => {
+    try {
+      const org = await runOrg(String(req.params.id));
+      if (org === null) return void res.status(404).json({ error: "no such run" });
+      const { approvalView } = await import("./run-approvals.js");
+      res.set("Cache-Control", "no-store").json(await approvalView(org, String(req.params.id)));
+    } catch (e) { if (e instanceof PackError) return void res.status(e.status).json({ error: e.message }); next(e); }
+  });
+  admin.post("/runs/:id/approve", need("accounts"), async (req, res, next) => {
+    try {
+      const org = await runOrg(String(req.params.id));
+      if (org === null) return void res.status(404).json({ error: "no such run" });
+      const { approvePreview } = await import("./run-approvals.js");
+      res.status(201).json({ approval: await approvePreview(org, String(req.params.id), req.body ?? {}, { role: "operator", by: `operator:${adminActor(req, res)}` }) });
+    } catch (e) { if (e instanceof PackError) return void res.status(e.status).json({ error: e.message }); next(e); }
+  });
   // Admin tokens for scripts (src/admin-tokens.ts): owners list, mint and revoke them. Minting, and changing who is an
   // admin, need a signed-in owner (signedIn), never a token: a leaked token cannot renew itself or make its holder an owner.
   const tokenErr = (res: Response, e: unknown) => {
