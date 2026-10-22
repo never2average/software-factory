@@ -18,6 +18,7 @@
 //  5. The time limit: past it every process of the run (one in its own session too) is killed; the run fails "timeout".
 //  6. Redaction: credential values and the gateway token printed, in results, in stderr: none stored; one written into
 //     the workspace: not written back.
+//     (mold_v0-079: strip applies to the pinned checkout only; the workspace's own files are never stripped.)
 //  7. Links: a link planted in the write-back paths is not followed nor written back; paths outside them are not
 //     written back.
 //  8. Egress: the run's proxy lets the kind's host past its list and refuses any other.
@@ -186,7 +187,8 @@ try {
   };
   const client = await harness.localRunnerClient("w-agent");
   const asRoot = process.getuid?.() === 0;
-  const iso = asRoot ? { runAs: { uid: 65534, gid: 65534 } } : { allowSameUser: true };
+  // As root, each run leases a user of its own (mold_v0-078, the harness's default); else the test's own user.
+  const iso = asRoot ? {} : { allowSameUser: true };
   const runNext = async (k: string, opts: Parameters<typeof harness.runWorkspaceHarness>[2] = {}) => {
     const c = await client.claim([`fixture_agent/${k}`]);
     assert.ok(c, `a run of ${k} to claim`);
@@ -209,7 +211,7 @@ try {
       assert.deepEqual(seen.notes, null, "a workspace's first run starts empty");
       assert.deepEqual(seen.stripped, { secret: false, samples: false }, "the declared paths were stripped before the run");
       assert.deepEqual(seen.argv, ["--company", "a-co", "--mode", "ok"], "the declared arguments, from the run's targets and the default");
-      if (asRoot) assert.equal(seen.uid, 65534, "the agent ran as the run's user");
+      if (asRoot) assert.equal(seen.uid, (await ev(r1.claim.run.id, "run_user"))[0].uid, "the agent ran as the run's own user");
       const env = (await ev(r1.claim.run.id, "env"))[0];
       assert.deepEqual(env, { has_gateway_token: true, base_url: `${http.base}/gw/anthropic`, fixed: "1", token_cred: "set", cred_file: "set" },
         "the gateway token and address under the declared names; both credentials delivered");
@@ -231,7 +233,7 @@ try {
       assert.equal(r2.view?.status, "succeeded");
       assert.deepEqual((await ev(r2.claim.run.id, "seen"))[0].notes, [r1.claim.run.id], "the next run had the workspace it wrote restored");
       assert.equal((await latest(A.orgId))!.version, 2);
-      console.log(`✓ a run end to end${asRoot ? " as the run's user (65534)" : ""}: at the pin, stripped, restored, arguments, gateway token and credentials by declared name, validated, only the write-back paths written back, results, transcript and usage recorded; the next run sees its workspace`);
+      console.log(`✓ a run end to end${asRoot ? " as the run's own user" : ""}: at the pin, stripped, restored, arguments, gateway token and credentials by declared name, validated, only the write-back paths written back, results, transcript and usage recorded; the next run sees its workspace`);
     }
 
     // ---------- 4. validation and failures gate the write-back ----------
@@ -354,11 +356,15 @@ try {
       const t0 = Date.now();
       const f = await runNext("audit_default");
       assert.equal(f.view?.status, "failed"); assert.match(f.view!.error!, /results\.json is not a plain file/); assert.ok(Date.now() - t0 < 30_000);
-      // A stripped path written into the workspace never reaches the store (nor comes back in a later run).
+      // mold_v0-079: `strip` is the pinned tree's, applied at checkout only. A file the run writes into the workspace at a
+      // path a strip pattern matches is the workspace's own: written back, restored as it is in the next run, kept.
       await start(ca, "audit", "a-co", "forbidden");
       const s = await runNext("audit");
       assert.equal(s.view?.status, "succeeded", JSON.stringify(s.view));
-      assert.ok(!(await filesOf(A.orgId)).some((x) => x.includes("forbidden")), "a stripped path is not written back");
+      assert.ok((await filesOf(A.orgId)).includes("data/a-co/forbidden.json"), "the workspace's file at a stripped path is written back (strip is the checkout's only)");
+      await start(ca, "audit", "a-co");
+      assert.equal((await runNext("audit")).view?.status, "succeeded");
+      assert.ok((await filesOf(A.orgId)).includes("data/a-co/forbidden.json"), "and restored as it is, so the next run keeps it");
       // Past the store's size limit: refused before it is read whole.
       process.env.OCTILLION_WORKSPACE_MAX_BYTES = String(1024 * 1024);
       await start(ca, "audit", "a-co", "big");
@@ -369,7 +375,7 @@ try {
       await start(ca, "audit", "a-co", "x/../y");
       const d = await runNext("audit");
       assert.match(d.view!.error!, /a value may not hold a "\.\." path part/);
-      console.log("✓ review fixes: a validator the agent rewrote is not the one run; a pipe for results is refused without hanging; a stripped path never reaches the store; the size limit holds before reading; no \"..\" in an argument");
+      console.log("✓ review fixes: a validator the agent rewrote is not the one run; a pipe for results is refused without hanging; strip applies at checkout only (the workspace's own files at a stripped path are kept); the size limit holds before reading; no \"..\" in an argument");
     }
   } finally {
     await ca.close(); await cb.close();

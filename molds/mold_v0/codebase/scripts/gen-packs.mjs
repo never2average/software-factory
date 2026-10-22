@@ -85,7 +85,7 @@ const DATA_PATH = /^\/[a-z0-9_\-/]*$/i;
 const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner", "host",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
-  "record_areas", "job_kinds", "credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts"]);
+  "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -969,7 +969,7 @@ function viewsModule() {
     g.items.push({ title: t.label, url: t.url, icon: t.icon, items: [], roles: t.roles });
   }
   return "\n/** A metric a pack declares (mold_v0-063): the console asks /api/metrics for its numbers. */\n" +
-    "export interface PackMetricSpec {\n  pack: string;\n  name: string;\n  label: string;\n  unit: 'count' | 'number' | 'usd' | 'percent' | 'days' | 'hours';\n  roles: string[];\n}\n" +
+    "export interface PackMetricSpec {\n  pack: string;\n  name: string;\n  label: string;\n  unit: 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours';\n  roles: string[];\n}\n" +
     `export const packMetrics: PackMetricSpec[] = ${json(packViews.metrics)};\n\n` +
     "/** A chart of a pack's metrics (mold_v0-063), drawn by web/src/features/tabs/charts.tsx. */\n" +
     "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +

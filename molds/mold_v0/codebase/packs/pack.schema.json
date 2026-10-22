@@ -600,6 +600,46 @@
                   "pattern": "^[a-z][a-z0-9_]{1,62}$"
                 }
               },
+              "operator_credentials": {
+                "default": [],
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                }
+              },
+              "company_egress": {
+                "default": false,
+                "type": "boolean"
+              },
+              "approval": {
+                "type": "object",
+                "properties": {
+                  "preview": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                  },
+                  "by": {
+                    "default": "owner",
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "operator"
+                    ]
+                  },
+                  "expires_minutes": {
+                    "default": 1440,
+                    "type": "integer",
+                    "minimum": 5,
+                    "maximum": 10080
+                  }
+                },
+                "required": [
+                  "preview"
+                ],
+                "additionalProperties": false
+              },
               "args": {
                 "maxItems": 30,
                 "type": "array",
@@ -842,6 +882,46 @@
                   "type": "string",
                   "pattern": "^[a-z][a-z0-9_]{1,62}$"
                 }
+              },
+              "operator_credentials": {
+                "default": [],
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                }
+              },
+              "company_egress": {
+                "default": false,
+                "type": "boolean"
+              },
+              "approval": {
+                "type": "object",
+                "properties": {
+                  "preview": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{1,62}$"
+                  },
+                  "by": {
+                    "default": "owner",
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "operator"
+                    ]
+                  },
+                  "expires_minutes": {
+                    "default": 1440,
+                    "type": "integer",
+                    "minimum": 5,
+                    "maximum": 10080
+                  }
+                },
+                "required": [
+                  "preview"
+                ],
+                "additionalProperties": false
               },
               "args": {
                 "maxItems": 30,
@@ -1660,6 +1740,10 @@
                   "file": {
                     "type": "string",
                     "pattern": "^[a-z0-9_][a-z0-9_.-]{0,99}$"
+                  },
+                  "path_env": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{1,62}$"
                   }
                 },
                 "required": [
@@ -1674,6 +1758,68 @@
           "name",
           "label",
           "bound_to",
+          "deliver_as"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "operator_credentials": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{1,62}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "help": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "deliver_as": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "env": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{1,62}$"
+                  }
+                },
+                "required": [
+                  "env"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_][a-z0-9_.-]{0,99}$"
+                  },
+                  "path_env": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{1,62}$"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "label",
           "deliver_as"
         ],
         "additionalProperties": false
@@ -2093,6 +2239,7 @@
               "number",
               "usd",
               "percent",
+              "percent_100",
               "days",
               "hours"
             ]

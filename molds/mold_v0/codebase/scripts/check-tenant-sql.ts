@@ -18,7 +18,9 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // mold_v0-034 the workspace credential vault
   "workspace_credentials",
   // mold_v0-035 schedules per workspace and due-date notices
-  "workspace_schedules", "workspace_notices"];
+  "workspace_schedules", "workspace_notices",
+  // mold_v0-079 approvals of previews, mold_v0-075 a company's egress hosts
+  "run_approvals", "workspace_egress_hosts"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

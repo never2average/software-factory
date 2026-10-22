@@ -73,7 +73,7 @@ export interface PackMetricSpec {
   pack: string;
   name: string;
   label: string;
-  unit: 'count' | 'number' | 'usd' | 'percent' | 'days' | 'hours';
+  unit: 'count' | 'number' | 'usd' | 'percent' | 'percent_100' | 'days' | 'hours';
   roles: string[];
 }
 export const packMetrics: PackMetricSpec[] = [];
