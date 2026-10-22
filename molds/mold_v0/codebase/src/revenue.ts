@@ -71,7 +71,19 @@ const empty = (R: ReturnType<typeof spendRange>, configured: boolean, error: str
   range: { from: R.from, to: R.to, days: R.days }, stripe: { configured, error }, currencies: [] as string[], totals: null, accounts: [], plans: [],
 });
 
+/**
+ * The Revenue tab's report: Stripe's side (below), and with price per run (mold_v0-019, src/run-charges.ts) the run
+ * charges and credits in the range, per currency and account, as `run_charges`; absent when the app bills no runs, so
+ * the report is then exactly as before.
+ */
 export async function revenueReport(q: { from?: unknown; to?: unknown } = {}, now = Date.now()) {
+  const out = await stripeRevenue(q, now);
+  const charges = await (await import("./run-charges.js")).adminCharges(spendRange(q, now), { rows: false })
+    .catch((e) => { console.error("finops revenue: run charges failed:", (e as Error).message); return undefined; });
+  return charges ? { ...out, run_charges: charges } : out;
+}
+
+async function stripeRevenue(q: { from?: unknown; to?: unknown } = {}, now = Date.now()) {
   const R = spendRange(q, now);
   if (!billing.stripeEnabled()) return empty(R, false, null);
   let subs: Sub[], current: Map<string, billing.SubscriptionSummary>, invoices: billing.Invoice[], plans: billing.Plan[];
