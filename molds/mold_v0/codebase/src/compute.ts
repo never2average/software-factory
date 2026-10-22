@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import * as kv from "./keyvault.js";
 import { AUTOSCALE, computeDemand, kickConfigured, type TickState } from "./autoscaler.js";
 import { scheduledAgents, variantsOf } from "./agents.js";
@@ -339,7 +340,9 @@ async function buildSummary(fresh: boolean) {
   const tick = lease?.state ?? null;
   const tickAge = tick?.at ? Math.max(0, (now - Date.parse(tick.at)) / 1000) : null;
 
-  const [ses] = await db.query<Record<string, unknown>>(
+  // Sessions and research are the session engine's, a host pack's tables (mold_v0-049): none in a build without them.
+  const eng = sessionEngine();
+  const [ses] = !eng ? [{} as Record<string, unknown>] : await db.query<Record<string, unknown>>(
     `/* tenant: internal: admin Compute page, counts and sums across all orgs, no row data */
      SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
             min(queued_at) FILTER (WHERE status = 'queued') AS oldest_queued,
@@ -358,7 +361,7 @@ async function buildSummary(fresh: boolean) {
             count(*) FILTER (WHERE sandbox_id IS NOT NULL AND started_at > now() - interval '1 day') AS starts_day
        FROM agent_sessions
       WHERE status IN ('queued', 'running') OR ended_at > now() - interval '24 hours' OR started_at > now() - interval '24 hours'`);
-  const [rsh] = await db.query<Record<string, unknown>>(
+  const [rsh] = !researchJobs() ? [{} as Record<string, unknown>] : await db.query<Record<string, unknown>>(
     `/* tenant: internal: admin Compute page, counts across all orgs */
      SELECT count(*) FILTER (WHERE status = 'queued') AS queued, min(created_at) FILTER (WHERE status = 'queued') AS oldest,
             count(*) FILTER (WHERE status = 'running') AS running
@@ -391,12 +394,13 @@ async function buildSummary(fresh: boolean) {
   const idleCandidates = live.filter((r) => r.state === "running" && runningOf(r) === 0 && r.meta?.worker_id &&
     r.ready_at && (now - new Date(r.ready_at).getTime()) / 1000 > idleWindowS);
   let idle = 0;
-  if (idleCandidates.length) {
+  if (idleCandidates.length && !eng) idle = idleCandidates.length; // no session engine: nothing of theirs is active
+  else if (idleCandidates.length) {
     const ids = idleCandidates.map((r) => r.meta!.worker_id!);
     const active = new Set((await db.query<{ worker_id: string }>(
       `/* tenant: internal: admin Compute page, by orchestrator worker id, returns only those ids */
-       SELECT worker_id FROM agent_sessions WHERE worker_id = ANY($1) AND greatest(heartbeat_at, ended_at, started_at) > now() - make_interval(secs => $2)
-       UNION SELECT worker_id FROM product_research WHERE worker_id = ANY($1) AND greatest(heartbeat_at, finished_at, started_at) > now() - make_interval(secs => $2)`,
+       SELECT worker_id FROM agent_sessions WHERE worker_id = ANY($1) AND greatest(heartbeat_at, ended_at, started_at) > now() - make_interval(secs => $2)${researchJobs() ? `
+       UNION SELECT worker_id FROM product_research WHERE worker_id = ANY($1) AND greatest(heartbeat_at, finished_at, started_at) > now() - make_interval(secs => $2)` : ""}`,
       [ids, idleWindowS])).map((x) => x.worker_id));
     idle = ids.filter((id) => !active.has(id)).length;
   }
@@ -416,7 +420,7 @@ async function buildSummary(fresh: boolean) {
   const [orphans] = await db.query<{ n: unknown }>("SELECT count(*) AS n FROM compute_events WHERE kind = 'orphan_deleted' AND at > now() - interval '24 hours'");
 
   // Failed sessions by class (24 h); the most common one names the Failures tile's "top".
-  const failed = await db.query<{ status: string; agent_id: string | null; error_message: string | null; completed_reason: string | null; infra_error: string | null }>(
+  const failed = !eng ? [] : await db.query<{ status: string; agent_id: string | null; error_message: string | null; completed_reason: string | null; infra_error: string | null }>(
     `/* tenant: internal: admin Compute page, classified into counts across all orgs */
      SELECT status, agent_id, error_message, completed_reason, metadata->>'infra_error' AS infra_error
        FROM agent_sessions WHERE status IN ('failed', 'timeout') AND ended_at > now() - interval '24 hours' ORDER BY ended_at DESC LIMIT 5000`);

@@ -3,10 +3,14 @@ import { orgMonthRunSpendUsd } from "./run-spend.js";
 
 /**
  * The session engine's shared SQL and figures (mold_v0-039). Sessions (agent_sessions) are the job queue the shell's
- * orchestrators claim (src/worker.ts); each runs one scenario. Their tables are still in the base schema (moving the
- * product's own tables into its pack is mold_v0-049), so the engine, the gateway and the account's month figures read
- * them here; what a session means to a product (its verdict, its reports) is the product's pack's.
+ * orchestrators claim (src/worker.ts); each runs one scenario. Their tables are a host pack's since mold_v0-049 (its
+ * migrations create them: pack.json host.schema), so the engine runs only in a build whose host pack has them
+ * (sessionEngine(), src/host-tables.ts); with none, every engine read answers empty and nothing is ever queued. What a session means to a
+ * product (its verdict, its reports) is the product's pack's.
  */
+
+export { hostTable, researchJobs, sessionEngine } from "./host-tables.js";
+import { sessionEngine } from "./host-tables.js";
 
 /** A session's scenario with its library task's fields filled in (a scenario linked to a library task keeps only the link). */
 export const SCENARIO_ROWS = `/* tenant: the scenarios table, rows scoped by the query around it */ (SELECT sc0.id, sc0.product_id,
@@ -33,6 +37,7 @@ export function wilson(hits: number, n: number): [number, number] | null {
 
 /** An account's model spend this calendar month (UTC): its sessions' and its runs' (src/run-spend.ts). */
 export async function orgMonthSpendUsd(orgId: number): Promise<number> {
+  if (!sessionEngine()) return orgMonthRunSpendUsd(orgId);
   const db = await getDb();
   const [r] = await db.query<{ usd: number }>(
     // Per session (and per run): its recorded cost, or the gateway's live total while it runs (whichever is larger); same as Billing shows.

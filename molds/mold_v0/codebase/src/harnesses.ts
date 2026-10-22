@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { hostTable } from "./host-tables.js";
 import { baseEntriesFor, fileRegistry, isBaseEntry, modelRoute, registry, setPlatformHarnesses, type PlatformHarness } from "./agents.js";
 
 /**
@@ -136,7 +137,8 @@ export async function deletePlatformHarness(id: string) {
   const db = await getDb();
   let mixes = 0;
   await db.transaction(async (tx) => {
-    mixes = (await tx.query("DELETE FROM developer_population_agents WHERE agent_id = $1 RETURNING population_id", [id])).length;
+    // Populations are a host pack's table (mold_v0-049): a build without one has no mix to leave.
+    if (hostTable("developer_population_agents")) mixes = (await tx.query("DELETE FROM developer_population_agents WHERE agent_id = $1 RETURNING population_id", [id])).length;
     await tx.query("DELETE FROM platform_harnesses WHERE id = $1", [id]);
   });
   await refreshPlatformHarnesses();

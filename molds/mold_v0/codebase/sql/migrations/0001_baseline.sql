@@ -1,13 +1,13 @@
--- Octillion schema. Idempotent: every statement is IF NOT EXISTS, so it runs on every boot.
+-- The shell's base schema (mold_v0-049): workspaces (organizations) and their keys, orchestrators and the autoscaler,
+-- the key vault and the inference gateway, model prices and usage, MCP activity, access requests, usage limits,
+-- worker tokens, deletions, the admin access log, data keys, settings, harnesses, emails and docs answers.
 --
---   organizations / api_keys     dev-tool companies (tenants) and the keys their MCP connectors use
---   products                     product context a company configures: names, packages, competitors
---   scenarios                    real-world coding tasks where the product should (or should not) come up
---   simulations                  one launch: scenarios x models x repeats
---   agent_sessions               one sandboxed sub-agent working one scenario; doubles as the worker job queue
---                                and carries the scored verdict
---   transcript_events            raw JSONL events, only when ClickHouse is not configured (local dev fallback)
---   access_requests              landing-page sign-ups
+-- Before mold_v0-049 this file was the product's whole schema (sql/schema.sql byte for byte, mold_v0-031): its own
+-- tables (products, scenarios, simulations and their sessions, research, personas and tasks, populations, journeys,
+-- context and memory, nudges, contributions, reports) left it for the host pack that owns them, whose migrations create
+-- them (MOLD.md "Host packs": host.schema). A database that applied the earlier version of this file keeps them, with
+-- their rows: src/migrate.ts accepts that version's checksum (SPLIT_MIGRATIONS) and the host pack adopts its own part.
+-- Idempotent: every statement is IF NOT EXISTS or guarded, as when it ran on every boot.
 
 CREATE TABLE IF NOT EXISTS organizations (
   id          SERIAL PRIMARY KEY,
@@ -30,103 +30,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
 -- adoption and limits. Null = the account's key, shown as "Connector key".
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS user_id TEXT;
 
-CREATE TABLE IF NOT EXISTS products (
-  id            SERIAL PRIMARY KEY,
-  org_id        INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  slug          TEXT NOT NULL,
-  name          TEXT NOT NULL,
-  description   TEXT NOT NULL DEFAULT '',
-  category      TEXT NOT NULL DEFAULT '',
-  website_url   TEXT,
-  docs_url      TEXT,
-  -- How the product shows up in agent output; all matched case-insensitively.
-  aliases       TEXT[] NOT NULL DEFAULT '{}',  -- other names, e.g. "Neon Postgres"
-  packages      TEXT[] NOT NULL DEFAULT '{}',  -- npm/PyPI/crate/module names, e.g. "@neondatabase/serverless"
-  domains       TEXT[] NOT NULL DEFAULT '{}',  -- e.g. "neon.tech"
-  competitors   JSONB NOT NULL DEFAULT '[]',   -- [{name, aliases[], packages[], domains[]}]
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (org_id, slug)
-);
-
-CREATE TABLE IF NOT EXISTS scenarios (
-  id           SERIAL PRIMARY KEY,
-  product_id   INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  title        TEXT NOT NULL,
-  prompt       TEXT NOT NULL,                 -- the task given to the sub-agent, verbatim; never names the customer
-  repo_url     TEXT,                          -- optional starter repo cloned into the sandbox
-  language     TEXT,
-  tags         TEXT[] NOT NULL DEFAULT '{}',
-  expectation  TEXT NOT NULL DEFAULT 'recommend' CHECK (expectation IN ('recommend', 'avoid')),
-  active       BOOLEAN NOT NULL DEFAULT true,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS scenarios_product_idx ON scenarios (product_id);
-
-CREATE TABLE IF NOT EXISTS simulations (
-  id           TEXT PRIMARY KEY,              -- sim_<random>
-  org_id       INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  product_id   INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  name         TEXT NOT NULL,
-  models       TEXT[] NOT NULL,
-  harness      TEXT NOT NULL,
-  repeats      INT NOT NULL,
-  status       TEXT NOT NULL DEFAULT 'queued'
-               CHECK (status IN ('queued', 'running', 'completed', 'cancelled')),
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  started_at   TIMESTAMPTZ,
-  finished_at  TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS simulations_product_idx ON simulations (product_id, created_at DESC);
--- Adaptive sampling (src/queries.ts extendAdaptive): the per-task session cap (NULL = fixed-size run) and the last
--- decision per task ({scenario_id: {attempts, scored, hits, margin, status}}).
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS max_samples INT;
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS sampling JSONB;
-
-CREATE TABLE IF NOT EXISTS agent_sessions (
-  id              TEXT PRIMARY KEY,           -- ses_<random>
-  simulation_id   TEXT NOT NULL REFERENCES simulations(id) ON DELETE CASCADE,
-  org_id          INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  product_id      INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  scenario_id     INT NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
-  model           TEXT NOT NULL,
-  harness         TEXT NOT NULL,
-  attempt         INT NOT NULL DEFAULT 1,     -- repeat number within the simulation
-  status          TEXT NOT NULL DEFAULT 'queued'
-                  CHECK (status IN ('queued', 'running', 'completed', 'failed', 'timeout', 'cancelled')),
-  worker_id       TEXT,
-  sandbox_id      TEXT,
-  queued_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-  started_at      TIMESTAMPTZ,
-  heartbeat_at    TIMESTAMPTZ,
-  ended_at        TIMESTAMPTZ,
-  tokens_in       BIGINT NOT NULL DEFAULT 0,
-  tokens_out      BIGINT NOT NULL DEFAULT 0,
-  cost_usd        NUMERIC(12, 4) NOT NULL DEFAULT 0,
-  error_message   TEXT,
-  metadata        JSONB NOT NULL DEFAULT '{}',
-  events          INT NOT NULL DEFAULT 0,     -- transcript events received
-  -- Scoring, filled when the session finishes (see src/scoring.ts).
-  verdict         TEXT CHECK (verdict IN ('adopted', 'recommended', 'mentioned', 'competitor', 'none')),
-  winner          TEXT,                       -- tool the agent went with (target or competitor name), if any
-  mentions        JSONB,                      -- [{tool, target, level, first_seq, evidence: [{seq, kind, snippet}]}]
-  scored_at       TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS agent_sessions_queue_idx ON agent_sessions (queued_at) WHERE status = 'queued';
-CREATE INDEX IF NOT EXISTS agent_sessions_sim_idx ON agent_sessions (simulation_id);
-CREATE INDEX IF NOT EXISTS agent_sessions_product_idx ON agent_sessions (product_id, ended_at DESC);
-
-CREATE TABLE IF NOT EXISTS transcript_events (
-  session_id  TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-  seq         INT NOT NULL,
-  ts          TIMESTAMPTZ NOT NULL,
-  type        TEXT NOT NULL,
-  text        TEXT NOT NULL,
-  raw         JSONB NOT NULL,
-  PRIMARY KEY (session_id, seq)
-);
-
 CREATE TABLE IF NOT EXISTS access_requests (
   id           SERIAL PRIMARY KEY,
   email        TEXT NOT NULL,
@@ -135,45 +38,6 @@ CREATE TABLE IF NOT EXISTS access_requests (
   message      TEXT,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Developer profiles and the task library, synced from the vault (`npm run vault:sync`, src/vault.ts).
--- A profile is who the orchestrator role-plays when a sub-agent asks a question; it never names a customer product.
-CREATE TABLE IF NOT EXISTS developer_profiles (
-  id            SERIAL PRIMARY KEY,
-  slug          TEXT UNIQUE NOT NULL,
-  external_id   TEXT,                         -- id in the vault
-  name          TEXT NOT NULL,
-  summary       TEXT NOT NULL DEFAULT '',
-  attributes    JSONB NOT NULL DEFAULT '{}',  -- role, experience, company_size, stack, constraints, tone, ...
-  instructions  TEXT NOT NULL DEFAULT '',     -- how this developer answers the agent's questions
-  active        BOOLEAN NOT NULL DEFAULT true,
-  synced_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS library_tasks (
-  id            SERIAL PRIMARY KEY,
-  slug          TEXT UNIQUE NOT NULL,
-  external_id   TEXT,
-  title         TEXT NOT NULL,
-  prompt        TEXT NOT NULL,
-  repo_url      TEXT,
-  language      TEXT,
-  category      TEXT,
-  tags          TEXT[] NOT NULL DEFAULT '{}',
-  attributes    JSONB NOT NULL DEFAULT '{}',
-  active        BOOLEAN NOT NULL DEFAULT true,
-  synced_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-ALTER TABLE scenarios      ADD COLUMN IF NOT EXISTS library_task_id INT REFERENCES library_tasks(id) ON DELETE SET NULL;
-ALTER TABLE simulations    ADD COLUMN IF NOT EXISTS profile_ids INT[] NOT NULL DEFAULT '{}';
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS profile_id INT REFERENCES developer_profiles(id) ON DELETE SET NULL;
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS user_turns INT NOT NULL DEFAULT 0;  -- questions answered by the simulated developer
-
--- Worker agents (harnesses/registry.json): which agent ran each session, and how a simulation picked them.
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS agent_id TEXT;              -- registry id, e.g. claude-code/sonnet
-ALTER TABLE simulations    ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'explicit';  -- representative | explicit
-ALTER TABLE simulations    ADD COLUMN IF NOT EXISTS agent_ids TEXT[] NOT NULL DEFAULT '{}';
 
 -- Orchestrators (each runs up to OCTILLION_PODS_PER_ORCHESTRATOR warm pods); the server plans the global pod mix (src/fleet.ts).
 CREATE TABLE IF NOT EXISTS orchestrators (
@@ -324,7 +188,7 @@ CREATE TABLE IF NOT EXISTS vault_credentials (
 CREATE TABLE IF NOT EXISTS gateway_tokens (
   token_hash       TEXT PRIMARY KEY,          -- sha256 of ogw_...; the token itself is never stored
   kind             TEXT NOT NULL CHECK (kind IN ('session', 'orchestrator')),
-  session_id       TEXT REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  session_id       TEXT,                      -- a session token's session (the host pack's sessions table, mold_v0-049)
   orchestrator_id  TEXT,
   providers        TEXT[] NOT NULL,
   expires_at       TIMESTAMPTZ NOT NULL,
@@ -348,103 +212,8 @@ CREATE TABLE IF NOT EXISTS gateway_usage (
 );
 -- Priced per request at record time (long-context tiers apply per request, not to a session's summed input).
 ALTER TABLE gateway_usage ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(12, 6) NOT NULL DEFAULT 0;
-
--- The Compute page's tables (src/compute-records.ts, src/compute.ts): sessions by status and when they ended, by agent,
--- by start (wait times, our boat starts), and gateway spend per orchestrator and per session.
-CREATE INDEX IF NOT EXISTS agent_sessions_status_ended_idx ON agent_sessions (status, ended_at DESC);
-CREATE INDEX IF NOT EXISTS agent_sessions_agent_status_idx ON agent_sessions (agent_id, status);
-CREATE INDEX IF NOT EXISTS agent_sessions_started_idx      ON agent_sessions (started_at DESC) WHERE started_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS gateway_usage_orch_idx          ON gateway_usage (orchestrator_id) WHERE orchestrator_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS gateway_usage_session_idx       ON gateway_usage (session_id) WHERE session_id IS NOT NULL;
-
--- Developer populations: the coding-agent (harness x model) mix a simulation should represent, e.g. the global
--- developer population or an enterprise subset. Agent definitions (images, adapters) stay in harnesses/registry.json;
--- the mix lives here. The default population is seeded from the registry's cited weights on first boot.
-CREATE TABLE IF NOT EXISTS developer_populations (
-  id                   SERIAL PRIMARY KEY,
-  slug                 TEXT UNIQUE NOT NULL,
-  name                 TEXT NOT NULL,
-  description          TEXT NOT NULL DEFAULT '',
-  as_of                DATE,
-  methodology          TEXT NOT NULL DEFAULT '',
-  sources              JSONB NOT NULL DEFAULT '[]',
-  unrepresented_share  REAL,                    -- usage in tools that cannot run headless
-  sandbox_unit         INT NOT NULL DEFAULT 20 CHECK (sandbox_unit > 0),
-  min_one_sandbox      BOOLEAN NOT NULL DEFAULT false,
-  is_default           BOOLEAN NOT NULL DEFAULT false,
-  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS developer_populations_one_default ON developer_populations (is_default) WHERE is_default;
-
-CREATE TABLE IF NOT EXISTS developer_population_agents (
-  population_id  INT NOT NULL REFERENCES developer_populations(id) ON DELETE CASCADE,
-  agent_id       TEXT NOT NULL,               -- registry agent id, e.g. claude-code/opus
-  market_share   REAL NOT NULL CHECK (market_share >= 0),  -- share of this population's agentic coding usage
-  paused         BOOLEAN NOT NULL DEFAULT false,
-  paused_reason  TEXT,
-  notes          TEXT,
-  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (population_id, agent_id)
-);
-
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS population_id INT REFERENCES developer_populations(id) ON DELETE SET NULL;
-
--- Product onboarding (docs/onboarding.md): prompt + link + docs -> orchestrator research -> profile, personas, problems.
-ALTER TABLE products  ADD COLUMN IF NOT EXISTS prompt   TEXT;              -- what the customer said the product is
-ALTER TABLE products  ADD COLUMN IF NOT EXISTS features JSONB NOT NULL DEFAULT '[]';
-ALTER TABLE products  ADD COLUMN IF NOT EXISTS research JSONB;            -- sources and notes from the last research
-ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS source    TEXT NOT NULL DEFAULT 'manual';  -- manual | library | generated
-ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS rationale TEXT;            -- why the product fits (or should not)
--- Starter workspace for scenarios without repo_url (orchestrator/workspaces/<template>); NULL = picked from language/tags/prompt.
-ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS template TEXT;
--- Superseded by developer_profiles.environment (the persona's tools, installed into the harness).
-ALTER TABLE scenarios DROP COLUMN IF EXISTS developer_context;
--- The persona's developer environment (orchestrator/core/environment.ts): {editor, tools: [catalog ids]}. Each session
--- installs the editor's language servers for the task's language plus these CLI tools into the worker sandbox and
--- wires them into the harness. NULL: the default (VS Code + base tools).
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS environment JSONB;
--- The same problem in each persona's own words ({persona slug: prompt}): a junior states the outcome, a senior adds
--- constraints and acceptance criteria. A session uses its persona's phrasing, else `prompt`.
-ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS prompt_variants JSONB NOT NULL DEFAULT '{}';
--- The purchase decision the task's requirements create (never shown to the agent): {need, options: [{kind, name}],
--- why_intrinsic, evidence_url}. A task without one measures nothing about tool choice.
-ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS decision JSONB;
--- Off-machine archive in R2 (src/archive.ts, docs/storage.md): object key once archived; claim time for the sweeper.
-ALTER TABLE agent_sessions   ADD COLUMN IF NOT EXISTS archive_key TEXT;
-ALTER TABLE agent_sessions   ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
-ALTER TABLE agent_sessions   ADD COLUMN IF NOT EXISTS archive_events INT;
-ALTER TABLE agent_sessions   ADD COLUMN IF NOT EXISTS archive_claimed_at TIMESTAMPTZ;
--- The onboarding research the run's personas and problems came from (provenance).
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS research_id TEXT;
--- Why a session ended: done (real workspace changes) | turn_cap (MAX_AGENT_TURNS) | time_cap | agent_gave_up | error.
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS completed_reason TEXT
-  CHECK (completed_reason IS NULL OR completed_reason IN ('done', 'turn_cap', 'time_cap', 'agent_gave_up', 'error'));
--- Personas generated for one product live next to the shared vault profiles, scoped to that org + product.
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS org_id     INT REFERENCES organizations(id) ON DELETE CASCADE;
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS product_id INT REFERENCES products(id) ON DELETE CASCADE;
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS source     TEXT NOT NULL DEFAULT 'vault';  -- vault | generated
-
-CREATE TABLE IF NOT EXISTS product_research (
-  id             TEXT PRIMARY KEY,           -- rsh_<random>
-  org_id         INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  product_id     INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  status         TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed')),
-  stage          TEXT,
-  note           TEXT,
-  input          JSONB NOT NULL,             -- {name?, prompt, website_url?, docs_url?}
-  run            JSONB,                      -- null = don't auto-run; else {samples?, population?}
-  result         JSONB,
-  error          TEXT,
-  attempts       INT NOT NULL DEFAULT 0,     -- complete() calls rejected by validation
-  worker_id      TEXT,
-  simulation_id  TEXT REFERENCES simulations(id) ON DELETE SET NULL,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  started_at     TIMESTAMPTZ,
-  heartbeat_at   TIMESTAMPTZ,
-  finished_at    TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS product_research_queue_idx ON product_research (created_at) WHERE status = 'queued';
 
 -- Gateway backends: 'direct' forwards to upstream_url; 'vertex' rewrites Anthropic Messages calls to Google Cloud Vertex AI
 -- (backend_config: {project_id, region ('global' | 'us' | 'eu' | a region), model_map?}); the credential is a service-account JSON key.
@@ -542,11 +311,6 @@ CREATE TABLE IF NOT EXISTS mcp_events (
 );
 CREATE INDEX IF NOT EXISTS mcp_events_org_idx ON mcp_events (org_id, at DESC);
 
--- R2 archive of onboarding research (src/archive.ts); after product_research exists.
-ALTER TABLE product_research ADD COLUMN IF NOT EXISTS archive_key TEXT;
-ALTER TABLE product_research ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
-ALTER TABLE product_research ADD COLUMN IF NOT EXISTS archive_claimed_at TIMESTAMPTZ;
-
 -- Onboarding (src/admin.ts, /admin). People live in WorkOS and money in Stripe; these are only the joins to them,
 -- plus the triage state of a landing-page request.
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS workos_org_id TEXT UNIQUE;       -- WorkOS organization (users, invites, SSO)
@@ -578,39 +342,8 @@ ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS researched_at TIMESTAMPTZ;
 ALTER TABLE mcp_events ADD COLUMN IF NOT EXISTS user_id TEXT;           -- the WorkOS user when signed in (null for API keys)
 CREATE INDEX IF NOT EXISTS mcp_events_user_idx ON mcp_events (org_id, user_id, at DESC);
 
--- Journey nudges (src/journeys.ts): a delivery queue for PostHog Workflows' in-chat channel. Journeys themselves live in
--- PostHog. One row per account (user_id '') or person and journey step; a step that fires again replaces its row.
-CREATE TABLE IF NOT EXISTS nudges (
-  id             BIGSERIAL PRIMARY KEY,
-  org_id         INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  user_id        TEXT NOT NULL DEFAULT '',     -- WorkOS user, or '' for everyone in the account
-  journey        TEXT NOT NULL,
-  step           TEXT NOT NULL,
-  message        TEXT NOT NULL,
-  prompt         TEXT,                         -- what to type to try it
-  link           TEXT,
-  source         TEXT NOT NULL DEFAULT 'posthog' CHECK (source IN ('posthog', 'admin')),
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at     TIMESTAMPTZ NOT NULL,
-  shown_count    INT NOT NULL DEFAULT 0,
-  first_shown_at TIMESTAMPTZ,
-  last_shown_at  TIMESTAMPTZ,
-  dismissed_at   TIMESTAMPTZ,
-  UNIQUE (org_id, user_id, journey, step)
-);
-CREATE INDEX IF NOT EXISTS nudges_active_idx ON nudges (org_id, user_id, created_at DESC) WHERE dismissed_at IS NULL;
-CREATE TABLE IF NOT EXISTS nudge_prefs (
-  org_id         INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  user_id        TEXT NOT NULL DEFAULT '',
-  muted          BOOLEAN NOT NULL DEFAULT false,  -- the person turned tips off on /app
-  last_shown_at  TIMESTAMPTZ,                     -- for the one-a-day limit in chat
-  PRIMARY KEY (org_id, user_id)
-);
-
--- Usage limits inside an account (src/limits.ts): how its admins split the plan's budget, who may run simulations,
+-- Usage limits inside an account (src/limits.ts): how its admins split the plan's budget, who may launch runs,
 -- and how much each person may run at once. Set on /app Limits; the budget itself comes from the Stripe plan.
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS created_by TEXT;   -- the WorkOS user who launched it (null: connector key)
-CREATE INDEX IF NOT EXISTS simulations_created_by_idx ON simulations (org_id, created_by);
 CREATE TABLE IF NOT EXISTS usage_policies (
   org_id                INT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
   mode                  TEXT NOT NULL DEFAULT 'pool' CHECK (mode IN ('pool', 'even', 'custom')),
@@ -720,133 +453,8 @@ SELECT p.org_id, 'Equal shares now count only people who can launch, so shares w
    AND (NOT p.new_members_can_run OR EXISTS (SELECT 1 FROM usage_members m WHERE m.org_id = p.org_id AND m.can_run = false));
 INSERT INTO usage_rule_migrations (name) VALUES ('own_limit_every_mode'), ('set_aside_every_mode'), ('share_counts_launchers') ON CONFLICT (name) DO NOTHING;
 
--- Context for the AI client (src/context.ts, /app Context): the company's, set by its admins, and each person's own.
-CREATE TABLE IF NOT EXISTS account_context (
-  org_id        INT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
-  about         TEXT,                          -- what the company does
-  audience      TEXT,                          -- the developers it builds for
-  competitors   JSONB NOT NULL DEFAULT '[]',   -- names to always track
-  terms         TEXT,                          -- internal product names and jargon
-  notes_for_ai  TEXT,
-  updated_at    TIMESTAMPTZ,
-  updated_by    TEXT
-);
-CREATE TABLE IF NOT EXISTS user_context (
-  org_id        INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  user_id       TEXT NOT NULL,                 -- WorkOS user
-  title         TEXT,
-  focus_product TEXT,                          -- product slug used when they do not name one
-  interests     TEXT,
-  answer_style  TEXT,                          -- brief | detailed | executive
-  notes         TEXT,
-  updated_at    TIMESTAMPTZ,
-  PRIMARY KEY (org_id, user_id)
-);
-
 -- Clerk replaced WorkOS for people (src/clerk.ts): the join to a Clerk organization. workos_org_id is no longer used.
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS clerk_org_id TEXT UNIQUE;
-
--- Customer journeys (src/playbooks.ts): use-case pipelines shown on /app Setup, managed by platform admins on /admin.
--- Seeded once with the built-in pipelines; `promoted` ones appear in the portal, in `position` order.
-CREATE TABLE IF NOT EXISTS journey_templates (
-  id              TEXT PRIMARY KEY,               -- slug
-  name            TEXT NOT NULL,
-  outcome         TEXT NOT NULL,
-  who             TEXT NOT NULL DEFAULT '',
-  time            TEXT NOT NULL DEFAULT '',
-  example_title   TEXT NOT NULL DEFAULT '',
-  example_result  TEXT NOT NULL DEFAULT '',
-  stages          JSONB NOT NULL,                 -- [{id, title, why, prompt, tools[], expect, manual?}]
-  promoted        BOOLEAN NOT NULL DEFAULT false,
-  position        INT NOT NULL DEFAULT 0,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_by      TEXT
-);
-
--- Journey progress per account (src/playbooks.ts): when each stage of a customer journey was first done, by a tool
--- call or marked by hand. Drives the per-journey funnel on /admin and the journey_* PostHog events (sent once).
-CREATE TABLE IF NOT EXISTS journey_progress (
-  org_id      INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  journey_id  TEXT NOT NULL,
-  stage_id    TEXT NOT NULL,
-  done_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  source      TEXT NOT NULL CHECK (source IN ('tool', 'manual')),
-  user_id     TEXT,                              -- who marked it, for manual stages
-  PRIMARY KEY (org_id, journey_id, stage_id)
-);
-
--- Institutional memory (src/context.ts): short items people add on /app/context beside the core fields. Scope is the
--- company, one user (subject = Clerk user id) or one product (subject = product slug). Fed to the AI client as background.
-CREATE TABLE IF NOT EXISTS context_memories (
-  id          BIGSERIAL PRIMARY KEY,
-  org_id      INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  scope       TEXT NOT NULL CHECK (scope IN ('company', 'user', 'product')),
-  subject     TEXT NOT NULL DEFAULT '',
-  kind        TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('fact', 'decision', 'preference', 'note')),
-  body        TEXT NOT NULL,
-  created_by  TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS context_memories_scope ON context_memories (org_id, scope, subject, created_at DESC);
-
--- Use cases an account adds for itself on /app/adoption (src/playbooks.ts): journey templates owned by one account.
--- NULL: a global template managed on /admin.
-ALTER TABLE journey_templates ADD COLUMN IF NOT EXISTS org_id INT REFERENCES organizations(id) ON DELETE CASCADE;
-
--- Help requests on /app/adoption (src/playbooks.ts): someone stuck on a use case asks; a teammate picks it up.
-CREATE TABLE IF NOT EXISTS adoption_help (
-  id          BIGSERIAL PRIMARY KEY,
-  org_id      INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  journey_id  TEXT NOT NULL,
-  requester   TEXT NOT NULL,                     -- Clerk user id
-  helper      TEXT,
-  note        TEXT NOT NULL DEFAULT '',
-  status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'picked', 'done')),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  picked_at   TIMESTAMPTZ,
-  closed_at   TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS adoption_help_org ON adoption_help (org_id, status, created_at DESC);
-
--- Platform a task targets (src/platform.ts): split results by web / mobile / backend ... Backfilled from the starter
--- template, else the language, else the tags and prompt; the rules mirror platformOf() in src/platform.ts.
-ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS platform TEXT CHECK (platform IN ('web', 'mobile', 'backend', 'desktop', 'cli', 'data', 'other'));
-ALTER TABLE library_tasks ADD COLUMN IF NOT EXISTS platform TEXT CHECK (platform IN ('web', 'mobile', 'backend', 'desktop', 'cli', 'data', 'other'));
-CREATE OR REPLACE FUNCTION octillion_platform_of(tpl TEXT, lang TEXT, tags TEXT[], prompt TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
-  SELECT CASE
-    WHEN tpl IN ('nextjs-ts', 'django') THEN 'web'
-    WHEN tpl IN ('react-native', 'flutter') THEN 'mobile'
-    WHEN tpl IN ('express-ts', 'fastapi', 'go-http', 'java-spring', 'rust-axum', 'node-ts') THEN 'backend'
-    WHEN tpl = 'cpp-cmake' THEN 'other'
-    WHEN lang ~* '^(dart|swift|objective-c|kotlin)$' THEN 'mobile'
-    WHEN concat_ws(' ', array_to_string(tags, ' '), prompt) ~* '\m(flutter|react native|react-native|expo|swiftui|jetpack compose|android app|ios app|mobile app|iphone|app store|play store)\M' THEN 'mobile'
-    WHEN concat_ws(' ', array_to_string(tags, ' '), prompt) ~* '\m(electron|tauri|desktop app)\M' THEN 'desktop'
-    WHEN concat_ws(' ', array_to_string(tags, ' '), prompt) ~* '\m(next\.?js|react|vue|svelte|angular|frontend|front-end|browser|web app|pwa|single-page)\M' THEN 'web'
-    WHEN concat_ws(' ', array_to_string(tags, ' '), prompt) ~* '\m(cli|command-line|command line tool)\M' THEN 'cli'
-    WHEN concat_ws(' ', array_to_string(tags, ' '), prompt) ~* '\m(notebook|pandas|spark|etl|data pipeline|airflow|dbt)\M' THEN 'data'
-    WHEN concat_ws(' ', array_to_string(tags, ' '), prompt) ~* '\m(express|fastapi|flask|spring boot|rails|laravel|nestjs|koa|gin|axum|actix|rest api|graphql api|microservice|backend service|api service)\M' THEN 'backend'
-    WHEN lang ~* '^(python|go|golang|rust|java|ruby|php|c#|elixir|typescript|javascript)$' THEN 'backend'
-    ELSE 'other' END
-$$;
-UPDATE scenarios SET platform = octillion_platform_of(template, language, tags, prompt) WHERE platform IS NULL;
-UPDATE library_tasks SET platform = octillion_platform_of(attributes->>'template', language, tags, prompt) WHERE platform IS NULL;
-CREATE INDEX IF NOT EXISTS scenarios_product_platform_idx ON scenarios (product_id, platform);
-CREATE INDEX IF NOT EXISTS library_tasks_platform_idx ON library_tasks (platform, category) WHERE active;
-
--- Tenant safety (docs/security.md): a developer profile is shared (org_id NULL) exactly when it comes from the vault.
--- A private persona inserted without its org fails instead of silently becoming visible to every organization.
-ALTER TABLE developer_profiles ALTER COLUMN source DROP DEFAULT;
--- Shared rows come from the vault, were written by Octillion staff on /admin/personas ('admin'), or were contributed by a
--- customer and accepted on /admin/personas ('contributed', library_submissions); all are public.
--- Re-created when an older definition (vault only) is in place.
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'developer_profiles_owner_matches_source'
-                   AND pg_get_constraintdef(oid) LIKE '%contributed%') THEN
-    ALTER TABLE developer_profiles DROP CONSTRAINT IF EXISTS developer_profiles_owner_matches_source;
-    ALTER TABLE developer_profiles ADD CONSTRAINT developer_profiles_owner_matches_source CHECK ((org_id IS NULL) = (source IN ('vault', 'admin', 'contributed')));
-  END IF;
-END $$;
 
 -- Per-job worker tokens (src/workerauth.ts): an autoscaled per-job orchestrator gets a token bound to its one job and
 -- organization instead of the fleet-wide OCTILLION_WORKER_TOKEN. Hash only; revoked when its sandbox is deleted.
@@ -867,51 +475,6 @@ CREATE TABLE IF NOT EXISTS org_deletions (
   counts      JSONB NOT NULL DEFAULT '{}',
   deleted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Private customer assets (src/private.ts, docs/security.md phase 1). Owned by one organization; never shared.
-CREATE TABLE IF NOT EXISTS org_task_sets (
-  id          SERIAL PRIMARY KEY,
-  public_id   TEXT UNIQUE NOT NULL,             -- tset_<random>
-  org_id      INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  product_id  INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  name        TEXT NOT NULL,
-  description TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (org_id, product_id, name)
-);
-ALTER TABLE scenarios ADD COLUMN IF NOT EXISTS task_set_id INT REFERENCES org_task_sets(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS scenarios_task_set_idx ON scenarios (task_set_id) WHERE task_set_id IS NOT NULL;
-CREATE TABLE IF NOT EXISTS org_harnesses (
-  id              TEXT PRIMARY KEY,             -- oh_<random>
-  org_id          INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  name            TEXT NOT NULL,
-  version_label   TEXT NOT NULL,
-  spec            JSONB NOT NULL,
-  status          TEXT NOT NULL CHECK (status IN ('submitted', 'building', 'scanning', 'pending_review', 'approved', 'rejected', 'failed', 'revoked')),
-  status_reason   TEXT,
-  providers       TEXT[] NOT NULL DEFAULT '{}',
-  event_format    TEXT NOT NULL,
-  egress_hosts    TEXT[] NOT NULL DEFAULT '{}',
-  artifact_uri    TEXT,                         -- internal only; never returned to customers
-  artifact_digest TEXT,
-  scan_summary    JSONB,
-  approved_at     TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (org_id, name, version_label)
-);
-
--- A run that uses an organization's private assets (its own personas or tasks; later its harnesses). Its sessions are
--- claimed only by the per-job orchestrator launched for it (job token), never by a shared orchestrator (fleet token).
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS private BOOLEAN NOT NULL DEFAULT false;
-
--- Private harness mixes (docs/security.md, phase 3): a population owned by one organization (its own distribution of
--- coding agents). Public populations have no owner; an organization's mix is never the default.
-ALTER TABLE developer_populations ADD COLUMN IF NOT EXISTS org_id INT REFERENCES organizations(id) ON DELETE CASCADE;
-DO $$ BEGIN
-  ALTER TABLE developer_populations ADD CONSTRAINT developer_populations_private_not_default CHECK (org_id IS NULL OR NOT is_default);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-CREATE UNIQUE INDEX IF NOT EXISTS developer_populations_org_name ON developer_populations (org_id, name) WHERE org_id IS NOT NULL;
 
 -- Staff access to the admin API (docs/security.md): who, what, when. No request bodies (they can hold secrets).
 CREATE TABLE IF NOT EXISTS admin_access_log (
@@ -939,32 +502,6 @@ INSERT INTO vault_providers (slug, mode, upstream_url, auth_header, auth_prefix,
   ('exa',          'direct', 'https://api.exa.ai',      'x-api-key', '', '{}'),
   ('libraries_io', 'direct', 'https://libraries.io/api', 'api_key',   '', '{}')
 ON CONFLICT (slug) DO NOTHING;
--- Every result URL a research job's searches returned: a competitor's evidence_url must be one of them.
-ALTER TABLE product_research ADD COLUMN IF NOT EXISTS sources  JSONB NOT NULL DEFAULT '[]';
-ALTER TABLE product_research ADD COLUMN IF NOT EXISTS searches INT NOT NULL DEFAULT 0;
--- The same research harness also researches the company behind an access request (src/prospect.ts): kind 'prospect',
--- no org or product yet, the request it is for.
-ALTER TABLE product_research ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'product' CHECK (kind IN ('product', 'prospect'));
-ALTER TABLE product_research ADD COLUMN IF NOT EXISTS request_id INT REFERENCES access_requests(id) ON DELETE CASCADE;
-ALTER TABLE product_research ALTER COLUMN org_id DROP NOT NULL;
-ALTER TABLE product_research ALTER COLUMN product_id DROP NOT NULL;
--- Packages the agent installed that match neither the product nor a tracked competitor ({name, ecosystem}): the
--- alternatives research missed. The report lists them so the customer can add them as competitors.
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS untracked JSONB;
-
--- Built-in journeys already seeded (src/playbooks.ts ensureSeeded): each is added once, so one an admin deleted stays gone.
-CREATE TABLE IF NOT EXISTS journey_seed (
-  id         TEXT PRIMARY KEY,
-  seeded_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- The persona and task libraries are edited on /admin (src/library.ts). An edited or admin-written row is the admin's:
--- the vault sync (src/vault.ts) leaves rows with edited_at set alone, and never retires a source = 'admin' row.
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS edited_by TEXT;
-ALTER TABLE library_tasks ADD COLUMN IF NOT EXISTS source    TEXT NOT NULL DEFAULT 'vault';  -- vault | admin
-ALTER TABLE library_tasks ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
-ALTER TABLE library_tasks ADD COLUMN IF NOT EXISTS edited_by TEXT;
 
 -- Global settings edited on /admin/compute (src/settings.ts): models, run sizes, capacity, research limits. A row here
 -- wins over the environment variable of the same name, which wins over the code default. No row: not set here.
@@ -993,10 +530,6 @@ CREATE TABLE IF NOT EXISTS platform_harnesses (
   updated_by       TEXT
 );
 
--- A task's harness preference (/admin/tasks): harness names ("pi", "claude-code") or admin-added agent ids. Sessions for
--- the task are dealt only among those, at their usual weights; empty is the whole mix (src/agents.ts dealByPreference).
-ALTER TABLE library_tasks ADD COLUMN IF NOT EXISTS harnesses TEXT[] NOT NULL DEFAULT '{}';
-
 -- Vertex AI as its own vault provider (src/keyvault.ts VERTEX_PROVIDER): Google Cloud service-account JSON keys that
 -- Claude (and Gemini) on Vertex sign in with. Orchestrator-only (no env_vars): the key never reaches an agent session.
 INSERT INTO vault_providers (slug, mode, upstream_url, auth_header, auth_prefix, env_vars) VALUES
@@ -1016,39 +549,6 @@ CREATE TABLE IF NOT EXISTS vault_env_imports (
   credential_id  INT,
   imported_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Library contributions (src/contributions.ts): an account publishes one of its OWN personas or tasks to Octillion's
--- shared library. Octillion reviews it on /admin/personas and /admin/tasks (Submissions); an accepted one is copied into
--- the library as a new row (source 'contributed') and the account gets a Stripe customer-balance credit (Stripe is the
--- system of record for the money: credit_status/stripe_txn_id only say whether the credit has been made). The
--- submitted content (snapshot) stays sealed with the account's key (src/orgcrypto.ts); the customer's copy stays theirs.
-CREATE TABLE IF NOT EXISTS library_submissions (
-  id             TEXT PRIMARY KEY,                       -- lsub_...
-  org_id         INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  kind           TEXT NOT NULL CHECK (kind IN ('persona', 'task')),
-  source_ref     TEXT NOT NULL,                          -- the persona's slug or the task's scenario id
-  title          TEXT NOT NULL,                          -- the persona's name or the task's title, for the lists
-  snapshot       JSONB NOT NULL,                         -- the submitted content, sealed ({_sealed}) when the vault is unlocked
-  status         TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'accepted', 'declined', 'withdrawn')),
-  decided_by     TEXT,
-  decided_at     TIMESTAMPTZ,
-  reason         TEXT,                                   -- why it was declined (shown to the account)
-  library_ref    TEXT,                                   -- the library row it became (persona slug or library_tasks id); never shown to the account
-  credit_usd     NUMERIC(10, 2),
-  credit_status  TEXT CHECK (credit_status IN ('none', 'pending', 'credited')),
-  credit_error   TEXT,
-  stripe_txn_id  TEXT,
-  created_by     TEXT,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
--- One open request per item.
-CREATE UNIQUE INDEX IF NOT EXISTS library_submissions_open_idx ON library_submissions (org_id, kind, source_ref) WHERE status = 'submitted';
-CREATE INDEX IF NOT EXISTS library_submissions_status_idx ON library_submissions (kind, status, created_at DESC);
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS contributed_by INT REFERENCES organizations(id) ON DELETE SET NULL;
-ALTER TABLE developer_profiles ADD COLUMN IF NOT EXISTS submission_id  TEXT;
-ALTER TABLE library_tasks      ADD COLUMN IF NOT EXISTS contributed_by INT REFERENCES organizations(id) ON DELETE SET NULL;
-ALTER TABLE library_tasks      ADD COLUMN IF NOT EXISTS submission_id  TEXT;
 
 -- Transactional email through Resend (src/email.ts). The key is a vault provider like any other: orchestrator/server
 -- only (no env_vars), so it never reaches an agent session.
@@ -1090,96 +590,6 @@ CREATE TABLE IF NOT EXISTS email_log (
 CREATE INDEX IF NOT EXISTS email_log_at_idx ON email_log (at DESC);
 -- Why a request was declined, when the reviewer says (it goes in the email to the requester).
 ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS decline_reason TEXT;
--- Saved Pick rate reports (src/visibility.ts): a name and a definition per account, run and exported from the Pick
--- rate page (/app/pick-rate) or export_visibility_report. definition: { filters: { competitor, persona, task,
--- product }, range: { preset } | { from, to }, sections, format }. created_by: the Clerk user who saved it (edits are
--- theirs; an Owner or Billing manager may also delete).
-CREATE TABLE IF NOT EXISTS visibility_reports (
-  id          BIGSERIAL PRIMARY KEY,
-  org_id      INT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  name        TEXT NOT NULL,
-  definition  JSONB NOT NULL DEFAULT '{}',
-  created_by  TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_run_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS visibility_reports_org_idx ON visibility_reports (org_id, id);
--- Why an agent did not pick the product (src/reasons.ts): a model's judgement per lost session (verdict competitor, or
--- none / mentioned on a recommend task), read from the agent's own messages and actions only. reason: {category,
--- phrase, quote, model, at, winner}; quote is verbatim agent text or null. reason_status: queued | done | failed |
--- skipped (nothing the agent wrote to read); reason_next_at: when a queued job may run (retry backoff);
--- reason_tried_at: the last model call (the daily cap REASONS_DAILY_MAX counts these).
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reason JSONB;
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reason_status TEXT;
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reason_attempts INT NOT NULL DEFAULT 0;
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reason_next_at TIMESTAMPTZ;
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reason_tried_at TIMESTAMPTZ;
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reason_error TEXT;
-CREATE INDEX IF NOT EXISTS agent_sessions_reason_queue_idx ON agent_sessions (reason_next_at) WHERE reason_status = 'queued';
-CREATE INDEX IF NOT EXISTS agent_sessions_reason_tried_idx ON agent_sessions (reason_tried_at) WHERE reason_tried_at IS NOT NULL;
-
--- Octillion's library is never copied into a customer account (2026-10-20). A product's task from the library is a
--- link: a scenarios row with library_task_id and only the product's own settings (expectation, platform, variants,
--- set) plus whatever research adapted for the product; title, prompt, repo, language and tags left NULL / empty are
--- read from library_tasks (queries.ts SCENARIO_ROWS). A persona from the library is a link too: product_personas,
--- never an account-owned copy.
-ALTER TABLE scenarios ALTER COLUMN title DROP NOT NULL;
-ALTER TABLE scenarios ALTER COLUMN prompt DROP NOT NULL;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'scenarios_text_or_library') THEN
-    ALTER TABLE scenarios ADD CONSTRAINT scenarios_text_or_library CHECK (library_task_id IS NOT NULL OR (title IS NOT NULL AND prompt IS NOT NULL));
-  END IF;
-END $$;
-CREATE TABLE IF NOT EXISTS product_personas (
-  product_id   INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  profile_id   INT NOT NULL REFERENCES developer_profiles(id) ON DELETE CASCADE,  -- a shared library persona (org_id NULL)
-  environment  JSONB,                     -- the editor, tools and skills research chose for this product
-  active       BOOLEAN NOT NULL DEFAULT true,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (product_id, profile_id)
-);
--- A library task added by hand used to be stored as source 'manual' (shown whole in the portal, and counted as private):
--- it is a library link like research's.
-UPDATE scenarios SET source = 'library' WHERE library_task_id IS NOT NULL AND source = 'manual';
--- Copies made before: a task field identical to the library's goes back to being read from it.
-UPDATE scenarios sc SET title = NULL FROM library_tasks lt WHERE lt.id = sc.library_task_id AND sc.title = lt.title;
-UPDATE scenarios sc SET prompt = NULL FROM library_tasks lt WHERE lt.id = sc.library_task_id AND sc.prompt = lt.prompt;
-UPDATE scenarios sc SET repo_url = NULL FROM library_tasks lt WHERE lt.id = sc.library_task_id AND sc.repo_url = lt.repo_url;
-UPDATE scenarios sc SET language = NULL FROM library_tasks lt WHERE lt.id = sc.library_task_id AND sc.language = lt.language;
-UPDATE scenarios sc SET tags = '{}' FROM library_tasks lt WHERE lt.id = sc.library_task_id AND sc.tags <> '{}' AND sc.tags = lt.tags;
--- Persona copies research made (source 'picked', attributes.from_profile = the shared slug): each becomes a link to
--- its shared persona; sessions, runs and prompt variants move to the shared id / slug; the copy is deleted.
-DO $$
-DECLARE m RECORD;
-BEGIN
-  FOR m IN SELECT dp.id AS copy_id, dp.slug AS copy_slug, dp.product_id, dp.environment, dp.active, s.id AS shared_id, s.slug AS shared_slug
-             FROM developer_profiles dp JOIN developer_profiles s ON s.slug = dp.attributes->>'from_profile' AND s.org_id IS NULL
-            WHERE dp.source = 'picked' AND dp.product_id IS NOT NULL LOOP
-    INSERT INTO product_personas (product_id, profile_id, environment, active) VALUES (m.product_id, m.shared_id, m.environment, m.active)
-      ON CONFLICT (product_id, profile_id) DO UPDATE SET active = product_personas.active OR EXCLUDED.active;
-    UPDATE agent_sessions SET profile_id = m.shared_id WHERE profile_id = m.copy_id;
-    UPDATE simulations SET profile_ids = array_replace(profile_ids, m.copy_id, m.shared_id) WHERE m.copy_id = ANY(profile_ids);
-    UPDATE scenarios SET prompt_variants = (prompt_variants - m.copy_slug) || jsonb_build_object(m.shared_slug, prompt_variants->m.copy_slug)
-     WHERE product_id = m.product_id AND prompt_variants ? m.copy_slug;
-    DELETE FROM developer_profiles WHERE id = m.copy_id;
-  END LOOP;
-END $$;
-
--- Loss reasons skipped as "the agent wrote nothing to read" before 2026-10-20: agentText dropped every _src "harness"
--- event, which is everything the agent wrote. Queued again for the automatic drain (once: only rows tried before the fix).
-UPDATE agent_sessions SET reason_status = NULL, reason_error = NULL
- WHERE reason_status = 'skipped' AND reason_error = 'the agent wrote nothing to read' AND reason_tried_at < '2026-10-20T10:30:00Z';
-
--- A run adapts its library tasks to the product when it starts (src/adapt.ts): the words are the run's, never the
--- product's. Keys "<scenario id>" or "<scenario id>:<persona slug>".
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS prompts JSONB NOT NULL DEFAULT '{}';
--- Research's rewrites of library tasks (title, prompt, per-persona variants) were stored on the product: cleared, the
--- product keeps the link and its settings; runs adapt the library task when they start. Only research's rows (they
--- carry its rationale or variants); a task a customer gave their own words to keeps them.
-UPDATE scenarios SET title = NULL, prompt = NULL, prompt_variants = '{}', updated_at = now()
- WHERE source = 'library' AND library_task_id IS NOT NULL AND (prompt_variants <> '{}' OR rationale IS NOT NULL)
-   AND (title IS NOT NULL OR prompt IS NOT NULL OR prompt_variants <> '{}');
 
 -- "Ask AI" answers from the docs (src/docs-answers.ts): one row per model call, for the daily cap
 -- (DOCS_ANSWERS_DAILY_MAX) and the per-person minute limit (DOCS_ANSWERS_PER_MINUTE). Never the question text.
@@ -1195,14 +605,3 @@ CREATE TABLE IF NOT EXISTS docs_answers (
 );
 CREATE INDEX IF NOT EXISTS docs_answers_at ON docs_answers (at);
 CREATE INDEX IF NOT EXISTS docs_answers_user ON docs_answers (user_key, at);
-
--- Execution mode (2026-10-20): how each coding agent is driven. 'plan' (the default for new runs): the agent first
--- plans in its own plan mode (or, for harnesses without one, is asked to plan and wait), the simulated developer
--- approves the plan in character, then it implements. 'direct': the agent is told to do the task and executes
--- straight away (every session before this date). A run's exec_modes lists its arms; with both, every session is
--- paired (same task, persona, agent and attempt in each mode), so pick rates compare mode against mode.
-ALTER TABLE simulations ADD COLUMN IF NOT EXISTS exec_modes TEXT[] NOT NULL DEFAULT '{direct}';
-ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS exec_mode TEXT NOT NULL DEFAULT 'direct';
-DO $$ BEGIN
-  ALTER TABLE agent_sessions ADD CONSTRAINT agent_sessions_exec_mode CHECK (exec_mode IN ('plan', 'direct'));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;

@@ -1,5 +1,6 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import { getObject, keys, putObject, storageEnabled } from "./storage.js";
 import { baseTranscripts, type StoredEvent } from "./transcripts.js";
 
@@ -33,6 +34,7 @@ async function allLiveEvents(orgId: number, sessionId: string): Promise<StoredEv
 
 /** Archive one finished session's trace. Returns the object key, or null when the session has nothing to archive. */
 export async function archiveSession(sessionId: string): Promise<{ key: string; events: number } | null> {
+  if (!sessionEngine()) return null; // no session engine tables in this build (mold_v0-049)
   const db = await getDb();
   const [s] = await db.query<any>(
     `SELECT s.id, s.org_id, s.product_id, s.simulation_id, s.scenario_id, s.profile_id, s.agent_id, s.harness, s.model, s.status,
@@ -52,6 +54,7 @@ export async function archiveSession(sessionId: string): Promise<{ key: string; 
 
 /** Archive one finished research job (its full result, sources included). */
 export async function archiveResearch(researchId: string): Promise<string | null> {
+  if (!researchJobs()) return null;
   const db = await getDb();
   const [r] = await db.query<any>(
     "SELECT id, org_id, product_id, status, input, result, error, simulation_id, created_at, finished_at FROM product_research WHERE id = $1", [researchId]);
@@ -64,7 +67,8 @@ export async function archiveResearch(researchId: string): Promise<string | null
 
 /** One sweep: claim and archive up to BATCH sessions and research jobs. Returns what it archived. */
 export async function archiveSweep(): Promise<{ sessions: number; research: number; failed: number }> {
-  if (!storageEnabled()) return { sessions: 0, research: 0, failed: 0 };
+  // The session engine's tables are a host pack's (mold_v0-049): with none, nothing of it to archive.
+  if (!storageEnabled() || !sessionEngine()) return { sessions: 0, research: 0, failed: 0 };
   const db = await getDb();
   const sessions = await db.query<{ id: string }>(
     `/* tenant: internal archive sweep across all orgs (rows keep their org_id) */ UPDATE agent_sessions SET archive_claimed_at = now()
@@ -73,7 +77,7 @@ export async function archiveSweep(): Promise<{ sessions: number; research: numb
                       AND (archive_claimed_at IS NULL OR archive_claimed_at < now() - interval '15 minutes')
                     ORDER BY coalesce(ended_at, queued_at) LIMIT $1 FOR UPDATE SKIP LOCKED)
       RETURNING id`, [BATCH(), FINAL]);
-  const research = await db.query<{ id: string }>(
+  const research = !researchJobs() ? [] : await db.query<{ id: string }>(
     `/* tenant: internal archive sweep across all orgs (rows keep their org_id) */ UPDATE product_research SET archive_claimed_at = now()
       WHERE id IN (SELECT id FROM product_research
                     WHERE archive_key IS NULL AND status IN ('completed', 'failed')
@@ -135,7 +139,7 @@ export function forgetArchivedOrg(orgId: number): void {
 }
 /** The archived events of a session (org-checked), or null when it has no archive. Small LRU of 20 sessions. */
 export async function archivedEvents(orgId: number, sessionId: string): Promise<StoredEvent[] | null> {
-  if (!storageEnabled()) return null;
+  if (!storageEnabled() || !sessionEngine()) return null;
   const ck = `${orgId}:${sessionId}`; // org in the key: the cache must never answer another org
   const hit = cache.get(ck);
   if (hit) { cache.delete(ck); cache.set(ck, hit); return hit; }

@@ -17,6 +17,7 @@ import { keepAlive } from "./telemetry.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
 import { RunScaler, runSandboxStatus, type RunTick } from "./run-sandboxes.js";
 import { queuedRunsByKind } from "./runs.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 
 /**
  * On-demand orchestrators: scale from zero to zero.
@@ -94,6 +95,11 @@ export function desiredOrchestrators(d: Demand, podCapacity: number): number {
 
 export async function computeDemand(freshSince?: Date): Promise<Demand> {
   const db = await getDb();
+  // The session engine's tables are a host pack's (mold_v0-049): with none, no session or research demand, runs only.
+  if (!sessionEngine()) {
+    const runs = await queuedRunsByKind();
+    return { sessions: 0, queued_sessions: 0, research: 0, unclaimable_sessions: 0, ...(freshSince ? { fresh_queued_sessions: 0 } : {}), ...(Object.keys(runs).length ? { runs } : {}) };
+  }
   let agents: string[] = [];
   try { agents = scheduledAgents(await currentPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)]); }
   catch { /* no population: count everything */ }
@@ -104,7 +110,7 @@ export async function computeDemand(freshSince?: Date): Promise<Demand> {
             count(*) FILTER (WHERE status = 'queued' AND NOT ${claimable}) AS unclaimable,
             count(*) FILTER (WHERE status = 'queued' AND ${claimable} AND $2::timestamptz IS NOT NULL AND queued_at > $2) AS fresh
        FROM agent_sessions WHERE status IN ('queued', 'running')`, [agents, freshSince ?? null]);
-  const [r] = await db.query<{ n: number }>("/* tenant: internal: autoscaler demand counts across all orgs, counts only */ SELECT count(*) AS n FROM product_research WHERE status IN ('queued', 'running')");
+  const [r] = researchJobs() ? await db.query<{ n: number }>("/* tenant: internal: autoscaler demand counts across all orgs, counts only */ SELECT count(*) AS n FROM product_research WHERE status IN ('queued', 'running')") : [{ n: 0 }];
   const runs = await queuedRunsByKind();
   return {
     sessions: Number(s?.sessions ?? 0), queued_sessions: Number(s?.queued ?? 0), research: Number(r?.n ?? 0),
@@ -118,11 +124,12 @@ export interface JobDemand { id: string; kind: "simulation" | "research"; sessio
 
 /** Research that is queued (or stalled), and simulations with claimable sessions still to run, oldest first. */
 export async function computeJobDemand(): Promise<JobDemand[]> {
+  if (!sessionEngine()) return []; // no session engine tables in this build (mold_v0-049)
   const db = await getDb();
   let agents: string[] = [];
   try { agents = scheduledAgents(await currentPopulation()).flatMap((a) => [a.id, ...variantsOf(a).map((v) => v.id)]); }
   catch { /* no population: count everything */ }
-  const research = await db.query<{ id: string }>(
+  const research = !researchJobs() ? [] : await db.query<{ id: string }>(
     `/* tenant: internal: autoscaler job demand across all orgs, ids go to the orchestrator only */ SELECT id FROM product_research WHERE status = 'queued'
         OR (status = 'running' AND heartbeat_at < now() - make_interval(mins => $1)) ORDER BY created_at`,
     [num(env.OCTILLION_RESEARCH_STALE_MINUTES, 20)]);

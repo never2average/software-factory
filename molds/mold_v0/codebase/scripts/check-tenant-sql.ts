@@ -33,7 +33,13 @@ const PACKS = path.join(ROOT, "packs");
 const packFiles = existsSync(PACKS) ? walk(PACKS) : [];
 const PACK_TABLES = [...new Set(packFiles.filter((f) => f.endsWith(".sql")).flatMap((f) =>
   [...readFileSync(f, "utf8").matchAll(/CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)/gi)].map((m) => m[1]!.toLowerCase())))];
-const TENANT_TABLES = [...SHELL_TENANT_TABLES, ...PACK_TABLES];
+// A host pack's own tables under the names they had in the shell's base schema (pack.json host.schema, mold_v0-049)
+// keep the scope this check always gave them: its workspace tables are named in SHELL_TENANT_TABLES above (their queries
+// in the shell's session engine and in the pack are checked wherever they are), its libraries are not tenant tables.
+const HOST_TABLES = new Set(existsSync(PACKS) ? readdirSync(PACKS).flatMap((id) => {
+  try { return JSON.parse(readFileSync(path.join(PACKS, id, "pack.json"), "utf8")).host?.schema?.tables ?? []; } catch { return []; }
+}) : []);
+const TENANT_TABLES = [...SHELL_TENANT_TABLES, ...PACK_TABLES.filter((t) => !HOST_TABLES.has(t))];
 // A host pack's operator scripts and tests (pack.json host.scripts, mold_v0-039) are left out, as the shell's scripts/ are.
 const scriptDirs = existsSync(PACKS) ? readdirSync(PACKS).flatMap((id) => {
   try { const h = JSON.parse(readFileSync(path.join(PACKS, id, "pack.json"), "utf8")).host; return h?.scripts ? [path.join(PACKS, id, h.scripts) + path.sep] : []; } catch { return []; }
@@ -76,4 +82,4 @@ if (fresh.length) {
   console.error("Add an org_id filter, or a /* tenant: <how it is scoped> */ note if it is scoped another way.");
   process.exit(1);
 }
-console.log(`TENANT SQL CHECK PASS (${offenders.length} baseline quer${offenders.length === 1 ? "y" : "ies"} pending review, 0 new)${packCode.length ? `; packs: ${PACK_TABLES.length} pack table(s) checked` : ""}`);
+console.log(`TENANT SQL CHECK PASS (${offenders.length} baseline quer${offenders.length === 1 ? "y" : "ies"} pending review, 0 new)${packCode.length ? `; packs: ${PACK_TABLES.length} pack table(s) checked${HOST_TABLES.size ? ` (${HOST_TABLES.size} a host pack's own, scoped as in the shell)` : ""}` : ""}`);
