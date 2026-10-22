@@ -1,18 +1,39 @@
-# TLS + reverse proxy for the Octillion server.
-# Upstreams are every replica of the `octillion` service (Docker DNS), re-resolved each second, so a rolling deploy can
-# run the new replica next to the old one. A draining replica refuses new connections: Caddy retries the request on
-# another replica and stops picking the refused one for a while. In-flight responses (model streams) are never moved.
+# TLS + reverse proxy for the Octillion server and its web console (mold_v0-020).
+# The API's own paths go straight to the `octillion` service: the MCP endpoints, /api, the inference gateway (/gw, model
+# streams), the OAuth metadata, the install pages and the tool previews. Everything else (the console's pages, its
+# assets, sign-in, the public pages, /healthz) goes to the `console` service, whose fallback rewrite reaches the API
+# for anything that is not one of its own pages, so /healthz answered through here proves the console reaches the API.
+# Streams never pass through the console (its proxy would cut them after 30 s).
+# Upstreams are every replica of each service (Docker DNS), re-resolved each second, so a rolling deploy can run a new
+# replica next to the old one. A draining replica refuses new connections: Caddy retries the request on another
+# replica and stops picking the refused one for a while. In-flight responses (model streams) are never moved.
 {$DOMAIN:localhost} {
-	reverse_proxy {
-		dynamic a {
-			name octillion
-			port 3333
-			refresh 1s
+	@api path /mcp /mcp/* /api/* /gw/* /.well-known/* /admin/session /admin/mcp /install /install.json /install/* /preview/*
+	handle @api {
+		reverse_proxy {
+			dynamic a {
+				name octillion
+				port 3333
+				refresh 1s
+			}
+			lb_try_duration 20s
+			lb_try_interval 250ms
+			fail_duration 10s
+			max_fails 1
+			flush_interval -1
 		}
-		lb_try_duration 20s
-		lb_try_interval 250ms
-		fail_duration 10s
-		max_fails 1
-		flush_interval -1
+	}
+	handle {
+		reverse_proxy {
+			dynamic a {
+				name console
+				port 3400
+				refresh 1s
+			}
+			lb_try_duration 20s
+			lb_try_interval 250ms
+			fail_duration 10s
+			max_fails 1
+		}
 	}
 }

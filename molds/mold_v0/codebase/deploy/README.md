@@ -7,14 +7,28 @@
 | `postgres` 17 | config, queue, scores, **key vault** (encrypted) | internal only |
 | `pg-backup` | nightly `pg_dump -Fc`, kept `BACKUP_KEEP_DAYS` (7) days in the `pg_backups` volume | – |
 | `clickhouse` 25.12 | raw JSONL transcripts + full-text search | internal only |
-| `octillion` | landing page, MCP, worker API, fleet, **inference gateway** `/gw/*` | via Caddy |
+| `octillion` | MCP, worker API, fleet, **inference gateway** `/gw/*`, install pages | via Caddy (its own paths) |
+| `console` | the web console (`web/`, Next.js standalone, `web/Dockerfile`): admin panel, portal, sign-in, public pages; reaches the API at `http://octillion:3333` for anything else | via Caddy (every other path) |
 | `runner` | run sandboxes (mold_v0-055, `src/run-fleet.ts`): a container per queued run from the `octillion` image, on the `runs` network; the only service with the Docker socket | – |
-| `caddy` | TLS (automatic Let's Encrypt for `DOMAIN`) | 80 / 443 |
+| `caddy` | TLS (automatic Let's Encrypt for `DOMAIN`); the API's own paths to `octillion`, the rest to `console` (`Caddyfile`) | 80 / 443 |
+
+The console signs people in with Clerk: add both of its keys to `.env` before the first `up` (the publishable key is
+built into the console's browser code, so changing it means rebuilding `console`; the secret key is read at run time
+and never built in):
+
+```bash
+CLERK_PUBLISHABLE_KEY=pk_live_...
+CLERK_SECRET_KEY=sk_live_...
+```
 
 ```bash
 cd deploy
 DOMAIN=octillion.example.com ./bootstrap.sh     # writes .env (0600) with generated secrets, once
+# (add CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to .env, above)
+docker compose -f docker-compose.prod.yml --env-file .env build octillion   # one image at a time on a 4 GB host
+docker compose -f docker-compose.prod.yml --env-file .env build console
 docker compose -f docker-compose.prod.yml --env-file .env up -d --build --wait
+# later releases, without downtime: ./rolling-deploy.sh .env
 
 # load credentials into the key vault: hidden prompts, verified against each provider, stored encrypted
 ./load-keys.sh                    # or: ANTHROPIC_API_KEY=... ./load-keys.sh --from-env ; ./load-keys.sh --list
