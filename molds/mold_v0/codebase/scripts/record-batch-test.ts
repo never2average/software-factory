@@ -36,8 +36,9 @@ try {
     assert.ok(definePack({ id: "pk", recordAreas: [area({ sealed: true })] }), "a sealed check area of a workspace");
     assert.throws(() => definePack({ id: "pk", recordAreas: [area({ sealed: true, scope: "platform" })] }), /no workspace key to seal it with/);
     assert.throws(() => definePack({ id: "pk", recordAreas: [area({ sealed: false, role: "asset" })] }), /an asset area is always sealed/);
-    assert.throws(() => definePack({ id: "pk", recordAreas: [area({ sealed: true, due: { field: "dd" } })] }), /a sealed area's dates are not readable there/);
-    console.log("✓ declarations: sealed for any workspace area; refused on a shared one, unset on an asset, with due dates");
+    // mold_v0-076: a sealed area may carry due dates (the daily check opens its rows in code: scripts/record-gaps-test.ts).
+    assert.ok(definePack({ id: "pk", recordAreas: [area({ sealed: true, due: { field: "dd" } })] }), "a sealed check area with due dates");
+    console.log("✓ declarations: sealed for any workspace area (due dates too); refused on a shared one, unset on an asset");
   }
 
   // Shared rows to refer to (hand rows of an upstream-fed area: staff may add them).

@@ -395,7 +395,7 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
     workspace, the second's rows keyed by the first's keys and linked to them); a declared "library + per-workspace
     state" pairing (one area name, two scopes) is still an extension point.
 - **Sealed areas, keys, batch writes** (mold_v0-066, built; `src/record-areas.ts`): `sealed: true` on any workspace
-  area (an asset area always is; refused on a shared area, and with `due`, whose dates are read in the database) seals
+  area (an asset area always is; refused on a shared area; `due` allowed since mold_v0-076, below) seals
   every record's title and data with the workspace's data key; a sealed write is refused (503) while the key vault is
   locked (for asset areas too: they were stored in the clear in that case before). A filter or sort over a sealed area
   opens the workspace's own rows (at most 5000) and runs in memory, never in the database. Record keys may hold ( and )
@@ -424,6 +424,10 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   header, https to its `egress` hosts only, the address resolved once, checked against private ranges and used for the
   connection, no redirects, 5 MB, 15 s). Rows come from a pack's `loaders` (code), else a declared `map` (`from`,
   `each`, `key`/`title` templates, `fields` value paths, `where`) or the kind's default (fields by name or camelCase).
+  A value path (`VALUE_PATH`, `src/pack-api.ts`; read by `valueAt`) is a dotted path of properties, each optionally
+  followed by list indexes (mold_v0-076: `controls[0]`, `refs[0].id`, `$.a[2].b`; 0 to 999, no negative, computed or
+  quoted index, never `__proto__`, `constructor` or `prototype`), in `fields`, `key`/`title` templates, `where` and
+  `identity`; a step that does not fit (an index past the end, an index on an object, a property on a list) is no value.
   An index is idempotent (each row's `fingerprint`, keyed with the workspace's key for a sealed area, and its `source`
   are stored with it), one transaction, and prunes only rows it wrote; a row written or changed by hand is kept (and
   counted as `kept_by_hand`), never overwritten or pruned, unless staff force the index. For an upstream catalog an
@@ -534,7 +538,10 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   `state:<value>`, as average, median, p90 or max, in days or hours); `where` conditions (eq, ne, in, not_in, lt, lte,
   gt, gte against a number, a date or today/now with +/- days, empty, not_empty); `group_by` a single-valued field (an
   enum's options in order, a reference named by its record's title, run results by check, asset, source, status or
-  `detail.<word>`) or `{due: <date field>}` (overdue, due soon, later, no date); `by_time` a series of the last N days,
+  `detail.<word>`) or `{due: <date field>}` (overdue, due soon, later, no date); a field that holds a list (a `link`, or
+  an enum, person or reference with `multiple`) only with `group_by_list` (mold_v0-076): `first` (the list's first item;
+  a link holding one key is that key) or `each` (a row in the group of every distinct item it lists: a lateral join on
+  the list in SQL, the same in code; the groups may add up to more than the rows, `rows` counts each row once); `by_time` a series of the last N days,
   weeks (from Monday) or months (UTC), by group for an enum of at most 8 options, a boolean, a status or a kind; `limit`
   groups (at most 50, flagged `more`); `roles`. One aggregate query each, inside `withTenant` with `org_id` named, field
   names and values only as bound parameters, a group limit, a time window and a 5 s statement timeout on Postgres
@@ -593,7 +600,15 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   `schedule:<id>`, under its per-workspace cap); the run engine is unchanged. The tick runs from the product's existing
   cron entry on Vercel (`/api/cron/autoscale`, `CRON_SECRET` only, every 5 minutes) and from a one-minute loop on a
   server (`startScheduler`, `OCTILLION_SCHEDULER=off` turns it off). **Due dates:** a check area of workspace scope may
-  declare `due` (one of its date fields, `within_days`, default 7, and the `notify` roles, owners by default). Once a UTC
+  declare `due` (one of its date fields, `within_days`, default 7, and the `notify` roles, owners by default), a sealed
+  one too (mold_v0-076: its rows' dates are ciphertext in the database, so the check opens each workspace's sealed rows
+  with that workspace's own key inside its own tenant scope, a page of 500 at a time, and applies the same window in
+  code; the notice's title is sealed again with that key and opened only when the workspace lists its notices; the email
+  names the record by its key, never its title; the record's key and due day are in the clear in the notice, as a key
+  always is; with the key vault locked nothing sealed is opened, the workspaces are counted in `sealed_skipped` and the
+  day is left unmarked, so the next tick checks again; a row whose ciphertext will not open is left out alone, counted in
+  `sealed_unreadable`; `/api/notices` lists a notice, of any area, only to people whose role may read its area;
+  `npm run test:record-gaps`). Once a UTC
   day (`scheduler_marks`, marked after the work, so a check cut short runs again) `dueCheck(now)` posts one in-app notice per record and due date within the window
   (`workspace_notices`; `/app/notices`, `/api/notices`, mounted only when such an area exists; "edit" dismisses), and
   emails the workspace's own people with those roles (its Clerk organization's members, suspended people left out) one
