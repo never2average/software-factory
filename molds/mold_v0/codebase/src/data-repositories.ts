@@ -208,15 +208,27 @@ export async function githubSource(up: { repo: string; commit: string }, fetcher
 // ---------- documents to rows ----------
 
 type Doc = unknown;
-/** A value of a document: "a.b" in the item, "$.a" from the document's root, "@name" a path placeholder, "@file" its path. */
+/**
+ * A value of a document: "a.b" in the item, "$.a" from the document's root, "@name" a path placeholder, "@file" its path;
+ * "a[0]" the first item of the list a, "a[0].b" a property of it (mold_v0-076). Each step reads an own property of an
+ * object or an item of a list, nothing else: a step that does not fit (a list where a property is named, an object where
+ * an index is, an index past the end) is no value, never an error.
+ */
 function valueAt(expr: string, ctx: { item: Doc; root: Doc; vars: Record<string, string> }): unknown {
   if (!VALUE_PATH.test(expr)) throw new PackError(`not a value path: ${expr}`, 400);
   if (expr.startsWith("@")) return Object.hasOwn(ctx.vars, expr.slice(1)) ? ctx.vars[expr.slice(1)] : undefined;
   const [from, p] = expr.startsWith("$.") ? [ctx.root, expr.slice(2)] : [ctx.item, expr];
   let v: unknown = from;
   for (const part of p.split(".")) {
-    if (!v || typeof v !== "object" || Array.isArray(v) || !Object.hasOwn(v, part)) return undefined;
-    v = (v as Record<string, unknown>)[part];
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)((?:\[\d{1,3}\])*)$/.exec(part);
+    if (!m) return undefined; // unreachable past VALUE_PATH
+    if (!v || typeof v !== "object" || Array.isArray(v) || !Object.hasOwn(v, m[1]!)) return undefined;
+    v = (v as Record<string, unknown>)[m[1]!];
+    for (const [, i] of m[2]!.matchAll(/\[(\d{1,3})\]/g)) {
+      const n = Number(i);
+      if (!Array.isArray(v) || n >= v.length) return undefined;
+      v = v[n];
+    }
   }
   return v;
 }
