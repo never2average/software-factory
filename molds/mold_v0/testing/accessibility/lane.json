@@ -1,9 +1,54 @@
 {
   "lane": "accessibility",
   "order": 40,
-  "summary": "No harness: the product ships no accessibility test of its own, and mold_v1's browser harness grades mold_v1's own routes and sign-in, so this lane is recorded skipped, never pass.",
-  "not_covered": [
-    "WCAG and keyboard traversal of the landing page, /admin and /app are not measured for mold_v0 apps."
+  "summary": "axe-core 4.13.0 (vendored) over every console page of the app's lane copy (the mold plus the app's packs), served on this machine by the lane world (molds/mold_v0/testing/console/: the lane copy's API on an embedded throwaway database behind the shell's own offline Clerk, one workspace owner who is also platform staff, `next start` on 127.0.0.1), with a row per pack and a row per page: the shell's own pages, each host pack's pages (its routes.json) and each pack's tabs, pages and record areas (the generated registry). A serious or critical WCAG 2.0/2.1/2.2 A or AA violation fails its page and its pack's row; so does an HTTP error, an error page, a signed-in page that sends its person to sign-in, or a page with no control to use: nothing measured is never a pass. Nothing deployed is contacted: the console and API listen on 127.0.0.1, start from an emptied environment, and every browser request or WebSocket a page opens off this machine is aborted and counted (service workers are blocked). The servers' own outbound fetches are kept off real services by that empty environment, not by a filter.",
+  "requires": [
+    {
+      "cmd": "node {testing}/console/deps-check.mjs --axe",
+      "else": "Install the browser this lane drives: npm i -g playwright && npx playwright install chromium (and restore the vendored rule set from git: git checkout molds/mold_v0/testing/accessibility/vendor/axe.min.js)."
+    }
   ],
-  "checks": []
+  "checks": [
+    {
+      "name": "axe.console",
+      "run": "python3 {testing}/console/render.py {app_id} --codebase {codebase} -- {testing}/accessibility/a11y.mjs",
+      "cwd": "root",
+      "timeout_s": 3000,
+      "emits": "markdown_table",
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "rows: [1-9][0-9]* \\(0 failed\\)"
+        ],
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "requires": [
+        {
+          "path": "{codebase}/node_modules/.bin/tsx",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock"
+        },
+        {
+          "path": "{codebase}/scripts/lib/test-world.ts",
+          "else": "This lane copy has no scripts/lib/test-world.ts (the shell's throwaway world, with its offline Clerk in scripts/lib/mock-providers.ts), which the lane world is built on. The shell in molds/mold_v0/codebase must carry it; restore it from git (git checkout molds/mold_v0/codebase/scripts/lib) and run the lane again."
+        },
+        {
+          "path": "{codebase}/web/node_modules/next/package.json",
+          "else": "The console's dependencies are not installed, so its pages cannot be built here: npm --prefix molds/mold_v0/codebase/web install --no-package-lock"
+        }
+      ],
+      "why": "A serious or critical WCAG violation is a person who cannot use the page at all: an unnamed button is invisible to a screen reader, failing contrast is unreadable in daylight. A row per pack shows which pack's pages carry it."
+    }
+  ],
+  "not_covered": [
+    "The DEPLOYED console. These pages are the app's lane copy (build/<app_id>.lane/: the mold plus the app's packs, unbranded), built with `next build --webpack` and served by `next start` on 127.0.0.1 against the lane copy's own API on an embedded throwaway database: the same pages, components and styles the app ships, not the bytes Vercel or its server serves. The brand overlay (name, colour, logo) is graded by `branding.py check`, not here, so colour contrast is measured in the shell's own theme.",
+    "Clerk itself. A copy served on this machine cannot reach Clerk with the app's keys, so the console is built with a lane stand-in for `@clerk/nextjs` (molds/mold_v0/testing/console/clerk-standin/, in that build only) that reads the session the shell's own offline Clerk signs; the API verifies that session as it does in production. Clerk's sign-in and sign-up widgets (/auth/sign-in, /auth/sign-up), its user menu and organisation switcher popups are therefore not graded.",
+    "One identity and an empty workspace: the owner of one fresh workspace who is also platform staff. Pages are graded with no records, runs, keys or members (their empty states), and what a member, a viewer or a second workspace sees is not graded.",
+    "Dynamic pages with an identifier in the address (a record, an account, a docs article: /app/records/<area>/<key>, /admin/accounts/<slug>, /app/docs/<slug>) are not graded; their list pages are.",
+    "Keyboard-only traversal, focus order and visible focus: axe checks the accessibility tree and the rendered styles, not a person tabbing through the page.",
+    "Screen-reader output, zoom to 200%, reduced motion and forced colours.",
+    "Moderate and minor axe rules, and axe's `incomplete` results (a person must judge them): counted in the detail column, never failing.",
+    "A pack that adds no console page has no row of its own to grade; its row says `not-covered (adds no console page)`, never pass."
+  ]
 }
