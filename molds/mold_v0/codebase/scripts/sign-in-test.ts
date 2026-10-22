@@ -486,10 +486,11 @@ try {
       assert.ok(add.status === 200 || add.status === 201, JSON.stringify(add.body));
       const sup = (await codeSignIn(`support-${STAMP}@platform.example`)).cookie;
       assert.equal((await call("GET", "/admin/session", { cookie: sup })).body.role, "support");
-      // MCP under the built-in sign-in: keys in a header only, no OAuth server advertised (mold_v0-013).
-      assert.equal((await call("GET", "/.well-known/oauth-protected-resource")).status, 404, "no protected-resource metadata");
+      // MCP under the built-in sign-in: this server is the OAuth server (mold_v0-013, src/mcp-oauth.ts; scripts/mcp-oauth-test.ts).
+      const prm = await call("GET", "/.well-known/oauth-protected-resource");
+      assert.equal(prm.status, 200); assert.deepEqual(prm.body.authorization_servers, [process.env.PUBLIC_URL ?? "http://127.0.0.1:3333"], "this server is the authorization server");
       const bare = await fetch(`${http.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
-      assert.equal(bare.status, 401); assert.doesNotMatch(bare.headers.get("www-authenticate") ?? "", /resource_metadata/, "the 401 sends no client to an OAuth server");
+      assert.equal(bare.status, 401); assert.match(bare.headers.get("www-authenticate") ?? "", /resource_metadata="[^"]+\/\.well-known\/oauth-protected-resource\/mcp"/, "the 401 sends clients to sign in");
       ok("platform admins: an OCTILLION_PLATFORM_ADMINS address and a person given a role on /admin/admins sign in with a code and reach /admin; cookie writes need the CSRF header");
     }
   } else {
