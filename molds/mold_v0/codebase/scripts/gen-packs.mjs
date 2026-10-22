@@ -588,7 +588,8 @@ for (const a of packs) for (const b of packs) if (a !== b && `${b.id}_`.startsWi
  */
 const LIMIT_KEYS = {
   mcp: ["per_key_per_minute", "per_member_per_minute", "per_workspace_per_minute", "per_ip_per_minute", "concurrent_per_workspace", "max_request_bytes", "max_response_bytes"],
-  endpoints: ["signup_per_hour_per_ip", "invites_per_hour_per_workspace", "keys_per_hour_per_workspace"],
+  endpoints: ["signup_per_hour_per_ip", "invites_per_hour_per_workspace", "keys_per_hour_per_workspace",
+    "signin_per_hour_per_ip", "signin_checks_per_hour_per_ip", "signin_codes_per_hour_per_address"],
   runs: ["budget_usd_max", "concurrency_per_workspace", "kind_month_budget_usd", "live_per_workspace"],
 };
 function limitsProblem(v, plans = true) {

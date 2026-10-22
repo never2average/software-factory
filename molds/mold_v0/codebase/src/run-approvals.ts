@@ -1,7 +1,7 @@
 /**
  * Approval-gated writes (mold_v0-079): a job kind that writes (`approval: {preview, by, expires_minutes}`) starts only
  * after someone said yes to the output of a run of its preview kind (a dry run of the same pack). Table:
- * sql/migrations/0015_run_approvals_egress.sql (run_approvals; no tenant access).
+ * sql/migrations/0016_run_approvals_egress.sql (run_approvals; no tenant access).
  *
  *   digest    previewDigest(): the sha256 of the preview's output as it is shown to the approver: the run (its id, kind,
  *             scope, targets), its results (every field, in order) and the files it recorded (agent_output and

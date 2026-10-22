@@ -92,6 +92,9 @@ def fixture_mold(t, lockfile=True, console=False):
     man.pop("source", None)    # mold_v0 is in-tree (mold_v0-040); this fixture stands for a mold with a source of its own
     if console: man["compose"]["console"] = {"service": "web", "pages": ["/admin", "/app"], "operator_env": {"PAY_PUBLISHABLE_KEY": "required", "PAY_SECRET_KEY": "required"}}
     else: man["compose"].pop("console", None)
+    # A console that requires its sign-in keys (mold_v0 itself made them optional in mold_v0-004): the rehearsals below
+    # check that a required key stops a deploy for the operator.
+    man["vercel"]["projects"]["web"]["operator_env"] = {"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "required", "CLERK_SECRET_KEY": "required"}
     json.dump(man, open(os.path.join(t, "molds", "mold_vx", "mold.json"), "w"))
     os.makedirs(os.path.join(t, "state"))
     json.dump({"molds": [{"mold_id": "mold_vx", "source": {"commit": "c" * 40}}]}, open(os.path.join(t, "state", "factory.json"), "w"))
@@ -242,8 +245,10 @@ def run():
        and RK.get("pages") == ["/admin", "/app"] and SS.built_services(real) == [real["service"], "console"],
        f"mold_v0's stack builds its web console as a service of its own (web/Dockerfile, a HEALTHCHECK, a port, read after a deploy): {RK}")
     ok("console" not in real["publishers"], f"the console publishes no port (Caddy alone does): {real['publishers']}")
-    ok(RK.get("required") == ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"] and SS.secret_names(real, "compose_remote")[0] == RK["required"]
-       and not set(RK["required"]) & set(SS.secret_names(real, "compose_remote")[2]), f"on its own server the console's sign-in names are the operator's to give: {SS.secret_names(real, 'compose_remote')[0]}")
+    # mold_v0-004: the console's Clerk keys are optional (the built-in sign-in by default); the required-key path is
+    # rehearsed with the fixture's own required names below.
+    ok(RK.get("required") == [] and RK.get("optional") == ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"] and SS.secret_names(real, "compose_remote")[0] == []
+       and {"CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"} <= set(SS.secret_names(real, "compose_remote")[2]), f"on its own server the console's Clerk keys are optional: {SS.secret_names(real, 'compose_remote')}")
     ctext = open(os.path.join(SS.codebase("mold_v0"), real["file"])).read(); args = []
     for blk in re.findall(r"(?m)^      args:\n((?:        .+\n)+)", ctext): args += re.findall(r"^\s+([A-Z0-9_]+):\s*(.*)$", blk, re.M)
     ok(args and all(not SS.CRED.search(re.sub(r"PUBLISHABLE_KEY", "", v)) for _, v in args) and all("PASSWORD" not in v and "SECRET" not in v and "VAULT" not in v for _, v in args),
@@ -291,9 +296,9 @@ def run():
             errs, _ = factory._app_errors("zz_shape", d)
             ok(errs == [], f"intake's shape for target {target} validates: {errs[:3]}")
         a0, i0, d0, _ = SS.shape_state("zz_shape", "mold_v0", "compose_remote", prod, mold, {"domain": "shape.example.org"}, {}, "b")
-        ok(i0["compose_remote"]["compose"]["project"] == "sf-zz-shape" and i0["secrets_user"] == ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"]
-           and not {"CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"} & set(i0["secrets_optional"]) and i0["compose_remote"]["compose"].get("console") == "console"
-           and d0["postgres"]["exposure"] == "compose_network", f"compose_remote state: own project, the console's two sign-in names the only operator values, database on the compose network: {i0['secrets_user']}")
+        ok(i0["compose_remote"]["compose"]["project"] == "sf-zz-shape" and i0["secrets_user"] == []
+           and {"CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"} <= set(i0["secrets_optional"]) and i0["compose_remote"]["compose"].get("console") == "console"
+           and d0["postgres"]["exposure"] == "compose_network", f"compose_remote state: own project, no operator value (the console's Clerk keys optional, mold_v0-004), database on the compose network: {i0['secrets_user']}")
         docs = {"application": a0, "infrastructure": i0, "datastores": d0}
         bad = lambda f: SS.problems("zz_shape", f(json.loads(json.dumps(docs))))
         def proj(x): x["infrastructure"]["compose_remote"]["compose"]["project"] = "another-stack"; return x

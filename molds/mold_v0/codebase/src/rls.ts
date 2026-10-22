@@ -52,6 +52,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "scheduler_marks",
   // The sandboxes launched for runs (mold_v0-055): platform bookkeeping.
   "run_sandboxes",
+  // Built-in sign-in (mold_v0-004, 0015_builtin_sign_in): people, sessions, codes and Google sign-ins in flight are the
+  // platform's; memberships and invitations carry org_id and are closed to tenant work as well.
+  "auth_users", "auth_sessions", "auth_codes", "auth_oauth_states", "auth_memberships", "auth_invitations",
   // Approvals of previews (mold_v0-079) and a company's egress hosts (mold_v0-075): the shell's code only.
   "run_approvals", "workspace_egress_hosts"];
 
