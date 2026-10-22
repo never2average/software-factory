@@ -1,6 +1,7 @@
 import "./hosts.js";
 import { canActAsOrchestrator, canActOnSession, resolveWorkerToken, type WorkerAuth } from "./workerauth.js";
 import path from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { platformAnalytics, platformErrors } from "./insights.js";
 import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
@@ -118,6 +119,16 @@ export function createApp() {
     setHeaders: (res, file) => { if (file.includes(`${path.sep}_next${path.sep}static${path.sep}`)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable"); },
   }));
   app.use(express.static(PUBLIC_DIR, { extensions: ["html"], maxAge: "5m" }));
+  // A host pack's landing page carries the source offer as the shell's root page does (mold_v0-050, 086): while something
+  // is offered, its index.html is sent with the shell's footer before </body>; otherwise the file is served as it is, below.
+  const hostIndex = hosts().map((h) => h.publicDir && path.join(h.publicDir, "index.html")).find((f) => f && existsSync(f));
+  if (hostIndex) app.get(["/", "/index.html"], (_req, res, next) => {
+    const footer = offerFooterHtml(currentOffer());
+    if (!footer) return next();
+    const html = readFileSync(hostIndex, "utf8");
+    const at = html.lastIndexOf("</body>");
+    res.type("html").set("Cache-Control", "public, max-age=300").send(at < 0 ? html + footer : html.slice(0, at) + footer + html.slice(at));
+  });
   // A host pack's own public files (src/host.ts publicDir; the product's landing page and downloads), after the shell's.
   for (const h of hosts()) if (h.publicDir) app.use(express.static(h.publicDir, { extensions: ["html"], maxAge: "5m" }));
   // With no landing page of a host pack's, the root says what this server is, in the profile's words (mold_v0-039).
