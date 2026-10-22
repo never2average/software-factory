@@ -14,6 +14,7 @@ import { customerSession } from "./app.js";
 import { currentOffer, dataMap, type DataMapRow, type DataMapSection, type DeployFacts } from "./data-map.js";
 import { packs } from "./packs.js";
 import { asPlatform } from "./tenant-scope.js";
+import { authProvider } from "./auth-provider.js";
 
 /** The host of a URL from the environment, or null: never its user, password, path or query. */
 export const urlHost = (u: string | undefined): string | null => { if (!u) return null; try { return new URL(u).hostname.toLowerCase() || null; } catch { return null; } };
@@ -93,7 +94,8 @@ export async function measured(env: NodeJS.ProcessEnv = process.env, staff = tru
     rows.push({ item: "Run sandboxes", detail: `OCTILLION_RUN_SANDBOX is ${RUN_SANDBOXES.mode()} (auto: the sandbox provider whose key is in the key vault, else the server's Docker from its runner service)` });
   }
   const third: [string, boolean, string, boolean][] = [
-    ["Sign-in", Boolean(env.CLERK_SECRET_KEY), `Clerk (${urlHost(env.CLERK_API_URL) ?? "api.clerk.com"})`, true],
+    // The server's sign-in (src/auth-provider.ts): Clerk, or its own (people and sessions in the database).
+    ["Sign-in", true, authProvider() === "clerk" && env.CLERK_SECRET_KEY ? `Clerk (${urlHost(env.CLERK_API_URL) ?? "api.clerk.com"})` : "this server's own sign-in: people and sessions are kept in the database", true],
     ["Billing", Boolean(env.STRIPE_SECRET_KEY), `Stripe (${urlHost(env.STRIPE_API_URL) ?? "api.stripe.com"})`, true],
     ["Product analytics", Boolean(env.POSTHOG_API_KEY), `PostHog (${urlHost(env.POSTHOG_HOST) ?? "us.i.posthog.com"}): product events, and the signed-in person's email address and name`, true],
     ["Traces and metrics", Boolean(env.OTEL_EXPORTER_OTLP_ENDPOINT) && env.OTEL_SDK_DISABLED !== "true", `OpenTelemetry export to ${urlHost(env.OTEL_EXPORTER_OTLP_ENDPOINT) ?? "?"}`, staff],
