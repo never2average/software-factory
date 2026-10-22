@@ -570,7 +570,30 @@ def up_sh(S, F=None):
     to what it said before this deploy. Either --back says NOTHING= and changes nothing when there is nowhere to go.
     Every image is built first, one service at a time (built_services), then the stack comes up on them."""
     return _head(S) + _dc(S) + VR.fill("""cd @INSTALL@
-upw() { for s in @BUILT@; do dc build "$s" || return 1; done; dc up -d --build --wait --wait-timeout @WAIT@; }
+# A file mounted from the release (e.g. the stack's Caddyfile) is mounted through `current`, a path that is the same for
+# every release, so compose sees no change and a running container keeps the file of the release it started on.
+# fresh: every running container whose mounted file differs from the one `current` now holds is recreated on it.
+fresh() {
+  for c in $(dc ps -q 2>/dev/null); do
+    docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}|{{.Destination}}{{"\n"}}{{end}}{{end}}' "$c" | while IFS='|' read -r src dst; do
+      case "$src" in @INSTALL@/current/*) ;; *) continue;; esac
+      [ -f "$src" ] || continue
+      if ! docker cp "$c:$dst" - 2>/dev/null | tar -xO 2>/dev/null | cmp -s - "$src"; then
+        svc="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$c")"
+        echo "fresh: $svc holds an older $dst; recreating it on this release"
+        dc up -d --no-deps --force-recreate --wait --wait-timeout @WAIT@ "$svc" || exit 1
+        break
+      fi
+    done || return 1
+  done
+}
+# upw: each image built on its own (only those the release's compose file has, so a rollback to a release from before
+# a service existed still comes up), then the stack, then any container holding an older mounted file recreated.
+upw() {
+  have="$(dc config --services 2>/dev/null)" || return 1
+  for s in @BUILT@; do printf '%s\n' "$have" | grep -qx "$s" || continue; dc build "$s" || return 1; done
+  dc up -d --build --wait --wait-timeout @WAIT@ && fresh
+}
 point() { ln -sfn "releases/$1" current.new && mv -T current.new current; }
 cur=""; [ -L current ] && cur="$(basename "$(readlink current)")"
 restore() { if [ -n "$1" ]; then echo "$1" > previous; else rm -f previous; fi; }
