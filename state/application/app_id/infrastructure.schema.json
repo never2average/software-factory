@@ -797,6 +797,10 @@
             "service": {
               "type": "string",
               "description": "The service the compose file builds (read from the file at intake)."
+            },
+            "console": {
+              "type": "string",
+              "description": "The web console's service in the same compose file, built from its own Dockerfile and served behind the stack's Caddy (mold_v0-020; mold.json compose.console, read at intake)."
             }
           }
         },
@@ -808,13 +812,25 @@
         "health": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The deploy's own verdict, never by hand: the app container's state and user id, the services publishing ports, the public health answer and the disk.",
+          "description": "The deploy's own verdict, never by hand: the app container's state and user id (and the console's, mold_v0-020), the services publishing ports, the public health answer (through the console when the stack has one), each console page's answer read without following a redirect, and the disk.",
           "properties": {
             "app": {
               "type": "string"
             },
             "uid": {
               "type": "string"
+            },
+            "console": {
+              "type": "string"
+            },
+            "console_uid": {
+              "type": "string"
+            },
+            "pages": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
             },
             "published": {
               "type": "string"
