@@ -3,6 +3,8 @@ import { ClerkProvider } from '@clerk/nextjs';
 import React from 'react';
 import { ActiveThemeProvider } from '../themes/active-theme';
 import QueryProvider from './query-provider';
+import { profile } from '@/config/profile.generated';
+import { hostSignUpSubtitle } from '@/features/packs/host-nav';
 
 export default function Providers({
   activeThemeValue,
@@ -16,8 +18,8 @@ export default function Providers({
       <ActiveThemeProvider initialTheme={activeThemeValue}>
         <ClerkProvider
           localization={{
-            signIn: { start: { title: 'Sign in to Octillion', subtitle: 'Welcome back' } },
-            signUp: { start: { title: 'Create your Octillion account', subtitle: 'Measure how coding agents pick your product' } }
+            signIn: { start: { title: `Sign in to ${profile.name}`, subtitle: 'Welcome back' } },
+            signUp: { start: { title: `Create your ${profile.name} account`, subtitle: hostSignUpSubtitle() ?? profile.short_description } }
           }}
           appearance={{
             variables: {

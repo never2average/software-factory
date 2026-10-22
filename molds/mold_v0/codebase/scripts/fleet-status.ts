@@ -1,5 +1,6 @@
 // Live orchestrators, the global usage-proportional pod plan, each orchestrator's share, and the autoscaler.
 //   npm run fleet:status
+import "../src/hosts.js"; // the build's host packs first: the agent mix the fleet plans by may be theirs (mold_v0-039)
 import { getDb } from "../src/db.js";
 import { fleetStatus } from "../src/fleet.js";
 import { autoscalerStatus, computeDemand } from "../src/autoscaler.js";

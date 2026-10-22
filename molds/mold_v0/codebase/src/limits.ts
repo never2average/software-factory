@@ -218,7 +218,7 @@ export type Allocation = ReturnType<typeof allocate>;
 
 /** The account's live spend this month, connector keys included (the same figure as Billing's header). */
 async function accountSpent(orgId: number) {
-  const { orgMonthSpendUsd } = await import("./queries.js");
+  const { orgMonthSpendUsd } = await import("./session-engine.js");
   return orgMonthSpendUsd(orgId);
 }
 

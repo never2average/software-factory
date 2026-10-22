@@ -25,9 +25,10 @@ import * as React from 'react';
 import { Icons } from '../icons';
 import { OrgSwitcher } from '../org-switcher';
 import { useNav } from './nav-context';
-import { OctillionMark } from '@/features/site/logo';
+import { BrandMark } from '@/components/brand';
+import { profile } from '@/config/profile.generated';
 
-/** Platform admins (Octillion staff) get a switch between the customer portal and /admin; nobody else sees it. */
+/** Platform admins (platform staff) get a switch between the customer portal and /admin; nobody else sees it. */
 function usePlatformAdmin(area: string) {
   const [is, setIs] = React.useState(area === 'admin');
   React.useEffect(() => {
@@ -62,10 +63,10 @@ export default function AppSidebar() {
         {area === 'admin' ? (
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton size='lg' render={<Link href='/admin' aria-label='Octillion Admin' />}>
-                <OctillionMark className='size-8 shrink-0' />
+              <SidebarMenuButton size='lg' render={<Link href='/admin' aria-label={`${profile.console_title} Admin`} />}>
+                <BrandMark className='size-8 shrink-0' />
                 <div className='grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden'>
-                  <span className='truncate font-semibold'>Octillion</span>
+                  <span className='truncate font-semibold'>{profile.console_title}</span>
                   <span className='text-muted-foreground truncate text-xs'>Platform admin</span>
                 </div>
               </SidebarMenuButton>

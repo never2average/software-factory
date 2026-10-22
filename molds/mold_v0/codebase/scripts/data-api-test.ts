@@ -16,7 +16,7 @@ import { catalogPack, workspaceFiles } from "./lib/catalog-fixture.js";
 try {
   const { getDb } = await import("../src/db.js");
   const db = await getDb();
-  const { TOOL_NAMES } = await import("../src/server.js");
+  const TOOL_NAMES = (await import("../src/server.js")).ownToolNames(); // the host packs' tools (src/host.ts): none with zero packs
   const { setPacksForTest } = await import("../src/packs.js");
   const { createOrg } = await import("../src/auth.js");
   const { dataAppRouter, dataAdminRouter } = await import("../src/data-routes.js");

@@ -22,6 +22,7 @@ import { useResult } from './result-dialog';
 import { ActionsMenu, Field, RecordView, type RecordCol, type RecordViewDef, type RowAction } from '@/components/layout/record-view';
 import { copyText, ErrorBox, StatusBadge, When } from './ui';
 import { Gate, useAdminRole } from './role';
+import { hostFeature } from '@/features/packs/host-nav';
 
 interface Req {
   id: number;
@@ -148,7 +149,8 @@ export function AdminRequests() {
     return [
       ...(q.status === 'pending' ? [lock({ label: 'Approve…', icon: <Icons.check />, onSelect: () => setApproving(q) }, 'requests')] : []),
       ...statusActions(q),
-      lock({ label: q.research ? 'Re-run research' : 'Research the company', icon: <Icons.sparkles />, disabled: researchBusy(q), separator: true, onSelect: () => runResearch(q) }, 'requests'),
+      // A requester's company research is a host pack's (mold_v0-039: the product's /requests/:id/research).
+      ...(hostFeature('research') ? [lock({ label: q.research ? 'Re-run research' : 'Research the company', icon: <Icons.sparkles />, disabled: researchBusy(q), separator: true, onSelect: () => runResearch(q) }, 'requests')] : []),
       copyEmail(q),
       ...(url ? [{ label: 'Open product site', icon: <Icons.externalLink />, onSelect: () => window.open(url, '_blank', 'noopener,noreferrer') }] : [])
     ];
@@ -163,7 +165,7 @@ export function AdminRequests() {
       { label: `Reopen ${declined.length} declined`, icon: <Icons.arrowRight />, disabled: !declined.length, onSelect: () => setConfirm({
         title: `Reopen ${plural(declined.length)}?`, body: 'They go back to pending.', label: 'Reopen', run: () => void runEach(declined, 'reopen', clear)
       }) },
-      { label: `Research ${sel.length} compan${sel.length === 1 ? 'y' : 'ies'}`, icon: <Icons.sparkles />, onSelect: () => { sel.forEach(runResearch); clear(); } }].map((a) => lock(a, 'requests')),
+      ...(hostFeature('research') ? [{ label: `Research ${sel.length} compan${sel.length === 1 ? 'y' : 'ies'}`, icon: <Icons.sparkles />, onSelect: () => { sel.forEach(runResearch); clear(); } }] : [])].map((a) => lock(a, 'requests')),
       { label: 'Copy emails', icon: <IconCopy />, onSelect: () => copyText(emails(sel), `${sel.length} emails copied`) }
     ];
   };
@@ -370,7 +372,7 @@ function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; o
         </div>
       </section>
 
-      <section>
+      {hostFeature('research') && <section>
         <div className='mb-2 flex items-center justify-between gap-3'>
           <span className='text-muted-foreground text-xs font-medium leading-none'>AI research</span>
           <Gate need='requests'><Button size='xs' variant='ghost' disabled={q.research_status === 'running' || q.deep?.status === 'queued' || q.deep?.status === 'running'} onClick={onResearch}>
@@ -382,7 +384,7 @@ function RequestPeek({ q, match, onResearch }: { q: Req; match: string | null; o
         {!q.research ? (
           q.research_status !== 'running' && <p className='text-muted-foreground leading-none'>Not researched yet.</p>
         ) : <Research b={q.research} at={q.researched_at} />}
-      </section>
+      </section>}
     </div>
   );
 }

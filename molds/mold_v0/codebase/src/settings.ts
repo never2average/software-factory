@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { defaultSender } from "./profile.js";
+import { hosts } from "./host.js";
 
 /**
  * Global platform settings (/admin/compute): knobs that used to be environment variables only. Each setting is keyed
@@ -10,7 +11,8 @@ import { defaultSender } from "./profile.js";
  * setSetting() updates this process's cache at once.
  */
 
-export type SettingGroup = "models" | "runs" | "capacity" | "research" | "reasons" | "docs" | "library" | "email";
+/** The shell's groups (models, runs, capacity, docs, email) and any a host pack adds (src/host.ts settings, mold_v0-039). */
+export type SettingGroup = string;
 export interface SettingDef {
   key: string; group: SettingGroup; label: string; help: string;
   kind: "text" | "int" | "number" | "choice";
@@ -20,14 +22,12 @@ export interface SettingDef {
   format?: "model" | "sender" | "emails";
 }
 
+/** The shell's own groups, in order; a host pack's groups go after the group each names (settingGroups). */
 export const SETTING_GROUPS: { id: SettingGroup; label: string }[] = [
   { id: "models", label: "Models" },
   { id: "runs", label: "Runs" },
   { id: "capacity", label: "Capacity" },
-  { id: "research", label: "Research" },
-  { id: "reasons", label: "Loss reasons" },
   { id: "docs", label: "Docs answers" },
-  { id: "library", label: "Library contributions" },
   { id: "email", label: "Email" },
 ];
 
@@ -38,10 +38,6 @@ export const SETTINGS: SettingDef[] = [
     help: "Cloudflare Workers AI model for the first, quick brief on an access request's company." },
   { key: "VERTEX_REGION", group: "models", label: "Vertex AI region", kind: "text", default: "us-east5",
     help: "Google Cloud region for Claude (and Gemini) on Vertex AI, e.g. us-east5, europe-west1, global. The project comes from the Vertex AI service-account key in Key vault." },
-  { key: "OCTILLION_DEFAULT_SAMPLES", group: "runs", label: "Default samples per task", kind: "int", default: 10, min: 1, max: 1000,
-    help: "Sessions per task when a run does not say how many." },
-  { key: "OCTILLION_MAX_SAMPLES", group: "runs", label: "Most samples per task", kind: "int", default: 20, min: 1, max: 1000,
-    help: "Adaptive sampling stops a task here even if its hit rate is still uncertain." },
   { key: "OCTILLION_MAX_SESSIONS_PER_RUN", group: "runs", label: "Most sessions per run", kind: "int", default: 100, min: 1, max: 100000,
     help: "A run that would start more sessions than this is refused." },
   { key: "OCTILLION_MAX_ORCHESTRATORS", group: "capacity", label: "Shared orchestrators", kind: "int", default: 4, min: 0, max: 1000,
@@ -52,22 +48,10 @@ export const SETTINGS: SettingDef[] = [
     help: "Worker sandboxes one per-job orchestrator runs at once." },
   { key: "BOAT_SANDBOX_SIZE", group: "capacity", label: "Sandbox size", kind: "choice", default: "default", options: ["small", "default", "large", "xlarge"],
     help: "boat.dev machine size for orchestrators started after the change and their worker sandboxes." },
-  { key: "RESEARCH_MAX_COST_USD", group: "research", label: "Most spend per research job (USD)", kind: "number", default: 2, min: 0, max: 1000,
-    help: "A deep research job stops once its model spend reaches this." },
-  { key: "PROSPECT_DAILY_LIMIT", group: "research", label: "Deep research jobs a day from the landing form", kind: "int", default: 20, min: 0, max: 10000,
-    help: "Access requests start at most this many deep research jobs a day. The Research button on a request is never capped." },
-  { key: "REASONS_ENABLED", group: "reasons", label: "Explain lost sessions", kind: "choice", default: "on", options: ["on", "off"],
-    help: "On: each session an agent didn't pick the product in gets a short model reason (the cheapest model, out of band) for \"Why agents chose others\" on Pick rate. Off: nothing new is queued or sent." },
-  { key: "REASONS_DAILY_MAX", group: "reasons", label: "Loss reasons a day", kind: "int", default: 500, min: 0, max: 100000,
-    help: "Most model calls for loss reasons a UTC day, across all accounts (retries count). Past it, the rest wait for tomorrow." },
   { key: "DOCS_ANSWERS_DAILY_MAX", group: "docs", label: "Docs answers a day", kind: "int", default: 500, min: 0, max: 100000,
     help: "Most model calls for \"Ask AI\" answers in the Cmd+K bar a UTC day, across all accounts and admins. Past it, people still get the matching docs sections, without the summary." },
   { key: "DOCS_ANSWERS_PER_MINUTE", group: "docs", label: "Docs answers a minute per person", kind: "int", default: 6, min: 0, max: 1000,
     help: "Most \"Ask AI\" answers one person gets a minute; past it, the matching sections only." },
-  { key: "PUBLISH_DISCOUNT_PERSONA_USD", group: "library", label: "Credit per accepted persona (USD)", kind: "number", default: 5, min: 0, max: 1000,
-    help: "What an account earns, as a credit on its next Stripe invoice, when Octillion accepts a developer persona it published to the library. The reviewer can change it on Accept." },
-  { key: "PUBLISH_DISCOUNT_TASK_USD", group: "library", label: "Credit per accepted task (USD)", kind: "number", default: 10, min: 0, max: 1000,
-    help: "What an account earns, as a credit on its next Stripe invoice, when Octillion accepts a programming task it published to the library. The reviewer can change it on Accept." },
   { key: "EMAILS_ENABLED", group: "email", label: "Send emails", kind: "choice", default: "on", options: ["on", "off"],
     help: "Off: nothing is sent (each email is logged as skipped). The Resend key is in Key vault; the log is on Emails." },
   { key: "EMAIL_FROM", group: "email", label: "From", kind: "text", format: "sender", default: defaultSender(), // the profile's sender (src/profile.ts)
@@ -77,7 +61,35 @@ export const SETTINGS: SettingDef[] = [
   { key: "EMAIL_ADMIN_TO", group: "email", label: "Operator alerts to", kind: "text", format: "emails", default: "",
     help: "Who gets new access requests and library submissions, comma-separated. Empty: the platform owners (Admins)." },
 ];
-const DEFS = new Map(SETTINGS.map((d) => [d.key, d]));
+/**
+ * Every group of this build, in order: the shell's, each host pack's after the group it names (mold_v0-039).
+ */
+export function settingGroups(): { id: SettingGroup; label: string }[] {
+  const out = [...SETTING_GROUPS];
+  for (const h of hosts()) for (const g of h.settings?.groups ?? []) {
+    const at = g.after ? out.findIndex((x) => x.id === g.after) : out.length - 1;
+    out.splice(at < 0 ? out.length : at + 1, 0, { id: g.id, label: g.label });
+  }
+  return out;
+}
+/**
+ * Every setting of this build: the shell's and its host packs', grouped in group order. A host pack's setting goes before
+ * the one it names (`before`), else at the end of its group.
+ */
+export function allSettings(): SettingDef[] {
+  const order = new Map(settingGroups().map((g, i) => [g.id, i]));
+  const all: SettingDef[] = [...SETTINGS];
+  for (const h of hosts()) for (const { before, ...d } of (h.settings?.defs ?? []) as (SettingDef & { before?: string })[]) {
+    const at = before ? all.findIndex((x) => x.key === before) : -1;
+    if (at >= 0) all.splice(at, 0, d); else all.push(d);
+  }
+  return all.map((d, i) => [d, i] as const).sort(([a, i], [b, j]) => (order.get(a.group) ?? 999) - (order.get(b.group) ?? 999) || i - j).map(([d]) => d);
+}
+let defsFor: { hosts: unknown; defs: Map<string, SettingDef> } | null = null;
+const defOf = (key: string) => {
+  if (defsFor?.hosts !== hosts()) defsFor = { hosts: hosts(), defs: new Map(allSettings().map((d) => [d.key, d])) };
+  return defsFor.defs.get(key);
+};
 
 const TTL_MS = 30_000;
 let cache = new Map<string, { value: unknown; updated_at: string; updated_by: string | null }>();
@@ -105,7 +117,7 @@ const envOf = (key: string) => { const v = process.env[key]; return v !== undefi
 
 /** The value in force: set here, else the environment, else the default. Numbers stay numbers. */
 export function settingValue(key: string): string | number {
-  const d = DEFS.get(key);
+  const d = defOf(key);
   if (!d) throw new Error(`Unknown setting ${key}`);
   const raw = setting(key) ?? envOf(key);
   if (raw === undefined) return d.default;
@@ -151,7 +163,7 @@ export async function setSettings(actor: string, values: Record<string, unknown>
   const changes: { key: string; from: unknown; to: unknown }[] = [];
   const checked: [SettingDef, string | number | null][] = [];
   for (const [key, v] of entries) {
-    const d = DEFS.get(key);
+    const d = defOf(key);
     if (!d) throw new SettingError(`Unknown setting ${key}`);
     if (v === null) { checked.push([d, null]); continue; }
     const c = clean(d, v);
@@ -177,7 +189,7 @@ export async function setSettings(actor: string, values: Record<string, unknown>
 /** Every setting with the value in force and where it comes from (for /admin/compute). */
 export async function listSettings() {
   await freshSettings();
-  return SETTINGS.map((d) => {
+  return allSettings().map((d) => {
     const row = cache.get(d.key), env = envOf(d.key);
     return {
       ...d, value: settingValue(d.key), source: row ? "set" as const : env !== undefined ? "env" as const : "default" as const,

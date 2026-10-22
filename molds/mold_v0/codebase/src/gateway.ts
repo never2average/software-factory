@@ -7,7 +7,7 @@ import { findAgent } from "./agents.js";
 import { getProvider, providersForEnv, useCredential, useVertexCredential, VERTEX_LABEL, type ProviderRow } from "./keyvault.js";
 import { adaptGeminiBody, geminiWantsThinkingLevel, toVertex, toVertexGemini, vertexAccessToken, vertexConfig, type VertexConfig } from "./vertex.js";
 import { costOf, recordModelUsage } from "./usage.js";
-import { SCENARIO_ROWS } from "./queries.js";
+import { SCENARIO_ROWS } from "./session-engine.js";
 
 /**
  * Inference gateway + credential broker (docs/credentials.md).

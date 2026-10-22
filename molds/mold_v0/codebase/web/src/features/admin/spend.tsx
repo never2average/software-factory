@@ -35,6 +35,7 @@ import { Gate, useAdminRole } from './role';
 import { copyText, ErrorBox, FormRow, Mono, StatusBadge, When, type Tone } from './ui';
 import { AMBER, Chip, cents, PeekSection, UrlTabs } from './compute-common';
 import { MiniTable } from './compute-sessions';
+import { profile } from '@/config/profile.generated';
 
 // ---------------------------------------------------------------- API shapes
 
@@ -151,7 +152,7 @@ type Tab = (typeof TABS)[number][0];
 const OLD: Record<string, Tab> = { accounts: 'spend', models: 'spend', days: 'compute' };
 type Group = 'account' | 'provider';
 const CONSUMER: Record<Consumer, string> = { session: 'Sessions', orchestrator: 'Orchestrators' };
-const SOURCE: Record<string, string> = { override: 'Set by Octillion', plan: 'Plan', default: 'Default' };
+const SOURCE: Record<string, string> = { override: `Set by ${profile.name}`, plan: 'Plan', default: 'Default' };
 const SHARED_HINT = 'Not tied to one account: shared orchestrators, prospect research, and platform data.';
 const UNPRICED = 'Some requests used a model with no price in model_prices, so this cost is understated.';
 const KIND: Record<StoreKind, string> = { database: 'Database', transcripts: 'Transcripts', archive: 'Archive', gateway: 'Gateway traffic' };
@@ -307,7 +308,7 @@ const PER: Record<string, string> = { day: 'd', week: 'wk', month: 'mo', year: '
 /** '$49 / mo', '$490 / 3 mo', or 'usage' when the plan has no base amount. */
 const priceLabel = (p: RevenuePlan) => (p.unit_amount_usd == null ? 'usage'
   : `${cents(p.unit_amount_usd)}${p.interval ? ` / ${every(p.interval_count)}${PER[p.interval] ?? p.interval}` : ''}`);
-const ALLOWANCE_HINT = 'A prepaid allowance is the account’s monthly cap on model spend (set by Octillion or by its plan). It is not revenue and is never counted in MRR or collected.';
+const ALLOWANCE_HINT = `A prepaid allowance is the account’s monthly cap on model spend (set by ${profile.name} or by its plan). It is not revenue and is never counted in MRR or collected.`;
 
 /** Margin: dollars and the share of what was collected; red when negative. */
 const marginCell = (usd: number, share: number | null) => (
@@ -419,7 +420,7 @@ function RevenueTab({ data, loading, bar, group }: TabProps<Revenue>) {
     { key: 'account', label: 'Account', title: true, keep: true, type: 'text', value: (a) => a.name, render: (a) => (
       <span className='flex min-w-0 flex-col gap-1'>
         <span className='flex items-center gap-1.5'><span className='truncate font-medium'>{a.name}</span>{a.shared && <Chip title={SHARED_HINT}>shared</Chip>}
-          {!a.shared && !a.slug && <Chip tone='warn' title='A Stripe customer no Octillion account is linked to'>not linked</Chip>}</span>
+          {!a.shared && !a.slug && <Chip tone='warn' title={`A Stripe customer no ${profile.name} account is linked to`}>not linked</Chip>}</span>
         {a.slug ? <span className='text-muted-foreground truncate text-xs'>{a.slug}</span> : a.customer && <Mono>{a.customer}</Mono>}
       </span>
     ) },
@@ -875,7 +876,7 @@ function SpendAccounts({ data, loading, rows, cards, filters, filtered, range }:
       a.allowance ? (
         <span className='flex flex-col gap-1'>
           <span className='tabular-nums'>{a.allowance.budget_usd > 0 ? `${cents(a.allowance.budget_usd)} a month` : 'No allowance'}</span>
-          <span className='text-muted-foreground text-xs'>{a.allowance.plan ?? SOURCE[a.allowance.source]}{a.allowance.plan && a.allowance.source === 'override' && ' · set by Octillion'}</span>
+          <span className='text-muted-foreground text-xs'>{a.allowance.plan ?? SOURCE[a.allowance.source]}{a.allowance.plan && a.allowance.source === 'override' && ` · set by ${profile.name}`}</span>
         </span>
       ) : NA
     ) },
@@ -885,7 +886,7 @@ function SpendAccounts({ data, loading, rows, cards, filters, filtered, range }:
     { key: 'month', label: 'This month', className: 'w-56', type: 'number', value: (a) => a.month_pct ?? null, render: (a) => (
       a.shared ? <span className='text-muted-foreground text-xs tabular-nums'>{cents(a.month_usd)} this month, no allowance</span>
         : <span className='flex flex-col gap-1'><AllowanceMeter used={a.month_usd} budget={a.allowance?.budget_usd ?? 0} pct={a.month_pct} />
-          {a.allowance && <span className='text-muted-foreground text-xs'>{a.allowance.plan ?? SOURCE[a.allowance.source]}{a.allowance.plan && a.allowance.source === 'override' && ' · set by Octillion'}</span>}</span>
+          {a.allowance && <span className='text-muted-foreground text-xs'>{a.allowance.plan ?? SOURCE[a.allowance.source]}{a.allowance.plan && a.allowance.source === 'override' && ` · set by ${profile.name}`}</span>}</span>
     ) },
     { key: 'sessions', label: 'Sessions', className: 'text-right', type: 'number', value: (a) => a.sessions, render: (a) => (a.sessions ? num(a.sessions.toLocaleString()) : NA) },
     { key: 'top_model', label: 'Top model', type: 'select', value: (a) => a.top_model ?? '', render: (a) => (a.top_model ? <Mono>{short(a.top_model)}</Mono> : NA) },

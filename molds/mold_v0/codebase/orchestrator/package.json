@@ -3,9 +3,9 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Octillion orchestrator: Pi (pi.dev) agent that drives coding-agent harnesses in boat.dev sandboxes and role-plays the developer. Runs only inside boat.dev orchestrator sandboxes.",
+  "description": "The orchestrator: drives coding-agent harnesses in sandboxes for the session engine; a host pack's own orchestrator (orchestrator/packs/<id>/main.ts) runs when the build has one. Runs only inside sandboxes.",
   "scripts": {
-    "start": "tsx pi-octillion/main.ts",
+    "start": "tsx main.ts",
     "worker": "tsx worker.ts",
     "boat-orchestrators": "tsx deploy/boat-orchestrators.ts"
   },

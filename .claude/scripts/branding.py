@@ -688,7 +688,7 @@ def self_test_v0(ok):
         ok_(any(x.startswith("profile:") for x in applied) and "manifest_icons" in applied and "manifest_theme_color" in applied and "palette" in applied, f"mold_v0: the profile, the manifest and the palette rules applied: {applied}")
         prof = load(os.path.join(b, "profile.json"))
         ok_(prof["name"] == prof["console_title"] == prof["email_sender_name"] == "Acme Ops" and prof["mcp_server_name"] == "acme-ops"
-            and prof["short_description"] == "Tools for small teams." and prof["console_description"].startswith("Acme Ops") and prof["email_from_address"] == load(os.path.join(code, "profile.json"))["email_from_address"],
+            and prof["short_description"] == "Tools for small teams." and prof["console_description"].startswith("Acme Ops") and prof.get("email_from_address") == load(os.path.join(code, "profile.json")).get("email_from_address"),
             f"mold_v0: the brand's name and words are in profile.json, every other field kept: {prof}")
         for g in rules["profile"]["generated"]:
             ok_('"name": "Acme Ops"' in open(os.path.join(b, g)).read(), f"mold_v0: {g} is regenerated with the brand")

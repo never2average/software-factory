@@ -38,7 +38,7 @@ try {
     assert.deepEqual([reg.packs, reg.tools, reg.routes], [[], [], []], "no pack tools or routes");
     const { mcpSurface } = await import("./export-mcp-tools.js");
     const surface = await mcpSurface();
-    const { TOOL_NAMES } = await import("../src/server.js");
+    const TOOL_NAMES = (await import("../src/server.js")).ownToolNames(); // the host packs' tools (src/host.ts): none with zero packs
     assert.deepEqual(surface.tools.map((t) => t.name).sort(), [...TOOL_NAMES].sort(), "with zero packs the MCP server lists exactly the shell's own tools");
     console.log(`✓ zero packs: registry current and empty; the MCP server lists the shell's ${TOOL_NAMES.length} tools only`);
   }
@@ -162,7 +162,7 @@ try {
     assert.throws(() => definePack({ id: "pk", credentials: [{ name: "c", label: "C", bound_to: "workspace", deliver_as: { env: "lower" } }] }), PackDefinitionError);
     assert.doesNotThrow(() => definePack({ id: "pk", tools: [{ name: "t", description: "d", inputSchema: { x: z.string() }, handler: h }] }));
     const { installPacks } = await import("../src/packs.js");
-    const { TOOL_NAMES } = await import("../src/server.js");
+    const TOOL_NAMES = ["shell_tool"]; // a name the shell reserves (a host pack's tool, src/host.ts)
     const manifest = (id: string) => ({ id, name: id, version: "1", entry: "index.ts", migrations: null, words: {} });
     const tool = (name: string) => ({ name, description: "d", handler: h });
     assert.throws(() => installPacks([{ manifest: manifest("pk"), definition: { id: "pk", tools: [tool(TOOL_NAMES[0]!)] } }], TOOL_NAMES), /already a shell tool/);
@@ -174,8 +174,9 @@ try {
   // ---------- 4. a build copy with the fixture pack ----------
   {
     const copy = path.join(tmp, "build");
-    const skip = new Set(["node_modules", ".pglite", ".pglite-preview", ".transcripts", "vault", ".next", "out", "packs", "dist"]);
-    cpSync(ROOT, copy, { recursive: true, filter: (src) => !skip.has(path.basename(src)) || src === ROOT });
+    const skip = new Set(["node_modules", ".pglite", ".pglite-preview", ".transcripts", ".next", "out", "dist"]);
+    // The codebase's own packs/ folder is left out (the fixture goes there); the console's packs/ folders are the shell's.
+    cpSync(ROOT, copy, { recursive: true, filter: (src) => (!skip.has(path.basename(src)) && src !== path.join(ROOT, "packs")) || src === ROOT });
     for (const nm of ["node_modules", "web/node_modules"]) if (existsSync(path.join(ROOT, nm))) symlinkSync(path.join(ROOT, nm), path.join(copy, nm), "dir");
     cpSync(FIXTURE, path.join(copy, "packs", "fixture_notes"), { recursive: true });
     writeFileSync(path.join(copy, "profile.json"), JSON.stringify({ name: "Fixture Desk", mcp_server_name: "fixture-desk", console_title: "Fixture Desk",
@@ -207,8 +208,9 @@ try {
   // ---------- 5. a build copy with the declarative fixture pack (mold_v0-057) ----------
   {
     const copy = path.join(tmp, "build-declarative");
-    const skip = new Set(["node_modules", ".pglite", ".pglite-preview", ".transcripts", "vault", ".next", "out", "packs", "dist"]);
-    cpSync(ROOT, copy, { recursive: true, filter: (src) => !skip.has(path.basename(src)) || src === ROOT });
+    const skip = new Set(["node_modules", ".pglite", ".pglite-preview", ".transcripts", ".next", "out", "dist"]);
+    // The codebase's own packs/ folder is left out (the fixture goes there); the console's packs/ folders are the shell's.
+    cpSync(ROOT, copy, { recursive: true, filter: (src) => (!skip.has(path.basename(src)) && src !== path.join(ROOT, "packs")) || src === ROOT });
     for (const nm of ["node_modules", "web/node_modules"]) if (existsSync(path.join(ROOT, nm))) symlinkSync(path.join(ROOT, nm), path.join(copy, nm), "dir");
     cpSync(path.join(ROOT, "scripts", "fixtures", "packs", "fixture_tracker"), path.join(copy, "packs", "fixture_tracker"), { recursive: true });
     const g = gen([], copy);

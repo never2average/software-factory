@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils';
 import { CopyButton, ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { Allowed } from './role';
 import { packOnboardingSteps } from '@/config/pack-nav.generated';
+import { profile } from '@/config/profile.generated';
+import { hostFeature } from '@/features/packs/host-nav';
 
 interface Step { id: string; label: string; done: boolean; at: string | null; help: string; optional?: boolean; prompt?: string | null }
 interface Setup {
@@ -43,7 +45,9 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
 
 export function SetupPage() {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
-  const { data: jr, reload: reloadJourneys } = useOrgLoad(() => appApi<{ journeys: Journey[] }>('GET', '/journeys'));
+  // Journeys and in-chat tips are a host pack's (mold_v0-039): asked for only when the build has one that offers them.
+  const journeysOn = hostFeature('journeys');
+  const { data: jr, reload: reloadJourneys } = useOrgLoad(() => (journeysOn ? appApi<{ journeys: Journey[] }>('GET', '/journeys') : Promise.resolve({ journeys: [] as Journey[] })));
   const [selected, setSelected] = useQueryState('journey', { defaultValue: 'setup' });
   // The earliest step not done yet, optional ones included: the timeline highlights it.
   const journey = jr?.journeys.find((x) => x.id === selected) ?? null;
@@ -57,15 +61,15 @@ export function SetupPage() {
               <Timeline s={s} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
-            <TipsSection />
+            {hostFeature('tips') && <TipsSection />}
           </div>
           {/* Two floating panels at a fixed width, pinned while the main column (which takes the rest) scrolls: the connection string and the journey picker. */}
           <div className='order-1 flex min-w-0 flex-col gap-4 lg:sticky lg:top-[4.5rem] lg:order-2'>
             <ConnectionBox s={s} onConnected={reload} />
-            <JourneyPicker setup={{ done: s.done, total: s.total }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
+            {journeysOn && <JourneyPicker setup={{ done: s.done, total: s.total }} journeys={jr?.journeys ?? []} selected={journey ? selected : 'setup'} onSelect={(id) => {
               void setSelected(id === 'setup' ? null : id);
               if (id !== 'setup') void appApi('POST', `/journeys/${encodeURIComponent(id)}/view`).catch(() => {});
-            }} />
+            }} />}
           </div>
         </div>
       )}
@@ -83,7 +87,7 @@ function FloatPanel({ title, icon, description, className, children }: { title: 
   );
 }
 
-/** The connection string, always in view: copy it, then prove the client reaches Octillion. */
+/** The connection string, always in view: copy it, then prove the client reaches the server. */
 function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }) {
   const [live, setLive] = useState<{ kind: 'wait' | 'ok' | 'bad'; text: string } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -102,7 +106,7 @@ function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }
     if (timer.current) return;
     appApi<{ since: string }>('POST', '/setup/test').then(({ since }) => {
       const until = Date.now() + 180_000;
-      setLive({ kind: 'wait', text: 'Waiting for your client… Open a new chat and type: "Get me started with Octillion."' });
+      setLive({ kind: 'wait', text: `Waiting for your client… Open a new chat and type: "Get me started with ${profile.name}."` });
       timer.current = setInterval(() => {
         appApi<Setup>('GET', `/setup?since=${encodeURIComponent(since)}`).then((r) => {
           if (r.live) {
@@ -111,7 +115,7 @@ function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }
             onConnected();
           } else if (Date.now() > until) {
             clearInterval(timer.current!); timer.current = null;
-            setLive({ kind: 'bad', text: 'Nothing arrived yet. Check the URL, that you signed in when your client asked, and that the Octillion tools are switched on; then try again.' });
+            setLive({ kind: 'bad', text: `Nothing arrived yet. Check the URL, that you signed in when your client asked, and that the ${profile.name} tools are switched on; then try again.` });
           }
         }).catch(() => {});
       }, 3000);
@@ -124,7 +128,7 @@ function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }
   const connected = live?.kind === 'ok' || s.clients.length > 0;
   const masked = url.replace(/([?&](?:key|token|k)=)[^&]+/i, '$1••••••••').replace(/(oct_[A-Za-z0-9]{4})[A-Za-z0-9_-]+/, '$1••••••••');
   return (
-    <FloatPanel title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : 'Octillion runs inside the AI client you already use.'}>
+    <FloatPanel title='Connect your AI client' icon={<Icons.plug />} description={s.connect.secret ? 'Your connection URL contains your key: keep it private.' : `${profile.name} runs inside the AI client you already use.`}>
       <ol className='flex flex-col gap-4'>
           <NumberedStep n={1} title='Pick your client'>
             <NativeSelect id='client-pick' aria-label='Your AI client' value={c?.id} onChange={(e) => choose(e.target.value)} className='bg-background w-full'>
@@ -135,7 +139,7 @@ function ConnectionBox({ s, onConnected }: { s: Setup; onConnected: () => void }
               ))}
             </NativeSelect>
           </NumberedStep>
-          <NumberedStep n={2} title={c ? `Add Octillion to ${c.client}` : 'Add Octillion'}>
+          <NumberedStep n={2} title={c ? `Add ${profile.name} to ${c.client}` : `Add ${profile.name}`}>
             <div className='flex flex-col gap-2'>
               <div className='bg-background flex items-center gap-1 rounded-md border py-1 pr-1 pl-2.5'>
                 <code className='min-w-0 flex-1 truncate font-mono text-xs select-all' title={show ? url : undefined}>{show ? url : masked}</code>
@@ -358,7 +362,7 @@ function TimelineSection({ title, done, total, noun, items, footer }: {
           );
         })}
       </ol>
-      <p className='text-muted-foreground border-t pt-3 text-sm'>{footer}</p>
+      {footer && <p className='text-muted-foreground border-t pt-3 text-sm'>{footer}</p>}
     </Section>
   );
 }
@@ -367,7 +371,7 @@ function Timeline({ s }: { s: Setup }) {
   return (
     <TimelineSection title='Get set up' done={s.done} total={s.total} noun='steps'
       items={s.steps.map((x) => ({ id: x.id, label: x.label.replace(' (team)', ''), done: x.done, body: <StepHelp help={x.help} done={x.done} prompt={x.prompt ?? null} /> }))}
-      footer={<>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline-offset-4 hover:underline'>Journeys</a>.</>} />
+      footer={hostFeature('journeys') ? <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline-offset-4 hover:underline'>Journeys</a>.</> : null} />
   );
 }
 
@@ -401,7 +405,7 @@ function TipsSection() {
     appApi('POST', '/nudges/mute', { muted: !on }).then(() => { toast.success(on ? 'Tips on' : 'Tips off in your AI client'); return load(); }).catch(fail);
   const safe = (l: string) => (/^\/app/.test(l) || /^https:\/\//.test(l) ? l : '#');
   return (
-    <Section title={<span className='flex items-center gap-2'><Icons.sparkles className='text-primary size-4' /> Tips for you</span>} description='Suggestions to get more out of Octillion.'>
+    <Section title={<span className='flex items-center gap-2'><Icons.sparkles className='text-primary size-4' /> Tips for you</span>} description={`Suggestions to get more out of ${profile.name}.`}>
       <div className='space-y-3'>
         <label className='flex items-center justify-between gap-3 text-sm'>
           <span>Show tips in my AI client</span>

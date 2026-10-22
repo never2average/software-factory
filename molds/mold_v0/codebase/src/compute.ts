@@ -2,7 +2,7 @@ import { getDb } from "./db.js";
 import * as kv from "./keyvault.js";
 import { AUTOSCALE, computeDemand, kickConfigured, type TickState } from "./autoscaler.js";
 import { scheduledAgents, variantsOf } from "./agents.js";
-import { getPopulation } from "./populations.js";
+import { currentPopulation } from "./agent-mix.js";
 import { listSettings } from "./settings.js";
 import { classifySession } from "./error-classes.js";
 import { directKeysAllowed, HARNESS_ENV, ORCHESTRATOR_ONLY_PROVIDERS } from "./gateway.js";
@@ -144,7 +144,7 @@ export function resetComputeCaches() { listing.reset(); limits.reset(); summaryC
  */
 export async function agentKeyCoverage(): Promise<{ agent_id: string; harness: string; missing_env: string[] }[]> {
   let agents: { id: string; harness: string; requires_env?: string[] }[] = [];
-  try { agents = scheduledAgents(await getPopulation()).flatMap((a) => [a, ...variantsOf(a).filter((v) => v.id !== a.id)]); }
+  try { agents = scheduledAgents(await currentPopulation()).flatMap((a) => [a, ...variantsOf(a).filter((v) => v.id !== a.id)]); }
   catch { return []; }
   const needsOf = (a: { harness: string; requires_env?: string[] }) => (a.requires_env?.length ? a.requires_env : HARNESS_ENV[a.harness] ?? []);
   const all = [...new Set(agents.flatMap(needsOf))];

@@ -5,6 +5,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
+import { hosts } from "./host.js";
 import { capture, identifyOrg, identifyPerson, posthogEnabled } from "./telemetry.js";
 
 export interface McpEvent {
@@ -71,9 +72,8 @@ export function recordMcpEvent(org: Org, e: McpEvent): void {
     .catch((err) => console.error("mcp event record failed:", (err as Error).message));
   // A staff call is in the workspace's own log only: it completes none of its people's journeys and is not product usage.
   if (org.staff) return;
-  // A successful tool call may complete a stage of a customer journey (src/playbooks.ts): sync shortly after.
-  if (e.method === "tools/call" && e.ok !== false)
-    void import("./playbooks.js").then((m) => m.scheduleSync({ orgId: org.orgId, slug: org.slug }, org.userId)).catch(() => {});
+  // A successful tool call may complete a step a host pack tracks (src/host.ts, its journeys): it is told shortly after.
+  if (e.method === "tools/call" && e.ok !== false) for (const h of hosts()) { try { h.background?.onToolCall?.(org); } catch (err) { console.error(`host ${h.id} onToolCall:`, (err as Error).message); } }
   const event = e.method === "tools/call" ? "tool_called" : PRODUCT_EVENTS[e.method];
   if (!event) return;
   const actor = { distinctId: org.userId ?? `org:${org.slug}`, orgSlug: org.slug };
@@ -104,7 +104,7 @@ export function connectorEvents(body: unknown, userAgent: string | undefined): M
 
 /**
  * The /app pages' equivalent of a tool call (Developer personas, Programming tasks): recorded as method 'page/action'
- * under the tool's name, so journey stages (src/playbooks.ts) complete from a page action exactly as from the MCP tool.
+ * under the tool's name, so a host pack's journey stages complete from a page action exactly as from the MCP tool.
  * Usage and tool adoption keep counting tools/call only. `every` (ms) skips a repeat by the same person within it
  * (opening a page). Awaited, so the next journey load sees it.
  */
@@ -117,7 +117,7 @@ export async function recordPageAction(org: Org, name: string, opts: { every?: n
       if (r) return;
     }
     await db.query("INSERT INTO mcp_events (org_id, method, name, client, ok, user_id) VALUES ($1, 'page/action', $2, 'portal', true, $3)", [org.orgId, name.slice(0, 200), org.userId ?? null]);
-    void import("./playbooks.js").then((m) => m.scheduleSync({ orgId: org.orgId, slug: org.slug }, org.userId)).catch(() => {});
+    for (const h of hosts()) { try { h.background?.onToolCall?.(org); } catch (err) { console.error(`host ${h.id} onToolCall:`, (err as Error).message); } }
     capture({ distinctId: org.userId ?? `org:${org.slug}`, orgSlug: org.slug }, "portal_action", { tool: name });
   } catch (e) { console.error("page action record failed:", (e as Error).message); }
 }

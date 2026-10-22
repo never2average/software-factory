@@ -17,6 +17,7 @@ import { Gate } from './role';
 import { useResult } from './result-dialog';
 import { StatStrip } from '@/components/layout/section';
 import { ConfirmButton, copyText, DataList, ErrorBox, Mono, Notice, Section, StatusBadge, SubBadge, When, type Tone } from './ui';
+import { profile } from '@/config/profile.generated';
 
 type Detail = any; // GET /orgs/:slug (src/admin.ts orgDetail)
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : '—');
@@ -249,7 +250,7 @@ function People({ d, path, onResult }: { d: Detail; path: string; onResult: (r: 
                     label='Suspend'
                     variant='destructive'
                     title={`Suspend ${m.email || m.user_id}?`}
-                    description='They can no longer use Octillion in this account until you restore access.'
+                    description={`They can no longer use ${profile.name} in this account until you restore access.`}
                     confirmLabel='Suspend'
                     onConfirm={() => member.mutate({ id: m.id, action: 'deactivate' })}
                   /></Gate>

@@ -87,10 +87,15 @@
     "base_pattern": "Connector URL: (https?://\\S+/mcp)\\b"
   },
   "packs": {
-    "$comment": "Where an app's packs go and what proves the mold takes them (.claude/scripts/packs.py; mold_v0-024; MOLD.md \"Pack and record-area contract\"). A factory pack packs/<id>/files/ mirrors the codebase root and may add files ONLY under packs/<its own id>/ ({pack} is substituted with the pack's id, so it cannot write into another pack or the shell): its pack.json, its definePack entry, its migrations, its run programs. Its console pages need no files of their own: they render through the shell's generic page (web/src/app/{app,admin}/packs/[pack]/[page]) from pack.json. A file that already exists in the codebase is refused (a pack only adds). The id pattern is the shell's own (scripts/gen-packs.mjs: it is also the pack's table prefix). After copying, the shell's generator writes the registry the server and the console import; gen-packs refuses a pack whose code or SQL gets past the seam. `prune`: a pack folder an earlier apply left in the build copy for a pack the app no longer names is removed, so the registry never lists it.",
+    "$comment": "Where an app's packs go and what proves the mold takes them (.claude/scripts/packs.py; mold_v0-024; MOLD.md \"Pack and record-area contract\"). A factory pack packs/<id>/files/ mirrors the codebase root and may add files ONLY under packs/<its own id>/ ({pack} is substituted with the pack's id, so it cannot write into another pack or the shell): its pack.json, its definePack entry, its migrations, its run programs. Its console pages need no files of their own: they render through the shell's generic page (web/src/app/{app,admin}/packs/[pack]/[page]) from pack.json. A file that already exists in the codebase is refused (a pack only adds). The id pattern is the shell's own (scripts/gen-packs.mjs: it is also the pack's table prefix). After copying, the shell's generator writes the registry the server and the console import; gen-packs refuses a pack whose code or SQL gets past the seam. `prune`: a pack folder an earlier apply left in the build copy for a pack the app no longer names is removed, so the registry never lists it. Host packs (mold_v0-039; src/host.ts): a pack named in `host_packs` that the app names is written into the build's profile.json `host_packs`, so it may carry the product's own surface: a host entry, operator scripts, console pages under web/src/packs/{pack}/ and an orchestrator extension under orchestrator/packs/{pack}/, each held to its own import rules by gen-packs. Every other pack is an ordinary one. The generators also write what depends on the packs' surface (mold_v0-039): the console's tool list (scripts/export-mcp-tools.ts), the docs answers' corpus (scripts/sync-docs-corpus.ts) and the internal docs (web/scripts/sync-docs.mjs, which reads a host pack's docs/); `verify` checks each is current.",
     "pack_id": "^[a-z][a-z0-9_]{1,30}$",
     "allowed": [
-      "^packs/{pack}/.+$"
+      "^packs/{pack}/.+$",
+      "^web/src/packs/{pack}/.+$",
+      "^orchestrator/packs/{pack}/.+$"
+    ],
+    "host_packs": [
+      "octillion"
     ],
     "required": [
       "packs/{pack}/pack.json"
@@ -107,12 +112,34 @@
       [
         "node",
         "scripts/gen-packs.mjs"
+      ],
+      [
+        "node_modules/.bin/tsx",
+        "scripts/export-mcp-tools.ts"
+      ],
+      [
+        "node_modules/.bin/tsx",
+        "scripts/sync-docs-corpus.ts"
+      ],
+      [
+        "node",
+        "web/scripts/sync-docs.mjs"
       ]
     ],
     "verify": [
       [
         "node",
         "scripts/gen-packs.mjs",
+        "--check"
+      ],
+      [
+        "node_modules/.bin/tsx",
+        "scripts/export-mcp-tools.ts",
+        "--check"
+      ],
+      [
+        "node_modules/.bin/tsx",
+        "scripts/sync-docs-corpus.ts",
         "--check"
       ]
     ],

@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { ACCOUNT_ROLE_LABEL, Allowed, useAccountRole, type AccountRole, type AccountRoleInfo } from './role';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { profile } from '@/config/profile.generated';
 
 interface Sub { status: string; plan: string | null; renews_at: string | null; cancel_at_period_end: boolean; trial_end: string | null }
 interface Plan { price_id: string; name: string; amount: number | null; currency: string; interval: string | null; monthly_budget_usd: number | null; trial_days?: number | null; description?: string | null;
@@ -32,7 +33,7 @@ interface Plan { price_id: string; name: string; amount: number | null; currency
   usage?: { metric: string; summary: string }[] }
 interface Billing { enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
   contributions?: Contributions }
-/** Credits for personas and tasks Octillion accepted into its library: from Stripe's balance transactions, plus accepted ones Stripe hasn't taken yet. */
+/** Credits for personas and tasks the platform accepted into its library: from Stripe's balance transactions, plus accepted ones Stripe hasn't taken yet. */
 interface Contributions { credits: { id: string; amount_usd: number; description: string | null; created: string; submission_id: string }[]; total_usd: number; error: string | null;
   pending: { id: string; kind: 'persona' | 'task'; title: string; credit_usd: number; decided_at: string | null }[] }
 interface Usage {
@@ -161,7 +162,7 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
       {/* No plan and no allowance: runs are off. Plans are invite-only while inference costs are high. */}
       {cap <= 0 && !(b.enabled && b.plans.length > 0) && (
         <Alert><Icons.lock /><AlertDescription>
-          Running simulations and onboarding needs a prepaid plan. Plans are invite-only for now: reply to your Octillion contact, or write to us, and we&apos;ll set one up for your team.
+          Running simulations and onboarding needs a prepaid plan. Plans are invite-only for now: reply to your {profile.name} contact, or write to us, and we&apos;ll set one up for your team.
         </AlertDescription></Alert>
       )}
       {b.enabled && b.plans.length > 0 && !(live && b.customer) && (
@@ -557,7 +558,7 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
   };
   const max = l.server_max_sessions;
   const rows: RuleRow[] = [
-    { key: 'allowance', rule: 'Monthly allowance', applies: 'Account', by: 'Octillion', at: null,
+    { key: 'allowance', rule: 'Monthly allowance', applies: 'Account', by: profile.name, at: null,
       value: l.budget_error ? "Couldn't load" : l.budget_usd > 0 ? `${usd(l.budget_usd)} a month` : 'No prepaid allowance' },
     // The short label; the sentence is its tooltip (and the dialog's hint).
     { ...policyRow('mode', 'How people share it', MODE_OPTIONS.find((m) => m.id === p.mode)?.label ?? p.mode, 'Each budget', 'mode', 'How the people in each budget share it. Own limits apply in every mode.'), hint: MODE_WORDS[p.mode] },
@@ -568,8 +569,8 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
       "No stops everyone who hasn't been allowed individually, including people already here."),
     policyRow('max_concurrent_runs', 'Runs at once (per person)', p.max_concurrent_runs == null ? 'No limit' : String(p.max_concurrent_runs), 'Each person', 'count',
       'Whole simulations running at once. Teams and people can set their own; the most specific one wins.'),
-    policyRow('max_sessions_per_run', 'Sessions per run', p.max_sessions_per_run == null ? `Octillion's maximum${max ? ` (${max})` : ''}` : String(p.max_sessions_per_run), 'Each simulation', 'count',
-      `Agent sessions per simulation, adaptive runs included.${max ? ` Octillion's maximum is ${max}.` : ''}`),
+    policyRow('max_sessions_per_run', 'Sessions per run', p.max_sessions_per_run == null ? `${profile.name}'s maximum${max ? ` (${max})` : ''}` : String(p.max_sessions_per_run), 'Each simulation', 'count',
+      `Agent sessions per simulation, adaptive runs included.${max ? ` ${profile.name}'s maximum is ${max}.` : ''}`),
     policyRow('max_run_usd', 'Spend cap per run', p.max_run_usd == null ? 'No limit' : usd(p.max_run_usd), 'Each simulation', 'money',
       'Adaptive runs stop adding sessions once a run reaches this. Sessions already running finish.'),
     ...l.teams.filter((t) => t.budget_usd != null || t.max_concurrent_runs != null).map((t): RuleRow => {
@@ -591,12 +592,12 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
     { key: 'rule', label: 'Rule', keep: true, title: true, type: 'text', value: (r) => r.rule, render: (r) => <span className='font-medium'>{r.rule}</span> },
     { key: 'value', label: 'Value', type: 'text', value: (r) => r.value, render: (r) => <span className='tabular-nums' title={r.hint}>{r.value}</span> },
     { key: 'applies', label: 'Applies to', className: 'w-56', type: 'select', value: (r) => r.applies, render: (r) => <span className='text-muted-foreground'>{r.applies}</span> },
-    // Who last changed it, and when on a second line (never for Default or Octillion, which have no date). Set by and Last changed stay hidden for filtering, grouping and sorting.
+    // Who last changed it, and when on a second line (never for Default or the platform, which have no date). Set by and Last changed stay hidden for filtering, grouping and sorting.
     { key: 'changed', label: 'Changed', className: 'w-48', peek: false, render: (r) => (<>
-      <span className={r.by === 'Default' || r.by === 'Octillion' ? 'text-muted-foreground' : ''}>{r.by}</span>
+      <span className={r.by === 'Default' || r.by === profile.name ? 'text-muted-foreground' : ''}>{r.by}</span>
       {r.at && <div className='text-muted-foreground mt-1 text-xs leading-none'><When d={r.at} /></div>}
     </>) },
-    { key: 'by', label: 'Set by', className: 'w-48', type: 'select', hidden: true, value: (r) => r.by, render: (r) => <span className={r.by === 'Default' || r.by === 'Octillion' ? 'text-muted-foreground' : ''}>{r.by}</span> },
+    { key: 'by', label: 'Set by', className: 'w-48', type: 'select', hidden: true, value: (r) => r.by, render: (r) => <span className={r.by === 'Default' || r.by === profile.name ? 'text-muted-foreground' : ''}>{r.by}</span> },
     { key: 'at', label: 'Last changed', className: 'w-32', type: 'date', hidden: true, value: (r) => r.at ?? undefined,
       render: (r) => <span className='text-muted-foreground text-xs'>{r.at ? <When d={r.at} /> : '—'}</span> }
   ];

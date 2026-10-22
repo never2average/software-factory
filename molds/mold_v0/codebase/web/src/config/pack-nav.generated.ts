@@ -64,7 +64,7 @@ export const workspacePortalNav: NavGroup[] = [];
 /** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */
 export const packOnboardingSteps = 0;
 
-/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack. */
+/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */
 export const usagePortalNav: NavGroup[] = [];
 export const usageAdminNav: NavGroup[] = [];
 

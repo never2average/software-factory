@@ -19,6 +19,7 @@ import { registerGeneratedTools } from "./mcp-tools.js";
 import { checkViews, viewsOf } from "./metric-spec.js";
 import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
+import { hostToolNames } from "./host.js";
 import { currentTenant, withTenant } from "./tenant-scope.js";
 
 /** What gen-packs copies from a pack's pack.json into the registry. */
@@ -121,18 +122,20 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let installed: InstalledPack[] | null = null;
 let reserved: readonly string[] = [];
-let reservedAdmin: readonly string[] = [];
+let reservedAdminOf: () => readonly string[] = () => [];
+/** The shell's own customer tool names: those reserved by name and every host pack's (src/host.ts, mold_v0-039). */
+const shellTools = () => [...reserved, ...hostToolNames()];
 /** A test's packs stay installed when a server module loads later and reserves its names: checked again against them. */
 let testList: readonly GeneratedPack[] | null = null;
-const reinstall = () => { installed = testList ? installPacks(testList, reserved, reservedAdmin) : null; };
-/** The shell's own tool names, set by src/server.ts before any pack is used, so a pack cannot shadow one. */
+const reinstall = () => { installed = testList ? installPacks(testList, shellTools(), reservedAdminOf()) : null; };
+/** Customer tool names a pack may not take, besides the host packs' (read when the packs are installed). */
 export function reserveShellTools(names: readonly string[]) { reserved = names; reinstall(); }
-/** The admin MCP's own tool names (src/admin-mcp.ts), which a generated admin tool may not take (mold_v0-060). */
-export function reserveAdminTools(names: readonly string[]) { reservedAdmin = names; reinstall(); }
+/** The admin MCP's own tool names (src/admin-mcp.ts), which a generated admin tool may not take (mold_v0-060); read on install. */
+export function reserveAdminTools(names: readonly string[] | (() => readonly string[])) { reservedAdminOf = typeof names === "function" ? names : () => names; reinstall(); }
 /** The installed packs (the generated registry, checked on first use; a bad pack fails the process at start). */
-export const packs = (): InstalledPack[] => (installed ??= installPacks(PACKS as readonly GeneratedPack[], reserved, reservedAdmin));
+export const packs = (): InstalledPack[] => (installed ??= installPacks(PACKS as readonly GeneratedPack[], shellTools(), reservedAdminOf()));
 /** Tests only: install another set of packs (a fixture) in place of the generated registry; null goes back to it. */
-export function setPacksForTest(list: readonly GeneratedPack[] | null) { installed = list ? installPacks(list, reserved, reservedAdmin) : null; testList = list; }
+export function setPacksForTest(list: readonly GeneratedPack[] | null) { installed = list ? installPacks(list, shellTools(), reservedAdminOf()) : null; testList = list; }
 
 /** Everything the packs declare, by kind: what is wired today and what later tickets pick up. */
 export function packRegistry() {

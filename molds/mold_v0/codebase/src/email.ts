@@ -316,7 +316,7 @@ const monthKey = (d = new Date()) => d.toISOString().slice(0, 7);
 export async function checkBudget(orgId: number, now = new Date()): Promise<{ threshold: number | null; sent: number }> {
   try {
     const { orgBudget } = await import("./billing.js");
-    const { orgMonthSpendUsd } = await import("./queries.js");
+    const { orgMonthSpendUsd } = await import("./session-engine.js");
     const budget = (await orgBudget(orgId).catch(() => null))?.budget ?? 0;
     if (!(budget > 0)) return { threshold: null, sent: 0 };
     const spent = await orgMonthSpendUsd(orgId);
