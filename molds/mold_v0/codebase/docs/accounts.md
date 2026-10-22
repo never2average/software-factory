@@ -48,7 +48,7 @@ console's, team management, member keys and the emails to a workspace's people w
 
 | `AUTH_PROVIDER` | Sign-in |
 |---|---|
-| `builtin` | the shell's own: an emailed eight-digit code, and Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (the button is hidden otherwise). People, sessions, members, roles and invitations are in Postgres (`auth_*`, migration 0014) |
+| `builtin` | the shell's own: an emailed eight-digit code, and Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (the button is hidden otherwise). People, sessions, members, roles and invitations are in Postgres (`auth_*`, migration 0015) |
 | `clerk` | Clerk, exactly as below |
 | unset | `clerk` when `CLERK_SECRET_KEY` is set (an app already on Clerk keeps it, unchanged), else `builtin` |
 
