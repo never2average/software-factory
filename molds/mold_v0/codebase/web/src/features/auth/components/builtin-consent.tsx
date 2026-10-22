@@ -34,9 +34,9 @@ function Consent() {
   const [framed, setFramed] = useState(false);
 
   useEffect(() => {
-    if (window.top !== window.self) { setFramed(true); return; }
-    if (!REQUEST.test(id)) { setError('This sign-in request is not valid. Go back to the app and connect again.'); return; }
     void (async () => {
+      if (window.top !== window.self) { setFramed(true); return; }
+      if (!REQUEST.test(id)) { setError('This sign-in request is not valid. Go back to the app and connect again.'); return; }
       const r = await fetch(`/api/oauth/requests/${id}`, { credentials: 'same-origin', cache: 'no-store' }).catch(() => null);
       if (r?.status === 401) {
         window.location.href = `/auth/sign-in?redirect_url=${encodeURIComponent(`/auth/consent?request=${id}`)}`;

@@ -214,6 +214,10 @@ try {
       assert.equal(back.origin + back.pathname, REDIRECT);
       assert.equal(back.searchParams.get("state"), "st-123"); assert.equal(back.searchParams.get("iss"), base, "iss in the response (RFC 9207)");
       assert.equal((await allow(P.cookie, id)).status, 404, "a request is answered once");
+      const sd = await startAuth();
+      const deny = await post(`/api/oauth/requests/${requestOf(sd.location)}`, { decision: "deny" }, consentHeaders(P.cookie));
+      const denied = new URL(deny.body.redirect);
+      assert.equal(denied.searchParams.get("error"), "access_denied"); assert.equal(denied.searchParams.get("state"), "st-123"); assert.equal(denied.searchParams.get("iss"), base);
       const code = codeOf(d.body.redirect);
       const t = await form("/oauth/token", { grant_type: "authorization_code", code, redirect_uri: REDIRECT, client_id: clientId, code_verifier: s.verifier, resource: RESOURCE });
       assert.equal(t.status, 200, JSON.stringify(t.body));
@@ -292,16 +296,19 @@ try {
     }
 
     // ---------- 3. refusals ----------
-    const errOf = (loc: string) => { const u = new URL(loc); return { error: u.searchParams.get("error"), state: u.searchParams.get("state"), iss: u.searchParams.get("iss") }; };
+    /** A refusal before consent: an error page naming the error, never a redirect (no open redirector). */
+    const refused = async (s: { res: Response; location: string }, error: string, what = error) => {
+      assert.equal(s.res.status, 400, what); assert.equal(s.location, "", `${what}: no redirect before the person answers`);
+      assert.ok((await s.res.text()).includes(`(${error})`), what);
+    };
     {
       // Wrong audience at authorize: another resource, the admin MCP, none at all.
       for (const resource of ["https://evil.example/mcp", `${base}/admin/mcp`, `${base}/api/admin/mcp`]) {
         const s = await startAuth({ resource });
-        assert.equal(s.res.status, 302); assert.equal(errOf(s.location).error, "invalid_target", resource);
-        assert.ok(s.location.startsWith(REDIRECT));
+        await refused(s, "invalid_target", resource);
       }
       const none = await startAuth({ resource: undefined });
-      assert.equal(errOf(none.location).error, "invalid_target", "no resource: refused (RFC 8707)");
+      await refused(none, "invalid_target", "no resource: refused (RFC 8707)");
       // Wrong audience at the token endpoint.
       const s = await startAuth();
       const d = await allow(P.cookie, requestOf(s.location));
@@ -318,13 +325,13 @@ try {
     }
     {
       const noPkce = await startAuth({ code_challenge: undefined });
-      assert.equal(errOf(noPkce.location).error, "invalid_request"); assert.equal(errOf(noPkce.location).state, "st-123"); assert.equal(errOf(noPkce.location).iss, base);
+      await refused(noPkce, "invalid_request", "no PKCE");
       const plain = await startAuth({ code_challenge: "a".repeat(43), code_challenge_method: "plain" });
-      assert.equal(errOf(plain.location).error, "invalid_request");
+      await refused(plain, "invalid_request", "plain PKCE");
       const noMethod = await startAuth({ code_challenge_method: undefined });
-      assert.equal(errOf(noMethod.location).error, "invalid_request", "no method means plain: refused");
+      await refused(noMethod, "invalid_request", "no method means plain: refused");
       const token = await startAuth({ response_type: "token" });
-      assert.equal(errOf(token.location).error, "unsupported_response_type");
+      await refused(token, "unsupported_response_type");
       // A wrong verifier, and no verifier.
       const s = await startAuth();
       const code = codeOf((await allow(P.cookie, requestOf(s.location))).body.redirect);
@@ -358,6 +365,10 @@ try {
       assert.equal((await rpc(t.access_token)).status, 200);
       const again = await form("/oauth/token", { grant_type: "authorization_code", code: t.code, redirect_uri: REDIRECT, client_id: clientId, code_verifier: t.verifier });
       assert.equal(again.body.error, "invalid_grant");
+      const stranger = await register({ redirect_uris: [REDIRECT] });
+      const t0 = await flow();
+      assert.equal((await form("/oauth/token", { grant_type: "authorization_code", code: t0.code, redirect_uri: REDIRECT, client_id: stranger.body.client_id, code_verifier: t0.verifier })).body.error, "invalid_grant");
+      assert.equal((await rpc(t0.access_token)).status, 200, "another client replaying a used code cannot revoke the grant");
       assert.equal((await rpc(t.access_token)).status, 401, "the first use's tokens are revoked");
       // Another client's code.
       const other = await register({ redirect_uris: [REDIRECT] });
@@ -411,12 +422,13 @@ try {
       const r = await rpc(t.access_token);
       assert.equal(r.status, 403); assert.match(r.www ?? "", /error="insufficient_scope"/); assert.match(r.www ?? "", /scope="mcp"/);
       const unknownScope = await startAuth({ scope: "admin root" });
-      assert.equal(errOf(unknownScope.location).error, "invalid_scope");
+      await refused(unknownScope, "invalid_scope");
       ok("insufficient scope: 403 with error=insufficient_scope and the scope to ask for; unknown scopes refused");
     }
     {
       // DCR: unsafe redirect URIs, too many, bad grant types; the per-address limit; confidential clients.
-      for (const uri of ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "http://evil.example/cb", "https://a.example/cb#frag", "https://user:pw@a.example/cb", "vbscript:x", " https://a.example/cb"]) {
+      for (const uri of ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "http://evil.example/cb", "https://a.example/cb#frag", "https://user:pw@a.example/cb", "vbscript:x", " https://a.example/cb",
+        "x-safari-https://evil.example/cb", "googlechromes://evil.example", "microsoft-edge:https://evil.example", "intent://evil.example#Intent;end", "search-ms:query=x", "myapp:/cb"]) {
         const r = await register({ redirect_uris: [uri] });
         assert.equal(r.status, 400, uri); assert.equal(r.body.error, "invalid_redirect_uri");
       }
@@ -424,6 +436,7 @@ try {
       assert.equal((await register({ redirect_uris: ["https://a.example/cb"], grant_types: ["client_credentials"] })).body.error, "invalid_client_metadata");
       assert.equal((await register({ redirect_uris: ["https://a.example/cb"], token_endpoint_auth_method: "private_key_jwt" })).body.error, "invalid_client_metadata");
       assert.equal((await register({ redirect_uris: ["cursor://anysphere.cursor-retrieval/oauth/callback"] })).status, 201, "an app's own scheme is fine");
+      assert.equal((await register({ redirect_uris: ["com.example.app:/oauth/callback"] })).status, 201, "a reverse-domain scheme is fine");
       const from = "198.51.100.77";
       let last = 0;
       for (let i = 0; i < 21; i++) last = (await register({ redirect_uris: ["https://a.example/cb"] }, from)).status;
@@ -479,6 +492,18 @@ try {
       for (const a of ["93.184.216.34", "8.8.8.8", "2606:4700:4700::1111", "::ffff:8.8.8.8"]) assert.equal(oauth.publicAddress(a), true, a);
       oauth.setDocumentFetcherForTest(null);
       ok("client ID metadata documents: a verified client end to end; a document naming another URL, asking for a secret or missing is refused; SSRF guards");
+    }
+
+    // ---------- sign-out everywhere ends connected apps too; a malformed body is refused without logging it ----------
+    {
+      const t = await flow(P, dirB);
+      assert.equal((await rpc(t.access_token)).status, 200);
+      const out = await post("/api/auth/sign-out/everywhere", {}, { cookie: P.cookie, origin: base });
+      assert.equal(out.status, 200, JSON.stringify(out.body));
+      assert.equal((await rpc(t.access_token)).status, 401, "signing out everywhere signs connected apps out");
+      const bad = await fetch(`${base}/oauth/token`, { method: "POST", headers: { "content-type": "application/json" }, body: `"${t.refresh_token}` });
+      assert.equal(bad.status, 400);
+      ok("signing out everywhere revokes connected apps; a malformed token request is a 400");
     }
 
     // ---------- 5. logs ----------

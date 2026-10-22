@@ -18,7 +18,9 @@
  *                                           most, safe schemes only)
  *   authorization code + PKCE               S256 only (no PKCE, plain, or a missing method is refused); redirect URIs
  *                                           match exactly (loopback http may change port, RFC 8252); codes last two
- *                                           minutes, are used once, and a second use revokes what the first gave
+ *                                           minutes, are used once, and a second use revokes what the first gave. An
+ *                                           error before the person answers is a page, never a redirect (no open
+ *                                           redirector); private-use schemes are reverse-domain or a known app's
  *   resource indicators (RFC 8707)          the resource parameter is required and must be this server's /mcp
  *                                           (mcpAudiences); the token is bound to it and /mcp checks it on every call
  *   tokens                                  opaque, random, only their sha256 stored: access tokens short-lived
@@ -125,6 +127,9 @@ export function wwwAuthenticate(error?: "invalid_token" | "insufficient_scope") 
 
 const LOOPBACK = new Set(["127.0.0.1", "[::1]", "localhost"]);
 /** Schemes a redirect URI may never use (a private-use scheme of an app, such as cursor: or vscode:, is fine). */
+/** One-word schemes of known MCP clients (editors and desktop apps) a redirect URI may use. */
+const APP_SCHEMES = new Set(["cursor", "vscode", "vscode-insiders", "claude", "windsurf", "zed", "kiro", "positron"]);
+const BROWSER_SCHEME = /(^|[.-])(safari|chrome|chromium|edge|firefox|opera|brave|intent|search|ms-|https?)([.-]|$)/;
 const BAD_SCHEMES = new Set(["javascript:", "data:", "file:", "vbscript:", "about:", "blob:", "filesystem:", "ftp:", "ws:", "wss:", "mailto:", "tel:", "chrome:", "view-source:"]);
 
 /** A redirect URI a client may register: https; http on a loopback host only; or an app's private-use scheme. No fragment. */
@@ -136,8 +141,11 @@ export function redirectUriOk(v: unknown): v is string {
   if (u.protocol === "https:") return Boolean(u.hostname);
   if (u.protocol === "http:") return LOOPBACK.has(u.hostname);
   if (BAD_SCHEMES.has(u.protocol)) return false;
-  // A private-use scheme: reverse-domain or an app name (RFC 8252 7.1), letters first.
-  return /^[a-z][a-z0-9+.-]{1,63}:$/i.test(u.protocol);
+  // A private-use scheme (RFC 8252 7.1): reverse-domain (com.example.app:), or one of the few editors' and apps' own
+  // one-word schemes. Anything else (a browser's or the OS's handler: x-safari-https:, googlechromes:, microsoft-edge:,
+  // intent:, search-ms:) could open any web page or program, so it is refused.
+  const scheme = u.protocol.slice(0, -1).toLowerCase();
+  return APP_SCHEMES.has(scheme) || (/^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/.test(scheme) && !BROWSER_SCHEME.test(scheme));
 }
 
 /** Exact match, except that a loopback http URI may change its port (RFC 8252 7.3). */
@@ -194,6 +202,9 @@ export async function registerClient(body: Record<string, unknown>, ip: string) 
     // Registrations nobody ever used go after a day (a cap on what a flood of them leaves behind).
     if (Math.random() < 0.05) await db.query(
       "/* tenant: platform: unused client registrations, no workspace yet */ DELETE FROM oauth_clients c WHERE c.kind = 'dcr' AND c.created_at < now() - interval '1 day' AND c.last_used_at IS NULL AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)");
+    // Cached metadata documents nobody holds a grant for go after a week (they are fetched again when used).
+    if (Math.random() < 0.05) await db.query(
+      "/* tenant: platform: cached client documents with no grant */ DELETE FROM oauth_clients c WHERE c.kind = 'cimd' AND c.fetched_at < now() - interval '7 days' AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)");
   });
   return {
     client_id: id, ...(secret ? { client_secret: secret, client_secret_expires_at: 0 } : {}), client_id_issued_at: Math.floor(Date.now() / 1000),
@@ -210,7 +221,7 @@ for (const [a, p] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127
   blocked.addSubnet(a, p, "ipv4");
 // IPv4-mapped addresses (::ffff:a.b.c.d, either spelling) are matched against the IPv4 rules by BlockList itself; a
 // ::ffff:0:0/96 rule here would also match every plain IPv4 address.
-for (const [a, p] of [["::", 128], ["::1", 128], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["100::", 64], ["2001::", 23], ["2001:db8::", 32],
+for (const [a, p] of [["::", 96], ["::ffff:0:0:0", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["100::", 64], ["2001::", 23], ["2001:db8::", 32],
   ["2002::", 16], ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8]] as const)
   blocked.addSubnet(a, p, "ipv6");
 
@@ -253,12 +264,16 @@ async function fetchDocument(url: string): Promise<unknown> {
     const req = https.get(url, { lookup: guardedLookup as any, agent: false, timeout: 5000, headers: { accept: "application/json", "user-agent": `${PROFILE.name} OAuth` } }, (res) => {
       if ((res.statusCode ?? 0) !== 200) { res.resume(); return reject(new Error(`answered ${res.statusCode}`)); }
       if (!/json/i.test(String(res.headers["content-type"] ?? ""))) { res.resume(); return reject(new Error("not JSON")); }
+      if (Number(res.headers["content-length"] ?? 0) > CIMD_MAX_BYTES) { req.destroy(); return reject(new Error("larger than 5 KB")); }
       let size = 0; const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => { size += c.length; if (size > CIMD_MAX_BYTES) { req.destroy(new Error("larger than 5 KB")); return; } chunks.push(c); });
       res.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { reject(new Error("not JSON")); } });
       res.on("error", reject);
     });
     req.on("timeout", () => req.destroy(new Error("timed out")));
+    // A deadline for the whole fetch, not only between bytes: a server answering one byte at a time is cut off too.
+    const deadline = setTimeout(() => req.destroy(new Error("took longer than 5 seconds")), 5000);
+    req.on("close", () => clearTimeout(deadline));
     req.on("error", reject);
   });
 }
@@ -345,7 +360,9 @@ async function authorize(req: Request, res: Response) {
   const redirectUri = q("redirect_uri");
   if (!redirectUri || !redirectMatches(client.redirectUris, redirectUri)) return errorPage(res, 400, "The app asked to send you to an address it did not register.");
   const state = q("state");
-  const fail = (error: string, description: string) => void res.set("Cache-Control", "no-store").redirect(302, answerUri(redirectUri, { error, error_description: description, state }));
+  // Errors before the person has answered are shown here, never sent to the redirect URI: anyone can register a client
+  // with any https redirect, so a redirect without a click would make this server an open redirector (RFC 9700 4.11.2).
+  const fail = (error: string, description: string) => errorPage(res, 400, `${description} (${error}).`);
   if (state && state.length > 1024) return fail("invalid_request", "state is too long");
   if (q("response_type") !== "code") return fail("unsupported_response_type", "Only response_type=code is supported");
   const challenge = q("code_challenge"), method = q("code_challenge_method");
@@ -435,6 +452,7 @@ async function issueTokens(db: Queryable, grant: { id: string; scope: string }) 
   await db.query("INSERT INTO oauth_tokens (token_hash, grant_id, kind, expires_at) VALUES ($1, $3, 'access', now() + make_interval(mins => $4)), ($2, $3, 'refresh', now() + make_interval(days => $5))",
     [sha256(access), sha256(refresh), grant.id, mins, refreshDays()]);
   await db.query("/* tenant: platform: one grant by its id */ UPDATE oauth_grants SET last_used_at = now() WHERE id = $1", [grant.id]);
+  await db.query("/* tenant: platform: the grant's client */ UPDATE oauth_clients SET last_used_at = now() WHERE id = (SELECT client_id FROM oauth_grants WHERE id = $1)", [grant.id]);
   return { access_token: access, token_type: "Bearer", expires_in: mins * 60, refresh_token: refresh, scope: grant.scope };
 }
 
@@ -457,7 +475,6 @@ async function tokenClient(req: Request): Promise<Client> {
     const got = Buffer.from(sha256(typeof secret === "string" ? secret : ""), "hex");
     if (via === "none" || !want || want.length !== got.length || !timingSafeEqual(want, got)) throw new OAuthError("invalid_client", "Client authentication failed", 401);
   }
-  P((db) => db.query("UPDATE oauth_clients SET last_used_at = now() WHERE id = $1", [client.id])).catch(() => {});
   return client;
 }
 
@@ -486,7 +503,9 @@ async function tokenEndpoint(req: Request) {
         "UPDATE oauth_codes SET used_at = now() WHERE code_hash = $1 AND used_at IS NULL RETURNING grant_id, redirect_uri, code_challenge, expires_at", [sha256(code)]);
       if (!c) {
         // A code used a second time: whatever the first use gave is revoked (RFC 6749 4.1.2, OAuth 2.1 4.1.3).
-        const [used] = await tx.query<{ grant_id: string }>("SELECT grant_id FROM oauth_codes WHERE code_hash = $1", [sha256(code)]);
+        const [used] = await tx.query<{ grant_id: string }>(
+          "/* tenant: platform: a code's grant by the code's hash */ SELECT c.grant_id FROM oauth_codes c JOIN oauth_grants g ON g.id = c.grant_id WHERE c.code_hash = $1 AND g.client_id = $2",
+          [sha256(code), client.id]);
         if (used) { await revokeGrant(tx, used.grant_id, "code_reused"); console.error(`oauth: a code of grant ${used.grant_id} was used twice: grant revoked`); }
         return { error: new OAuthError("invalid_grant", "The code is invalid, expired or already used") };
       }
@@ -586,7 +605,7 @@ export function mcpOAuthRouter(): Router {
   const oauthJson = (fn: (req: Request) => Promise<unknown>, status = 200) => (req: Request, res: Response) => void fn(req).then(
     (out) => void res.status(status).json(out ?? {}),
     (e) => {
-      if (!(e instanceof OAuthError)) { console.error(`oauth: ${req.path} failed: ${(e as Error).message}`); return void res.status(500).json({ error: "server_error" }); }
+      if (!(e instanceof OAuthError)) { console.error(`oauth: ${req.path} failed (${(e as Error).name})`); return void res.status(500).json({ error: "server_error" }); }
       if (e.status === 401 && /^Basic/i.test(req.get("authorization") ?? "")) res.set("WWW-Authenticate", 'Basic realm="oauth"');
       res.status(e.status).json({ error: e.code, error_description: e.message });
     });
@@ -652,8 +671,13 @@ export function mcpOAuthRouter(): Router {
     await P((db) => revokeGrant(db, g.id, "revoked_by_person"));
     res.json({ ok: true });
   }));
-  r.use(["/oauth", "/api/oauth"], (err: Error, _req: Request, res: Response, _next: NextFunction) => {
-    console.error(`oauth: ${err.message}`);
+  r.use(["/oauth", "/api/oauth"], (err: Error & { type?: string; status?: number }, req: Request, res: Response, _next: NextFunction) => {
+    // A body the parser refused: its message can quote the body (a token, a code), so only its kind is logged.
+    if (err.type && err.status && err.status < 500) {
+      console.error(`oauth: ${req.path} refused a request body (${err.type})`);
+      return void res.status(err.status).json({ error: "invalid_request", error_description: "The request body could not be read" });
+    }
+    console.error(`oauth: ${req.path} failed (${err.name})`);
     res.status(500).json({ error: "server_error" });
   });
   return r;
