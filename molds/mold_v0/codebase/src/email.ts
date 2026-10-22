@@ -1,6 +1,7 @@
 /**
- * Transactional email through Resend (https://resend.com/docs/api-reference/emails/send-email). Clerk still sends the
- * account invitations; this is everything else Octillion says by email:
+ * Transactional email through Resend (https://resend.com/docs/api-reference/emails/send-email). Under Clerk, Clerk sends
+ * the account invitations; under the built-in sign-in (mold_v0-004) this module sends them and the sign-in codes too
+ * (src/builtin-auth.ts: neither the code nor the address is ever in email_log). This is what Octillion says by email:
  *
  *   access requests     received (to the requester, and an alert to the operator), declined (with the reason, if
  *                       given), approved (a short welcome beside Clerk's invitation)
@@ -28,12 +29,15 @@ import { getProvider, useCredential } from "./keyvault.js";
 import { freshSettings, settingText } from "./settings.js";
 import * as telemetry from "./telemetry.js";
 import * as clerk from "./clerk.js";
+import { people } from "./people.js";
 import { accountRoleOf, type AccountRole } from "./account-roles.js";
 import { PROFILE } from "./profile.js";
 
 export const EMAIL_PROVIDER = "resend";
 export const EMAIL_KINDS = ["request_received", "request_alert", "request_declined", "request_approved", "submission_alert", "submission_accepted",
-  "submission_declined", "budget_80", "budget_100", "due_soon", "test"] as const;
+  "submission_declined", "budget_80", "budget_100", "due_soon", "test",
+  // Built-in sign-in (mold_v0-004, src/builtin-auth.ts): the one-time code, and an invitation to a workspace.
+  "sign_in_code", "invitation"] as const;
 export type EmailKind = (typeof EMAIL_KINDS)[number];
 
 export interface Email {
@@ -169,7 +173,7 @@ export async function adminRecipients(): Promise<string[]> {
   const set = settingText("EMAIL_ADMIN_TO").split(",").map((x) => x.trim().toLowerCase()).filter(isEmail);
   if (set.length) return [...new Set(set)];
   const out = new Set(clerk.platformAdminEntries().filter(isEmail));
-  if (clerk.clerkEnabled()) {
+  if (people().enabled()) {
     try {
       const { listAdmins } = await import("./admin-roles.js");
       for (const a of await listAdmins()) if (a.role === "owner" && isEmail(a.email)) out.add(a.email.toLowerCase());
@@ -181,12 +185,13 @@ export async function adminRecipients(): Promise<string[]> {
 /** The account's people with one of these roles (Clerk memberships; suspended people left out). */
 export async function accountRecipients(orgId: number, roles: AccountRole[] = ["owner", "billing"]): Promise<string[]> {
   const [o] = await (await getDb()).query<{ clerk_org_id: string | null }>("SELECT clerk_org_id FROM organizations WHERE id = $1", [orgId]);
-  if (!o?.clerk_org_id || !clerk.clerkEnabled()) return [];
+  const dir = people();
+  if (!o?.clerk_org_id || !dir.enabled()) return [];
   const out = new Set<string>();
-  for (const m of await clerk.memberships.list(o.clerk_org_id)) {
+  for (const m of await dir.memberships.list(o.clerk_org_id)) {
     if (clerk.isSuspended(m) || !roles.includes(accountRoleOf(m))) continue;
     const id = m.public_user_data?.identifier;
-    const email = isEmail(id) ? id : m.public_user_data?.user_id ? clerk.primaryEmail(await clerk.users.get(m.public_user_data.user_id)).email : null;
+    const email = isEmail(id) ? id : m.public_user_data?.user_id ? clerk.primaryEmail(await dir.users.get(m.public_user_data.user_id)).email : null;
     if (isEmail(email)) out.add(email.toLowerCase());
   }
   return [...out];
@@ -196,8 +201,8 @@ export async function accountRecipients(orgId: number, roles: AccountRole[] = ["
 async function personOf(actor: string | null | undefined): Promise<string | null> {
   const [kind, rest] = [String(actor ?? "").split(":")[0], String(actor ?? "").split(":").slice(1).join(":")];
   if (kind === "customer" && isEmail(rest)) return rest.toLowerCase();
-  if (kind === "ai" && rest.startsWith("user_") && clerk.clerkEnabled()) {
-    try { return clerk.primaryEmail(await clerk.users.get(rest)).email; } catch { return null; }
+  if (kind === "ai" && rest.startsWith("user_") && people().enabled()) {
+    try { return clerk.primaryEmail(await people().users.get(rest)).email; } catch { return null; }
   }
   return null;
 }

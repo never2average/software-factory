@@ -34,7 +34,7 @@
     },
     "dockerfile": "Dockerfile",
     "console": {
-      "$comment": "The web console on a server of its own (mold_v0-020): the compose service built from web/Dockerfile (Next.js standalone output) behind the stack's Caddy, which sends the API's own paths to the API service and everything else to the console. Health: the API's health path answers 200 ok THROUGH the console (so its API-address variable reaches the API), and these pages answer without following a redirect (a page, its sign-in redirect, or 401/403; never a 5xx or nothing). operator_env: the names in the server's env file the console needs from the operator (its sign-in; the API reads the same two), asked for at a hidden prompt during the deploy when the server lacks them.",
+      "$comment": "The web console on a server of its own (mold_v0-020): the compose service built from web/Dockerfile (Next.js standalone output) behind the stack's Caddy, which sends the API's own paths to the API service and everything else to the console. Health: the API's health path answers 200 ok THROUGH the console (so its API-address variable reaches the API), and these pages answer without following a redirect (a page, its sign-in redirect, or 401/403; never a 5xx or nothing). operator_env: the names in the server's env file the console needs from the operator (its sign-in; the API reads the same two), asked for at a hidden prompt during the deploy when the server lacks them. Optional since mold_v0-004: without them the console and the API run the built-in sign-in (an emailed code, and Google when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set); an app whose state lists them keeps Clerk.",
       "service": "console",
       "proxied_health": "/healthz",
       "pages": [
@@ -42,8 +42,8 @@
         "/app"
       ],
       "operator_env": {
-        "CLERK_PUBLISHABLE_KEY": "required",
-        "CLERK_SECRET_KEY": "required"
+        "CLERK_PUBLISHABLE_KEY": "optional",
+        "CLERK_SECRET_KEY": "optional"
       }
     },
     "source_excludes": [
@@ -58,7 +58,7 @@
     ]
   },
   "vercel": {
-    "$comment": "TWO projects on Vercel (operator's decision 2026-10-20, ticket mold_v0-029): <project>-api is the API and MCP function from the root vercel.json, the only one with the app's own Neon Postgres and the product's minted keys; <project> is the web console (web/, a server-rendered Next.js app behind a middleware) as its own Next.js project, given the API's address through the one variable its next.config reads (found there at plan time, never named here) and only the sign-in names below. Deployed api first; both rolled back if either fails its health.",
+    "$comment": "TWO projects on Vercel (operator's decision 2026-10-20, ticket mold_v0-029): <project>-api is the API and MCP function from the root vercel.json, the only one with the app's own Neon Postgres and the product's minted keys; <project> is the web console (web/, a server-rendered Next.js app behind a middleware) as its own Next.js project, given the API's address through the one variable its next.config reads (found there at plan time, never named here) and only the sign-in names below: optional since mold_v0-004, as the console signs people in with the built-in emailed code (and Google) unless Clerk's keys are set; an app whose state already lists them in secrets_user keeps Clerk, and AUTH_PROVIDER (builtin or clerk) overrides the rule. Deployed api first; both rolled back if either fails its health.",
     "cron_secret": "CRON_SECRET",
     "projects": {
       "api": {
@@ -78,8 +78,8 @@
           "/app"
         ],
         "operator_env": {
-          "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "required",
-          "CLERK_SECRET_KEY": "required"
+          "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "optional",
+          "CLERK_SECRET_KEY": "optional"
         }
       }
     }

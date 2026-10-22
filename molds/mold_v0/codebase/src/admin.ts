@@ -23,6 +23,7 @@ import { clientCatalog } from "./connect-catalog.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
 import * as clerk from "./clerk.js";
+import { people as directory } from "./people.js";
 import * as mail from "./email.js";
 import { currentAdminRole } from "./admin-roles.js";
 import { accountRoleOf, clerkRoleFor, parseAccountRole, ACCOUNT_ROLE_LABELS, type AccountRole } from "./account-roles.js";
@@ -50,6 +51,8 @@ export function integrations() {
     stripe: billing.stripeEnabled(), stripe_test_mode: /^(sk|rk)_test_/.test(key), spend_meter: process.env.STRIPE_SPEND_METER || null,
     require_subscription: process.env.OCTILLION_REQUIRE_SUBSCRIPTION === "1",
     default_budget_usd: Number(process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ?? 0),
+    // The built-in sign-in (mold_v0-004) says so; Clerk's answer is unchanged.
+    ...(directory().provider === "builtin" ? { auth_provider: "builtin" } : {}),
   };
 }
 
@@ -141,12 +144,13 @@ const toInvite = (x: clerk.ClerkInvitation): Invite => ({
 
 const peopleCache = new Map<string, { at: number; people: People }>();
 async function peopleOf(clerkOrgId: string | null, fresh = false): Promise<People | null> {
-  if (!clerkOrgId || !clerk.clerkEnabled()) return null;
+  const dir = directory();
+  if (!clerkOrgId || !dir.enabled()) return null;
   const hit = peopleCache.get(clerkOrgId);
   if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.people;
   let people: People;
   try {
-    const [members, invitations] = await Promise.all([clerk.memberships.list(clerkOrgId), clerk.invitations.list(clerkOrgId)]);
+    const [members, invitations] = await Promise.all([dir.memberships.list(clerkOrgId), dir.invitations.list(clerkOrgId)]);
     people = { members: members.map(toMember), invitations: invitations.map(toInvite) };
   } catch (err) {
     return { members: [], invitations: [], error: (err as Error).message }; // show the account anyway; do not cache a failure
@@ -358,7 +362,7 @@ export async function orgDetail(slug: string) {
     invitations: people?.invitations ?? [],
     clerk_error: people?.error ?? null,
     // Enterprise SSO (SAML/OIDC) is set up per organization in the Clerk dashboard; there is no hosted admin portal link.
-    clerk_dashboard: org.clerk_org_id ? "https://dashboard.clerk.com/" : null,
+    clerk_dashboard: org.clerk_org_id && directory().provider === "clerk" ? "https://dashboard.clerk.com/" : null,
     plans: billing.stripeEnabled() ? await billing.listPlans().catch(() => []) : [],
     invoices,
     stripe_dashboard: org.stripe_customer_id ? `https://dashboard.stripe.com/${testMode ? "test/" : ""}customers/${org.stripe_customer_id}` : null,
@@ -414,25 +418,27 @@ async function newAccount(actor: string, nameIn: string, slugIn: string | undefi
   if ((await db.query("SELECT 1 FROM organizations WHERE slug = $1", [slug])).length)
     throw new AdminError(`The slug ${slug} is taken: pick another, or add this person to that account`, 409);
   let key: string | undefined, clerkOrgId: string | null = null;
-  if (clerk.clerkEnabled()) {
-    clerkOrgId = (await clerk.organizations.create(name, slug, { octillion_slug: slug })).id;
+  const dir = directory();
+  if (dir.enabled()) {
+    clerkOrgId = (await dir.organizations.create(name, slug, { octillion_slug: slug })).id;
     await db.query("INSERT INTO organizations (slug, name, clerk_org_id) VALUES ($1, $2, $3)", [slug, name, clerkOrgId]);
   } else {
     key = (await createOrg(name, slug)).key;
     if (email) await db.query("UPDATE api_keys SET label = $2 WHERE org_id = (SELECT id FROM organizations WHERE slug = $1)", [slug, email]);
   }
   if (billing.stripeEnabled()) await ensureCustomer(actor, slug, email).catch((err) => console.error(`stripe customer for ${slug}:`, (err as Error).message));
-  log(actor, "org.create", slug, { clerk: Boolean(clerkOrgId) });
+  log(actor, "org.create", slug, dir.provider === "clerk" ? { clerk: Boolean(clerkOrgId) } : { people: Boolean(clerkOrgId) });
   return { slug, name, key };
 }
 
 /** Invite a person: a Clerk invitation (Clerk emails it), or without Clerk a legacy key labelled with their email. */
 async function invitePerson(actor: string, slug: string, email: string, role: AccountRole = "member") {
   const f = await factsBySlug(slug);
-  if (clerk.clerkEnabled()) {
+  const dir = directory();
+  if (dir.enabled()) {
     const clerkOrgId = f.clerk_org_id ?? (await linkClerk(actor, slug)).clerk_org_id!;
     const c = clerkRoleFor(role);
-    const inv = toInvite(await clerk.invitations.send(clerkOrgId, email, c.role, c.metadata));
+    const inv = toInvite(await dir.invitations.send(clerkOrgId, email, c.role, c.metadata));
     forget(clerkOrgId);
     log(actor, "invite.send", slug, { email, invitation: inv.id, role });
     return { invitation: { id: inv.id, email: inv.email, state: inv.state, role: inv.role, account_role: inv.account_role, expires_at: inv.expires_at }, key: undefined as string | undefined };
@@ -512,7 +518,7 @@ export async function resendInvitation(actor: string, slug: string, invitationId
   const inv = (await peopleOf(f.clerk_org_id, true))?.invitations.find((x) => x.id === invitationId);
   if (!inv) throw new AdminError("No such invitation in this account", 404);
   if (inv.state === "accepted") throw new AdminError("Already accepted", 409);
-  if (inv.state === "pending") await clerk.invitations.revoke(f.clerk_org_id!, inv.id);
+  if (inv.state === "pending") await directory().invitations.revoke(f.clerk_org_id!, inv.id);
   return invite(actor, slug, inv.email, inv.account_role);
 }
 
@@ -521,7 +527,7 @@ export async function revokeInvitation(actor: string, slug: string, invitationId
   const inv = (await peopleOf(f.clerk_org_id, true))?.invitations.find((x) => x.id === invitationId);
   if (!inv) throw new AdminError("No such invitation in this account", 404);
   if (inv.state !== "pending") throw new AdminError(`The invitation is ${inv.state}`, 409);
-  await clerk.invitations.revoke(f.clerk_org_id!, inv.id);
+  await directory().invitations.revoke(f.clerk_org_id!, inv.id);
   forget(f.clerk_org_id);
   log(actor, "invite.revoke", slug, { email: inv.email });
 }
@@ -537,17 +543,17 @@ export async function setMemberActive(actor: string, slug: string, memberId: str
   const m = people?.members.find((x) => x.id === memberId);
   if (!m) throw new AdminError("No such member in this account", 404);
   if (!active) lastOwnerGuard(people!.members, m, "suspend");
-  await clerk.memberships.setSuspended(f.clerk_org_id!, m.user_id, !active);
+  await directory().memberships.setSuspended(f.clerk_org_id!, m.user_id, !active);
   forget(f.clerk_org_id);
   log(actor, active ? "member.reactivate" : "member.deactivate", slug, { user: m.user_id, email: m.email });
 }
 
 const ROLE_CHOICES = "role must be owner, billing, member or viewer";
 /** An account always keeps one active owner: the last one can't be demoted or suspended. */
-function lastOwnerGuard(members: Member[], m: Member, what: "demote" | "suspend") {
+function lastOwnerGuard(members: Member[], m: Member, what: "demote" | "suspend" | "remove") {
   if (m.account_role !== "owner" || m.status !== "active") return;
   if (members.some((x) => x.id !== m.id && x.account_role === "owner" && x.status === "active")) return;
-  throw new AdminError(`${m.email ?? "This person"} is the account's last owner. Make someone else an owner before you ${what === "demote" ? "change their role" : "suspend them"}.`, 409);
+  throw new AdminError(`${m.email ?? "This person"} is the account's last owner. Make someone else an owner before you ${what === "demote" ? "change their role" : what === "suspend" ? "suspend them" : "remove them"}.`, 409);
 }
 
 /**
@@ -563,17 +569,37 @@ export async function setMemberRole(actor: string, slug: string, memberId: strin
   if (!m) throw new AdminError("No such member in this account", 404);
   if (role !== "owner") lastOwnerGuard(people!.members, m, "demote");
   const c = clerkRoleFor(role);
-  await clerk.memberships.setRole(f.clerk_org_id!, m.user_id, c.role, c.metadata);
+  await directory().memberships.setRole(f.clerk_org_id!, m.user_id, c.role, c.metadata);
   forget(f.clerk_org_id);
   log(actor, "member.role", slug, { user: m.user_id, role, label: ACCOUNT_ROLE_LABELS[role] });
+}
+
+/**
+ * Remove a person from the account (mold_v0-004): their membership goes (under the built-in sign-in their sessions in
+ * this workspace end with it, src/builtin-auth.ts), and their member keys for this workspace are revoked, so neither the
+ * console nor a client of theirs reaches it again. Their usage history stays. The last active owner can't be removed.
+ */
+export async function removeMember(actor: string, slug: string, memberId: string) {
+  const f = await factsBySlug(slug);
+  const people = await peopleOf(f.clerk_org_id, true);
+  const m = people?.members.find((x) => x.id === memberId);
+  if (!m) throw new AdminError("No such member in this account", 404);
+  lastOwnerGuard(people!.members, m, "remove");
+  await directory().memberships.remove(f.clerk_org_id!, m.user_id);
+  const keys = await asPlatform(async () => (await getDb()).query(
+    `/* platform: the removed person's member keys in this workspace */ UPDATE api_keys SET revoked_at = now(), revoked_by = $3
+      WHERE org_id = $1 AND user_id = $2 AND scoped AND revoked_at IS NULL RETURNING id`, [f.id, m.user_id, `removed:${actor}`.slice(0, 200)]));
+  forget(f.clerk_org_id);
+  log(actor, "member.remove", slug, { user: m.user_id, email: m.email, keys_revoked: keys.length });
+  return { keys_revoked: keys.length };
 }
 
 /** Give a legacy account (API keys only) a Clerk organization so people can be invited and sign in. */
 export async function linkClerk(actor: string, slug: string) {
   const f = await factsBySlug(slug);
   if (f.clerk_org_id) return { clerk_org_id: f.clerk_org_id };
-  if (!clerk.clerkEnabled()) throw new AdminError("Clerk is not configured (CLERK_SECRET_KEY)", 503);
-  const c = await clerk.organizations.create(f.name, f.slug, { octillion_slug: f.slug, ...(f.stripe_customer_id ? { stripe_customer_id: f.stripe_customer_id } : {}) });
+  if (!directory().enabled()) throw new AdminError("Clerk is not configured (CLERK_SECRET_KEY)", 503);
+  const c = await directory().organizations.create(f.name, f.slug, { octillion_slug: f.slug, ...(f.stripe_customer_id ? { stripe_customer_id: f.stripe_customer_id } : {}) });
   await (await getDb()).query("UPDATE organizations SET clerk_org_id = $2 WHERE id = $1", [f.id, c.id]);
   log(actor, "org.link_clerk", slug, { clerk_org_id: c.id });
   return { clerk_org_id: c.id };
@@ -584,7 +610,7 @@ export async function renameOrg(actor: string, slug: string, nameIn: unknown) {
   const name = String(nameIn ?? "").trim().slice(0, 200);
   if (!name) throw new AdminError("name cannot be empty");
   await (await getDb()).query("UPDATE organizations SET name = $2 WHERE id = $1", [f.id, name]);
-  if (f.clerk_org_id) await clerk.organizations.rename(f.clerk_org_id, name);
+  if (f.clerk_org_id) await directory().organizations.rename(f.clerk_org_id, name);
   log(actor, "org.rename", slug, { name });
   return orgBySlug(slug);
 }
@@ -600,7 +626,7 @@ export async function ensureCustomer(actor: string, slug: string, email?: string
   if (!billing.stripeEnabled()) throw new AdminError("Stripe is not configured (STRIPE_SECRET_KEY)", 503);
   const c = await billing.createCustomer({ name: f.name, email, slug: f.slug, clerkOrgId: f.clerk_org_id });
   await (await getDb()).query("UPDATE organizations SET stripe_customer_id = $2 WHERE id = $1", [f.id, c.id]);
-  if (f.clerk_org_id) await clerk.organizations.setMetadata(f.clerk_org_id, { stripe_customer_id: c.id }).catch((err) => console.error("clerk stripe link:", (err as Error).message));
+  if (f.clerk_org_id) await directory().organizations.setMetadata(f.clerk_org_id, { stripe_customer_id: c.id }).catch((err) => console.error("clerk stripe link:", (err as Error).message));
   log(actor, "billing.customer", slug, { customer: c.id });
   return c.id;
 });
@@ -768,7 +794,7 @@ export async function team(slug: string, fresh = false) {
   const f = await factsBySlug(slug);
   const people = await peopleOf(f.clerk_org_id, fresh);
   return {
-    clerk: Boolean(f.clerk_org_id && clerk.clerkEnabled()), error: people?.error ?? null,
+    clerk: Boolean(f.clerk_org_id && directory().enabled()), error: people?.error ?? null,
     members: people?.members ?? [],
     invitations: (people?.invitations ?? []).filter((x) => x.state === "pending" || x.state === "expired"),
   };

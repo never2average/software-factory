@@ -1,7 +1,7 @@
 'use client';
 // Small helpers shared by the portal pages: data loading keyed by the active Clerk organization, spend meter,
 // copy buttons, relative times, loading and error states.
-import { useAuth } from '@clerk/nextjs';
+import { useAuth } from '@/lib/auth';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
