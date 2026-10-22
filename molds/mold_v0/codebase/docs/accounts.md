@@ -5,7 +5,7 @@ record for none of it, except the product data it already had:
 
 | Module | System of record | Octillion code | Octillion stores |
 |---|---|---|---|
-| People: organizations, users, invitations, roles, sign-in (passwords, social, enterprise SSO) on `/mcp`, `/app` and `/admin` | **Clerk** (Organizations, OAuth server, sessions) | `src/clerk.ts`, `src/session.ts`, `resolveUserToken` in `src/auth.ts` | `organizations.clerk_org_id` |
+| People: organizations, users, invitations, roles, sign-in on `/app` and `/admin` (and `/mcp` under Clerk) | the **built-in sign-in** (an emailed code and Google; the default) or **Clerk** (Organizations, OAuth server, sessions), one per server: see "Sign-in: built-in or Clerk" | `src/people.ts`, `src/builtin-auth.ts`, `src/clerk.ts`, `src/session.ts` | built-in: `auth_*` tables; both: `organizations.clerk_org_id` |
 | Money: plans, subscriptions, invoices, cards, usage metering | **Stripe** (Billing, Checkout, customer portal, Meters) | `src/billing.ts` | `organizations.stripe_customer_id` |
 | Product analytics: funnels, retention, feature adoption by account | **PostHog** (group analytics, `organization` group) | `src/telemetry.ts`, `src/analytics.ts` | nothing new |
 | Ops observability: traces, latency, errors, alerts | **New Relic** over OpenTelemetry (any OTLP backend works) | `src/otel.ts`, a span per tool call in `src/server.ts` | nothing |
@@ -40,6 +40,46 @@ for the Clerk Backend API and Stripe (session and OAuth tokens are minted by the
 `/admin` lists accounts that need a person, for example: invited 2+ days ago and not accepted, an expired invitation,
 joined but never connected, connected but no tool call (tools switched off in the client), failed onboarding, a past-due
 subscription, or 80% of the monthly model budget used.
+
+## Sign-in: built-in or Clerk
+
+One sign-in per server (`src/auth-provider.ts`), behind one adapter (`src/people.ts`): the portal's session, the admin
+console's, team management, member keys and the emails to a workspace's people work the same with either.
+
+| `AUTH_PROVIDER` | Sign-in |
+|---|---|
+| `builtin` | the shell's own: an emailed six-digit code, and Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (the button is hidden otherwise). People, sessions, members, roles and invitations are in Postgres (`auth_*`, migration 0014) |
+| `clerk` | Clerk, exactly as below |
+| unset | `clerk` when `CLERK_SECRET_KEY` is set (an app already on Clerk keeps it, unchanged), else `builtin` |
+
+The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PROVIDER`, else Clerk when
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is set).
+
+### The built-in sign-in
+
+- **Who may sign in:** a person the server already knows, an address with a live invitation, or an
+  `OCTILLION_PLATFORM_ADMINS` address. Accounts stay invite-only: signing in with the invited address is accepting the
+  invitation (the email carries no secret, so a forwarded invitation lets nobody else in).
+- **The code:** six digits, emailed through the email module (`src/email.ts`; Resend must be connected and emails on,
+  else the page says email sign-in is not set up). Ten minutes, five tries, used once; a new code retires the old one.
+  Only an HMAC of it is stored. "Send me a code" answers the same for every address, known or not.
+- **Google:** OpenID Connect with PKCE, a state bound to the browser, a nonce, and an ID token checked against Google's
+  keys (issuer, audience, expiry, verified address). Register `https://<console>/api/auth/google/callback` as the
+  redirect URI (or set `GOOGLE_REDIRECT_URI`). A Google account is linked to the person on first use; another Google
+  account with the same address is refused.
+- **Limits:** codes per address an hour (5), wrong tries per address a day (20), code requests and Google starts per IP
+  an hour (30), code checks per IP an hour (60); `limits.endpoints` in the profile or `OCTILLION_LIMIT_ENDPOINTS_*`.
+- **Sessions:** a random 256-bit value in an httpOnly, SameSite=Lax cookie (`__Host-oct_session`, Secure, on https),
+  stored as a hash, 14 days (`OCTILLION_SESSION_DAYS`, 1 to 90), checked on every request. The profile page signs out
+  other devices or everywhere; removing someone from a workspace ends their sessions there and revokes their member
+  keys for it.
+- **Two addresses on Vercel:** the console is its own project in front of the API, so set `OCTILLION_CONSOLE_URL` on the
+  API project to the console's address (invitation emails link to its sign-in page).
+- **MCP clients:** no OAuth server yet under the built-in sign-in (mold_v0-013). Clients connect with a key in a
+  header: a member's own key (made on the console's API keys page, `src/member-keys.ts`) or the workspace's key, as
+  `Authorization: Bearer oct_…` or `X-API-Key: oct_…`. Claude's and ChatGPT's apps, which only sign in, wait for 013.
+- **Platform admins:** the same roles as under Clerk, kept on the person (`auth_users.public_metadata`); an
+  `OCTILLION_PLATFORM_ADMINS` address is an owner once its person signs in with it.
 
 ## Setting it up
 

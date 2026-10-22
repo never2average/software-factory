@@ -40,9 +40,11 @@ const identified = new Set<string>();
 async function identifyUser(org: Org) {
   if (!posthogEnabled() || !org.userId || identified.has(org.userId)) return;
   identified.add(org.userId);
-  const { clerkEnabled, displayName, primaryEmail, users } = await import("./clerk.js");
-  if (!clerkEnabled()) return;
-  const u = await users.get(org.userId).catch(() => null);
+  const { displayName, primaryEmail } = await import("./clerk.js");
+  const { people } = await import("./people.js");
+  const dir = people();
+  if (!dir.enabled()) return;
+  const u = await dir.users.get(org.userId).catch(() => null);
   if (u) identifyPerson(org.userId, { email: primaryEmail(u).email ?? undefined, name: displayName(u) ?? undefined, account: org.slug, account_name: org.name });
 }
 

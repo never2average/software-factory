@@ -17,7 +17,7 @@
  */
 
 import { useMemo } from 'react';
-import { useOrganization, useUser } from '@clerk/nextjs';
+import { useOrganization, useUser } from '@/lib/auth';
 import type { NavItem, NavGroup } from '@/types';
 import { tabPortalNav } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
