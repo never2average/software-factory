@@ -48,7 +48,8 @@ export function usageRange(q: { from?: unknown; to?: unknown; days?: unknown } =
 type Range = ReturnType<typeof usageRange>;
 
 /** Who a call is: its member, else its key, else the workspace's own connector. */
-const PERSON = "coalesce('m:' || e.user_id, 'k:' || e.key_id::text, 'w')";
+// Staff acting for a workspace (mold_v0-067, user_id staff:...) are in its log but are none of its people.
+const PERSON = "CASE WHEN e.user_id LIKE 'staff:%' THEN NULL ELSE coalesce('m:' || e.user_id, 'k:' || e.key_id::text, 'w') END";
 
 /** Tool calls in [start, end): per tool, totals, errors by class, active people, retention; for one workspace or all. */
 async function callFigures(orgId: number | null, R: Range) {
@@ -87,7 +88,7 @@ async function callFigures(orgId: number | null, R: Range) {
   const byDay = new Map(daily.map((d) => [d.day, d]));
   // Weekly active people and week-over-week retention (ISO weeks, Monday, UTC).
   const weeks = new Map<string, Set<string>>();
-  for (const w of weekly) { const s = weeks.get(w.week) ?? new Set<string>(); s.add(w.person); weeks.set(w.week, s); }
+  for (const w of weekly) { if (w.person == null) continue; const s = weeks.get(w.week) ?? new Set<string>(); s.add(w.person); weeks.set(w.week, s); }
   const monday = (t: number) => { const d = Math.floor(t / DAY) * DAY; return d - ((new Date(d).getUTCDay() + 6) % 7) * DAY; };
   const retention = [];
   for (let w = monday(+R.start); w < +R.end; w += 7 * DAY) {
@@ -96,7 +97,7 @@ async function callFigures(orgId: number | null, R: Range) {
     const kept = [...before].filter((x) => now.has(x)).length;
     retention.push({ week: key, active: now.size, previous: before.size, retained: kept, rate: before.size ? r2(kept / before.size) : null });
   }
-  const lastWeek = new Set(weekly.filter((w) => Date.parse(`${w.week}T00:00:00Z`) >= monday(+R.end - DAY)).map((w) => w.person));
+  const lastWeek = new Set(weekly.filter((w) => w.person != null && Date.parse(`${w.week}T00:00:00Z`) >= monday(+R.end - DAY)).map((w) => w.person));
   const dailyPeople = days.map((d) => n(byDay.get(d)?.people));
   return {
     totals: { calls: n(t.calls), errors: n(t.errors), error_rate: n(t.calls) ? r2(n(t.errors) / n(t.calls)) : 0,

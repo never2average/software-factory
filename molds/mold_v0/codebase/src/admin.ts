@@ -726,8 +726,8 @@ export async function issueKey(actor: string, slug: string, label?: string) {
 async function keyOf(slug: string, keyId: number) {
   intId(keyId);
   const f = await factsBySlug(slug);
-  const [k] = await (await getDb()).query<{ id: number; label: string; key_prefix: string; revoked_at: Date | null; user_id: string | null }>(
-    "SELECT id, label, key_prefix, revoked_at, user_id FROM api_keys WHERE id = $1 AND org_id = $2", [keyId, f.id]);
+  const [k] = await (await getDb()).query<{ id: number; label: string; key_prefix: string; revoked_at: Date | null; user_id: string | null; scoped: boolean }>(
+    "SELECT id, label, key_prefix, revoked_at, user_id, scoped FROM api_keys WHERE id = $1 AND org_id = $2", [keyId, f.id]);
   if (!k) throw new AdminError(`No key ${keyId} in ${slug}`, 404);
   return { f, k };
 }
@@ -735,14 +735,17 @@ async function keyOf(slug: string, keyId: number) {
 export async function revokeKey(actor: string, slug: string, keyId: number) {
   const { f, k } = await keyOf(slug, keyId);
   if (k.revoked_at) throw new AdminError("This key is already revoked", 409);
-  await (await getDb()).query("UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND org_id = $2", [k.id, f.id]);
+  await (await getDb()).query("UPDATE api_keys SET revoked_at = now(), revoked_by = $3 WHERE id = $1 AND org_id = $2", [k.id, f.id, `staff:${actor}`.slice(0, 200)]);
   log(actor, "key.revoke", slug, { label: k.label, key_prefix: k.key_prefix });
 }
 
 /** Revoke a key and issue its replacement under the same label and for the same person (a leaked link). */
 export async function rotateKey(actor: string, slug: string, keyId: number) {
   const { f, k } = await keyOf(slug, keyId);
-  if (!k.revoked_at) await (await getDb()).query("UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND org_id = $2", [k.id, f.id]);
+  // A member key (mold_v0-007) is its member's: its replacement would be an unscoped key with no role and no expiry.
+  // Staff revoke it (revokeKey); the member makes a new one on /app/keys.
+  if (k.scoped) throw new AdminError("This is a member's own key: revoke it, and the member makes a new one on their API keys page", 409);
+  if (!k.revoked_at) await (await getDb()).query("UPDATE api_keys SET revoked_at = now(), revoked_by = $3 WHERE id = $1 AND org_id = $2", [k.id, f.id, `staff:${actor}`.slice(0, 200)]);
   const key = await createApiKey(f.id, k.label, k.user_id);
   log(actor, "key.rotate", slug, { label: k.label, user_id: k.user_id, old_prefix: k.key_prefix, key_prefix: key.slice(0, 10) });
   return result(slug, k.label.includes("@") ? k.label : null, { key });

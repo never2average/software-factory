@@ -155,6 +155,15 @@ export default function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
+          {area === 'portal' && (
+            // A person's own MCP keys (mold_v0-007), in every build whatever the sidebar's groups are.
+            <SidebarMenuItem>
+              <SidebarMenuButton size='sm' tooltip='API keys' isActive={pathname === '/app/keys'} render={<Link href='/app/keys' />}>
+                <Icons.lock />
+                <span>API keys</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
           <SidebarMenuItem className='group/me'>
             <SidebarMenuButton tooltip='Profile' className='h-10' isActive={pathname === `${base}/profile`} render={<Link href={`${base}/profile`} aria-label='Your profile' />}>
               {user && <UserAvatarProfile className='size-7 rounded-lg' showInfo compact user={user} />}

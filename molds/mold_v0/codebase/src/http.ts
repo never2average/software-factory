@@ -19,6 +19,7 @@ import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
 import { mountInstallPages } from "./install-pages.js";
+import { memberKeyAppRouter } from "./member-keys.js";
 import * as roles from "./admin-roles.js";
 import * as adminTokens from "./admin-tokens.js";
 const { need } = roles;
@@ -185,6 +186,8 @@ export function createApp() {
   app.use("/api/onboarding", onboardingAppRouter());
   // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------
   app.use("/api/usage", usageAppRouter());
+  // ---------- a member's own MCP keys (mold_v0-007, src/member-keys.ts): header-only, named, expiring, revocable ----------
+  app.use("/api/keys", memberKeyAppRouter(PUBLIC_URL));
   // ---------- schedules per workspace and due-date notices: /api/schedules, /api/notices (src/schedule-routes.ts); with no job kind or due area nothing is mounted ----------
   app.use("/api/schedules", scheduleAppRouter());
   app.use("/api/notices", noticeAppRouter());
@@ -346,7 +349,8 @@ export function createApp() {
         error: { code: -32001, message: `API keys in the connector URL are no longer accepted. Connect to ${PUBLIC_URL}/mcp and send the key in a header (Authorization: Bearer <key>), or sign in.` },
       });
     }
-    const org = await resolveKey(key);
+    // A member key (mold_v0-007) is never accepted here: it goes in a header only.
+    const org = await resolveKey(key, { inUrl: true });
     if (!org) return unauthorized(res);
     // RFC 9745: deprecated since 2026-10-20 (a structured date); the successor is the plain /mcp with a header.
     res.set({ Deprecation: "@1792454400", Link: `<${PUBLIC_URL}/mcp>; rel="successor-version"` });
@@ -647,14 +651,14 @@ export function createApp() {
     const isTool = (n: string) => hostToolNames().includes(n);
     const keyOf = (req: Request) => String(req.query.key ?? req.body?.key ?? "");
     app.post("/preview/api/tool", express.json(), async (req, res) => {
-      const org = await resolveKey(keyOf(req));
+      const org = await resolveKey(keyOf(req), { inUrl: true });
       const { name, arguments: args = {} } = req.body ?? {};
       if (!org) return void res.status(401).json({ isError: true, content: [{ type: "text", text: "Invalid key" }] });
       if (!isTool(name)) return void res.status(404).json({ isError: true, content: [{ type: "text", text: `Unknown tool ${name}` }] });
       res.json(await runTool(org, name, args));
     });
     app.get("/preview/:tool", async (req, res) => {
-      const org = await resolveKey(keyOf(req));
+      const org = await resolveKey(keyOf(req), { inUrl: true });
       const name = req.params.tool;
       if (!org) return void res.status(401).send("Pass ?key=<org API key>");
       if (!isTool(name)) return void res.status(404).send(`Unknown tool ${name}`);

@@ -511,6 +511,18 @@ export async function checkRun(org: Org): Promise<RunCheck> {
 }
 
 /**
+ * A run platform staff start for a workspace (mold_v0-067; an admin_only start tool on the admin MCP): the account's
+ * own launch rules with no person, as an account-level launch: its allowance, its month's cap and the buffer it holds
+ * back from launches, fail closed when they cannot be read. A person's own limits do not apply (staff are not one).
+ */
+export async function checkAccountRun(org: Org): Promise<void> {
+  const o = await overview(org);
+  if (o.budget_error)
+    throw new LimitError("We couldn't check the account's allowance. Try again in a minute.", 503, { code: "budget_error", admins: o.admins });
+  if (o.account.blocked) throw refusal(o, o.account.blocked);
+}
+
+/**
  * While an adaptive run samples more: has its launcher run out (their limit, their pot, the buffer or the account)?
  * Then the run stops early. Launch access is not rechecked: it governs starting runs, not finishing them. Fails closed:
  * when the allowance or the limits can't be read, the run stops adding sessions (the ones running still finish).

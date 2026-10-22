@@ -30,14 +30,15 @@ import { ensureOrgKey, isSealed, open, openJson, seal, sealJson } from "./orgcry
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
 import { areaLinks, DECLARABLE_ROLES, optionValues, PackError, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, WRITE_ROLES, z, type PackTool, type PlatformRecords, type RecordAction, type RecordInput, type RecordOperation, type RecordOperationResult, type RecordPage, type RecordQuery, type RecordRow, type Repository, type Workspace, type WorkspaceRecords } from "./pack-api.js";
 import { packs } from "./packs.js";
+import { areaOpWithheld } from "./mcp-withheld.js";
 import { cursorOf, goneCursor, pageInMemory, parseQuery, readsContent, sqlParts, type Parsed, type QField } from "./record-query.js";
 import { asPlatform, currentTenant, withTenant } from "./tenant-scope.js";
 
 /** An area as installed: its declaration, its pack, and the repository its rows come from (null: the shell's tables). */
 export type RecordArea = z.output<typeof RecordAreaSchema> & { pack: string; repo: { name: string; kind: Repository["kind"]; settings: Repository } | null };
 
-/** The MCP tools the shell adds when at least one area is declared (a pack may not take these names). */
-export const RECORD_TOOL_NAMES = ["list_records", "get_record"] as const;
+/** The MCP tools the shell adds when at least one area is declared (a pack may not take these names; src/shell-tools.ts). */
+export { RECORD_TOOL_NAMES } from "./shell-tools.js";
 
 let cache: { from: unknown; areas: RecordArea[] } | null = null;
 /** Every declared area, in pack order then declaration order. Validated (and unique across packs) by installPacks. */
@@ -713,23 +714,29 @@ export const areaSummary = (a: RecordArea) => ({
 
 /** The two shell tools, built for the declared areas; empty when no pack declares one (the MCP surface is unchanged). */
 export function recordTools(): PackTool[] {
-  const areas = recordAreas();
-  if (!areas.length) return [];
-  const names = areas.map((a) => a.name) as [string, ...string[]];
-  const catalog = areas.map((a) => `${a.name} (${a.label}: ${a.role}, ${a.scope === "platform" ? "shared" : "this workspace's own"})`).join("; ");
+  const all = recordAreas();
+  if (!all.length) return [];
+  // An area whose generated list_ or get_ tool its pack withholds (mold_v0-067: exclude, admin_only) is not offered
+  // through these two either (src/mcp-withheld.ts); with nothing withheld both are exactly as before.
+  const offered = (op: "list" | "get") => all.filter((a) => !areaOpWithheld(a.name, op));
+  const tools = (["list", "get"] as const).map((op) => {
+    const areas = offered(op);
+    return areas.length ? { names: areas.map((a) => a.name) as [string, ...string[]], catalog: areas.map((a) => `${a.name} (${a.label}: ${a.role}, ${a.scope === "platform" ? "shared" : "this workspace's own"})`).join("; ") } : null;
+  });
   return [
-    {
+    tools[0] && {
       name: "list_records",
       title: "List records",
-      description: `List the records of one area, by key, a page at a time (pass next as after for the following page). Areas: ${catalog}.`,
+      description: `List the records of one area, by key, a page at a time (pass next as after for the following page). Areas: ${tools[0].catalog}.`,
       inputSchema: {
-        area: z.enum(names).describe("The record area"),
+        area: z.enum(tools[0].names).describe("The record area"),
         limit: z.number().int().min(1).max(200).optional().describe("Records per page (default 50)"),
         after: z.string().max(200).optional().describe("The next value of the previous page"),
       },
       annotations: { title: "List records", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       handler: async (ws: Workspace, args: { area: string; limit?: number; after?: string }) => {
         const area = areaOrThrow(args.area);
+        if (areaOpWithheld(area.name, "list")) throw new PackError(`no record area ${area.name}`, 404);
         const page = await listFor(ws.id, area.name, { limit: args.limit, after: args.after }, { role: ws.role, userId: ws.userId });
         const cols = areaSummary(area).list_columns;
         return {
@@ -739,22 +746,23 @@ export function recordTools(): PackTool[] {
         };
       },
     },
-    {
+    tools[1] && {
       name: "get_record",
       title: "Get a record",
-      description: `One record of an area by its key, with every field and the records its links name. Areas: ${catalog}.`,
+      description: `One record of an area by its key, with every field and the records its links name. Areas: ${tools[1].catalog}.`,
       inputSchema: {
-        area: z.enum(names).describe("The record area"),
+        area: z.enum(tools[1].names).describe("The record area"),
         key: z.string().min(1).max(200).describe("The record's key"),
       },
       annotations: { title: "Get a record", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       handler: async (ws: Workspace, args: { area: string; key: string }) => {
+        if (areaOpWithheld(args.area, "get")) throw new PackError(`no record area ${String(args.area).slice(0, 80)}`, 404);
         const d = await detailFor(ws.id, args.area, args.key, { role: ws.role, userId: ws.userId });
         if (!d) throw new PackError(`no record ${args.key} in ${args.area}`, 404);
         return { record: d.record, links: d.links };
       },
     },
-  ] as unknown as PackTool[];
+  ].filter(Boolean) as unknown as PackTool[];
 }
 
 export function registerRecordTools(server: McpServer, run: (t: PackTool, args: Record<string, unknown>) => unknown) {

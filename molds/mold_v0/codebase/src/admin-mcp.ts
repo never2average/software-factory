@@ -40,6 +40,7 @@ import { platformAnalytics } from "./insights.js";
 import { listSettings, settingGroups } from "./settings.js";
 import { adminGeneratedTools, generatedAdminInstructions } from "./mcp-tools.js";
 import { reserveAdminTools } from "./packs.js";
+import type { AdminShellToolName, SameNames } from "./shell-tools.js";
 
 /** Who is calling: the name changes are logged under (their email, or the token's X-Admin-Actor label) and their role. */
 export interface AdminCaller { actor: string; role: PlatformRole; userId: string | null; ip?: string }
@@ -299,6 +300,10 @@ export const ADMIN_TOOLS = {
   },
 } satisfies Record<string, AdminTool>;
 
+// The build reads the shell's own admin tools from src/shell-tools.ts (mold_v0-067): a change here alone does not
+// typecheck. A host pack's admin tools (below) are its own, placed among these.
+const sameAdminNames: SameNames<keyof typeof ADMIN_TOOLS, AdminShellToolName> = true;
+void sameAdminNames;
 export type AdminToolName = string;
 /**
  * The admin MCP's own tools in the order clients list them: the shell's, with each host pack's (src/host.ts, mold_v0-039)
