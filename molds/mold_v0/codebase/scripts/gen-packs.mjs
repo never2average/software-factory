@@ -5,6 +5,7 @@
 //
 //   src/packs.generated.ts               each pack's manifest and its entry module (definePack), in pack order
 //   src/pack-migrations.generated.ts     the ordered list of pack migration directories (no pack code imported)
+//   src/run-tools.generated.json         the run tools the packs' agent kinds need (mold_v0-072), installed in the runner image
 //   src/profile.generated.ts             the profile: product name, MCP server name, console title, email sender
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
@@ -707,6 +708,24 @@ function limitsProblem(v, plans = true) {
   return null;
 }
 
+/**
+ * The profile's optional `billing` (mold_v0-019, src/run-charges.ts): price per run, off unless `enabled` is true.
+ * Only the app's own profile.json may set it (a host pack's profile may not: a pack never turns billing on or widens
+ * its rules). Checked here so a typo fails the build rather than billing differently than written.
+ */
+const BILLING_KEYS = ["$comment", "enabled", "currency", "max_fixed", "max_cost_plus_percent", "charge_failed_runs", "charge_cancelled_runs", "stripe_meter"];
+function billingProblem(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
+  for (const k of Object.keys(v)) if (!BILLING_KEYS.includes(k)) return `${k} is not a billing setting (known: ${BILLING_KEYS.slice(1).join(", ")})`;
+  if (typeof v.enabled !== "boolean") return "enabled must be true or false";
+  if (v.currency !== undefined && (typeof v.currency !== "string" || !/^[a-z]{3}$/.test(v.currency))) return "currency must be a currency code in lower case, e.g. usd";
+  for (const k of ["max_fixed", "max_cost_plus_percent"])
+    if (v[k] !== undefined && (typeof v[k] !== "number" || !Number.isFinite(v[k]) || v[k] < 0 || v[k] > (k === "max_fixed" ? 1_000_000 : 10_000))) return `${k} must be a number from 0 to ${k === "max_fixed" ? "1000000" : "10000"}`;
+  for (const k of ["charge_failed_runs", "charge_cancelled_runs"]) if (v[k] !== undefined && typeof v[k] !== "boolean") return `${k} must be true or false`;
+  if (v.stripe_meter !== undefined && (typeof v.stripe_meter !== "string" || !/^[a-z0-9_]{3,100}$/.test(v.stripe_meter))) return "stripe_meter must be an event name of lower-case letters, digits and underscores";
+  return null;
+}
+
 let profile = { ...DEFAULT_PROFILE };
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
@@ -716,12 +735,14 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   const filePf = existsSync(PROFILE_FILE) ? readJson(PROFILE_FILE, rel(PROFILE_FILE)) : null;
   const pf = { ...(hostProfiles[0]?.host.profile ?? {}), ...(filePf && typeof filePf === "object" && !Array.isArray(filePf) ? filePf : {}) };
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
+  if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
   {
     for (const [k, v] of Object.entries(pf)) {
       if (k === "$comment") continue;
       // Which packs may be host packs (read above, before the packs): a list of pack ids, never shown.
       if (k === "host_packs") { if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !ID.test(x))) fail(rel(PROFILE_FILE), "host_packs: a list of pack ids"); continue; }
       if (k === "limits") { const bad = limitsProblem(v); if (bad) fail(rel(PROFILE_FILE), `limits: ${bad}`); else profile.limits = v; continue; }
+      if (k === "billing") { const bad = billingProblem(v); if (bad) fail(rel(PROFILE_FILE), `billing: ${bad}`); else profile.billing = v; continue; }
       // The customer MCP server's own version and instructions (mold_v0-060), optional: absent, the shell's.
       if (k === "mcp_server_version") { if (typeof v !== "string" || !/^\d{1,6}\.\d{1,6}\.\d{1,6}([-+][0-9A-Za-z.-]{1,40})?$/.test(v)) fail(rel(PROFILE_FILE), "mcp_server_version: a version like 1.2.3"); else profile[k] = v; continue; }
       if (k === "mcp_instructions") {
@@ -738,7 +759,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, mcp_server_version, mcp_instructions, install_clients)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, mcp_server_version, mcp_instructions, install_clients)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -797,7 +818,7 @@ for (const [id, json, file] of entries) {
       metrics: (def.metrics ?? []).map((x) => ({ name: x.name, over: x.over })),
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
       resultChecks: def.runResults?.check ?? [],
-      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null })) };
+      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })) };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 3000) }; }
 }
 // Metrics, charts and tabs across the build (mold_v0-063, 058): checked together once every pack loaded.
@@ -923,6 +944,12 @@ files.set(srcPacks, HEADER +
   ` * (mold_v0-057; null for none) and its code entry's definePack export (null for a pack.json alone). src/packs.ts merges and checks them.\n */\n` +
   `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string }; readonly declared: unknown; readonly definition: unknown }[] = [` +
   (packs.length ? `\n${packs.map((p, i) => `  { manifest: ${JSON.stringify(p.manifest)}, declared: ${Object.keys(defsByPack[p.id]?.declared ?? {}).length ? JSON.stringify(defsByPack[p.id].declared) : "null"}, definition: ${p.manifest.entry === null ? "null" : `pack${i}`} },`).join("\n")}\n` : "") + "];\n");
+// The run tools the packs' agent kinds need (mold_v0-072; src/run-tools.ts): the runner image is built with exactly
+// these (scripts/install-run-tools.ts, the Dockerfile), each at its pinned version and checksum.
+files.set(path.join(OUT, "src", "run-tools.generated.json"), json({
+  $comment: "Generated by scripts/gen-packs.mjs from the packs' agent job kinds (agent.tools). Do not edit: run npm run gen:packs. The runner image installs these (scripts/install-run-tools.ts).",
+  tools: [...new Set(packs.flatMap((p) => (defsByPack[p.id]?.kinds ?? []).flatMap((k) => k.tools ?? [])))].sort(),
+}) + "\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
   "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
@@ -1037,7 +1064,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   viewsModule());
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
-  `export const profile = ${json((({ limits: _l, ...p }) => p)(profile))} as const;\n`);
+  `export const profile = ${json((({ limits: _l, billing: _b, ...p }) => p)(profile))} as const;\n`);
 
 /**
  * The packs' metrics, charts and tabs for the console (mold_v0-063, 058): what each chart shows, and the declared tabs

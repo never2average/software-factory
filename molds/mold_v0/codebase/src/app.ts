@@ -9,6 +9,7 @@
  */
 import express, { type NextFunction, type Request, type Response } from "express";
 import { withTenant } from "./tenant-scope.js";
+import { workspaceCharges } from "./run-charges.js";
 import { z } from "zod";
 import * as admin from "./admin.js";
 import { orgForClerk, type Org } from "./auth.js";
@@ -299,6 +300,9 @@ async function billingView(s: Session) {
     // Plans are invite-only; in a pricing experiment the account sees only its own variant (src/experiments.ts).
     plans: billing.stripeEnabled() && f.prepaid_allowed ? (await experiments.offeredPlans(s.org, await billing.listPlans()).catch(() => [] as billing.Plan[])).map((p) => ({ price_id: p.price_id, name: p.name, amount: p.amount, currency: p.currency, interval: p.interval, monthly_budget_usd: p.monthly_budget_usd, trial_days: p.trial_days, description: p.description,
       usage: p.usage.map((u) => ({ metric: u.metric, summary: u.summary })) })) : [],
+    // Price per run (mold_v0-019, src/run-charges.ts): this month's run charges, only when the app bills runs (or has billed
+    // them). The latest rows are everyone's for billing roles, a member's own runs otherwise.
+    ...await workspaceCharges(s.org, { person: roles.canAccount(s.accountRole, "billing") ? null : s.user ?? "" }).then((c) => (c ? { run_charges: c } : {})),
   };
 }
 

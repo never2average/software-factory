@@ -32,6 +32,7 @@ import type { Secret } from "./credential-redact.js";
 import { redactJson, redactText } from "./credential-redact.js";
 import { runCredentials, runSecrets, type RunCredentials } from "./credentials.js";
 import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits.js";
+import { priceForStart } from "./run-charges.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -106,6 +107,9 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
   // Limits (mold_v0-018, 053; src/run-limits.ts): the workspace's live runs, the kind's month budget, the account's
   // allowance; the run's budget is the kind's, never above the platform's ceiling.
   const { budget_usd, live_per_workspace } = await checkRunStart(orgId, pack, kind, k, n);
+  // Price per run (mold_v0-019, src/run-charges.ts): what the platform allows of the kind's price, frozen into the run
+  // (null with billing off: the run is never charged). Its charge is written when the run ends (0014_run_charges.sql).
+  const price = priceForStart({ pack, name: k.name, price: (k as { price?: unknown }).price });
   const id = `run_${randomBytes(12).toString("base64url")}`;
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
   // The live cap is counted again with the insert, under a lock per workspace, so concurrent starts (a scheduler's
@@ -116,10 +120,10 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
     if (live >= live_per_workspace)
       throw new PackError(`this workspace already has ${live} runs queued or running (at most ${live_per_workspace}): wait for some to finish`, 429);
     return tx.query<RunRow>(
-      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING ${COLS}`,
+      `INSERT INTO runs (id, org_id, pack, kind, scope, targets, spec, max_attempts, token_lifetime_seconds, lease_seconds, budget_usd, egress, requested_by, price)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING ${COLS}`,
       [id, orgId, pack, kind, JSON.stringify(scope), JSON.stringify(targets), JSON.stringify(k), k.max_attempts, k.token_lifetime_seconds,
-       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy]);
+       k.lease_seconds, budget_usd, k.egress.map((h) => h.replace(/^\*\./, "").toLowerCase()), requestedBy, price ? JSON.stringify(price) : null]);
   }));
   await event(id, orgId, 0, "queued", { kind, requested_by: requestedBy });
   // On Vercel nothing ticks between crons: the run's sandbox is launched now (mold_v0-055; a server's loop ticks itself).
