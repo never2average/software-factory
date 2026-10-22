@@ -11,6 +11,7 @@
  *   NEW_RELIC_DASHBOARD_URL  e.g. https://one.newrelic.com/...            (link only)
  */
 import * as clerk from "./clerk.js";
+import { people as directory } from "./people.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
 
@@ -278,7 +279,7 @@ async function facets(range: ReturnType<typeof reportRange>, orgsOnce: () => Pro
   // Emails from Clerk (cached a minute per user); without Clerk, or on a lookup error, the id stands in.
   const users = await Promise.all(people.map(async (u) => {
     let email: string | null = null, name: string | null = null;
-    if (clerk.clerkEnabled()) try { const cu = await clerk.users.get(u.user_id); email = clerk.primaryEmail(cu).email; name = clerk.displayName(cu); } catch { /* keep the id */ }
+    if (directory().enabled()) try { const cu = await directory().users.get(u.user_id); email = clerk.primaryEmail(cu).email; name = clerk.displayName(cu); } catch { /* keep the id */ }
     return { id: u.user_id, email, name, account: u.account };
   }));
   const tally = (xs: string[]) => { const m: Record<string, number> = {}; for (const x of xs) m[x] = (m[x] ?? 0) + 1; return m; };

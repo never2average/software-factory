@@ -9,6 +9,7 @@
  */
 import * as billingModule from "./billing.js";
 import * as clerkModule from "./clerk.js";
+import { people } from "./people.js";
 import * as emailModule from "./email.js";
 import * as harnessModule from "./harnesses.js";
 import * as accountRolesModule from "./account-roles.js";
@@ -22,7 +23,13 @@ export { asPlatform, withTenant } from "./tenant-scope.js";
 export { bearer, orgForClerk, randomId, type Org } from "./auth.js";
 export { accountRefusal, canAccount, type AccountPermission, type AccountRole } from "./account-roles.js";
 export const accountRoles = { canAccount: accountRolesModule.canAccount, accountPermissionsOf: accountRolesModule.accountPermissionsOf };
-export const clerk = { clerkEnabled: clerkModule.clerkEnabled, isSuspended: clerkModule.isSuspended, memberships: clerkModule.memberships };
+/** The people directory for a host pack, under the server's sign-in (src/people.ts: Clerk's, or the built-in one). The
+ *  name stays `clerk` for the host packs written against it; `clerkEnabled` says whether sign-in is on. */
+export const clerk = {
+  get clerkEnabled() { return people().enabled; },
+  isSuspended: clerkModule.isSuspended,
+  get memberships() { return people().memberships; },
+};
 
 // ---------- sealing an organization's private text (src/orgcrypto.ts) ----------
 export { ensureOrgKey, open, openJson, openRows, seal, sealJson } from "./orgcrypto.js";

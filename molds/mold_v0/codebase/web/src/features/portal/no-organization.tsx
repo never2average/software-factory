@@ -1,5 +1,5 @@
 'use client';
-import { SignOutButton, useOrganizationList, useUser } from '@clerk/nextjs';
+import { SignOutButton, useOrganizationList, useUser } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';

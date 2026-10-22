@@ -581,7 +581,8 @@ def self_test_single(n, fails):
         else:
             d = docs("zz_one"); i = d["infrastructure"]; n += 1
             if (i["target"], i["compose_remote"]["compose"]["project"], i["compose_remote"].get("domain"), i["secrets_user"], d["datastores"]["postgres"]["exposure"]) != \
-               ("compose_remote", "sf-zz-one", "shop.example.org", ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"], "compose_network"):   # the console's sign-in (mold_v0-020)
+               ("compose_remote", "sf-zz-one", "shop.example.org", [], "compose_network") \
+               or not {"CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"} <= set(i.get("secrets_optional") or []):   # the console's Clerk keys: optional since mold_v0-004 (built-in sign-in by default)
                 fails.append(f"mold_v0 state for its own server: {i['target']} {i.get('compose_remote')} {d['datastores']['postgres']}")
             n += 1
             if "model" in d["application"] or "workspace" in d["application"] or "inference" in i: fails.append("mold_v1's model, workspace or inference was written into a mold_v0 app")
@@ -596,7 +597,7 @@ def self_test_single(n, fails):
             r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); d2 = docs("zz_one"); n += 1
             if r.returncode or d2 != d: fails.append(f"a same-brief re-run of a deployed mold_v0 app changed its state: {(r.stdout + r.stderr).strip()[-200:]}")
             r = go("zz_one", "Mold: mold_v0\nDomain: shop.example.org\n", {"deploy_target": "vercel"}); d3 = docs("zz_one"); n += 1
-            if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"] or "DATABASE_URL" not in d3["infrastructure"]["secrets_derived"] \
+            if r.returncode or d3["infrastructure"]["target"] != "vercel" or "compose_remote" in d3["infrastructure"] or d3["infrastructure"]["secrets_user"] != [] or not {"CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"} <= set(d3["infrastructure"]["secrets_optional"]) or "DATABASE_URL" not in d3["infrastructure"]["secrets_derived"] \
                or d3["datastores"]["postgres"]["provider"] != "neon":
                 fails.append(f"switching a mold_v0 app to Vercel: {(r.stdout + r.stderr).strip()[-200:]} {d3['infrastructure'].get('target')}")
         # review fixes (PR #17): the mold only from its own line and only a registered one; a Vercel project that is taken

@@ -20,7 +20,9 @@ const SHELL_TENANT_TABLES = ["agent_sessions", "simulations", "products", "scena
   // mold_v0-035 schedules per workspace and due-date notices
   "workspace_schedules", "workspace_notices",
   // mold_v0-019 price per run: the run charges ledger
-  "run_charges"];
+  "run_charges",
+  // mold_v0-004 the built-in sign-in's memberships and invitations (platform-only tables that carry org_id)
+  "auth_memberships", "auth_invitations"];
 const BASELINE = path.join(ROOT, "scripts/tenant-sql-baseline.json");
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

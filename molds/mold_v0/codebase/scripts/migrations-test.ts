@@ -4,7 +4,7 @@
 //
 // mold_v0-049 moved the product's tables out of the shell's base schema into its host pack's migrations. The older
 // versions are the pre-049 migrations (scripts/fixtures/pre-049-migrations: the three files split since, the others
-// unchanged) recorded up to 0001, 0003, 0008, 0013 and 0014, and the schema-on-boot path before them, each with rows shaped
+// unchanged) recorded up to 0001, 0003, 0008, 0013 and 0015, and the schema-on-boot path before them, each with rows shaped
 // like a live database in every table (fixtures/pre-049-migrations/seed.sql). In a build with no packs a new database
 // has none of the product's tables, and an older one keeps them with their rows (its shell schema equal to a new
 // one's). In a build whose host pack owns them (pack.json host.schema), a new database has them again, and every older
@@ -81,8 +81,8 @@ const oldBoot = (db: Db, sql: string) => db.migrate((tx) => tx.exec(sql));
  * edited). Run by this runner with no packs, that builds exactly the database such a release built.
  */
 const PRE = path.join(import.meta.dirname, "fixtures", "pre-049-migrations");
-/** The last shell migration released before mold_v0-049 (0014_run_charges, mold_v0-019); 0015 is the split's own. */
-const LAST_PRE = 14;
+/** The last shell migration released before mold_v0-049 (0015_builtin_sign_in, mold_v0-004); 0016 is the split's own. */
+const LAST_PRE = 15;
 async function preDir(upTo: number) {
   const dir = path.join(tmp, `pre049-${upTo}`);
   rmSync(dir, { recursive: true, force: true });
