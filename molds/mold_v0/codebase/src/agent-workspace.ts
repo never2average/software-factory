@@ -38,6 +38,14 @@ export interface FetchOptions {
   timeoutMs?: number;
   /** Where git keeps its scratch (an empty HOME); a fresh directory under `dest`'s parent by default. */
   home?: string;
+  /**
+   * A credential helper for the fetch (mold_v0-074, the checkout cache): `/bin/sh <script>` for exactly `scope`
+   * (protocol://host) and no other helper; the script (src/agent-workspace-steps.ts gitCredentialFiles) reads the token
+   * from a file on tmpfs, so it is never in git's arguments, its environment or the URL.
+   */
+  credentialHelper?: { scope: string; script: string };
+  /** Refuse the commit when its tree holds more than this many bytes, counted from git's objects before anything is checked out. */
+  maxTreeBytes?: number;
 }
 
 const git = (args: string[], o: { env: Record<string, string>; cwd?: string; timeoutMs: number }) => new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
@@ -90,7 +98,10 @@ export async function fetchPinned(url: string, commit: string, dest: string, o: 
     GIT_ALLOW_PROTOCOL: proto, GIT_INDEX_FILE: path.join(work, "index"),
   };
   const cfg = ["-c", "protocol.allow=never", "-c", `protocol.${proto}.allow=always`, "-c", "http.followRedirects=false", "-c", "core.hooksPath=/dev/null",
-    "-c", "transfer.fsckObjects=true", "-c", "fetch.recurseSubmodules=false", "-c", "core.symlinks=true", "-c", "credential.helper=", "-c", "core.fsmonitor=false"];
+    "-c", "transfer.fsckObjects=true", "-c", "fetch.recurseSubmodules=false", "-c", "core.symlinks=true", "-c", "credential.helper=", "-c", "core.fsmonitor=false",
+    ...(o.credentialHelper ? ["-c", `credential.${o.credentialHelper.scope}.helper=!/bin/sh ${o.credentialHelper.script}`, "-c", "credential.useHttpPath=false"] : [])];
+  if (o.credentialHelper && (!/^[A-Za-z0-9._/-]+$/.test(o.credentialHelper.script) || !/^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/.test(o.credentialHelper.scope)))
+    throw new AgentRunError("the fetch's credential helper is not plain");
   try {
     const init = await git(["init", "--quiet", "--bare", ...(commit.length === 64 ? ["--object-format=sha256"] : []), gitDir], { env, timeoutMs });
     if (init.code !== 0) throw new AgentRunError(`git init: ${init.err.trim().slice(0, 300)}`, "infrastructure");
@@ -107,6 +118,21 @@ export async function fetchPinned(url: string, commit: string, dest: string, o: 
     if (t.code !== 0 || t.out.trim() !== "commit") throw new AgentRunError(`the agent repository did not give commit ${commit.slice(0, 12)}`);
     const tree = await git(["--git-dir", gitDir, "rev-parse", "--verify", "--end-of-options", `${commit}^{tree}`], { env, timeoutMs: 30_000 });
     if (tree.code !== 0 || !/^[0-9a-f]{40,64}$/.test(tree.out.trim())) throw new AgentRunError(`commit ${commit.slice(0, 12)} has no tree`);
+    if (o.maxTreeBytes !== undefined) {
+      // The tree's size from git's own objects, before a single file is written (a small pack may expand a lot).
+      const bytes = await new Promise<number>((resolve, reject) => {
+        const p = spawn("git", ["--git-dir", gitDir, "ls-tree", "-r", "-l", "--full-tree", tree.out.trim()], { env, stdio: ["ignore", "pipe", "ignore"] });
+        let sum = 0, rest = "";
+        const t = setTimeout(() => p.kill("SIGKILL"), 120_000);
+        p.stdout.setEncoding("utf8").on("data", (d: string) => {
+          const lines = (rest + d).split("\n"); rest = lines.pop() ?? "";
+          for (const l of lines) sum += Number(/^\S+ \S+ \S+\s+(\d+)\t/.exec(l)?.[1] ?? 0);
+        });
+        p.on("error", (e) => { clearTimeout(t); reject(new AgentRunError(`ls-tree: ${e.message}`, "infrastructure")); });
+        p.on("close", (code) => { clearTimeout(t); if (code === 0) resolve(sum); else reject(new AgentRunError(`ls-tree exited with ${code}`, "infrastructure")); });
+      });
+      if (bytes > o.maxTreeBytes) throw new AgentRunError(`the commit's files are ${bytes} bytes, more than ${o.maxTreeBytes}: not checked out`);
+    }
     const rt = await git(["--git-dir", gitDir, "--work-tree", dest, "read-tree", tree.out.trim()], { env, timeoutMs: 120_000 });
     if (rt.code !== 0) throw new AgentRunError(`read-tree: ${rt.err.trim().slice(0, 300)}`, "infrastructure");
     const co = await git([...cfg, "--git-dir", gitDir, "--work-tree", dest, "checkout-index", "--all", "--force"], { env, cwd: dest, timeoutMs: 600_000 });
@@ -262,7 +288,7 @@ export function recordedFiles(checkout: string, globs: string[]): { path: string
     try { fd = openSync(path.join(checkout, rel), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return; }
     try {
       const s = fstatSync(fd);
-      if (!s.isFile() || s.size > 8 * 1024 * 1024) return;
+      if (!s.isFile() || s.nlink > 1 || s.size > 8 * 1024 * 1024) return;
       const b = readFileSync(fd);
       const item: { path: string; size: number; sha256: string; json?: unknown } = { path: rel, size: b.length, sha256: createHash("sha256").update(b).digest("hex") };
       if (b.length <= 12 * 1024 && /\.json$/i.test(rel)) { try { item.json = JSON.parse(b.toString("utf8")); } catch { /* not JSON */ } }

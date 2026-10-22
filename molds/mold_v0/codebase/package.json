@@ -29,6 +29,8 @@
     "test:data-repositories": "tsx scripts/data-repositories-test.ts",
     "test:runs": "tsx scripts/runs-test.ts",
     "test:agent-runner": "tsx scripts/agent-runner-test.ts",
+    "test:agent-steps": "tsx scripts/agent-steps-test.ts",
+    "test:run-tools": "tsx scripts/run-tools-test.ts",
     "test:workspace-hook": "tsx scripts/workspace-hook-test.ts",
     "test:run-results": "tsx scripts/run-results-test.ts",
     "test:workspace-store": "tsx scripts/workspace-store-test.ts",
