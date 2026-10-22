@@ -81,9 +81,35 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
   keys for it.
 - **Two addresses on Vercel:** the console is its own project in front of the API, so set `OCTILLION_CONSOLE_URL` on the
   API project to the console's address (invitation emails link to its sign-in page).
-- **MCP clients:** no OAuth server yet under the built-in sign-in (mold_v0-013). Clients connect with a key in a
-  header: a member's own key (made on the console's API keys page, `src/member-keys.ts`) or the workspace's key, as
-  `Authorization: Bearer oct_…` or `X-API-Key: oct_…`. Claude's and ChatGPT's apps, which only sign in, wait for 013.
+- **MCP clients:** the server is its own OAuth 2.1 authorization server for `/mcp` (mold_v0-013, `src/mcp-oauth.ts`,
+  migration 0018), so Claude's and ChatGPT's connectors and VS Code, which only sign in, connect to `$PUBLIC_URL/mcp`.
+  Other clients may still send a key in a header: a member's own key (the console's API keys page,
+  `src/member-keys.ts`) or the workspace's key, as `Authorization: Bearer oct_…` or `X-API-Key: oct_…`.
+  - **Discovery:** a 401 on `/mcp` names `/.well-known/oauth-protected-resource/mcp` (RFC 9728; the root
+    `/.well-known/oauth-protected-resource` answers the same); the authorization server's metadata is at
+    `/.well-known/oauth-authorization-server` (RFC 8414) and `/.well-known/openid-configuration`, issuer exactly
+    `PUBLIC_URL`; the authorization response carries `iss` (RFC 9207).
+  - **Clients:** a client ID metadata document (the `client_id` is an https URL; fetched with SSRF guards: https only, no
+    IP literal or localhost, every address the name resolves to public, no redirects, at most 5 KB, 5 seconds; cached an
+    hour) or, as the deprecated fallback, dynamic client registration at `/oauth/register` (RFC 7591: 20 an hour per
+    address, ten redirect URIs at most; https, http on a loopback address, or an app's own scheme; never `javascript:`,
+    `data:`, `file:` and the like; registrations nobody used go after a day).
+  - **Authorization code + PKCE:** S256 only (no PKCE, `plain` or no method is refused); redirect URIs match exactly (a
+    loopback http URI may change port, RFC 8252); a wrong client or redirect URI gets an error page, never a redirect.
+    `resource` is required and must be this server's `/mcp` (`$PUBLIC_URL/mcp` or a `CLERK_MCP_AUDIENCE` URI, RFC 8707);
+    the token is bound to it and `/mcp` checks it on every call. Codes last two minutes and are used once: a second use
+    revokes everything the first gave.
+  - **Consent:** the console's `/auth/consent` page, under the built-in session (signed out, it sends the person to sign
+    in and back). It names the app (a metadata-document client by its verified address; a registered one as "not
+    verified"), where it sends the person back, and the workspace the app will act in (the person picks one of theirs).
+    The page cannot be framed; allowing is a same-site JSON request with the console's `X-Pack-Request` header.
+  - **Tokens:** opaque, random, stored as sha256 only. Access tokens last 30 minutes (`OCTILLION_OAUTH_ACCESS_MINUTES`,
+    5 to 60); refresh tokens 30 days (`OCTILLION_OAUTH_REFRESH_DAYS`, 1 to 90) and rotate on every use (a replayed one
+    revokes the grant). A token acts as its person with their current role in the one workspace they chose, read live on
+    every call: removing or suspending them, or a role change, holds on the next request. Scope `mcp` (the default); a
+    token without it gets a 403 `insufficient_scope`. Revocation: `/oauth/revoke` (RFC 7009) for the client;
+    `GET /api/oauth/grants` and `POST /api/oauth/grants/<id>/revoke` for the person.
+  - **Clerk on:** none of this answers; Clerk stays the authorization server, exactly as below.
 - **Platform admins:** the same roles as under Clerk, kept on the person (`auth_users.public_metadata`); an
   `OCTILLION_PLATFORM_ADMINS` address is an owner once its person signs in with it.
 

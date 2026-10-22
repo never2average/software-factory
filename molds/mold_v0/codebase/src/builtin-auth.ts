@@ -600,7 +600,7 @@ async function googleCallback(req: Request, res: Response) {
  * or the host the request came to (a page on another site gets a 403), and the body is JSON (a cross-site form cannot
  * send that without a preflight this server never answers).
  */
-function sameSite(req: Request): boolean {
+export function sameSite(req: Request): boolean {
   const origin = req.get("origin");
   if (!origin) return true;
   const allowed = new Set([new URL(publicUrl()).origin, new URL(consoleUrl()).origin, ...(process.env.OCTILLION_AUTH_ORIGINS ?? "").split(",").map((x) => x.trim().replace(/\/$/, "")).filter(Boolean)]);
