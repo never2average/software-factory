@@ -411,6 +411,10 @@ export function appRouter() {
   api.use((req, res, next) => (hosts().some((h) => h.routes?.appLargeBody?.(req)) ? next() : small(req, res, next)));
   api.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   api.use(customerSession);
+  // Under the built-in sign-in (a long-lived cookie, mold_v0-004) a change riding the cookie carries X-Pack-Request: 1,
+  // which a page on another site cannot send (CSRF), as the data, keys and pack routes already ask. Clerk's is unchanged.
+  api.use((req, res, next) => (people().provider === "builtin" && res.locals.viaCookie && req.method !== "GET" && req.method !== "HEAD" && req.get("x-pack-request") !== "1"
+    ? void res.status(403).json({ error: "Missing X-Pack-Request header" }) : next()));
   const S = (res: Response) => res.locals.session as Session;
   /** Refuse unless the person's role has the permission: 403 in plain words, with a code and the role it needs. */
   const need = (res: Response, p: roles.AccountPermission) => {

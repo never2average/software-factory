@@ -29,7 +29,7 @@ export interface McpLimits {
 export interface EndpointLimits {
   signup_per_hour_per_ip: number; invites_per_hour_per_workspace: number; keys_per_hour_per_workspace: number;
   /** Built-in sign-in (mold_v0-004, src/builtin-auth.ts): code requests and Google starts per IP, code checks and Google
-   *  answers per IP, and codes per email address (an address also gets no more codes after 20 wrong tries in a day). */
+   *  answers per IP, and codes per email address (and at most 5 an hour for one address from one IP). */
   signin_per_hour_per_ip: number; signin_checks_per_hour_per_ip: number; signin_codes_per_hour_per_address: number;
 }
 export interface RunLimits { budget_usd_max: number; concurrency_per_workspace: number; kind_month_budget_usd: number; live_per_workspace: number }
@@ -41,7 +41,7 @@ export const DEFAULTS: Readonly<Limits> = Object.freeze({
   mcp: { per_key_per_minute: 300, per_member_per_minute: 300, per_workspace_per_minute: 600, per_ip_per_minute: 600,
     concurrent_per_workspace: 16, max_request_bytes: 4 * 1024 * 1024, max_response_bytes: 4 * 1024 * 1024 },
   endpoints: { signup_per_hour_per_ip: 5, invites_per_hour_per_workspace: 30, keys_per_hour_per_workspace: 20,
-    signin_per_hour_per_ip: 30, signin_checks_per_hour_per_ip: 60, signin_codes_per_hour_per_address: 5 },
+    signin_per_hour_per_ip: 30, signin_checks_per_hour_per_ip: 60, signin_codes_per_hour_per_address: 10 },
   runs: { budget_usd_max: 25, concurrency_per_workspace: 4, kind_month_budget_usd: 200, live_per_workspace: 20 },
 });
 

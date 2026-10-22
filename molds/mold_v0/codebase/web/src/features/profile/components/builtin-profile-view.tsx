@@ -48,6 +48,18 @@ export function BuiltinProfileViewPage() {
           </div>
         </div>
 
+        {(session?.invitations ?? []).length > 0 && (
+          <div className='flex flex-col gap-2'>
+            <h2 className='text-sm font-medium'>Invitations</h2>
+            {session!.invitations!.map((i) => (
+              <div key={i.id} className='flex items-center justify-between gap-4 rounded-md border p-3 text-sm'>
+                <span>{i.organization.name}</span>
+                <Button size='sm' onClick={() => authPost(`/invitations/${encodeURIComponent(i.id)}/accept`).then(reload).then(() => toast.success(`You joined ${i.organization.name}`)).catch(fail)}>Accept</Button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <dl className='divide-y border-y text-sm'>
           <div className='flex items-center justify-between gap-4 py-3 leading-none'>
             <dt className='text-muted-foreground'>Sign in with</dt>

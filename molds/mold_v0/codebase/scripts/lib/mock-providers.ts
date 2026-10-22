@@ -344,7 +344,7 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
     res.json({ token: await t.sign(privateKey) });
   });
   // ---------- Google, a stand-in for the built-in sign-in's tests (mold_v0-004; src/builtin-auth.ts) ----------
-  // POST /_mock/google/code {email, sub, nonce, code_challenge, email_verified?, given_name?, aud?, iss?} -> {code}: what
+  // POST /_mock/google/code {email, sub, nonce, code_challenge, redirect_uri?, email_verified?, given_name?, hd?, aud?, iss?, expired?} -> {code}: what
   // Google's consent screen would hand back. POST /_mock/google/token (form, like Google's) checks the client, the
   // redirect URI and the PKCE verifier against that challenge, and answers an ID token signed with the mock's key, served
   // at GET /_mock/google/jwks. The issuer is `${base}/google` unless the test asks for another (point GOOGLE_ISSUER at it).
@@ -364,7 +364,7 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
     if (c.redirect_uri && b.redirect_uri !== c.redirect_uri) return void res.status(400).json({ error: "redirect_uri_mismatch" });
     const { createHash } = await import("node:crypto");
     if (!b.code_verifier || createHash("sha256").update(String(b.code_verifier)).digest("base64url") !== c.code_challenge) return void res.status(400).json({ error: "invalid_grant", error_description: "PKCE" });
-    const t = new SignJWT({ email: c.email, email_verified: c.email_verified ?? true, nonce: c.nonce, ...(c.given_name ? { given_name: c.given_name } : {}) })
+    const t = new SignJWT({ email: c.email, email_verified: c.email_verified ?? true, nonce: c.nonce, ...(c.given_name ? { given_name: c.given_name } : {}), ...(c.hd ? { hd: c.hd } : {}) })
       .setProtectedHeader({ alg: "RS256", kid: "mock-1", typ: "JWT" }).setIssuer(c.iss ?? `${getBase()}/google`).setSubject(String(c.sub))
       .setAudience(c.aud ?? String(b.client_id)).setIssuedAt().setExpirationTime(c.expired ? Math.floor(Date.now() / 1000) - 60 : "5m");
     res.json({ id_token: await t.sign(privateKey), access_token: "ya29.mock", token_type: "Bearer", expires_in: 3599 });

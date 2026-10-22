@@ -14,6 +14,8 @@ export interface BuiltinSession {
   user?: { id: string; email: string | null; first_name: string | null; last_name: string | null; google: boolean };
   active_organization?: { id: string; name: string; slug: string | null } | null;
   memberships?: BuiltinMembership[];
+  /** Invitations to the person's own address not yet accepted (someone already in a workspace accepts each one). */
+  invitations?: { id: string; role: string; expires_at: string; organization: { id: string; name: string } }[];
 }
 
 /** A change to /api/auth: JSON, same origin (the API refuses anything else). */
@@ -94,8 +96,12 @@ export function useOrganizationList(_opts?: unknown) {
     if (organization) await authPost('/active-org', { organization_id: organization });
     await reload();
   };
-  // Invitations are accepted by signing in with the invited address, so there are none left to accept here.
-  return { isLoaded: loaded, setActive, userMemberships: { data, revalidate: reload, isLoading: !loaded }, userInvitations: { data: [] as never[], isLoading: false } };
+  // A first sign-in accepts the invited address's invitations; later ones are accepted here, one by one.
+  const invitations = (session?.invitations ?? []).map((i) => ({
+    id: i.id, role: i.role, publicOrganizationData: { id: i.organization.id, name: i.organization.name },
+    accept: async () => { await authPost(`/invitations/${encodeURIComponent(i.id)}/accept`); await reload(); },
+  }));
+  return { isLoaded: loaded, setActive, userMemberships: { data, revalidate: reload, isLoading: !loaded }, userInvitations: { data: invitations, isLoading: !loaded } };
 }
 
 export function useClerk() {

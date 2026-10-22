@@ -1,6 +1,6 @@
 'use client';
 /**
- * The built-in sign-in (mold_v0-004; the API server's /api/auth, src/builtin-auth.ts): an address, then the six-digit code
+ * The built-in sign-in (mold_v0-004; the API server's /api/auth, src/builtin-auth.ts): an address, then the eight-digit code
  * emailed to it; or Google when the server has a Google client. Invite-only: the same form signs up an invited person.
  * After signing in, the person goes back to the page that sent them here (a path on this site only).
  */
@@ -21,6 +21,7 @@ const ERRORS: Record<string, string> = {
   google_cancelled: 'Google sign-in was cancelled.',
   google_failed: 'Google could not confirm your address. Try again, or use an emailed code.',
   google_linked_elsewhere: 'This address is linked to another Google account. Use an emailed code instead.',
+  google_not_authoritative: 'Google can only sign in Gmail addresses and Google Workspace addresses of their own domain. Use an emailed code for this address.',
   not_invited: `That Google account's address has no ${profile.name} invitation. Ask your account admin to invite it, or sign in with the address they invited.`
 };
 
@@ -61,7 +62,7 @@ function Form() {
     <Card className='w-full max-w-sm'>
       <CardHeader>
         <CardTitle>Sign in to {profile.name}</CardTitle>
-        <CardDescription>{step === 'email' ? 'We will email you a six-digit code.' : `Enter the code we sent to ${email}.`}</CardDescription>
+        <CardDescription>{step === 'email' ? 'We will email you an eight-digit code.' : `Enter the code we sent to ${email}.`}</CardDescription>
       </CardHeader>
       <CardContent className='flex flex-col gap-4'>
         {error && <p role='alert' className='text-destructive text-sm'>{error}</p>}
@@ -76,9 +77,9 @@ function Form() {
           <form onSubmit={verify} className='flex flex-col gap-3'>
             {note && <p className='text-muted-foreground text-sm'>{note}</p>}
             <Label htmlFor='code'>Code</Label>
-            <Input id='code' inputMode='numeric' autoComplete='one-time-code' pattern='[0-9]{6}' maxLength={6} required value={code}
+            <Input id='code' inputMode='numeric' autoComplete='one-time-code' pattern='[0-9]{8}' maxLength={8} required value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} disabled={busy} />
-            <Button type='submit' disabled={busy || code.length !== 6}>{busy ? 'Checking…' : 'Sign in'}</Button>
+            <Button type='submit' disabled={busy || code.length !== 8}>{busy ? 'Checking…' : 'Sign in'}</Button>
             <Button type='button' variant='ghost' size='sm' disabled={busy} onClick={() => { setStep('email'); setCode(''); setNote(null); }}>Use another address</Button>
             <Button type='button' variant='ghost' size='sm' disabled={busy} onClick={() => void ask()}>Send a new code</Button>
           </form>
