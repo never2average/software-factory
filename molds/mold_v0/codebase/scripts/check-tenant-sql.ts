@@ -78,4 +78,4 @@ if (fresh.length) {
   console.error("Add an org_id filter, or a /* tenant: <how it is scoped> */ note if it is scoped another way.");
   process.exit(1);
 }
-console.log(`TENANT SQL CHECK PASS (${offenders.length} baseline quer${offenders.length === 1 ? "y" : "ies"} pending review, 0 new)${packCode.length ? `; packs: ${PACK_TABLES.length} pack table(s), ${HOST_TABLES.size} of them a host pack's own (scoped as in the shell)` : ""}`);
+console.log(`TENANT SQL CHECK PASS (${offenders.length} baseline quer${offenders.length === 1 ? "y" : "ies"} pending review, 0 new)${packCode.length ? `; packs: ${PACK_TABLES.length} pack table(s) checked${HOST_TABLES.size ? ` (${HOST_TABLES.size} a host pack's own, scoped as in the shell)` : ""}` : ""}`);
