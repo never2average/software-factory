@@ -17,6 +17,49 @@ import { log } from "./admin.js";
 import { customerSession, type Session } from "./app.js";
 import { credentialSpecs, deleteCredential, listCredentials, setCredential } from "./credentials.js";
 import { PackError } from "./pack-api.js";
+import { addCompanyHost, companyEgressPacks, listCompanyHosts, removeCompanyHost } from "./egress-hosts.js";
+
+/**
+ * Per-company egress hosts over HTTP (mold_v0-075; src/egress-hosts.ts): /api/egress-hosts. Mounted only when a kind of
+ * the build declares company_egress. GET: a signed-in person of the workspace; PUT {pack, host, asset?} and DELETE
+ * {pack, host, asset?}: "manage" (an owner). The workspace is the session's.
+ */
+export function egressHostAppRouter(): Router {
+  const r = express.Router();
+  if (!companyEgressPacks().length) return r;
+  r.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
+  r.use(express.json({ limit: "8kb" }));
+  r.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) => {
+    if (!err) return next();
+    res.status(err.status && err.status < 500 ? err.status : 400).json({ error: err.type === "entity.too.large" ? "The request is too large" : "The request body must be JSON" });
+  });
+  r.use(customerSession);
+  r.use((req, res, next) => (req.method !== "GET" && req.method !== "HEAD" && res.locals.viaCookie && req.get("x-pack-request") !== "1"
+    ? void res.status(403).json({ error: "Missing X-Pack-Request header" }) : next()));
+  const S = (res: Response) => res.locals.session as Session;
+  const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
+    try { res.json(await fn(req, res)); }
+    catch (e) { if (e instanceof PackError) return void res.status(e.status).json({ error: e.message }); next(e); }
+  };
+  const manage = (res: Response) => { if (!canAccount(S(res).accountRole, "manage")) throw new PackError(accountRefusal("manage").message, 403); };
+  const who = (res: Response) => `customer:${S(res).email ?? S(res).user ?? S(res).slug}`;
+  r.get("/", answer(async (_req, res) => ({ hosts: await listCompanyHosts(S(res).org), packs: companyEgressPacks().map((p) => p.id), can_manage: canAccount(S(res).accountRole, "manage") })));
+  r.put("/", answer(async (req, res) => {
+    manage(res);
+    const out = await addCompanyHost(S(res).org, who(res), (req.body ?? {}) as Record<string, unknown>);
+    log(who(res), "egress_host.add", S(res).slug, { pack: out.pack, asset: out.asset, host: out.host });
+    return out;
+  }));
+  r.delete("/", answer(async (req, res) => {
+    manage(res);
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    if (!(await removeCompanyHost(S(res).org, b))) throw new PackError("no such host", 404);
+    log(who(res), "egress_host.remove", S(res).slug, { pack: b.pack, asset: b.asset ?? null, host: b.host });
+    return { removed: true };
+  }));
+  r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
+  return r;
+}
 
 export function credentialAppRouter(): Router {
   const r = express.Router();

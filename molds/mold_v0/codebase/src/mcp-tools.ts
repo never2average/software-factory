@@ -123,7 +123,7 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
       return { metrics: await computeMetrics(ws.id, names, { role: ws.role, userId: ws.userId }) };
     }
     case "start": {
-      const { target_asset, target_environment, ...scope } = a;
+      const { target_asset, target_environment, approval, ...scope } = a;
       const targets: Record<string, unknown> = {};
       if (target_asset) {
         // The target is a record of the caller's own workspace, as the caller sees it.
@@ -134,7 +134,8 @@ async function handle(t: GeneratedTool, ws: Workspace, args: Record<string, unkn
       if (target_environment) targets.environment = target_environment;
       const k = kindOf(t.pack, t.kind!);
       // A kind with no declared arguments takes none: its scope is never free text from a client.
-      const run = await ctx.runs.start(t.kind!, { scope: k.args ? scope : {}, targets });
+      // mold_v0-079: the approval of the preview a gated write writes (checked by the run engine; none for any other kind).
+      const run = await ctx.runs.start(t.kind!, { scope: k.args ? scope : {}, targets, ...(approval !== undefined ? { approval } : {}) });
       return { run };
     }
     case "run_status": {

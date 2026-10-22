@@ -53,6 +53,17 @@ try {
     assert.deepEqual(Object.fromEntries(metrics.map((m: any) => [m.name, m.unit])).time_to_fix, "days");
     assert.equal(Object.fromEntries(metrics.map((m: any) => [m.name, m.unit])).pick_rate, "percent");
     assert.equal(Object.fromEntries(metrics.map((m: any) => [m.name, m.unit])).run_spend, "usd", "the sum of a run's cost is money");
+    // mold_v0-079: a value already 0 to 100 (an average of percentages a run measured) is "percent_100", shown as it is
+    // ("percent" is a share from 0 to 1, a rate, shown times 100).
+    {
+      const r100 = tryPacks([vulns((j) => { metricOf(j, "mean_cvss_open").unit = "percent_100"; })]);
+      assert.equal(r100.status, 0, `a percent_100 unit builds: ${r100.stderr}`);
+      const nav100 = readFileSync(path.join(TMP, `try-${n}`, "out", "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+      const m100 = JSON.parse(/export const packMetrics[^=]*= ([\s\S]*?);\n/.exec(nav100)![1]!);
+      assert.equal(m100.find((m: any) => m.name === "mean_cvss_open").unit, "percent_100");
+      assert.match(nav100, /unit: 'count' \| 'number' \| 'usd' \| 'percent' \| 'percent_100' \| 'days' \| 'hours';/, "the console's type knows it");
+      refused("a unit that is none", tryPacks([vulns((j) => { metricOf(j, "mean_cvss_open").unit = "percent_points"; })]), /mean_cvss_open|metrics\[\d+\]\.unit/);
+    }
 
     const both = (j: any) => tryPacks(j.job_kinds ? [j, fixtureJson("fixture_adoption")] : [j]);
     const cases: [string, any, RegExp][] = [

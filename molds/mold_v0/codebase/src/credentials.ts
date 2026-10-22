@@ -19,7 +19,7 @@
 import { getDb } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
-import { CredentialSchema, PackError, RECORD_KEY, z } from "./pack-api.js";
+import { CredentialSchema, OperatorCredentialSchema, PackError, RECORD_KEY, z } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { checkKey, getFor } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
@@ -43,8 +43,11 @@ const ENV = /^[a-z][a-z0-9_-]{0,39}$/;
 /** What the console shows of a field: never a value. */
 export const fieldSummary = (c: CredentialSpec) => ({
   pack: c.pack, name: c.name, label: c.label, help: c.help ?? null, bound_to: c.bound_to, area: c.area ?? null,
-  environments: c.environments ?? null, deliver_as: "env" in c.deliver_as ? { env: c.deliver_as.env } : { file: c.deliver_as.file },
+  environments: c.environments ?? null, deliver_as: deliveredAs(c.deliver_as),
 });
+/** How a field is delivered: a variable, or a file (and the variable naming its path, mold_v0-075). */
+const deliveredAs = (d: CredentialSpec["deliver_as"]): { env: string } | { file: string; path_env?: string } =>
+  "env" in d ? { env: d.env } : { file: d.file, ...(d.path_env ? { path_env: d.path_env } : {}) };
 
 interface Slot { spec: CredentialSpec; asset: string | null; environment: string | null }
 /** The slot a value goes in: the field, and the asset and environment its binding needs (and nothing it does not). */
@@ -130,11 +133,15 @@ export async function hasCredential(orgId: number, pack: string, name: string): 
 // ---------- runs ----------
 
 /** What a run receives: each value with the way its field delivers it. */
-export interface Delivered { name: string; env?: string; file?: string; value: string }
+/**
+ * What a run receives: each value with the way its field delivers it. `path_env` (mold_v0-075): the variable that holds
+ * the file's full path. `operator`: a value the platform's operators hold (never the workspace's to see).
+ */
+export interface Delivered { name: string; env?: string; file?: string; path_env?: string; operator?: boolean; value: string }
 export interface RunCredentials { credentials: Delivered[]; missing: string[] }
 
 /** The part of a run row this needs: its own workspace, pack, frozen kind and targets. */
-export interface RunForCredentials { org_id: number; pack: string; spec: { credentials?: string[] } | null; targets: Record<string, unknown> | null }
+export interface RunForCredentials { org_id: number; pack: string; spec: { credentials?: string[]; operator_credentials?: string[] } | null; targets: Record<string, unknown> | null }
 
 /** The asset (its key, and the area when the run names one) and environment a run targets. */
 const targetOf = (targets: Record<string, unknown> | null) => {
@@ -155,6 +162,7 @@ const targetOf = (targets: Record<string, unknown> | null) => {
 export async function runCredentials(run: RunForCredentials, opts: { strict?: boolean } = {}): Promise<RunCredentials> {
   const names = Array.isArray(run.spec?.credentials) ? run.spec!.credentials.filter((n): n is string => typeof n === "string") : [];
   const out: RunCredentials = { credentials: [], missing: [] };
+  await operatorCredentials(run, out, opts);
   if (!names.length) return out;
   const { asset, area, environment } = targetOf(run.targets);
   for (const name of names) {
@@ -177,7 +185,7 @@ export async function runCredentials(run: RunForCredentials, opts: { strict?: bo
       if (opts.strict) throw new PackError("the run's credentials cannot be opened now (the key vault is locked?): try again", 503);
       void e; out.missing.push(name); continue;
     }
-    out.credentials.push({ name, ...("env" in spec.deliver_as ? { env: spec.deliver_as.env } : { file: spec.deliver_as.file }), value });
+    out.credentials.push({ name, ...deliveredAs(spec.deliver_as), value });
   }
   return out;
 }
@@ -198,9 +206,46 @@ export async function workspaceCredentialValue(orgId: number, pack: string, name
   catch { throw new PackError("the workspace's credential cannot be opened now (the key vault is locked?): try again", 503); }
 }
 
+// ---------- operator-held credentials (mold_v0-075) ----------
+
+/** The key vault's provider that holds the packs' operator credentials (label "<pack>.<name>"). */
+export const OPERATOR_CREDENTIAL_PROVIDER = "pack_credentials";
+export type OperatorCredentialSpec = z.output<typeof OperatorCredentialSchema> & { pack: string };
+/** Every operator credential the packs declare. Never listed to a workspace (the console's fields are credentialSpecs). */
+export const operatorCredentialSpecs = (): OperatorCredentialSpec[] =>
+  packs().flatMap((p) => (p.definition.operatorCredentials ?? []).map((c) => ({ ...OperatorCredentialSchema.parse(c), pack: p.id })));
+export const operatorVaultLabel = (pack: string, name: string) => `${pack}.${name}`;
+
+/**
+ * The operator credentials a run's kind names (frozen into the run): each from the platform's key vault under its pack's
+ * label, delivered as its field declares. Missing ones are listed (as "operator:<name>") and the run decides. While
+ * redacting (strict) a vault that cannot be read refuses rather than store unredacted output.
+ */
+async function operatorCredentials(run: RunForCredentials, out: RunCredentials, opts: { strict?: boolean }) {
+  const names = Array.isArray(run.spec?.operator_credentials) ? run.spec!.operator_credentials.filter((n): n is string => typeof n === "string") : [];
+  if (!names.length) return;
+  const { decrypt } = await import("./keyvault.js");
+  for (const name of names) {
+    const spec = operatorCredentialSpecs().find((c) => c.pack === run.pack && c.name === name);
+    if (!spec) { out.missing.push(`operator:${name}`); continue; }
+    // The vault is platform data (src/tenant-scope.ts): read as the platform, by the run row's own pack only.
+    const [r] = await asPlatform(async () => (await getDb()).query<{ ciphertext: string; iv: string; tag: string; key_id: string }>(
+      "SELECT ciphertext, iv, tag, key_id FROM vault_credentials WHERE provider = $1 AND label = $2 AND enabled ORDER BY priority DESC, id LIMIT 1",
+      [OPERATOR_CREDENTIAL_PROVIDER, operatorVaultLabel(run.pack, name)]));
+    if (!r) { out.missing.push(`operator:${name}`); continue; }
+    let value: string;
+    try { value = decrypt(r); }
+    catch {
+      if (opts.strict) throw new PackError("the run's operator credentials cannot be opened now (the key vault is locked?): try again", 503);
+      out.missing.push(`operator:${name}`); continue;
+    }
+    out.credentials.push({ name, ...deliveredAs(spec.deliver_as), operator: true, value });
+  }
+}
+
 /** The values a run may have received, for redacting what it writes (src/runs.ts events and completion). */
 export async function runSecrets(run: RunForCredentials): Promise<Secret[]> {
-  if (!run.spec?.credentials?.length) return [];
+  if (!run.spec?.credentials?.length && !run.spec?.operator_credentials?.length) return [];
   return (await runCredentials(run, { strict: true })).credentials.map((c) => ({ name: c.name, value: c.value }));
 }
 
