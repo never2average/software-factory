@@ -62,8 +62,12 @@ turns it into shell, or builds it where nothing exists yet.
   guides come from `src/connect-catalog.ts`.
 - **Generalised by.** mold_v0-038 (done: pack tools register after the shell's from the registry `gen-packs.mjs`
   generates, `src/packs.ts`; the server name comes from the profile; the shell's own 31 tools stay in `src/server.ts`
-  until mold_v0-039), mold_v0-007 (keys header-only, named, revocable, expiring), mold_v0-013 (a built-in MCP OAuth server when
-  Clerk is off), mold_v0-010 (install guides from the profile, tool docs from the registry), mold_v0-018, **built** (MCP rate
+  until mold_v0-039), mold_v0-007, **built** (per-member keys header-only, named, revocable, expiring, with the member's
+  current role; `src/member-keys.ts`, `/app/keys`), mold_v0-013 (a built-in MCP OAuth server when
+  Clerk is off), mold_v0-010, **built** (install guides from the profile, a tool reference from the registry at
+  `/install/tools`), mold_v0-067, **built** (excluded and admin_only tools withhold their routes and tabs; the build
+  knows the shell's tool names, `src/shell-tools.ts`; staff calls in the workspace's log; staff runs under the account's
+  launch rules), mold_v0-018, **built** (MCP rate
   limits per key, member, workspace and address with a 429 and Retry-After, request and answer size caps, requests in
   flight per workspace, the sign-up, invitation and key endpoints; `src/rate-limits.ts`, numbers from the profile's
   `limits`, per plan, under the server's environment), mold_v0-060, **built** (MCP as a core offering: tools generated from every pack's declarations

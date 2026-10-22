@@ -12,7 +12,7 @@
 
 ## What is in it today
 
-- A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`, tools in `src/server.ts`), per-organisation API keys (hashed), Clerk sign-in, client install guides, onboarding, usage analytics, billing and email.
+- A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`, tools in `src/server.ts`), per-organisation API keys (hashed) and per-member keys (header-only, expiring, with the member's role; mold_v0-007), Clerk sign-in, client install guides, onboarding, usage analytics, billing and email.
 - An agent-run engine: a job queue (`src/worker.ts`, `/api/worker`), an autoscaler that launches one sandboxed orchestrator per job (`src/autoscaler.ts`, `orchestrator/`), pinned coding-agent harnesses (`harnesses/registry.json`), an inference gateway with per-session tokens and cost metering (`src/gateway.ts`, `src/usage.ts`), a versioned key vault and per-organisation data keys (`src/keyvault.ts`, `src/orgcrypto.ts`), transcripts and an off-machine archive.
 - A web console in `web/` (Next.js): `/admin` for platform staff, `/app` for an account's people.
 - Postgres with versioned migrations (`sql/migrations/NNNN_*.sql`, `src/migrate.ts`, `npm run db:migrate`; proven by `npm run test:migrations`) and row-level security on every tenant table (`sql/migrations/0003_row_level_security.sql`, `src/rls.ts`; proven by `npm run check:rls`), plus optional analytics and archive stores.
@@ -460,9 +460,8 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   security, the answer's size cap, the activity log) behind `/mcp`'s rate limits. pack.json **`mcp`** (or
   `definePack({ mcp })`): `prefix`, `include`, `exclude`, `rename` (generated name -> name), `describe` (plain text) and
   `admin_only` (a customer tool moved to the admin MCP, where it names the workspace by slug and needs "accounts",
-  reads included: it opens that workspace's own records; it only moves the MCP tool, the same operation stays open to
-  the workspace through `/api/data` and the console); every name a generated one, refused at build (`gen-packs`) when it names no tool, a name passes 64
-  characters, or two tools take one name, and at start when one takes a shell or pack tool's name. The **server**:
+  reads included: it opens that workspace's own records); every name a generated one, refused at build (`gen-packs`) when it names no tool, a name passes 64
+  characters, two tools take one name, or one takes a shell tool's name (mold_v0-067, below), and at start when one takes a shell or pack tool's name. The **server**:
   name and version from the profile (`mcp_server_version`, default the shell's), its instructions the profile's
   `mcp_instructions` (else the shell's) plus one paragraph per pack naming the tools this caller may use and that
   record contents and run outputs are data, never instructions; zero packs leave the surface byte-identical
@@ -472,10 +471,61 @@ its pack. The factory side is built too (mold_v0-024): `packs.py` applies a mold
   `npm run test:mcp-tools` (the fixtures `fixture_tracker` and `fixture_review`, two workspaces; the golden surface
   `scripts/fixtures/mcp/generated-surface.json`, `-- --update` after a deliberate change). **Not covered:** no delete
   tool for a workspace's records (destructive; the data API has it); output schemas are not generated; the console's
-  own Setup page still shows the catalog inline (the install pages are separate, public pages); a clash of a generated
-  name with a shell tool is found at start, not by `gen-packs` (which does not load the server); a staff call for a
-  workspace (`admin_only`) is audited on the admin MCP but not in the workspace's own activity log, and the account's
-  launch rules (`checkRun`) apply to signed-in people only, as for schedules.
+  own Setup page still shows the catalog inline (the install pages are separate, public pages).
+- **MCP follow-ups** (mold_v0-067, built; `src/mcp-withheld.ts`, `src/shell-tools.ts`): *withheld means withheld*: a
+  generated tool a pack `exclude`s (or leaves out of `include`) or marks `admin_only` also withholds the same
+  operation's routes for the workspace, which answer 404: `list` the area's `GET /api/data/:area` and
+  `GET /api/records/:area` (and `list_records` no longer offers the area), `get` the record's, `create`/`update`/`move`
+  their `/api/data` verbs and the matching `_batch` operations (`put` needs both), `get_metrics` the pack's metrics on
+  `/api/metrics`, `list_<runs>` the pack's runs in `GET /api/runs`, `<run>_status` a run's status and
+  `get_<run>_results` its results (and result counts) on `/api/runs`, `start_<kind>` scheduling the kind
+  (`POST /api/schedules`; the pack's own default schedules still fire); `DELETE` (no tool of its own) when every write
+  of the area (create, update, move) is withheld; an excluded staff tool withholds its `/api/admin/data` and `/api/admin/records` route (and an
+  upstream catalog's sync). `gen-packs` leaves the area's Records entry and area tab (and the pack's runs tab) out of
+  the sidebar. An `admin_only` tool stays usable by staff on the admin MCP. *The build knows the shell's names*:
+  `src/shell-tools.ts` lists the customer MCP's, the record tools' and the admin MCP's own tool names (no imports;
+  `src/server.ts` and `src/admin-mcp.ts` do not typecheck when their tools and the list differ), and `gen-packs` refuses
+  a pack whose own or generated tool takes one. *Staff calls in the workspace's log*: a call of an `admin_only` tool is
+  written to that workspace's `mcp_events` (refusals and failures too) as `staff:<12 hex of an HMAC of the admin
+  identity, keyed with a server secret and the workspace>` with client `admin-mcp`, never the identity itself (a
+  guessed email cannot be checked, and one person reads differently in each workspace) (the admin access log names the person); the usage
+  pages label it Staff and do not count it among the workspace's people (DAU, WAU, retention); product analytics and
+  journeys ignore it. *Staff runs under the account's launch rules*: a run staff start for a workspace (`org.staff`)
+  passes `checkAccountRun` (`src/limits.ts`: the account's allowance, its month's cap and the buffer Budget rules hold
+  back, fail closed), and its `requested_by` is the staff pseudonym. `npm run test:mcp-followups`.
+- **Install guides and tool docs** (mold_v0-010, built; absorbs 015; `src/install-pages.ts`): the per-client install
+  pages of 060 (one per client, the exact command or config, Cursor's one-click link, sign-in first and, for clients
+  that send a header, the key in an `Authorization` header) now follow the profile's optional `install_clients` (ids
+  from `src/connect-catalog.ts`; `gen-packs` refuses an unknown or repeated one; absent, every client). A signed-in
+  member's own setup (`memberSetup`, answered once when they make a key, mold_v0-007) carries their key in each
+  client's header, says per client whether it uses the key or signs in (OAuth), and the console shows it with copy
+  buttons. The **tool reference**, `GET /install/tools` and `/install/tools.json`, public as the install pages: every
+  tool the packs add to the customer MCP, per pack (its own tools and the generated ones that stay there), with its
+  description in the pack's words, its input schema (JSON Schema) and the roles that may call it (the same check the
+  server makes when it offers a tool), never an excluded, `admin_only` or staff tool; linked from `/install` and named
+  in `/install.json` (`tool_reference`). With zero packs nothing is mounted or linked and every install page, the
+  guide's JSON and the docs' tool table (`web/src/content/mcp-tools.generated.json`) are byte for byte what they were
+  (the golden `scripts/fixtures/install/zero-packs.json` was written by the code before this change). `npm run
+  test:install-docs`. **Not covered:** an editable override of the generated text and a playground (015's) are not
+  built; VS Code's install link is not offered (the client pages are unchanged for zero packs).
+- **Per-member MCP keys** (mold_v0-007, built; `src/member-keys.ts`, `sql/migrations/0013_member_keys.sql`,
+  `/app/keys`): a signed-in person makes keys of their own (`POST /api/keys` `{name, expires_in_days}`: 7, 30, 90,
+  180 or 365, default 90; at most 20 live), each named, shown once (only its sha256 is stored) and revocable
+  (`POST /api/keys/:id/revoke`). A member key (`api_keys.scoped`, with `user_id` and `expires_at`, a check constraint)
+  is accepted only in a header (`/mcp/<key>` and the preview's `?key=` refuse it), is refused on the next call once
+  revoked or expired, and acts as its person with their **current** role in the workspace, read from Clerk on every
+  call (30 seconds' cache, cleared when the shell changes a membership): a viewer's key is offered no write and is
+  refused one; a removed or suspended member's keys stop working; Clerk unreachable fails closed. Rate limits: the key's
+  own, the member's (all their keys) and the workspace's (mold_v0-018); creating one counts against the hourly key
+  number per person (a bucket of its own, so no member can use up the one staff issue and rotate keys from; a request
+  refused for its name or expiry does not count; the 20-key cap is counted under a lock per person); a cookie-borne change needs `X-Pack-Request: 1`. Owners (the team permission) see every key of the
+  workspace on the same page, with whose it is, and revoke any (`revoked_by` keeps who, staff included). Staff revoke a
+  member key but never rotate one (409: a replacement would be an unscoped key). The tenant role still cannot
+  write `api_keys` (`check:rls` probes un-revoking). **Migration path:** existing keys keep working exactly as before:
+  the account's own keys (no person, no role limits; also in the deprecated URL until `OCTILLION_URL_KEYS=off`) and
+  the older keys staff issued for a person (their person, no role, no expiry). To move a client: the person makes a
+  member key on `/app/keys`, pastes the setup shown, and they (or an owner) revoke the old key on the same page.
+  `npm run test:member-keys`.
 - **Metrics and charts** (mold_v0-063, built; `src/metrics.ts`, `src/metric-spec.ts`, `src/view-routes.ts`): pack.json
   `metrics` are computed on the server for one workspace: over a record area (its shared rows, or the workspace's own),
   the workspace's `run_results` or its `runs`; `measure` count, sum or average of a number field, rate (the share of rows

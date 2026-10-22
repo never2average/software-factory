@@ -13,6 +13,8 @@
  *   mcp_server_version optional (mold_v0-060): the customer MCP server's version (absent: the shell's)
  *   mcp_instructions   optional (mold_v0-060): the customer MCP server's instructions, in place of the shell's; the
  *                      paragraph for the tools generated from the packs is added after either
+ *   install_clients    optional (mold_v0-010): the clients the install pages and a member's key setup offer, by id
+ *                      (src/connect-catalog.ts); absent, every client
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
@@ -31,6 +33,7 @@ export interface Profile {
   limits?: ProfileLimits;
   mcp_server_version?: string;
   mcp_instructions?: string;
+  install_clients?: readonly string[];
 }
 
 export const PROFILE: Readonly<Profile> = Object.freeze({ ...(GENERATED_PROFILE as Profile) });

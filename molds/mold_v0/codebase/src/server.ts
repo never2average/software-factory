@@ -21,6 +21,7 @@ import * as vis from "./visibility.js";
 import { registerPackTools, reserveShellTools } from "./packs.js";
 import { generatedInstructions } from "./mcp-tools.js";
 import { PROFILE } from "./profile.js";
+import type { SameNames, ShellToolName } from "./shell-tools.js";
 
 /** Hosts (ChatGPT in particular) cache the template by URI: bump the version on breaking HTML/JS changes. */
 export const WIDGET_URI = "ui://octillion/dashboard-v2.html";
@@ -399,6 +400,10 @@ export const TOOL_STATUS: Record<ToolName, [string, string]> = {
 };
 
 export const TOOL_NAMES = Object.keys(handlersFor({ orgId: 0, slug: "", name: "" })) as ToolName[];
+// The build reads the same names from src/shell-tools.ts (gen-packs refuses a pack tool that takes one, mold_v0-067):
+// adding or removing a tool here without changing that list does not typecheck.
+const sameShellNames: SameNames<ToolName, ShellToolName> = true;
+void sameShellNames;
 // Pack tools (src/packs.ts) come after these and may not take one of their names.
 reserveShellTools(TOOL_NAMES);
 
