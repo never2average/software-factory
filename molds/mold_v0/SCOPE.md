@@ -239,9 +239,15 @@ at the same paths and with the same MCP surface. Paths below are where each now 
   `orchestrator/packs/octillion/` (run by `orchestrator/main.ts`), with its tests. The starter projects in
   `orchestrator/workspaces/` stay with the session engine: neutral framework starters it seeds sandboxes from.
 - **Record areas.** Personas and tasks (`server/library.ts`, `server/private.ts`, `server/vault.ts`, the curated vault
-  `packs/octillion/vault/`) and their pages, still over their own tables (not the shell's record store) until
-  mold_v0-049 moves the tables: declaring them as record areas now would add MCP tools and empty pages, so the surface
-  would not be the product's.
+  `packs/octillion/vault/`) and their pages, over the product's own tables (not the shell's record store): declaring them
+  as record areas would add MCP tools and empty pages, so the surface would not be the product's.
+- **Tables** (mold_v0-049). The product's 24 tables (`products`, `scenarios`, `simulations`, `agent_sessions` with their
+  verdicts, `transcript_events`, `product_research`, `developer_profiles`, `library_tasks`, `product_personas`,
+  `developer_populations` and their agents, `library_submissions`, `visibility_reports`, context and memory, journeys,
+  nudges, task sets and private harnesses) are the pack's own migrations (`packs/octillion/migrations/`), under the names
+  they had, by the host-pack schema allowance (MOLD.md "Host packs": `host.schema`); a database built before keeps
+  them and its rows (the pack adopts what the earlier base schema made). The admin MCP's job tools named for them
+  (`list_simulations`, `get_simulation`, `cancel_simulation`) are the pack's (`server/admin-tools.ts`).
 - **Console pages.** Pick rate (with its report), context (company, users, products), journeys, developer personas and
   programming tasks on /app; personas, tasks, journeys and the harness mix on /admin (agent configuration, every
   global setting, stays the shell's page):
@@ -253,12 +259,10 @@ at the same paths and with the same MCP surface. Paths below are where each now 
 - **Other.** The client skill (`packs/octillion/integrations/claude-skill/octillion/`, the download in
   `packs/octillion/public/downloads/`), the operator scripts and the product's own smoke test and connector check
   (`packs/octillion/scripts/`: `npm run pack:run -- <script>`).
-- **Still in the shell.** The tables (`products`, `scenarios`, `simulations`, the verdict columns of `agent_sessions`,
-  `product_research`, `developer_profiles`, `library_tasks`, `product_personas`, `developer_populations`,
-  `library_submissions`, `visibility_reports` and the other product-only tables: mold_v0-049), the session engine that
-  reads them (the job queue's claim, the autoscaler's simulation and research jobs, the Compute, Accounts, Usage and
-  Billing pages' figures over sessions), the library submission emails and credits (`src/email.ts`, `src/billing.ts`),
-  and the product's name in some console text, environment names and the default icons (mold_v0-045).
+- **Still in the shell.** The session engine that reads the product's tables in a build that has them (the job queue's
+  claim, the autoscaler's simulation and research jobs, the Compute, Accounts, Usage and Billing pages' figures over
+  sessions; dormant with no host pack, `src/host-tables.ts`), the library submission emails and credits (`src/email.ts`,
+  `src/billing.ts`), and the product's name in some console text, environment names and the default icons (mold_v0-045).
 
 The second app, an audit-agent pack, is built on the same contract and changes nothing above (mold_v0-044, 048): its
 runner, run kinds, tools, pages and record areas are its own pack.

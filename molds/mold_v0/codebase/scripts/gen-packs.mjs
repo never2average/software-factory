@@ -44,6 +44,10 @@
 //     migrations, by SELECT shell_pack_tenant_table('<table>') (a workspace table: org_id NOT NULL, a policy that
 //     limits the tenant role to its own workspace, fails closed) or shell_pack_private_table('<table>') (no tenant
 //     access at all). src/migrate.ts checks the same again in the database when it applies them.
+//     A host pack whose tables keep the names they had in the shell's base schema (mold_v0-049) declares them in
+//     pack.json host.schema (tables, functions, adopts); its migrations may also name those tables, define those
+//     functions and run DO blocks, GRANT, REVOKE and policies, which only the database can check: src/migrate.ts
+//     refuses any change outside the pack's own tables and functions, and any of its tables without row-level security.
 //
 // Record areas are declared in code (definePack({ recordAreas })), so once every check above passes, each pack's entry
 // is loaded once (through tsx, as the server loads it) to read them; with no packs nothing is loaded.
@@ -288,7 +292,7 @@ async function checkGraphs() {
  * (so a quote can neither hide a comment marker nor carry a banned word). Escape-string (E'…'), Unicode (U&'…') and
  * dollar quoting are refused outright. Returns null (and records why) when the text cannot be lexed safely.
  */
-function lex(sql, where) {
+function lex(sql, where, host = false) {
   let code = "", blank = "", i = 0;
   const n = sql.length;
   while (i < n) {
@@ -304,7 +308,15 @@ function lex(sql, where) {
       if (depth > 0) { fail(where, "an unterminated /* comment"); return null; }
       code += " "; blank += " "; continue;
     }
-    if (ch === "$" && /^\$[a-z_0-9]*\$/i.test(sql.slice(i))) { fail(where, "uses dollar-quoted bodies (DO blocks, functions): not allowed in a pack migration"); return null; }
+    if (ch === "$" && /^\$[a-z_0-9]*\$/i.test(sql.slice(i)) && !/[a-z0-9_$]/i.test(sql[i - 1] ?? "")) {
+      // A host pack's schema (mold_v0-049) carries DO blocks and its declared functions: the body stays in the text the
+      // banned-word scan reads (so nothing banned hides in it) and is one opaque token for the statement checks.
+      if (!host) { fail(where, "uses dollar-quoted bodies (DO blocks, functions): not allowed in a pack migration"); return null; }
+      const tag = /^\$[a-z_0-9]*\$/i.exec(sql.slice(i))[0];
+      const end = sql.indexOf(tag, i + tag.length);
+      if (end < 0) { fail(where, `an unterminated ${tag} body`); return null; }
+      code += `${tag} BODY ${tag}`; blank += ` ${sql.slice(i + tag.length, end)} `; i = end + tag.length; continue;
+    }
     if (ch === "'" || ch === '"') {
       // E'…' interprets backslash escapes (E'\'' is a quote inside the string); U&'…' has escapes too: refuse both.
       if (ch === "'" && /(^|[^a-z0-9_$])(e|u&)$/i.test(sql.slice(Math.max(0, i - 3), i))) {
@@ -347,13 +359,30 @@ const BANNED_SQL = [
   [/\bOWNER\s+TO\b/i, "OWNER TO"], [/\bINHERITS\b/i, "INHERITS"], [/\bPARTITION\s+OF\b/i, "PARTITION OF"],
 ];
 
+/**
+ * A host pack's schema (mold_v0-049) may grant, revoke, write policies and run DO blocks on its own tables (the database
+ * holds it to that: src/migrate.ts securitySnapshot); never the rest of BANNED_SQL, nor objects that act outside a table.
+ */
+const HOST_ALLOWED = new Set(["GRANT", "REVOKE", "policies (the shell's helpers write them)", "dollar-quoted bodies (DO blocks, functions)"]);
+const HOST_BANNED_SQL = [
+  [/\b(CREATE|ALTER|DROP)\s+(ROLE|USER|GROUP)\b/i, "roles"], [/\bDEFAULT\s+PRIVILEGES\b/i, "default privileges"],
+  [/\b(CREATE|ALTER)\s+(OR\s+REPLACE\s+)?(TRIGGER|RULE|VIEW|EXTENSION|EVENT\s+TRIGGER|PUBLICATION|SCHEMA|AGGREGATE|OPERATOR|CAST)\b/i, "triggers, rules, views, extensions, schemas or operators"],
+  [/\bLANGUAGE\s+(c|internal|plpython\w*|plperl\w*|pltcl\w*)\b/i, "an untrusted function language"],
+  [/\bCOPY\b/i, "COPY"], [/\bpg_read_|\blo_import\b|\blo_export\b|\bdblink\b/i, "server file or connection functions"],
+];
+
 const NAME = String.raw`"?([a-z_][a-z0-9_]*)"?`;
 const unq = (s) => s.replace(/"/g, "").toLowerCase();
 
-function checkMigrations(dir, id, where) {
+function checkMigrations(dir, id, where, schema = null) {
   const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
   const prefix = `${id}_`;
-  const own = (t) => unq(t).replace(/^public\./, "").startsWith(prefix);
+  // A host pack's declared tables (mold_v0-049) are its own too, under their names.
+  const declared = new Set(schema?.tables ?? []);
+  const fns = new Set(schema?.functions ?? []);
+  const own = (t) => { const n = unq(t).replace(/^public\./, ""); return n.startsWith(prefix) || declared.has(n); };
+  const createdNames = new Set();
+  const definedFns = new Set();
   const created = []; // [table, file]
   const secured = new Map(); // table -> "tenant" | "private"
   const order = [];
@@ -362,19 +391,30 @@ function checkMigrations(dir, id, where) {
     if (!m) return fail(`${where}/${f}`, "name it NNNN_lowercase_words.sql");
     if (Number(m[1]) !== i + 1) fail(`${where}/${f}`, `expected version ${String(i + 1).padStart(4, "0")} (no gaps or duplicates)`);
     const sql = readFileSync(path.join(dir, f), "utf8");
-    const lexed = lex(sql, `${where}/${f}`);
+    const lexed = lex(sql, `${where}/${f}`, !!schema);
     if (!lexed) return;
-    for (const [re, what] of BANNED_SQL) if (re.test(lexed.blank)) fail(`${where}/${f}`, `uses ${what}: not allowed in a pack migration`);
+    for (const [re, what] of BANNED_SQL) if (re.test(lexed.blank) && !(schema && HOST_ALLOWED.has(what))) fail(`${where}/${f}`, `uses ${what}: not allowed in a pack migration`);
+    if (schema) for (const [re, what] of HOST_BANNED_SQL) if (re.test(lexed.blank)) fail(`${where}/${f}`, `uses ${what}: not allowed in a pack migration`);
     for (const st of statements(lexed.code)) {
       const at = `${where}/${f}: ${st.slice(0, 80)}`;
       let x;
+      if (schema && /^DO (\$[a-z_0-9]*\$) BODY \1$/i.test(st)) continue; // checked in the database (src/migrate.ts)
+      if (schema && (x = new RegExp(String.raw`^CREATE (?:OR REPLACE )?FUNCTION (?:public\.)?${NAME} ?\(`, "i").exec(st))) {
+        if (!fns.has(unq(x[1]))) fail(at, `defines function ${unq(x[1])}, which pack.json host.schema.functions does not declare`);
+        else definedFns.add(unq(x[1]));
+        if (/\bSECURITY\s+DEFINER\b/i.test(st)) fail(at, "SECURITY DEFINER");
+        continue;
+      }
       if ((x = new RegExp(String.raw`^CREATE (?:UNLOGGED )?TABLE (?:IF NOT EXISTS )?(?:public\.)?${NAME} ?\((.*)\)$`, "i").exec(st))) {
         const t = unq(x[1]);
-        if (!own(t)) { fail(at, `table ${t} must be named ${prefix}…`); continue; }
+        if (!own(t)) { fail(at, `table ${t} must be named ${prefix}…${schema ? " or declared in pack.json host.schema.tables" : ""}`); continue; }
+        createdNames.add(t);
+        // A declared table is secured by the pack's own policies, which the database checks (src/migrate.ts).
+        if (declared.has(t)) continue;
         created.push({ t, f, body: x[2], i: order.length });
         order.push({ kind: "create", t });
       } else if ((x = new RegExp(String.raw`^CREATE (?:UNIQUE )?INDEX (?:CONCURRENTLY )?(?:IF NOT EXISTS )?(?:${NAME} )?ON (?:ONLY )?(?:public\.)?${NAME}\b`, "i").exec(st))) {
-        if (x[1] && !own(x[1])) fail(at, `index ${unq(x[1])} must be named ${prefix}…`);
+        if (x[1] && !own(x[1]) && !declared.has(unq(x[2]))) fail(at, `index ${unq(x[1])} must be named ${prefix}…`);
         if (!own(x[2])) fail(at, `an index on ${unq(x[2])}, which is not this pack's table`);
       } else if ((x = new RegExp(String.raw`^ALTER TABLE (?:IF EXISTS )?(?:ONLY )?(?:public\.)?${NAME} (.*)$`, "i").exec(st))) {
         if (!own(x[1])) fail(at, `alters ${unq(x[1])}, which is not this pack's table`);
@@ -397,6 +437,9 @@ function checkMigrations(dir, id, where) {
       } else fail(at, "not a statement a pack migration may run (CREATE TABLE/INDEX, ALTER/DROP its own tables, seed rows, COMMENT, SELECT shell_pack_*_table)");
     }
   });
+  // A declared table (mold_v0-049) must be one this pack's migrations create, and a declared function one they define.
+  for (const t of declared) if (!createdNames.has(t)) fail(where, `pack.json host.schema.tables names ${t}, which no migration here creates`);
+  for (const fn of fns) if (!definedFns.has(fn)) fail(where, `pack.json host.schema.functions names ${fn}, which no migration here defines`);
   // Every table created must be secured after its (last) creation, and a workspace table must carry org_id NOT NULL.
   for (const c of created) {
     const later = order.slice(c.i + 1).find((o) => o.t === c.t);
@@ -410,6 +453,43 @@ function checkMigrations(dir, id, where) {
 }
 
 // ---------- packs ----------
+
+/**
+ * pack.json host.schema (mold_v0-049), or null. Only a host pack of this build may declare one; its tables are not the
+ * shell's (checked once the shell's tables are known, below) and its names are plain identifiers.
+ */
+function hostSchemaOf(m, dirName, where) {
+  const sc = m?.host && typeof m.host === "object" ? m.host.schema : undefined;
+  if (sc === undefined) return null;
+  const IDENT = /^[a-z][a-z0-9_]{1,62}$/;
+  if (!HOST_PACKS.has(dirName)) { fail(where, "host.schema: only a host pack of this build may declare its own tables"); return null; }
+  if (!sc || typeof sc !== "object" || Array.isArray(sc)) { fail(where, "host.schema must be an object {tables, functions?, adopts?}"); return null; }
+  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
+  const list = (v, what) => Array.isArray(v) && v.every((x) => typeof x === "string" && IDENT.test(x)) && new Set(v).size === v.length ? v : (fail(where, `host.schema.${what} must be a list of distinct lowercase names`), []);
+  const tables = list(sc.tables, "tables");
+  if (!tables.length) fail(where, "host.schema.tables names no table");
+  const functions = sc.functions === undefined ? [] : list(sc.functions, "functions");
+  for (const fn of functions) if (fn.startsWith("shell_pack_")) fail(where, `host.schema.functions: ${fn} is the shell's`);
+  const platformRead = sc.platform_read === undefined ? [] : list(sc.platform_read, "platform_read");
+  for (const t of platformRead) if (!tables.includes(t)) fail(where, `host.schema.platform_read: ${t} is not one of host.schema.tables`);
+  const adopts = {};
+  if (sc.adopts !== undefined) {
+    if (!sc.adopts || typeof sc.adopts !== "object" || Array.isArray(sc.adopts)) fail(where, "host.schema.adopts must be an object of pack migration -> shell migration");
+    else for (const [k, v] of Object.entries(sc.adopts)) {
+      if (!/^\d{4}_[a-z0-9_]+$/.test(k) || typeof v !== "string" || !/^\d{4}_[a-z0-9_]+$/.test(v)) fail(where, `host.schema.adopts.${k}: NNNN_name -> NNNN_name (file names without .sql)`);
+      else adopts[k] = v;
+    }
+  }
+  const references = {};
+  if (sc.references !== undefined) {
+    if (!sc.references || typeof sc.references !== "object" || Array.isArray(sc.references)) fail(where, "host.schema.references must be an object of shell table.column -> its table");
+    else for (const [k, v] of Object.entries(sc.references)) {
+      if (!/^[a-z][a-z0-9_]{1,62}\.[a-z][a-z0-9_]{1,62}$/.test(k) || typeof v !== "string" || !tables.includes(v)) fail(where, `host.schema.references.${k}: a shell table.column -> one of host.schema.tables`);
+      else references[k] = v;
+    }
+  }
+  return { tables, functions, adopts, platform_read: platformRead, references };
+}
 
 function loadPack(dirName) {
   const dir = path.join(PACKS_DIR, dirName);
@@ -429,12 +509,20 @@ function loadPack(dirName) {
   const entry = m.entry ?? (existsSync(path.join(dir, "index.ts")) ? "index.ts" : null);
   if (entry !== null && (typeof entry !== "string" || !/^[a-z0-9_\-/]+\.ts$/i.test(entry) || entry.includes(".."))) fail(where, "entry must be a .ts file inside the pack");
   else if (entry !== null && !existsSync(path.join(dir, entry))) fail(where, `entry ${entry} does not exist`);
+  // A host pack's schema (mold_v0-049): its tables under their own names, its functions, the migrations it adopts.
+  const schema = hostSchemaOf(m, dirName, where);
   let migrations = null;
   if (m.migrations !== undefined) {
     if (typeof m.migrations !== "string" || !/^[a-z0-9_\-/]+$/i.test(m.migrations) || m.migrations.includes("..")) fail(where, "migrations must be a directory inside the pack");
     else if (!existsSync(path.join(dir, m.migrations)) || !statSync(path.join(dir, m.migrations)).isDirectory()) fail(where, `migrations directory ${m.migrations} does not exist`);
-    else if (checkMigrations(path.join(dir, m.migrations), id, `packs/${dirName}/${m.migrations}`) === 0) fail(where, `migrations directory ${m.migrations} has no .sql files`);
+    else if (checkMigrations(path.join(dir, m.migrations), id, `packs/${dirName}/${m.migrations}`, schema) === 0) fail(where, `migrations directory ${m.migrations} has no .sql files`);
     else migrations = m.migrations;
+  }
+  if (schema) {
+    if (!migrations) fail(where, "host.schema needs the pack's migrations (pack.json migrations), which create those tables");
+    else for (const [mine, shell] of Object.entries(schema.adopts ?? {}))
+      if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.adopts names ${mine}, which is not one of its migrations`);
+      else if (!existsSync(path.join(ROOT, "sql", "migrations", `${shell}.sql`))) fail(where, `host.schema.adopts maps ${mine} to ${shell}, which is not a shell migration`);
   }
   const pages = [];
   if (m.pages !== undefined && !Array.isArray(m.pages)) fail(where, "pages must be a list");
@@ -481,7 +569,7 @@ function loadPack(dirName) {
   let host = null;
   if (m.host !== undefined) {
     const h = m.host;
-    const HOST_KEYS = new Set(["entry", "scripts", "profile"]);
+    const HOST_KEYS = new Set(["entry", "scripts", "profile", "schema"]);
     if (!h || typeof h !== "object" || Array.isArray(h)) fail(where, "host must be an object {entry, scripts?, profile?}");
     else {
       for (const k of Object.keys(h)) if (!HOST_KEYS.has(k)) fail(where, `host: unknown field ${k}`);
@@ -507,7 +595,7 @@ function loadPack(dirName) {
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
   // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
   const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
-  return { id, dir, json: m, host, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
+  return { id, dir, json: m, host, schema, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -581,9 +669,20 @@ const SHELL_TABLES = new Set(["pack_schema_migrations", "schema_migrations"]);
 for (const f of existsSync(path.join(ROOT, "sql", "migrations")) ? readdirSync(path.join(ROOT, "sql", "migrations")).filter((x) => x.endsWith(".sql")) : [])
   for (const m of readFileSync(path.join(ROOT, "sql", "migrations", f), "utf8").matchAll(/CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)/gi))
     SHELL_TABLES.add(m[1].toLowerCase());
+// The shell's own functions (its migrations define them): no host pack may declare one (mold_v0-049).
+const SHELL_FUNCTIONS = new Set();
+for (const f of existsSync(path.join(ROOT, "sql", "migrations")) ? readdirSync(path.join(ROOT, "sql", "migrations")).filter((x) => x.endsWith(".sql")) : [])
+  for (const m of readFileSync(path.join(ROOT, "sql", "migrations", f), "utf8").matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?"?([a-z_][a-z0-9_]*)/gi))
+    SHELL_FUNCTIONS.add(m[1].toLowerCase());
 for (const p of packs) {
   const clash = [...SHELL_TABLES].filter((t) => t.startsWith(`${p.id}_`));
   if (clash.length) fail(`packs/${p.id}`, `its table prefix ${p.id}_ is taken by the shell's ${clash.join(", ")}: choose another id`);
+  for (const t of p.schema?.tables ?? []) {
+    if (SHELL_TABLES.has(t)) fail(`packs/${p.id}/pack.json`, `host.schema.tables: ${t} is a shell table`);
+    for (const q of packs) if (`${t}`.startsWith(`${q.id}_`) && q !== p) fail(`packs/${p.id}/pack.json`, `host.schema.tables: ${t} is named with pack ${q.id}'s prefix`);
+    for (const q of packs) if (q !== p && q.schema?.tables.includes(t)) fail(`packs/${p.id}/pack.json`, `host.schema.tables: ${t} is also pack ${q.id}'s`);
+  }
+  for (const fn of p.schema?.functions ?? []) if (SHELL_FUNCTIONS.has(fn)) fail(`packs/${p.id}/pack.json`, `host.schema.functions: ${fn} is a shell function`);
 }
 // One pack's table prefix may not be another's (pack "a" would own "a_b_…", pack "a_b"'s tables).
 for (const a of packs) for (const b of packs) if (a !== b && `${b.id}_`.startsWith(`${a.id}_`)) fail(`packs/${b.id}`, `its id starts with pack ${a.id}'s table prefix ${a.id}_`);
@@ -926,8 +1025,10 @@ files.set(path.join(OUT, "src", "run-tools.generated.json"), json({
   tools: [...new Set(packs.flatMap((p) => (defsByPack[p.id]?.kinds ?? []).flatMap((k) => k.tools ?? [])))].sort(),
 }) + "\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
+  "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
+  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
-  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir })))};\n`);
+  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n`);
 // The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
 const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
 const hostPacks = packs.filter((p) => p.host && p.host.entry);

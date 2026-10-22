@@ -8,6 +8,7 @@ import { getProvider, providersForEnv, useCredential, useVertexCredential, VERTE
 import { adaptGeminiBody, geminiWantsThinkingLevel, toVertex, toVertexGemini, vertexAccessToken, vertexConfig, type VertexConfig } from "./vertex.js";
 import { costOf, recordModelUsage } from "./usage.js";
 import { SCENARIO_ROWS } from "./session-engine.js";
+import { sessionEngine } from "./host-tables.js";
 
 /**
  * Inference gateway + credential broker (docs/credentials.md).
@@ -96,6 +97,8 @@ export async function runGatewayUsage(runId: string) {
 
 /** Credentials for one running agent session: gateway providers get a scoped token, direct ones the real key. */
 export async function brokerSessionCredentials(sessionId: string) {
+  // The session engine's tables are a host pack's (mold_v0-049): with none in this build there is no session.
+  if (!sessionEngine()) throw Object.assign(new Error(`No session ${sessionId}`), { status: 404 });
   const db = await getDb();
   const [s] = await db.query<{ status: string; agent_id: string | null; harness: string; task_source: string | null }>(
     `/* tenant: session checked against the job token in http.ts (/sessions/:id) */ SELECT s.status, s.agent_id, s.harness, sc.source AS task_source

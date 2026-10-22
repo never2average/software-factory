@@ -21,6 +21,7 @@ import * as experiments from "./experiments.js";
 import { parsePlanConfig, PlanConfigError } from "./plan-config.js";
 import { clientCatalog } from "./connect-catalog.js";
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import * as clerk from "./clerk.js";
 import { people as directory } from "./people.js";
 import * as mail from "./email.js";
@@ -93,26 +94,33 @@ interface OrgFacts {
   onboarded_at: Date | null; onboarding_running: number; onboarding_failed: number; first_sim_at: Date | null; sims_running: number;
   first_report_at: Date | null; calls_7d: number; errors_7d: number; month_spend_usd: number;
 }
-const ORG_FACTS = `
+/**
+ * An account's facts. The onboarding, simulation and session figures read the session engine's tables, a host pack's
+ * (mold_v0-049): in a build without them each is empty (NULL or 0).
+ */
+const ORG_FACTS = () => `
   SELECT o.id, o.slug, o.name, o.created_at, o.clerk_org_id, o.stripe_customer_id, o.prepaid_allowed, o.budget_override_usd,
     (SELECT count(*) FROM api_keys k WHERE k.org_id = o.id AND k.revoked_at IS NULL) AS active_keys,
     (SELECT max(k.last_used_at) FROM api_keys k WHERE k.org_id = o.id) AS key_last_used,
     (SELECT min(e.at) FROM mcp_events e WHERE e.org_id = o.id) AS first_seen,
     (SELECT max(e.at) FROM mcp_events e WHERE e.org_id = o.id) AS last_seen,
     (SELECT min(e.at) FROM mcp_events e WHERE e.org_id = o.id AND e.method = 'tools/call' AND e.ok) AS first_call_at,
+${researchJobs() ? `
     -- Onboarded: research completed, or a product saved by hand (save_product) without research.
     least((SELECT min(r.finished_at) FROM product_research r WHERE r.org_id = o.id AND r.status = 'completed'),
           (SELECT min(p.created_at) FROM products p WHERE p.org_id = o.id
             AND NOT EXISTS (SELECT 1 FROM product_research r WHERE r.product_id = p.id))) AS onboarded_at,
     (SELECT count(*) FROM product_research r WHERE r.org_id = o.id AND r.status IN ('queued', 'running')) AS onboarding_running,
-    (SELECT count(*) FROM product_research r WHERE r.org_id = o.id AND r.status = 'failed') AS onboarding_failed,
+    (SELECT count(*) FROM product_research r WHERE r.org_id = o.id AND r.status = 'failed') AS onboarding_failed,` : `
+    NULL::timestamptz AS onboarded_at, 0 AS onboarding_running, 0 AS onboarding_failed,`}${sessionEngine() ? `
     (SELECT min(s.created_at) FROM simulations s WHERE s.org_id = o.id) AS first_sim_at,
-    (SELECT count(*) FROM simulations s WHERE s.org_id = o.id AND s.status IN ('queued', 'running')) AS sims_running,
+    (SELECT count(*) FROM simulations s WHERE s.org_id = o.id AND s.status IN ('queued', 'running')) AS sims_running,` : `
+    NULL::timestamptz AS first_sim_at, 0 AS sims_running,`}
     (SELECT min(e.at) FROM mcp_events e WHERE e.org_id = o.id AND e.name = 'get_visibility_report' AND e.ok) AS first_report_at,
     (SELECT count(*) FROM mcp_events e WHERE e.org_id = o.id AND e.method = 'tools/call' AND e.at > now() - interval '7 days') AS calls_7d,
     (SELECT count(*) FROM mcp_events e WHERE e.org_id = o.id AND NOT e.ok AND e.at > now() - interval '7 days') AS errors_7d,
-    (SELECT coalesce(sum(u.cost_usd), 0) FROM gateway_usage u JOIN agent_sessions a ON a.id = u.session_id
-      WHERE a.org_id = o.id AND a.queued_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS month_spend_usd
+    ${sessionEngine() ? `(SELECT coalesce(sum(u.cost_usd), 0) FROM gateway_usage u JOIN agent_sessions a ON a.id = u.session_id
+      WHERE a.org_id = o.id AND a.queued_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')` : "0"} AS month_spend_usd
   FROM organizations o`;
 
 // ---------- people, from Clerk ----------
@@ -249,12 +257,12 @@ async function shapeAll(rows: OrgFacts[], fresh = false) {
 }
 
 export async function listOrgs(fresh = true) {
-  const rows = await (await getDb()).query<OrgFacts>(`${ORG_FACTS} ORDER BY o.created_at DESC`);
+  const rows = await (await getDb()).query<OrgFacts>(`${ORG_FACTS()} ORDER BY o.created_at DESC`);
   return { stages: STAGES, ...(await shapeAll(rows, fresh)) };
 }
 
 async function factsBySlug(slug: string) {
-  const [f] = await (await getDb()).query<OrgFacts>(`${ORG_FACTS} WHERE o.slug = $1`, [slug]);
+  const [f] = await (await getDb()).query<OrgFacts>(`${ORG_FACTS()} WHERE o.slug = $1`, [slug]);
   if (!f) throw new AdminError(`No organization ${slug}`, 404);
   return f;
 }
@@ -315,6 +323,8 @@ export async function orgDetail(slug: string) {
   const db = await getDb();
   const people = await peopleOf(org.clerk_org_id);
   const sp = sparkSpans();
+  // The session engine's tables are a host pack's (mold_v0-049): with none, no products, research, runs or sessions.
+  const eng = sessionEngine(), none = Promise.resolve([] as Record<string, unknown>[]);
   const [keys, tools, clients, errors, products, research, sims, requests, invoices, perDay] = await Promise.all([
     db.query(`SELECT id, label, key_prefix, created_at, last_used_at, revoked_at FROM api_keys WHERE org_id = $1
                ORDER BY revoked_at IS NOT NULL, created_at DESC`, [org.id]),
@@ -323,10 +333,10 @@ export async function orgDetail(slug: string) {
     db.query(`SELECT client, count(*) AS n, max(at) AS last FROM mcp_events WHERE org_id = $1 AND client IS NOT NULL
                GROUP BY client ORDER BY max(at) DESC LIMIT 8`, [org.id]),
     db.query(`SELECT at, method, name, error FROM mcp_events WHERE org_id = $1 AND NOT ok ORDER BY at DESC LIMIT 10`, [org.id]),
-    db.query(`SELECT slug, name, website_url, created_at FROM products WHERE org_id = $1 ORDER BY created_at`, [org.id]),
-    db.query(`SELECT r.id, p.name AS product, r.status, r.stage, r.error, r.created_at, r.finished_at
+    !eng ? none : db.query(`SELECT slug, name, website_url, created_at FROM products WHERE org_id = $1 ORDER BY created_at`, [org.id]),
+    !researchJobs() ? none : db.query(`SELECT r.id, p.name AS product, r.status, r.stage, r.error, r.created_at, r.finished_at
                 FROM product_research r JOIN products p ON p.id = r.product_id WHERE r.org_id = $1 ORDER BY r.created_at DESC LIMIT 10`, [org.id]),
-    db.query(`SELECT s.id, s.name, s.status, s.created_at, s.finished_at,
+    !eng ? none : db.query(`SELECT s.id, s.name, s.status, s.created_at, s.finished_at,
                      (SELECT count(*) FROM agent_sessions a WHERE a.simulation_id = s.id) AS sessions,
                      (SELECT count(*) FROM agent_sessions a WHERE a.simulation_id = s.id AND a.status = 'completed') AS completed
                 FROM simulations s WHERE s.org_id = $1 ORDER BY s.created_at DESC LIMIT 10`, [org.id]),
@@ -338,12 +348,12 @@ export async function orgDetail(slug: string) {
       `SELECT 'calls' AS k, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) AS v FROM mcp_events
         WHERE org_id = $1 AND method = 'tools/call' AND at >= $2 GROUP BY 2
        UNION ALL
-       SELECT 'errors', to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), count(*) FROM mcp_events WHERE org_id = $1 AND NOT ok AND at >= $2 GROUP BY 2
+       SELECT 'errors', to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), count(*) FROM mcp_events WHERE org_id = $1 AND NOT ok AND at >= $2 GROUP BY 2${eng ? `
        UNION ALL
        SELECT 'sessions', to_char(queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), count(*) FROM agent_sessions WHERE org_id = $1 AND queued_at >= $2 GROUP BY 2
        UNION ALL
        SELECT 'spend', to_char(a.queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), sum(u.cost_usd) FROM gateway_usage u JOIN agent_sessions a ON a.id = u.session_id
-        WHERE a.org_id = $1 AND a.queued_at >= $3 GROUP BY 2`, [org.id, sp.last30, sp.month]),
+        WHERE a.org_id = $1 AND a.queued_at >= $3 GROUP BY 2` : ""}`, eng ? [org.id, sp.last30, sp.month] : [org.id, sp.last30]),
   ]);
   const testMode = integrations().stripe_test_mode;
   return {
@@ -371,8 +381,8 @@ export async function listRequests(status?: string) {
   return (await getDb()).query(
     `SELECT q.id, q.email, q.company, q.product_url, q.message, q.created_at, q.status, q.decided_at, o.slug AS org_slug, o.name AS org_name,
             q.name, q.role, q.team_size, q.agents, q.source, q.docs_url, q.competitors, q.goal, q.timeline, q.heard_from, q.subindustry, q.research, q.research_status, q.research_error, q.researched_at,
-            (SELECT json_build_object('id', r.id, 'status', r.status, 'stage', r.stage, 'note', r.note, 'error', r.error, 'created_at', r.created_at, 'finished_at', r.finished_at)
-               FROM product_research r WHERE r.kind = 'prospect' AND r.request_id = q.id ORDER BY r.created_at DESC LIMIT 1) AS deep
+            ${researchJobs() ? `(SELECT json_build_object('id', r.id, 'status', r.status, 'stage', r.stage, 'note', r.note, 'error', r.error, 'created_at', r.created_at, 'finished_at', r.finished_at)
+               FROM product_research r WHERE r.kind = 'prospect' AND r.request_id = q.id ORDER BY r.created_at DESC LIMIT 1)` : "NULL::json"} AS deep
        FROM access_requests q LEFT JOIN organizations o ON o.id = q.org_id
       WHERE $1::text IS NULL OR q.status = $1
       ORDER BY q.status = 'pending' DESC, q.created_at DESC LIMIT 500`, [status ?? null]);
