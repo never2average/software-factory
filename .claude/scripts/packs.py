@@ -35,6 +35,17 @@ every pack must add), `manifest_required` (pack.json fields), `supports` (a file
 directory whose per-pack folders an earlier apply may have left behind for a pack the app no longer names). A pack's
 pack.json may name its mold (`"mold_id"`), and is then refused for an app on another one.
   check <pack> [--mold <mold_id>]   the rules of that mold (default: the pack's own mold_id, else mold_v1's)
+
+DEPLOY FACTS (mold_v0-050). A mold whose rules name `deploy_facts` (a file at the codebase root: mold_v0's
+deploy-facts.json) gets, in the deploy copy build/<app_id>/ (never a lane copy) and BEFORE its generators run, what the
+factory knows from the app's state about where it is deployed: the target, the Vercel team and projects or the server
+(provider, address, domain, compose project), the database and object store providers, the secret store and every
+secret NAME (deploy_facts below). Never a value: the mold's generator refuses anything that is not a name, a place or a
+provider. The mold renders them into its data-flow and residency statement (DATA-MAP.md and the console's About page).
+The same step writes the source offer the operator chose for this machine's deployments (state/factory.json
+defaults.source_offer, usually set in state/factory.local.json: {"app": "licensor_exception"} when the factory's
+LICENSE-EXCEPTION.md permission covers the operator, or {"app": {"url", "license"}}) into the copy's profile.json, where
+the mold reads it; absent, nothing is written and the build says nothing about its own source.
 """
 import json, os, re, shutil, subprocess, sys
 
@@ -56,7 +67,7 @@ SKIP = ("__pycache__", ".pyc", ".DS_Store")
 
 def load(p): return json.load(open(p))
 
-RULE_KEYS = {"$comment", "pack_id", "allowed", "required", "manifest_required", "supports", "generators", "verify", "prune", "host_packs"}
+RULE_KEYS = {"$comment", "pack_id", "allowed", "required", "manifest_required", "supports", "generators", "verify", "prune", "host_packs", "deploy_facts"}
 def rules_for(mold_id):
     """The `packs` block of molds/<mold_id>/mold.json, checked, or None: the mold_v1 rules above (every mold without one)."""
     p = os.path.join(ROOT, "molds", str(mold_id or ""), "mold.json")
@@ -76,8 +87,69 @@ def rules_for(mold_id):
         if not (isinstance(sup, dict) and sup.get("file") and sup.get("contains")): bad.append("supports needs file and contains")
         for k in ("generators", "verify"):
             if any(not (isinstance(c, list) and c and all(isinstance(x, str) for x in c)) for c in block.get(k) or []): bad.append(f"{k} must be a list of commands (lists of words)")
+        if "deploy_facts" in block and not (isinstance(block["deploy_facts"], str) and re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._-]*\.json", block["deploy_facts"])):
+            bad.append("deploy_facts must be a .json file name at the codebase root")
     if bad: sys.exit(f"molds/{mold_id}/mold.json packs: " + "; ".join(bad))
     return dict(block, mold_id=mold_id)
+
+def deploy_facts(app_id, root=None):
+    """What the factory knows from state/application/<app_id>/ about where the app is deployed, as the mold's
+    deploy-facts.json: names, places and providers only (never a value, never a *_ref's secret). None when the app's
+    target is not one a single-service mold deploys to (vercel, compose_remote)."""
+    adir = os.path.join(root or ROOT, "state", "application", app_id)
+    rd = lambda n: (load(os.path.join(adir, n)) if os.path.isfile(os.path.join(adir, n)) else {}) or {}
+    infra, ds = rd("infrastructure.json"), rd("datastores.json")
+    target = infra.get("target")
+    if target not in ("vercel", "compose_remote"): return None
+    host_url = lambda u: u if isinstance(u, str) and re.fullmatch(r"https://[a-z0-9.-]+/?", u) else None
+    clean = lambda d: {k: v for k, v in d.items() if v not in (None, "", [], {})}
+    facts = {"$comment": "Written by the factory (.claude/scripts/packs.py deploy_facts) from the app's state: names, places and providers only, never a value. Read by scripts/gen-packs.mjs.",
+             "app_id": app_id, "target": target, "source": f"state/application/{app_id}/infrastructure.json and datastores.json"}
+    if target == "vercel":
+        v = infra.get("vercel") or {}; pr = v.get("projects") or {}
+        facts["vercel"] = clean({"team": v.get("team"), "api_project": pr.get("api"), "web_project": pr.get("web"),
+                                 "production_url": host_url(v.get("custom_domain") and f"https://{v['custom_domain']}" or v.get("production_url")), "api_url": host_url(v.get("api_url"))})
+    else:
+        cr = infra.get("compose_remote") or {}
+        facts["server"] = clean({"provider": cr.get("provider"), "host": cr.get("host"), "domain": cr.get("domain"), "compose_project": (cr.get("compose") or {}).get("project")})
+    pg = ds.get("postgres") or {}
+    facts["database"] = clean({"provider": pg.get("provider") or "unknown", "exposure": pg.get("exposure"), "resource": (infra.get("datastores") or {}).get("neon_resource")})
+    facts["object_store"] = {"provider": (ds.get("blob") or {}).get("provider") or "none"}
+    facts["secret_store"] = infra.get("secret_store") or "unknown"
+    names = lambda xs: sorted({x for x in xs or [] if isinstance(x, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,62}", x)})
+    req = names(infra.get("secrets"))
+    facts["secrets"] = {"required": req, "optional": [x for x in names(infra.get("secrets_optional")) if x not in req]}
+    return facts
+
+def _write_json(p, doc):
+    """Write doc to p when it differs; never through a hard link into the mold. -> whether it changed."""
+    text = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+    if os.path.isfile(p) and not os.path.islink(p) and open(p).read() == text: return False
+    if os.path.lexists(p): os.remove(p)
+    with open(p, "w") as fh: fh.write(text)
+    return True
+
+def _deploy_facts(build, app_id, rules):
+    """mold_v0-050: the deploy facts (rules deploy_facts) and the operator's source offer (factory defaults.source_offer,
+    into profile.json) written into a DEPLOY copy before its generators run. -> whether either file changed."""
+    name = rules.get("deploy_facts")
+    if not name or not os.path.isdir(build): return False
+    changed = False
+    p = os.path.join(build, name)
+    facts = deploy_facts(app_id)
+    if facts is None:
+        if os.path.lexists(p): os.remove(p); changed = True
+    else: changed |= _write_json(p, facts)
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+    from factory_local import load_factory
+    offer = ((load_factory(os.path.join(ROOT, "state")) or {}).get("defaults") or {}).get("source_offer")
+    pp = os.path.join(build, "profile.json")
+    doc = load(pp) if os.path.isfile(pp) else {}
+    if (doc.get("source_offer") or None) != (offer or None):
+        if offer: doc["source_offer"] = offer
+        else: doc.pop("source_offer", None)
+        changed |= _write_json(pp, doc)
+    return changed
 
 def _allowed(rules, pack_id):
     return [re.compile(p.replace("{pack}", re.escape(pack_id))) for p in rules["allowed"]]
@@ -262,8 +334,10 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
     if not packs:
         gone = _prune(build, mold_dir, rules, []) if not lane and os.path.isdir(build) else []
         if not lane and os.path.isdir(build) and _host_packs(build, rules, []): gone.append("profile.json host_packs")
-        if gone: _generate(build, rules)
-        print(f"{app_id}: no packs; nothing to apply" + (f"; {', '.join(gone)} (no longer named) taken out of its build copy and the registry regenerated" if gone else "")); return 0
+        facts = not lane and _deploy_facts(build, app_id, rules)
+        if gone or facts: _generate(build, rules)
+        print(f"{app_id}: no packs; nothing to apply" + (f"; {', '.join(gone)} (no longer named) taken out of its build copy and the registry regenerated" if gone else "")
+              + ("; the deploy facts and source offer written into its build copy and the generators run" if facts else "")); return 0
     errs = [e for p in packs for e in check_pack(p, rules=rules)]
     if not supports_packs(mold_dir, rules):
         errs.append(f"{app['mold_id']} does not discover packs ({rules['supports']['file']} with {rules['supports']['contains']!r} is not in its codebase), "
@@ -301,6 +375,7 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
         if os.path.lexists(dest): os.remove(dest)          # never write through a hard link
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
     _host_packs(build, rules, packs)
+    if not lane: _deploy_facts(build, app_id, rules)
     _generate(build, rules)
     print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)"
           + (f"; {', '.join(gone)} no longer named, taken out" if gone else "")
@@ -473,6 +548,26 @@ def rules_self_test():
                "the build copy leaves out what mold.json build_copy excludes (.env) and links the mold's node_modules")
             app(["notes"]); ok(quiet(apply, "zz") == 0 and reg() == '["notes"]' and not os.path.exists(os.path.join(b, "packs", "tasks")),
                                "a pack the app no longer names is pruned from the build copy and the registry")
+            # mold_v0-050: the deploy facts (names, places, providers) and the operator's source offer, in the deploy copy only
+            sd = os.path.join(t, "state", "application", "zz")
+            json.dump({"target": "vercel", "secret_store": "vercel_env", "secrets": ["OCTILLION_VAULT_KEY", "DATABASE_URL"], "secrets_optional": ["R2_ACCESS_KEY_ID", "DATABASE_URL", "not a name"],
+                       "vercel": {"team": "acme", "project": "zz", "projects": {"api": "zz-api", "web": "zz"}, "production_url": "https://zz.vercel.app", "api_url": "https://zz-api.vercel.app/x?y=1"},
+                       "datastores": {"neon_resource": "zz"}}, open(os.path.join(sd, "infrastructure.json"), "w"))
+            json.dump({"postgres": {"provider": "neon", "exposure": "managed_provider", "url_ref": "DATABASE_URL", "admin_url_ref": "DATABASE_URL_UNPOOLED"}, "blob": {"provider": "none"}}, open(os.path.join(sd, "datastores.json"), "w"))
+            json.dump({"defaults": {"source_offer": {"app": "licensor_exception"}}}, open(os.path.join(t, "state", "factory.json"), "w"))
+            ok(quiet(apply, "zz") == 0, "apply with deploy facts")
+            f = load(os.path.join(b, "deploy-facts.json"))
+            ok(f["target"] == "vercel" and f["vercel"] == {"team": "acme", "api_project": "zz-api", "web_project": "zz", "production_url": "https://zz.vercel.app"}
+               and f["database"] == {"provider": "neon", "exposure": "managed_provider", "resource": "zz"} and f["object_store"] == {"provider": "none"}
+               and f["secrets"] == {"required": ["DATABASE_URL", "OCTILLION_VAULT_KEY"], "optional": ["R2_ACCESS_KEY_ID"]} and f["secret_store"] == "vercel_env",
+               f"the deploy facts from state: names, places and providers (an address with a path or query left out, a non-name dropped): {f}")
+            ok(load(os.path.join(b, "profile.json")).get("source_offer") == {"app": "licensor_exception"}, "the operator's source offer (factory defaults) in the copy's profile.json")
+            json.dump({}, open(os.path.join(t, "state", "factory.json"), "w"))
+            ok(quiet(apply, "zz") == 0 and "source_offer" not in load(os.path.join(b, "profile.json")), "no default: no source_offer in the copy")
+            ok(quiet(lane_copies, "zz") == 0 and not any(os.path.exists(os.path.join(t, "build", x, "deploy-facts.json")) for x in ("zz.lane", "zz.lane-default")), "never in a lane copy")
+            infra = load(os.path.join(sd, "infrastructure.json")); infra["target"] = "vm"; json.dump(infra, open(os.path.join(sd, "infrastructure.json"), "w"))
+            ok(quiet(apply, "zz") == 0 and not os.path.exists(os.path.join(b, "deploy-facts.json")), "a target the mold does not deploy to: no facts (a stale file removed)")
+            for x in ("zz.lane", "zz.lane-default"): shutil.rmtree(os.path.join(t, "build", x))
             app([]); ok(quiet(apply, "zz") == 0 and reg() == "[]" and os.listdir(os.path.join(b, "packs")) == ["README.md"], "no packs: the last one pruned, the mold's own file kept")
             app(["notes"]); quiet(apply, "zz"); open(os.path.join(b, "packs", "notes", "stale.ts"), "w").write("dropped\n")
             ok(quiet(apply, "zz") == 0 and not os.path.exists(os.path.join(b, "packs", "notes", "stale.ts")), "a file a still-named pack dropped does not linger in the build copy")

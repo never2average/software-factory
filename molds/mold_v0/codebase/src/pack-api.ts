@@ -688,7 +688,8 @@ export const RowMapSchema = z.object({
 export const UpstreamSchema = z.object({
   repo: z.string().regex(/^(https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|file:\/\/\/[A-Za-z0-9._~/-]+)$/, "an https:// repository address (file:// only in tests)"),
   commit: z.string().regex(/^([0-9a-f]{40}|[0-9a-f]{64})$/, "a full commit id (40 or 64 hex characters): never a branch or a tag"),
-  license: z.string().max(80).optional(),
+  /** Its licence, as an SPDX id or expression ("AGPL-3.0-only", "MIT OR Apache-2.0"): shown in the build's source offer. */
+  license: z.string().regex(/^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/, "an SPDX licence id or expression (letters, digits, . + - ( ) and spaces)").optional(),
 }).strict();
 const ShellTablesSchema = z.object({ kind: z.literal("shell_tables"), $comment: comment }).strict();
 /**
