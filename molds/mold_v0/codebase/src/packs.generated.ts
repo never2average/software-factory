@@ -4,4 +4,4 @@
  * Every pack in this build, in pack order (by id): its pack.json, the definePack fields its declarations compile to
  * (mold_v0-057; null for none) and its code entry's definePack export (null for a pack.json alone). src/packs.ts merges and checks them.
  */
-export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string }; readonly declared: unknown; readonly definition: unknown }[] = [];
+export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string; upstream?: { repo: string; commit: string; license?: string } }; readonly declared: unknown; readonly definition: unknown }[] = [];
