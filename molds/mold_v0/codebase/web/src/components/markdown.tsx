@@ -59,6 +59,7 @@ const ELEMENTS: Components = {
           <span className='text-muted-foreground font-mono text-xs'>{lang || 'code'}</span>
           <CodeCopyButton className='-mr-1.5' />
         </div>
+        {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrolls sideways: reachable by keyboard (WCAG 2.1.1) */}
         <pre tabIndex={0} className='focus-visible:ring-ring/50 overflow-x-auto p-4 outline-none focus-visible:ring-[3px] focus-visible:ring-inset font-mono text-[13px] leading-relaxed [&_code]:rounded-none [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-[1em]' {...p}>{children}</pre>
       </div>
     );
@@ -67,6 +68,7 @@ const ELEMENTS: Components = {
   // A wide table scrolls inside its frame, which takes keyboard focus so it can be scrolled without a pointer (axe
   // `scrollable-region-focusable`).
   table: ({ node: _n, ...p }) => (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scrolling region must be reachable by keyboard (WCAG 2.1.1)
     <div tabIndex={0} role='region' aria-label='Table' className='focus-visible:ring-ring/50 my-6 w-full overflow-x-auto rounded-lg border outline-none focus-visible:ring-[3px]'>
       <table className='w-full border-collapse text-sm' {...p} />
     </div>
