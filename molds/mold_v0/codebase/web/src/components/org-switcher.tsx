@@ -1,6 +1,6 @@
 'use client';
 
-import { useAuth, useOrganizationList } from '@clerk/nextjs';
+import { useAuth, useOrganizationList } from '@/lib/auth';
 import { Icons } from '@/components/icons';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
