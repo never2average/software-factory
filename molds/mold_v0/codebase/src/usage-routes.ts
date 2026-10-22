@@ -28,7 +28,7 @@ export function usageAppRouter(): Router {
         names = new Map((await team(s.slug)).members.map((m) => [m.user_id, m.email ?? m.name ?? m.user_id]));
       } catch { /* the team list is unreachable: ids stand in */ }
       const label = (id: string | null, key: number | null) =>
-        id?.startsWith("schedule:") ? "Schedule" : id ? (id === s.user ? "You" : names.get(id) ?? "Former member") : key != null ? `Key ${key}` : "Workspace key";
+        id?.startsWith("schedule:") ? "Schedule" : id?.startsWith("staff:") ? "Staff" : id ? (id === s.user ? "You" : names.get(id) ?? "Former member") : key != null ? `Key ${key}` : "Workspace key";
       // Spend per person is for billing roles (owners, billing managers), as on the Usage and Billing pages: everyone
       // else sees the workspace's figures, their own spend, and no colleague's.
       const billing = canAccount(s.accountRole, "billing");

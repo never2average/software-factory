@@ -16,6 +16,12 @@ export interface Org {
   keyId?: number;
   /** The MCP client, as its User-Agent names it ("name/version"), for usage per client (mold_v0-008). */
   client?: { name: string | null; version: string | null };
+  /**
+   * Platform staff acting for this workspace through the admin MCP (an admin_only tool, mold_v0-067): their calls are
+   * written to the workspace's activity log as "staff:<pseudonym>" (src/analytics.ts staffId) and the runs they start
+   * pass the account's own launch rules (src/limits.ts checkAccountRun). Absent for every customer call.
+   */
+  staff?: string;
 }
 
 const KEY_PREFIX = "oct_";
@@ -49,21 +55,51 @@ export async function createApiKey(orgId: number, label = "default", userId: str
   return key;
 }
 
-/** Resolve an API key to its organization, or null if it is unknown or revoked. */
-export async function resolveKey(key: string | undefined | null): Promise<Org | null> {
+/**
+ * Resolve an API key to its organization, or null if it is unknown, revoked or expired. A member key (mold_v0-007,
+ * src/member-keys.ts) acts as its person with their current role in the workspace, read on every call through Clerk's
+ * 30-second membership cache (cleared on the instance that changes a membership: a removal, suspension or role change
+ * made elsewhere, in Clerk or on another instance, holds within 30 seconds), and is
+ * refused when it came in a URL (`inUrl`: the legacy /mcp/<key> path and the preview's ?key=): a member key is
+ * header-only. Older keys (the account's own, and those staff issued for a person) resolve exactly as before.
+ */
+export async function resolveKey(key: string | undefined | null, opts: { inUrl?: boolean } = {}): Promise<Org | null> {
   if (!key || !key.startsWith(KEY_PREFIX)) return null;
   const db = await getDb();
-  const [row] = await db.query<{ id: number; org_id: number; slug: string; name: string; user_id: string | null }>(
-    `SELECT k.id, k.org_id, o.slug, o.name, k.user_id
+  const [row] = await db.query<{ id: number; org_id: number; slug: string; name: string; user_id: string | null; scoped: boolean; clerk_org_id: string | null }>(
+    `SELECT k.id, k.org_id, o.slug, o.name, k.user_id, k.scoped, o.clerk_org_id
        FROM api_keys k JOIN organizations o ON o.id = k.org_id
-      WHERE k.key_hash = $1 AND k.revoked_at IS NULL`,
+      WHERE k.key_hash = $1 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > now())`,
     [sha256(key)],
   );
   if (!row) return null;
+  let role: AccountRole | undefined;
+  if (row.scoped) {
+    if (opts.inUrl || !row.user_id) return null;
+    const r = await memberRole(row.user_id, row.clerk_org_id);
+    if (!r) return null;
+    role = r;
+  }
   // Best effort; never block the request on it.
   db.query("/* tenant: the key row just resolved by its hash */ UPDATE api_keys SET last_used_at = now() WHERE id = $1", [row.id]).catch(() => {});
-  // A key issued to a person acts as that person (usage, adoption, limits); an account key has no person.
-  return { orgId: row.org_id, slug: row.slug, name: row.name, ...(row.user_id ? { userId: row.user_id } : {}), keyId: Number(row.id) };
+  // A key issued to a person acts as that person (usage, adoption, limits); an account key has no person. A member key
+  // also carries the person's role, so it can do no more than they can.
+  return { orgId: row.org_id, slug: row.slug, name: row.name, ...(row.user_id ? { userId: row.user_id } : {}), ...(role ? { role } : {}), keyId: Number(row.id) };
+}
+
+/**
+ * A person's current role in the workspace linked to Clerk organization `clerkOrgId`, or null when they are not in it
+ * (left, removed), are suspended, or it cannot be read (Clerk off or failing: a member key fails closed).
+ */
+export async function memberRole(userId: string, clerkOrgId: string | null): Promise<AccountRole | null> {
+  if (!clerkOrgId || !clerkEnabled()) return null;
+  try {
+    const m = (await memberships.forUser(userId)).find((x) => x.organization?.id === clerkOrgId);
+    return m && !isSuspended(m) ? accountRoleOf(m) : null;
+  } catch (e) {
+    console.error(`member key: the membership could not be read (${(e as Error).message}): refused`);
+    return null;
+  }
 }
 
 /** Constant-time check of the orchestrator's shared worker token (OCTILLION_WORKER_TOKEN). */

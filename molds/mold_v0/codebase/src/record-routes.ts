@@ -10,6 +10,8 @@
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
 import { assertGuarded, need } from "./admin-roles.js";
 import { customerSession, type Session } from "./app.js";
+import type { GeneratedOp } from "./mcp-catalog.js";
+import { areaOpWithheld } from "./mcp-withheld.js";
 import { PackError } from "./pack-api.js";
 import { areaOrThrow, areaSummary, deletePlatform, detailFor, getPlatform, listFor, listPlatform, putPlatform, recordAreas } from "./record-areas.js";
 
@@ -25,6 +27,10 @@ const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Req
 };
 
 /** /api/records: the console's list and detail pages for one workspace (a signed-in person of it). Read only. */
+/** An area's page or record whose generated MCP tool a pack withholds answers 404 (mold_v0-067, src/mcp-withheld.ts). */
+const open = (...ops: GeneratedOp[]) => (req: Request, res: Response, next: NextFunction) =>
+  (ops.some((op) => areaOpWithheld(String(req.params.area), op)) ? void res.status(404).json({ error: "Not found" }) : next());
+
 export function recordAppRouter(): Router {
   const r = express.Router();
   if (!recordAreas().length) return r; // no areas: nothing is mounted, nothing answers
@@ -34,11 +40,11 @@ export function recordAppRouter(): Router {
   // The person asking: an area's read permission is theirs to pass (mold_v0-057).
   const actor = (res: Response) => { const s = res.locals.session as Session; return { role: s.accountRole ?? null, userId: s.user ?? null }; };
   r.get("/areas", answer(async () => ({ areas: recordAreas().map(areaSummary) })));
-  r.get("/:area", answer(async (req, res) => {
+  r.get("/:area", open("list"), answer(async (req, res) => {
     const a = areaOrThrow(String(req.params.area));
     return { area: areaSummary(a), ...(await listFor(org(res), a.name, { limit: req.query.limit, after: req.query.after }, actor(res))) };
   }));
-  r.get("/:area/:key", answer(async (req, res) => {
+  r.get("/:area/:key", open("get"), answer(async (req, res) => {
     const d = await detailFor(org(res), String(req.params.area), String(req.params.key), actor(res));
     if (!d) throw new PackError("Not found", 404);
     return d;
@@ -57,19 +63,19 @@ export function recordAdminRouter(): Router {
     return a;
   };
   r.get("/areas", need("read"), answer(async () => ({ areas: recordAreas().map(areaSummary) })));
-  r.get("/:area", need("read"), answer(async (req) => {
+  r.get("/:area", need("read"), open("admin_list"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
     return { area: areaSummary(a), ...(await listPlatform(a, { limit: req.query.limit, after: req.query.after })) };
   }));
-  r.get("/:area/:key", need("read"), answer(async (req) => {
+  r.get("/:area/:key", need("read"), open("admin_get"), answer(async (req) => {
     const a = platformArea(String(req.params.area));
     const record = await getPlatform(a, String(req.params.key));
     if (!record) throw new PackError("Not found", 404);
     return { area: areaSummary(a), record, links: [] };
   }));
-  r.put("/:area/:key", need("library"), answer(async (req) =>
+  r.put("/:area/:key", need("library"), open("admin_create", "admin_update"), answer(async (req) =>
     ({ record: await putPlatform(null, platformArea(String(req.params.area)).name, String(req.params.key), req.body ?? {}) })));
-  r.delete("/:area/:key", need("delete"), answer(async (req) => {
+  r.delete("/:area/:key", need("delete"), open("admin_delete"), answer(async (req) => {
     if (!(await deletePlatform(null, platformArea(String(req.params.area)).name, String(req.params.key)))) throw new PackError("Not found", 404);
   }));
   assertGuarded(r, "/api/admin/records");

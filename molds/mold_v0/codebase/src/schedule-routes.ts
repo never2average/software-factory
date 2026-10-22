@@ -61,6 +61,12 @@ export function scheduleAppRouter(): Router {
   })));
   r.post("/", answer(async (req, res) => {
     may(res, "manage");
+    // A kind whose start tool its pack withholds (mold_v0-067) cannot be scheduled by the workspace either; the pack's
+    // own default schedules are its declaration and still fire.
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const { withheldTools } = await import("./mcp-withheld.js");
+    if (withheldTools().some((w) => w.op === "start" && w.door === "workspace" && w.kind === b.job_kind && (b.pack === undefined || w.pack === b.pack)))
+      throw new PackError(`no job kind ${String(b.job_kind).slice(0, 64)} to schedule`, 404);
     const out = await createSchedule(S(res).org, who(res), (req.body ?? {}) as Record<string, unknown>);
     log(who(res), "schedule.add", S(res).slug, { pack: out.pack, name: out.name, job_kind: out.job_kind, cron: out.cron });
     return out;

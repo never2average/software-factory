@@ -204,6 +204,8 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("simulations: A points its own run at B's product", "/* tenant: rls probe */ INSERT INTO simulations (org_id, product_id, name, models, harness, repeats) VALUES ($1, $2, 'x', '{x}', 'x', 1)", [a, pb]);
     await refused("org_task_sets: A attaches its own task set to B's product", "/* tenant: rls probe */ INSERT INTO org_task_sets (public_id, org_id, product_id, name) VALUES ($1, $2, $3, 'x')", [`${tag}-ts`, a, pb]);
     await refused("api_keys: A issues itself a key", "INSERT INTO api_keys (org_id, label, key_prefix, key_hash) VALUES ($1, 'x', 'oct_x', $2)", [a, `${tag}-own`]);
+    // Member keys (mold_v0-007): tenant work cannot bring a revoked or expired key back, nor widen one.
+    await refused("api_keys: A un-revokes or extends its own key", "UPDATE api_keys SET revoked_at = NULL, expires_at = NULL, scoped = false WHERE org_id = $1", [a]);
     await refused("organizations: A changes its own account", "/* tenant: rls probe */ UPDATE organizations SET name = 'x' WHERE id = $1", [a]);
     for (const t of NO_ACCESS) await refused(`${t}: readable by a tenant query`, `SELECT 1 FROM ${t} LIMIT 1`);
     // Record areas (mold_v0-047): a platform area is read-only to customers; a workspace area's rows are each workspace's own.
