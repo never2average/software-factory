@@ -920,7 +920,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   same places (`adminMcp.tools`, with `adminMcp.reword` for `get_account`'s words and `adminMcp.skills` for the two skills
   that name them); the reads and the cancel behind them are the shell's (`src/pack-host.ts`).
   `npm run test:migrations` proves it: databases at the shell's older versions (schema-on-boot, and the pre-049
-  migrations recorded up to 0001, 0003, 0008, 0013 and 0015, each with rows in every table) upgrade with every row identical;
+  migrations recorded up to 0001, 0003, 0008, 0013 and 0016, each with rows in every table) upgrade with every row identical;
   with no packs their shell schema equals a new one's and the product's tables stay with their rows; with the host pack
   every one comes out identical to a new database, which equals the earlier schema table for table, column for column,
   constraint, index, policy and grant, but for the pack's own bookkeeping and the gateway's rule through its function.
