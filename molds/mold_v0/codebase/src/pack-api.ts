@@ -461,6 +461,32 @@ export const AgentJobKindSchema = z.object({
   }
   for (const name of Object.keys(k.agent.env)) if (RESERVED_ENV.test(name))
     ctx.addIssue({ code: "custom", message: `${name} is set by the shell for every run (PATH, HOME, RUN_*, proxy and loader settings)`, path: ["agent", "env", name] });
+  // mold_v0-074: what a step or the command receives is one of the kind's credentials; git hosts are reachable.
+  const issue = (message: string, ...p: (string | number)[]) => ctx.addIssue({ code: "custom", message, path: ["agent", ...p] });
+  const own = new Set(k.credentials);
+  const onEgress = (h: string) => k.egress.some((e) => { const x = e.replace(/^\*\./, "").toLowerCase(); return h === x || h.endsWith(`.${x}`); });
+  for (const n of k.agent.credentials ?? []) if (!own.has(n)) issue(`${n} is not one of the kind's credentials`, "credentials");
+  for (const [j, g] of k.agent.git_credentials.entries()) {
+    if (!own.has(g.credential)) issue(`${g.credential} is not one of the kind's credentials`, "git_credentials", j, "credential");
+    if (!onEgress(g.host)) issue(`${g.host} is not in the kind's egress (git could not reach it)`, "git_credentials", j, "host");
+  }
+  let total = k.agent.timeout_seconds;
+  for (const [i, st] of k.agent.steps.entries()) {
+    total += st.timeout_seconds;
+    for (const n of st.credentials) if (!own.has(n)) issue(`${n} is not one of the kind's credentials`, "steps", i, "credentials");
+    for (const [j, g] of st.git_credentials.entries()) {
+      if (!own.has(g.credential)) issue(`${g.credential} is not one of the kind's credentials`, "steps", i, "git_credentials", j, "credential");
+      if (!onEgress(g.host)) issue(`${g.host} is not in the kind's egress (git could not reach it)`, "steps", i, "git_credentials", j, "host");
+    }
+    if (st.checkout?.credential && !own.has(st.checkout.credential)) issue(`${st.checkout.credential} is not one of the kind's credentials`, "steps", i, "checkout", "credential");
+    for (const h of st.checkout?.hosts ?? []) if (!onEgress(h)) issue(`${h} is not in the kind's egress`, "steps", i, "checkout", "hosts");
+  }
+  if (total > k.token_lifetime_seconds) issue(`the steps and the command may take ${total} s, longer than token_lifetime_seconds (the run's deadline)`, "steps");
+  // mold_v0-073: an input from the run's scope is one of the kind's declared arguments when it declares them.
+  if (k.args) for (const [name, inp] of Object.entries(k.agent.inputs)) {
+    const [root, key] = inp.from.split(".");
+    if (root === "scope" && !k.args.some((a) => a.name === key)) issue(`input ${name}: ${inp.from} is not one of the kind's arguments (args)`, "inputs", name, "from");
+  }
 });
 
 /**
