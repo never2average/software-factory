@@ -52,7 +52,7 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   "scheduler_marks",
   // The sandboxes launched for runs (mold_v0-055): platform bookkeeping.
   "run_sandboxes",
-  // Built-in sign-in (mold_v0-004, 0014_builtin_sign_in): people, sessions, codes and Google sign-ins in flight are the
+  // Built-in sign-in (mold_v0-004, 0015_builtin_sign_in): people, sessions, codes and Google sign-ins in flight are the
   // platform's; memberships and invitations carry org_id and are closed to tenant work as well.
   "auth_users", "auth_sessions", "auth_codes", "auth_oauth_states", "auth_memberships", "auth_invitations"];
 
@@ -170,6 +170,8 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
       // Schedules and notices (mold_v0-035): a schedule and a notice per organization.
       await tx.query("INSERT INTO workspace_schedules (org_id, pack, name, job_kind, cron, next_at) VALUES ($1, 'probe', 'probe', 'probe', '0 * * * *', now())", [o]);
       await tx.query("INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'probe', 'probe', $2, current_date)", [o, tag]);
+      // Price per run (mold_v0-019): a run's charge per organization.
+      await tx.query("INSERT INTO run_charges (run_id, org_id, kind, pack, job_kind, attempt, run_status, currency, amount_minor) VALUES ($1, $2, 'charge', 'probe', 'probe', 1, 'succeeded', 'usd', 100)", [`${tag}-run-${o}`, o]);
     }
     await tx.query("/* tenant: rls probe, one scenario per probe org */ INSERT INTO scenarios (product_id, title, prompt) VALUES ($1, $2, $2), ($3, $2, $2)", [pa, tag, pb]);
     // What A should see through each parent, counted as the platform before switching.
@@ -234,6 +236,12 @@ export async function rlsProbe(db: Db): Promise<{ problems: string[]; checked: n
     await refused("workspace_schedules: a tenant moves its own schedule on", "/* tenant: rls probe */ UPDATE workspace_schedules SET next_at = now(), seq = seq + 1");
     await refused("workspace_notices: a tenant posts a notice", "INSERT INTO workspace_notices (org_id, pack, area, record_key, due_on) VALUES ($1, 'p', 'p', 'x', current_date)", [a]);
     await refused("workspace_notices: a tenant marks a notice emailed", "/* tenant: rls probe */ UPDATE workspace_notices SET emailed_at = now()");
+    // Price per run (mold_v0-019): tenant work reads its own charges and can neither write, lower nor credit one, nor
+    // call the function that writes them.
+    await refused("run_charges: a tenant writes a charge", "INSERT INTO run_charges (run_id, org_id, kind, pack, job_kind, attempt, run_status, currency, amount_minor) VALUES ($1, $2, 'credit', 'p', 'p', 1, 'succeeded', 'usd', -100)", [`${tag}-run-${a}`, a]);
+    await refused("run_charges: a tenant lowers its own charge", "/* tenant: rls probe */ UPDATE run_charges SET amount_minor = 0");
+    await refused("run_charges: a tenant deletes its own charge", "/* tenant: rls probe */ DELETE FROM run_charges");
+    await refused("run_charges: a tenant writes a charge through the shell's function", "SELECT octillion_run_charge($1)", [`${tag}-run-${a}`]);
     // Packs' workspace tables (mold_v0-038): A cannot write a row for B (refused by the policy before any other check).
     for (const t of packTables) await refused(`${t}: A inserts a row for B`, `/* tenant: rls probe */ INSERT INTO ${t} (org_id) VALUES ($1)`, [b]);
 

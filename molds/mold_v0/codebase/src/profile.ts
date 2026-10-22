@@ -15,6 +15,8 @@
  *                      paragraph for the tools generated from the packs is added after either
  *   install_clients    optional (mold_v0-010): the clients the install pages and a member's key setup offer, by id
  *                      (src/connect-catalog.ts); absent, every client
+ *   billing            optional (mold_v0-019): price per run, off unless `enabled` is true (src/run-charges.ts); only
+ *                      the app's own profile.json sets it, never a host pack's profile
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
@@ -34,6 +36,24 @@ export interface Profile {
   mcp_server_version?: string;
   mcp_instructions?: string;
   install_clients?: readonly string[];
+  billing?: ProfileBilling;
+}
+
+/**
+ * Price per run (mold_v0-019; src/run-charges.ts, molds/mold_v0/MOLD.md "Price per run"): the app's billing rules. Off
+ * unless `enabled` is true. The rest bounds what a pack's run prices can do: the currency every price must be in
+ * (default usd), the ceilings on a run's fixed amount (major units, default 1000) and on its cost-plus percent (default
+ * 100), whether a failed or a cancelled run may be charged at all (default no: they are free whatever the pack says),
+ * and the Stripe meter event name charges go to when Stripe is configured (default run_charges).
+ */
+export interface ProfileBilling {
+  enabled: boolean;
+  currency?: string;
+  max_fixed?: number;
+  max_cost_plus_percent?: number;
+  charge_failed_runs?: boolean;
+  charge_cancelled_runs?: boolean;
+  stripe_meter?: string;
 }
 
 export const PROFILE: Readonly<Profile> = Object.freeze({ ...(GENERATED_PROFILE as Profile) });

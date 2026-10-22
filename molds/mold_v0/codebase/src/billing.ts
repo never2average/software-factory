@@ -441,6 +441,23 @@ export function reportSimulationUsage(simulationId: string): void {
   })().catch((err) => console.error(`stripe usage for run ${simulationId} failed:`, (err as Error).message));
 }
 
+// ---------- price per run (mold_v0-019; src/run-charges.ts) ----------
+
+/**
+ * One run's charge, to a billing meter: `value` in the currency's minor unit for `customer`. `identifier` is the run's
+ * own (Stripe counts a meter event with an identifier it has seen once) and is also the request's idempotency key, so
+ * a retry after a lost answer, or a second deliverer, never counts it twice. Throws a StripeError when Stripe refuses.
+ */
+export const sendRunChargeEvent = (o: { meter: string; identifier: string; customer: string; value: number }) =>
+  call<{ identifier?: string }>("POST", "/v1/billing/meter_events",
+    { event_name: o.meter, identifier: o.identifier, payload: { stripe_customer_id: o.customer, value: String(Math.trunc(o.value)) } }, o.identifier);
+
+/** A credit for a run's charge: a negative customer balance transaction, which Stripe takes off the next invoice. Once per key. */
+export const creditRunCharge = (customer: string, o: { minor: number; currency: string; description: string; runId: string; key: string }) =>
+  call<BalanceTransaction>("POST", `/v1/customers/${encodeURIComponent(customer)}/balance_transactions`, {
+    amount: -Math.abs(Math.trunc(o.minor)), currency: o.currency, description: o.description, metadata: { octillion_run_id: o.runId, octillion_kind: "run_credit" },
+  }, o.key);
+
 // ---------- credits for library contributions (src/contributions.ts) ----------
 
 export interface BalanceTransaction { id: string; amount: number; currency: string; created: number; description: string | null; metadata?: Record<string, string> }
