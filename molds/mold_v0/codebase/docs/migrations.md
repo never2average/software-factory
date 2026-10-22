@@ -27,7 +27,7 @@ nothing that is already there and adds whatever an older release had not created
 Repairs and seed rows in the baseline (zero limits, persona copies, sandbox error splits, model prices) used to re-run
 on every boot; now they run once. A repair or seed that must happen again goes in a new migration (or in code).
 `npm run test:migrations` proves it: databases built by the old schema-on-boot path and by the migrations as they were
-before mold_v0-049 (recorded up to 0001, 0003, 0008, 0013 and 0015), each with rows in every table, are migrated, and every
+before mold_v0-049 (recorded up to 0001, 0003, 0008, 0013 and 0016), each with rows in every table, are migrated, and every
 row comes out identical; their shell tables, columns, defaults, constraints, indexes, functions and policies equal a
 database built from scratch (with the host pack, every one of them does, the product's tables included); a second run
 applies nothing; an edited migration is refused. `MIGRATIONS_PG_URL` runs the same on a real Postgres (plus replicas
