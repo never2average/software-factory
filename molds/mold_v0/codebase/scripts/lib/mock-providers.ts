@@ -343,6 +343,32 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
       .setIssuedAt().setNotBefore(Math.floor(Date.now() / 1000) - 5).setExpirationTime(b.expired ? Math.floor(Date.now() / 1000) - 60 : "5m");
     res.json({ token: await t.sign(privateKey) });
   });
+  // ---------- Google, a stand-in for the built-in sign-in's tests (mold_v0-004; src/builtin-auth.ts) ----------
+  // POST /_mock/google/code {email, sub, nonce, code_challenge, email_verified?, given_name?, aud?, iss?} -> {code}: what
+  // Google's consent screen would hand back. POST /_mock/google/token (form, like Google's) checks the client, the
+  // redirect URI and the PKCE verifier against that challenge, and answers an ID token signed with the mock's key, served
+  // at GET /_mock/google/jwks. The issuer is `${base}/google` unless the test asks for another (point GOOGLE_ISSUER at it).
+  const googleCodes = new Map<string, any>();
+  app.post("/_mock/google/code", (req, res) => {
+    const code = id("gcode");
+    googleCodes.set(code, { ...(req.body ?? {}) });
+    res.json({ code });
+  });
+  app.get("/_mock/google/jwks", (_req, res) => void res.json({ keys: [jwk] }));
+  app.post("/_mock/google/token", async (req, res) => {
+    const b = req.body ?? {};
+    const c = googleCodes.get(String(b.code ?? ""));
+    googleCodes.delete(String(b.code ?? ""));
+    if (!c || b.grant_type !== "authorization_code") return void res.status(400).json({ error: "invalid_grant" });
+    if (b.client_id !== process.env.GOOGLE_CLIENT_ID || b.client_secret !== process.env.GOOGLE_CLIENT_SECRET) return void res.status(401).json({ error: "invalid_client" });
+    if (c.redirect_uri && b.redirect_uri !== c.redirect_uri) return void res.status(400).json({ error: "redirect_uri_mismatch" });
+    const { createHash } = await import("node:crypto");
+    if (!b.code_verifier || createHash("sha256").update(String(b.code_verifier)).digest("base64url") !== c.code_challenge) return void res.status(400).json({ error: "invalid_grant", error_description: "PKCE" });
+    const t = new SignJWT({ email: c.email, email_verified: c.email_verified ?? true, nonce: c.nonce, ...(c.given_name ? { given_name: c.given_name } : {}) })
+      .setProtectedHeader({ alg: "RS256", kid: "mock-1", typ: "JWT" }).setIssuer(c.iss ?? `${getBase()}/google`).setSubject(String(c.sub))
+      .setAudience(c.aud ?? String(b.client_id)).setIssuedAt().setExpirationTime(c.expired ? Math.floor(Date.now() / 1000) - 60 : "5m");
+    res.json({ id_token: await t.sign(privateKey), access_token: "ya29.mock", token_type: "Bearer", expires_in: 3599 });
+  });
   /** A Clerk OAuth access token for an MCP client: opaque oat_… (verified through the Backend API) or a JWT (typ at+jwt). */
   app.post("/_mock/oauth", async (req, res) => {
     const b = req.body ?? {};

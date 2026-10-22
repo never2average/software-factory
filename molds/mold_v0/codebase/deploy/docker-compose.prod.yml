@@ -182,8 +182,14 @@ services:
       # Reliability: retries of infrastructure-failed sessions, and how long a stopping server lets requests finish.
       OCTILLION_SESSION_INFRA_RETRIES: ${OCTILLION_SESSION_INFRA_RETRIES:-1}
       OCTILLION_DRAIN_SECONDS: ${OCTILLION_DRAIN_SECONDS:-300}
-      # Accounts (docs/accounts.md): people in Clerk, billing in Stripe, analytics in PostHog, traces in New Relic.
-      # Each is off while its key is empty; per-org API keys keep working either way.
+      # Sign-in (mold_v0-004, src/auth-provider.ts): builtin (an emailed code, and Google when its client is set) unless
+      # AUTH_PROVIDER says clerk, or it is empty and CLERK_SECRET_KEY is set (an app already on Clerk keeps Clerk).
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OCTILLION_SESSION_DAYS: ${OCTILLION_SESSION_DAYS:-}
+      # Accounts (docs/accounts.md): people in Clerk (when it is the sign-in), billing in Stripe, analytics in PostHog,
+      # traces in New Relic. Each is off while its key is empty; per-org API keys keep working either way.
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
       CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
       CLERK_JWT_KEY: ${CLERK_JWT_KEY:-}
@@ -250,6 +256,7 @@ services:
       args:
         OCTILLION_API_URL: http://octillion:3333
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
+        AUTH_PROVIDER: ${AUTH_PROVIDER:-}
         NEXT_PUBLIC_APP_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://octillion.example.com}
     init: true
     restart: unless-stopped

@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/sidebar';
 import { UserAvatarProfile } from '@/components/user-avatar-profile';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { useClerk, useUser } from '@clerk/nextjs';
+import { useClerk, useUser } from '@/lib/auth';
 import { useFilteredNavGroups } from '@/hooks/use-nav';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';

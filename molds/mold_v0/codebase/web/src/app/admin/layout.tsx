@@ -1,8 +1,8 @@
 import { AreaShell } from '@/components/layout/area-shell';
 import { adminNav } from '@/config/nav-config';
 import { serverApi } from '@/lib/server-api';
-import { auth } from '@clerk/nextjs/server';
-import { SignOutButton } from '@clerk/nextjs';
+import { protect } from '@/lib/auth/server';
+import { SignOutButton } from '@/lib/auth';
 import Link from 'next/link';
 import { AdminRoleProvider, type AdminSession } from '@/features/admin/role';
 import type { Metadata } from 'next';
@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: { default: 'Admin', template: `%s | $
 
 /** Platform staff only: the API server decides who is a platform admin and their role (src/admin-roles.ts). */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  await auth.protect();
+  await protect();
   const an = `${/^[aeiou]/i.test(profile.name) ? 'an' : 'a'} ${profile.name}`;
   const s = await serverApi<{ email: string | null; is_platform_admin: boolean } & AdminSession>('/admin/session');
   if (!s.body?.is_platform_admin) {

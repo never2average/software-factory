@@ -14,6 +14,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { NextFunction, Request, Response, Router } from "express";
 import * as clerk from "./clerk.js";
+import { people } from "./people.js";
 
 export const PLATFORM_ROLES = ["viewer", "support", "operator", "owner"] as const;
 export type PlatformRole = (typeof PLATFORM_ROLES)[number];
@@ -83,7 +84,7 @@ export function roleOfUser(u: clerk.ClerkUser): { role: PlatformRole | null; sou
   return { role: null, source: null };
 }
 export async function platformRoleFor(userId: string): Promise<{ email: string | null; role: PlatformRole | null }> {
-  const u = await clerk.users.get(userId);
+  const u = await people().users.get(userId);
   return { email: clerk.primaryEmail(u).email, role: roleOfUser(u).role };
 }
 
@@ -97,7 +98,7 @@ export interface AdminRow { id: string | null; email: string | null; name: strin
 /** Everyone with a platform role: Clerk users, plus environment entries nobody has signed in with yet. */
 export async function listAdmins(): Promise<AdminRow[]> {
   const out: AdminRow[] = [];
-  for (const u of await clerk.users.list()) {
+  for (const u of await people().users.list()) {
     const { role, source } = roleOfUser(u);
     if (!role) continue;
     const md = u.public_metadata ?? {};
@@ -120,7 +121,7 @@ export interface Changer { actor: string; userId: string | null }
 async function editable(id: string) {
   const all = await listAdmins();
   const row = all.find((a) => a.id === id);
-  const u = row ? null : await clerk.users.get(id, true).catch(() => null);
+  const u = row ? null : await people().users.get(id, true).catch(() => null);
   if (!row && !u) throw new AdminRoleError("No such person in Clerk", 404);
   if (row?.source === "environment") throw new AdminRoleError("This admin is set in the server environment (OCTILLION_PLATFORM_ADMINS). Change it there.", 409);
   return { all, row };
@@ -136,7 +137,7 @@ export async function setAdminRole(by: Changer, id: string, roleIn: unknown) {
   const { all, row } = await editable(id);
   if (row?.role === "owner" && roleIn !== "owner" && !ownersLeft(all, id))
     throw new AdminRoleError(id === by.userId ? "You are the last owner. Make someone else an owner first." : "This is the last owner. Make someone else an owner first.", 409);
-  await clerk.users.setMetadata(id, stamp(by, roleIn));
+  await people().users.setMetadata(id, stamp(by, roleIn));
   return (await listAdmins()).find((a) => a.id === id)!;
 }
 
@@ -146,7 +147,7 @@ export async function removeAdmin(by: Changer, id: string) {
   if (!row) throw new AdminRoleError("Not an admin", 404);
   if (row.role === "owner" && !ownersLeft(all, id))
     throw new AdminRoleError(id === by.userId ? "You are the last owner. Make someone else an owner first." : "This is the last owner. Make someone else an owner first.", 409);
-  await clerk.users.setMetadata(id, stamp(by, null));
+  await people().users.setMetadata(id, stamp(by, null));
 }
 
 /** Add an admin by email: an existing Clerk user gets the role; otherwise Clerk creates the user, who becomes an admin on first sign-in. */
@@ -154,8 +155,8 @@ export async function addAdmin(by: Changer, emailIn: unknown, roleIn: unknown) {
   const email = String(emailIn ?? "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AdminRoleError("Enter a valid email address");
   if (!isRole(roleIn)) throw new AdminRoleError(`role must be one of ${PLATFORM_ROLES.join(", ")}`);
-  const u = await clerk.users.byEmail(email);
+  const u = await people().users.byEmail(email);
   if (u) return { created: false, admin: await setAdminRole(by, u.id, roleIn) };
-  const made = await clerk.users.create(email, Object.fromEntries(Object.entries(stamp(by, roleIn)).filter(([, v]) => v != null)));
+  const made = await people().users.create(email, Object.fromEntries(Object.entries(stamp(by, roleIn)).filter(([, v]) => v != null)));
   return { created: true, admin: (await listAdmins()).find((a) => a.id === made.id) ?? null };
 }
