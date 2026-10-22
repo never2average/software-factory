@@ -106,7 +106,7 @@ const tables = async (db: Db) => (await db.query<{ t: string }>(
  * (a later migration may add a column; the rows' own values must not change).
  */
 async function fingerprint(db: Db, cols?: Map<string, string[]>) {
-  const out = new Map<string, { rows: number; md5: string }>();
+  const out = new Map<string, { rows: number; md5: string; texts: string[] }>();
   const have = cols ?? new Map<string, string[]>();
   if (!cols) for (const r of await db.query<{ t: string; c: string }>(
     `SELECT c.relname AS t, a.attname AS c FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
@@ -115,23 +115,34 @@ async function fingerprint(db: Db, cols?: Map<string, string[]>) {
     have.set(r.t, [...(have.get(r.t) ?? []), r.c]);
   for (const [t, cs] of have) {
     const row = `row(${cs.map((c) => `"${c}"`).join(", ")})::text`;
-    const [r] = await db.query<{ n: number; h: string | null }>(`SELECT count(*)::int AS n, md5(coalesce(string_agg(${row}, '|' ORDER BY ${row}), '')) AS h FROM "${t}"`);
-    out.set(t, { rows: Number(r!.n), md5: r!.h ?? "" });
+    const texts = (await db.query<{ r: string }>(`SELECT ${row} AS r FROM "${t}" ORDER BY 1`)).map((x) => x.r);
+    out.set(t, { rows: texts.length, md5: createHash("md5").update(texts.join("|")).digest("hex"), texts });
   }
   return { cols: have, rows: out };
 }
 const seedSql = readFileSync(path.join(PRE, "seed.sql"), "utf8");
 async function seed(db: Db) { await db.exec(seedSql); return fingerprint(db); }
-/** The rows of every table that was there before are exactly the same after (counts and contents). */
+/**
+ * Every row that was there before is there after, unchanged (over the columns its table had then): none lost, none
+ * changed. The product's tables come out exactly as they were; a shell table may also gain the seed rows a later shell
+ * migration adds (0016 seeds a vault provider), counted and shown.
+ */
 async function sameRows(db: Db, before: Awaited<ReturnType<typeof fingerprint>>, what: string) {
   const after = await fingerprint(db, before.cols);
-  let total = 0;
+  let total = 0, added = 0;
   for (const [t, b] of before.rows) {
     const a = after.rows.get(t)!;
-    assert.deepEqual(a, b, `${what}: rows of ${t} changed (${b.rows} -> ${a.rows})`);
+    if (PRODUCT_TABLES.includes(t)) assert.deepEqual({ rows: a.rows, md5: a.md5 }, { rows: b.rows, md5: b.md5 }, `${what}: rows of ${t} changed (${b.rows} -> ${a.rows})`);
+    const left = new Map<string, number>();
+    for (const x of a.texts) left.set(x, (left.get(x) ?? 0) + 1);
+    for (const x of b.texts) {
+      assert.ok((left.get(x) ?? 0) > 0, `${what}: a row of ${t} was lost or changed: ${x.slice(0, 160)}`);
+      left.set(x, left.get(x)! - 1);
+    }
+    added += a.rows - b.rows;
     total += b.rows;
   }
-  return { tables: before.rows.size, rows: total };
+  return { tables: before.rows.size, rows: total, added };
 }
 
 /**
@@ -228,7 +239,7 @@ async function suite(kind: "pglite" | "postgres") {
       console.log(`  ✓ ${kind}: running the adopted ${set.pack} migration instead would change rows of ${changed.join(", ")}; adopting it changes none`);
     }
     assert.deepEqual((await runMigrations(old)).applied, [], `${st.name}: migrating again applies nothing`);
-    console.log(`  ✓ ${kind}: ${st.name} → ${applied.applied.length} applied${adopted.length ? ` (${adopted.join(", ")})` : ""}; ${kept.rows} rows in ${kept.tables} tables identical` +
+    console.log(`  ✓ ${kind}: ${st.name} → ${applied.applied.length} applied${adopted.length ? ` (${adopted.join(", ")})` : ""}; ${kept.rows} rows in ${kept.tables} tables identical${kept.added ? ` (+${kept.added} seed row(s) a later shell migration adds)` : ""}` +
       (ownsAll ? "; schema identical to a new database" : `; shell schema identical, ${lingering.length} earlier product tables kept with their rows`));
     await old.drop();
   }
