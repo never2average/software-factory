@@ -73,14 +73,20 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
 - **Limits:** codes per address an hour (10, and 5 from one IP), code requests and Google starts per IP an hour (30),
   code checks per IP an hour (60); `limits.endpoints` in the profile or `OCTILLION_LIMIT_ENDPOINTS_*`. There is no
   lock-out on wrong tries (anyone who knows an address could use it to keep its person out); the guess rate is bounded
-  instead: at most 10 codes x 5 tries an hour against 10^8 codes. Per-IP counts use the request's address as Express
-  sees it (`trust proxy`), so they are a speed bump; the per-address counts are the guard.
+  instead: at most 10 codes x 5 tries an hour against 10^8 codes. Per-IP counts use the address the nearest proxy saw
+  (`OCTILLION_PROXY_HOPS`, the number of proxies in front: 1 behind the stack's Caddy or Vercel's edge, which the
+  factory sets; unset, 0, or 1 on Vercel), never an entry a client writes into `X-Forwarded-For`; the per-address
+  counts are the guard.
 - **Sessions:** a random 256-bit value in an httpOnly, SameSite=Lax cookie (`__Host-oct_session`, Secure, on https),
   stored as a hash (on https only the `__Host-` cookie is read), 14 days (`OCTILLION_SESSION_DAYS`, 1 to 90), checked on every request. The profile page signs out
   other devices or everywhere; removing someone from a workspace ends their sessions there and revokes their member
   keys for it.
-- **Two addresses on Vercel:** the console is its own project in front of the API, so set `OCTILLION_CONSOLE_URL` on the
-  API project to the console's address (invitation emails link to its sign-in page).
+- **Two addresses on Vercel:** the console is its own project in front of the API, so the factory sets
+  `OCTILLION_CONSOLE_URL` on the API project to the console's address after the console's deploy (and deploys the API
+  once more when it changed): sign-in codes, invitations and every other email link to its pages. On a server of its
+  own it is the domain.
+- **Email:** every message goes through the email adapter (`src/email.ts`); sign-in codes and invitations are always
+  on, other notifications only when the profile's `email.notifications` lists them.
 - **MCP clients:** no OAuth server yet under the built-in sign-in (mold_v0-013). Clients connect with a key in a
   header: a member's own key (made on the console's API keys page, `src/member-keys.ts`) or the workspace's key, as
   `Authorization: Bearer oct_…` or `X-API-Key: oct_…`. Claude's and ChatGPT's apps, which only sign in, wait for 013.

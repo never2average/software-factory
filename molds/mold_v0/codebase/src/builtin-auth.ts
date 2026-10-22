@@ -37,6 +37,7 @@ import { ACCOUNT_ROLE_LABELS, isAccountRole, type AccountRole } from "./account-
 import { PROFILE } from "./profile.js";
 import { hashed, hit, limitsFor } from "./rate-limits.js";
 import { asPlatform } from "./tenant-scope.js";
+import { consoleUrl, publicUrl } from "./console-url.js";
 
 // ---------- settings ----------
 
@@ -50,13 +51,12 @@ const sessionDays = () => {
   const d = Number(process.env.OCTILLION_SESSION_DAYS ?? "");
   return Number.isInteger(d) && d >= 1 && d <= 90 ? d : 14;
 };
-const publicUrl = () => (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/$/, "");
 /**
- * Where people open the console: OCTILLION_CONSOLE_URL, else PUBLIC_URL (one address serves both on a server). On Vercel
- * the console is its own project in front of this API, so set OCTILLION_CONSOLE_URL on the API project to the console's
- * address: invitation emails link to its sign-in page.
+ * Where people open the console (src/console-url.ts): OCTILLION_CONSOLE_URL, else PUBLIC_URL. The factory sets it on
+ * every target (mold_v0-084): on Vercel, where the console is its own project in front of this API, to the console's
+ * address, so invitation and sign-in emails link to the console's sign-in page.
  */
-export const consoleUrl = () => (process.env.OCTILLION_CONSOLE_URL || publicUrl()).replace(/\/$/, "");
+export { consoleUrl };
 /** The origin the browser is on: the forwarded host when the console proxies the request (Next.js rewrites), else this host. */
 const browserOrigin = (req: Request) => {
   const host = String(req.get("x-forwarded-host") ?? req.get("host") ?? "").split(",")[0]!.trim();
@@ -264,15 +264,9 @@ export const invitations = {
         [newId("inv_b"), o.id, e, accountRole, INVITE_DAYS]);
       return { inv: x!, org: o };
     });
+    // The words and the link are the email module's (src/email.ts invitation): the one place that sends.
     const mail = await import("./email.js");
-    void mail.sendLater({
-      kind: "invitation", to: e, idempotencyKey: `invitation:${inv.id}`, meta: { invitation: inv.id, account: org.slug },
-      subject: `You're invited to ${org.name} on ${PROFILE.name}`,
-      text: [`Hi,`, `You're invited to join ${org.name} on ${PROFILE.name} as ${ACCOUNT_ROLE_LABELS[accountRole]}.`,
-        `To accept, sign in with this address (${e}): ${consoleUrl()}/auth/sign-in?redirect_url=%2Fapp`,
-        `We'll email you a sign-in code${googleConfigured() ? ", or you can continue with Google if this address is your Google account" : ""}. If you already use ${PROFILE.name}, accept the invitation on your profile page once signed in. The invitation is good for ${INVITE_DAYS} days.`,
-        `If you weren't expecting it, ignore this email.`, `— ${PROFILE.email_sender_name}`].join("\n\n"),
-    });
+    void mail.invitation({ id: inv.id, to: e, account: org.name, accountSlug: org.slug, role: ACCOUNT_ROLE_LABELS[accountRole], google: googleConfigured(), days: INVITE_DAYS });
     return toInvitation(inv);
   }),
   list: (orgDirId: string) => P(async (db) => {
@@ -480,12 +474,7 @@ export async function requestCode(email: string, ip: string): Promise<CodeReques
   }));
   if (deliverable) {
     const mail = await import("./email.js");
-    void mail.sendLater({
-      kind: "sign_in_code", to: email, idempotencyKey: `sign-in-code:${id}`,
-      subject: `Your ${PROFILE.name} sign-in code`,
-      text: [`Your sign-in code is ${code}`, `It works once, for ${CODE_TTL_MINUTES} minutes.`,
-        `If you didn't ask to sign in to ${PROFILE.name}, ignore this email: nobody can sign in without the code.`, `— ${PROFILE.email_sender_name}`].join("\n\n"),
-    });
+    void mail.signInCode({ id, to: email, code, minutes: CODE_TTL_MINUTES });
   }
   return { ok: true };
 }

@@ -115,10 +115,12 @@ export async function startRun(orgId: number, pack: string, kind: string, input:
     "SELECT count(*)::int AS n FROM runs WHERE org_id = $1 AND status IN ('queued', 'running')", [orgId]));
   // Limits (mold_v0-018, 053; src/run-limits.ts): the workspace's live runs, the kind's month budget, the account's
   // allowance; the run's budget is the kind's, never above the platform's ceiling.
-  const { budget_usd, live_per_workspace } = await checkRunStart(orgId, pack, kind, k, n);
+  // The workspace's plan must include runs (src/entitlements.ts, mold_v0-083).
+  const { budget_usd, live_per_workspace, run_charges } = await checkRunStart(orgId, pack, kind, k, n);
   // Price per run (mold_v0-019, src/run-charges.ts): what the platform allows of the kind's price, frozen into the run
-  // (null with billing off: the run is never charged). Its charge is written when the run ends (0014_run_charges.sql).
-  const price = priceForStart({ pack, name: k.name, price: (k as { price?: unknown }).price });
+  // (null with billing off, or on a plan whose runs are included: the run is never charged). Its charge is written when
+  // the run ends (0014_run_charges.sql).
+  const price = run_charges === "included" ? null : priceForStart({ pack, name: k.name, price: (k as { price?: unknown }).price });
   const id = `run_${randomBytes(12).toString("base64url")}`;
   // The tenant role may only read runs: the row is written by the platform, with the workspace the caller is scoped to.
   // The live cap is counted again with the insert, under a lock per workspace, so concurrent starts (a scheduler's
@@ -594,7 +596,16 @@ const withHook = (r: RunRow | null) => !!r?.spec?.workspace && (typeof packs().f
 
 /** End the current attempt (the lease holder only). Returns the run as it now stands. */
 export async function completeRun(runId: string, leaseToken: string, c: Completion): Promise<RunView> {
-  return complete(runId, leaseToken, c);
+  const run = await complete(runId, leaseToken, c);
+  // A run that ended counts against the account's month (mold_v0-053): the usage alert at 80% and 100% of its allowance
+  // goes through the email adapter (src/email.ts checkBudget: once a month per threshold, only when the profile turns
+  // usage notifications on), after the run's own writes and never in their way.
+  if (["succeeded", "failed", "cancelled"].includes(run.status))
+    void (async () => {
+      const [r] = await asPlatform(async () => (await getDb()).query<{ org_id: number }>("/* tenant: the ended run's own workspace, by id */ SELECT org_id FROM runs WHERE id = $1", [runId]));
+      if (r) (await import("./email.js")).checkBudgetLater(Number(r.org_id));
+    })().catch((e) => console.error("usage alert:", (e as Error).message));
+  return run;
 }
 
 /** The start of a run's error when the shell's index of its workspace files refused the commit (mold_v0-059). */

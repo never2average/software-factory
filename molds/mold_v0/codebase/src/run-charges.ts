@@ -244,9 +244,23 @@ export async function deliverCharges(opts: { runId?: string; limit?: number } = 
       const msg = String((e as Error)?.message ?? e).slice(0, 500);
       await wait(Number(r.delivery_attempts) >= MAX_DELIVERY_ATTEMPTS ? `${msg} (gave up after ${MAX_DELIVERY_ATTEMPTS} tries: credit or resend it by hand)` : msg).catch(() => {});
       console.error(`run charges: ${r.kind} for ${r.run_id} not delivered${Number(r.delivery_attempts) >= MAX_DELIVERY_ATTEMPTS ? " (giving up)" : " (retried later)"}: ${msg}`);
+      // Given up: a billing notice to the operator, through the email adapter (src/email.ts billingNotice: once per
+      // charge, only when the profile turns billing notices on), never in the way of the next row.
+      if (Number(r.delivery_attempts) >= MAX_DELIVERY_ATTEMPTS) void billingNoticeFor(r, msg);
     }
   }
   return out;
+}
+
+/** The operator's notice for a charge that was given up on: the run, the workspace's slug, the amount; never a customer id. */
+async function billingNoticeFor(r: { id: string | number; run_id: string; kind: "charge" | "credit"; org_id: number; amount_minor: string | number; currency: string; delivery_attempts: number }, error: string) {
+  try {
+    const [o] = await asPlatform(async () => (await getDb()).query<{ slug: string }>("SELECT slug FROM organizations WHERE id = $1", [r.org_id]));
+    const exp = exponentOf(r.currency);
+    const { billingNotice } = await import("./email.js");
+    await billingNotice({ charge_id: String(r.id), run_id: r.run_id, kind: r.kind, account: o?.slug ?? null,
+      amount: `${(Number(r.amount_minor) / 10 ** exp).toFixed(exp)} ${r.currency.toUpperCase()}`, tries: Number(r.delivery_attempts), error });
+  } catch (e) { console.error(`run charges: the billing notice for ${r.run_id} was not sent: ${(e as Error).message}`); }
 }
 
 let timer: NodeJS.Timeout | null = null;

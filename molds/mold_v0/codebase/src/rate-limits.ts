@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { getDb } from "./db.js";
 import { PROFILE } from "./profile.js";
 import { asPlatform } from "./tenant-scope.js";
+import { entitlementsProfile, resolvePlan } from "./entitlements.js";
 
 export interface McpLimits {
   per_key_per_minute: number; per_member_per_minute: number; per_workspace_per_minute: number; per_ip_per_minute: number;
@@ -69,20 +70,27 @@ export function limitsFor(plan: string | null = null, profile: ProfileLimits | u
   return out as unknown as Limits;
 }
 
-/** A workspace's plan name, for its limits: read at most once a minute per workspace; none when it cannot be read. */
+/**
+ * A workspace's plan name, for its limits and its entitlements (src/entitlements.ts): its live subscription's plan, or,
+ * when the profile declares entitlements, that plan only if declared there and else the profile's `without_plan`. Read
+ * at most once a minute per workspace; a subscription that cannot be read is no plan.
+ */
 const planCache = new Map<number, { at: number; plan: Promise<string | null> }>();
 export function planOf(orgId: number): Promise<string | null> {
-  if (!(PROFILE as { limits?: ProfileLimits }).limits?.plans) return Promise.resolve(null); // no per-plan limits: never look
+  const ent = entitlementsProfile();
+  if (!(PROFILE as { limits?: ProfileLimits }).limits?.plans && !ent) return Promise.resolve(null); // no per-plan rules: never look
   const hit = planCache.get(orgId);
   if (hit && Date.now() - hit.at < 60_000) return hit.plan;
   const plan = asPlatform(async () => {
     const { orgBudget } = await import("./billing.js");
     const b = await orgBudget(orgId);
     return b.subscription && ["active", "trialing"].includes(b.subscription.status) ? b.subscription.plan ?? null : null;
-  }).catch(() => null);
+  }).catch(() => null).then((p) => resolvePlan(p, ent));
   planCache.set(orgId, { at: Date.now(), plan });
   return plan;
 }
+/** Forget every workspace's cached plan (a plan change, or a test's new rules). */
+export const forgetPlans = () => planCache.clear();
 
 export const hashed = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 24);
 

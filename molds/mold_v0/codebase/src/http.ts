@@ -4,6 +4,7 @@ import path from "node:path";
 import { platformAnalytics, platformErrors } from "./insights.js";
 import * as telemetry from "./telemetry.js";
 import * as mail from "./email.js";
+import { proxyHops } from "./proxy-trust.js";
 import { appRouter } from "./app.js";
 import { packAdminRouter, packAppRouter } from "./pack-routes.js";
 import { recordAdminRouter, recordAppRouter } from "./record-routes.js";
@@ -89,7 +90,9 @@ let draining = false;
 
 export function createApp() {
   const app = express();
-  app.set("trust proxy", true);
+  // The client's address behind the real number of proxies (src/proxy-trust.ts, mold_v0-084): never the leftmost
+  // X-Forwarded-For entry, which any client writes.
+  app.set("trust proxy", proxyHops());
   app.disable("x-powered-by");
   // Origin first (src/origin.ts, DNS-rebinding protection): a browser page from a foreign origin gets a 403 on every MCP
   // endpoint, the admin MCP included, before any credential is looked at and before any database read.
