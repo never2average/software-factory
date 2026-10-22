@@ -1,7 +1,10 @@
-# Octillion production stack, self-hosted: Postgres + ClickHouse + server + Caddy (TLS).
+# Octillion production stack, self-hosted: Postgres + ClickHouse + server + web console + Caddy (TLS).
 #   cd deploy && ./bootstrap.sh            # generates .env with strong secrets (once)
+#   (add CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to .env: the console's sign-in needs both)
 #   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
-# Only Caddy publishes ports (80/443). Postgres (and the optional local ClickHouse) are reachable inside the
+# Only Caddy publishes ports (80/443). It sends the API's own paths (MCP, /api, the gateway, ...) straight to the
+# `octillion` service and every other request to the `console` service (Caddyfile), which reaches the API for
+# anything that is not one of its pages through its fallback rewrite. Postgres (and the optional local ClickHouse) are reachable inside the
 # compose network only. Transcripts go to ClickHouse Cloud when CLICKHOUSE_URL is set; for a local ClickHouse
 # instead, leave it unset and add --profile local-clickhouse.
 
@@ -235,15 +238,41 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [default, runs]
 
+  # The web console (web/, a server-rendered Next.js app; mold_v0-020): its own image (web/Dockerfile, Next.js standalone
+  # output), no published port, Caddy in front. It holds the API's address and its two sign-in names, nothing else of
+  # the API's: never the database, the vault key or a minted token. Its build arguments are public values only.
+  console:
+    logging: *logging
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        OCTILLION_API_URL: http://octillion:3333
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
+        NEXT_PUBLIC_APP_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://octillion.example.com}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    depends_on:
+      octillion: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      OCTILLION_API_URL: http://octillion:3333
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    expose: ["3400"]
+
   caddy:
     logging: *logging
     image: docker.io/caddy:2
     restart: unless-stopped
-    depends_on: [octillion]
+    depends_on: [octillion, console]
     environment:
       DOMAIN: ${DOMAIN:-localhost}
-    # Caddyfile: every replica of `octillion` is an upstream (re-resolved each second), with retries on refused
-    # connections, so a rolling deploy never drops a request.
+    # Caddyfile: every replica of `octillion` (the API's paths) and of `console` (everything else) is an upstream,
+    # re-resolved each second, with retries on refused connections, so a rolling deploy never drops a request.
     command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:
       - "${HTTP_PORT:-80}:80"

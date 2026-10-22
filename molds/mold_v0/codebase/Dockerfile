@@ -1,12 +1,6 @@
-# Octillion server: landing page, MCP endpoint, orchestrator worker API, admin panel and customer portal.
-# The admin panel and portal (web/, Next.js) build to static files the server serves.
-FROM node:22-slim AS web
-WORKDIR /web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
-COPY web ./
-RUN npm run build
-
+# Octillion server: landing page, MCP endpoint, orchestrator worker API.
+# The admin panel and portal (web/, a server-rendered Next.js app) are their own image, web/Dockerfile, and their own
+# service in deploy/docker-compose.prod.yml behind the same Caddy (mold_v0-020); nothing of web/ is in this image.
 FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3333
@@ -19,7 +13,6 @@ COPY scripts ./scripts
 # Packs (mold_v0-038): their code is imported through src/packs.generated.ts, their migrations read at start.
 COPY packs ./packs
 COPY public ./public
-COPY --from=web /web/out ./web/out
 COPY harnesses ./harnesses
 # Orchestrator sources (no node_modules, no Pi clone, no tests): the autoscaler (src/autoscaler.ts) imports
 # orchestrator/deploy/boat-lib.ts, and tars these same files for orchestrator sandboxes / the snapshot image.

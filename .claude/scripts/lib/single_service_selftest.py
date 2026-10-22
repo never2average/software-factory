@@ -57,18 +57,41 @@ put PUBLIC_URL "${PUBLIC_URL:-https://${DOMAIN:-localhost}}"
 echo "ready"
 """
 DOCKERFILE = "FROM node:22-slim\nCOPY package.json package-lock.json ./\nCOPY --from=web /x ./y\nCOPY src ./src\nHEALTHCHECK CMD true\nUSER node\n"
+# mold_v0-020: the web console as a service of its own, built from the codebase root with a Dockerfile of its own.
+CONSOLE_SERVICE = """  web:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        SHOP_API_URL: http://app:3333
+        NEXT_PUBLIC_PAY_KEY: ${PAY_PUBLISHABLE_KEY:-}
+    depends_on:
+      app: { condition: service_healthy }
+    environment:
+      SHOP_API_URL: http://app:3333
+      PAY_SECRET_KEY: ${PAY_SECRET_KEY:-}
+    expose: ["3400"]
+"""
+CONSOLE_DOCKERFILE = "FROM node:22-slim AS build\nCOPY web/package.json web/package-lock.json ./\nCOPY web ./\nRUN true\nFROM node:22-slim\nCOPY --from=build /a ./\nUSER node\nHEALTHCHECK CMD true\n"
 
-def fixture_mold(t, lockfile=True):
-    """A one-service mold in a temp factory root: mold.json, a compose file, a Dockerfile, the mold's bootstrap."""
+def fixture_mold(t, lockfile=True, console=False):
+    """A one-service mold in a temp factory root: mold.json, a compose file, a Dockerfile, the mold's bootstrap. With
+    console=True the stack also builds its web console (mold_v0-020): service `web` from web/Dockerfile; without it the
+    mold names no console (mold.json compose.console removed), the shape before mold_v0-020."""
     cb = os.path.join(t, "molds", "mold_vx", "codebase")
     os.makedirs(os.path.join(cb, "deploy")); os.makedirs(os.path.join(cb, "src"))
-    open(os.path.join(cb, "deploy", "docker-compose.prod.yml"), "w").write(COMPOSE)
+    open(os.path.join(cb, "deploy", "docker-compose.prod.yml"), "w").write(COMPOSE.replace("  caddy:\n", CONSOLE_SERVICE + "  caddy:\n") if console else COMPOSE)
+    if console:
+        os.makedirs(os.path.join(cb, "web"), exist_ok=True); open(os.path.join(cb, "web", "Dockerfile"), "w").write(CONSOLE_DOCKERFILE)
+        open(os.path.join(cb, "web", "package.json"), "w").write("{}\n"); open(os.path.join(cb, "web", "package-lock.json"), "w").write("{}\n")
     open(os.path.join(cb, "deploy", "bootstrap.sh"), "w").write(BOOT)
     open(os.path.join(cb, "Dockerfile"), "w").write(DOCKERFILE)
     open(os.path.join(cb, "package.json"), "w").write("{}\n")
     if lockfile: open(os.path.join(cb, "package-lock.json"), "w").write("{}\n")
     man = json.load(open(os.path.join(ROOT, "molds", "mold_v0", "mold.json"))); man["mold_id"] = "mold_vx"
     man.pop("source", None)    # mold_v0 is in-tree (mold_v0-040); this fixture stands for a mold with a source of its own
+    if console: man["compose"]["console"] = {"service": "web", "pages": ["/admin", "/app"], "operator_env": {"PAY_PUBLISHABLE_KEY": "required", "PAY_SECRET_KEY": "required"}}
+    else: man["compose"].pop("console", None)
     json.dump(man, open(os.path.join(t, "molds", "mold_vx", "mold.json"), "w"))
     os.makedirs(os.path.join(t, "state"))
     json.dump({"molds": [{"mold_id": "mold_vx", "source": {"commit": "c" * 40}}]}, open(os.path.join(t, "state", "factory.json"), "w"))
@@ -212,7 +235,26 @@ def run():
     ok(SS.bootstrap_names(BOOT) == ["APP_VAULT_KEY", "DOMAIN", "POSTGRES_PASSWORD", "PUBLIC_URL"], "the names a bootstrap script puts")
     ok(SS.dockerfile_sources(DOCKERFILE) == ["package.json", "package-lock.json", "src"], f"build-context sources: {SS.dockerfile_sources(DOCKERFILE)}")
     real = SS.compose_facts(SS.codebase("mold_v0"), SS.manifest("mold_v0"))
-    ok(real["service"] and real["default_project"] and real["port"] and real["healthcheck"], "mold_v0's snapshot: one built service, a default project, a port, a HEALTHCHECK")
+    ok(real["service"] and real["default_project"] and real["port"] and real["healthcheck"], "mold_v0's snapshot: one built API service, a default project, a port, a HEALTHCHECK")
+    # mold_v0-020: the console is the stack's second built service, its own image, behind Caddy, holding no secret at build
+    RK = real.get("console") or {}
+    ok(RK.get("service") == "console" and RK.get("dockerfile") == "web/Dockerfile" and RK.get("present") and RK.get("healthcheck") and RK.get("port")
+       and RK.get("pages") == ["/admin", "/app"] and SS.built_services(real) == [real["service"], "console"],
+       f"mold_v0's stack builds its web console as a service of its own (web/Dockerfile, a HEALTHCHECK, a port, read after a deploy): {RK}")
+    ok("console" not in real["publishers"], f"the console publishes no port (Caddy alone does): {real['publishers']}")
+    ok(RK.get("required") == ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"] and SS.secret_names(real, "compose_remote")[0] == RK["required"]
+       and not set(RK["required"]) & set(SS.secret_names(real, "compose_remote")[2]), f"on its own server the console's sign-in names are the operator's to give: {SS.secret_names(real, 'compose_remote')[0]}")
+    ctext = open(os.path.join(SS.codebase("mold_v0"), real["file"])).read(); args = []
+    for blk in re.findall(r"(?m)^      args:\n((?:        .+\n)+)", ctext): args += re.findall(r"^\s+([A-Z0-9_]+):\s*(.*)$", blk, re.M)
+    ok(args and all(not SS.CRED.search(re.sub(r"PUBLISHABLE_KEY", "", v)) for _, v in args) and all("PASSWORD" not in v and "SECRET" not in v and "VAULT" not in v for _, v in args),
+       f"no build argument in mold_v0's compose file carries a secret (Next.js writes build arguments into the image): {args}")
+    wdf = open(os.path.join(SS.codebase("mold_v0"), "web", "Dockerfile")).read()
+    ok(re.search(r"(?m)^USER node$", wdf) and "CLERK_SECRET_KEY" not in re.sub(r"(?m)^#.*$", "", wdf) and "--from=web" not in open(os.path.join(SS.codebase("mold_v0"), "Dockerfile")).read(),
+       "the console's image runs as node, never sees the sign-in secret at build, and the API's image no longer copies a static export that is never built")
+    caddy = open(os.path.join(SS.codebase("mold_v0"), "deploy", "Caddyfile")).read()
+    api_paths = (re.search(r"(?m)^\s*@api path (.+)$", caddy) or [None, ""])[1].split()
+    ok({"/mcp", "/mcp/*", "/api/*", "/gw/*", "/.well-known/*"} <= set(api_paths) and "/healthz" not in api_paths and "name console" in caddy and "name octillion" in caddy,
+       f"Caddy sends the API's own paths (MCP, /api, the gateway's streams) to the API and everything else, /healthz included, through the console: {api_paths}")
     ok(not [x for x in real["required"] if x not in real["config"] and x not in real["minted"]], "every name mold_v0's compose file requires is written from state or minted by its bootstrap")
     ok(real["publishers"] == ["caddy"] or len(real["publishers"]) == 1, f"one service publishes ports in mold_v0's stack: {real['publishers']}")
     t = tempfile.mkdtemp(prefix="single-selftest-"); home_was = os.environ.get("HOME"); priv_was = os.environ.get("FACTORY_PRIVATE_DIR")
@@ -246,7 +288,9 @@ def run():
             errs, _ = factory._app_errors("zz_shape", d)
             ok(errs == [], f"intake's shape for target {target} validates: {errs[:3]}")
         a0, i0, d0, _ = SS.shape_state("zz_shape", "mold_v0", "compose_remote", prod, mold, {"domain": "shape.example.org"}, {}, "b")
-        ok(i0["compose_remote"]["compose"]["project"] == "sf-zz-shape" and i0["secrets_user"] == [] and d0["postgres"]["exposure"] == "compose_network", "compose_remote state: own project, no operator values, database on the compose network")
+        ok(i0["compose_remote"]["compose"]["project"] == "sf-zz-shape" and i0["secrets_user"] == ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"]
+           and not {"CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"} & set(i0["secrets_optional"]) and i0["compose_remote"]["compose"].get("console") == "console"
+           and d0["postgres"]["exposure"] == "compose_network", f"compose_remote state: own project, the console's two sign-in names the only operator values, database on the compose network: {i0['secrets_user']}")
         docs = {"application": a0, "infrastructure": i0, "datastores": d0}
         bad = lambda f: SS.problems("zz_shape", f(json.loads(json.dumps(docs))))
         def proj(x): x["infrastructure"]["compose_remote"]["compose"]["project"] = "another-stack"; return x
@@ -325,6 +369,62 @@ def run():
         ok("THE SITE IS DOWN" in stop(runner=Runner(dict(R.answers, up=(1, "UP=failed\nROLLBACK_FAILED=20261019T000000Z\n")))), "an up whose switch back failed says the site is down")
         waits = []
         ok("does not serve" in stop(read_public=lambda u: ("502", None, "bad gateway"), wait=waits.append) and waits, "a public 502 (after waiting for the certificate) stops with the rollback command")
+        # --- 7a. the web console as a service of the stack (mold_v0-020) -------------------------------------------------
+        try:
+            tc = os.path.join(t, "with-console"); cbc = fixture_mold(tc, console=True); manc = SS.manifest("mold_vx", tc); FC = SS.compose_facts(cbc, manc)
+            KC = FC["console"]
+            ok(FC["service"] == "app" and KC["service"] == "web" and KC["dockerfile"] == "web/Dockerfile" and KC["port"] == "3400" and KC["healthcheck"]
+               and SS.built_services(FC) == ["app", "web"] and FC["publishers"] == ["caddy"], f"a stack with a console: the API is still the service, the console is the second built one: {FC['service']} {KC}")
+            ok(SS.parse_compose(open(os.path.join(cbc, FC["file"])).read())["services"]["app"]["dockerfile"] == "Dockerfile", "an inline build's Dockerfile is read")
+            ok({"web/Dockerfile", "web/package.json", "web/package-lock.json", "web"} <= set(FC["dockerfile_sources"]), f"the console's build inputs are checked before contact too: {FC['dockerfile_sources']}")
+            os.remove(os.path.join(cbc, "web", "Dockerfile"))
+            FC2 = SS.compose_facts(cbc, manc); SC0 = dict(SS.settings("zz_shop", app, dict(infra, secrets_user=["PAY_PUBLISHABLE_KEY", "PAY_SECRET_KEY"]), tc))
+            ok(any("web/Dockerfile" in p_ for p_ in SS.preflight(cbc, FC2, SC0)), f"a console Dockerfile the snapshot lacks stops the deploy before contact: {SS.preflight(cbc, FC2, SC0)}")
+            open(os.path.join(cbc, "web", "Dockerfile"), "w").write(CONSOLE_DOCKERFILE)
+            u, d, o = SS.secret_names(FC, "compose_remote")
+            ok(u == ["PAY_PUBLISHABLE_KEY", "PAY_SECRET_KEY"] and "PAY_SECRET_KEY" not in o, f"the console's sign-in names are the operator's to give on its own server: {u} {o}")
+            ok(SS.preflight(cbc, FC, SC0) == [], f"state listing them passes preflight: {SS.preflight(cbc, FC, SC0)}")
+            why = SS.preflight(cbc, FC, dict(SC0, secrets_user=[]))
+            ok(why and "PAY_PUBLISHABLE_KEY" in why[0] and "secrets_user" in why[0], f"state that does not list them is refused before contact, saying what to add: {why}")
+            ok(SS.preflight(cb, F, S) == [], "a mold with no console asks for no sign-in names (the shape before mold_v0-020)")
+            try: SS.compose_facts(cbc, dict(manc, compose=dict(manc["compose"], console={"service": "nope"}))); bad_c = ""
+            except SS.Stop as e_: bad_c = str(e_)
+            ok("nope" in bad_c, f"a console mold.json names but the compose file does not build is refused: {bad_c}")
+            # the generated scripts: both services built one at a time, both judged on the server
+            BC = SS.bundle(SC0, FC)
+            ok("for s in app web; do dc build" in BC["up.sh"][0] and BC["up.sh"][0].count("upw") == 4, "up.sh builds the API, then the console, one at a time, then brings the stack up (every path)")
+            ok("CONSOLE_STATE=" in BC["health.sh"][0] and "dc ps -q web" in BC["health.sh"][0] and "APP_STATE=" in BC["health.sh"][0], "health.sh reads the console's container as it reads the API's")
+            ok("APP_STATE" not in "".join(l for l in B["health.sh"][0].splitlines() if "CONSOLE" in l) and "CONSOLE_STATE" not in B["health.sh"][0], "a stack without a console reads no console")
+            outc = os.path.join(t, "bundle-console"); SS.write_bundle(SC0, FC, outc); ok(SS.rehearse(outc) == [], f"the console bundle rehearses clean: {SS.rehearse(outc)}")
+            HC = HEALTHY + "CONSOLE_STATE=healthy\nCONSOLE_UID=1000\n"; kvc = VR.parse_kv(HC)
+            pages_ok = {"/admin": ("307", ""), "/app": ("307", "")}
+            ok(SS.health_verdict(FC, kvc, pub, pages_ok) == [], f"both containers healthy, not root; /healthz through the console; pages redirect to sign-in: {SS.health_verdict(FC, kvc, pub, pages_ok)}")
+            ok(any("web container runs as root" in x for x in SS.health_verdict(FC, dict(kvc, CONSOLE_UID="0"), pub, pages_ok)), "a console running as root fails health")
+            ok(any("web container is unhealthy" in x for x in SS.health_verdict(FC, dict(kvc, CONSOLE_STATE="unhealthy"), pub, pages_ok)), "an unhealthy console fails health")
+            ok(any("web container is absent" in x for x in SS.health_verdict(FC, {k: v for k, v in kvc.items() if not k.startswith("CONSOLE")}, pub, pages_ok)), "a console that is not there fails health")
+            ok(any("/admin answered HTTP 500" in x for x in SS.health_verdict(FC, kvc, pub, dict(pages_ok, **{"/admin": ("500", "")}))), "a console page answering 500 fails health")
+            ok(any("/app answered nothing" in x for x in SS.health_verdict(FC, kvc, pub, dict(pages_ok, **{"/app": ("", "nothing answered")}))), "a console page answering nothing fails health")
+            ok(any("console does not reach the API" in x for x in SS.health_verdict(FC, kvc, ("502", None, "bad gateway"), pages_ok)), "/healthz failing through the console says the console does not reach the API")
+            ok(any("web container runs as root" in x for x in SS.health_verdict(FC, dict(kvc, CONSOLE_UID="0"), pub, pages_ok)) and not SS.health_verdict(F, kv, pub), "the console's checks apply only to a stack with a console")
+            # a whole deploy: the pages are read from outside, without following a redirect, and recorded
+            os.makedirs(os.path.join(tc, "home", ".ssh"), exist_ok=True)
+            RC = Runner(dict(R.answers, health=(0, HC))); seen_pages = []
+            resc = SS.deploy(SC0, FC, cbc, runner=RC, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                             read_page=lambda u: seen_pages.append(u) or ("307", ""), say=lambda s_: None, release="20261020T000020Z", wait=lambda s_: None)
+            ok(seen_pages == ["https://shop.example.org/admin", "https://shop.example.org/app"] and resc["health"]["pages"] == {"/admin": "307", "/app": "307"}
+               and resc["health"]["console"] == "healthy" and resc["health"]["console_uid"] == "1000", f"the deploy reads the console's pages and records them: {seen_pages} {resc['health']}")
+            RC2 = Runner(dict(R.answers, health=(0, HC), back=(0, "ROLLED_BACK=20261019T000000Z\nSERVING=20261019T000000Z\n")))
+            try:
+                SS.deploy(SC0, FC, cbc, runner=RC2, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                          read_page=lambda u: ("502", "") if u.endswith("/admin") else ("307", ""), say=lambda s_: None, release="20261020T000021Z", wait=lambda s_: None); msg = ""
+            except SS.Stop as e_: msg = str(e_)
+            ok("/admin answered HTTP 502" in msg and "switched back by itself" in msg and [c[0] for c in RC2.calls][-1] == "back",
+               f"a console page that fails: the server goes back to the release before, by itself: {msg[:200]}")
+            # the record fits the schema (validate's own reading)
+            ix = {"target": "compose_remote", "compose_remote": {"health": resc["health"]}}
+            sch = json.load(open(os.path.join(ROOT, "state", "application", "app_id", "infrastructure.schema.json")))["properties"]["compose_remote"]["properties"]["health"]["properties"]
+            ok(set(resc["health"]) <= set(sch), f"every health field the deploy writes is in the schema: {sorted(set(resc['health']) - set(sch))}")
+        except BaseException as e_: ok(False, f"the console as a service: crashed: {type(e_).__name__}: {e_}"[:400])
         # --- 7b. row-level security on the deployed database (mold_v0-051) ---------------------------------------------
         real_spec = SS.rls_spec(SS.codebase("mold_v0"), SS.manifest("mold_v0"))
         ok(real_spec and real_spec["script"] == "check:rls" and real_spec["mode"] == "fail_closed", f"mold_v0 declares the product's own RLS check, and its package.json has it: {real_spec}")
@@ -803,6 +903,16 @@ def run():
             os.remove(os.path.join(inst, "previous"))
             rc, kv, cur, prev = upr("--back")
             ok(rc == 0 and kv.get("NOTHING") and cur == "20261002T000000Z", f"--back with nowhere to go says so and changes nothing ({kv})")
+            # with a console (mold_v0-020): each image built on its own, the API's first, before the stack comes up
+            try:
+                FCu = SS.compose_facts(fixture_mold(os.path.join(t, "upc"), console=True), SS.manifest("mold_vx", os.path.join(t, "upc")))
+                upc = os.path.join(t, "upc.sh"); open(upc, "w").write(SS.up_sh(SU, FCu)); dlog = os.path.join(t, "docker.log")
+                for f in os.listdir(stubs): os.remove(os.path.join(stubs, f))
+                stub("docker", f'echo "$*" >> {dlog}; exit 0')
+                r = subprocess.run(["bash", upc, "20261003T000000Z"], env={"PATH": stubs + ":/usr/bin:/bin", "SF_REMOTE_DEPLOY": SU["app_id"]}, capture_output=True, text=True)
+                calls_ = [" ".join(l.split()[l.split().index("compose") + 7:]) if "compose" in l else l for l in open(dlog).read().splitlines()]
+                ok(r.returncode == 0 and [c_.split(" --")[0] for c_ in calls_] == ["build app", "build web", "up -d"], f"up.sh with a console: build app, build web, then up: {calls_} {r.stderr[-200:]}")
+            except BaseException as e_: ok(False, f"up.sh with a console: crashed: {type(e_).__name__}: {e_}"[:300])
             R4 = Runner({"rollback": (0, "NOTHING=no earlier release to go back to (serving x); nothing was changed\nSERVING=x\n")}); said4 = []
             SS.rollback_remote("zz_shop", S, F, runner=R4, say=said4.append)
             ok(said4 and "nothing was changed" in said4[-1], f"--rollback-remote with nowhere to go says so: {said4}")

@@ -581,7 +581,7 @@ def self_test_single(n, fails):
         else:
             d = docs("zz_one"); i = d["infrastructure"]; n += 1
             if (i["target"], i["compose_remote"]["compose"]["project"], i["compose_remote"].get("domain"), i["secrets_user"], d["datastores"]["postgres"]["exposure"]) != \
-               ("compose_remote", "sf-zz-one", "shop.example.org", [], "compose_network"):
+               ("compose_remote", "sf-zz-one", "shop.example.org", ["CLERK_PUBLISHABLE_KEY", "CLERK_SECRET_KEY"], "compose_network"):   # the console's sign-in (mold_v0-020)
                 fails.append(f"mold_v0 state for its own server: {i['target']} {i.get('compose_remote')} {d['datastores']['postgres']}")
             n += 1
             if "model" in d["application"] or "workspace" in d["application"] or "inference" in i: fails.append("mold_v1's model, workspace or inference was written into a mold_v0 app")
