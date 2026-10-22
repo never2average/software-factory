@@ -718,6 +718,7 @@ for (const [id, json, file] of entries) {
       onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id })),
       metrics: (def.metrics ?? []).map((x) => ({ name: x.name, over: x.over })),
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
+      store: (def.agentJobKinds ?? []).length > 0 || (def.jobKinds ?? []).some((k) => k.workspace === true),
       resultChecks: def.runResults?.check ?? [],
       kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })) };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 3000) }; }
@@ -808,6 +809,8 @@ const workspaceItems = [
   ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
   ...(dueAreaCount ? [{ title: "Notices", url: "/app/notices", icon: "notification", items: [] }] : []),
+  // The workspace store's file viewer (mold_v0-056) when a pack has a workspace store.
+  ...(packs.some((p) => defsByPack[p.id]?.store) ? [{ title: "Files", url: "/app/files", icon: "page", items: [] }] : []),
 ];
 {
   const owner = new Map();
@@ -950,7 +953,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
   `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")) ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")).map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules\n" +
-  " * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates. */\n" +
+  " * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates, Files (mold_v0-056)\n" +
+  " * when a pack has a workspace store. */\n" +
   `export const workspacePortalNav: NavGroup[] = ${json(workspaceItems.length ? [{ label: "Workspace", items: workspaceItems }] : [])};\n\n` +
   "/** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */\n" +
   `export const packOnboardingSteps = ${onboardingSteps.length};\n` +
@@ -971,12 +975,12 @@ files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER
  */
 function viewsModule() {
   const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile" };
-  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", page: "page" };
+  const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", page: "page", files: "page" };
   // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
   const shown = packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack)));
   const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
-    url: SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
+    url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null, timeline_by: t.timeline_by ?? "updated" } : {}),
     charts: t.charts ?? [],
   }));
@@ -995,7 +999,7 @@ function viewsModule() {
     "export interface PackChartSpec {\n  pack: string;\n  name: string;\n  title: string;\n  description: string | null;\n  type: 'bar' | 'stacked_bar' | 'line' | 'area' | 'number' | 'table';\n  metrics: string[];\n  palette: 'categorical' | 'ordinal';\n}\n" +
     `export const packCharts: PackChartSpec[] = ${json(packViews.charts)};\n\n` +
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
-    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page';\n" +
+    "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
     "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +

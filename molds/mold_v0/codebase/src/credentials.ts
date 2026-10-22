@@ -17,6 +17,7 @@
  * No function here logs a value or puts one in an error message.
  */
 import { getDb } from "./db.js";
+import { vaultUnlocked } from "./keyvault.js";
 import { openBytes, sealBytes } from "./orgcrypto.js";
 import { CredentialSchema, PackError, RECORD_KEY, z } from "./pack-api.js";
 import { packs } from "./packs.js";
@@ -201,4 +202,27 @@ export async function workspaceCredentialValue(orgId: number, pack: string, name
 export async function runSecrets(run: RunForCredentials): Promise<Secret[]> {
   if (!run.spec?.credentials?.length) return [];
   return (await runCredentials(run, { strict: true })).credentials.map((c) => ({ name: c.name, value: c.value }));
+}
+
+/**
+ * Every value stored for workspace `orgId` (any pack, any binding), for checking that what the console's file viewer
+ * serves holds none of them (mold_v0-056; src/workspace-files.ts). Only the shell's own code holds them, for that check;
+ * never an answer or a log. A value that does not open (the vault locked, a row moved) refuses the check: it throws.
+ */
+export async function workspaceSecrets(orgId: number): Promise<Secret[]> {
+  const rows = await asPlatform(async () => (await getDb()).query<{ pack: string; name: string; bound_to: string; asset_area: string | null; asset_key: string | null; environment: string | null; sealed: string }>(
+    "SELECT pack, name, bound_to, asset_area, asset_key, environment, sealed FROM workspace_credentials WHERE org_id = $1", [orgId]));
+  const out: Secret[] = [];
+  for (const r of rows) {
+    // Opened in the slot its own row names (what it was sealed with), whether or not today's build declares the field
+    // the same way: a value a run once received may still be in a file.
+    const spec = { pack: r.pack, name: r.name, bound_to: r.bound_to, ...(r.asset_area ? { area: r.asset_area } : {}) } as unknown as CredentialSpec;
+    try { out.push({ name: r.name, value: (await asPlatform(() => openBytes(orgId, Buffer.from(r.sealed, "base64"), aad(orgId, { spec, asset: r.asset_key, environment: r.environment })))).toString("utf8") }); }
+    catch {
+      if (!vaultUnlocked()) throw new PackError("the workspace's credentials cannot be opened now (the key vault is locked): try again", 503);
+      // A row that does not open in its own slot (moved, damaged) holds nothing anyone was ever given.
+      console.error(`workspace ${orgId}: a stored credential value of ${r.pack}/${r.name} does not open in its own slot`);
+    }
+  }
+  return out;
 }
