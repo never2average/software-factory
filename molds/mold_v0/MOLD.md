@@ -437,7 +437,7 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   (`deliver_as: {file, path_env}`, above); **operator credentials**: a pack declares `operatorCredentials`
   (`operator_credentials` in pack.json: name, label, help, `deliver_as` as a field's) and a kind names those its runs
   receive (`operator_credentials`; never with `company_egress`, so no host a workspace chose reaches them); the values are the platform's, in the key vault (provider `pack_credentials`,
-  label `<pack>.<name>`, set by an owner of the platform on `/admin` key vault; `sql/migrations/0014_run_approvals_egress.sql`
+  label `<pack>.<name>`, set by an owner of the platform on `/admin` key vault; `sql/migrations/0015_run_approvals_egress.sql`
   adds the provider, direct mode with no environment names, so no session is ever given one); the runner fetches them with
   the run's lease beside the workspace's (`src/credentials.ts`), delivered as declared (a pack's own program gets them; an
   agent's command and steps only when their `credentials` name them: an agent reads the workspace's files). A workspace never sees one: no console or API lists them (the console's fields are
