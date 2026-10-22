@@ -64,7 +64,7 @@ try {
   const codeFor = async (to: string, after = 0) => {
     for (let i = 0; i < 100; i++) {
       const m = emailsTo(to, "sign_in_code");
-      if (m.length > after) return /sign-in code is (\d{6})/.exec(m.at(-1).text)![1]!;
+      if (m.length > after) return /sign-in code is (\d{8})/.exec(m.at(-1).text)![1]!;
       await wait(20);
     }
     throw new Error(`no code emailed to ${to}`);
@@ -193,7 +193,25 @@ try {
     assert.equal((await call("POST", `/api/app/team/invitations/${pend.body.invitation.id}/revoke`, ownerB.h)).status, 404, "B's owner cannot revoke A's invitation");
     assert.equal((await call("POST", `/api/app/team/invitations/${pend.body.invitation.id}/revoke`, ownerA.h)).status, 204);
   }
-  ok("cross-workspace: an owner of A cannot change, suspend or remove B's people, and each team list names only its own");
+  if (PROVIDER === "builtin") {
+    // Someone already in a workspace who is invited to another is not moved there by signing in: they accept it themselves.
+    const r = await call("POST", "/api/app/team/invitations", ownerB.h, { email: ownerAEmail, role: "member" });
+    assert.equal(r.status, 201);
+    const again = await codeSignIn(ownerAEmail);
+    const h = { cookie: again.cookie, "x-pack-request": "1" };
+    assert.equal((await call("GET", "/api/app/me", h)).body.account.slug, slugA, "signing in keeps them in their own workspace");
+    const sess = (await call("GET", "/api/auth/session", h)).body;
+    assert.equal(sess.memberships.length, 1, "not a member of B until they accept");
+    assert.deepEqual(sess.invitations.map((i: any) => i.organization.id), [rowB!.clerk_org_id], "the invitation waits for them");
+    assert.equal((await call("POST", `/api/auth/invitations/${sess.invitations[0].id}/accept`, ownerB.h, {})).status, 404, "nobody else can accept it");
+    const acc = await call("POST", `/api/auth/invitations/${sess.invitations[0].id}/accept`, h, {});
+    assert.equal(acc.status, 200, JSON.stringify(acc.body));
+    assert.equal((await call("GET", "/api/app/me", h)).body.account.slug, slugA, "accepting does not switch their session");
+    assert.equal((await call("GET", "/api/auth/session", h)).body.memberships.length, 2);
+    // Back out of B so the rest of the suite reads A's owner as before.
+    assert.equal((await call("POST", `/api/app/team/members/${ownerA.user}/remove`, ownerB.h)).status, 200);
+  }
+  ok("cross-workspace: an owner of A cannot change, suspend or remove B's people, and each team list names only its own" + (PROVIDER === "builtin" ? "; an invitation to someone already in a workspace waits for them to accept it" : ""));
 
   // ---------- 5. removal ends sessions and revokes member keys ----------
   const mk = await call("POST", "/api/keys", member.h, { name: "member's CLI" });
@@ -249,7 +267,7 @@ try {
       // Even the right digits for an unknown address are refused (it was never sent).
       const [u] = await db.query<{ id: number }>("SELECT id FROM auth_codes WHERE email = $1", [unknown]);
       const { CODE_REFUSED } = await import("../src/builtin-auth.js");
-      for (let i = 0; i < 3; i++) assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": freshIp() }, { email: unknown, code: String(100000 + i) })).body.error, CODE_REFUSED);
+      for (let i = 0; i < 3; i++) assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": freshIp() }, { email: unknown, code: String(10000000 + i) })).body.error, CODE_REFUSED);
       assert.ok(u, "row exists");
       // The code: only its HMAC is stored.
       const email = viewerEmail;
@@ -259,7 +277,7 @@ try {
       const [logged] = await db.query<{ subject: string; meta: unknown }>("SELECT subject, meta FROM email_log WHERE kind = 'sign_in_code' ORDER BY id DESC LIMIT 1");
       assert.ok(!JSON.stringify(logged).includes(code), "nor in the email log");
       // Five tries: four wrong, the fifth right still works; a sixth after five wrong is refused even when right.
-      const wrong = (c: string) => (c === "000000" ? "000001" : "000000");
+      const wrong = (c: string) => (c === "00000000" ? "00000001" : "00000000");
       for (let i = 0; i < 4; i++) assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": freshIp() }, { email, code: wrong(code) })).status, 401);
       assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": freshIp() }, { email, code })).status, 200, "the fifth try, right, signs in");
       assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": freshIp() }, { email, code })).status, 401, "a used code is refused");
@@ -281,15 +299,17 @@ try {
       assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": freshIp() }, { email, code: newer })).status, 401, "an expired code is refused");
       const [ttl] = await db.query<{ m: number }>("SELECT extract(epoch FROM expires_at - created_at)::int / 60 AS m FROM auth_codes WHERE email = $1 ORDER BY id DESC LIMIT 1", [ownerAEmail]);
       assert.equal(Number(ttl!.m), 10, "codes live ten minutes");
-      // Per address: five codes an hour (the default).
+      // Per address and IP: five codes an hour; per address: ten an hour (the default), from any IP.
       delete process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS;
-      const busy = `busy-${STAMP}@a.example`;
+      const busy = `busy-${STAMP}@a.example`, oneIp = freshIp();
+      for (let i = 0; i < 5; i++) assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": oneIp }, { email: busy })).status, 200);
+      assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": oneIp }, { email: busy })).status, 429, "the sixth code in an hour for one address from one IP");
       for (let i = 0; i < 5; i++) assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": freshIp() }, { email: busy })).status, 200);
-      assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": freshIp() }, { email: busy })).status, 429, "the sixth code in an hour for one address is refused, from any IP");
-      // Per address: twenty failed tries a day close it to new codes.
+      assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": freshIp() }, { email: busy })).status, 429, "the eleventh code in an hour for one address, from any IP");
+      // No longer lock-out: wrong tries never close an address to new codes (anyone could keep its person out).
       await db.query("UPDATE auth_codes SET created_at = now() - interval '2 hours' WHERE email = $1", [busy]);
-      await db.query("INSERT INTO auth_codes (email, code_hash, deliverable, attempts, expires_at, created_at) VALUES ($1, 'x', false, 20, now(), now() - interval '3 hours')", [busy]);
-      assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": freshIp() }, { email: busy })).status, 429, "twenty wrong tries in a day: no more codes today");
+      await db.query("INSERT INTO auth_codes (email, code_hash, deliverable, attempts, expires_at, created_at) VALUES ($1, 'x', false, 100, now(), now() - interval '3 hours')", [busy]);
+      assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": freshIp() }, { email: busy })).status, 200, "a hundred wrong tries by someone else do not lock the address");
       process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS = "1000";
       await db.query("DELETE FROM auth_codes WHERE email = $1", [viewerEmail]);
       // Per IP.
@@ -300,16 +320,20 @@ try {
       delete process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP;
       process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP = "2";
       const ip2 = freshIp();
-      for (let i = 0; i < 2; i++) await call("POST", "/api/auth/email/verify", { "x-forwarded-for": ip2 }, { email: busy, code: "123456" });
-      assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": ip2 }, { email: busy, code: "123456" })).status, 429, "code checks per IP");
+      for (let i = 0; i < 2; i++) await call("POST", "/api/auth/email/verify", { "x-forwarded-for": ip2 }, { email: busy, code: "12345678" });
+      assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": ip2 }, { email: busy, code: "12345678" })).status, 429, "code checks per IP");
       delete process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP;
       // JSON from this site only.
       const form = await fetch(`${http.base}/api/auth/email/request`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `email=${encodeURIComponent(viewerEmail)}` });
       assert.equal(form.status, 415, "a form post (what a cross-site page can send) is refused");
-      const foreign = await call("POST", "/api/auth/email/verify", { origin: "https://evil.example" }, { email: viewerEmail, code: "123456" });
+      const foreign = await call("POST", "/api/auth/email/verify", { origin: "https://evil.example" }, { email: viewerEmail, code: "12345678" });
       assert.equal(foreign.status, 403, "a request from another site's page is refused");
       assert.equal((await call("POST", "/api/auth/email/request", {}, { email: "not an address" })).status, 400);
-      ok("the emailed code: the same answer and write for any address (no enumeration), only its HMAC stored, five tries, used once, newest only, ten minutes; per-address and per-IP limits; JSON from this site only");
+      // A cookie-borne change to /api/app needs the CSRF header.
+      const owner = (await codeSignIn(ownerAEmail)).cookie;
+      assert.equal((await call("POST", "/api/app/team/invitations", { cookie: owner }, { email: `csrf-${STAMP}@a.example` })).status, 403, "no X-Pack-Request: refused");
+      assert.equal((await call("POST", "/api/app/team/invitations", { cookie: owner, "x-pack-request": "1" }, { email: `csrf-${STAMP}@a.example` })).status, 201);
+      ok("the emailed code: eight digits, the same answer and write for any address (no enumeration), only its HMAC stored, five tries, used once, newest only, ten minutes; per-address, per-address-and-IP and per-IP limits, no lock-out; JSON from this site only; /api/app cookie writes need the CSRF header");
     }
 
     // ---------- 8. sessions ----------
@@ -325,6 +349,12 @@ try {
       assert.equal((await db.query("SELECT 1 FROM auth_sessions WHERE token_hash = $1", [sha256(value)])).length, 1);
       // Fixation: whatever cookie the browser brings to a sign-in, it leaves with a new one, and the old one is ended.
       const planted = `oct_session=${"A".repeat(43)}`;
+      // On an https site only the __Host- cookie counts: a plain one (which a sibling host could plant) is nobody.
+      const pub = process.env.PUBLIC_URL;
+      process.env.PUBLIC_URL = "https://console.example";
+      assert.equal((await call("GET", "/api/auth/session", { cookie })).body.signed_in, false, "https: the plain cookie is not read");
+      assert.equal((await call("GET", "/api/auth/session", { cookie: `__Host-${cookie}` })).body.signed_in, true, "https: the __Host- one is");
+      if (pub === undefined) delete process.env.PUBLIC_URL; else process.env.PUBLIC_URL = pub;
       const again = await codeSignIn(viewerEmail);
       const viaPlanted = await (async () => {
         const before = emailsTo(viewerEmail, "sign_in_code").length;
@@ -379,7 +409,7 @@ try {
         return { q, cookie: c.split(";")[0]! };
       };
       const back = async (st: { q: Record<string, string>; cookie: string }, claims: Record<string, unknown>, cookie: string | null = st.cookie) => {
-        const { code } = await mockPost("/_mock/google/code", { nonce: st.q.nonce, code_challenge: st.q.code_challenge, redirect_uri: st.q.redirect_uri, ...claims });
+        const { code } = await mockPost("/_mock/google/code", { nonce: st.q.nonce, code_challenge: st.q.code_challenge, redirect_uri: st.q.redirect_uri, hd: "a.example", ...claims });
         const r = await fetch(`${http.base}/api/auth/google/callback?code=${code}&state=${encodeURIComponent(st.q.state!)}`, { redirect: "manual", headers: { "x-forwarded-for": freshIp(), ...(cookie ? { cookie } : {}) } });
         return { status: r.status, location: r.headers.get("location") ?? "", cookie: cookieOf(r) };
       };
@@ -395,6 +425,16 @@ try {
         assert.match(r.location, /error=google_failed/, `${what}: refused (${r.location})`);
         assert.equal(r.cookie, null);
       }
+      // Google speaks only for Gmail or its own Workspace domain: a consumer account with a work address is refused.
+      const sH = await start();
+      assert.match((await back(sH, { email: gEmail, sub, hd: undefined })).location, /error=google_not_authoritative/, "no hd claim for a work address");
+      const sH2 = await start();
+      assert.match((await back(sH2, { email: gEmail, sub, hd: "other.example" })).location, /error=google_not_authoritative/, "another Workspace domain");
+      const gmail = `invited.${STAMP}@gmail.com`;
+      await call("POST", "/api/app/team/invitations", ownerA.h, { email: gmail, role: "viewer" });
+      const sG = await start();
+      const gm = await back(sG, { email: gmail, sub: `gm-${STAMP}`, hd: undefined });
+      assert.equal(gm.location, "/app/usage"); assert.ok(gm.cookie, "a Gmail address needs no hd");
       // An address with no invitation.
       const sN = await start();
       assert.match((await back(sN, { email: `stranger-${STAMP}@a.example`, sub: `x-${STAMP}` })).location, /error=not_invited/);
@@ -411,7 +451,7 @@ try {
       const s2 = await start();
       assert.match((await back(s2, { email: gEmail, sub: `other-${STAMP}` })).location, /error=google_linked_elsewhere/);
       // Open redirects.
-      for (const bad of ["https://evil.example/x", "//evil.example", "/\\evil.example", "javascript:alert(1)"]) {
+      for (const bad of ["https://evil.example/x", "//evil.example", "/\\evil.example", "javascript:alert(1)", "/.//evil.example", "/..//evil.example", "/%2e//evil.example", "/a/..//evil.example"]) {
         const s = await start(bad);
         assert.equal((await back(s, { email: gEmail, sub })).location, "/app", `${bad} is not followed`);
       }

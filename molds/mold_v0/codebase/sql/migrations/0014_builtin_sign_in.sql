@@ -5,7 +5,7 @@
 --
 --   auth_users        one row per person (an address, lower-cased); public_metadata holds the platform role, as Clerk's did
 --   auth_sessions     a signed-in browser: only the sha256 of the cookie's value is stored; revoked_at ends it at once
---   auth_codes        emailed sign-in codes: an HMAC of the code, ten minutes, five tries, used once
+--   auth_codes        emailed sign-in codes: an HMAC of the code, ten minutes, five tries, used once (ip_hash: a hash of the requesting address, for the per-address-and-IP limit)
 --   auth_oauth_states a Google sign-in in flight (state, PKCE verifier, nonce), used once, ten minutes
 --   auth_memberships  a person in a workspace, with their account role (src/account-roles.ts) and suspension
 --   auth_invitations  an invitation by email to a workspace with a role: seven days, used once, revocable
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS auth_codes (
   email        TEXT NOT NULL,
   code_hash    TEXT NOT NULL,
   deliverable  BOOLEAN NOT NULL,
+  ip_hash      TEXT,
   attempts     INT NOT NULL DEFAULT 0,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at   TIMESTAMPTZ NOT NULL,

@@ -48,7 +48,7 @@ console's, team management, member keys and the emails to a workspace's people w
 
 | `AUTH_PROVIDER` | Sign-in |
 |---|---|
-| `builtin` | the shell's own: an emailed six-digit code, and Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (the button is hidden otherwise). People, sessions, members, roles and invitations are in Postgres (`auth_*`, migration 0014) |
+| `builtin` | the shell's own: an emailed eight-digit code, and Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set (the button is hidden otherwise). People, sessions, members, roles and invitations are in Postgres (`auth_*`, migration 0014) |
 | `clerk` | Clerk, exactly as below |
 | unset | `clerk` when `CLERK_SECRET_KEY` is set (an app already on Clerk keeps it, unchanged), else `builtin` |
 
@@ -58,19 +58,25 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
 ### The built-in sign-in
 
 - **Who may sign in:** a person the server already knows, an address with a live invitation, or an
-  `OCTILLION_PLATFORM_ADMINS` address. Accounts stay invite-only: signing in with the invited address is accepting the
-  invitation (the email carries no secret, so a forwarded invitation lets nobody else in).
-- **The code:** six digits, emailed through the email module (`src/email.ts`; Resend must be connected and emails on,
+  `OCTILLION_PLATFORM_ADMINS` address. Accounts stay invite-only. A first sign-in with the invited address accepts its
+  invitations (the email carries no secret, so a forwarded invitation lets nobody else in); someone already in a
+  workspace accepts each new invitation themselves (profile page, or the account chooser), and their session stays in
+  the workspace they had.
+- **The code:** eight digits, emailed through the email module (`src/email.ts`; Resend must be connected and emails on,
   else the page says email sign-in is not set up). Ten minutes, five tries, used once; a new code retires the old one.
   Only an HMAC of it is stored. "Send me a code" answers the same for every address, known or not.
 - **Google:** OpenID Connect with PKCE, a state bound to the browser, a nonce, and an ID token checked against Google's
-  keys (issuer, audience, expiry, verified address). Register `https://<console>/api/auth/google/callback` as the
+  keys (issuer, audience, expiry, verified address). Google speaks only for a Gmail address or a Google Workspace
+  address of its own domain (the `hd` claim); any other address signs in with an emailed code. Register `https://<console>/api/auth/google/callback` as the
   redirect URI (or set `GOOGLE_REDIRECT_URI`). A Google account is linked to the person on first use; another Google
   account with the same address is refused.
-- **Limits:** codes per address an hour (5), wrong tries per address a day (20), code requests and Google starts per IP
-  an hour (30), code checks per IP an hour (60); `limits.endpoints` in the profile or `OCTILLION_LIMIT_ENDPOINTS_*`.
+- **Limits:** codes per address an hour (10, and 5 from one IP), code requests and Google starts per IP an hour (30),
+  code checks per IP an hour (60); `limits.endpoints` in the profile or `OCTILLION_LIMIT_ENDPOINTS_*`. There is no
+  lock-out on wrong tries (anyone who knows an address could use it to keep its person out); the guess rate is bounded
+  instead: at most 10 codes x 5 tries an hour against 10^8 codes. Per-IP counts use the request's address as Express
+  sees it (`trust proxy`), so they are a speed bump; the per-address counts are the guard.
 - **Sessions:** a random 256-bit value in an httpOnly, SameSite=Lax cookie (`__Host-oct_session`, Secure, on https),
-  stored as a hash, 14 days (`OCTILLION_SESSION_DAYS`, 1 to 90), checked on every request. The profile page signs out
+  stored as a hash (on https only the `__Host-` cookie is read), 14 days (`OCTILLION_SESSION_DAYS`, 1 to 90), checked on every request. The profile page signs out
   other devices or everywhere; removing someone from a workspace ends their sessions there and revokes their member
   keys for it.
 - **Two addresses on Vercel:** the console is its own project in front of the API, so set `OCTILLION_CONSOLE_URL` on the

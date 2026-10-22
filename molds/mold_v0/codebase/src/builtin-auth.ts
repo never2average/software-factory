@@ -2,7 +2,7 @@
  * Built-in sign-in (mold_v0-004): the shell's own people directory and sessions, used when AUTH_PROVIDER is builtin
  * (src/auth-provider.ts; the default for every app without a Clerk key). Two ways in, both proving an email address:
  *
- *   an emailed code  six digits from a CSPRNG, sent through the email module (src/email.ts, Resend), kept as an HMAC
+ *   an emailed code  eight digits from a CSPRNG, sent through the email module (src/email.ts, Resend), kept as an HMAC
  *                    keyed with a server secret; ten minutes, five tries, used once, and a new code retires the old one
  *   Google           OpenID Connect with PKCE (S256), a state bound to the browser by a cookie, a nonce, and an ID token
  *                    checked against Google's keys (issuer, audience, expiry, nonce, email_verified). Shown only when
@@ -42,8 +42,9 @@ import { asPlatform } from "./tenant-scope.js";
 
 export const CODE_TTL_MINUTES = 10;
 export const CODE_MAX_ATTEMPTS = 5;
-/** Failed tries on one address's codes within a day before it gets no more codes (whatever the IP). */
-export const FAILED_TRIES_PER_DAY = 20;
+/** Codes for one address from one IP an hour (the per-address total is limits.endpoints.signin_codes_per_hour_per_address). */
+export const CODES_PER_ADDRESS_AND_IP = 5;
+export const CODE_DIGITS = 8;
 export const INVITE_DAYS = 7;
 const sessionDays = () => {
   const d = Number(process.env.OCTILLION_SESSION_DAYS ?? "");
@@ -99,7 +100,9 @@ export function safeRedirect(v: unknown, fallback = "/app"): string {
   try {
     const u = new URL(s, "http://x.invalid");
     if (u.origin !== "http://x.invalid") return fallback;
-    return u.pathname + u.search + u.hash;
+    // Dot-segments collapse ("/.//evil.example" is "//evil.example" once normalised): check the result again.
+    const out = u.pathname + u.search + u.hash;
+    return out.startsWith("/") && !out.startsWith("//") && !/[\\\u0000-\u001f\u007f]/.test(out) ? out : fallback;
   } catch { return fallback; }
 }
 
@@ -267,7 +270,7 @@ export const invitations = {
       subject: `You're invited to ${org.name} on ${PROFILE.name}`,
       text: [`Hi,`, `You're invited to join ${org.name} on ${PROFILE.name} as ${ACCOUNT_ROLE_LABELS[accountRole]}.`,
         `To accept, sign in with this address (${e}): ${consoleUrl()}/auth/sign-in?redirect_url=%2Fapp`,
-        `We'll email you a sign-in code${googleConfigured() ? ", or you can continue with Google if this address is your Google account" : ""}. The invitation is good for ${INVITE_DAYS} days.`,
+        `We'll email you a sign-in code${googleConfigured() ? ", or you can continue with Google if this address is your Google account" : ""}. If you already use ${PROFILE.name}, accept the invitation on your profile page once signed in. The invitation is good for ${INVITE_DAYS} days.`,
         `If you weren't expecting it, ignore this email.`, `— ${PROFILE.email_sender_name}`].join("\n\n"),
     });
     return toInvitation(inv);
@@ -289,18 +292,22 @@ export const invitations = {
 
 /** A known person, a live invitation, or a platform admin named in the environment. */
 export async function maySignIn(email: string): Promise<boolean> {
-  if (isPlatformAdminEmail(email)) return true;
-  return P(async (db) => {
+  // The query runs for every address, an environment admin's too, so the time taken says nothing about who is one.
+  const admin = isPlatformAdminEmail(email);
+  const known = await P(async (db) => {
     const [r] = await db.query<{ ok: boolean }>(
       `/* tenant: platform: who may sign in, by address, across workspaces */ SELECT EXISTS (SELECT 1 FROM auth_users WHERE email = $1)
            OR EXISTS (SELECT 1 FROM auth_invitations WHERE email = $1 AND status = 'pending' AND expires_at > now()) AS ok`, [email]);
     return Boolean(r?.ok);
   });
+  return admin || known;
 }
 
 /**
- * The person behind a proven address, made or updated, and their live invitations accepted (each becomes a membership
- * with its role). For Google, the person is found by Google's stable id first, then by address; an address already
+ * The person behind a proven address, made or updated. Their live invitations are accepted here (each becomes a
+ * membership with its role) only when they are in no workspace yet: someone who already has one accepts each new
+ * invitation themselves (acceptInvitation; the console lists them), so an invitation cannot quietly move them into
+ * another workspace, and their session opens the workspace they already had. For Google, the person is found by Google's stable id first, then by address; an address already
  * linked to another Google account is refused. Returns the person and the workspace to open first.
  */
 export async function completeSignIn(email: string, how: { method: "email_code" | "google"; googleSub?: string; firstName?: string | null; lastName?: string | null }):
@@ -323,7 +330,9 @@ export async function completeSignIn(email: string, how: { method: "email_code" 
               google_sub = coalesce(google_sub, $3),
               first_name = coalesce(first_name, $4), last_name = coalesce(last_name, $5)
         WHERE id = $1`, [userId, email, how.googleSub ?? null, how.firstName?.slice(0, 100) || null, how.lastName?.slice(0, 100) || null]);
-    const accepted = await tx.query<{ org_id: number; role: AccountRole; id: string }>(
+    const [had] = await tx.query("SELECT 1 FROM auth_memberships WHERE user_id = $1 LIMIT 1", [userId]);
+    // Invitations for the address on file only (a Google account whose address changed accepts nothing for the new one).
+    const accepted = had || email !== u!.email ? [] : await tx.query<{ org_id: number; role: AccountRole; id: string }>(
       `UPDATE auth_invitations SET status = 'accepted', accepted_at = now(), accepted_by = $2, updated_at = now()
         WHERE email = $1 AND status = 'pending' AND expires_at > now() RETURNING org_id, role, id`, [email, userId]);
     for (const a of accepted)
@@ -331,7 +340,34 @@ export async function completeSignIn(email: string, how: { method: "email_code" 
     if (accepted.length) changed(userId, null);
     const [first] = await tx.query<{ org_id: number }>(
       "SELECT org_id FROM auth_memberships WHERE user_id = $1 AND NOT suspended ORDER BY created_at, org_id LIMIT 1", [userId]);
-    return { userId, activeOrg: accepted.at(-1)?.org_id ?? first?.org_id ?? null };
+    return { userId, activeOrg: first?.org_id ?? null };
+  }));
+}
+
+/** Live invitations for the person's own (verified) address, for the console to offer. */
+export async function pendingInvitations(userId: string) {
+  return P(async (db) => (await db.query<{ id: string; role: AccountRole; expires_at: Date; dir_id: string; name: string }>(
+    `/* tenant: platform: the signed-in person's own invitations, by their verified address */
+     SELECT i.id, i.role, i.expires_at, o.clerk_org_id AS dir_id, o.name FROM auth_invitations i
+       JOIN auth_users u ON u.email = i.email AND u.email_verified_at IS NOT NULL JOIN organizations o ON o.id = i.org_id
+      WHERE u.id = $1 AND i.status = 'pending' AND i.expires_at > now() AND o.clerk_org_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM auth_memberships m WHERE m.org_id = i.org_id AND m.user_id = u.id)
+      ORDER BY i.created_at`, [userId])).map((x) => ({ id: x.id, role: x.role, expires_at: new Date(x.expires_at).toISOString(), organization: { id: x.dir_id, name: x.name } })));
+}
+
+/** Accept one invitation to the person's own verified address: the membership, with the invitation's role. */
+export async function acceptInvitation(userId: string, invitationId: string): Promise<{ orgId: number; dirId: string } | null> {
+  return P((db) => db.transaction(async (tx) => {
+    const [x] = await tx.query<{ org_id: number; role: AccountRole }>(
+      `/* tenant: platform: an invitation to the signed-in person's own verified address */
+       UPDATE auth_invitations i SET status = 'accepted', accepted_at = now(), accepted_by = $2, updated_at = now()
+         FROM auth_users u WHERE i.id = $1 AND u.id = $2 AND u.email = i.email AND u.email_verified_at IS NOT NULL
+          AND i.status = 'pending' AND i.expires_at > now() RETURNING i.org_id, i.role`, [invitationId, userId]);
+    if (!x) return null;
+    await tx.query("INSERT INTO auth_memberships (org_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (org_id, user_id) DO NOTHING", [x.org_id, userId, x.role]);
+    const [o] = await tx.query<{ clerk_org_id: string }>("SELECT clerk_org_id FROM organizations WHERE id = $1", [x.org_id]);
+    changed(userId, null);
+    return { orgId: x.org_id, dirId: o!.clerk_org_id };
   }));
 }
 
@@ -359,9 +395,10 @@ const cookieLine = (name: string, value: string, maxAge: number, secure: boolean
 const clearSessionCookies = (res: Response) =>
   [cookieLine(COOKIE_SECURE, "", 0, true), cookieLine(COOKIE_PLAIN, "", 0, false)];
 
+/** On an https site only the `__Host-` cookie counts (a plain one could be planted by a sibling host or over http). */
 const sessionToken = (req: Request) => {
   const jar = readCookies(req);
-  const t = jar[COOKIE_SECURE] ?? jar[COOKIE_PLAIN];
+  const t = secureSite(req) ? jar[COOKIE_SECURE] : jar[COOKIE_SECURE] ?? jar[COOKIE_PLAIN];
   return t && /^[A-Za-z0-9_-]{40,64}$/.test(t) ? t : null;
 };
 
@@ -417,25 +454,26 @@ export type CodeRequest = { ok: true } | { ok: false; status: number; error: str
  * Make a code for `email` and send it when the address may sign in. The same answer, and the same writes, whoever it
  * is for: only the delivery differs (fired after the answer, never awaited).
  */
-export async function requestCode(email: string): Promise<CodeRequest> {
+export async function requestCode(email: string, ip: string): Promise<CodeRequest> {
   const limit = limitsFor(null).endpoints.signin_codes_per_hour_per_address;
+  const ipHash = hashed(ip);
+  // Codes an hour for the address (a cap on guesses: at most limit x five tries an hour against 10^8 codes), and for the
+  // address from one IP. There is no longer lock-out: anyone who knows an address could use it to keep its person out.
   const busy = await P(async (db) => {
-    const [r] = await db.query<{ recent: number; failed: number }>(
-      `SELECT count(*) FILTER (WHERE created_at > now() - interval '1 hour')::int AS recent,
-              coalesce(sum(attempts) FILTER (WHERE created_at > now() - interval '1 day'), 0)::int AS failed
-         FROM auth_codes WHERE email = $1 AND created_at > now() - interval '1 day'`, [email]);
+    const [r] = await db.query<{ recent: number; mine: number }>(
+      `SELECT count(*)::int AS recent, count(*) FILTER (WHERE ip_hash = $2)::int AS mine
+         FROM auth_codes WHERE email = $1 AND created_at > now() - interval '1 hour'`, [email, ipHash]);
     return r!;
   });
-  if (busy.recent >= limit) return { ok: false, status: 429, error: "Too many codes for this address. Try again in an hour.", retry_after: 3600 };
-  if (busy.failed >= FAILED_TRIES_PER_DAY) return { ok: false, status: 429, error: "Too many wrong codes for this address today. Try again tomorrow.", retry_after: 86_400 };
+  if (busy.recent >= limit || busy.mine >= CODES_PER_ADDRESS_AND_IP) return { ok: false, status: 429, error: "Too many codes for this address. Try again in an hour.", retry_after: 3600 };
   const deliverable = await maySignIn(email);
-  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  const code = String(randomInt(0, 10 ** CODE_DIGITS)).padStart(CODE_DIGITS, "0");
   const id = await P(async (db) => db.transaction(async (tx) => {
     // A new code retires the older ones: only the newest can be used.
     await tx.query("UPDATE auth_codes SET consumed_at = now() WHERE email = $1 AND consumed_at IS NULL", [email]);
     const [r] = await tx.query<{ id: number }>(
-      "INSERT INTO auth_codes (email, code_hash, deliverable, expires_at) VALUES ($1, $2, $3, now() + make_interval(mins => $4)) RETURNING id",
-      [email, codeHash(email, code), deliverable, CODE_TTL_MINUTES]);
+      "INSERT INTO auth_codes (email, code_hash, deliverable, ip_hash, expires_at) VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5)) RETURNING id",
+      [email, codeHash(email, code), deliverable, ipHash, CODE_TTL_MINUTES]);
     // Old rows go now and then (a day of them is what the limits read).
     if (Math.random() < 0.02) await tx.query("DELETE FROM auth_codes WHERE created_at < now() - interval '2 days'");
     return Number(r!.id);
@@ -457,7 +495,7 @@ export const CODE_REFUSED = "That code is wrong or has expired. Ask for a new on
 
 /** Check a code for `email`: the newest unused one, counted before it is compared, used once. */
 export async function checkCode(email: string, code: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
-  if (!/^\d{6}$/.test(code)) return { ok: false, status: 400, error: "The code is six digits." };
+  if (!new RegExp(`^\\d{${CODE_DIGITS}}$`).test(code)) return { ok: false, status: 400, error: `The code is ${CODE_DIGITS} digits.` };
   return P(async (db) => {
     const [row] = await db.query<{ id: number; code_hash: string; deliverable: boolean; expires_at: Date; attempts: number }>(
       "SELECT id, code_hash, deliverable, expires_at, attempts FROM auth_codes WHERE email = $1 AND consumed_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1", [email]);
@@ -471,8 +509,6 @@ export async function checkCode(email: string, code: string): Promise<{ ok: true
     if (!match) return { ok: false, status: 401, error: CODE_REFUSED };
     const [used] = await db.query("UPDATE auth_codes SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL RETURNING id", [row.id]);
     if (!used) return { ok: false, status: 401, error: CODE_REFUSED };
-    // The try that succeeded is not a failure: it does not count toward the day's failed tries.
-    await db.query("UPDATE auth_codes SET attempts = attempts - 1 WHERE id = $1", [row.id]);
     return { ok: true };
   });
 }
@@ -542,6 +578,12 @@ async function googleCallback(req: Request, res: Response) {
   const email = normEmail(claims.email);
   if (claims.nonce !== st.nonce || !email || !(claims.email_verified === true || claims.email_verified === "true") || typeof claims.sub !== "string" || !claims.sub)
     return void res.redirect(302, signInPage("google_failed"));
+  // Google speaks for an address only when it hosts its mailbox: a Gmail address, or a Google Workspace account of the
+  // address's own domain (the hd claim). A consumer Google account made with a work address stays "verified" after its
+  // owner leaves that mailbox, so it proves nothing: that person signs in with an emailed code.
+  const domain = email.split("@")[1]!;
+  if (!(["gmail.com", "googlemail.com"].includes(domain) || (typeof claims.hd === "string" && claims.hd.toLowerCase() === domain)))
+    return void res.redirect(302, signInPage("google_not_authoritative"));
   const known = await P(async (db) => (await db.query("SELECT 1 FROM auth_users WHERE google_sub = $1", [claims.sub])).length > 0);
   if (!known && !(await maySignIn(email))) return void res.redirect(302, signInPage("not_invited"));
   const done = await completeSignIn(email, { method: "google", googleSub: claims.sub, firstName: typeof claims.given_name === "string" ? claims.given_name : null,
@@ -586,6 +628,7 @@ export async function sessionView(s: BuiltinSession) {
     active_organization: active ? { id: active.organization!.id, name: active.organization!.name, slug: active.organization!.slug } : null,
     memberships: ms.map((m) => ({ organization: { id: m.organization!.id, name: m.organization!.name, slug: m.organization!.slug },
       role: m.role, account_role: m.public_metadata?.octillion_role ?? null, suspended: m.public_metadata?.suspended === true })),
+    invitations: await pendingInvitations(s.userId),
   };
 }
 
@@ -612,7 +655,7 @@ export function builtinAuthRouter(): Router {
     const email = normEmail(req.body?.email);
     if (!email) return void res.status(400).json({ error: "Enter a valid email address." });
     if (!(await emailCodesReady())) return void res.status(503).json({ error: "Email sign-in is not set up on this server yet (no email provider). Ask your administrator.", code: "email_off" });
-    const out = await requestCode(email);
+    const out = await requestCode(email, req.ip ?? "?");
     if (!out.ok) return void res.status(out.status).set(out.retry_after ? { "Retry-After": String(out.retry_after) } : {}).json({ error: out.error, code: "rate_limited" });
     res.json({ ok: true, message: "If that address can sign in here, a code is on its way. It works for 10 minutes." });
   }));
@@ -680,6 +723,14 @@ export function builtinAuthRouter(): Router {
     if (!m) return void res.status(404).json({ error: "You are not in that workspace" });
     await P((db) => db.query("UPDATE auth_sessions SET active_org_id = (SELECT id FROM organizations WHERE clerk_org_id = $2) WHERE id = $1", [s.sessionId, want]));
     res.json({ ok: true, active_organization: { id: m.organization!.id, name: m.organization!.name } });
+  }));
+  // Accept an invitation to your own address (someone already in a workspace accepts each new one here).
+  r.post("/invitations/:id/accept", change, wrap(async (req, res) => {
+    const s = await signedIn(req, res);
+    if (!s) return;
+    const done = await acceptInvitation(s.userId, String(req.params.id));
+    if (!done) return void res.status(404).json({ error: "No such invitation for your address, or it expired" });
+    res.json({ ok: true, organization_id: done.dirId });
   }));
   r.post("/profile", change, wrap(async (req, res) => {
     const s = await signedIn(req, res);
