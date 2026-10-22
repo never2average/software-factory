@@ -578,6 +578,46 @@
                 "exclusiveMinimum": 0,
                 "maximum": 100000
               },
+              "price": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "pattern": "^[a-z]{3}$"
+                  },
+                  "fixed": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "cost_plus_percent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10000
+                  },
+                  "on_failure": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost",
+                      "full"
+                    ]
+                  },
+                  "on_cancel": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost"
+                    ]
+                  }
+                },
+                "required": [
+                  "currency"
+                ],
+                "additionalProperties": false
+              },
               "egress": {
                 "default": [],
                 "maxItems": 50,
@@ -819,6 +859,46 @@
                 "type": "number",
                 "exclusiveMinimum": 0,
                 "maximum": 100000
+              },
+              "price": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "pattern": "^[a-z]{3}$"
+                  },
+                  "fixed": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "cost_plus_percent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10000
+                  },
+                  "on_failure": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost",
+                      "full"
+                    ]
+                  },
+                  "on_cancel": {
+                    "default": "free",
+                    "type": "string",
+                    "enum": [
+                      "free",
+                      "cost"
+                    ]
+                  }
+                },
+                "required": [
+                  "currency"
+                ],
+                "additionalProperties": false
               },
               "egress": {
                 "default": [],
