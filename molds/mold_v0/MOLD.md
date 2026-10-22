@@ -132,11 +132,81 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   proves it offline with a fixture agent repository (`scripts/fixtures/agent-repo`) in a local git repository: the pin
   (a branch named like it, the branch's tip, a missing commit, a redirect), validation gating, the time limit, redaction,
   links, egress, two workspaces, and what the adversarial review found (a rewritten validator, a pipe for results, a
-  stripped path written into the workspace, the size limit). **Not covered:** no cache of fetched repositories (each
-  run fetches its pin; the pinned tree is copied twice per run, its dependencies included); no size limit on the fetch
-  itself; the
-  agent's own image (tools like a coding agent's CLI) is the runner machine's, not declared per kind; `setup` needs
-  the package registry in the kind's `egress`.
+  stripped path written into the workspace, the size limit). **Not covered:** the agent repository itself is not
+  cached (each run fetches its pin; the pinned tree is copied twice per run, its dependencies included); no size limit
+  on a fetch while it downloads (a checkout's size is checked once it is on disk); `setup` needs the package registry in
+  the kind's `egress`.
+- **What an agent run does besides its command** (mold_v0-071..074, built; `src/agent-workspace-steps.ts`,
+  `src/run-tools.ts`, carried out by `src/run-harness.ts`; all plain JSON in `agent`):
+  - `results_from` (071): the program's own result file under `<RUN_OUT>` (outside the checkout, never written back):
+    `file`, a JSON `pointer` to its list (`/findings`), an optional `where` (only items whose field is one of the
+    values), and per item `check`/`asset`/`source` (`{area, key}` with a key template: `{field.path}` of the item,
+    `{$args.<name>}` of the run's arguments, `{$root.<path>}` of the file), `status` (one of the five, or `{from, map,
+    default}`: the item's field looked up in the map), `fingerprint`, `evidence`, `detail` (templates). Own properties
+    only (a `__proto__` key is a plain key); every value checked as the engine checks it (status, fingerprint, sizes)
+    before it is sent, and the engine checks every reference against the run's own workspace again. An item that does
+    not map follows the kind's `unresolved_references`: `reject` fails the run, `drop`/`downgrade` leave it out
+    (`result_unmapped`, counted against `max_unresolved`). Read only from a plain file (never a link or a pipe), redacted
+    as text first. Instead of `results`. **Every file the run writes under `<RUN_OUT>`** is recorded in its events
+    (`agent_output`: path, size, sha256, a small JSON file's content, redacted), whatever the run's outcome.
+  - `tools` (072): tools from a fixed catalogue (`src/run-tools.ts`: claude-code 2.1.295, sops 3.13.3, age 1.3.2,
+    kubectl 1.37.1, aws 2.37.5, each with its release artifact's sha256 for x64 and arm64, measured when pinned; git is
+    the image's distribution package). `gen-packs` writes the union across the build's kinds
+    (`src/run-tools.generated.json`, `check:packs` keeps it current; an unknown tool is refused at build); the Dockerfile
+    installs exactly those (`scripts/install-run-tools.ts`: each artifact's sha256 checked before it is unpacked into
+    `/opt/octi-tools`, root's, with a manifest) and checks them last (`--verify`: an image that lacks a tool the build
+    needs is refused at build); a boat run sandbox runs the same installer in its set-up, before its runner starts. At
+    run time nothing is downloaded: the harness checks each tool the kind names (the pinned version and artifact, the
+    installed program's own sha256, root's and writable by no one else, no link) and links exactly those first on the
+    run's PATH; a kind whose image lacks one, or whose installed file changed, is refused before anything runs.
+  - `inputs` (073): run arguments written to files of the checkout before the first step: each `from` the run's scope
+    or targets (an object, a list or a value; from `scope` it must be one of the kind's `args` when it declares them),
+    checked against its `schema` (a fixed JSON Schema subset: type, properties, required, additionalProperties, items,
+    enum, const, pattern, min/maxLength, minimum/maximum, min/maxItems, maxProperties; any other keyword, `$ref`
+    included, is refused at build), at most `max_bytes` (64 KB by default, 1 MB at most), `json` or `text`. Refused
+    when it holds the value of one of the run's credentials or its gateway token. Written to a new file (never over a
+    file of the pinned tree, never through a link, never under a write-back path, so never written back).
+  - `steps` (074): commands run before `command`, in order, each with its own `timeout_seconds` (the steps and the
+    command together within the kind's token lifetime), the run's own variables (the kind's `env`, and so a gateway
+    token, only with `env: true`) and only the `credentials` it names (none by default; the command gets
+    `agent.credentials`, else all of the kind's but a checkout's); their lines are `step_log` events, never events of
+    the run. Per-step credentials keep honest steps apart; they are not a wall against a hostile step (all steps are one
+    user in one checkout: a step can change what a later one runs). `git_credentials` (`{credential, host, username}`, the host in the kind's egress) hand a credential to
+    git: a private directory on tmpfs holds the token (0400), a helper script that answers `get` for exactly
+    `https://<host>` and prints that file, and a global git config naming it for that host only (GIT_CONFIG_GLOBAL; no
+    system config, no prompt), repeated as command-line configuration (GIT_CONFIG_COUNT) that resets every other helper,
+    so a helper a repository's own config names never sees the token. The token is never an argument, a variable or part of a URL, and the directory goes with
+    the step. A `checkout` step is the runner's own: manifest files (`manifests`, a glob with `{argument}`
+    placeholders; read as root, never through a link or a second name) name repositories (`url`, `commit`, `name`
+    fields). By default (`source: "workspace"`) they are read from the workspace as the run restored it, before any
+    program of the run could write one, so the run's programs never choose what the runner fetches with the token;
+    `source: "checkout"` reads the checkout as the earlier steps left it, which gives those programs the token's read
+    reach on the step's hosts. Each repository is on exactly one of the step's `hosts` (no subdomain; also in the
+    kind's egress), at a full commit id, fetched at exactly that commit as the agent repository is (outside the run's
+    proxy, with the step's `credential`, which no step and not the command receive, through the same helper for that
+    host only; the commit's size is counted from git's objects before anything is checked out) into the **checkout cache**: outside the workspace store,
+    per workspace (`<OCTILLION_RUN_CACHE_DIR or /var/cache/octi-checkouts>/ws-<id>`, root's, traversable by the run's
+    user only during that workspace's run, closed again after), per repository and commit (an unguessable directory
+    name), each checkout at most `max_bytes` (512 MB default) and the workspace's cache at most
+    `OCTILLION_RUN_CACHE_MAX_BYTES` (2 GiB; least recently used entries go first, never one the run uses), entries unused
+    for `OCTILLION_RUN_CACHE_DAYS` (7) and unfinished fetches removed; entering one workspace's cache closes every other.
+    Each is linked at its `mount` (with `{name}`; never at or over a write-back path, an input or the results, and never
+    over files the workspace holds) in the checkout, read-only to the run's user (root's files); the links are removed before the write-back is
+    collected, so a checkout never enters the store. The write-back is still validated and gated as before.
+  `npm run test:agent-steps` proves 071, 073 and 074 offline (the fixture program `scripts/fixtures/agent-repo/steps.mjs`
+  writing an audit program's result object, local repositories over file:// and one behind git's own HTTP backend that
+  asks for a token) and the harness side of 072 (a stand-in tool installed through the installer with its checksum);
+  `npm run test:run-tools` the catalogue, the installer (each format, a mismatched artifact, a tampered or linked
+  program), the build's union and `--verify`. **Not covered:** the real tools are never downloaded by a test (their
+  checksums were measured once, when pinned); a run sandbox lives one run, so on boat and docker the checkout cache is
+  per run unless the operator mounts `OCTILLION_RUN_CACHE_DIR` (a runner on its own server keeps it); a boat sandbox
+  downloads the tools in its set-up (checked against the same checksums) rather than starting from a built image; only
+  each tool's program is re-hashed per run (aws's `dist/` libraries and the rest of a tool's tree are trusted by being
+  root's alone), and a tool the kind did not declare is off its PATH but still on disk; the checkout fetch runs git as
+  root on the named repositories (git's own checkout safeguards, the image's git version); a cancel or the deadline stops
+  a checkout step between repositories, not inside one fetch (each fetch has the step's time limit); the hosts' names
+  are not resolved and checked for private addresses before the fetch (literal addresses and local names are refused);
+  no cap on the cache across workspaces (per workspace only).
 - **Runs in sandboxes** (mold_v0-055, built; `src/run-sandboxes.ts`, the runner `src/run-sandbox-runner.ts`, the
   compose runner service `src/run-fleet.ts`; operator decision D4: runs go to the sandbox provider the product already
   uses for its orchestrators). The autoscaler's demand counts queued runs per kind (`demand.runs`), and each tick (on a
