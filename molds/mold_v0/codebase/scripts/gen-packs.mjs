@@ -630,7 +630,16 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, mcp_server_version, mcp_instructions)`);
+      // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
+      if (k === "install_clients") {
+        const known = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)"/g)].map((m) => m[1]).filter((id) => id !== "header");
+        const bad = Array.isArray(v) ? v.filter((x) => !known.includes(x)) : null;
+        if (!Array.isArray(v) || !v.length || new Set(v).size !== v.length || bad.length)
+          fail(rel(PROFILE_FILE), `install_clients: a list of client ids, each once, from ${known.join(", ")}${bad?.length ? ` (not one: ${bad.map(String).join(", ").slice(0, 200)})` : ""}`);
+        else profile[k] = v;
+        continue;
+      }
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, mcp_server_version, mcp_instructions, install_clients)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -666,7 +675,7 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages, catalogApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
@@ -704,9 +713,25 @@ if (loaded.length === entries.length) {
     tabs: problems.length ? [] : b.tabs.map((t) => ({ ...t, label: tabLabel(t, b), roles: tabRoles(t, b) })) };
 }
 // The MCP tools generated from the declarations (mold_v0-060, src/mcp-catalog.ts), across the build's packs: each
-// pack's mcp settings name real tools, names fit, no two take one name. (The shell's own names are checked at start.)
+// pack's mcp settings name real tools, names fit, no two take one name, and none takes a name of the shell's own tools
+// (src/shell-tools.ts, mold_v0-067: refused here at build, not only when the server starts). The tools the settings
+// withhold (exclude, admin_only) also withhold their console tabs (below).
 const { generateCatalog } = await import(pathToFileURL(catalogApi).href);
-const mcp = { problems: loaded.length === entries.length ? generateCatalog(loaded).problems : [] };
+const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
+const mcp = { problems: [], withheld: [] };
+if (loaded.length === entries.length) {
+  const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES];
+  const own = new Map();
+  for (const p of loaded) for (const t of p.definition.tools ?? []) {
+    if (!t || typeof t.name !== "string") continue;
+    if (shell.includes(t.name)) mcp.problems.push(\`pack \${p.id}: tool \${t.name} is already a shell tool\`);
+    else if (own.has(t.name)) mcp.problems.push(\`pack \${p.id}: tool \${t.name} is already pack \${own.get(t.name)}'s\`);
+    else own.set(t.name, p.id);
+  }
+  const catalog = generateCatalog(loaded, { customer: shell, admin: ADMIN_SHELL_TOOL_NAMES });
+  mcp.problems.push(...catalog.problems);
+  mcp.withheld = catalog.withheld;
+}
 process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mcp }) + "\\n");
 `);
     // The packs' pack.json files go in a file (an argument is limited to 128 KiB); the answer comes back on a line marked
@@ -715,7 +740,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
       packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
-      path.join(ROOT, "src", "mcp-catalog.ts")]));
+      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts")]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
@@ -723,6 +748,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     for (const pr of views.problems) fail("packs", pr);
     for (const pr of mcp.problems) fail("packs", pr);
     packViews = views;
+    withheld = mcp.withheld;
     const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [] };
     for (const [id, v] of Object.entries(got)) {
       if (v.json !== undefined) { for (const pr of v.json) fail(`packs/${id}/pack.json`, pr); got[id] = empty; }
@@ -738,6 +764,14 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
 }
 /** The build's metrics, charts and tabs (mold_v0-063, 058), as checked across every pack by src/metric-spec.ts. */
 let packViews = { problems: [], metrics: [], charts: [], tabs: [] };
+/**
+ * The generated MCP tools the packs' mcp settings withhold (mold_v0-067, src/mcp-catalog.ts WithheldTool): their
+ * console tabs are left out of the sidebar, as their routes answer 404 (src/mcp-withheld.ts). An area whose list tool
+ * is withheld has no Records entry and no area tab; a pack whose runs list is withheld has no runs tab.
+ */
+let withheld = [];
+const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
+const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
 const recordAreas = packs.flatMap((p) => (defsByPack[p.id]?.areas ?? []).map((a) => ({ pack: p.id, ...a })));
 /** The credential fields the packs declare (mold_v0-034): the console's Credentials page appears when there is one. */
@@ -885,9 +919,9 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   `export const recordAreas: RecordAreaSpec[] = ${json(recordAreas.map((a) => ({ pack: a.pack, name: a.name, label: a.label, description: a.description ?? null, role: a.role,
     scope: a.scope, fields: a.fields, list_columns: a.list_columns ?? a.fields.slice(0, 4).map((f) => f.name), links: linksOf(a), lifecycle: a.lifecycle ?? null })))};\n\n` +
   "/** The /app sidebar's Records group: every area (a workspace reads shared areas and its own). */\n" +
-  `export const recordPortalNav: NavGroup[] = ${json(recordAreas.length ? [{ label: "Records", items: recordAreas.map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  `export const recordPortalNav: NavGroup[] = ${json(recordAreas.some((a) => !listWithheld(a.name)) ? [{ label: "Records", items: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => ({ title: a.label, url: `/app/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /admin sidebar's Records group: the platform-scope areas staff maintain. */\n" +
-  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform") ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform").map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
+  `export const recordAdminNav: NavGroup[] = ${json(recordAreas.some((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")) ? [{ label: "Records", items: recordAreas.filter((a) => a.scope === "platform" && !listWithheld(a.name, "admin_list")).map((a) => ({ title: a.label, url: `/admin/records/${a.name}`, items: [] })) }] : [])};\n\n` +
   "/** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules\n" +
   " * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates. */\n" +
   `export const workspacePortalNav: NavGroup[] = ${json(workspaceItems.length ? [{ label: "Workspace", items: workspaceItems }] : [])};\n\n` +
@@ -911,7 +945,9 @@ files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER
 function viewsModule() {
   const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile" };
   const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", page: "page" };
-  const tabs = packViews.tabs.map((t) => ({
+  // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
+  const shown = packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack)));
+  const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
     url: SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null, timeline_by: t.timeline_by ?? "updated" } : {}),

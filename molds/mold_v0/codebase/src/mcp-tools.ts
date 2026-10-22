@@ -25,6 +25,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { ACCOUNT_ROLE_LABELS, canAccount, type AccountRole } from "./account-roles.js";
 import type { Permission as AdminPermission } from "./admin-roles.js";
+import { errorClass, jsonBytes, recordMcpEvent, staffId } from "./analytics.js";
 import type { Org } from "./auth.js";
 import { adminDataApi, DATA_API_OPERATIONS, dataApi, type DataCaller } from "./data-api.js";
 import { getDb } from "./db.js";
@@ -322,17 +323,30 @@ export function adminGeneratedTools(): GeneratedAdminTool[] {
         // customer of it would, where the admin data door reads shared areas only.
         name: t.name, title: t.title, description: `Staff, for one workspace: ${t.description}`, needs: "accounts", destructive: t.annotations.destructiveHint,
         input: { workspace: z.string().min(1).max(100).describe("The workspace's slug (list_accounts shows it)"), ...t.input }, annotations: t.annotations,
-        run: async (a) => {
+        run: async (a, c) => {
           const { workspace, ...args } = a;
-          const org = await workspaceBySlug(workspace);
+          // Staff acting for the workspace (mold_v0-067): the call is written to the workspace's own activity log (as
+          // "staff:<pseudonym>", src/analytics.ts staffId) and a run it starts passes the account's launch rules.
+          const org: Org = { ...(await workspaceBySlug(workspace)), staff: c.actor, client: { name: "admin-mcp", version: null } };
           // As the shell for that workspace (no account role: staff's own permission was checked), under its row-level
           // security, with the pack's own ctx as a customer call gets it.
           const ws: Workspace = { id: org.orgId, slug: org.slug, name: org.name, userId: null, role: null };
           const { workspaceRuns } = await import("./runs.js");
           const ctx: PackToolContext = { pack: t.pack, workspace: ws, db: workspaceDb(org.orgId), records: workspaceRecords(t.pack, org.orgId),
-            runs: declaredRuns(t.pack, workspaceRuns(t.pack, org.orgId, null, org), org.orgId, { role: null, userId: null }) };
-          const value = await withTenant(org.orgId, () => pt.handler(ws, args, ctx));
-          return { workspace: org.slug, ...(value && typeof value === "object" && !Array.isArray(value) ? value : { value }) };
+            runs: declaredRuns(t.pack, workspaceRuns(t.pack, org.orgId, staffId(c.actor, org.orgId), org), org.orgId, { role: null, userId: null }) };
+          const t0 = performance.now();
+          try {
+            const value = await withTenant(org.orgId, () => pt.handler(ws, args, ctx));
+            const out = { workspace: org.slug, ...(value && typeof value === "object" && !Array.isArray(value) ? value : { value }) };
+            recordMcpEvent(org, { method: "tools/call", name: t.name, ok: true, ms: performance.now() - t0, req_bytes: jsonBytes(args), res_bytes: jsonBytes(out) });
+            return out;
+          } catch (err) {
+            // As runPackTool: a database error's text can echo another row's values, so the log keeps its code only.
+            const e = err as Error & { code?: unknown };
+            const message = typeof e.code === "string" && /^[0-9A-Z]{5}$/.test(e.code) ? `database error ${e.code}` : String(e.message ?? e);
+            recordMcpEvent(org, { method: "tools/call", name: t.name, ok: false, error: message, ms: performance.now() - t0, error_class: errorClass(err), req_bytes: jsonBytes(args) });
+            throw err;
+          }
         },
         summary: () => `${t.title} for the workspace: ${writes ? "done" : "read"}.`,
       });

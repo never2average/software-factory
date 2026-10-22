@@ -57,6 +57,14 @@ export interface GeneratedTool {
 /** One pack as the catalog reads it: its id, name, profile words and merged definition. */
 export interface CatalogPack { id: string; name: string; words?: Record<string, string>; definition: PackDefinition }
 
+/**
+ * A generated tool a pack's mcp settings keep off the customer MCP (mold_v0-067): `exclude` (or left out of `include`)
+ * removes it everywhere, `admin_only` moves it to the admin MCP. Either way the same operation's HTTP route for the
+ * workspace (the data API, the console's record and run data) and its console tab are withheld too
+ * (src/mcp-withheld.ts, scripts/gen-packs.mjs); an excluded staff tool withholds the staff route likewise.
+ */
+export interface WithheldTool { pack: string; generated: string; op: GeneratedOp; door: "workspace" | "admin"; area?: string; kind?: string; repository?: string; reason: "exclude" | "admin_only" }
+
 /** The names a generated tool may not take: the shell's and the packs' own tools, and the admin MCP's. */
 export interface Reserved { customer?: readonly string[]; admin?: readonly string[] }
 
@@ -124,8 +132,11 @@ const WRITE = (destructive: boolean, idempotent: boolean, openWorld = false) => 
  * The generated tools of a build's packs, in pack order, and every problem with their names and the packs' `mcp`
  * settings. Deterministic: the same definitions give the same list, byte for byte.
  */
-export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserved = {}): { tools: GeneratedTool[]; problems: string[] } {
+export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserved = {}): { tools: GeneratedTool[]; problems: string[]; withheld: WithheldTool[] } {
   const problems: string[] = [];
+  const withheld: WithheldTool[] = [];
+  const held = (t: GeneratedTool, reason: WithheldTool["reason"]) => withheld.push({ pack: t.pack, generated: t.generated, op: t.op, door: t.door,
+    ...(t.area ? { area: t.area } : {}), ...(t.kind ? { kind: t.kind } : {}), ...(t.repository ? { repository: t.repository } : {}), reason });
   const areaLabels = new Map<string, string>();
   for (const p of packs) for (const a of p.definition.recordAreas ?? []) {
     const r = RecordAreaSchema.safeParse(a);
@@ -313,12 +324,13 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
     named(Object.keys(settings.rename ?? {}), "rename"); named(Object.keys(settings.describe ?? {}), "describe");
     const include = settings.include ? new Set(settings.include) : null, exclude = new Set(settings.exclude ?? []), adminOnly = new Set(settings.admin_only ?? []);
     for (const t of tools) {
-      if ((include && !include.has(t.generated)) || exclude.has(t.generated)) continue;
+      if ((include && !include.has(t.generated)) || exclude.has(t.generated)) { held(t, "exclude"); continue; }
       if (adminOnly.has(t.generated)) {
         if (t.door === "admin") { problems.push(at(`admin_only names ${t.generated}, which is on the admin MCP already`)); continue; }
         // On the admin MCP it names the workspace it acts for.
         if ("workspace" in t.input) { problems.push(at(`admin_only names ${t.generated}, whose argument workspace would clash with the workspace staff name`)); continue; }
         t.admin_only = true;
+        held(t, "admin_only");
       }
       t.name = settings.rename?.[t.generated] ?? t.generated;
       if (settings.describe?.[t.generated]) t.description = plain(settings.describe[t.generated], 1000);
@@ -345,5 +357,5 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
     if (prior) problems.push(`pack ${t.pack}: mcp: tool ${t.name} (${t.generated}) clashes with ${prior} on the ${server} MCP: rename it or set mcp.prefix`);
     else owner[server].set(t.name, `pack ${t.pack}'s ${t.generated}`);
   }
-  return { tools: kept, problems };
+  return { tools: kept, problems, withheld };
 }

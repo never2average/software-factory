@@ -7,6 +7,7 @@ import { limitsFor } from "./rate-limits.js";
 import { registerPackTools } from "./packs.js";
 import { generatedInstructions } from "./mcp-tools.js";
 import { PROFILE } from "./profile.js";
+import type { SameNames, ShellToolName } from "./shell-tools.js";
 
 /**
  * The customer MCP server (/mcp, one workspace's): its name and version from the profile, its instructions, then the
@@ -85,6 +86,11 @@ export function capResult(org: Org, name: string, result: CallToolResult, t0: nu
 
 /** The customer MCP server's own tools: the host packs' (src/host.ts, mold_v0-039); none with zero packs. */
 export const ownToolNames = (): string[] => hostToolNames();
+
+// The shell has no customer tool of its own (mold_v0-039): src/shell-tools.ts SHELL_TOOL_NAMES is empty, and the
+// compiler holds it so. A host pack's tools are reserved when the packs are installed (src/packs.ts hostToolNames).
+const sameShellNames: SameNames<never, ShellToolName> = true;
+void sameShellNames;
 
 /** `context`: the account's and the person's context (a host pack's, src/host.ts), appended to the instructions. */
 export function createServer(org: Org, context = ""): McpServer {

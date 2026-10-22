@@ -14,6 +14,7 @@ import { customerSession, type Session } from "./app.js";
 import { getDb } from "./db.js";
 import { PackError } from "./pack-api.js";
 import { buildViews, computeMetrics, MAX_METRICS_PER_REQUEST } from "./metrics.js";
+import { packOpWithheld } from "./mcp-withheld.js";
 import { packs } from "./packs.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
@@ -37,6 +38,9 @@ export function metricAppRouter(): Router {
     const names = raw.split(",").map((n) => n.trim()).filter(Boolean);
     if (!names.length) throw new PackError("names: the metrics to compute, comma-separated", 400);
     if (names.length > MAX_METRICS_PER_REQUEST || names.some((n) => !/^[a-z][a-z0-9_]{1,62}$/.test(n))) throw new PackError(`names: up to ${MAX_METRICS_PER_REQUEST} metric names`, 400);
+    // A pack that withholds its metrics tool (mold_v0-067) withholds its metrics here too: as if they did not exist.
+    const held = new Set(buildViews().metrics.filter((m) => packOpWithheld(m.pack, "metrics")).map((m) => m.name));
+    if (names.some((n) => held.has(n))) throw new PackError(`no metric ${names.find((n) => held.has(n))}`, 404);
     return { metrics: await computeMetrics(session(res).org, names, actor(res)) };
   }));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
@@ -54,24 +58,30 @@ export function runAppRouter(): Router {
     const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new PackError("limit is 1 to 200", 400);
     const org = session(res).org;
-    const runs = await listRuns(org, { limit });
+    // The runs of a pack that withholds its list tool (mold_v0-067) are not listed here either.
+    const runs = (await listRuns(org, { limit })).filter((x) => !packOpWithheld(x.pack, "list_runs"));
     const counts = runs.length ? await (await getDb()).query<{ run_id: string; status: string; n: number }>(
       "SELECT run_id, status, count(*)::int AS n FROM run_results WHERE org_id = $1 AND run_id = ANY ($2::text[]) GROUP BY 1, 2", [org, runs.map((x) => x.id)]) : [];
-    return { runs: runs.map((x) => ({ ...x, results: Object.fromEntries(counts.filter((c) => c.run_id === x.id).map((c) => [c.status, c.n])) })) };
+    // A pack that withholds its results tool (mold_v0-067) shows no result counts either.
+    return { runs: runs.map((x) => ({ ...x, results: packOpWithheld(x.pack, "run_results") ? {} : Object.fromEntries(counts.filter((c) => c.run_id === x.id).map((c) => [c.status, c.n])) })) };
   }));
   r.get("/:id", answer(async (req, res) => {
     const { getRun, runResults } = await import("./runs.js");
     const id = String(req.params.id);
     if (!/^run_[A-Za-z0-9_-]{1,80}$/.test(id)) throw new PackError("Not found", 404);
     const run = await getRun(session(res).org, id);
-    if (!run) throw new PackError("Not found", 404);
+    // A run of a pack that withholds its status and results tools (mold_v0-067) is not shown here either.
+    if (!run || (packOpWithheld(run.pack, "run_status") && packOpWithheld(run.pack, "run_results"))) throw new PackError("Not found", 404);
     // A result names records: one whose check the person may not read is left out; an asset or source they may not read
     // is not named (the read permission of each area, mold_v0-057, as on /api/records).
     const { findArea, may } = await import("./record-areas.js");
     const readable = (x: { area: string } | null) => !x || (() => { const a = findArea(x.area); return !!a && may(a, "read", actor(res)); })();
     const results = (await runResults(session(res).org, id)).filter((x) => readable(x.check)).slice(0, 2000)
       .map((x) => ({ ...x, asset: readable(x.asset) ? x.asset : null, source: readable(x.source) ? x.source : null }));
-    return { run, results };
+    // Each part as its tool (mold_v0-067): a withheld results tool withholds the results, a withheld status tool the
+    // run's status, cost and error (only which run it is stays, so the results have their run).
+    const shownRun = packOpWithheld(run.pack, "run_status") ? { id: run.id, pack: run.pack, kind: run.kind } : run;
+    return { run: shownRun, results: packOpWithheld(run.pack, "run_results") ? [] : results };
   }));
   r.use((_req, res) => void res.status(404).json({ error: "Not found" }));
   return r;
