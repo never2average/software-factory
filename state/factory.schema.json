@@ -179,6 +179,10 @@
         "notify_domain": {
           "type": "string",
           "description": "the domain the operator has verified for sending email; a new application's sender is <Product> <project@domain>"
+        },
+        "source_offer": {
+          "type": "object",
+          "description": "mold_v0-050: where a mold_v0 app's own source is offered, written into each deploy copy's profile.json (.claude/scripts/packs.py). {\"app\": \"licensor_exception\"} when the factory's LICENSE-EXCEPTION.md permission covers the operator who runs the deployments (the app then says so and offers no link to its own source), or {\"app\": {\"url\": \"https://...\", \"license\": \"AGPL-3.0-only\"}}. Set it in state/factory.local.json, the machine's own file. Absent: the app says nothing about its own source. A pack's copyleft upstream is offered either way."
         }
       }
     }

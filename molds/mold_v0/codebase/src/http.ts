@@ -22,6 +22,9 @@ import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
 import { mountInstallPages } from "./install-pages.js";
+import { aboutAdminRouter, aboutAppRouter } from "./about-routes.js";
+import { currentOffer } from "./data-map.js";
+import { offerFooterHtml } from "./source-offer.js";
 import { memberKeyAppRouter } from "./member-keys.js";
 import { builtinAuthRouter } from "./builtin-auth.js";
 import * as roles from "./admin-roles.js";
@@ -78,7 +81,7 @@ const neutralRoot = () => {
   const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(PROFILE.name)}</title>` +
     `<meta name="description" content="${esc(PROFILE.short_description)}"><style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#111;background:#fff}a{color:#2563eb}</style></head>` +
-    `<body><main><h1>${esc(PROFILE.name)}</h1><p>${esc(PROFILE.console_description)}</p><p><a href="/install">Connect an MCP client</a> · <a href="/app">Sign in</a></p></main></body></html>`;
+    `<body><main><h1>${esc(PROFILE.name)}</h1><p>${esc(PROFILE.console_description)}</p><p><a href="/install">Connect an MCP client</a> · <a href="/app">Sign in</a></p>${offerFooterHtml(currentOffer())}</main></body></html>`;
 };
 
 /** Set on SIGTERM/SIGINT: the process is finishing in-flight requests and will exit. */
@@ -206,6 +209,8 @@ export function createApp() {
   // ---------- metrics and the runs the console's tabs read: /api/metrics, /api/runs (src/view-routes.ts); with no metric or job kind nothing is mounted ----------
   app.use("/api/metrics", metricAppRouter());
   app.use("/api/runs", runAppRouter());
+  // ---------- the About page's data (mold_v0-050, src/about-routes.ts): data flow and residency, the source offer ----------
+  app.use("/api/about", aboutAppRouter());
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
 
@@ -695,6 +700,7 @@ export function createApp() {
   admin.use("/packs", packAdminRouter());
   admin.use("/records", recordAdminRouter());
   admin.use("/data", dataAdminRouter());
+  admin.use("/about", aboutAdminRouter());
   app.use("/api/admin", admin);
 
   // ---------- local preview of the widget (development only) ----------

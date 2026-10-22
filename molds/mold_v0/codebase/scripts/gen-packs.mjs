@@ -13,6 +13,9 @@
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
 //   orchestrator/packs.generated.ts      the host packs' orchestrator entries (orchestrator/packs/<id>/main.ts)
+//   src/deploy-facts.generated.ts        the deploy facts the factory wrote into this build copy (deploy-facts.json at the
+//                                        codebase root, mold_v0-050): names, places and providers, never a value; null
+//                                        without the file. Read by src/data-map.ts (DATA-MAP.md and the About page)
 //
 // Host packs (mold_v0-039): a pack whose pack.json has `host` (an entry with defineHost, src/host.ts) is the product's
 // own surface: tools, routes and hooks at the shell's fixed points, console pages (web/src/packs/<id>/), an orchestrator
@@ -47,7 +50,8 @@
 //
 //   node scripts/gen-packs.mjs            write the files (npm run gen:packs)
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
-//   --packs <dir> --out <dir> --profile <file>   another packs directory, output root or profile (tests)
+//   --packs <dir> --out <dir> --profile <file> --facts <file>   another packs directory, output root, profile or deploy
+//                                                facts file (tests)
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -63,6 +67,7 @@ const ROOT = path.resolve(HERE, "..");
 const PACKS_DIR = path.resolve(opt("--packs") ?? path.join(ROOT, "packs"));
 const OUT = path.resolve(opt("--out") ?? ROOT);
 const PROFILE_FILE = path.resolve(opt("--profile") ?? path.join(ROOT, "profile.json"));
+const FACTS_FILE = path.resolve(opt("--facts") ?? path.join(ROOT, "deploy-facts.json"));
 const CHECK = argv.includes("--check");
 const PACK_API = path.join(ROOT, "src", "pack-api.ts");
 const PACK_HOST = path.join(ROOT, "src", "pack-host.ts");
@@ -500,7 +505,9 @@ function loadPack(dirName) {
   if (entry === null && !host) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
     fail(where, `${posix(path.relative(dir, e.p))} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
-  return { id, dir, json: m, host, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
+  // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
+  const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
+  return { id, dir, json: m, host, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -610,6 +617,62 @@ function limitsProblem(v, plans = true) {
   return null;
 }
 
+/** profile.json `source_offer` (mold_v0-050): null when it is well formed, else what is wrong. */
+const SPDX = /^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/;
+function sourceOfferProblem(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app}";
+  for (const k of Object.keys(v)) if (k !== "app" && k !== "$comment") return `unknown field ${k} (known: app)`;
+  const a = v.app;
+  if (a === undefined || a === "licensor_exception") return null;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return 'app must be "licensor_exception" or {url, license}';
+  for (const k of Object.keys(a)) if (k !== "url" && k !== "license") return `app: unknown field ${k} (known: url, license)`;
+  if (typeof a.url !== "string" || !/^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~%/+=-]*)?$/.test(a.url) || a.url.length > 300) return "app.url must be an https:// address of the source (no query, no user or password)";
+  if (typeof a.license !== "string" || !SPDX.test(a.license)) return "app.license must be an SPDX licence id or expression";
+  return null;
+}
+
+/**
+ * deploy-facts.json (mold_v0-050): what the factory knows from the app's state about where this build is deployed, written
+ * into the build copy before the generators run (.claude/scripts/packs.py). Names, places and providers only: every value
+ * is a short word, a name, a host or an https:// address without a user, password or query, and each secret is a NAME.
+ * Anything else is refused, so a value can never be carried into the build by this file. -> the facts or null.
+ */
+function readFacts() {
+  if (!existsSync(FACTS_FILE)) return null;
+  const where = rel(FACTS_FILE);
+  const f = readJson(FACTS_FILE, where);
+  if (!f) return null;
+  const WORD = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,79}$/, HOST = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/, URL_ = /^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/?$/, SECRET = /^[A-Z][A-Z0-9_]{1,62}$/;
+  const SOURCE = /^[A-Za-z0-9 .,_:/()<>'-]{1,300}$/;
+  const shape = {
+    $comment: "text", app_id: "id", target: ["vercel", "compose_remote"], source: "source",
+    vercel: { team: "word", api_project: "word", web_project: "word", production_url: "url", api_url: "url", function_region: "word" },
+    server: { provider: "word", host: "host", domain: "host", region: "word", compose_project: "word" },
+    database: { provider: "word", exposure: "word", resource: "word", region: "word" },
+    object_store: { provider: "word", bucket: "word", region: "word" },
+    secret_store: "word", secrets: { required: "names", optional: "names" },
+  };
+  const ok = {
+    text: (x) => typeof x === "string" && x.length <= 2000, id: (x) => typeof x === "string" && ID.test(x), word: (x) => x === null || (typeof x === "string" && WORD.test(x)),
+    host: (x) => x === null || (typeof x === "string" && HOST.test(x)), url: (x) => x === null || (typeof x === "string" && URL_.test(x)),
+    source: (x) => typeof x === "string" && SOURCE.test(x), names: (x) => Array.isArray(x) && x.length <= 200 && x.every((n) => typeof n === "string" && SECRET.test(n)),
+  };
+  const walkFacts = (obj, spec, at) => {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return fail(where, `${at || "the file"} must be an object`);
+    for (const [k, v] of Object.entries(obj)) {
+      const s = spec[k], here = at ? `${at}.${k}` : k;
+      if (s === undefined) fail(where, `unknown field ${here}: deploy facts carry names, places and providers only`);
+      else if (Array.isArray(s)) { if (!s.includes(v)) fail(where, `${here} must be one of ${s.join(", ")}`); }
+      else if (typeof s === "object") walkFacts(v, s, here);
+      else if (!ok[s](v)) fail(where, `${here} is not a ${s === "names" ? "list of secret NAMES (A-Z, 0-9, _)" : s === "url" ? "an https:// address with no path, user or query" : s} (a deploy fact is never a value)`);
+    }
+  };
+  walkFacts(f, shape, "");
+  for (const k of ["app_id", "target", "source", "database", "object_store", "secret_store", "secrets"]) if (f[k] === undefined) fail(where, `${k} is required`);
+  return f;
+}
+const deployFacts = readFacts();
+
 /**
  * The profile's optional `billing` (mold_v0-019, src/run-charges.ts): price per run, off unless `enabled` is true.
  * Only the app's own profile.json may set it (a host pack's profile may not: a pack never turns billing on or widens
@@ -652,6 +715,9 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
+      // Where the build's own source is offered (mold_v0-050, src/source-offer.ts), optional: {app: {url, license}} or
+      // {app: "licensor_exception"} (the licensor's additional permission applies to this deployment, and it says so).
+      if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
       if (k === "install_clients") {
         const known = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)"/g)].map((m) => m[1]).filter((id) => id !== "header");
@@ -661,7 +727,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, mcp_server_version, mcp_instructions, install_clients)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, mcp_server_version, mcp_instructions, install_clients, source_offer)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -697,11 +763,12 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
 const { checkViews, viewsOf, tabRoles, tabLabel, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const out = {};
 const loaded = [];
 for (const [id, json, file] of entries) {
@@ -713,6 +780,9 @@ for (const [id, json, file] of entries) {
     if (file) { const m = await import(pathToFileURL(file).href); code = m.default?.default ?? m.default ?? null; }
     const def = validatePack(mergePack(id, declared, code));
     if (def.id !== id) throw new Error(\`its entry defines pack \${JSON.stringify(def.id)}; the ids must match\`);
+    // The source offer names the commit that runs (mold_v0-050): an agent kind on the upstream's repository runs its pin.
+    const offerProblems = upstreamProblems([{ id, manifest: { name: json.name, upstream: json.upstream }, definition: def }]);
+    if (offerProblems.length) throw new Error(offerProblems.join("; "));
     loaded.push({ id, name: json.name, words: json.words ?? {}, definition: def });
     out[id] = { declared, areas: (def.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
       credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
@@ -763,7 +833,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
       packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
-      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts")]));
+      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts")]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
@@ -847,7 +917,7 @@ files.set(srcPacks, HEADER +
   packs.map((p, i) => p.manifest.entry === null ? "" : `import pack${i} from ${JSON.stringify(importPath(srcPacks, path.join(p.dir, p.manifest.entry)))};\n`).join("") +
   `\n/**\n * Every pack in this build, in pack order (by id): its pack.json, the definePack fields its declarations compile to\n` +
   ` * (mold_v0-057; null for none) and its code entry's definePack export (null for a pack.json alone). src/packs.ts merges and checks them.\n */\n` +
-  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string }; readonly declared: unknown; readonly definition: unknown }[] = [` +
+  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string; upstream?: { repo: string; commit: string; license?: string } }; readonly declared: unknown; readonly definition: unknown }[] = [` +
   (packs.length ? `\n${packs.map((p, i) => `  { manifest: ${JSON.stringify(p.manifest)}, declared: ${Object.keys(defsByPack[p.id]?.declared ?? {}).length ? JSON.stringify(defsByPack[p.id].declared) : "null"}, definition: ${p.manifest.entry === null ? "null" : `pack${i}`} },`).join("\n")}\n` : "") + "];\n");
 // The run tools the packs' agent kinds need (mold_v0-072; src/run-tools.ts): the runner image is built with exactly
 // these (scripts/install-run-tools.ts, the Dockerfile), each at its pinned version and checksum.
@@ -918,6 +988,9 @@ if (existsSync(path.join(OUT, "orchestrator")))
   files.set(path.join(OUT, "orchestrator", "packs.generated.ts"), HEADER +
     "/** The host packs' orchestrator entries (mold_v0-039), relative to orchestrator/: main.ts runs the first, else the deterministic worker. */\n" +
     `export const ORCHESTRATOR_ENTRIES: readonly string[] = ${JSON.stringify(orchPacks.map((id) => `./packs/${id}/main.ts`))};\n`);
+files.set(path.join(OUT, "src", "deploy-facts.generated.ts"), HEADER +
+  "/** The deploy facts the factory wrote into this build copy (deploy-facts.json, mold_v0-050), read by src/data-map.ts; null without them. */\n" +
+  `export const DEPLOY_FACTS: unknown = ${deployFacts ? json(deployFacts) : "null"};\n`);
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
   `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);
