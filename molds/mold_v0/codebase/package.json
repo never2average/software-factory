@@ -36,6 +36,7 @@
     "test:workspace-hook": "tsx scripts/workspace-hook-test.ts",
     "test:run-results": "tsx scripts/run-results-test.ts",
     "test:workspace-store": "tsx scripts/workspace-store-test.ts",
+    "test:workspace-files": "tsx scripts/workspace-files-test.ts",
     "test:credentials": "tsx scripts/credentials-test.ts",
     "test:onboarding": "tsx scripts/onboarding-test.ts",
     "test:run-spend": "tsx scripts/run-spend-test.ts",
