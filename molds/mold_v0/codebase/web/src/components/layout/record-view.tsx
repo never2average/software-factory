@@ -326,7 +326,7 @@ export function RecordView<T>({
                     <Fragment key={r ? k : `g:${it.g!.value}`}>
                       {head && it.g && (
                         <TableRow className='bg-muted/30 hover:bg-muted/30'>
-                          <TableCell colSpan={span} className='py-1.5'>
+                          <TableCell colSpan={span} className='py-0.5'>
                             <button type='button' className='flex min-h-6 items-center gap-1.5 text-xs font-medium leading-none'
                               onClick={() => setCollapsed((s) => { const n = new Set(s); if (!n.delete(it.g!.value)) n.add(it.g!.value); return n; })}>
                               <Icons.chevronRight className={cn('size-3.5 transition-transform', !collapsed.has(it.g.value) && 'rotate-90')} />
