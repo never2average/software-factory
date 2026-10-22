@@ -54,6 +54,8 @@ export const RUN_SANDBOXES = {
   unsandboxedAllowed: () => env.OCTILLION_ALLOW_UNSANDBOXED_RUNS === "yes",
 };
 export const sandboxWorkerId = (rowId: number) => `sbx-${rowId}`;
+/** What a boat run sandbox gets besides the runner's code (mold_v0-072): the run tools' installer and the build's list. */
+export const RUN_TOOL_INSTALL_FILES = ["scripts/install-run-tools.ts", "src/run-tools.generated.json"];
 
 // ---------- providers ----------
 
@@ -110,7 +112,8 @@ export function boatProvider(apiUrl: string): RunSandboxProvider {
         step = "ready";
         await lib.waitReady(id);
         step = "code upload";
-        await lib.uploadCode(id, ROOT, lib.runnerCodeFiles(ROOT, spec.packDirs));
+        // The runner's code, and the run tools' installer with the build's list (mold_v0-072): the sandbox is set up with them below.
+        await lib.uploadCode(id, ROOT, [...lib.runnerCodeFiles(ROOT, spec.packDirs), ...RUN_TOOL_INSTALL_FILES]);
         step = "configure";
         const envBody = Object.entries(spec.env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
         if (/[\r]/.test(envBody) || Object.values(spec.env).some((v) => v.includes("\n"))) throw new Error("an environment value spans lines");
@@ -134,7 +137,12 @@ done
 command -v git >/dev/null 2>&1 || { sudo -n apt-get update -qq && sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git; } >/dev/null 2>&1 || true
 command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables >/dev/null 2>&1 || true
 command -v git >/dev/null 2>&1 || { echo "git is missing in the run sandbox" >&2; exit 30; }
-command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || { echo "neither nft nor iptables in the run sandbox" >&2; exit 31; }`, 600);
+command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1 || { echo "neither nft nor iptables in the run sandbox" >&2; exit 31; }
+# The run tools the packs' agent kinds declare (mold_v0-072), as the runner image has them: each artifact checked against
+# its pinned sha256 before it is unpacked (root's, /opt/octi-tools). Before the runner starts: a run never downloads one.
+cd ${lib.HOME}/app
+grep -q '"aws"' src/run-tools.generated.json && { command -v unzip >/dev/null 2>&1 || sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unzip >/dev/null 2>&1 || true; }
+sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx scripts/install-run-tools.ts --from src/run-tools.generated.json --dir /opt/octi-tools >/dev/null 2>tools.err || { tail -5 tools.err >&2; exit 32; }`, 900);
         if (conf.code !== 0) throw new Error(`configure failed: ${conf.stderr.slice(-500)}`);
         step = "start";
         // As root (the runner switches to the run's user for the run itself), as a unit that outlives this command.
