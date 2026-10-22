@@ -33,7 +33,9 @@ export function StatStrip({ items, className }: {
       {items.map((it, i) => {
         const body = (
           <>
-            <dt className='text-muted-foreground text-xs font-medium'>{it.label}</dt>
+            <dt className='text-muted-foreground text-xs font-medium'>
+              {it.href ? <a href={it.href} className='outline-none after:absolute after:inset-0 group-hover:underline'>{it.label}</a> : it.label}
+            </dt>
             <dd className='mt-1 flex items-end justify-between gap-3'>
               <span className='text-2xl font-semibold tabular-nums tracking-tight'>{it.value}</span>
               {it.spark && it.spark.length > 1 && <Sparkline values={it.spark} />}
@@ -41,9 +43,11 @@ export function StatStrip({ items, className }: {
             {it.hint && <dd className='text-muted-foreground mt-0.5 text-xs'>{it.hint}</dd>}
           </>
         );
+        // A <dl> holds only <dt>/<dd> groups wrapped in a <div> (axe `definition-list`, `dlitem`), so a stat with a link
+        // keeps that shape: the link is the label, stretched over the whole cell so the cell is still one tap target.
         return (
-          <div key={i} className='min-w-0 flex-1 px-4 py-3 first:pl-0 max-sm:border-b max-sm:odd:pl-0 max-sm:even:border-l'>
-            {it.href ? <a href={it.href} className='block hover:underline'>{body}</a> : body}
+          <div key={i} className={cn('min-w-0 flex-1 px-4 py-3 first:pl-0 max-sm:border-b max-sm:odd:pl-0 max-sm:even:border-l', it.href && 'group relative has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-ring')}>
+            {body}
           </div>
         );
       })}
@@ -57,9 +61,11 @@ export function Sparkline({ values }: { values: number[] }) {
   const pts = values.map((v, i) => [i * step, max ? h - 2 - (v / max) * (h - 4) : h - 2] as const);
   const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} className='text-primary mb-1 shrink-0 overflow-visible' aria-hidden>
+    // 96px wide where there is room; in a narrow cell (a tablet beside the sidebar) it narrows, down to 32px, rather
+    // than push the strip past the page's edge. Stretched, not cropped; the line keeps its width.
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio='none' className='text-primary mb-1 h-7 w-24 min-w-8 shrink overflow-visible' aria-hidden>
       <path d={`${line}L${w},${h}L0,${h}Z`} fill='currentColor' opacity={0.12} />
-      <path d={line} fill='none' stroke='currentColor' strokeWidth={1.5} strokeLinejoin='round' strokeLinecap='round' />
+      <path d={line} fill='none' stroke='currentColor' strokeWidth={1.5} strokeLinejoin='round' strokeLinecap='round' vectorEffect='non-scaling-stroke' />
     </svg>
   );
 }

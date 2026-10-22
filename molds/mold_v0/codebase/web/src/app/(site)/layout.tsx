@@ -17,7 +17,7 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
   if (Host) return <Host>{children}</Host>;
   return (
     <div className='flex min-h-screen flex-col'>
-      <a href='#main' className='bg-background ring-ring sr-only rounded-md px-3 py-2 text-sm focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:ring-2'>Skip to content</a>
+      <a href='#main' className='bg-background ring-ring sr-only rounded-md text-sm focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-2 focus:ring-2'>Skip to content</a>
       <main id='main' className='flex-1'>{children}</main>
     </div>
   );
