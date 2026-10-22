@@ -4,7 +4,7 @@
 //
 // mold_v0-049 moved the product's tables out of the shell's base schema into its host pack's migrations. The older
 // versions are the pre-049 migrations (scripts/fixtures/pre-049-migrations: the three files split since, the others
-// unchanged) recorded up to 0001, 0003, 0008 and 0013, and the schema-on-boot path before them, each with rows shaped
+// unchanged) recorded up to 0001, 0003, 0008, 0013 and 0014, and the schema-on-boot path before them, each with rows shaped
 // like a live database in every table (fixtures/pre-049-migrations/seed.sql). In a build with no packs a new database
 // has none of the product's tables, and an older one keeps them with their rows (its shell schema equal to a new
 // one's). In a build whose host pack owns them (pack.json host.schema), a new database has them again, and every older
@@ -81,6 +81,8 @@ const oldBoot = (db: Db, sql: string) => db.migrate((tx) => tx.exec(sql));
  * edited). Run by this runner with no packs, that builds exactly the database such a release built.
  */
 const PRE = path.join(import.meta.dirname, "fixtures", "pre-049-migrations");
+/** The last shell migration released before mold_v0-049 (0014_run_charges, mold_v0-019); 0015 is the split's own. */
+const LAST_PRE = 14;
 async function preDir(upTo: number) {
   const dir = path.join(tmp, `pre049-${upTo}`);
   rmSync(dir, { recursive: true, force: true });
@@ -165,7 +167,7 @@ async function suite(kind: "pglite" | "postgres") {
 
   // Re-mint parity (mold_v0-049): the database a release before the split built, migrated by this one, is the new one.
   const main = await fresh(kind);
-  await runMigrations(main, { dir: await preDir(13), packDirs: [] });
+  await runMigrations(main, { dir: await preDir(LAST_PRE), packDirs: [] });
   const mainCatalog = await catalog(main);
   if (ownsAll) {
     // From scratch, the differences from the earlier schema are only: the runner's own record of pack migrations and
@@ -183,7 +185,7 @@ async function suite(kind: "pglite" | "postgres") {
   await main.drop();
 
   // Databases at the shell's older versions, with rows in every table: the legacy schema-on-boot path (the earlier
-  // baseline booted twice, as every deploy did), and the pre-049 migrations recorded up to 1, 3, 8 and 13.
+  // baseline booted twice, as every deploy did), and the pre-049 migrations recorded up to 1, 3, 8, 13 and 14.
   const starts: { name: string; build: (db: Db) => Promise<Awaited<ReturnType<typeof fingerprint>>> }[] = [
     { name: "schema-on-boot", build: async (db) => {
       const old = readFileSync(path.join(PRE, "0001_baseline.sql"), "utf8");
@@ -193,7 +195,7 @@ async function suite(kind: "pglite" | "postgres") {
       assert.equal((await migrationStatus(db)).legacy, true, "the old way leaves no schema_migrations table");
       return fingerprint(db);
     } },
-    ...[1, 3, 8, 13].map((v) => ({ name: `pre-049 at ${String(v).padStart(4, "0")}`, build: async (db: Db) => {
+    ...[1, 3, 8, 13, LAST_PRE].map((v) => ({ name: `pre-049 at ${String(v).padStart(4, "0")}`, build: async (db: Db) => {
       await runMigrations(db, { dir: await preDir(v), packDirs: [] });
       return seed(db);
     } })),
@@ -209,7 +211,7 @@ async function suite(kind: "pglite" | "postgres") {
     if (ownsAll) sameCatalog(await catalog(old), want, `${kind}: ${st.name} after migrating with the host pack`);
     else sameShellCatalog(await catalog(old), want, lingering, `${kind}: ${st.name} after migrating with no packs`);
     const adopted = applied.applied.filter((x) => x.endsWith("(adopted)"));
-    if (ownsAll && adopted.length && st.name.endsWith("0013")) {
+    if (ownsAll && adopted.length && st.name.endsWith(String(LAST_PRE).padStart(4, "0"))) {
       // Why adopting matters: running the adopted migration on this database would change its rows (its one-time
       // repairs: the reworded library task, the picked persona copy, the loss reason skipped before the fix).
       const set = packSets.find((x) => x.schema?.adopts)!, m = set.migrations.find((x) => set.schema!.adopts[`${String(x.version).padStart(4, "0")}_${x.name}`])!;
@@ -298,7 +300,7 @@ async function suite(kind: "pglite" | "postgres") {
     // would have): the migration that adopts it is recorded and not run, so the rows stay as they were.
     {
       const d = await fresh(kind);
-      await runMigrations(d, { dir: await preDir(13), packDirs: [] });
+      await runMigrations(d, { dir: await preDir(LAST_PRE), packDirs: [] });
       await d.exec(W + SEC + "INSERT INTO organizations (slug, name) VALUES ('hp-org', 'HP');\nINSERT INTO widgets (org_id, name) SELECT id, 'as it was' FROM organizations WHERE slug = 'hp-org';\n");
       const r2 = await runMigrations(d, { packDirs: hp(W + SEC + FN + MARK) });
       assert.ok(r2.applied.includes("pack hp 0001_widgets (adopted)"), `the database that ran the earlier baseline adopts it: ${r2.applied.join(", ")}`);
@@ -306,7 +308,7 @@ async function suite(kind: "pglite" | "postgres") {
       assert.equal((await d.query<{ n: number }>("SELECT count(*)::int AS n FROM pack_schema_migrations WHERE pack = 'hp'"))[0]!.n, 1, "recorded once");
       // Without its table there, adoption is refused: a database that never had the product's tables cannot pretend to.
       const e = await fresh(kind);
-      await runMigrations(e, { dir: await preDir(13), packDirs: [] });
+      await runMigrations(e, { dir: await preDir(LAST_PRE), packDirs: [] });
       await e.exec("DROP TABLE IF EXISTS widgets");
       await assert.rejects(runMigrations(e, { packDirs: hp(W + SEC + FN + MARK) }), /do not create: widgets/, "an adopted migration whose tables are missing is refused");
       await d.drop(); await e.drop();
