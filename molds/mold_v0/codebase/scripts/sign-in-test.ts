@@ -28,6 +28,9 @@ process.env.AUTH_PROVIDER = PROVIDER;
 process.env.OCTILLION_PLATFORM_ADMINS = "boss@platform.example";
 // Every test signs people in many times: the per-address code limit is checked on its own below.
 process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS = "1000";
+// The test stands in for the one proxy in front of the server (src/proxy-trust.ts, mold_v0-084): each request's
+// X-Forwarded-For is the address that proxy saw.
+process.env.OCTILLION_PROXY_HOPS = "1";
 const { cleanup, startHttp, STAMP } = await import("./lib/test-world.js");
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");

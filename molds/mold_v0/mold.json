@@ -30,7 +30,9 @@
     "mint": "deploy/bootstrap.sh",
     "config": {
       "DOMAIN": "{domain}",
-      "PUBLIC_URL": "https://{domain}"
+      "PUBLIC_URL": "https://{domain}",
+      "OCTILLION_CONSOLE_URL": "https://{domain}",
+      "OCTILLION_PROXY_HOPS": "1"
     },
     "dockerfile": "Dockerfile",
     "console": {
@@ -66,7 +68,12 @@
         "dir": ".",
         "config": "vercel.json",
         "database": true,
-        "health": "/healthz"
+        "health": "/healthz",
+        "env": {
+          "$comment": "Settings the factory writes on the api project at every deploy (mold_v0-084), never secrets: {console_url} is the console project's production address, read back from Vercel after its deploy (the API is deployed once more when it changed), so sign-in codes, invitations and every email link to the console; OCTILLION_PROXY_HOPS is the one proxy in front of the function (Vercel's edge), so per-IP limits read the address the edge saw.",
+          "OCTILLION_CONSOLE_URL": "{console_url}",
+          "OCTILLION_PROXY_HOPS": "1"
+        }
       },
       "web": {
         "suffix": "",

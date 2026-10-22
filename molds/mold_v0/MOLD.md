@@ -346,9 +346,36 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   every gateway request, so splitting work into many runs spends no more than one could (past the limit by at most
   the requests in flight when it is reached). An account with no allowance (no plan, no override) starts no run and
   its running ones stop spending, as its own launches do. For these checks a run queued in an earlier month and still
-  live counts in the current month too. The per-address count trusts `X-Forwarded-For` as the server's `trust proxy` does: behind no proxy, a
-  client can vary it, and the key, member and workspace limits still hold. `npm run test:limits` (with a load test: one
+  live counts in the current month too. The per-address count reads the client's address behind the real number of proxies (mold_v0-084,
+  `src/proxy-trust.ts`): `OCTILLION_PROXY_HOPS`, which the factory sets per target (1 on a server: the stack's Caddy; 1
+  on Vercel: its edge; unset, 0, or 1 on Vercel), so the address is the one the nearest proxy saw and an entry a client
+  writes into `X-Forwarded-For` is never read (`npm run test:proxy-hops`). A run container on the stack's internal runs
+  network reaches the API with no proxy in front and could still name an address; the key, member and workspace
+  limits hold either way. `npm run test:limits` (with a load test: one
   workspace's 120 requests at once leave another's error rate at 0).
+- **The email adapter** (mold_v0-083, built; `src/email.ts`): the one place that sends email. Sign-in codes and
+  invitations (`src/builtin-auth.ts` asks it for both), access requests, library submissions, usage alerts (80% and
+  100% of the month's allowance, after a session or a run ends), due dates (`src/schedules.ts`) and billing notices (a
+  run's charge given up on, `src/run-charges.ts`) are all built and sent there; `npm run test:email` fails if any other
+  file in `src/` talks to a provider or builds a message. The transport is `OCTILLION_EMAIL_PROVIDER`, else the
+  profile's `email.provider`, else Resend (its key in the Key vault); `test` keeps messages in the process (never in
+  production); `none` sends nothing. Sign-in codes and invitations are always on; every other group (`access_requests`,
+  `library`, `usage`, `due_dates`, `billing`) only when the app's profile lists it in `email.notifications` (a host
+  pack's profile may, for its product); `OCTILLION_EMAIL_NOTIFICATIONS` only narrows that list. An app built before
+  this change sent every group whenever Resend was connected: before its next deploy its profile (or its host pack's)
+  lists the groups it sends (the Octillion product: `access_requests`, `library`, `usage`; a pack with due dates such
+  as ComplianceOS: `due_dates`), or they are logged as skipped. With no transport that
+  can send, the About page and `/admin/emails` say so in one sentence. Every message is a row in `email_log` with a hash
+  and the domain of its one address, never the address, a code or a key; subjects, senders and recipients lose line
+  breaks; every link is on the console's address from the environment (`src/console-url.ts`: `OCTILLION_CONSOLE_URL`,
+  else `PUBLIC_URL`; anything but a plain http(s) address is ignored).
+- **Plan entitlements** (mold_v0-083, built; `src/entitlements.ts`): the app's own `profile.json` may declare
+  `entitlements: { plans: { <plan>: { features: [...], run_charges: "charged" | "included" } }, without_plan }`
+  (gen-packs checks it, and refuses it in a host pack's profile). A workspace's plan is its live subscription's when
+  declared, else `without_plan`; its limits are `limits.plans.<plan>` (018's), read for the same plan. Features: `runs`
+  (checked with the run limits at start) and `schedules` (making or turning on a schedule, and each firing).
+  `run_charges: "included"` freezes the plan's runs with no price, so 019's billing never charges them. Absent, nothing
+  is gated. `npm run test:entitlements`, and `npm run test:schedules` section 8.
 - **Price per run** (mold_v0-019, built; `src/run-charges.ts`, `sql/migrations/0014_run_charges.sql`): a billing usage
   event per finished run, **off by default**. Only the app's own `profile.json` turns it on (`billing: { enabled: true,
   currency, max_fixed, max_cost_plus_percent, charge_failed_runs, charge_cancelled_runs, stripe_meter }`; gen-packs
@@ -1130,9 +1157,13 @@ typed by hand, and nothing in the snapshot changes:
   Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set on the API), and the console's `src/proxy.ts` only
   sends a visitor without a session cookie to `/auth/sign-in`. An app whose state already lists them in
   `secrets_user` (the re-mint and its live copy) keeps Clerk, and the check still asks for them. For the built-in
-  sign-in on two Vercel projects, `OCTILLION_CONSOLE_URL` on the API names the console's address for invitation links.
+  sign-in on two Vercel projects, the factory writes the console's address on the API project as
+  `OCTILLION_CONSOLE_URL` (mold.json `vercel.projects.api.env`, mold_v0-084), with `OCTILLION_PROXY_HOPS=1`: sign-in
+  codes, invitations and every other email link to the console. On a server of its own both are in the env file
+  (`compose.config`: the domain, and the stack's Caddy).
 - Order: the API first (twice on a first deploy, so it reads its own address as `PUBLIC_URL`), its `/healthz` must
-  answer 200 ok; then the API-address variable on the console, then the console. Health on the console: `/healthz`
+  answer 200 ok; then the API-address variable on the console, then the console; then, when the console's address is
+  not the one the API holds (a first deploy, a new domain), the API once more with it, health-checked again. Health on the console: `/healthz`
   through the console answers 200 ok (so it reaches the API), and `/admin` and `/app` answer, read without following a
   redirect (a page, its sign-in redirect, or 401/403; never a 5xx or nothing).
 - When anything after the first deploy fails (a health check, a build, an address that cannot be read), **both**

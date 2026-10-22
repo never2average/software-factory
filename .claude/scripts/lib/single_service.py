@@ -1116,6 +1116,19 @@ def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
 def vercel_projects(base): return {r: f"{base}{s}" for r, s in SUFFIX.items()} if base else {}
 def vercel_spec(man, role): return (((man or {}).get("vercel") or {}).get("projects") or {}).get(role) or {}
 
+def api_settings(man, console_url=None):
+    """The settings the mold has the factory write on the api project (mold.json vercel.projects.api.env, mold_v0-084),
+    never secrets: name -> value, with {console_url} the console project's production address. A value that needs the
+    console's address is left out while it is not known (None). Only plain names and values on one line."""
+    out = {}
+    for n, v in (vercel_spec(man, "api").get("env") or {}).items():
+        if n.startswith("$") or not re.fullmatch(r"[A-Z][A-Z0-9_]*", n) or not isinstance(v, str) or re.search(r"[\r\n]", v): continue
+        if "{console_url}" in v:
+            if not console_url: continue
+            v = v.replace("{console_url}", console_url.rstrip("/"))
+        out[n] = v
+    return out
+
 NEXT_CONFIGS = ("next.config.ts", "next.config.mjs", "next.config.js")
 API_ENV = re.compile(r"""process\.env\.([A-Z][A-Z0-9_]*)\s*\?\?\s*['"`]https?://""")
 def console_facts(cb, man):
@@ -1248,6 +1261,9 @@ def vercel_plan(app_id, F, infra, man, K=None, cb=None, app=None):
              else f"a build copy build/{app_id}/ of the snapshot (no node_modules, no .next); the deployment serving each project now is recorded"),
             f"vercel deploy --prod --yes --project {names.get('api')}{sc} from the copy; its address read back from Vercel; PUBLIC_URL set to it (one more deploy when it changed); "
             f"health: <api>{man['health_path']} answers 200 ok",
+            *([f"{names.get('api')}: the mold's settings written before its deploy ({', '.join(f'{n}={v}' for n, v in (vercel_spec(man, 'api').get('env') or {}).items() if not n.startswith('$'))}); "
+               "{console_url} is the console's address read back after its deploy (the last deploy's until then), and the API is deployed once more when it changed, "
+               "so sign-in codes and invitations link to the console"] if api_settings(man, "x") else []),
             f"{names.get('web')}: {K['api_env'] or '<the API-address variable>'} set to the API's address (nothing else of the API's: never DATABASE_URL, never a minted key; "
             f"sign-in names the operator sets for it: {signin})",
             f"vercel deploy --prod --yes --project {names.get('web')}{sc} from build/{app_id}/{K['dir']}/; its address read back from Vercel",
@@ -1467,6 +1483,13 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     health_urls = lambda: {r: u + p for r, u, p in (("api", v.get("api_url"), man["health_path"]), ("web", v.get("production_url"), K["proxied_health"])) if u}
     try:
         api_url = ""
+        # The mold's settings for the api project (mold_v0-084): the console's address as the last deploy read it back
+        # (checked again after this run's console deploy), the proxy hops; written before the API's deploy reads them.
+        want = api_settings(man, v.get("production_url"))
+        have = P.pull_env(cb, api, required=False)
+        if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
+            for n, val in want.items():
+                if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
         for attempt in (1, 2):
             out = P.vercel_deploy(f"vercel deploy --prod --yes --project {api}{scope}", build, f"{api} deploy")
             if before["api"].get("id"): P.promote_new({"projects": {"api": before["api"]}}, cb, ["api"])   # after an earlier rollback Vercel holds production
@@ -1488,9 +1511,27 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
             P._set_env(K["api_env"], api_url, cb, project=web); say(f"  {web}: {K['api_env']} set to the API's address {api_url}")
         out = P.vercel_deploy(f"vercel deploy --prod --yes --project {web}{scope}", os.path.join(build, K["dir"]), f"{web} deploy")
         if before["web"].get("id"): P.promote_new({"projects": {"web": before["web"]}}, cb, ["web"])
-        url = P._deployed_address(web, out, cb, infra); v["production_url"] = url
+        url = P._deployed_address(web, out, cb, infra)
+        # The console's front door (mold_v0-084): its own domain once `domain.py switch` made it so and Vercel files it under
+        # this project, else the address just read back. Emails link to it, and it stays the recorded production address.
+        front = P._front_door(infra, url, cb) if hasattr(P, "_front_door") else url
+        v["production_url"] = front
         bad, h = console_verdict(P, url, K, read_page); v["health"].update(h)
         if bad: raise Stop(f"{web} deployed to {url}, but " + "; ".join(bad))
+        # The console's address is known now: the API's emails must link to it (mold_v0-084). When it is not what the
+        # API holds (a first deploy, or a new address), it is written and the API deployed once more to read it.
+        have = P.pull_env(cb, api, required=False)
+        stale = {n: val for n, val in api_settings(man, front).items() if have.get(n) != val}
+        if stale and not have and P.vercel_env_names(cb, api):
+            # The project holds names but none could be read back (a failed pull): never take that for "stale".
+            say(f"  NOTE: {api}'s settings could not be read back; {', '.join(stale)} left as they are (the next deploy checks again)"); stale = {}
+        if stale:
+            for n, val in stale.items(): P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}; deploying the API once more so it reads it")
+            P.vercel_deploy(f"vercel deploy --prod --yes --project {api}{scope}", build, f"{api} deploy")
+            if before["api"].get("id"): P.promote_new({"projects": {"api": before["api"]}}, cb, ["api"])
+            res = P._read_health(api_url + man["health_path"]); v["health"]["api"] = str(res[0]) if res[0] else "no answer"
+            if not _healthy(res): raise Stop(f"{api} deployed once more with the console's address, but {api_url}{man['health_path']} answered {_said(res)}")
+            say(f"  {api}: {api_url}{man['health_path']} answered 200 ok with the console's address")
     except (Stop, SystemExit) as e:
         why = _stop_text(e); rec = _rollback_recorded(before, cb, P, why, health_urls, v, ipath, infra)
         raise Stop(why.rstrip(".") + f". {_rollback_said(rec, names)} Recorded as reverted.")

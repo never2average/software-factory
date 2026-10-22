@@ -284,6 +284,8 @@ try {
     {
       process.env.RESEND_API_URL = http.mock.url;
       await (await import("../src/keyvault.js")).setCredential("resend", `re_test_${STAMP}_secret`);
+      // Due-date emails are a notification the app's profile turns on (mold_v0-083, src/email.ts): this app's does.
+      (await import("../src/email.js")).setEmailProfileForTest({ notifications: ["due_dates"] });
       const ownerA = await http.signIn(A, "owner"), viewerA = await http.signIn(A, "viewer"), memberA = await http.signIn(A, "member");
       const ownerB = await http.signIn(B, "owner");
       const day = "2030-02-04", plus = (n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
@@ -338,6 +340,41 @@ try {
       assert.equal((await (await http.req("GET", "/api/notices", h(ownerB))).json()).notices.length, 1);
       assert.equal((await http.req("GET", "/api/notices", {})).status, 401);
       console.log("✓ due check: a notice per record due within 7 days, an email to each workspace's own owners with only its records, in the email log without addresses; once a day; a later record posted and emailed then");
+    }
+
+    // ---------- 8. plan entitlements (mold_v0-083, src/entitlements.ts) ----------
+    {
+      const ent = await import("../src/entitlements.js");
+      NOW = at("2030-03-04T08:30:00Z");
+      const owner = await http.signIn(A, "owner");
+      const h = (tok: string) => ({ authorization: `Bearer ${tok}` });
+      await ent.setEntitlementsForTest({ plans: { basic: { features: ["runs"] }, team: { features: ["runs", "schedules"] }, sched_only: { features: ["schedules"] } }, without_plan: "basic" });
+      // Making one, or turning one on: only on a plan that includes schedules. Turning one off always.
+      const made = await http.req("POST", "/api/schedules", h(owner), { pack: "fixture_sched", job_kind: "sweep", name: "plan_check", cron: "0 * * * *" });
+      assert.equal(made.status, 403);
+      assert.match((await made.json()).error, /plan \(basic\) does not include run on a schedule/);
+      const hourly = (await (await http.req("GET", "/api/schedules", h(owner))).json()).schedules.find((s: any) => s.name === "hourly_sweep");
+      assert.equal((await http.req("PATCH", `/api/schedules/${hourly.id}`, h(owner), { enabled: false })).status, 200, "turning one off is always allowed");
+      assert.equal((await http.req("PATCH", `/api/schedules/${hourly.id}`, h(owner), { enabled: true })).status, 403, "turning one on needs the plan");
+      // A due schedule does not fire on such a plan: its row says why, and no run is written.
+      await cancelAll();
+      const nB = (await runsOf(B)).length;
+      await sch.tickSchedules(at("2030-03-04T10:00:00Z"));
+      assert.equal((await runsOf(B)).length, nB, "B's due hourly started nothing");
+      assert.match((await rowOf(B, "hourly_sweep")).last_error, /not started: this workspace's plan \(basic\) does not include run on a schedule/);
+      // A plan with schedules but not runs: the schedule fires, its runs are refused (the runs feature).
+      await ent.setEntitlementsForTest({ plans: { basic: { features: ["runs"] }, team: { features: ["runs", "schedules"] }, sched_only: { features: ["schedules"] } }, without_plan: "sched_only" });
+      await sch.tickSchedules(at("2030-03-04T11:00:00Z"));
+      assert.equal((await runsOf(B)).length, nB, "no run without the runs feature");
+      assert.match((await rowOf(B, "hourly_sweep")).last_error, /does not include start runs/);
+      // The plan with both: on again, and it fires.
+      await ent.setEntitlementsForTest({ plans: { basic: { features: ["runs"] }, team: { features: ["runs", "schedules"] } }, without_plan: "team" });
+      assert.equal((await http.req("PATCH", `/api/schedules/${hourly.id}`, h(owner), { enabled: true })).status, 200);
+      await sch.tickSchedules(at("2030-03-04T12:00:00Z"));
+      assert.ok((await runsOf(B)).length > nB, "on a plan with schedules and runs, B's due hourly starts its run");
+      await cancelAll();
+      await ent.setEntitlementsForTest(undefined);
+      console.log("✓ plan entitlements: a schedule is made, turned on and fired only on a plan with schedules, its runs only on a plan with runs; turning one off always works");
     }
 
     // ---------- 7. the cron entry ----------

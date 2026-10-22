@@ -188,6 +188,16 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       OCTILLION_SESSION_DAYS: ${OCTILLION_SESSION_DAYS:-}
+      # Where people open the console, for every link in an email (mold_v0-084, src/console-url.ts): empty, PUBLIC_URL
+      # (the stack serves both on one address); the factory sets it to https://<domain>.
+      OCTILLION_CONSOLE_URL: ${OCTILLION_CONSOLE_URL:-}
+      # The proxies in front of the API (src/proxy-trust.ts): one, the stack's Caddy, so per-IP limits read the address
+      # Caddy saw, never one a client wrote into X-Forwarded-For.
+      OCTILLION_PROXY_HOPS: ${OCTILLION_PROXY_HOPS:-1}
+      # The email adapter (mold_v0-083, src/email.ts): its transport (resend, none) and a narrower list of the
+      # notifications the profile turns on (none, or a comma-separated subset); empty, the profile's.
+      OCTILLION_EMAIL_PROVIDER: ${OCTILLION_EMAIL_PROVIDER:-}
+      OCTILLION_EMAIL_NOTIFICATIONS: ${OCTILLION_EMAIL_NOTIFICATIONS:-}
       # Accounts (docs/accounts.md): people in Clerk (when it is the sign-in), billing in Stripe, analytics in PostHog,
       # traces in New Relic. Each is off while its key is empty; per-org API keys keep working either way.
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
