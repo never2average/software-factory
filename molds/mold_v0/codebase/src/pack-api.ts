@@ -501,7 +501,9 @@ export const RecordAreaSchema = z.object({
   /**
    * Due dates (wired by mold_v0-035; src/schedules.ts): a check area of workspace scope may name one of its date fields.
    * Once a day the shell posts an in-app notice for each record whose date falls within `within_days` (today included),
-   * and emails the workspace's people with the `notify` roles (owners by default) a list of them.
+   * and emails the workspace's people with the `notify` roles (owners by default) a list of them. A sealed area may
+   * declare it too (mold_v0-076): its rows are opened with each workspace's own key in the daily check, never read in
+   * the database; its notices keep the title sealed and its emails name the record by key, never by title.
    */
   due: z.object({
     field: name,
@@ -515,7 +517,6 @@ export const RecordAreaSchema = z.object({
   if (a.role === "asset" && a.scope === "platform") bad("an asset area holds a workspace's private data: workspace scope only", "scope");
   if (a.sealed && a.scope === "platform") bad("a shared (platform) area has no workspace key to seal it with: sealed is for workspace areas", "sealed");
   if (a.sealed === false && a.role === "asset") bad("an asset area is always sealed", "sealed");
-  if (a.due && (a.sealed || a.role === "asset")) bad("due dates are read in the database: a sealed area's dates are not readable there", "due");
   if (new Set(a.fields.map((f) => f.name)).size !== a.fields.length) bad("a field is declared twice", "fields");
   if (!(a.list_columns ?? []).every((c) => a.fields.some((f) => f.name === c))) bad("list_columns must name declared fields", "list_columns");
   if (!(a.links ?? []).every((l) => a.fields.some((f) => f.name === l.field))) bad("a link's field must be a declared field", "links");
@@ -565,9 +566,14 @@ const fileKey = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/, "a file name in the d
 /** A path inside a repository or a workspace's files: no "..", no leading "/"; {name} placeholders and * in the last part. */
 const repoPath = z.string().regex(/^(?!\/)[A-Za-z0-9._/{}*-]{1,300}$/, "a relative path (letters, digits, . _ - / { } *)")
   .refine((p) => !p.split("/").some((s) => s === ".." || s === "." || s === ""), "a relative path with no . or .. part");
-/** A value inside a document: a dotted path of properties ("a.b"), "$." for the document's root, "@<name>" a path placeholder, "@file" the file's path. */
-export const VALUE_PATH = /^(?!.*(^|[.@$])(__proto__|constructor|prototype)(\.|$))(\$\.|@)?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
-const valuePath = z.string().regex(VALUE_PATH, "a value path: a.b, $.a (the document's root), @name (a path placeholder) or @file");
+/**
+ * A value inside a document: a dotted path of properties ("a.b"), each property optionally followed by list indexes
+ * ("controls[0]", "refs[0].id": the item at that position, counted from 0, at most 999), "$." for the document's root,
+ * "@<name>" a path placeholder, "@file" the file's path. A plain grammar (no expressions, no negative or computed
+ * indexes, no quotes), parsed by src/data-repositories.ts valueAt; __proto__, constructor and prototype are never a part.
+ */
+export const VALUE_PATH = /^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*|(\$\.)?[A-Za-z_][A-Za-z0-9_]*(\[(0|[1-9][0-9]{0,2})\])*(\.[A-Za-z_][A-Za-z0-9_]*(\[(0|[1-9][0-9]{0,2})\])*)*)$/;
+const valuePath = z.string().max(300).regex(VALUE_PATH, "a value path: a.b, a list's item a[0] or a[0].b, $.a (the document's root), @name (a path placeholder) or @file");
 /** Text with {value path} parts: a record's key or title made from a document's values. */
 const template = z.string().min(1).max(300).refine((t) => /\{[^{}]+\}/.test(t) && [...t.matchAll(/\{([^{}]*)\}/g)].every((m) => VALUE_PATH.test(m[1]!)) && !/[\u0000-\u001f]/.test(t),
   "a template: text with {value path} parts, e.g. {id} or {$.instrument}:{id}");
@@ -584,7 +590,7 @@ export const RowMapSchema = z.object({
   title: template.optional(),
   fields: z.record(name, valuePath).optional(),
   /** Only the items whose values are these (e.g. {"kind": "control"} in a ledger that holds several kinds of lines). */
-  where: z.record(z.string().regex(VALUE_PATH, "a value path"), z.union([z.string().max(200), z.number(), z.boolean()])).optional(),
+  where: z.record(z.string().max(300).regex(VALUE_PATH, "a value path"), z.union([z.string().max(200), z.number(), z.boolean()])).optional(),
 }).strict();
 /** An upstream project pinned by commit: a full commit id, never a branch or a tag. */
 export const UpstreamSchema = z.object({
@@ -734,6 +740,10 @@ export const METRIC_MEASURES = ["count", "sum", "average", "rate", "duration"] a
  *   where     conditions every row must meet (open findings: state in open, triaged)
  *   group_by  a field (one bar per value; an enum's options in their declared order), or {due: a date field, soon_days}:
  *             overdue / due soon / later / no date, against today
+ *   group_by_list  for a group_by field that holds a list (a link, or an enum, person or reference with `multiple`;
+ *             mold_v0-076): "first" groups each row by the list's first item (a link holding one key is that key),
+ *             "each" counts a row in the group of every item it lists (once per distinct item; a row's measure counts
+ *             in each of its groups, so the groups may add up to more than the rows; `rows` is still the rows read)
  *   by_time   a series: rows by `at` (a point in time), one bucket per day, week (from Monday) or month, the `last` N
  *             buckets up to now (UTC). With group_by, one series per group (an enum or a status: at most 8 groups)
  *   limit     groups shown (largest first; an enum's options in order), at most 50; the answer says when there are more
@@ -755,6 +765,7 @@ export const MetricSchema = z.object({
   }).strict().optional(),
   where: z.array(MetricConditionSchema).max(10).optional(),
   group_by: z.union([fieldRef, z.object({ due: name, soon_days: z.number().int().min(1).max(365).default(7) }).strict()]).optional(),
+  group_by_list: z.enum(["first", "each"]).optional(),
   by_time: z.object({
     at: point,
     every: z.enum(["day", "week", "month"]),
@@ -775,6 +786,7 @@ export const MetricSchema = z.object({
   const max = { day: 400, week: 260, month: 120 } as const;
   if (m.by_time && m.by_time.last > max[m.by_time.every]) bad(`by_time.last is at most ${max[m.by_time.every]} for every ${m.by_time.every}`, "by_time", "last");
   if (m.by_time && m.group_by && typeof m.group_by === "object") bad("a series groups by a field, not by due dates", "group_by");
+  if (m.group_by_list !== undefined && typeof m.group_by !== "string") bad("group_by_list says how to group by a field that holds a list: declare that field as group_by", "group_by_list");
   if (m.name === "metrics") bad("metrics is reserved", "name");
 });
 export type Metric = z.output<typeof MetricSchema>;

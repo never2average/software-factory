@@ -25,9 +25,11 @@
  */
 import { CronError, countBetween, latestAtOrBefore, nextAfter, parseCron } from "./cron.js";
 import { getDb } from "./db.js";
+import { vaultUnlocked } from "./keyvault.js";
+import { ensureOrgKey, isSealed, open, openJson, seal } from "./orgcrypto.js";
 import { PackError, RECORD_KEY, ScheduleSchema, z } from "./pack-api.js";
 import { packs } from "./packs.js";
-import { findArea, recordAreas, type RecordArea } from "./record-areas.js";
+import { findArea, isSealedArea, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
 import { findKind, jobKinds, startRun } from "./runs.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 
@@ -381,7 +383,17 @@ export async function tickSchedules(now = clock(), opts: { limit?: number } = {}
 
 // ---------- the daily due-date check ----------
 
-export interface DueReport { ran: boolean; reason?: string; day: string; areas: number; found: number; posted: number; emailed: number; email_failed: number }
+export interface DueReport {
+  ran: boolean; reason?: string; day: string; areas: number; found: number; posted: number; emailed: number; email_failed: number;
+  /**
+   * Workspaces whose sealed rows of a due area could not be opened (the key vault is locked); the day is then not marked
+   * done, so the next tick checks again. Rows that would not open (counted in `sealed_unreadable`) are left out alone.
+   */
+  sealed_skipped: number;
+  sealed_unreadable: number;
+}
+/** Sealed rows opened at a time by the due check (one workspace's, in pages by id: every row is read, few are held). */
+const SEALED_PAGE = 500;
 
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (day: string, n: number) => dayOf(new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000));
@@ -394,7 +406,7 @@ const realDay = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d
  */
 export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): Promise<DueReport> {
   const day = dayOf(now);
-  const report: DueReport = { ran: false, day, areas: 0, found: 0, posted: 0, emailed: 0, email_failed: 0 };
+  const report: DueReport = { ran: false, day, areas: 0, found: 0, posted: 0, emailed: 0, email_failed: 0, sealed_skipped: 0, sealed_unreadable: 0 };
   const areas = dueAreas();
   if (!areas.length) return { ...report, reason: "no record area declares due dates" };
   const db = await getDb();
@@ -413,14 +425,35 @@ export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): P
       `/* tenant: platform due-date check across workspaces; each row keeps its own org_id */ SELECT org_id, key, title, substr(data->>$3, 1, 10) AS due_on
          FROM workspace_records WHERE pack = $1 AND area = $2 AND NOT sealed AND substr(data->>$3, 1, 10) BETWEEN $4 AND $5
         ORDER BY org_id, due_on, key`, [a.pack, a.name, a.due.field, day, hi]));
-    for (const r of rows) {
-      if (!realDay(r.due_on)) continue;
+    const post = async (r: { org_id: number; key: string; title: string | null; due_on: string }) => {
+      if (!realDay(r.due_on)) return;
       report.found++;
       const posted = await asPlatform(() => db.query(
         `INSERT INTO workspace_notices (org_id, kind, pack, area, record_key, title, due_on, created_at) VALUES ($1, 'due', $2, $3, $4, $5, $6, $7)
          ON CONFLICT (org_id, kind, pack, area, record_key, due_on) DO NOTHING RETURNING id`,
-        [r.org_id, a.pack, a.name, r.key, typeof r.title === "string" ? r.title.slice(0, 300) : null, r.due_on, now]));
+        [r.org_id, a.pack, a.name, r.key, r.title, r.due_on, now]));
       report.posted += posted.length;
+    };
+    // A sealed area's title is never stored in the clear, whatever the row (one written before the area was sealed).
+    const sealedArea = isSealedArea(a);
+    for (const r of rows) await post({ ...r, title: !sealedArea && typeof r.title === "string" ? r.title.slice(0, 300) : null });
+    // Sealed rows (a sealed area's, mold_v0-076): their dates are ciphertext in the database, so each workspace's rows are
+    // opened with its own key, inside its own tenant scope, and the same window applied in code. The notice keeps the
+    // title sealed with that key (opened only when the workspace lists its notices); nothing opened is logged or kept.
+    const orgs = await asPlatform(() => db.query<{ org_id: number }>(
+      `/* tenant: platform due-date check: which workspaces hold sealed rows of this area; each is then read in its own scope */ SELECT DISTINCT org_id
+         FROM workspace_records WHERE pack = $1 AND area = $2 AND sealed ORDER BY org_id`, [a.pack, a.name]));
+    for (const { org_id: orgId } of orgs) {
+      if (!vaultUnlocked()) { report.sealed_skipped++; continue; }
+      try {
+        const got = await sealedDue(orgId, a.pack, a.name, a.due.field, day, hi);
+        report.sealed_unreadable += got.unreadable;
+        for (const r of got.rows) await post(r);
+      } catch (e) {
+        // Never the message: a decryption or database error must not carry a row's value into a log.
+        report.sealed_skipped++;
+        console.error(`due check: the sealed rows of ${a.name} in workspace ${orgId} could not be read (${(e as { code?: string }).code ?? (e as Error).name})`);
+      }
     }
     // Email: per workspace, the notices of this area still due and not yet emailed (a failure is tried again tomorrow).
     const pending = await asPlatform(() => db.query<{ id: string; org_id: number; record_key: string; title: string | null; due_on: string | Date }>(
@@ -430,7 +463,8 @@ export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): P
     const byOrg = new Map<number, typeof pending>();
     for (const n of pending) byOrg.set(n.org_id, [...(byOrg.get(n.org_id) ?? []), n]);
     for (const [orgId, list] of byOrg) {
-      const items = list.map((n) => ({ key: n.record_key, title: n.title, due_on: typeof n.due_on === "string" ? n.due_on.slice(0, 10) : dayOf(new Date(n.due_on)) }));
+      // A sealed title never leaves in an email (it would cross the mail provider in the clear): the key names the record.
+      const items = list.map((n) => ({ key: n.record_key, title: sealedArea || isSealed(n.title) ? null : n.title, due_on: typeof n.due_on === "string" ? n.due_on.slice(0, 10) : dayOf(new Date(n.due_on)) }));
       const out = await mail.dueSoon(orgId, { area: a.name, label: a.label, within_days: a.due.within_days, roles: a.due.notify, day, items,
         batch: list.map((n) => String(n.id)) });
       // Emailed once it reached someone of the workspace: a recipient whose address fails is not a reason to send the
@@ -441,22 +475,64 @@ export async function dueCheck(now = clock(), opts: { force?: boolean } = {}): P
       } else report.email_failed += out.recipients - out.delivered;
     }
   }
-  if (!opts.force) await asPlatform(() => db.query(
+  // Sealed rows left unopened (the vault locked, a workspace's read failed): the day stays unmarked, so the next tick
+  // runs the check again (notices and emails are posted once whatever the number of runs).
+  if (!opts.force && !report.sealed_skipped) await asPlatform(() => db.query(
     `INSERT INTO scheduler_marks (name, day, at) VALUES ('due_check', $1, $2) ON CONFLICT (name) DO UPDATE SET day = excluded.day, at = excluded.at
       WHERE scheduler_marks.day < excluded.day`, [day, now]));
   return report;
+}
+
+/**
+ * One workspace's sealed rows of a due area whose date is within [day, hi], opened in its own tenant scope a page at a
+ * time. The title is sealed again (cut to 300 characters) with the same key for the notice.
+ */
+type DueRow = { org_id: number; key: string; title: string | null; due_on: string };
+async function sealedDue(orgId: number, pack: string, area: string, field: string, day: string, hi: string): Promise<{ rows: DueRow[]; unreadable: number }> {
+  return withTenant(orgId, async () => {
+    const db = await getDb();
+    await ensureOrgKey(orgId);
+    const out: DueRow[] = [];
+    let unreadable = 0;
+    for (let after = "0"; ;) {
+      const page = await db.query<{ id: string; key: string; title: string | null; data: unknown }>(
+        "SELECT id, key, title, data FROM workspace_records WHERE org_id = $1 AND pack = $2 AND area = $3 AND sealed AND id > $4 ORDER BY id LIMIT $5",
+        [orgId, pack, area, after, SEALED_PAGE]);
+      for (const r of page) {
+        // One row that will not open (damaged ciphertext) is left out alone, never the workspace's other rows.
+        try {
+          const v = (await openJson(orgId, r.data))[field];
+          const due = typeof v === "string" ? v.slice(0, 10) : null;
+          if (!due || due < day || due > hi) continue;
+          const t = typeof r.title === "string" && r.title ? (await open(orgId, r.title)).slice(0, 300) : null;
+          const sealedTitle = t ? await seal(orgId, t) : null;
+          // seal() passes text through when the vault is locked: then no title at all, never one in the clear.
+          out.push({ org_id: orgId, key: r.key, title: isSealed(sealedTitle) ? sealedTitle : null, due_on: due });
+        } catch { unreadable++; }
+      }
+      if (page.length < SEALED_PAGE) break;
+      after = String(page[page.length - 1]!.id);
+    }
+    return { rows: out, unreadable };
+  });
 }
 
 // ---------- notices (the console) ----------
 
 export interface NoticeView { id: string; kind: "due"; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean }
 
-export async function listNotices(orgId: number, opts: { all?: boolean } = {}): Promise<NoticeView[]> {
-  const rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; kind: "due"; area: string; record_key: string; title: string | null;
+/** A workspace's notices, only those of areas `actor` may read (an API key or the system: every one). */
+export async function listNotices(orgId: number, opts: { all?: boolean; actor?: Actor } = {}): Promise<NoticeView[]> {
+  let rows = await withTenant(orgId, async () => (await getDb()).query<{ id: string; kind: "due"; area: string; record_key: string; title: string | null;
     due_on: string | Date; created_at: Date; emailed_at: Date | null; dismissed_at: Date | null }>(
     `SELECT id, kind, area, record_key, title, due_on, created_at, emailed_at, dismissed_at FROM workspace_notices
       WHERE org_id = $1 AND ($2 OR dismissed_at IS NULL) ORDER BY due_on, id LIMIT 500`, [orgId, !!opts.all]));
-  return rows.map((r) => ({ id: String(r.id), kind: r.kind, area: r.area, area_label: findArea(r.area)?.label ?? r.area, key: r.record_key, title: r.title,
+  // A notice names a record (its key, its due day, its title): only for people who may read its area (mold_v0-076).
+  const actor = opts.actor;
+  if (actor) rows = rows.filter((r) => { const a = findArea(r.area); return !!a && may(a, "read", actor); });
+  // A sealed area's notice holds its title sealed with this workspace's key: opened here, for this workspace only.
+  const titles = await Promise.all(rows.map(async (r) => (isSealed(r.title) ? withTenant(orgId, () => open(orgId, r.title!)).catch(() => null) : r.title)));
+  return rows.map((r, i) => ({ id: String(r.id), kind: r.kind, area: r.area, area_label: findArea(r.area)?.label ?? r.area, key: r.record_key, title: titles[i] ?? null,
     due_on: typeof r.due_on === "string" ? r.due_on.slice(0, 10) : dayOf(new Date(r.due_on)), created_at: iso(r.created_at)!, emailed: !!r.emailed_at, dismissed: !!r.dismissed_at }));
 }
 

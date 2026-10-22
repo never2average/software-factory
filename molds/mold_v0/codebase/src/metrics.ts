@@ -194,11 +194,26 @@ function measureSql(q: Sql, m: SpecMetric, over: SpecArea | RunSource, now: Date
   }
 }
 
-/** The group key of a row: a field's value (as text), or its due-date bucket. */
+/**
+ * A list field's items as rows of one text column `v` (a lateral join on `t`): its distinct string items, a single
+ * string as one item (a link may hold one key), nothing otherwise. group_by_list "each" (mold_v0-076).
+ */
+function itemsSql(q: Sql, c: Column): string {
+  const x = q.list(c);
+  return `LEFT JOIN LATERAL (SELECT DISTINCT e.j #>> '{}' AS v FROM jsonb_array_elements(CASE jsonb_typeof(${x}) WHEN 'array' THEN ${x}
+    WHEN 'string' THEN jsonb_build_array(${x}) ELSE '[]'::jsonb END) AS e(j) WHERE jsonb_typeof(e.j) = 'string') g ON true`;
+}
+
+/** The group key of a row: a field's value (as text), a list's first item or each item, or its due-date bucket. */
 function groupSql(q: Sql, m: SpecMetric, over: SpecArea | RunSource, now: Date): string {
   const g = m.group_by!;
   if (typeof g === "string") {
     const col = columnOf(over, g) as Column;
+    if (m.group_by_list === "each") return "g.v";
+    if (m.group_by_list === "first") {
+      const x = q.list(col);
+      return `(CASE jsonb_typeof(${x}) WHEN 'array' THEN (CASE WHEN jsonb_typeof(${x} -> 0) = 'string' THEN ${x} ->> 0 END) WHEN 'string' THEN ${x} #>> '{}' END)`;
+    }
     return col.type === "boolean" ? `(${q.bool(col)})::text` : q.text(col);
   }
   const d = q.time(columnOf(over, g.due) as Column);
@@ -209,33 +224,50 @@ function groupSql(q: Sql, m: SpecMetric, over: SpecArea | RunSource, now: Date):
 
 type Cell = { k: string | null; b: string | null; v: number | null; n: number };
 
-async function runSql(orgId: number, m: SpecMetric, src: Source, now: Date): Promise<Cell[]> {
-  const q = new Sql();
-  const over = overOf(src);
-  const from = "area" in src
-    ? src.area.scope === "platform"
-      ? `FROM platform_records t WHERE t.pack = ${q.p(src.area.pack)} AND t.area = ${q.p(src.area.name)}`
-      : `FROM workspace_records t WHERE t.org_id = ${q.p(orgId)} AND t.pack = ${q.p(src.area.pack)} AND t.area = ${q.p(src.area.name)} AND NOT t.sealed`
-    : `FROM ${src.run === "runs" ? "runs" : "run_results"} t WHERE t.org_id = ${q.p(orgId)}`;
-  const where = (m.where ?? []).map((c) => condSql(q, over, c, now));
-  const { agg, counted } = measureSql(q, m, over, now);
-  let bucket = "NULL::text";
-  if (m.by_time) {
-    const at = q.time(pointOf(over, m.by_time.at) as Column);
-    const w = bucketsOf(m.by_time, now);
-    where.push(`${at} >= ${q.p(w.start.toISOString())}::timestamptz AND ${at} < ${q.p(w.end.toISOString())}::timestamptz`);
-    bucket = `to_char(date_trunc(${q.p(m.by_time.every)}, ${at} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`;
-  }
-  const key = m.group_by !== undefined ? groupSql(q, m, over, now) : "NULL::text";
-  const col = typeof m.group_by === "string" ? (columnOf(over, m.group_by) as Column) : null;
-  // A field's values (not an enum's options, a boolean or due buckets) are many: the largest groups, and one more to know.
-  const bounded = m.group_by !== undefined && !m.by_time && col && col.type !== "enum" && col.type !== "boolean";
-  const sql = `SELECT ${key} AS k, ${bucket} AS b, ${agg} AS v, ${counted}::int AS n ${from}${where.length ? ` AND ${where.join(" AND ")}` : ""}
-    GROUP BY 1, 2${bounded ? ` ORDER BY 3 DESC NULLS LAST, 1 LIMIT ${q.p(m.limit + 1)}` : ""}`;
+/** A metric's cells, and (group_by_list "each", where a row may sit in several groups) the rows it read. */
+type Cells = { cells: Cell[]; rows?: number };
+
+async function runSql(orgId: number, m: SpecMetric, src: Source, now: Date): Promise<Cells> {
+  // One statement per call: the cells (grouped), or for "each" also the rows read (the same rows, not grouped).
+  const statement = (grouped: boolean) => {
+    const q = new Sql();
+    const over = overOf(src);
+    const each = grouped && m.group_by_list === "each" && typeof m.group_by === "string";
+    const table = "area" in src ? (src.area.scope === "platform" ? "platform_records" : "workspace_records") : src.run === "runs" ? "runs" : "run_results";
+    const join = each ? ` ${itemsSql(q, columnOf(over, m.group_by as string) as Column)}` : "";
+    const scope = "area" in src
+      ? src.area.scope === "platform"
+        ? `t.pack = ${q.p(src.area.pack)} AND t.area = ${q.p(src.area.name)}`
+        : `t.org_id = ${q.p(orgId)} AND t.pack = ${q.p(src.area.pack)} AND t.area = ${q.p(src.area.name)} AND NOT t.sealed`
+      : `t.org_id = ${q.p(orgId)}`;
+    const from = `FROM ${table} t${join} WHERE ${scope}`;
+    const where = (m.where ?? []).map((c) => condSql(q, over, c, now));
+    const { agg, counted } = measureSql(q, m, over, now);
+    let bucket = "NULL::text";
+    if (m.by_time) {
+      const at = q.time(pointOf(over, m.by_time.at) as Column);
+      const w = bucketsOf(m.by_time, now);
+      where.push(`${at} >= ${q.p(w.start.toISOString())}::timestamptz AND ${at} < ${q.p(w.end.toISOString())}::timestamptz`);
+      if (grouped) bucket = `to_char(date_trunc(${q.p(m.by_time.every)}, ${at} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`;
+    }
+    const filter = where.length ? ` AND ${where.join(" AND ")}` : "";
+    if (!grouped) return { sql: `SELECT ${counted}::int AS n ${from}${filter}`, params: q.params };
+    const key = m.group_by !== undefined ? groupSql(q, m, over, now) : "NULL::text";
+    const col = typeof m.group_by === "string" ? (columnOf(over, m.group_by) as Column) : null;
+    // A field's values (not an enum's options, a boolean or due buckets) are many: the largest groups, and one more to know.
+    const bounded = m.group_by !== undefined && !m.by_time && col && col.type !== "enum" && col.type !== "boolean";
+    return { sql: `SELECT ${key} AS k, ${bucket} AS b, ${agg} AS v, ${counted}::int AS n ${from}${filter}
+    GROUP BY 1, 2${bounded ? ` ORDER BY 3 DESC NULLS LAST, 1 LIMIT ${q.p(m.limit + 1)}` : ""}`, params: q.params };
+  };
   const db = await getDb();
   return withTenant(orgId, () => db.transaction(async (tx) => {
     await tx.query(`SET LOCAL statement_timeout = ${METRIC_TIMEOUT_MS}`);
-    return tx.query<Cell>(sql, q.params);
+    const c = statement(true);
+    const cells = await tx.query<Cell>(c.sql, c.params);
+    if (m.group_by_list !== "each") return { cells };
+    const t = statement(false);
+    const [r] = await tx.query<{ n: number }>(t.sql, t.params);
+    return { cells, rows: Number(r?.n ?? 0) };
   }));
 }
 
@@ -290,9 +322,12 @@ const percentile = (xs: number[], p: number) => {
   const s = [...xs].sort((a, b) => a - b), pos = p * (s.length - 1), lo = Math.floor(pos);
   return s[lo]! + (s[Math.min(lo + 1, s.length - 1)]! - s[lo]!) * (pos - lo);
 };
-function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cell[] {
+/** A list field's string items, as the SQL reads them: a single string is one item (a link may hold one key). */
+const jsItems = (v: unknown): string[] => (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string");
+function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cells {
   const keep = rows.filter((r) => (m.where ?? []).every((c) => jsCond(area, c, r, now)));
   const cells = new Map<string, Row[]>();
+  const read: Row[] = [];
   const w = m.by_time ? bucketsOf(m.by_time, now) : null;
   const atCol = m.by_time ? (pointOf(area, m.by_time.at) as Column) : null;
   for (const r of keep) {
@@ -302,22 +337,26 @@ function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cell[] 
       if (t === null || t < w.start.getTime() || t >= w.end.getTime()) continue;
       b = bucketStart(new Date(t), m.by_time!.every).toISOString().slice(0, 10);
     }
-    let k: string | null = null;
+    read.push(r);
+    let ks: (string | null)[] = [null];
     if (typeof m.group_by === "string") {
       const col = columnOf(area, m.group_by) as Column;
       const v = jsValue(col, r);
-      k = col.type === "boolean" ? (typeof v === "boolean" ? String(v) : null) : jsText(v);
+      if (m.group_by_list === "each") { const items = [...new Set(jsItems(v))]; ks = items.length ? items : [null]; }
+      else if (m.group_by_list === "first") ks = [Array.isArray(v) ? (typeof v[0] === "string" ? v[0] : null) : typeof v === "string" ? v : null];
+      else ks = [col.type === "boolean" ? (typeof v === "boolean" ? String(v) : null) : jsText(v)];
     } else if (m.group_by) {
       const d = jsTime(columnOf(area, m.group_by.due) as Column, r), today = utcDay(now).getTime();
-      k = d === null ? "none" : d < today ? "overdue" : d < today + m.group_by.soon_days * DAY ? "due_soon" : "later";
+      ks = [d === null ? "none" : d < today ? "overdue" : d < today + m.group_by.soon_days * DAY ? "due_soon" : "later"];
     }
-    const id = JSON.stringify([k, b]);
-    if (!cells.has(id)) cells.set(id, []);
-    cells.get(id)!.push(r);
+    for (const k of ks) {
+      const id = JSON.stringify([k, b]);
+      if (!cells.has(id)) cells.set(id, []);
+      cells.get(id)!.push(r);
+    }
   }
   const out: Cell[] = [];
-  for (const [id, rs] of cells) {
-    const [k, b] = JSON.parse(id) as [string | null, string | null];
+  const measure = (rs: Row[]): { v: number | null; n: number } => {
     let v: number | null, n = rs.length;
     if (m.measure === "count") v = rs.length;
     else if (m.measure === "sum" || m.measure === "average") {
@@ -332,12 +371,17 @@ function jsCells(m: SpecMetric, area: SpecArea, rows: Row[], now: Date): Cell[] 
       n = xs.length;
       v = !xs.length ? null : d.stat === "average" ? xs.reduce((a, x) => a + x, 0) / xs.length : d.stat === "max" ? Math.max(...xs) : percentile(xs, d.stat === "median" ? 0.5 : 0.9);
     }
-    out.push({ k, b, v, n });
+    return { v, n };
+  };
+  for (const [id, rs] of cells) {
+    const [k, b] = JSON.parse(id) as [string | null, string | null];
+    out.push({ k, b, ...measure(rs) });
   }
+  const rowsRead = m.group_by_list === "each" ? { rows: measure(read).n } : {};
   const col = typeof m.group_by === "string" ? (columnOf(area, m.group_by) as Column) : null;
   if (m.group_by !== undefined && !m.by_time && col && col.type !== "enum" && col.type !== "boolean")
-    return out.sort((x, y) => (y.v ?? -Infinity) - (x.v ?? -Infinity) || String(x.k).localeCompare(String(y.k))).slice(0, m.limit + 1);
-  return out;
+    return { cells: out.sort((x, y) => (y.v ?? -Infinity) - (x.v ?? -Infinity) || (x.k === y.k ? 0 : x.k === null ? 1 : y.k === null ? -1 : x.k.localeCompare(y.k))).slice(0, m.limit + 1), ...rowsRead };
+  return { cells: out, ...rowsRead };
 }
 
 /**
@@ -420,18 +464,20 @@ export async function computeMetric(orgId: number, name: string, actor: Actor, n
   if (actor.role !== null && !metricRoles(m, buildViews().areas).includes(actor.role)) throw new PackError(`Your role can't read ${m.label}.`, 403);
   const src = sourceOf(m);
   const over = overOf(src);
-  let cells: Cell[], partial = false;
+  let got: Cells, partial = false;
   if ("area" in src && (opts.forceCode || (await hasSealed(orgId, src.area)))) {
     // One read of an area's sealed rows per request, shared by its metrics.
     const cache = opts.sealed ?? new Map<string, Promise<Sealed>>();
     if (!cache.has(src.area.name)) cache.set(src.area.name, sealedRows(orgId, src.area));
-    const got = await cache.get(src.area.name)!;
-    partial = got.partial;
-    cells = jsCells(m, src.area, got.rows, now);
-  } else cells = await runSql(orgId, m, src, now);
+    const sealed = await cache.get(src.area.name)!;
+    partial = sealed.partial;
+    got = jsCells(m, src.area, sealed.rows, now);
+  } else got = await runSql(orgId, m, src, now);
+  const cells = got.cells;
 
   const base = { name: m.name, label: m.label, description: m.description ?? null, unit: metricUnit(m, over), measure: m.measure, as_of: now.toISOString(), ...(partial ? { partial } : {}) };
-  const rows = cells.reduce((a, c) => a + Number(c.n), 0);
+  // A row grouped by each item of its list sits in several groups: the rows read are counted once (got.rows).
+  const rows = got.rows ?? cells.reduce((a, c) => a + Number(c.n), 0);
   const empty = m.measure === "count" || m.measure === "sum" ? 0 : null;
   const label = await labeler(orgId, m, over, [...new Set(cells.map((c) => c.k))], actor);
   /** A group the person may not read is shown without its key too. */
