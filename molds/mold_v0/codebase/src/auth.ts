@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getDb } from "./db.js";
 import { clerkEnabled, isSuspended, mcpAudiences, memberships, onMembershipChange, organizations, verifyOAuthToken } from "./clerk.js";
+import { people } from "./people.js";
 import { accountRoleOf, type AccountRole } from "./account-roles.js";
 
 /** The tenant a request acts for. Every query in queries.ts is scoped by orgId. */
@@ -88,13 +89,16 @@ export async function resolveKey(key: string | undefined | null, opts: { inUrl?:
 }
 
 /**
- * A person's current role in the workspace linked to Clerk organization `clerkOrgId`, or null when they are not in it
- * (left, removed), are suspended, or it cannot be read (Clerk off or failing: a member key fails closed).
+ * A person's current role in the workspace whose directory id (organizations.clerk_org_id: a Clerk organization, or the
+ * built-in directory's id, src/people.ts) is `clerkOrgId`, or null when they are not in it (left, removed), are
+ * suspended, or it cannot be read (sign-in off or failing: a member key fails closed). Built-in memberships are read
+ * live; Clerk's through its 30-second cache.
  */
 export async function memberRole(userId: string, clerkOrgId: string | null): Promise<AccountRole | null> {
-  if (!clerkOrgId || !clerkEnabled()) return null;
+  const dir = people();
+  if (!clerkOrgId || !dir.enabled()) return null;
   try {
-    const m = (await memberships.forUser(userId)).find((x) => x.organization?.id === clerkOrgId);
+    const m = (await dir.memberships.forUser(userId)).find((x) => x.organization?.id === clerkOrgId);
     return m && !isSuspended(m) ? accountRoleOf(m) : null;
   } catch (e) {
     console.error(`member key: the membership could not be read (${(e as Error).message}): refused`);

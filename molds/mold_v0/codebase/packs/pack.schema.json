@@ -2267,7 +2267,8 @@
               "setup",
               "billing",
               "profile",
-              "page"
+              "page",
+              "files"
             ]
           },
           "label": {
@@ -2904,6 +2905,42 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{0,63}$"
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspace_store": {
+      "type": "object",
+      "properties": {
+        "retention": {
+          "type": "object",
+          "properties": {
+            "keep_last": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "keep_days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 36500
+            }
+          },
+          "additionalProperties": false
+        },
+        "secret_paths": {
+          "default": [],
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
         }
       },
       "additionalProperties": false
