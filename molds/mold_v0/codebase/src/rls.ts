@@ -51,7 +51,9 @@ export const NO_ACCESS = ["vault_credentials", "vault_providers", "admin_access_
   // The scheduler's own bookkeeping (mold_v0-035): the day the due-date check last ran.
   "scheduler_marks",
   // The sandboxes launched for runs (mold_v0-055): platform bookkeeping.
-  "run_sandboxes"];
+  "run_sandboxes",
+  // Approvals of previews (mold_v0-079) and a company's egress hosts (mold_v0-075): the shell's code only.
+  "run_approvals", "workspace_egress_hosts"];
 
 export async function tenantTables(db: Queryable): Promise<string[]> {
   const rows = await db.query<{ table_name: string }>(

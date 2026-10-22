@@ -12,6 +12,8 @@
 //     proxy, which refuses an unlisted name (SNI) and nothing reaches the outside; DNS goes to the proxy's responder
 //     (NXDOMAIN for an unlisted name), not out; through the proxy, an IP address or an unlisted host is refused.
 //  3. Root in the sandbox (the runner) still reaches the outside: the rules hold for the run's user, by uid.
+// The run user is one leased per run (mold_v0-078, src/run-users.ts): a uid no account names, locked down by number;
+// the run's allowlist has a company's own host (mold_v0-075), allowed exactly: never its subdomains.
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -19,6 +21,7 @@ import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { proxySource, probeSource, setupScript } from "../orchestrator/core/egress.js";
+import { leaseRunUser, type RunUser } from "../src/run-users.js";
 
 const has = (bin: string) => spawnSync("sh", ["-c", `command -v ${bin}`]).status === 0;
 const why = process.getuid?.() !== 0 ? "not root" : !has("ip") ? "no ip" : !has("nft") && !has("iptables") ? "neither nft nor iptables" : !has("setpriv") ? "no setpriv" : null;
@@ -36,7 +39,11 @@ const sh = (args: string[], opts: { ns?: string } = {}) => {
 };
 const kids: ChildProcess[] = [];
 let failed = false;
+let lease: RunUser | null = null;
 try {
+  // The run's user as a sandbox's runner gets it: leased for this run (a uid with no account), never shared meanwhile.
+  lease = await leaseRunUser(`firewall-${tag}`);
+  const RUID = lease.uid;
   // ---------- two namespaces and a cable ----------
   sh(["ip", "netns", "add", nsS]); sh(["ip", "netns", "add", nsO]);
   sh(["ip", "link", "add", `${tag}a`, "type", "veth", "peer", "name", `${tag}b`]);
@@ -87,8 +94,9 @@ const out = mode === "baseline" ? { direct8080: await tcp(OUT, 8080), local_daem
   : { direct8080: await tcp(OUT, 8080), direct22: await tcp(OUT, 22), dns_tcp: await tcp(OUT, 53), local_daemon: await tcp("127.0.0.1", 7777),
       local_resolver_tcp: await tcp("127.0.0.53", 53), own_address: await tcp(${JSON.stringify(IN)}, 7778), ipv6_loopback: await tcp("::1", 7777), tls443_unlisted: await tls443("example.com"), tls443_listed_no_dns: await tls443("allowed.test"),
       dns: await dns("example.com"), proxy_ip: await viaProxy(OUT + ":443"), proxy_unlisted: await viaProxy("example.com:443") };
+if (mode === "after") Object.assign(out, { company_exact: await viaProxy("company.test:443"), company_sub: await viaProxy("x.company.test:443") });
 console.log(JSON.stringify(out));`);
-  const asRunUser = (mode: string) => JSON.parse(sh(["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", process.execPath, path.join(dir, "try.mjs"), mode], { ns: nsS }).trim());
+  const asRunUser = (mode: string) => JSON.parse(sh(["setpriv", `--reuid=${RUID}`, `--regid=${RUID}`, "--clear-groups", process.execPath, path.join(dir, "try.mjs"), mode], { ns: nsS }).trim());
 
   // 1. baseline
   const before = asRunUser("baseline");
@@ -98,14 +106,14 @@ console.log(JSON.stringify(out));`);
   console.log("✓ before the lockdown the run user reaches the outside directly");
 
   // 2. the lockdown, as the runner runs it (as root, no systemd), for the run user "nobody"
-  for (const [f, body] of [["egress-proxy.mjs", proxySource()], ["egress-allow.json", JSON.stringify({ hosts: ["allowed.test"] })], ["egress-probe.mjs", probeSource("allowed.test")]] as const)
+  for (const [f, body] of [["egress-proxy.mjs", proxySource()], ["egress-allow.json", JSON.stringify({ hosts: ["allowed.test"], exact: ["company.test"] })], ["egress-probe.mjs", probeSource("allowed.test")]] as const)
     writeFileSync(path.join(dir, f), body);
   const inst = path.join(dir, "inst"), logs = path.join(dir, "log");
   sh(["install", "-d", "-m", "755", logs]);
-  writeFileSync(path.join(dir, "setup.sh"), setupScript(dir, { user: "nobody", sudo: false, systemd: false, strict: true, proxyUser: "daemon", installDir: inst, logDir: logs }));
+  writeFileSync(path.join(dir, "setup.sh"), setupScript(dir, { user: "octirun", uid: RUID, sudo: false, systemd: false, strict: true, proxyUser: "daemon", installDir: inst, logDir: logs }));
   const set = spawnSync("ip", ["netns", "exec", nsS, "bash", path.join(dir, "setup.sh")], { encoding: "utf8", timeout: 60_000 });
   assert.equal(set.status, 0, `lockdown: ${set.stderr}`);
-  assert.match(set.stdout, /egress: locked down \(nobody uid 65534/);
+  assert.match(set.stdout, new RegExp(`egress: locked down \\(octirun uid ${RUID};`), "the run's own uid, by number (it has no account)");
   const after = asRunUser("after");
   console.log(JSON.stringify(after));
   if (process.env.FW_DEBUG) {
@@ -128,6 +136,11 @@ console.log(JSON.stringify(out));`);
   assert.equal(seenLines().length, base, `nothing of the run user reached the outside: ${JSON.stringify(seenLines().slice(base))}`);
   const plog = readFileSync(path.join(logs, "octi-egress.log"), "utf8");
   assert.match(plog, /"deny":"example.com","why":"host not allowed"/);
+  // mold_v0-075: a company's host passes the list exactly (then the proxy looks it up: offline, no such name); a
+  // subdomain of it does not pass the list at all.
+  assert.match(after.company_exact, /403/); assert.match(after.company_sub, /403/);
+  assert.match(plog, /"deny":"company.test:443","why":"dns"/, "the company's host passed the allowlist");
+  assert.match(plog, /"deny":"x.company.test:443","why":"host not allowed"/, "its subdomain did not");
   console.log("✓ after the lockdown, as the run user: direct TCP dropped (any port, DNS over TCP), no local daemon, local resolver, own address or IPv6; 443 and DNS go to the sandbox's proxy, which refuses unlisted names and addresses; nothing reached the outside");
 
   // 3. root (the runner) is not the run user
@@ -149,5 +162,6 @@ console.log(JSON.stringify(out));`);
   }
   for (const ns of [nsS, nsO]) spawnSync("ip", ["netns", "del", ns]);
   rmSync(dir, { recursive: true, force: true });
+  await lease?.release();
 }
 process.exit(failed ? 1 : 0);

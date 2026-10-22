@@ -91,10 +91,10 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   kind's `egress` plus the gateway's public host; a listed host includes its subdomains, the proxy's rule) and gives the
   program its proxy settings: **enforced** for every connection through the proxy; a program that ignores proxy settings
   is stopped by the run sandbox's uid firewall (mold_v0-055, "Runs in sandboxes" below), not by the harness.
-  The harness runs a kind's programs only as a user kept for runs (`runAs`, `OCTILLION_RUN_UID`; a runner started as
-  root), never the runner's own: the program cannot read the runner's environment through `/proc`, gets its own copy
-  of the pack and a private scratch, and every process of that user is killed when the run ends (one run at a time per
-  such user). It refuses to run a program as its own user unless told (`allowSameUser`, the offline tests). Starting a
+  The harness runs a kind's programs only as **a user of the run's own** (mold_v0-078, below; a runner started as root),
+  never the runner's own: the program cannot read the runner's environment through `/proc`, gets its own copy
+  of the pack and a private scratch, and every process of that user is killed when the run ends. It refuses to run a
+  program as its own user unless told (`allowSameUser`, the offline tests). Starting a
   run applies the account's launch rules for a signed-in person (`src/limits.ts` `checkRun`) and a per-workspace cap
   on runs queued or running (`runs.live_per_workspace`, 20; below). In a deployed app runs are carried out in run
   sandboxes the autoscaler launches (mold_v0-055, below); `drainRuns` is the loop for a runner with the fleet token.
@@ -112,15 +112,16 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   run's events: a session summary, usage) and `timeout_seconds` (at most the kind's token lifetime). A run: the
   repository is fetched **at exactly the pin** (by commit id into a repository with no refs, the machine's git
   configuration ignored, no redirect followed, only its own protocol, objects checked on receipt, no hooks; the commit's
-  tree checked out and `.git` removed; a pin the repository lacks fails the run, not retried); the `strip` paths go; the
+  tree checked out and `.git` removed; a pin the repository lacks fails the run, not retried); the `strip` paths go (the
+  pinned tree's only, mold_v0-079: never the workspace's own files); the
   workspace store's latest snapshot (033) is unpacked where only the runner can read it and its files under the
   write-back paths are laid over the checkout (never through a link the checkout holds); `setup` runs with the run's
   egress and no credential or token; the credentials (034) are delivered (variable, or a 0400 file on tmpfs); the
   command runs as the run's user (054) with its time limit (past it every process of that user is killed: "timeout");
   the agent's transcript files are recorded; once every process of the run's user is gone (checked in `/proc`), the
   write-back paths are copied out (regular files with one name, opened without following a link, within the store's
-  file and byte limits; a link or special file is left out and named in `workspace_skipped`; stripped paths again
-  removed), with the snapshot's files outside them carried over; `validate` runs, with no credential and no gateway
+  file and byte limits; a link or special file is left out and named in `workspace_skipped`), with the snapshot's files
+  outside them carried over; `validate` runs, with no credential and no gateway
   token, **on a copy of the pinned tree as it stood before the agent ran** (after `setup`) with exactly those files laid
   over it, so an agent that rewrites its validator or a dependency changes nothing; only when it exits 0 is that same
   set staged; a value of a credential or the gateway token anywhere in it refuses the write-back. The runner fetches
@@ -218,7 +219,7 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   The runner (root in the sandbox) claims its run, **once** (the run's worker is `sbx-<row>`); a run token is refused
   everywhere else in the worker API (`src/http.ts`, `src/run-routes.ts`), and the fleet token may not claim as `sbx-`.
   Then the **lockdown**: the sandbox's egress proxy (`orchestrator/core/egress.ts`) with the run's allowlist from the
-  claim, and the firewall for the run's user (`octirun`, strict rules): everything dropped but the proxy's three
+  claim, and the firewall for the run's user (a uid leased for this run, mold_v0-078, matched by number; strict rules): everything dropped but the proxy's three
   loopback ports (so no local resolver, over UDP or TCP, no other local daemon, not the sandbox's own address, no
   IPv6), TCP 443 and UDP DNS redirected to the proxy from a nat chain ahead of Docker's own; the local resolver's and
   the system bus's unix sockets denied to the run user where setfacl exists (boat); the run's programs started with
@@ -242,9 +243,9 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   **Providers** (`OCTILLION_RUN_SANDBOX`, default `auto`): `boat` (the orchestrators' provider, its key in the vault: a
   small sandbox per run, the runner's code uploaded as the orchestrators' is, with the same `npm ci` for tsx; the runner
   imports only node's modules and its own files, walked from its entry, plus the pack's directory; git and nft are
-  installed in the sandbox when missing; the run user is created); `docker` (a server of its own: the compose project's
+  installed in the sandbox when missing; the run's user is leased by the runner and given an account, `octirun-<uid>`); `docker` (a server of its own: the compose project's
   `runner` service, the only container with the Docker socket, starts a container per run from the app's own image,
-  which has git, nftables and the `octirun` user, on the project's `runs` network, which the API is on and the database
+  which has git and nftables (its runner leases the run's user as on boat), on the project's `runs` network, which the API is on and the database
   is not; every capability dropped but NET_ADMIN, SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER and KILL, no new
   privileges, no mount, memory, CPU and process limits); `off`. `auto` takes boat when its key is in the vault, else
   docker when this process has the socket. **With no provider nothing runs unsandboxed:** queued runs wait, each with
@@ -385,8 +386,12 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   run row's own workspace and its `targets.asset` / `targets.environment`, and gives the entry program each value as
   its declared environment variable or as a file (0400, the run user's) in a private directory on tmpfs
   (`RUN_CREDENTIALS_DIR`, `/dev/shm`; with no tmpfs the run fails rather than write one to disk), removed when the
-  program ends; the validator gets none. Runs share their user, so before and after each run every file that user owns
-  in `/tmp`, `/var/tmp` and `/dev/shm` is removed (a copy or hard link of a value never waits for the next run). A target
+  program ends; the validator gets none. A run's uid is handed to a later run only after the others (mold_v0-078), and
+  before and after each run every file that user owns in `/tmp`, `/var/tmp`, `/dev/shm`, `/run/lock` and `/dev/mqueue`
+  and its System V IPC objects are removed (a copy or hard link of a value never waits for the next run). A file field
+  may also name `path_env` (mold_v0-075): the variable that holds the file's full path (`KUBECONFIG`, or a pack's own
+  locator such as `PROD_RO_KUBECONFIG`), checked as any variable a field delivers (never one the shell sets, never two
+  fields to one). A target
   that names an asset's area gets a value only for the field's own area. Everything a run writes (stdout lines, the
   stderr tail, results as text and as values, errors, event types) is redacted of the values (as is, JSON-escaped,
   URL-encoded, hex, base64 at any byte offset, numbers, each line of a multi-line value, longest first across values;
@@ -397,6 +402,70 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   through an allowed host or the model gateway (egress is the run's allowlist; the gateway does not store prompts), or
   writes part of a value; values replaced while a run is going are redacted only by the harness (which holds what it
   delivered); no rotation reminder or expiry.
+- **A run user per run** (mold_v0-078, built; `src/run-users.ts`, used by `src/run-harness.ts` and
+  `src/run-sandbox-runner.ts`): every run's programs run as a uid of their own, leased for that run alone from a reserved
+  range (`OCTILLION_RUN_UIDS`, default `61000-64999`: never root, nobody or 65535; a uid `/etc/passwd` names is skipped)
+  and given back when it ends; the gid is the uid, with no supplementary groups. Before, every run of a host shared one
+  uid (`OCTILLION_RUN_UID`, no longer read) and the end-of-run sweep (every process of that user killed, its files in
+  the shared temporary directories removed) was host-wide: a concurrent run on the same host lost its steps (exit 128).
+  Leases are files in a root-only directory (`OCTILLION_RUN_UID_DIR`, default `/run/octi-run-uids`) naming the holding
+  process (pid and start time, so a reused pid is not mistaken for it) and its run, taken and given back under a
+  host-wide mutex (an abstract unix socket the kernel frees when its holder dies), round robin (a released uid comes
+  back only after every other free one). A lease whose runner died is taken over only after every process of that uid
+  is killed and its files swept; a uid with processes this runner never leased is skipped and left alone; a uid whose
+  processes will not die stays out of use ("quarantined") while its holder lives. A fixed `runAs` (tests, older setups)
+  is leased the same way: a second run asking for it at once is refused (infrastructure, retried), never run beside the
+  first. In a run sandbox (boat, docker: one run per sandbox) the runner leases the uid inside the sandbox, gives it an
+  account (`octirun-<uid>`), and the lockdown firewall matches it by number (`setupScript` `uid`); the unix sockets of
+  the local resolver and the system bus are denied to that uid (setfacl, best effort). Each run records its uid
+  (`run_user` event). `npm run test:run-users` (root) proves it: leases (one per run, held never handed out, round robin,
+  a dead runner's uid only after its leftovers are gone, foreign processes left alone, a fixed uid in use refused, eight
+  runner processes at once get eight uids), and the bug: two runs at once on one host in two runner processes, one ends
+  early and its sweep runs while the other keeps running; the other keeps its processes and files and finishes (on the
+  code before this, with `OCTILLION_RUN_UID` set, both failed "the run exited with 128"). `test:run-firewall` locks a
+  leased uid with no account down by number; `test:run-sandboxes` sees two concurrent sandbox runs as two uids.
+  **Not covered:** uids are per PID namespace and host: two docker run containers lease independently, so two of them
+  may hold the same uid (their processes and files are apart, their per-uid kernel limits and keyrings are not); files
+  the run user leaves outside the swept directories (another world-writable directory) are not found; a runner in
+  another network namespace on the same host shares the leases' directory but not the mutex.
+- **Run credentials and egress per company** (mold_v0-075, built): a file credential's path in a declared variable
+  (`deliver_as: {file, path_env}`, above); **operator credentials**: a pack declares `operatorCredentials`
+  (`operator_credentials` in pack.json: name, label, help, `deliver_as` as a field's) and a kind names those its runs
+  receive (`operator_credentials`); the values are the platform's, in the key vault (provider `pack_credentials`,
+  label `<pack>.<name>`, set by an owner of the platform on `/admin` key vault; `sql/migrations/0014_run_approvals_egress.sql`
+  adds the provider, direct mode with no environment names, so no session is ever given one); the runner fetches them with
+  the run's lease beside the workspace's (`src/credentials.ts`), delivered as declared (the command gets them by default,
+  a step only when it names them). A workspace never sees one: no console or API lists them (the console's fields are
+  the workspace's own), the run's events name them but never carry a value, and everything the run writes is redacted
+  of them and refused in the workspace's write-back and inputs, as a workspace credential. **Per-company egress
+  hosts** (`src/egress-hosts.ts`, table `workspace_egress_hosts`, no tenant access): a kind with `company_egress: true`
+  also reaches the hosts its workspace's owners list for the pack (`/api/egress-hosts`, PUT and DELETE for owners,
+  mounted only when such a kind exists), for the whole workspace or for one of its asset records (the run's
+  `targets.asset`), read when the run is claimed and given to the proxy as `exact` hosts (allowed exactly, never a
+  subdomain; the kind's own `egress` still allows subdomains). A host is a DNS name only (no address in any notation,
+  no port or wildcard, at least two labels, a top-level label of letters), never a local or internal name (`localhost`,
+  `.local`, `.internal`, `.arpa`, `.lan`, `.corp`, `.test`, ...) nor the platform's own, and refused when it resolves
+  here to a private, loopback, link-local or reserved address; the proxy checks every address again at connect time
+  (DNS rebinding). Company hosts are reached only by the run's programs through the proxy, never by the runner's own
+  fetches (the agent repository, checkout steps and git credentials need the kind's own egress), so they never receive a
+  credential the runner holds. `npm run test:run-credentials` proves the three; `test:run-firewall` proves the exact
+  match in the sandbox's own proxy. **Not covered:** a program that sends an operator credential out through an allowed
+  host or encodes it past the redaction (as for a workspace credential); no console page for the hosts yet (the API only).
+- **Approval-gated writes** (mold_v0-079, built; `src/run-approvals.ts`): a kind that writes declares
+  `approval: {preview, by, expires_minutes}` (`preview`: an ungated kind of the same pack, its dry run; `by`: `owner`, the
+  workspace's owner, default, or `operator`, the platform's; `expires_minutes` 5 to 10080, default 1440). No schedule
+  may start it. A run of it starts only with an approval (`approval: "apr_…"` in `ctx.runs.start`, and in its generated
+  start tool, where it is required). The approver is shown the preview's output and its sha256
+  (`GET /api/runs/:id/approval`, or `/api/admin/runs/:id/approval`): the run, its scope and targets, its results and the
+  files it recorded; they approve that sha256 (`POST /api/runs/:id/approve` {kind, sha256}, a signed-in owner, never a
+  key; `POST /api/admin/runs/:id/approve`, an operator); another sha256, another role, a preview that did not succeed or
+  is older than the approval's life, and a second approval of one preview for one kind are refused. Starting the write
+  takes the approval in the transaction that queues it: unused, unexpired, this workspace's, pack's and kind's (used once:
+  no replay); the run's scope and targets must be the preview's; the preview's output must still hash to the approved
+  sha256. When the write is claimed its workspace must still be at the version it had when the preview was approved
+  (another run changed it: the write fails, not retried). No MCP tool approves. `npm run test:run-approvals`.
+  Also in 079: `strip` applies at checkout only (above); and a metric `unit` `percent_100` for values already 0 to 100
+  (an average of percentages a run measured), shown as they are (`percent` stays a share from 0 to 1, shown times 100).
 - **The onboarding checklist from packs** (mold_v0-011, built): a pack declares steps (`definePack({ onboarding })`: an
   id, a label, help, and `done_when`, one of `workspace`, `connected`, `first_call`, `tool:<name>`,
   `credential:<name>`, `record:<area>`, `run:<kind>`; a credential, a workspace-scope area or a kind must be the pack's
@@ -768,7 +837,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `jobKinds` (`job_kinds`) | run kinds: the runner (`workspace-harness`: its `entry` and `validator` programs in the pack; or `agent-workspace`: an agent repository at a pinned commit with a declared command, validation and write-back), the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store, what an unresolved result reference does | the run engine (mold_v0-041; agent-workspace mold_v0-061; results mold_v0-065) |
 | `onWorkspaceCommit` (code only) | a hook given the files of each committed workspace snapshot, before the run's results are checked | `src/runs.ts` (mold_v0-064) |
 | `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
-| `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
+| `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
 | `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
 | `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
