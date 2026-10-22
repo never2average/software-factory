@@ -4,7 +4,7 @@
 
 ### Declarative AI apps, built and run with frontier intelligence spent only where it counts.
 
-Apps as declarations, not forks · deterministic tools, frontier judgement · tested before it ships · Vercel or your own server · MIT licensed
+Apps as declarations, not forks · deterministic tools, frontier judgement · tested before it ships · Vercel or your own server · AGPL-3.0 licensed
 
 <img src="plugins/factory-board/docs/tab-products.png" alt="The factory board: every product, its stage and its live apps" width="760">
 
@@ -293,4 +293,4 @@ A **product** is a mold under a brand, with stage gates: defined → built → t
 
 ## License
 
-[MIT](LICENSE)
+[GNU AGPL-3.0](LICENSE), with an [additional permission](LICENSE-EXCEPTION.md) under its section 7 for Priyesh Srivastava and affiliated legal entities.
