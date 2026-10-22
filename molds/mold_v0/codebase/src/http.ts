@@ -13,6 +13,7 @@ import { onboardingAppRouter } from "./onboarding.js";
 import { usageAdminRoute, usageAppRouter } from "./usage-routes.js";
 import { noticeAppRouter, scheduleAppRouter } from "./schedule-routes.js";
 import { metricAppRouter, runAppRouter } from "./view-routes.js";
+import { workspaceFileAppRouter } from "./workspace-files.js";
 import { schedulerTick, startScheduler, stopScheduler } from "./schedules.js";
 import { startChargeDelivery, stopChargeDelivery } from "./run-charges.js";
 import { runWorkerRouter } from "./run-routes.js";
@@ -24,6 +25,7 @@ import { aboutAdminRouter, aboutAppRouter } from "./about-routes.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml } from "./source-offer.js";
 import { memberKeyAppRouter } from "./member-keys.js";
+import { builtinAuthRouter } from "./builtin-auth.js";
 import * as roles from "./admin-roles.js";
 import * as adminTokens from "./admin-tokens.js";
 const { need } = roles;
@@ -177,6 +179,9 @@ export function createApp() {
     res.status(201).json({ ok: true });
   });
 
+  // ---------- built-in sign-in: /api/auth (src/builtin-auth.ts, mold_v0-004): an emailed code or Google, sessions,
+  // sign-out (everywhere); under Clerk only /api/auth/config answers (it names the provider) ----------
+  app.use("/api/auth", builtinAuthRouter());
   // ---------- customer page: sign-in, setup check, usage, team, billing (src/app.ts, web/app/app) ----------
   // The customer portal can start work too (approvals, re-runs): tick after any write there (Vercel only).
   app.use("/api/app", (req, _res, next) => { if (req.method !== "GET") _res.on("finish", () => serverlessTick()); next(); });
@@ -203,6 +208,8 @@ export function createApp() {
   app.use("/api/runs", runAppRouter());
   // ---------- the About page's data (mold_v0-050, src/about-routes.ts): data flow and residency, the source offer ----------
   app.use("/api/about", aboutAppRouter());
+  // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
+  app.use("/api/workspace-files", workspaceFileAppRouter());
 
   // ---------- a host pack's public routes (src/host.ts; the product's journeys webhook) ----------
   for (const h of hosts()) h.routes?.public?.(app);
@@ -531,6 +538,7 @@ export function createApp() {
   ob.post("/orgs/:slug/members/:id/deactivate", need("accounts"), async (req, res) => done(res, await onboarding.setMemberActive(adminActor(req, res), slug(req), String(req.params.id), false)));
   ob.post("/orgs/:slug/members/:id/reactivate", need("accounts"), async (req, res) => done(res, await onboarding.setMemberActive(adminActor(req, res), slug(req), String(req.params.id), true)));
   ob.post("/orgs/:slug/members/:id/role", need("accounts"), async (req, res) => done(res, await onboarding.setMemberRole(adminActor(req, res), slug(req), String(req.params.id), req.body?.role)));
+  ob.post("/orgs/:slug/members/:id/remove", need("accounts"), async (req, res) => done(res, await onboarding.removeMember(adminActor(req, res), slug(req), String(req.params.id))));
   ob.post("/orgs/:slug/clerk", need("accounts"), async (req, res) => void res.json(await onboarding.linkClerk(adminActor(req, res), slug(req))));
   ob.post("/orgs/:slug/billing/customer", need("accounts"), async (req, res) => void res.json({ customer: await onboarding.ensureCustomer(adminActor(req, res), slug(req)) }));
   ob.post("/orgs/:slug/prepaid", need("accounts"), async (req, res) => void res.json(await onboarding.setPrepaidAllowed(adminActor(req, res), slug(req), req.body?.allowed)));

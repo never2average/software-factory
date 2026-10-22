@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { CLERK } from '@/lib/auth/provider';
+import { BuiltinProfileViewPage } from './builtin-profile-view';
 
 const clerkMessage = (e: unknown) =>
   (e as { errors?: { longMessage?: string; message?: string }[] })?.errors?.[0]?.longMessage ??
@@ -16,7 +18,7 @@ const clerkMessage = (e: unknown) =>
 const fail = (e: unknown) => toast.error(clerkMessage(e));
 const providerName = (p: string) => p.replace(/^oauth_/, '').replace(/^\w/, (c) => c.toUpperCase());
 
-export default function ProfileViewPage() {
+function ClerkProfileViewPage() {
   const { user, isLoaded } = useUser();
   const { session } = useSession();
   const [name, setName] = useState<string | null>(null);
@@ -76,4 +78,9 @@ export default function ProfileViewPage() {
       </div>
     </PageContainer>
   );
+}
+
+/** Clerk's profile under Clerk; the built-in sign-in's own page otherwise (mold_v0-004). */
+export default function ProfileViewPage() {
+  return CLERK ? <ClerkProfileViewPage /> : <BuiltinProfileViewPage />;
 }

@@ -2,7 +2,7 @@
 // The signed-in person's role in this account (src/account-roles.ts, from GET /api/app/me): useAccountRole().can('launch')
 // says whether something is allowed; <Allowed need='edit'> disables a button the role lacks, with a tooltip naming the
 // role it needs. The server refuses the same things, so this only keeps people from pressing buttons that would fail.
-import { useAuth } from '@clerk/nextjs';
+import { useAuth } from '@/lib/auth';
 import { cloneElement, isValidElement, useEffect, useState, type ReactElement } from 'react';
 import type { RowAction } from '@/components/layout/record-view';
 import { appApi } from '@/lib/api-client';

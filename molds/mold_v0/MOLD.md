@@ -12,7 +12,7 @@
 
 ## What is in it today
 
-- A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`: the host packs' tools, then every pack's, `src/server.ts`), per-organisation API keys (hashed) and per-member keys (header-only, expiring, with the member's role; mold_v0-007), Clerk sign-in, client install guides, onboarding, usage analytics, billing and email.
+- A TypeScript server (Express, `src/http.ts`) with a stateless MCP endpoint (`/mcp`: the host packs' tools, then every pack's, `src/server.ts`), per-organisation API keys (hashed) and per-member keys (header-only, expiring, with the member's role; mold_v0-007), sign-in (built-in emailed code and Google, or Clerk; mold_v0-004), client install guides, onboarding, usage analytics, billing and email.
 - An agent-run engine: a job queue (`src/worker.ts`, `/api/worker`), an autoscaler that launches one sandboxed orchestrator per job (`src/autoscaler.ts`, `orchestrator/`), pinned coding-agent harnesses (`harnesses/registry.json`), an inference gateway with per-session tokens and cost metering (`src/gateway.ts`, `src/usage.ts`), a versioned key vault and per-organisation data keys (`src/keyvault.ts`, `src/orgcrypto.ts`), transcripts and an off-machine archive.
 - A web console in `web/` (Next.js): `/admin` for platform staff, `/app` for an account's people.
 - Postgres with versioned migrations (`sql/migrations/NNNN_*.sql`, `src/migrate.ts`, `npm run db:migrate`; proven by `npm run test:migrations`) and row-level security on every tenant table (`sql/migrations/0003_row_level_security.sql`, `src/rls.ts`; proven by `npm run check:rls`), plus optional analytics and archive stores.
@@ -25,6 +25,14 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 ## Decisions
 
 - Sign-in for apps from the generalised shell: Clerk at launch, the adapter the product already uses (operator decision, 2026-10-20, mold_v0-046); a built-in emailed code plus Google comes later, with Clerk then optional (mold_v0-004).
+- Sign-in, built (mold_v0-004, operator decision 2026-10-22): the default is the shell's own (`AUTH_PROVIDER=builtin`: an
+  emailed one-time code and Google, people, sessions, members, roles and invitations in Postgres, `src/builtin-auth.ts`);
+  Clerk is an optional adapter (`AUTH_PROVIDER=clerk`), kept unchanged for apps already on it: with `AUTH_PROVIDER` unset
+  a server with `CLERK_SECRET_KEY` (a console with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`) runs Clerk. One adapter
+  (`src/people.ts`, Clerk's shapes) serves the portal's and the admin console's sessions, team management, member keys
+  and the workspace emails under either. Under the built-in sign-in MCP clients use keys in a header (a member's own
+  key, or the workspace's); its OAuth server is mold_v0-013. `npm run test:sign-in` runs one suite through both
+  adapters. Details: `codebase/docs/accounts.md`, "Sign-in: built-in or Clerk".
 - The source has no licence constraints (a hackathon project).
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).
 - Generalisation (2026-10-20): mold_v0 becomes an **agent-run shell** (tenancy, an MCP front door, a run engine with sandboxed
@@ -400,9 +408,26 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   `workspaces/org-<id>/<store>/`, sealed with the workspace's data key (`src/orgcrypto.ts` `sealBytes`, refused while
   the vault is locked) and bound by AES-GCM additional data to their workspace, store, row and manifest. A runner names
   a run and its lease token, never a workspace (`GET`/`PUT /api/worker/runs/:id/workspace`); packing never follows a
-  link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots. **Not wired yet:**
-  no customer-facing read of a snapshot's files (an evidence viewer), and no retention of old versions (all are kept).
+  link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots.
   `npm run test:workspace-store` proves it with two workspaces.
+  **Retention and the file viewer** (mold_v0-056, built): a pack declares `workspace_store` (`src/workspace-store-policy.ts`):
+  `retention` keeps the newest `keep_last` versions and/or those committed within `keep_days`, each capped by the
+  platform's ceiling (`OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS`, 100; `OCTILLION_WORKSPACE_RETENTION_MAX_DAYS`, 365;
+  a pack that declares nothing gets the ceiling). Whatever the rules, the latest version, every version a run's results
+  or a report reference (the version the run left, as the report tool reads it) and the version a store lease checked
+  out are kept. A daily sweep from the scheduler's tick (`src/workspace-retention.ts`; `scheduler_marks`
+  "workspace_retention") deletes the rest per workspace and store in one transaction, then their objects, and any object
+  under that store's own prefix with no live row; never a key outside it. Idempotent; refused with the vault locked
+  (the day is then not marked). `OCTILLION_WORKSPACE_RETENTION=off` stops it. The console's **Files** page (`/app/files`,
+  `src/workspace-files.ts` at `/api/workspace-files`, a `files` tab for a build with tabs) lists a store's versions
+  (time, the run that wrote it, size), browses a version's files, shows a text file (at most 1 MiB, as text, never
+  markup), downloads a file (an attachment, at most 25 MiB) and diffs two versions (files changed; a text file's lines),
+  for the roles that may read every one of the pack's record areas, opening the version per request with the
+  workspace's key (503 while the vault is locked). It never lists or serves a hidden path (a segment starting with
+  "."), a credential-looking file, a path the pack declares secret (`workspace_store.secret_paths`) or strips (its agent
+  kinds' `strip`), a file a credential is delivered as, nor a file that holds one of the workspace's credential values;
+  paths are plain relative paths the version's manifest names. `npm run test:workspace-files` proves it with two
+  workspaces.
 - **The workspace credential vault** (mold_v0-034, built; merges the old 009): a pack declares credential fields
   (`definePack({ credentials })`: a label, help, `bound_to` the workspace, an `asset` of one of its asset areas (`area`)
   or an asset's `environment` (optionally from a list), delivered as an environment variable or a file). A workspace's
@@ -620,9 +645,11 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   180 or 365, default 90; at most 20 live), each named, shown once (only its sha256 is stored) and revocable
   (`POST /api/keys/:id/revoke`). A member key (`api_keys.scoped`, with `user_id` and `expires_at`, a check constraint)
   is accepted only in a header (`/mcp/<key>` and the preview's `?key=` refuse it), is refused on the next call once
-  revoked or expired, and acts as its person with their **current** role in the workspace, read from Clerk on every
-  call (30 seconds' cache, cleared when the shell changes a membership): a viewer's key is offered no write and is
-  refused one; a removed or suspended member's keys stop working; Clerk unreachable fails closed. Rate limits: the key's
+  revoked or expired, and acts as its person with their **current** role in the workspace, read on every call from
+  the sign-in's directory (`src/people.ts`: the built-in one live from Postgres; Clerk's with 30 seconds' cache, cleared
+  when the shell changes a membership): a viewer's key is offered no write and is refused one; a removed or suspended
+  member's keys stop working, and removing a member (mold_v0-004) also revokes their keys in that workspace; a
+  directory that cannot be read fails closed. Rate limits: the key's
   own, the member's (all their keys) and the workspace's (mold_v0-018); creating one counts against the hourly key
   number per person (a bucket of its own, so no member can use up the one staff issue and rotate keys from; a request
   refused for its name or expiry does not count; the 20-key cap is counted under a lock per person); a cookie-borne change needs `X-Pack-Request: 1`. Owners (the team permission) see every key of the
@@ -713,7 +740,7 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   `npm run test:record-gaps`). Once a UTC
   day (`scheduler_marks`, marked after the work, so a check cut short runs again) `dueCheck(now)` posts one in-app notice per record and due date within the window
   (`workspace_notices`; `/app/notices`, `/api/notices`, mounted only when such an area exists; "edit" dismisses), and
-  emails the workspace's own people with those roles (its Clerk organization's members, suspended people left out) one
+  emails the workspace's own people with those roles (its members in the sign-in's directory, suspended people left out) one
   list of the notices not yet emailed (`due_soon` in `email_log`, keyed by workspace, area, the notices listed and
   recipient, so the same list never reaches a person twice; a notice counts as emailed once it reached one recipient). `npm run test:schedules` proves it with a clock the test
   controls: five missed hours run once, three ticks at once start each run once (and, on Postgres 17 with eight
@@ -798,6 +825,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `tools` | MCP tools: name, input and output schemas, annotations, a handler that receives the calling workspace first | the tool registry behind `/mcp` (today hand-written in `src/server.ts`) |
 | `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
 | `jobKinds` (`job_kinds`) | run kinds: the runner (`workspace-harness`: its `entry` and `validator` programs in the pack; or `agent-workspace`: an agent repository at a pinned commit with a declared command, validation and write-back), the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store, what an unresolved result reference does | the run engine (mold_v0-041; agent-workspace mold_v0-061; results mold_v0-065) |
+| `workspaceStore` (`workspace_store`) | the workspace store's retention (keep_last, keep_days) and the paths its file viewer never shows (secret_paths) | the daily retention sweep and the console's Files page (mold_v0-056) |
 | `onWorkspaceCommit` (code only) | a hook given the files of each committed workspace snapshot, before the run's results are checked | `src/runs.ts` (mold_v0-064) |
 | `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
 | `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
@@ -931,10 +959,11 @@ DNS check, key pair, hidden prompt and env file, then:
 4. copies the source into a new release directory beside the serving one;
 5. writes `DOMAIN` and `PUBLIC_URL` from state into `/etc/software-factory/<app>/env` (root, mode 600), then mints every
    name still missing (the database password and the product's keys) with the product's own `bootstrap.sh`, on the
-   server, in a private temp directory that sees names and never values. The console's sign-in keys
-   (`CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, mold.json `compose.console.operator_env`) are the operator's: the
-   deploy asks for each at a hidden prompt when the server lacks it (or the operator sets it first with
-   `provision.py <app> --set-secret NAME`). Other optional keys (billing, analytics) stay off until the operator sets one;
+   server, in a private temp directory that sees names and never values. The console's Clerk keys
+   (`CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, mold.json `compose.console.operator_env`) are optional since
+   mold_v0-004: without them the stack runs the built-in sign-in; an app whose state lists them in `secrets_user`
+   keeps Clerk and the deploy asks for each at a hidden prompt when the server lacks it (or the operator sets it first
+   with `provision.py <app> --set-secret NAME`). Other optional keys (billing, analytics, Google sign-in) stay off until the operator sets one;
 6. points `current` at the new release, builds the API's image and then the console's, one at a time (a 4 GB server
    cannot run both builds at once), and runs `docker compose -p sf-<app> ... up -d --build --wait`; on failure it
    switches back to the release that served before and brings that up;
@@ -970,9 +999,11 @@ typed by hand, and nothing in the snapshot changes:
   never a minted key. The only other names it reads are its sign-in keys (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`,
   `CLERK_SECRET_KEY`, mold.json `operator_env`), set by the operator with `provision.py <app> --set-secret NAME`, which
   writes a name to every project that reads it (`CLERK_SECRET_KEY` to both, the publishable key to the console only).
-  Both are required: the console's `src/proxy.ts` runs Clerk's middleware on `/admin` and `/app`, which cannot start
-  without them, so the check (`provision.py <app>`) stops and asks for them (exit 3) rather than deploying a console that fails its health
-  check. The built-in emailed-code sign-in comes with the generalised shell.
+  Since mold_v0-004 both are optional: without them the console and the API run the built-in sign-in (an emailed code,
+  Google when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set on the API), and the console's `src/proxy.ts` only
+  sends a visitor without a session cookie to `/auth/sign-in`. An app whose state already lists them in
+  `secrets_user` (the re-mint and its live copy) keeps Clerk, and the check still asks for them. For the built-in
+  sign-in on two Vercel projects, `OCTILLION_CONSOLE_URL` on the API names the console's address for invitation links.
 - Order: the API first (twice on a first deploy, so it reads its own address as `PUBLIC_URL`), its `/healthz` must
   answer 200 ok; then the API-address variable on the console, then the console. Health on the console: `/healthz`
   through the console answers 200 ok (so it reaches the API), and `/admin` and `/app` answer, read without following a

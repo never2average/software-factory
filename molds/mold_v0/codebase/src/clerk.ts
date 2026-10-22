@@ -21,8 +21,11 @@
  * membership in Clerk.
  */
 import { createLocalJWKSet, importSPKI, jwtVerify, decodeProtectedHeader, type JWTPayload } from "jose";
+import { authProvider } from "./auth-provider.js";
 
-export const clerkEnabled = () => Boolean(process.env.CLERK_SECRET_KEY);
+/** Clerk is on when it is the server's sign-in (src/auth-provider.ts: AUTH_PROVIDER=clerk, or unset with this key) and
+ *  its key is set. With AUTH_PROVIDER=builtin it is off even when a key is left in the environment. */
+export const clerkEnabled = () => Boolean(process.env.CLERK_SECRET_KEY) && authProvider() === "clerk";
 const apiBase = () => (process.env.CLERK_API_URL ?? "https://api.clerk.com").replace(/\/$/, "");
 const publicUrl = () => (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/$/, "");
 

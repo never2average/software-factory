@@ -11,6 +11,7 @@ managed services. There is one prefix per kind of data, and `src/storage.ts` is 
 | `reports/org-<id>/<simulation>/<stamp>.pdf` and `.html` | run reports | reports (planned: `export_report`) | until deleted |
 | `diffs/org-<id>/<simulation>/<session>.diff.gz` | workspace diffs | reserved | — |
 | `exports/org-<id>/…` | customer data exports | reserved | — |
+| `workspaces/org-<id>/<store>/<snapshot>.wse` | workspace store snapshots, sealed with the org's data key (mold_v0-033) | `src/workspace-store.ts` | per the pack's retention, under the platform's ceiling (mold_v0-056, `src/workspace-retention.ts`: daily; the latest and every version a result or a report references are always kept) |
 | `ops/…` | internal one-offs | by hand | — |
 
 Customer data always sits under its org's prefix (`org-<id>`, the id, because slugs can be renamed), so access can be

@@ -18,8 +18,10 @@
  *              record whose date falls within the window gets one in-app notice (workspace_notices, one per record and
  *              due date), and the workspace's people with the area's notify roles (its own Clerk organization's members,
  *              src/email.ts accountRecipients) get one email listing the notices not yet emailed, recorded in email_log
+ *   retention  the workspace store's daily sweep of expired versions (mold_v0-056, src/workspace-retention.ts), when the
+ *              build has a workspace store
  *
- * schedulerTick(now) runs both: from the product's cron entry on Vercel (/api/cron/autoscale, CRON_SECRET) and from a
+ * schedulerTick(now) runs them all: from the product's cron entry on Vercel (/api/cron/autoscale, CRON_SECRET) and from a
  * one-minute loop on a server (startScheduler, src/http.ts; OCTILLION_SCHEDULER=off turns it off). Every time here is
  * the `now` handed in, so a test drives the clock. With no job kind and no due area nothing is read or written.
  */
@@ -32,6 +34,7 @@ import { packs } from "./packs.js";
 import { findArea, isSealedArea, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
 import { findKind, jobKinds, startRun } from "./runs.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
+import { retentionSweep, retentionWired, type RetentionReport } from "./workspace-retention.js";
 
 export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
 
@@ -545,10 +548,13 @@ export async function dismissNotice(orgId: number, id: string, by: string): Prom
 
 // ---------- both, from the cron entry and the server's loop ----------
 
-export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport }> {
+export async function schedulerTick(now = clock()): Promise<{ schedules: TickReport; due: DueReport; retention?: RetentionReport | { error: string } }> {
   const schedules = await tickSchedules(now);
   const due = await dueCheck(now);
-  return { schedules, due };
+  // The workspace store's daily retention sweep (mold_v0-056, src/workspace-retention.ts), when the build has a store.
+  if (!retentionWired()) return { schedules, due };
+  const retention = await retentionSweep(now).catch((e) => ({ error: String((e as Error)?.message ?? e).slice(0, 300) }));
+  return { schedules, due, retention };
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -556,12 +562,14 @@ let busy = false;
 /** The server's loop: a tick every minute (Vercel has no loop: its cron entry ticks). */
 export function startScheduler(everyMs = 60_000): boolean {
   if (timer || (process.env.OCTILLION_SCHEDULER ?? "on").toLowerCase() === "off") return false;
-  if (!schedulesWired() && !dueAreas().length) return false;
+  if (!schedulesWired() && !dueAreas().length && !retentionWired()) return false;
   const run = () => {
     if (busy) return;
     busy = true;
     schedulerTick().then((r) => {
       if (r.schedules.fired || r.due.ran) console.error(`scheduler: ${r.schedules.fired} schedule(s) fired, ${r.schedules.runs} run(s) started${r.due.ran ? `; due check: ${r.due.posted} notice(s), ${r.due.emailed} email(s)` : ""}`);
+      const kept = r.retention;
+      if (kept && "ran" in kept && kept.ran) console.error(`scheduler: workspace retention: ${kept.stores} store(s), ${kept.deleted} version(s) expired, ${kept.objects_removed} object(s) removed${kept.failed ? `, ${kept.failed} store(s) failed` : ""}`);
     }).catch((e) => console.error("scheduler tick:", (e as Error).message)).finally(() => { busy = false; });
   };
   timer = setInterval(run, everyMs);
