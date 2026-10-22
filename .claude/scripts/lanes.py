@@ -106,7 +106,10 @@ def die(msg): print(msg); sys.exit(2)
 SECRETS = [(re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@\"']*:[^\s/@\"']*@"), r"\1***:***@"),
            (re.compile(r"(?i)\b(postgres(?:ql)?://)[^\s\"']*@"), r"\1***@"),
            (re.compile(r"(?i)\b(bearer\s+)[^\s\"']+"), r"\1***"),
-           (re.compile(r"(?i)([?&](?:token|api[_-]?key|access_token|secret)=)[^&\s\"']+"), r"\1***")]
+           (re.compile(r"(?i)([?&](?:token|api[_-]?key|access_token|secret)=)[^&\s\"']+"), r"\1***"),
+           # mold_v0-021: a product API key (oct_...) or a connector address carrying one, and any JWT (a session token)
+           (re.compile(r"\boct_[A-Za-z0-9_-]{8,}"), "oct_***"),
+           (re.compile(r"\beyJ[\w-]{6,}\.[\w-]{6,}\.[\w-]+"), "eyJ***")]
 def redact(s):
     for rx, rep in SECRETS: s = rx.sub(rep, s or "")
     return s
@@ -237,11 +240,21 @@ def run_check(c, docs, ctx):
            "root": ROOT}[c.get("cwd", "codebase")]
     t = c.get("timeout_s", 600)
     try:
-        r = subprocess.run(res["cmd"], shell=True, cwd=cwd, capture_output=True, text=True, timeout=t, env=env)
-        out, code = redact((r.stdout or "") + (r.stderr or "")), r.returncode
-    except subprocess.TimeoutExpired as x:
-        got = lambda b: b.decode(errors="replace") if isinstance(b, bytes) else (b or "")
-        return dict(res, status="fail", reason=f"timed out after {t}s", out=redact(got(x.stdout) + got(x.stderr)))
+        # Its own process group, so a timeout stops everything the check started (a build, a server), not only the shell.
+        pr = subprocess.Popen(res["cmd"], shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                              start_new_session=True)
+        try: so, se = pr.communicate(timeout=t)
+        except subprocess.TimeoutExpired:
+            import signal
+            try: os.killpg(pr.pid, signal.SIGTERM)
+            except ProcessLookupError: pass
+            try: so, se = pr.communicate(timeout=20)
+            except subprocess.TimeoutExpired:
+                try: os.killpg(pr.pid, signal.SIGKILL)
+                except ProcessLookupError: pass
+                so, se = pr.communicate()
+            return dict(res, status="fail", reason=f"timed out after {t}s", out=redact((so or "") + (se or "")))
+        out, code = redact((so or "") + (se or "")), pr.returncode
     except Exception as x:
         return dict(res, status="fail", reason=f"could not launch `{res['cmd']}`: {x}")
     exp = c.get("expect") or {}; want = exp.get("exit", 0); bad = []
@@ -489,11 +502,17 @@ def main(a):
     if listing:
         print(f"{'lane':16} {'harness':8} {'checks':>6}  preconditions")
         listed = {}
+        unbuilt = []
         for l in todo:
             s = specs[l]
             if not s: print(f"{l:16} {'no':8} {0:>6}  no lane.json — this lane is skipped, never passed"); listed[l] = {"harness": False, "checks": 0, "unmet": []}; continue
             ctx = context(app_id, l, mold_id, docs, os.path.join(ROOT, "molds", mold_id, "testing", l, "reports",
                           *(["dry"] if dry else []), f"{app_id}-{TODAY}T<hhmmss>Z.md"))   # pattern: --list writes nothing
+            # --list builds nothing, and the lane copies are rebuilt from the mold (whose installed folders they link) at
+            # the start of every run: until one exists, its preconditions are judged on the mold's codebase.
+            for k, d in (("codebase", "lane"), ("default_codebase", "lane-default")):
+                if not os.path.isdir(ctx[k]):
+                    unbuilt.append(f"build/{app_id}.{d}/"); ctx[k] = os.path.join(ctx["mold"], "codebase")
             u = [e for e in (unmet(p, docs, ctx) for p in s.get("requires", [])) if e]
             # A check with app_env is judged with the same environment the run would give it, so --list and
             # the run can never disagree about whether a precondition holds.
@@ -502,6 +521,9 @@ def main(a):
                          if c.get("app_env") else ctx) for p in c.get("requires", [])) if e]
             print(f"{l:16} {'yes':8} {len(s.get('checks', [])):>6}  " + ("; ".join(dict.fromkeys(u))[:160] if u else "all met"))
             listed[l] = {"harness": True, "checks": len(s.get("checks", [])), "unmet": list(dict.fromkeys(u))}
+        if unbuilt:
+            print(f"note: {', '.join(dict.fromkeys(unbuilt))} not built yet (every run rebuilds it with the app's packs); "
+                  f"preconditions on it were judged on molds/{mold_id}/codebase, whose installed folders it links.")
         AR.detail("lanes", listed)
         AR.note(summary=f"{len(todo)} lane(s) for {app_id}: " + ", ".join(f"{l} {'no harness' if not v['harness'] else str(v['checks']) + ' checks' + (', ' + str(len(v['unmet'])) + ' precondition(s) unmet' if v['unmet'] else '')}" for l, v in listed.items()) + ".")
         return 0
@@ -703,14 +725,45 @@ def self_test():
     cr = {"target": "compose_remote", "deployed_at": "2026-10-20T00:00:00+00:00", "compose_remote": {"domain": "a.example.org", "production_url": "https://a.example.org"}}
     ok(lane_url.target_url(cr) == "https://a.example.org" and lane_url.target_url(dict(cr, deployed_at=None)) == "", "compose_remote is graded at its recorded address, only once a deploy wrote it")
     specs = {l: read_spec(l, "mold_v0") for l in LANES}
-    ok(all(specs.values()) and [c["name"] for c in specs["functional"]["checks"]] == ["typecheck", "test:migrations", "smoke", "mcp.check"]
-       and [c["name"] for c in specs["context"]["checks"]] == ["check:tenant-sql", "check:rls"],
+    ok(all(specs.values()) and [c["name"] for c in specs["functional"]["checks"]][:4] == ["typecheck", "test:migrations", "smoke", "mcp.check"]
+       and [c["name"] for c in specs["context"]["checks"]][:2] == ["check:tenant-sql", "check:rls"],
        "mold_v0's lanes run the product's own typecheck, migration test, smoke, MCP check, tenant-SQL check and row-level security check")
     offline = {c["name"]: c["run"] for l in ("functional", "context") for c in specs[l]["checks"] if c["name"] in ("test:migrations", "check:rls")}
     ok(all("DATABASE_URL= " in r for r in offline.values()) and "-u MIGRATIONS_PG_URL" in offline["test:migrations"] and "PGLITE_DIR=" in offline["check:rls"],
        "  ...the migration test and the RLS check run offline only: no DATABASE_URL (nor MIGRATIONS_PG_URL) reaches them, the RLS check on a throwaway embedded database")
-    ok(all(specs[l]["checks"] == [] and "skipped" in specs[l]["summary"] for l in ("load", "accessibility", "responsiveness")),
-       "mold_v0's lanes with no harness of the product's own are empty, and say they are skipped, never pass")
+    # mold_v0-021: all five lanes have a harness, each with a row per pack
+    names = {l: [c["name"] for c in specs[l]["checks"]] for l in LANES}
+    ok(names["load"] == ["load.mcp_and_pages"] and names["accessibility"] == ["axe.console"]
+       and names["responsiveness"] == ["layout.viewports", "tap.targets"] and names["functional"][-1] == "packs.tools"
+       and names["context"][-1] == "packs.tables", "mold_v0-021: all five lanes have a harness (load, axe, viewports) and per-pack rows in functional and context")
+    per_pack = [c for l in LANES for c in specs[l]["checks"] if c["name"] in ("load.mcp_and_pages", "axe.console", "layout.viewports", "tap.targets", "packs.tools", "packs.tables")]
+    ok(len(per_pack) == 6 and all(c.get("emits") == "markdown_table" and any("rows: " in x for x in c["expect"]["stdout"])
+                                  and "\\| fail \\|" in c["expect"]["stdout_not"] for c in per_pack),
+       "  ...each prints its rows (a row per pack) into the report, needs a measured `rows:` line, and fails on any `| fail |` row")
+    console = [c for l in ("accessibility", "responsiveness") for c in specs[l]["checks"]]
+    ok(all("render.py {app_id} --codebase {codebase}" in c["run"] and "{url}" not in c["run"] and "lane-url" not in c["run"] for c in console),
+       "  ...accessibility and responsiveness grade the lane copy served on this machine (render.py), never a deployed address")
+    lc = specs["load"]["checks"][0]
+    ok(any("--check-addresses" in p.get("cmd", "") for p in lc["requires"]) and any("lane-key-path" in p.get("cmd", "") for p in lc["requires"])
+       and "{url}" not in lc["run"], "  ...load runs only when both of the app's addresses are proven its own and it has a lane-check connector")
+    ok(redact("oct_abcdefghijkl https://x/mcp/oct_ZZZZZZZZZZ eyJhbGciOi.eyJzdWIiOi.c2ln") == "oct_*** https://x/mcp/oct_*** eyJ***",
+       "a product API key, a connector address carrying one, and a session token (JWT) never reach a report")
+    import tempfile as _tf
+    pidf = os.path.join(_tf.mkdtemp(prefix="lanes-pg-"), "pid")
+    r = run_check({"name": "t", "run": f"sh -c 'sleep 60 & echo $! > {pidf}; wait'", "timeout_s": 1, "cwd": "root"}, {},
+                  {"app_id": "zz", "codebase": ROOT, "default_codebase": ROOT, "testing": ROOT})
+    time.sleep(0.5)
+    gone = not os.path.exists(f"/proc/{open(pidf).read().strip()}")
+    ok(r["status"] == "fail" and "timed out" in r["reason"] and gone, "a check that times out is stopped with everything it started (its process group)")
+    t = os.path.join(ROOT, "molds", "mold_v0", "testing")
+    for what, argv in (("load.py", [sys.executable, os.path.join(t, "load", "load.py"), "--self-test"]),
+                       ("render.py", [sys.executable, os.path.join(t, "console", "render.py"), "--self-test"])):
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+        ok(r.returncode == 0, f"  ...{what} --self-test: {(r.stdout or r.stderr).strip().splitlines()[-1:] or ['no output']}")
+    r = subprocess.run(["node", "--input-type=module", "-e", f"import {{ isLoopback }} from {json.dumps(os.path.join(t, 'console', 'browser.mjs'))};"
+                        "process.exit(isLoopback('http://127.0.0.1:3400/app') && isLoopback('http://localhost:1/') && !isLoopback('https://octillion.vercel.app/') && !isLoopback('http://127.0.0.1.example.org/') ? 0 : 1)"],
+                       capture_output=True, text=True, timeout=60)
+    ok(r.returncode == 0, "  ...the browser harnesses send nothing off this machine: only 127.0.0.1 and localhost pass their request filter")
     # mold_v0-024: a mold_v0 app with packs is graded in its unbranded lane copy (mold + packs, packs.py lane-copy), as a
     # mold_v1 app is; one with a brand only, or nothing, in the codebase itself
     cv = lambda app: context("zz", "functional", "mold_v0", {"application": app, "infrastructure": cr}, "r.md")
