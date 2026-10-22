@@ -58,7 +58,8 @@ export const recordPortalNav: NavGroup[] = [];
 export const recordAdminNav: NavGroup[] = [];
 
 /** The /app sidebar's Workspace group: Credentials (mold_v0-034) when a pack declares a credential field, Schedules
- * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates. */
+ * (mold_v0-035) when the build has a job kind, Notices when a check area declares due dates, Files (mold_v0-056)
+ * when a pack has a workspace store. */
 export const workspacePortalNav: NavGroup[] = [];
 
 /** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */
@@ -94,7 +95,7 @@ export const packCharts: PackChartSpec[] = [];
 export interface PackTabSpec {
   pack: string;
   id: string;
-  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page';
+  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';
   label: string;
   description: string | null;
   icon: string;

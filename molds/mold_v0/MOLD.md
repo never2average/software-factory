@@ -408,9 +408,26 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   `workspaces/org-<id>/<store>/`, sealed with the workspace's data key (`src/orgcrypto.ts` `sealBytes`, refused while
   the vault is locked) and bound by AES-GCM additional data to their workspace, store, row and manifest. A runner names
   a run and its lease token, never a workspace (`GET`/`PUT /api/worker/runs/:id/workspace`); packing never follows a
-  link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots. **Not wired yet:**
-  no customer-facing read of a snapshot's files (an evidence viewer), and no retention of old versions (all are kept).
+  link; unpacking writes only inside an empty directory. Deleting a workspace removes its snapshots.
   `npm run test:workspace-store` proves it with two workspaces.
+  **Retention and the file viewer** (mold_v0-056, built): a pack declares `workspace_store` (`src/workspace-store-policy.ts`):
+  `retention` keeps the newest `keep_last` versions and/or those committed within `keep_days`, each capped by the
+  platform's ceiling (`OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS`, 100; `OCTILLION_WORKSPACE_RETENTION_MAX_DAYS`, 365;
+  a pack that declares nothing gets the ceiling). Whatever the rules, the latest version, every version a run's results
+  or a report reference (the version the run left, as the report tool reads it) and the version a store lease checked
+  out are kept. A daily sweep from the scheduler's tick (`src/workspace-retention.ts`; `scheduler_marks`
+  "workspace_retention") deletes the rest per workspace and store in one transaction, then their objects, and any object
+  under that store's own prefix with no live row; never a key outside it. Idempotent; refused with the vault locked
+  (the day is then not marked). `OCTILLION_WORKSPACE_RETENTION=off` stops it. The console's **Files** page (`/app/files`,
+  `src/workspace-files.ts` at `/api/workspace-files`, a `files` tab for a build with tabs) lists a store's versions
+  (time, the run that wrote it, size), browses a version's files, shows a text file (at most 1 MiB, as text, never
+  markup), downloads a file (an attachment, at most 25 MiB) and diffs two versions (files changed; a text file's lines),
+  for the roles that may read every one of the pack's record areas, opening the version per request with the
+  workspace's key (503 while the vault is locked). It never lists or serves a hidden path (a segment starting with
+  "."), a credential-looking file, a path the pack declares secret (`workspace_store.secret_paths`) or strips (its agent
+  kinds' `strip`), a file a credential is delivered as, nor a file that holds one of the workspace's credential values;
+  paths are plain relative paths the version's manifest names. `npm run test:workspace-files` proves it with two
+  workspaces.
 - **The workspace credential vault** (mold_v0-034, built; merges the old 009): a pack declares credential fields
   (`definePack({ credentials })`: a label, help, `bound_to` the workspace, an `asset` of one of its asset areas (`area`)
   or an asset's `environment` (optionally from a list), delivered as an environment variable or a file). A workspace's
@@ -808,6 +825,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `tools` | MCP tools: name, input and output schemas, annotations, a handler that receives the calling workspace first | the tool registry behind `/mcp` (today hand-written in `src/server.ts`) |
 | `routes` | HTTP handlers | mounted at `/api/packs/<id>` (workspace-scoped, behind sign-in) and `/api/admin/packs/<id>` (platform staff, behind the admin roles), never at a shell path |
 | `jobKinds` (`job_kinds`) | run kinds: the runner (`workspace-harness`: its `entry` and `validator` programs in the pack; or `agent-workspace`: an agent repository at a pinned commit with a declared command, validation and write-back), the gateway providers, token lifetime, lease, attempts, budget, egress allowlist, whether it uses the workspace store, what an unresolved result reference does | the run engine (mold_v0-041; agent-workspace mold_v0-061; results mold_v0-065) |
+| `workspaceStore` (`workspace_store`) | the workspace store's retention (keep_last, keep_days) and the paths its file viewer never shows (secret_paths) | the daily retention sweep and the console's Files page (mold_v0-056) |
 | `onWorkspaceCommit` (code only) | a hook given the files of each committed workspace snapshot, before the run's results are checked | `src/runs.ts` (mold_v0-064) |
 | `recordAreas` (`record_areas`) | areas with a `role` (`source`, `check` or `asset`), a `scope` (`platform` or `workspace`), typed fields, list columns, links and references to other areas, a lifecycle and per-role permissions | a list page, a detail page and MCP list/get tools with no extra code (mold_v0-047); fields, states and permissions enforced on every write and move (mold_v0-057) |
 | `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name or tmpfs file) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
