@@ -165,7 +165,11 @@ export interface RunResultRow {
 }
 /** Runs of this pack's job kinds, for the calling workspace only (the workspace comes from the caller, never input). */
 export interface WorkspaceRuns {
-  start(kind: string, input?: { scope?: Record<string, unknown>; targets?: Record<string, unknown> }): Promise<RunView>;
+  /**
+   * `approval` (mold_v0-079): for a kind whose write waits for a yes after its preview, the id (apr_…) of the approval of
+   * the preview run whose output is to be written; refused without one, and each approval starts one run.
+   */
+  start(kind: string, input?: { scope?: Record<string, unknown>; targets?: Record<string, unknown>; approval?: string }): Promise<RunView>;
   get(id: string): Promise<RunView | null>;
   list(opts?: { limit?: number }): Promise<RunView[]>;
   results(id: string): Promise<RunResultRow[]>;
@@ -430,6 +434,30 @@ const jobKindBase = {
    */
   credentials: z.array(name).max(20).default([]),
   /**
+   * Credentials the platform's operators hold (mold_v0-075; the pack's `operatorCredentials`, values in the platform's
+   * key vault, provider "pack_credentials", label "<pack>.<name>"), by name; none by default. Delivered to the run as the
+   * field declares, like a workspace's, and never shown to the workspace: no console lists them, no workspace sets or
+   * reads them, and the run's output (events, results, its workspace) is redacted of them and refused when it holds one.
+   */
+  operator_credentials: z.array(name).max(10).default([]),
+  /**
+   * Per-company egress (mold_v0-075): the run may also reach the hosts its workspace's owners listed for this pack (the
+   * whole workspace's, and those of the asset the run targets: src/egress-hosts.ts), each exactly (never a subdomain),
+   * added to the run's allowlist. Off by default.
+   */
+  company_egress: z.boolean().default(false),
+  /**
+   * An approval gate (mold_v0-079): a run of this kind (a write) starts only with an approval of a run of its `preview`
+   * kind (a dry run of the same pack) that succeeded, for the same scope and targets, given by the workspace's `owner`
+   * (default) or the platform's `operator` for exactly that run's output (its sha256), within `expires_minutes`
+   * (default 1440), and used once. The workspace must not have changed since the preview.
+   */
+  approval: z.object({
+    preview: name,
+    by: z.enum(["owner", "operator"]).default("owner"),
+    expires_minutes: z.number().int().min(5).max(7 * 24 * 60).default(24 * 60),
+  }).strict().optional(),
+  /**
    * The run's arguments (mold_v0-057): typed like a record area's fields (the same types and checks). When declared, a
    * run's `scope` must be exactly these (unknown keys refused, each value of its type, required ones present); checked
    * when a pack's code starts the run (src/packs.ts declaredRuns). Absent: the scope is free, as before.
@@ -449,6 +477,13 @@ const jobKindBase = {
     format: z.enum(["markdown", "text", "json"]).default("markdown"),
   }).strict().optional(),
 };
+/**
+ * A kind given the platform's operator credentials never reaches hosts a workspace chose (mold_v0-075 review: the
+ * workspace's owner could list a host of their own and have the run send the operator's value there).
+ */
+const OP_EGRESS = "a kind with operator_credentials cannot take company_egress (a host the workspace chose would reach the operator's credential)";
+/** A gated write runs once per approval (mold_v0-079 review: a retried attempt would write again on one yes). */
+const ONE_ATTEMPT = "a kind that waits for an approval runs once per approval: max_attempts must be 1";
 export const JobKindSchema = z.object({
   ...jobKindBase,
   runner: z.literal("workspace-harness"),
@@ -457,6 +492,9 @@ export const JobKindSchema = z.object({
   validator: packFile.optional(),
 }).strict()
   .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice")
+  .refine((k) => k.approval?.preview !== k.name, { message: "a kind is not its own preview", path: ["approval", "preview"] })
+  .refine((k) => !(k.operator_credentials.length && k.company_egress), { message: OP_EGRESS, path: ["company_egress"] })
+  .refine((k) => !k.approval || k.max_attempts === 1, { message: ONE_ATTEMPT, path: ["max_attempts"] })
   .refine((k) => !k.report || k.workspace, { message: "a report is a file of the run's workspace: the kind needs workspace: true", path: ["report"] });
 
 /**
@@ -487,9 +525,13 @@ export const AgentJobKindSchema = z.object({
     ctx.addIssue({ code: "custom", message: `${name} is set by the shell for every run (PATH, HOME, RUN_*, proxy and loader settings)`, path: ["agent", "env", name] });
   // mold_v0-074: what a step or the command receives is one of the kind's credentials; git hosts are reachable.
   const issue = (message: string, ...p: (string | number)[]) => ctx.addIssue({ code: "custom", message, path: ["agent", ...p] });
-  const own = new Set(k.credentials);
+  const own = new Set([...k.credentials, ...k.operator_credentials]);
   const onEgress = (h: string) => k.egress.some((e) => { const x = e.replace(/^\*\./, "").toLowerCase(); return h === x || h.endsWith(`.${x}`); });
   for (const n of k.agent.credentials ?? []) if (!own.has(n)) issue(`${n} is not one of the kind's credentials`, "credentials");
+  if (k.approval?.preview === k.name) ctx.addIssue({ code: "custom", message: "a kind is not its own preview", path: ["approval", "preview"] });
+  if (k.operator_credentials.length && k.company_egress) ctx.addIssue({ code: "custom", message: OP_EGRESS, path: ["company_egress"] });
+  if (k.approval && k.max_attempts !== 1) ctx.addIssue({ code: "custom", message: ONE_ATTEMPT, path: ["max_attempts"] });
+  for (const n of k.operator_credentials) if (k.credentials.includes(n)) ctx.addIssue({ code: "custom", message: `${n} is both a workspace and an operator credential`, path: ["operator_credentials"] });
   for (const [j, g] of k.agent.git_credentials.entries()) {
     if (!own.has(g.credential)) issue(`${g.credential} is not one of the kind's credentials`, "git_credentials", j, "credential");
     if (!onEgress(g.host)) issue(`${g.host} is not in the kind's egress (git could not reach it)`, "git_credentials", j, "host");
@@ -798,8 +840,13 @@ export const METRIC_MEASURES = ["count", "sum", "average", "rate", "duration"] a
  *             buckets up to now (UTC). With group_by, one series per group (an enum or a status: at most 8 groups)
  *   limit     groups shown (largest first; an enum's options in order), at most 50; the answer says when there are more
  *   roles     who may read it (narrows: an area metric also needs the area's read permission)
- *   unit      how the console shows it (count, number, usd, percent, days, hours); from the measure when absent
+ *   unit      how the console shows it (count, number, usd, percent, percent_100, days, hours); from the measure when
+ *             absent. "percent" is a share from 0 to 1 (a rate), shown times 100; "percent_100" (mold_v0-079) a value
+ *             that is already 0 to 100 (an average of percentages a run measured), shown as it is
  */
+/** The units a metric is shown in (src/metric-spec.ts metricUnit; the console's formatValue). */
+export const METRIC_UNITS = ["count", "number", "usd", "percent", "percent_100", "days", "hours"] as const;
+export type MetricUnit = (typeof METRIC_UNITS)[number];
 export const MetricSchema = z.object({
   name,
   label: z.string().min(1).max(80),
@@ -823,7 +870,7 @@ export const MetricSchema = z.object({
   }).strict().optional(),
   limit: z.number().int().min(1).max(50).default(12),
   roles: z.array(role).min(1).max(4).optional(),
-  unit: z.enum(["count", "number", "usd", "percent", "days", "hours"]).optional(),
+  unit: z.enum(METRIC_UNITS).optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((m, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
@@ -938,6 +985,18 @@ const envLabel = z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "an environment nam
  * (deliver_as {env}) or a file in a private directory named by RUN_CREDENTIALS_DIR (deliver_as {file}). Values never
  * reach the pack's server code, the run's events or results, the MCP output or any log.
  */
+/**
+ * How a run receives a credential: an environment variable (`env`), or a file (`file`, 0400, the run user's, in a
+ * private directory on tmpfs named by RUN_CREDENTIALS_DIR) whose full path is also given in `path_env` when declared
+ * (mold_v0-075: a locator a tool reads, KUBECONFIG, or a pack's own name such as PROD_RO_KUBECONFIG).
+ */
+const deliverAs = z.union([
+  z.object({ env: envNameField }).strict(),
+  z.object({
+    file: z.string().regex(/^[a-z0-9_][a-z0-9_.-]{0,99}$/i, "a file name (letters, digits, _ . -), no directories"),
+    path_env: envNameField.optional(),
+  }).strict(),
+]);
 export const CredentialSchema = z.object({
   name,
   label: z.string().min(1).max(80),
@@ -946,13 +1005,23 @@ export const CredentialSchema = z.object({
   /** The asset area (asset and environment bindings): one of this pack's own areas with role "asset". */
   area: name.optional(),
   environments: z.array(envLabel).min(1).max(20).optional(),
-  deliver_as: z.union([
-    z.object({ env: envNameField }).strict(),
-    z.object({ file: z.string().regex(/^[a-z0-9_][a-z0-9_.-]{0,99}$/i, "a file name (letters, digits, _ . -), no directories") }).strict(),
-  ]),
+  deliver_as: deliverAs,
 }).strict()
   .refine((c) => (c.bound_to === "workspace") === (c.area === undefined), "area names the asset area for an asset or environment binding (and only then)")
   .refine((c) => c.environments === undefined || c.bound_to === "environment", "environments is for an environment binding only");
+
+/**
+ * A credential the platform's operators hold for a pack (mold_v0-075): a login to a catalogue every workspace's runs
+ * read, say. Its value is in the platform's key vault (provider "pack_credentials", label "<pack>.<name>"), set by an
+ * owner of the platform (/admin key vault); a kind that names it in `operator_credentials` receives it as declared. A
+ * workspace never sees it: not in its console, its runs' events or results, nor its workspace's files.
+ */
+export const OperatorCredentialSchema = z.object({
+  name,
+  label: z.string().min(1).max(80),
+  help: z.string().max(500).optional(),
+  deliver_as: deliverAs,
+}).strict();
 
 /**
  * A default schedule (wired by mold_v0-035; src/schedules.ts). Every workspace gets its own copy (per workspace: its own
@@ -1027,6 +1096,8 @@ export interface PackDefinition {
   agentJobKinds?: z.input<typeof AgentJobKindSchema>[];
   recordAreas?: z.input<typeof RecordAreaSchema>[];
   credentials?: z.input<typeof CredentialSchema>[];
+  /** Credentials the platform's operators hold for the pack's runs (mold_v0-075), never a workspace's to see. */
+  operatorCredentials?: z.input<typeof OperatorCredentialSchema>[];
   schedules?: z.input<typeof ScheduleSchema>[];
   onboarding?: z.input<typeof OnboardingStepSchema>[];
   /** Metrics over the records and the runs' results (mold_v0-063; src/metrics.ts computes them for one workspace). */
@@ -1127,6 +1198,7 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   for (const t of p.tabs ?? []) for (const c of t?.charts ?? []) if (!chartNames.has(c)) problems.push(at(`tab ${t.id} shows chart ${c}, which this pack does not declare`));
   each(p.recordAreas, RecordAreaSchema, "recordAreas");
   each(p.credentials, CredentialSchema, "credentials");
+  each(p.operatorCredentials, OperatorCredentialSchema, "operatorCredentials");
   each(p.schedules, ScheduleSchema, "schedules");
   each(p.onboarding, OnboardingStepSchema, "onboarding");
   // Repositories (mold_v0-059) and the run-results mapping (061): declared shapes; an area names a declared repository.
@@ -1173,16 +1245,35 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
     if (c?.area !== undefined && !(p.recordAreas ?? []).some((a) => a?.name === c.area && a.role === "asset"))
       problems.push(at(`credential ${c.name} is bound to area ${c.area}, which is not one of this pack's asset areas`));
   }
+  // Workspace and operator credentials (mold_v0-075) share the targets: two never deliver to the same variable or file
+  // (a file's path_env is a variable too), and a name is one or the other.
   const targets = new Map<string, string>();
-  for (const c of p.credentials ?? []) {
-    const d = c?.deliver_as as { env?: string; file?: string } | undefined;
-    const where = d?.env ? `env ${d.env}` : d?.file ? `file ${d.file}` : null;
-    if (!where) continue;
-    if (targets.has(where)) problems.push(at(`credentials ${targets.get(where)} and ${c.name} both deliver to ${where}`));
-    else targets.set(where, c.name);
+  const opCreds = new Map((p.operatorCredentials ?? []).map((c) => [c?.name, c]));
+  for (const c of [...(p.credentials ?? []), ...(p.operatorCredentials ?? [])]) {
+    const d = c?.deliver_as as { env?: string; file?: string; path_env?: string } | undefined;
+    for (const where of [d?.env ? `env ${d.env}` : null, d?.file ? `file ${d.file}` : null, d?.path_env ? `env ${d.path_env}` : null]) {
+      if (!where) continue;
+      if (targets.has(where)) problems.push(at(`credentials ${targets.get(where)} and ${c.name} both deliver to ${where}`));
+      else targets.set(where, c.name);
+    }
   }
-  for (const k of [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])]) for (const n of (k as { credentials?: unknown[] })?.credentials ?? [])
-    if (typeof n === "string" && !creds.has(n)) problems.push(at(`job kind ${k.name} names credential ${n}, which this pack does not declare`));
+  for (const n of opCreds.keys()) if (n && creds.has(n)) problems.push(at(`credential ${n} is declared both as a workspace's and as an operator's`));
+  for (const k of [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])]) {
+    for (const n of (k as { credentials?: unknown[] })?.credentials ?? [])
+      if (typeof n === "string" && !creds.has(n)) problems.push(at(`job kind ${k.name} names credential ${n}, which this pack does not declare`));
+    for (const n of (k as { operator_credentials?: unknown[] })?.operator_credentials ?? [])
+      if (typeof n === "string" && !opCreds.has(n)) problems.push(at(`job kind ${k.name} names operator credential ${n}, which this pack does not declare (operatorCredentials)`));
+  }
+  // Approval gates (mold_v0-079): the preview is a kind of this pack, itself not gated; no schedule starts a gated kind
+  // (a schedule has no one to approve its preview).
+  const allKinds = [...(p.jobKinds ?? []), ...(p.agentJobKinds ?? [])] as { name?: string; approval?: { preview?: string } }[];
+  for (const k of allKinds) if (k?.approval?.preview) {
+    const pv = allKinds.find((x) => x?.name === k.approval!.preview);
+    if (!pv) problems.push(at(`job kind ${k.name}: its preview ${k.approval.preview} is not a kind of this pack`));
+    else if (pv.approval) problems.push(at(`job kind ${k.name}: its preview ${pv.name} waits for an approval itself`));
+  }
+  for (const s of p.schedules ?? []) if (allKinds.find((k) => k?.name === s?.job_kind)?.approval)
+    problems.push(at(`schedule ${s.name} starts ${s.job_kind}, which waits for an approval of its preview: a schedule cannot start it`));
   // Onboarding (mold_v0-011): a step's condition names this pack's own kind, credential or workspace-scope area. (A tool
   // may be any pack's or the shell's: src/packs.ts installPacks checks it against the whole build.)
   for (const st of p.onboarding ?? []) {

@@ -46,16 +46,15 @@ delete process.env.OCTILLION_ALLOW_UNSANDBOXED_RUNS;
 // ---------- the sandbox stand-ins ----------
 let base = ""; // the HTTP server, as a sandbox's network reaches the API's public address
 const kids = new Set<ChildProcess>();
-// Each stand-in sandbox gets a run user of its own (a uid with no account): real sandboxes are separate machines, and a
-// harness kills every process of its run user when a run starts and ends.
-let nextUid = 41_000 + Math.floor(Math.random() * 1000) * 10;
+// Each stand-in's runner leases a run user of its own (mold_v0-078: a uid per run from OCTILLION_RUN_UIDS, as a real
+// sandbox's runner does; these stand-ins share this machine, so the leases keep their runs apart).
 /** Start the runner as a sandbox would, from `cwd`'s code, with `env` (as written for the sandbox), and no firewall. */
 function startRunner(cwd: string, bin: string[], env: Record<string, string>, tag: string): ChildProcess {
   const { OCTILLION_RUN_USER: _u, ...rest } = env;
   const child = spawn(bin[0]!, [...bin.slice(1), "src/run-sandbox-runner.ts"], { cwd, detached: true, stdio: ["ignore", "ignore", "pipe"],
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...rest, OCTILLION_URL: rest.OCTILLION_URL === PUBLIC ? base : rest.OCTILLION_URL!,
            OCTILLION_RUN_LOCKDOWN: "off", OCTILLION_ALLOW_UNSANDBOXED_RUNS: "yes",
-           ...(asRoot ? { OCTILLION_RUN_UID: String(++nextUid), OCTILLION_RUN_GID: String(nextUid) } : { OCTILLION_RUN_SAME_USER: "yes" }) } });
+           ...(asRoot ? {} : { OCTILLION_RUN_SAME_USER: "yes" }) } });
   let err = "";
   child.stderr!.on("data", (d) => { err += d; if (process.env.SBX_DEBUG) process.stderr.write(`[${tag}] ${d}`); });
   child.on("exit", () => kids.delete(child));
@@ -266,10 +265,10 @@ try {
     assert.ok(Number(sb.create.ttlSeconds) <= 10 * 60 + 2 * 3600 + 2 * 15 + 1800 && Number(sb.create.ttlSeconds) > 0, `TTL ${sb.create.ttlSeconds}`);
     const e = envFiles[sb.id]!;
     assert.equal(e.OCTILLION_RUN_LOCKDOWN, "on", "the launcher always asks for the lockdown");
-    assert.equal(e.OCTILLION_RUN_USER, "octirun");
+    assert.equal(e.OCTILLION_RUN_UIDS, "61000-64999", "the range its runner leases the run's user from (mold_v0-078)");
     assert.equal(e.OCTILLION_URL, PUBLIC);
     assert.ok(e.OCTILLION_WORKER_TOKEN?.startsWith("owk_") && e.OCTILLION_WORKER_TOKEN !== process.env.OCTILLION_WORKER_TOKEN, "a run token, never the fleet token");
-    for (const k of Object.keys(e)) assert.ok(["OCTILLION_URL", "OCTILLION_WORKER_TOKEN", "OCTILLION_RUN_ID", "OCTILLION_RUN_USER", "OCTILLION_RUN_PACK_DIR", "OCTILLION_RUN_LOCKDOWN"].includes(k), `unexpected ${k} in the sandbox`);
+    for (const k of Object.keys(e)) assert.ok(["OCTILLION_URL", "OCTILLION_WORKER_TOKEN", "OCTILLION_RUN_ID", "OCTILLION_RUN_UIDS", "OCTILLION_RUN_PACK_DIR", "OCTILLION_RUN_LOCKDOWN"].includes(k), `unexpected ${k} in the sandbox`);
     // The uploaded code is the runner's import graph, the pack and the orchestrator: no server code.
     const uploaded = spawnSync("tar", ["-tzf", path.join(sb.dir, "code.tgz")], { encoding: "utf8" }).stdout.split("\n");
     for (const f of ["src/run-sandbox-runner.ts", "src/run-harness.ts", "orchestrator/core/egress.ts", "scripts/fixtures/runs/ok.mjs"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
@@ -327,6 +326,11 @@ try {
     const resB = await db.query<{ org_id: number; asset_key: string }>("SELECT org_id, asset_key FROM run_results WHERE run_id = $1", [b]);
     assert.ok(resA.length === 1 && resA[0]!.org_id === A.orgId && resA[0]!.asset_key === "app-a");
     assert.ok(resB.length === 1 && resB[0]!.org_id === B.orgId && resB[0]!.asset_key === "app-b");
+    if (asRoot) {
+      // mold_v0-078: the two runs, at once on this machine, each as a user of its own.
+      const ua = (await events(a)).find((x) => x.type === "run_user")?.data.uid, ub = (await events(b)).find((x) => x.type === "run_user")?.data.uid;
+      assert.ok(ua >= 61000 && ub >= 61000 && ua !== ub, `a run user per run (${ua}, ${ub})`);
+    }
     await rs.tick();
     assert.ok(!sbs.has(ra!.sandbox_id!) && !sbs.has(rb!.sandbox_id!), "both torn down");
     console.log("✓ two workspaces: a sandbox and a token per run; a token claims once, never the other run, never another worker route; results in each run's own workspace");
@@ -438,7 +442,6 @@ try {
   // ---------- 7. process (tests only) ----------
   {
     Object.assign(process.env, { OCTILLION_RUN_SANDBOX: "process", OCTILLION_ALLOW_UNSANDBOXED_RUNS: "yes" });
-    if (asRoot) Object.assign(process.env, { OCTILLION_RUN_UID: String(++nextUid), OCTILLION_RUN_GID: String(nextUid) });
     const id = await start(ca, "plain", { asset: "app-a" });
     const t = await rs.tick(); await rs.settle();
     assert.equal(t.provider, "process");

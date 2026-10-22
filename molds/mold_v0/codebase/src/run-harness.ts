@@ -6,11 +6,14 @@
  *                  a lease token, a deadline, gateway env for the kind's providers, and the egress allowlist
  *   2. workspace   (kinds with workspace: true) check the workspace's latest snapshot out into an empty directory
  *   3. run         the kind's entry, a program in (the run's own copy of) the pack, with node, in that directory, as a
- *                  user kept for runs (runAs / OCTILLION_RUN_UID; never the runner's), with an environment built from
+ *                  user of the run's own (a uid leased for this run alone from OCTILLION_RUN_UIDS, src/run-users.ts,
+ *                  mold_v0-078; never the runner's), with an environment built from
  *                  nothing: PATH, a private HOME, RUN_* (id, attempt, scope, targets, the output directory) and the
  *                  gateway env. Never the runner's own environment (database URL, vault key, worker token), which the
  *                  separate user cannot read either (/proc/<runner>/environ). When it ends, every process of that user
- *                  is killed. Without a separate user the harness refuses to run, unless told (allowSameUser, tests).
+ *                  is killed and its files in the shared temporary directories removed: no other run has that uid, so
+ *                  this never touches another run. Without a separate user the harness refuses to run, unless told
+ *                  (allowSameUser, tests).
  *                  Its stdout lines are events (a JSON line {"event": "<type>", ...} is that event; anything else "log").
  *                  Exit 0: done. Exit 75: an infrastructure failure (the engine retries while attempts remain). Else failed.
  *   4. heartbeat   every lease_seconds / 3; on cancel=true (cancelled, or past the deadline) the program is stopped
@@ -52,6 +55,10 @@ import { packBundle, unpackBundle } from "./workspace-bundle.js";
 import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, recordedFiles, restoreInto, stripPaths, underWriteBack } from "./agent-workspace.js";
 import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
 import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
+import { killUser, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
+
+/** Kept here for callers that imported it from the harness (it lives in src/run-users.ts, mold_v0-078). */
+export { sweepUserFiles };
 
 /** What a runner needs from the engine: in-process (localRunnerClient) or over HTTP (httpRunnerClient). */
 export interface RunnerClient {
@@ -123,11 +130,12 @@ const freeUdp = () => new Promise<number>((resolve, reject) => {
 
 export interface RunProxy { port: number; env: Record<string, string>; log: string; stop: () => void }
 /** Start the sandboxes' egress proxy for one run's allowlist on free local ports; resolves once it accepts connections. */
-export async function startRunProxy(hosts: string[], dir: string): Promise<RunProxy> {
+export async function startRunProxy(hosts: string[], dir: string, exact: string[] = []): Promise<RunProxy> {
   mkdirSync(dir, { recursive: true });
   const script = path.join(dir, "egress-proxy.mjs"), allow = path.join(dir, "egress-allow.json"), log = path.join(dir, "egress.log");
   writeFileSync(script, proxySource());
-  writeFileSync(allow, JSON.stringify({ hosts }));
+  // `exact`: hosts allowed exactly, not their subdomains (a company's own, mold_v0-075).
+  writeFileSync(allow, JSON.stringify({ hosts, exact }));
   const [port, tport, dport] = [await freeTcp(), await freeTcp(), await freeUdp()];
   const proc = spawn(process.execPath, [script, allow, log, String(port), String(tport), String(dport)], { stdio: "ignore", env: { PATH: process.env.PATH ?? "" } });
   const stop = () => { if (proc.exitCode === null) proc.kill("SIGKILL"); };
@@ -150,13 +158,23 @@ export async function startRunProxy(hosts: string[], dir: string): Promise<RunPr
 
 export interface HarnessOptions {
   /**
-   * The user the run's programs run as (and only they): a uid and gid kept for runs, never the runner's own. Then a
-   * program cannot read the runner's memory or environment (/proc/<runner>/environ is the runner's), its scratch is its
-   * own (mode 0700), and when the run ends every process of that user is killed, so nothing it started outlives it or
-   * touches the workspace while it is written back. Needs a runner started as root. One run at a time per user.
-   * Default: OCTILLION_RUN_UID / OCTILLION_RUN_GID.
+   * The run's user (mold_v0-078): by default every run gets a uid of its own, leased from the reserved range
+   * (src/run-users.ts: OCTILLION_RUN_UIDS, default 61000-64999) for that run alone and given back when it ends, never
+   * the runner's own. A program cannot read the runner's memory or environment (/proc/<runner>/environ is the runner's),
+   * its scratch is its own (mode 0700), and when the run ends every process of that user is killed and its files in the
+   * shared temporary directories are removed: since no other run has that uid, that never touches another run. Needs
+   * a runner started as root.
+   *
+   * `runAs` fixes the uid instead (tests, older setups): it is leased the same way, so a second run on the host that
+   * asks for the same uid while the first runs is refused (an infrastructure failure, retried) rather than sharing it.
    */
   runAs?: { uid: number; gid: number };
+  /** The reserved range to lease from (default OCTILLION_RUN_UIDS, else 61000-64999). */
+  runUsers?: UidRange;
+  /** A run user the caller already leased (a run sandbox's runner, which locks its uid down first); the caller releases it. */
+  runUser?: RunUser;
+  /** Where the leases are kept (default OCTILLION_RUN_UID_DIR, else /run/octi-run-uids). Tests only. */
+  runUidDir?: string;
   /**
    * Run the programs as the runner's own user, without the protection above (offline tests only). A program can then
    * read the runner's environment (its worker token; on the server, the vault key and database address) and start
@@ -203,18 +221,30 @@ const cacheMaxBytes = () => Math.max(1024 * 1024, Number(process.env.OCTILLION_R
 const cacheDays = () => Math.max(0, Number(process.env.OCTILLION_RUN_CACHE_DAYS ?? 7) || 7);
 
 export class HarnessConfigError extends Error {}
-/** The isolation a runner uses: a dedicated user, or (tests) an explicit opt-out. Throws when neither. */
-export function runIsolation(opts: HarnessOptions): { uid: number; gid: number } | null {
-  const env = process.env.OCTILLION_RUN_UID ? { uid: Number(process.env.OCTILLION_RUN_UID), gid: Number(process.env.OCTILLION_RUN_GID ?? process.env.OCTILLION_RUN_UID) } : null;
-  const as = opts.runAs ?? env;
-  if (as) {
+/** How a run's programs are isolated: a run user leased per run (the default for a runner started as root), a given one, or (tests) none. */
+let warnedRunUid = false;
+export type Isolation = { mode: "pool"; range: UidRange } | { mode: "fixed"; uid: number; gid: number } | { mode: "given"; user: RunUser } | null;
+/** The isolation a runner uses: a run user per run, or (tests) an explicit opt-out. Throws when neither is possible. */
+export function runIsolation(opts: HarnessOptions): Isolation {
+  const root = process.getuid?.() === 0;
+  if (opts.runUser) return { mode: "given", user: opts.runUser };
+  if (opts.runAs) {
+    const as = opts.runAs;
     if (!Number.isSafeInteger(as.uid) || !Number.isSafeInteger(as.gid) || as.uid <= 0 || as.gid <= 0) throw new HarnessConfigError("runAs: a uid and gid other than root");
-    if (process.getuid?.() !== 0) throw new HarnessConfigError("runAs needs a runner started as root (to switch to the run's user)");
+    if (!root) throw new HarnessConfigError("runAs needs a runner started as root (to switch to the run's user)");
     if (as.uid === process.getuid?.()) throw new HarnessConfigError("runAs: the run's user must not be the runner's");
-    return as;
+    return { mode: "fixed", uid: as.uid, gid: as.gid };
   }
   if (opts.allowSameUser) return null;
-  throw new HarnessConfigError("the workspace harness runs programs only as a dedicated user (runAs, OCTILLION_RUN_UID): set one, or allowSameUser in offline tests");
+  if (root) {
+    if (process.env.OCTILLION_RUN_UID && !warnedRunUid) {
+      warnedRunUid = true;
+      console.error("OCTILLION_RUN_UID is no longer read (mold_v0-078): every run leases a uid of its own from OCTILLION_RUN_UIDS (default 61000-64999)");
+    }
+    try { return { mode: "pool", range: opts.runUsers ?? runUidRange() }; }
+    catch (e) { throw new HarnessConfigError((e as Error).message); }
+  }
+  throw new HarnessConfigError("the workspace harness runs programs only as a run user of their own (a runner started as root leases one per run, OCTILLION_RUN_UIDS): start it as root, or set allowSameUser in offline tests");
 }
 
 const INFRA_EXIT = 75;
@@ -231,22 +261,6 @@ const chownTree = (dir: string, uid: number, gid: number) => {
     if (e.isDirectory()) chownTree(p, uid, gid); else chownSync(p, uid, gid);
   }
 };
-/** Every process of the run's user, gone (kill -KILL -1 as that user signals all of its processes but itself). */
-const killUser = (as: { uid: number; gid: number }) => { spawnSync("/bin/kill", ["-KILL", "-1"], { uid: as.uid, gid: as.gid, stdio: "ignore", timeout: 10_000 }); };
-/** The processes of `uid` still alive (from /proc; zombies count as gone). */
-function processesOf(uid: number): number[] {
-  const out: number[] = [];
-  let pids: string[] = [];
-  try { pids = readdirSync("/proc").filter((d) => /^\d+$/.test(d)); } catch { return out; }
-  for (const pid of pids) {
-    try {
-      const st = readFileSync(`/proc/${pid}/status`, "utf8");
-      const u = /^Uid:\s+(\d+)/m.exec(st)?.[1], state = /^State:\s+(\S)/m.exec(st)?.[1];
-      if (Number(u) === uid && state !== "Z" && state !== "X") out.push(Number(pid));
-    } catch { /* gone */ }
-  }
-  return out;
-}
 /**
  * Before the runner (root) reads what the run's user wrote: every process of that user gone, so nothing can swap a
  * file for a link between a check and a read. Killed again a few times; still alive, the run stops (infrastructure).
@@ -296,13 +310,35 @@ function runProgram(cmd0: string, args0: string[], o: { cwd: string; env: Record
 
 /** Carry out one claimed run, from checkout to completion. Never throws for the run's own failures: it completes them. */
 export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, opts: HarnessOptions = {}): Promise<RunView | null> {
-  const as = runIsolation(opts);
+  const iso = runIsolation(opts);
   const prog = (cmd: string, args: string[], o: Omit<Parameters<typeof runProgram>[2], "nnp">) => runProgram(cmd, args, { ...o, nnp: !!opts.noNewPrivs });
-  if (as) { killUser(as); sweepUserFiles(as.uid); } // nothing of an earlier run (one whose runner died) is left for this one
   const run = claim.run, spec = run.spec, lease = claim.lease_token;
+  // mold_v0-078: the run's own user, leased for this run alone (no other run on the host has its uid while it runs).
+  const userNotes: { type: string; data: Record<string, unknown> }[] = [];
+  let user: RunUser | null = null;
+  if (iso) {
+    try {
+      user = iso.mode === "given" ? iso.user : await leaseRunUser(run.id, { ...(iso.mode === "fixed" ? { fixed: { uid: iso.uid, gid: iso.gid } } : { range: iso.range }),
+        dir: opts.runUidDir, note: (type, data) => userNotes.push({ type, data }) });
+    } catch (e) {
+      // No run user free now (or a fixed one in use by another run): nothing ran; an infrastructure failure, retried.
+      const busy = e instanceof RunUserError && e.kind === "busy";
+      return client.complete(run.id, lease, { outcome: "failed", error_kind: "infrastructure", error: `prepare: ${busy ? "" : "the run's user: "}${(e as Error).message}`.slice(0, 2000) }).catch(() => null);
+    }
+  }
+  const as = user ? { uid: user.uid, gid: user.gid } : null;
   /** The agent-workspace runner's configuration (mold_v0-061), or null for a program of the pack's own. */
   const agent = spec.runner === "agent-workspace" ? spec.agent : null;
-  const scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `run-${run.id.slice(4, 12)}-`));
+  let scratch: string;
+  try {
+    if (as) { killUser(as); sweepUserFiles(as.uid); } // nothing of an earlier holder of this uid is left for this run
+    scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `run-${run.id.slice(4, 12)}-`));
+    for (const d of ["workspace", "checkout", "out", "home"]) if (d !== (agent ? "workspace" : "checkout")) mkdirSync(path.join(scratch, d), { recursive: true, mode: 0o700 });
+  } catch (e) {
+    // Before the run's own clean-up is in place: the leased user goes back now (never held by a run that is not going).
+    if (user && iso?.mode !== "given") await user.release().catch(() => false);
+    throw e;
+  }
   // An agent run's directory is the agent repository's checkout; its snapshot is unpacked beside it, where only the
   // runner can read it (the run's user gets the write-back paths restored into the checkout, nothing else).
   const work = path.join(scratch, agent ? "checkout" : "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home"), pack = path.join(scratch, "pack");
@@ -310,12 +346,11 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   // The pinned tree as it stood before the agent ran (after setup, without the workspace): the validation runs on a copy
   // of it with the staged write-back laid over, never on files the agent could have changed (its validator, its deps).
   const pristine = path.join(scratch, "pristine"), vdir = path.join(scratch, "validate");
-  for (const d of [work, out, home]) mkdirSync(d, { recursive: true });
   let proxy: RunProxy | null = null;
   let delivered: RunCredentials | null = null;
   const proc: { child: ChildProcess | null; timedOut?: boolean } = { child: null };
   let stopped: "cancelled" | "deadline" | "lease" | null = null;
-  const pending: { type: string; data?: Record<string, unknown> }[] = [];
+  const pending: { type: string; data?: Record<string, unknown> }[] = [...userNotes, ...(as ? [{ type: "run_user", data: { uid: as.uid } }] : [])];
   let leaseLost = false;
   /** The credential values this run received: whatever it writes is redacted of them before it leaves the harness. */
   let secrets: Secret[] = [];
@@ -446,10 +481,11 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         pending.push({ type: "agent_checkout", data: { commit: got.commit, files: got.files, stripped: stripped.length } });
         await client.checkout(run.id, lease, snap);
         chmodSync(snap, 0o700);
+        // mold_v0-079: `strip` is the pinned tree's (its samples, its own data), applied at checkout only. What the
+        // workspace holds is the workspace's: restored as it is, never stripped (a strip pattern that matches a file the
+        // workspace keeps, its own series, say, would otherwise delete it on every run).
         const r = restoreInto(snap, work, agent.write_back);
-        // Stripped again: a stripped path the workspace carried (under a write-back path) never comes back through it.
-        const again = stripPaths(work, agent.strip);
-        pending.push({ type: "workspace_restored", data: { ...r, ...(again.length ? { stripped: again.length } : {}) } });
+        pending.push({ type: "workspace_restored", data: r });
         // mold_v0-072: the kind's tools, as pinned, from the image (never downloaded now), first on the run's PATH.
         if (agent.tools.length) {
           const catalog = opts.runTools?.catalog ?? RUN_TOOL_CATALOG;
@@ -476,9 +512,14 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
         validator = hs.validator ? { cmd: process.execPath, args: [inside(pack, hs.validator), work, out], timeoutMs: 600_000 } : null;
         if (spec.workspace) await client.checkout(run.id, lease, work);
       }
-      if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"));
+      if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"), claim.egress.exact ?? []);
       else if (opts.egress === "system") proxy = { port: EGRESS_PROXY_PORT, env: proxyEnv(), log: path.join(EGRESS_LOG_DIR, "octi-egress.log"), stop: () => {} };
-      if (as) { if (!agent) chownTree(pack, as.uid, as.gid); for (const d of [work, out, home]) chownTree(d, as.uid, as.gid); chmodSync(scratch, 0o711); }
+      if (as) {
+        if (!agent) chownTree(pack, as.uid, as.gid);
+        // 0700: the run's user only (on a runner that carries out several runs at once, never another run's user).
+        for (const d of [work, out, home]) { chownTree(d, as.uid, as.gid); chmodSync(d, 0o700); }
+        chmodSync(scratch, 0o711);
+      }
     } catch (e) {
       dropSecrets();
       const kind = e instanceof AgentRunError ? e.kind : "infrastructure";
@@ -489,6 +530,16 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_KIND: run.kind, RUN_OUT: out, RUN_WORKSPACE: work,
       RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
     };
+    // mold_v0-079: a gated write is given the preview's output that was approved (its run, results and recorded files,
+    // and the sha256 the approver saw), to apply exactly that.
+    if (claim.approval) {
+      try {
+        const f = path.join(scratch, "approved-preview.json");
+        writeFileSync(f, JSON.stringify(claim.approval, null, 2), { mode: 0o400, flag: "wx" });
+        if (as) chownSync(f, as.uid, as.gid);
+        runEnv.RUN_APPROVED_PREVIEW = f;
+      } catch (e) { return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: the approved preview: ${(e as Error).message}` }); }
+    }
     if (agent?.setup) {
       // The repository's own preparation (its dependencies): the run's egress, no credential, no gateway token.
       const s0 = Date.now();
@@ -514,7 +565,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       }
     }
     try {
-      if (spec.credentials?.length) {
+      if (spec.credentials?.length || spec.operator_credentials?.length) {
         delivered = await client.credentials(run.id, lease);
         secrets = [...secrets, ...delivered.credentials.map((c) => ({ name: c.name, value: c.value }))];
       }
@@ -538,6 +589,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       const files = chosen.filter((c) => c.file);
       const gits: GitCredential[] = [];
       const missing: string[] = [];
+      const shadowedPaths: string[] = [];
       for (const g of git) {
         const c = (delivered?.credentials ?? []).find((x) => x.name === g.credential);
         if (c) gits.push({ protocol: "https", host: g.host, username: g.username, value: c.value }); else missing.push(g.credential);
@@ -554,6 +606,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
           const p = path.join(secretDir, path.basename(f.file!));
           writeFileSync(p, f.value, { mode: 0o400, flag: "wx" });
           if (as) chownSync(p, as.uid, as.gid);
+          // mold_v0-075: the file's full path in the variable its field names (KUBECONFIG, a pack's own locator).
+          if (f.path_env) { if (f.path_env in env || f.path_env in extra) shadowedPaths.push(f.name); else extra[f.path_env] = p; }
         }
         if (files.length) extra.RUN_CREDENTIALS_DIR = secretDir;
         if (gits.length) Object.assign(extra, gitCredentialFiles(secretDir, gits, as).env);
@@ -561,7 +615,7 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       }
       // A credential's variable never replaces one the shell sets (a gateway provider's, say): that one is not delivered.
       const credEnv: Record<string, string> = {};
-      const shadowed: string[] = [];
+      const shadowed: string[] = [...shadowedPaths];
       for (const c of chosen) if (c.env) { if (c.env in env || c.env in extra) shadowed.push(c.name); else credEnv[c.env] = c.value; }
       if (shadowed.length) pending.push({ type: "credentials_shadowed", data: { names: shadowed } });
       return { ...credEnv, ...env, ...extra };
@@ -640,6 +694,8 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     let env: Record<string, string>;
     // The command: the credentials it names, else all the kind's but a checkout's (that one is the runner's own).
     const checkoutCreds = new Set((agent?.steps ?? []).flatMap((st) => st.checkout?.credential ? [st.checkout.credential] : []));
+    // mold_v0-075: an operator credential reaches an agent's command only when its `credentials` name it (never by
+    // default: an agent reads the workspace's files, which its people write). A program of the pack's own gets all.
     try { env = agent ? deliver(agent.credentials ?? (spec.credentials ?? []).filter((n: string) => !checkoutCreds.has(n)), agent.git_credentials) : deliver(null, []); }
     catch (e) { dropSecrets(); return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` }); }
     let err = "", errCut = false;
@@ -684,9 +740,9 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
             if (real && lstatSync(m.at).isSymbolicLink()) rmSync(m.at, { force: true });
           } catch { /* gone */ }
         }
+        // Written back as the run left it (mold_v0-079: strip is applied at checkout only, never to the workspace).
         const wb = collectWriteBack(work, snap, stageDir, agent.write_back);
-        const stripped = stripPaths(stageDir, agent.strip);
-        if (wb.skipped.length || stripped.length) pending.push({ type: "workspace_skipped", data: { skipped: wb.skipped, ...(stripped.length ? { stripped } : {}) } });
+        if (wb.skipped.length) pending.push({ type: "workspace_skipped", data: { skipped: wb.skipped } });
         cpSync(pristine, vdir, { recursive: true, dereference: false, verbatimSymlinks: true });
         restoreInto(stageDir, vdir, agent.write_back);
         if (as) { chownTree(vdir, as.uid, as.gid); }
@@ -768,6 +824,9 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     proxy?.stop();
     if (proxy && opts.onProxyLog) { try { opts.onProxyLog(readFileSync(proxy.log, "utf8")); } catch { opts.onProxyLog(""); } }
     rmSync(scratch, { recursive: true, force: true });
+    // mold_v0-078: the uid goes back only once none of its processes is left (else it stays out of use: quarantined).
+    // A run user the caller leased (a run sandbox's) is the caller's to give back.
+    if (user && iso?.mode !== "given") await user.release().catch((e) => console.error(`run ${run.id}: releasing its run user ${user!.uid}: ${(e as Error).message}`));
   }
 }
 
@@ -802,31 +861,12 @@ function secretIn(dir: string, secrets: Secret[]): string | null {
   return null;
 }
 
-/**
- * Every file the run's user left in the shared temporary directories (/tmp, /var/tmp, /dev/shm), removed. Runs share
- * that user, so a copy of a credential (or anything else) left there would be readable by the next run, of any
- * workspace. Done before a run starts (what a runner that died left behind) and after it ends.
- */
-export function sweepUserFiles(uid: number, roots = ["/tmp", "/var/tmp", "/dev/shm"]) {
-  const sweep = (dir: string, depth: number) => {
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      let st;
-      try { st = lstatSync(p); } catch { continue; }
-      if (st.uid === uid) { rmSync(p, { recursive: true, force: true }); continue; }
-      // Another owner's directory the run's user could still write into (world-writable, like /tmp itself).
-      if (st.isDirectory() && (st.mode & 0o002) && depth < 4) sweep(p, depth + 1);
-    }
-  };
-  for (const r of roots) sweep(r, 0);
-}
-
 function killGroup(c: ChildProcess, signal: NodeJS.Signals) {
   try { if (c.pid) process.kill(-c.pid, signal); } catch { /* already gone */ }
 }
 
+/** Event types the harness and the engine write: a program's line claiming one is a log line. */
+export const RESERVED_EVENT = /^(queued|claimed|retry|succeeded|failed|cancelled|cancel_requested|waiting|approved|approval_used|run_user.*|credentials.*|git_credentials.*|agent_.*|workspace_.*|results?_.*|stderr|setup_log|validate_log|step_log|log|redacted)$/;
 function lineEvent(line: string, step?: "setup" | "validate"): { type: string; data?: Record<string, unknown> } {
   const l = line.slice(0, 8000);
   // A setup or validation step's lines are its log, never events of the run (they could not pose as one).
@@ -834,7 +874,9 @@ function lineEvent(line: string, step?: "setup" | "validate"): { type: string; d
   if (l.startsWith("{")) {
     try {
       const j = JSON.parse(l);
-      if (j && typeof j.event === "string" && /^[a-z][a-z0-9_.:-]{0,63}$/.test(j.event)) { const { event, ...data } = j; return { type: event, data }; }
+      // The harness's and the engine's own event types are never a program's (it could not pose as one: an approval, a
+      // recorded file that a preview's digest counts, its run user, its credentials). Found by the review of mold_v0-078.
+      if (j && typeof j.event === "string" && /^[a-z][a-z0-9_.:-]{0,63}$/.test(j.event) && !RESERVED_EVENT.test(j.event)) { const { event, ...data } = j; return { type: event, data }; }
     } catch { /* plain text */ }
   }
   return { type: "log", data: { line: l.slice(0, 2000) } };

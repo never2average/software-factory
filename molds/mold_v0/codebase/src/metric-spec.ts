@@ -5,7 +5,7 @@
  * (src/metrics.ts) share one reading of a metric: which columns it reads, of what type, and which roles may see it.
  */
 import { ACCOUNT_ROLES, canAccount, type AccountRole } from "./account-roles.js";
-import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, TabSchema, z, type Chart, type Metric, type Tab } from "./pack-api.js";
+import { ChartSchema, DECLARABLE_ROLES, MetricSchema, optionValues, RecordAreaSchema, TabSchema, z, type Chart, type Metric, type MetricUnit, type Tab } from "./pack-api.js";
 
 export type SpecArea = z.output<typeof RecordAreaSchema> & { pack: string };
 export type SpecMetric = Metric & { pack: string };
@@ -114,7 +114,7 @@ export function metricRoles(m: SpecMetric, areas: readonly SpecArea[]): AccountR
 }
 
 /** How the console shows a metric's numbers. */
-export function metricUnit(m: Metric, over: SpecArea | RunSource | null): "count" | "number" | "usd" | "percent" | "days" | "hours" {
+export function metricUnit(m: Metric, over: SpecArea | RunSource | null): MetricUnit {
   if (m.unit) return m.unit;
   if (m.measure === "count") return "count";
   if (m.measure === "rate") return "percent";

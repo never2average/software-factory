@@ -341,8 +341,14 @@ try {
     {
       const r = await start(ca, "isolation");
       const c = (await client.claim(["fixture_runs/isolation"]))!;
-      await assert.rejects(harness.runWorkspaceHarness(client, c, { egress: "off" }), /only as a dedicated user/, "the harness refuses to run a program as its own user unless told");
-      await assert.rejects(harness.drainRuns(client, { egress: "off" }), /only as a dedicated user/, "a runner loop refuses before claiming anything");
+      if (process.getuid?.() === 0) {
+        // A runner started as root runs every run as a user of the run's own by default (mold_v0-078), never as root.
+        assert.equal(harness.runIsolation({})?.mode, "pool", "as root, the default is a run user leased per run");
+        await assert.rejects(harness.runWorkspaceHarness(client, c, { egress: "off", runAs: { uid: 0, gid: 0 } }), /other than root/, "never root itself");
+      } else {
+        await assert.rejects(harness.runWorkspaceHarness(client, c, { egress: "off" }), /only as a run user of their own/, "the harness refuses to run a program as its own user unless told");
+        await assert.rejects(harness.drainRuns(client, { egress: "off" }), /only as a run user of their own/, "a runner loop refuses before claiming anything");
+      }
       const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
       const probe = async (opts: Parameters<typeof harness.runWorkspaceHarness>[2]) => {
         await db.query("UPDATE runs SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [r.id]);
@@ -361,9 +367,11 @@ try {
       process.kill(leftover, "SIGKILL");
       await db.query("UPDATE runs SET status = 'queued', ended_at = NULL WHERE id = $1", [r.id]);
       if (process.getuid?.() === 0) {
-        const iso = await probe({ runAs: { uid: 65534, gid: 65534 } });
+        // As root the harness's default: a user of the run's own, leased for it (mold_v0-078).
+        const iso = await probe({});
         assert.equal(iso.v?.status, "succeeded", JSON.stringify(iso.v));
-        assert.equal(iso.e.uid, 65534, "the program ran as the run's user");
+        const ru = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'run_user' ORDER BY id DESC LIMIT 1", [r.id]))[0]!.data.uid;
+        assert.ok(ru > 0 && ru !== process.getuid!() && iso.e.uid === ru, "the program ran as the run's own user");
         assert.equal(iso.e.environ, "EACCES", "it cannot read the runner's environment");
         assert.ok(!alive(iso.e.grandchild), "and nothing it started outlives the run");
         console.log("✓ isolation: as a separate user the program cannot read the runner's environment and leaves nothing running; the harness refuses to run as its own user unless told");
@@ -376,14 +384,14 @@ try {
       assert.equal(c.run.id, r.id);
       const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
       const asRoot = process.getuid?.() === 0;
-      const v = await harness.runWorkspaceHarness(client, c, { egress: "off", ...(asRoot ? { runAs: { uid: 65534, gid: 65534 } } : { allowSameUser: true }) });
+      const v = await harness.runWorkspaceHarness(client, c, { egress: "off", ...(asRoot ? {} : { allowSameUser: true }) });
       assert.equal(v?.status, "succeeded", JSON.stringify(v));
       const e = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'spawned'", [r.id]))[0]!.data;
-      const want = asRoot ? 65534 : process.getuid!();
+      const want = asRoot ? (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'run_user'", [r.id]))[0]!.data.uid : process.getuid!();
       assert.deepEqual([e.uid, e.node_child_uid, e.sh_child_uid], [want, want, want], "the program and every process it starts run as the run's user");
       if (asRoot) assert.ok(!alive(e.left_behind), "and none outlives the run");
       else process.kill(e.left_behind, "SIGKILL");
-      console.log(`✓ a run program starts processes (node and a shell) as the run's user${asRoot ? " (65534), and none outlives the run" : ""}`);
+      console.log(`✓ a run program starts processes (node and a shell) as the run's user${asRoot ? " (its own, leased for it), and none outlives the run" : ""}`);
     }
   } finally {
     await ca.close(); await cb.close();
