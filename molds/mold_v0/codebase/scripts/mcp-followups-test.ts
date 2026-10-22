@@ -30,8 +30,9 @@ const gen = (args: string[]) => spawnSync(process.execPath, [path.join(ROOT, "sc
 try {
   const { getDb } = await import("../src/db.js");
   const db = await getDb();
-  const { TOOL_NAMES } = await import("../src/server.js");
-  const { ADMIN_TOOL_NAMES, createAdminServer } = await import("../src/admin-mcp.js");
+  const TOOL_NAMES = (await import("../src/server.js")).ownToolNames(); // the host packs' (none here, mold_v0-039)
+  const { adminToolNames, createAdminServer } = await import("../src/admin-mcp.js");
+  const ADMIN_TOOL_NAMES = adminToolNames();
   const { SHELL_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES, RECORD_TOOL_NAMES } = await import("../src/shell-tools.js");
   const { RECORD_TOOL_NAMES: fromAreas } = await import("../src/record-areas.js");
   const { setPacksForTest } = await import("../src/packs.js");
@@ -76,7 +77,7 @@ try {
     const area = { name: "pc_things", label: "Things", role: "asset", scope: "workspace", fields: [{ name: "body", label: "Body", type: "text" }] };
     const good = tryPack("good", { id: "pc", name: "P", version: "1", record_areas: [area] });
     assert.equal(good.status, 0, `a pack without a clash builds: ${good.stderr}`);
-    const renamed = tryPack("renamed", { id: "pc", name: "P", version: "1", record_areas: [area], mcp: { rename: { pc_list_pc_things: "get_started" } } });
+    const renamed = tryPack("renamed", { id: "pc", name: "P", version: "1", record_areas: [area], mcp: { rename: { pc_list_pc_things: "list_records" } } }); // the shell's own customer tools are the record tools (mold_v0-039)
     assert.equal(renamed.status, 1, `a generated tool renamed to a shell tool's name is refused at build: ${renamed.stdout}`);
     assert.match(renamed.stderr, /pc_list_pc_things\) clashes with the shell's or a pack's own tool on the customer MCP/);
     const recordName = tryPack("record", { id: "pc", name: "P", version: "1", record_areas: [area], mcp: { rename: { pc_get_pc_things: "get_record" } } });
@@ -85,9 +86,9 @@ try {
     assert.match(adminName.stderr, /clashes with an admin MCP tool of the shell on the admin MCP/, "and the admin MCP's");
     const api = path.relative(path.join(dir, "own", "pc"), path.join(ROOT, "src", "pack-api.js")).split(path.sep).join("/");
     const own = tryPack("own", { id: "pc", name: "P", version: "1", entry: "index.ts" }, { "index.ts":
-      `import { definePack, defineTool, z } from "${api}";\nexport default definePack({ id: "pc", tools: [defineTool({ name: "search_memory", description: "x", inputSchema: { q: z.string() }, annotations: { readOnlyHint: true }, handler: async () => ({}) })] });\n` });
+      `import { definePack, defineTool, z } from "${api}";\nexport default definePack({ id: "pc", tools: [defineTool({ name: "list_records", description: "x", inputSchema: { q: z.string() }, annotations: { readOnlyHint: true }, handler: async () => ({}) })] });\n` });
     assert.equal(own.status, 1, `a pack's own tool of a shell tool's name is refused at build: ${own.stdout}`);
-    assert.match(own.stderr, /pack pc: tool search_memory is already a shell tool/);
+    assert.match(own.stderr, /pack pc: tool list_records is already a shell tool/);
     console.log("✓ gen-packs refuses a pack tool (generated, renamed or its own) that takes a shell tool's name, on either MCP; its list is the servers' own");
   }
 

@@ -18,7 +18,7 @@ const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) <
 try {
   const w = await spendWorld([{ name: "metered", providers: ["anthropic"], budget_usd: 5 }]);
   const { createOrg } = await import("../src/auth.js");
-  const { orgMonthSpendUsd } = await import("../src/queries.js");
+  const { orgMonthSpendUsd } = await import("../src/session-engine.js");
   const { withTenant } = await import("../src/tenant-scope.js");
   const spend = await import("../src/spend.js");
   const limits = await import("../src/limits.js");

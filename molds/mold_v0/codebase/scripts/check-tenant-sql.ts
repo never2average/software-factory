@@ -28,7 +28,11 @@ const packFiles = existsSync(PACKS) ? walk(PACKS) : [];
 const PACK_TABLES = [...new Set(packFiles.filter((f) => f.endsWith(".sql")).flatMap((f) =>
   [...readFileSync(f, "utf8").matchAll(/CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)/gi)].map((m) => m[1]!.toLowerCase())))];
 const TENANT_TABLES = [...SHELL_TENANT_TABLES, ...PACK_TABLES];
-const packCode = packFiles.filter((f) => /\.(m?[jt]sx?)$/.test(f));
+// A host pack's operator scripts and tests (pack.json host.scripts, mold_v0-039) are left out, as the shell's scripts/ are.
+const scriptDirs = existsSync(PACKS) ? readdirSync(PACKS).flatMap((id) => {
+  try { const h = JSON.parse(readFileSync(path.join(PACKS, id, "pack.json"), "utf8")).host; return h?.scripts ? [path.join(PACKS, id, h.scripts) + path.sep] : []; } catch { return []; }
+}) : [];
+const packCode = packFiles.filter((f) => /\.(m?[jt]sx?)$/.test(f) && !scriptDirs.some((d) => f.startsWith(d)));
 
 const files = [
   ...readdirSync(path.join(ROOT, "src")).filter((f) => f.endsWith(".ts")).map((f) => path.join("src", f)),

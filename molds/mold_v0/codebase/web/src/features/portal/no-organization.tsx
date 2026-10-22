@@ -3,10 +3,11 @@ import { SignOutButton, useOrganizationList, useUser } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
+import { profile } from '@/config/profile.generated';
 
 /**
- * Signed in, but no account picked: choose one of your Octillion accounts, or ask for an invitation. Accounts are
- * created by Octillion (invite-only), so there is no "create organization" here.
+ * Signed in, but no account picked: choose one of your accounts, or ask for an invitation. Accounts are
+ * created by the platform's staff (invite-only), so there is no "create organization" here.
  */
 export function NoOrganization({ platformAdmin = false }: { platformAdmin?: boolean }) {
   const { user } = useUser();
@@ -18,11 +19,11 @@ export function NoOrganization({ platformAdmin = false }: { platformAdmin?: bool
   return (
     <main className='flex min-h-screen flex-col items-center justify-center gap-6 p-6'>
       <div className='max-w-md text-center'>
-        <h1 className='text-2xl font-semibold'>{memberships.length ? 'Choose your account' : 'No Octillion account yet'}</h1>
+        <h1 className='text-2xl font-semibold'>{memberships.length ? 'Choose your account' : `No ${profile.name} account yet`}</h1>
         <p className='text-muted-foreground mt-2'>
           {memberships.length
-            ? 'Pick the Octillion account to open.'
-            : `Octillion is invite-only for now. Ask your account admin, or your Octillion contact, to invite ${email}.`}
+            ? `Pick the ${profile.name} account to open.`
+            : `${profile.name} is invite-only for now. Ask your account admin, or your ${profile.name} contact, to invite ${email}.`}
         </p>
       </div>
       {!isLoaded ? <Icons.spinner className='text-muted-foreground size-5 animate-spin' /> : (

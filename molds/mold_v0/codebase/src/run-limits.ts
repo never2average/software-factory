@@ -48,7 +48,7 @@ export function effectiveKindLimits(k: KindLimits, plan: string | null = null) {
  */
 async function accountRefusal(orgId: number): Promise<string | null> {
   const { orgBudget } = await import("./billing.js");
-  const { orgMonthSpendUsd } = await import("./queries.js");
+  const { orgMonthSpendUsd } = await import("./session-engine.js");
   const budget = await orgBudget(orgId).then((b) => b.budget, () => null);
   if (budget == null) return "the account's allowance could not be checked: try again in a minute";
   if (!(budget > 0)) return "the account has no allowance (no plan): ask your contact for one";

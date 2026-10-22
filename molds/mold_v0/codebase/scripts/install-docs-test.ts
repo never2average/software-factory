@@ -31,7 +31,7 @@ try {
   const { createOrg } = await import("../src/auth.js");
   const { installGuide, memberSetup } = await import("../src/install-pages.js");
   const { PROFILE } = await import("../src/profile.js");
-  const { TOOL_NAMES } = await import("../src/server.js");
+  const { ownToolNames } = await import("../src/server.js"); // the host packs' tools (src/host.ts, mold_v0-039), read when used
   const declared = (id: string) => {
     const j = fixture(id);
     return { manifest: { id, name: j.name, version: j.version, entry: null, migrations: null, words: j.words ?? {}, dir: path.join(ROOT, "scripts", "fixtures", "packs", id) },
@@ -135,7 +135,7 @@ try {
     // Exactly what each role is offered on the customer MCP (the shell's own and the record tools aside).
     for (const role of ["viewer", "member", "billing", "owner"] as const) {
       const c = await connect({ ...A.org, userId: `user_${role}`, role });
-      const offered = (await c.client.listTools()).tools.map((t) => t.name).filter((n) => !(TOOL_NAMES as readonly string[]).includes(n) && n !== "list_records" && n !== "get_record");
+      const offered = (await c.client.listTools()).tools.map((t) => t.name).filter((n) => !ownToolNames().includes(n) && n !== "list_records" && n !== "get_record");
       await c.close();
       assert.deepEqual(all.filter((t) => t.roles.includes(role)).map((t) => t.name).sort(), offered.sort(), `the reference's ${role} tools are exactly those the ${role} is offered`);
     }

@@ -20,10 +20,12 @@ import { money, usd } from '@/lib/octillion-format';
 import { TablePager, usePaged } from '@/components/layout/table-pager';
 import { cn } from '@/lib/utils';
 import { Sparkline } from '@/components/layout/section';
-import { Dock } from '@/features/portal/memory';
+import { Dock } from '@/components/layout/dock';
 import { ACCOUNT_ROLES, accountRoleLabel, accountRoleOf, post, STAGE_LABELS, useAdmin, type InviteResult, type OrgRow } from './lib';
 import { copyText, ErrorBox, Mono, When, type Tone } from './ui';
 import { Gate, useAdminRole, type AdminPermission } from './role';
+import { profile } from '@/config/profile.generated';
+import { hostFeature } from '@/features/packs/host-nav';
 
 /** A row of GET /orgs: lib.ts's OrgRow plus the fields shapeOrg (src/admin.ts) also returns. */
 export type Org = OrgRow & {
@@ -122,7 +124,8 @@ export function accountActions(o: Org, ctl: AccountCtl, d: OrgDetail | undefined
     ? [lock({ label: 'Invite person…', icon: <Icons.send />, onSelect: x.invite }, 'invite'), issue]
     : [issue, ...(ctl.clerkOn ? [lock({ label: 'Link to Clerk', icon: <Icons.shield />, onSelect: x.linkClerk }, 'accounts')] : [])];
   const groups: RowAction[][] = [
-    [...people, lock({ label: 'Send a tip…', icon: <Icons.chat />, onSelect: x.tip }, 'journeys')],
+    // In-chat tips go through a host pack's journeys (mold_v0-039): offered only when the build has one that sends them.
+    [...people, ...(hostFeature('tips') ? [lock({ label: 'Send a tip…', icon: <Icons.chat />, onSelect: x.tip }, 'journeys')] : [])],
     [
       { label: 'Copy connector URL', icon: <Icons.plug />, onSelect: x.connector },
       { label: 'Copy welcome email', icon: <Icons.post />, onSelect: x.welcome }
@@ -359,7 +362,7 @@ function fixFor(a: string, o: Org, d: OrgDetail | undefined, ctl: AccountCtl, vi
     return { label: 'Resend', onSelect: () => void ctl.run(() => Promise.all(expired.map((i) => post(`${p}/invitations/${encodeURIComponent(i.id)}/resend`))), 'Invitation resent'), need: 'invite' };
   }
   if ((a.startsWith('Joined ') && a.includes('never connected')) || a.startsWith('Connected but never called')) return { label: 'Copy welcome email', onSelect: x.welcome };
-  if (['Using tools but has not onboarded', 'Product onboarded, no simulation', 'Simulation ran, report never opened'].some((m) => a.startsWith(m))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
+  if (hostFeature('tips') && ['Using tools but has not onboarded', 'Product onboarded, no simulation', 'Simulation ran, report never opened'].some((m) => a.startsWith(m))) return { label: 'Send a tip…', onSelect: x.tip, need: 'journeys' };
   if (a.startsWith('Stripe subscription is') || a.startsWith('Subscription cancels')) return { label: 'Copy portal link', onSelect: x.portal, need: 'accounts' };
   if (a.startsWith('Product onboarding failed') || a.includes('tool errors')) return { label: 'View', onSelect: () => view('usage') };
   return null;
@@ -390,7 +393,7 @@ export function AccountPeek({ org, ctl }: { org: Org; ctl: AccountCtl }) {
     const act = (a: string, ok: string, body?: unknown) => () => void ctl.run(() => post(`${path}/members/${encodeURIComponent(m.id)}/${a}`, body), ok);
     return ([
       ...ACCOUNT_ROLES.filter((r) => r.id !== accountRoleOf(m)).map((r) => ({ label: `Make ${r.label.toLowerCase()}`, onSelect: act('role', 'Role changed', { role: r.id }) })),
-      ...(m.status === 'active' ? [{ label: 'Suspend…', destructive: true, separator: true, onSelect: () => confirm.ask({ title: `Suspend ${who}?`, description: 'They can no longer use Octillion in this account until you restore access; tokens already issued expire within minutes.', label: 'Suspend', destructive: true, run: act('deactivate', 'Suspended') }) }] : []),
+      ...(m.status === 'active' ? [{ label: 'Suspend…', destructive: true, separator: true, onSelect: () => confirm.ask({ title: `Suspend ${who}?`, description: `They can no longer use ${profile.name} in this account until you restore access; tokens already issued expire within minutes.`, label: 'Suspend', destructive: true, run: act('deactivate', 'Suspended') }) }] : []),
       ...(m.status === 'inactive' ? [{ label: 'Restore', separator: true, onSelect: act('reactivate', 'Restored') }] : [])
     ] as RowAction[]).map((a) => ctl.lock(a, 'accounts'));
   };

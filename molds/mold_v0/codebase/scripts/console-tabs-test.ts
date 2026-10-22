@@ -4,9 +4,11 @@
 //   CONSOLE_TABS_TYPECHECK=off           skip the TypeScript check of the build copy (the slow part)
 //   CONSOLE_TABS_SNAPSHOT_DIR=<dir>      keep the rendered page (DOM) and screenshots (light, dark) there
 //   CONSOLE_TABS_CSS=<file>              the console's compiled CSS for the screenshots (from a next build)
+//   CONSOLE_TABS_UPDATE=1                rewrite the sidebar snapshots (after a deliberate change)
 //
-// 1. Zero packs: the console's sidebar (/app and /admin) is exactly what it was before tabs existed (a snapshot taken
-//    from the code before mold_v0-058: scripts/fixtures/console-nav/zero-packs.json), and the pack page route has no page.
+// 1. Zero packs: the console's sidebar (/app and /admin) is the shell's own (a snapshot: scripts/fixtures/console-nav/
+//    zero-packs.json; taken before mold_v0-058, retaken by mold_v0-039 when the product's entries moved to its pack),
+//    and the pack page route has no page.
 //    A pack with no tabs (fixture_tracker) keeps the shell's sidebar plus what the pack adds, as before (fixture_tracker.json).
 // 2. Packs that declare tabs (fixture_vulns, fixture_adoption): the /app sidebar is exactly the declared tabs, in order and
 //    groups, each tab limited to the roles that may read what it shows; each tab with a page of its own is a page of the
@@ -137,9 +139,13 @@ try {
   // ---------- 1. zero packs, and a pack with no tabs ----------
   {
     const zero = inConsole<Nav>(path.join(ROOT, "web"), NAV);
-    assert.equal(navOnly(zero), readFileSync(path.join(SNAP, "zero-packs.json"), "utf8").trim(), "zero packs: the /app and /admin sidebars are exactly as before mold_v0-058");
+    // CONSOLE_TABS_UPDATE=1 rewrites the two snapshots after a deliberate change (mold_v0-039: the product's own entries
+    // left the shell's sidebar for its host pack's nav, so a build with it still shows them where they were).
+    if (process.env.CONSOLE_TABS_UPDATE === "1") writeFileSync(path.join(SNAP, "zero-packs.json"), `${navOnly(zero)}\n`);
+    assert.equal(navOnly(zero), readFileSync(path.join(SNAP, "zero-packs.json"), "utf8").trim(), "zero packs: the /app and /admin sidebars are the shell's own, as in the snapshot");
     assert.deepEqual([zero.tabPortalNav, zero.packTabs, zero.params], [[], [], []], "zero packs: no tab, and the pack page route has no page (its placeholder is a 404)");
     const tracker = inConsole<Nav>(path.join(buildCopy("tracker", ["fixture_tracker"]), "web"), NAV);
+    if (process.env.CONSOLE_TABS_UPDATE === "1") writeFileSync(path.join(SNAP, "fixture_tracker.json"), `${navOnly(tracker)}\n`);
     assert.equal(navOnly(tracker), readFileSync(path.join(SNAP, "fixture_tracker.json"), "utf8").trim(), "a pack with no tabs: the shell's sidebar and its additions, as before");
     console.log("✓ zero packs: the /app and /admin sidebars equal the snapshot taken before tabs (and no tab page); a pack with no tabs keeps the old sidebar too");
   }

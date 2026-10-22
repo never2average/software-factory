@@ -10,6 +10,7 @@ import { AgentLogo } from '@/features/site/agent-logos';
 import { useAdmin } from './lib';
 import { useAdminRole, ROLE_LABEL, type AdminRole } from './role';
 import { DataList, ErrorBox, LoadingCards, Section, copyText } from './ui';
+import { profile } from '@/config/profile.generated';
 
 interface Tool { name: string; title: string; needs: AdminRole; needs_label: string; changes: boolean; destructive: boolean }
 /** A skill: a playbook shipped as an MCP prompt, a slash command in the client (src/admin-mcp.ts ADMIN_SKILLS). */
@@ -19,9 +20,9 @@ const ORDER: AdminRole[] = ['viewer', 'support', 'operator', 'owner'];
 /** Each client's way in: one thing to paste. */
 function clients(url: string) {
   return [
-    { id: 'claude-code', logo: 'claude-code', label: 'Claude Code', steps: 'Run this, then /mcp in Claude Code to sign in.', text: `claude mcp add --transport http octillion-admin ${url}` },
+    { id: 'claude-code', logo: 'claude-code', label: 'Claude Code', steps: 'Run this, then /mcp in Claude Code to sign in.', text: `claude mcp add --transport http ${profile.mcp_server_name}-admin ${url}` },
     { id: 'cursor', logo: 'cursor', label: 'Cursor', steps: 'Add this to ~/.cursor/mcp.json. Cursor asks you to sign in when it connects.',
-      text: JSON.stringify({ mcpServers: { 'octillion-admin': { url } } }, null, 2) },
+      text: JSON.stringify({ mcpServers: { [`${profile.mcp_server_name}-admin`]: { url } } }, null, 2) },
     { id: 'claude-desktop', logo: 'claude-code', label: 'Claude Desktop', steps: 'Settings › Connectors › Add custom connector, and paste this URL.', text: url }
   ];
 }

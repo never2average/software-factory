@@ -15,6 +15,7 @@ import { MultiSelectFilter, type FilterOption } from '@/components/layout/multi-
 import { Icons } from '@/components/icons';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, useOrgLoad } from './shared';
+import { profile } from '@/config/profile.generated';
 
 interface Week { week: string; partial: boolean }
 interface Usage {
@@ -124,7 +125,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
 
       <div className='border-l'>
         <div className='grid lg:grid-cols-2'>
-          <Box title='Tool calls per day' description='Every Octillion tool call, failed ones in red.'>
+          <Box title='Tool calls per day' description={`Every ${profile.name} tool call, failed ones in red.`}>
             {calls ? (
               <ChartContainer config={callsConfig} className='aspect-auto h-[240px] w-full'>
                 <AreaChart data={series} margin={{ left: 0, right: 8, top: 8 }}>
@@ -161,7 +162,7 @@ function UsageBody({ u, users }: { u: Usage; users: string[] }) {
         </div>
 
         <div className='grid lg:grid-cols-2'>
-          <Box title='Calls by tool' description='The ten most called Octillion tools.'>
+          <Box title='Calls by tool' description={`The ten most called ${profile.name} tools.`}>
             <RankBars data={top(u.tools, (t) => Number(t.calls)).map((t) => ({ name: t.name, value: Number(t.calls) }))} label='Tool calls' color='var(--chart-1)' format={num} mono empty='No tool calls in this period.' />
           </Box>
           <Box title='Calls by person' description='Tool calls by each person on your team, busiest first.'>

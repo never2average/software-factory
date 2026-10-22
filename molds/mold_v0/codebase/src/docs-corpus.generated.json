@@ -3,164 +3,24 @@
  "chunks": [
   {
    "area": "customer",
-   "title": "What Octillion does",
-   "href": "/app/docs/what-octillion-does",
-   "heading": null,
-   "text": "When a developer asks an AI coding agent to \"add a database\" or \"send a welcome email\", the agent picks a tool. Octillion\nmeasures whether it picks **yours**.\n\nIt runs real coding agents (Claude Code, Codex, Cursor and others) as sandboxed sub-agents on realistic programming\ntasks that never name your product, mixed in proportion to how much developers really use each agent. Each session is\nscored from its transcript: did the agent build on your product, on a competitor, or on no vendor at all, and did it\neven mention you. The results land on the **Pick rate** page and in your AI client.\n\nYou work with Octillion from the AI client you already use (Claude, ChatGPT, Claude Code, Cursor and others) over\nMCP. This portal is where your team sets up, reads the results and manages budgets."
-  },
-  {
-   "area": "customer",
    "title": "Getting started",
    "href": "/app/docs/getting-started",
    "heading": null,
-   "text": "Open **Setup & training** (the first page in the sidebar). The **Connect your AI client** panel walks you through it:\n\n1. **Pick your client.** Chat apps, coding agents and editors are listed separately.\n2. **Add Octillion to it.** Copy your connection URL, then follow the steps shown for your client: a one-click\n   install, a command, a config snippet (and the file it goes in), or where to paste it in the client's settings.\n   If your URL contains your key, keep it private: anyone with it can use your account.\n3. **Check it works.** Press **Test my connection**, open a new chat and type *\"Get me started with Octillion.\"*\n   The page waits up to three minutes for your client to reach Octillion and confirms which client connected.\n\nIf nothing arrives, check the URL, that you signed in when your client asked, and that the Octillion tools are\nswitched on in the client; then test again. Recent problems show on the same page.\n\nThe **Journeys** panel beside it lists real use cases as step-by-step pipelines, each with the prompt to type for\nevery stage. Stages are marked done from your real tool calls."
-  },
-  {
-   "area": "customer",
-   "title": "Your first report in three prompts",
-   "href": "/app/docs/your-first-report-in-three-prompts",
-   "heading": null,
-   "text": "1. *\"Onboard my product: name, website, docs link.\"* Octillion researches the product and builds its profile\n   (package names, domains, competitors), target developer personas and realistic programming tasks. Research only;\n   no coding agents run yet. **Check the competitor list:** a competitor that is missing can't be credited when an\n   agent picks it.\n2. *\"Run a simulation.\"* Coding agents work each task in their own sandbox. Ask *\"How is my simulation doing?\"* any time.\n3. *\"Show my visibility report.\"* Then ask why agents picked a competitor on a task, or search the transcripts."
-  },
-  {
-   "area": "customer",
-   "title": "Running a simulation",
-   "href": "/app/docs/running-a-simulation",
-   "heading": null,
-   "text": "Ask your client to run a simulation (or call `run_simulation`). By default a run is **representative and adaptive**:\n\n- Coding agents are mixed in proportion to real-world developer adoption for a developer population (ask\n  *\"list agents\"* for the current mix and its sources).\n- Each scenario starts with a few sessions per developer persona and keeps sampling until its result is stable (a\n  narrow 95% interval) or it reaches the per-scenario cap. Tasks where agents agree stop early; contested ones get more.\n- Every session runs in its own fresh sandbox.\n- Agents **plan, then execute**: each agent first plans in its own plan mode (Claude Code, Cursor; other agents are\n  asked to plan and wait), the simulated developer approves the plan, then the agent implements it. This is how most\n  developers work with coding agents, and the plan shows what the agent weighed before it chose.\n\nTo see whether planning changes what agents pick, run with **execution \"both\"**: every session runs once planning\nfirst and once executing directly (same task, persona and agent), and the results and the Pick rate page show the two\nside by side. `execution: \"direct\"` runs agents without the plan step.\n\nYou can narrow a run to some scenarios, one platform (web, mobile, backend, ...), one of your task sets, chosen\npersonas, or your own harness mix. To test specific agents or models, name them instead: each runs a fixed number of\ntimes per scenario. Runs on your own harness mix are labelled and never blended into the market-weighted headline.\n\nA run can be cancelled at any time. Your account's budget rules (see Billing) decide who can launch, how many runs one\nperson can have at once, and how large or expensive a single run may get."
-  },
-  {
-   "area": "customer",
-   "title": "Reading the Pick rate page",
-   "href": "/app/docs/reading-the-pick-rate-page",
-   "heading": null,
-   "text": "**Pick rate** answers one question: did the coding agents in your simulations pick your product, and what did they\npick instead. The header holds every control: the product, **Competitors**, **Developer personas**, **Tasks** and the\nperiod. Filters live in the page address, so a filtered view can be shared."
-  },
-  {
-   "area": "customer",
-   "title": "Reading the Pick rate page",
-   "href": "/app/docs/reading-the-pick-rate-page#recommend-and-avoid-tasks",
-   "heading": "Recommend and avoid tasks",
-   "text": "Each task has an expectation. **Recommend** tasks are ones your product should win. **Avoid** tasks are controls where\nthe right call is not to pick it. Pick rate is measured on recommend tasks only; avoid tasks are scored separately."
-  },
-  {
-   "area": "customer",
-   "title": "Reading the Pick rate page",
-   "href": "/app/docs/reading-the-pick-rate-page#the-headline-numbers",
-   "heading": "The headline numbers",
-   "text": "- **Pick rate**: the share of scored sessions on tasks you should win where the agent picked you, with a trend line.\n- **Correctly avoided**: on avoid tasks, the share of sessions where the agent rightly didn't pick you.\n- **Top competitor**: the tool most often picked instead of you.\n- **Sessions scored**: how many sessions the figures rest on.\n\nA session counts as a pick when the agent built on your product, not when it merely named it. Sample sizes are\nsmall: rates come with a 95% interval, so treat one run as a signal."
-  },
-  {
-   "area": "customer",
-   "title": "Reading the Pick rate page",
-   "href": "/app/docs/reading-the-pick-rate-page#the-sections",
-   "heading": "The sections",
-   "text": "- **Pick rate over time**: weekly, with the 95% interval as a band.\n- **Pick rate by agent, harness, model, developer persona and platform.**\n- **Pick rate by task**: hits of scored sessions on each of your tasks, best first.\n- **Competitor share**: when an agent didn't pick you, which tool it picked instead.\n- **Competitor word cloud**: every tool agents chose or named, sized by how often, marked as picked over you, named\n  only, or installed but not tracked. An installed tool that isn't tracked may be a competitor to add to the product.\n- **Head-to-head**: on tasks you should win where a competitor came up, how often you won versus it.\n- **Why agents chose others**: the main reason in the agent's own words, grouped, for sessions that didn't pick you.\n- **How the win showed up**: in sessions lost to a competitor, what the agent did with the other tool: installed its\n  package, imported it in code, called its API directly, or recommended it in prose.\n- **Expectation check**: recommend vs avoid tasks, with the sessions that made the right and the wrong call."
-  },
-  {
-   "area": "customer",
-   "title": "Reading the Pick rate page",
-   "href": "/app/docs/reading-the-pick-rate-page#reports",
-   "heading": "Reports",
-   "text": "Under **Reports**, pick the filters, dates and sections, then export now or save the report to run again later. Saved\nreports are shared with everyone in the account. A print view saves a report as PDF."
-  },
-  {
-   "area": "customer",
-   "title": "Personas and tasks",
-   "href": "/app/docs/personas-and-tasks",
-   "heading": null,
-   "text": "Simulations combine **developer personas** with **programming tasks**:\n\n- A **developer persona** describes who is asking: role, experience, company size, stack and constraints. While an\n  agent works, Octillion role-plays the persona whenever the agent asks a question.\n- A **programming task** (a scenario) is a realistic coding job handed verbatim to the agent, phrased the way a\n  developer would and never naming your product.\n\nOctillion keeps a curated library of both; onboarding picks from it for your product, and those show in the portal by\nname only. You can bring your own under **Private data**: **Developer personas** and **Programming tasks** (task\nsets per product), created here, imported, or saved from your AI client. Your own personas and tasks are private to\nyour organization.\n\nYou can offer one of your own personas or tasks to Octillion's shared library (the **Published** column). Only its\ncontent is shared, never your organization's name. If Octillion accepts it, your organization earns a credit on its\nnext invoice, shown under **Credits from contributions** on Billing."
-  },
-  {
-   "area": "customer",
-   "title": "Context",
-   "href": "/app/docs/context",
-   "heading": null,
-   "text": "Under **Context**, **Company**, **Users** and **Products** hold what Octillion knows about your company, your people\nand your products, including the account's memory (what `save_to_memory` saved); **Journeys** shows, person by person,\nhow far each use case got and where people are stuck. **Usage** shows your team's activity across every AI client,\nits simulations and model spend."
+   "text": "Connect your AI client to this workspace's MCP server from the **Setup & training** page: pick your client, follow its\none step, then press **Test my connection**. Clients that sign in (OAuth) need no key; the others send an API key in a\nheader, never in a URL. The public install pages at `/install` show every client's setup."
   },
   {
    "area": "customer",
    "title": "MCP tools",
    "href": "/app/docs/mcp-tools",
    "heading": null,
-   "text": "Your AI client calls these for you; you rarely name them. They are listed in the order your client shows them."
+   "text": "This workspace offers no tools yet: they come with the products installed in it."
   },
   {
    "area": "customer",
-   "title": "MCP tools",
-   "href": "/app/docs/mcp-tools#start-and-onboard",
-   "heading": "Start and onboard",
-   "text": "| Tool | What it does |\n|---|---|\n| `get_started` | Start here. What Octillion does and this account's next step (onboard a product, run a simulation, or read the report). |\n| `onboard_product` | Start here. Describe a developer tool with a short prompt plus its website and docs links. |\n| `get_onboarding` | Progress and output of a product onboarding: research stage, the generated product profile, developer personas, programming problems and the simulation it launched. |\n| `review_draft_tasks` | Approve or reject the draft tasks onboarding research proposed for needs Octillion's task library does not cover (listed by get_onboarding). |"
-  },
-  {
-   "area": "customer",
-   "title": "MCP tools",
-   "href": "/app/docs/mcp-tools#products-and-scenarios",
-   "heading": "Products and scenarios",
-   "text": "| Tool | What it does |\n|---|---|\n| `list_products` | List the organization's products with scenario counts and their 30-day recommendation hit rate. |\n| `get_product` | Show a product's configured context (description, aliases, package names, domains, competitors), its scenarios with per-scenario hit rate, and recent simulations. |\n| `save_product` | Create a product, or update one when `product` names an existing one. |\n| `save_scenarios` | Add scenarios (omit id) or edit existing ones (pass id). |\n| `browse_task_library` | Browse the curated library of real-world developer tasks (active ones: id, title, prompt, platform, category, language, repo, tags). |"
-  },
-  {
-   "area": "customer",
-   "title": "MCP tools",
-   "href": "/app/docs/mcp-tools#simulations",
-   "heading": "Simulations",
-   "text": "| Tool | What it does |\n|---|---|\n| `run_simulation` | Launch sandboxed coding sub-agents on the product's scenarios. |\n| `list_simulations` | Recent simulations with progress and hit rate. |\n| `get_simulation` | One simulation: progress, verdict counts, hit rate by model, a scenario x model matrix and every agent session. |\n| `cancel_simulation` | Cancel a simulation: queued sessions never start, and running sessions are stopped (their model access is revoked and their sandboxes shut down). |"
-  },
-  {
-   "area": "customer",
-   "title": "MCP tools",
-   "href": "/app/docs/mcp-tools#results-and-evidence",
-   "heading": "Results and evidence",
-   "text": "| Tool | What it does |\n|---|---|\n| `get_visibility_report` | A sectioned report on whether coding agents pick the product: headline findings; results by platform (web, mobile, backend, ...) and by task (built on the product, on which competitor, or on no… |\n| `export_visibility_report` | Export the Pick rate report (the portal's Pick rate page): pick rate, its 95% interval, times picked, competitor share, pick rate by agent, harness, model, task, persona and platform, head-to-head,… |\n| `get_agent_session` | One sub-agent session: scenario, model, status, cost, verdict, the tool it went with and the transcript evidence for every product it mentioned. |\n| `get_session_transcript` | Read a sub-agent session's raw JSONL transcript (messages, tool calls, commands, results), a page at a time. |\n| `search_transcripts` | Full-text search across this organization's agent transcripts. |"
-  },
-  {
-   "area": "customer",
-   "title": "MCP tools",
-   "href": "/app/docs/mcp-tools#personas-tasks-and-agents",
-   "heading": "Personas, tasks and agents",
-   "text": "| Tool | What it does |\n|---|---|\n| `list_developer_profiles` | Curated developer personas (role, experience, company size, stack, constraints) from the vault, plus your organization's own. |\n| `save_personas` | Add or update your own developer personas (the developers you target). |\n| `list_personas` | Your organization's own personas: the ones you saved and the ones research picked for your products. |\n| `import_tasks` | Bring your own tasks (for example from past case studies) as a named task set for a product. |\n| `list_task_sets` | Your organization's private task sets and their tasks. |\n| `publish_to_library` | Offer one of your own personas (persona: slug from list_personas) or one task of your own task sets (task_id from list_task_sets) to Octillion's shared library. |\n| `list_agents` | A developer population's coding-agent mix: the agents Octillion simulates (harness, model, pinned version) and each one's share, in whole sandboxes out of 20, from real-world developer usage with… |\n| `save_harness_mix` | Define your own distribution of coding agents (for example only the agents your users run), from the runnable agents in list_agents. |\n| `list_harness_mixes` | Your organization's own harness mixes. |\n| `register_harness` | Submit your own coding agent as a declarative spec (pinned packages with integrity hashes, the executable and its arguments, the model providers it calls through the Octillion gateway). |\n| `list_harnesses` | Your organization's private harnesses and their review status. |"
-  },
-  {
-   "area": "customer",
-   "title": "MCP tools",
-   "href": "/app/docs/mcp-tools#memory",
-   "heading": "Memory",
-   "text": "| Tool | What it does |\n|---|---|\n| `save_to_memory` | Save one lasting item to the account's institutional memory: a fact, decision, preference or note about the company, the signed-in person ('me') or a product. |\n| `search_memory` | Search the account's institutional memory: the company's items, this person's own and product items, newest first. |"
-  },
-  {
-   "area": "customer",
-   "title": "MCP tools",
-   "href": "/app/docs/mcp-tools#slash-commands",
-   "heading": "Slash commands",
-   "text": "Clients that support MCP prompts also offer ready-made playbooks that chain the tools above:\n\n- `/onboard_product`: Research a developer tool from its website and docs, build its profile, personas and problems, and start a coding-agent run.\n- `/visibility_report`: A full written report on whether coding agents pick the product, why, and what to change: sectioned like a case study, backed by session evidence.\n- `/explain_loss`: Read one agent session's evidence and explain why the coding agent chose a competitor.\n- `/compare_models`: Compare how each coding agent and model treats the product.\n- `/weekly_digest`: A short weekly digest across all products: movement, notable losses, runs and actions."
-  },
-  {
-   "area": "customer",
-   "title": "Billing",
-   "href": "/app/docs/billing",
+   "title": "Your account",
+   "href": "/app/docs/your-account",
    "heading": null,
-   "text": "**Billing** shows this month at the top: model spend against the account's prepaid allowance, a projection to month\nend, sessions finished and anything still running. Admins see a banner from 80% of the allowance; members see their own\nbudget and the rules that apply to them."
-  },
-  {
-   "area": "customer",
-   "title": "Billing",
-   "href": "/app/docs/billing#plans",
-   "heading": "Plans",
-   "text": "Running simulations and onboarding needs a prepaid plan. Plans are invite-only for now: ask your Octillion contact to\nset one up for your team. Each plan shows its monthly fee, how much model spend it covers a month, any free trial and\nany usage pricing. Admins choose a plan and manage the card and invoices through **Manage billing** (Stripe)."
-  },
-  {
-   "area": "customer",
-   "title": "Billing",
-   "href": "/app/docs/billing#usage-pricing",
-   "heading": "Usage pricing",
-   "text": "A plan can add usage-based charges on top of its fee, each with an included amount: **model spend** (priced as a\nmarkup on model cost), **agent sessions** (per completed session), **simulations** (per completed run) and **sandbox\nhours**. The plan list shows exactly which apply to yours."
-  },
-  {
-   "area": "customer",
-   "title": "Billing",
-   "href": "/app/docs/billing#budget-rules",
-   "heading": "Budget rules",
-   "text": "Admins set how the allowance is spent on the **Budget rules** tab; each rule shows who set it and when:\n\n- **Monthly allowance**: the account's cap on model spend, set by Octillion from your plan.\n- **How people share it**: a shared pool, split evenly between the people who can launch, or custom caps per person.\n- **Held back (buffer)**: an amount nobody can launch into, which absorbs runs that finish past a limit.\n- **New members can launch**: whether everyone can start runs, or only people allowed individually.\n- **Runs at once**, **sessions per run** and a **spend cap per run**.\n- **Team budgets** and **people's own settings**: set aside a budget for a team, or give a person their own limit.\n\nThe **People** tab lists everyone in the account with their role, team, limit and what is left; the **Teams** tab\nlists team budgets."
+   "text": "**Team** lists the account's people and their roles (owner, billing manager, member, viewer). **Usage** shows tool calls\nand spend; **Billing** the plan and this month's model spend against its allowance."
   },
   {
    "area": "admin",
@@ -279,7 +139,7 @@
    "title": "Accounts: onboarding, people, billing, analytics",
    "href": "/admin/docs/accounts#journeys",
    "heading": "Journeys",
-   "text": "See **docs/journeys.md**: build journeys in PostHog Workflows; Octillion delivers their in-chat and\n`/app` tips."
+   "text": "See **docs/journeys.md** (the octillion host pack's docs): build journeys in PostHog Workflows; Octillion delivers their in-chat and\n`/app` tips."
   },
   {
    "area": "admin",
@@ -294,48 +154,6 @@
    "href": "/admin/docs/accounts#local-preview",
    "heading": "Local preview",
    "text": "```bash\nnpm run mock:providers     # fake Clerk Backend API + Stripe on :4455 (API tests; browsers need a real Clerk dev instance)\nnpm run demo:seed          # one account with two weeks of scored runs\nnpm run admin:demo         # requests and accounts at every funnel stage (mock only)\nnpm run dev                # the API; sign in through the web app against a Clerk development instance\n```"
-  },
-  {
-   "area": "admin",
-   "title": "Octillion beta guide",
-   "href": "/admin/docs/beta-guide",
-   "heading": null,
-   "text": "Octillion runs real AI coding agents (Claude Code, Codex, OpenCode, Antigravity and others) on realistic development\ntasks and shows you how often they pick your developer tool versus competitors, if they pick one at all. This guide\ngets you from invite to your first report."
-  },
-  {
-   "area": "admin",
-   "title": "Octillion beta guide",
-   "href": "/admin/docs/beta-guide#1-connect",
-   "heading": "1. Connect",
-   "text": "Your invite gives you the connector URL `https://octillion.useimmaculate.com/mcp`, and either a sign-in invitation or a\npersonal API key (`oct_…`). A key is your login: anyone with it can use your account, so keep it private. Your client\nsends it in a header, `Authorization: Bearer <key>`; it never goes in the URL. (Old links with the key in the URL,\n`…/mcp/oct_…`, still work for now but are being retired: move to the header.)\n\n| Client | How to connect | What you see |\n|---|---|---|\n| Claude (web or desktop) | Settings, Connectors, Add custom connector, paste the URL and sign in (these apps cannot send a key) | An interactive dashboard under each answer |\n| ChatGPT | Turn on developer mode, add a custom connector with the URL and sign in (OAuth) | The same dashboard |\n| Claude Code | `claude mcp add --transport http octillion <URL> --header \"Authorization: Bearer <key>\"` | Text answers |\n| Cursor and other IDEs | Add the URL with a `headers` entry (`\"Authorization\": \"Bearer <key>\"`) in the MCP settings and switch the Octillion tools on; ask in Agent chat | Text answers |\n\nThen type: **\"Get me started with Octillion.\"** The first tool, `get_started`, answers with your next step.\n\nIf the tools do not appear, remove the connector, add it again and start a new chat. In Cursor, check that the\nOctillion server is switched on in the MCP settings."
-  },
-  {
-   "area": "admin",
-   "title": "Octillion beta guide",
-   "href": "/admin/docs/beta-guide#2-your-first-report-three-prompts",
-   "heading": "2. Your first report: three prompts",
-   "text": "1. **\"Onboard my product: <name>, <website>, <docs link>. It is a <one-line description>.\"**\n   Octillion researches your product and writes a profile (package names, domains), your competitors, developer\n   personas and 3 to 10 realistic coding tasks that never name your product. This takes a few minutes and uses no\n   coding agents yet. **Check the competitor list now:** a competitor that is missing cannot be credited when agents\n   pick it. Ask to add any, e.g. \"Add Amazon SES and Loops as competitors.\"\n2. **\"Run a simulation.\"** Coding agents work each task in their own fresh sandbox, mixed by how many developers use\n   each agent. Every task is sampled until its result is stable, up to 20 sessions. Expect 20 to 60 minutes. Ask\n   \"How is my simulation doing?\" any time.\n3. **\"Show my visibility report.\"** How often agents picked your tool, which competitor won instead, results per task\n   and per agent, and the agents' own words. Follow up with \"Why did agents pick <competitor> on <task>?\" or\n   \"Search the transcripts for <keyword>.\""
-  },
-  {
-   "area": "admin",
-   "title": "Octillion beta guide",
-   "href": "/admin/docs/beta-guide#3-how-to-read-the-results",
-   "heading": "3. How to read the results",
-   "text": "- **A pick** means the agent built on your tool: it installed or imported your SDK, called your API from the code it\n  wrote, or chose you in its own words. Being named in passing is a mention, not a pick.\n- **Control tasks** (\"avoid\") are tasks where the right answer is to use no tool at all. Agents get credit for not\n  adding one.\n- **Sample sizes are small.** Each rate is shown with a 95% range. Treat one run as a signal and repeat a task before\n  acting on it.\n- **Agents covered**, weighted by real-world use: Claude Code (Opus, Sonnet), Codex (GPT-6.1-Sol), OpenCode, Antigravity\n  (Gemini 4 Argon), Pi, Cline and Kilo. Ask \"list agents\" for the current mix and sources."
-  },
-  {
-   "area": "admin",
-   "title": "Octillion beta guide",
-   "href": "/admin/docs/beta-guide#4-beta-limits",
-   "heading": "4. Beta limits",
-   "text": "| Limit | Value |\n|---|---|\n| Model spend per account | $1,000 per calendar month; new runs pause after that |\n| Sessions per task | Adaptive, up to 20 |\n| Sessions per run | Up to 120 |\n| Cost of a typical run | About $40 to $90 of model use, free for you during the beta |"
-  },
-  {
-   "area": "admin",
-   "title": "Octillion beta guide",
-   "href": "/admin/docs/beta-guide#5-feedback",
-   "heading": "5. Feedback",
-   "text": "Reply to the message your invite came in. We most want to hear where you got stuck, tasks that felt unrealistic for\nyour product, results you don't believe, and what you would need to act on a report."
   },
   {
    "area": "admin",
@@ -532,111 +350,6 @@
    "href": "/admin/docs/budget-rules-spec#10-open-questions-for-the-product-owner",
    "heading": "10. Open questions for the product owner",
    "text": "1. **Turning on change B for existing pool or custom accounts with team budgets.** Should admins opt in through the notice (the proposal), or should Octillion switch it on for everyone after a notice period?\n2. **The buffer.** Should it be reachable by admins (guardrails-first's \"held back for admins\") or by nobody, as proposed? \"Nobody\" keeps one meaning but makes the money reachable only through overshoot and connector keys.\n3. **Connector-key spend.** It is shown but stays unlimited in v1. Do you want a separate monthly cap for connector keys now, or later?\n4. **Phase 2 alerts and \"Request more\".** Is adding an email provider (e.g. Resend or Postmark, a new SaaS dependency) approved, and should increase requests be one-month-only, permanent, or both?\n\nSources: /root/octillion-live/octillion-admin/web/src/features/portal/billing.tsx, /root/octillion-live/octillion-admin/src/limits.ts, /root/octillion-live/octillion-admin/src/app.ts, /root/octillion-live/octillion-admin/src/queries.ts, /root/octillion-live/octillion-admin/src/research.ts, /root/octillion-live/octillion-admin/src/billing.ts, /root/octillion-live/octillion-admin/sql/schema.sql"
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase",
-   "heading": null,
-   "text": "Firebase is Google's app development platform: auth, Firestore sync, Cloud Messaging, Remote Config and more, with\nSDKs for Flutter, iOS, Android and the web. We asked seven coding agents to do real app work in realistic projects\nand recorded what each one built on. Firebase was not involved; everything below comes from Firebase's public site\nand docs and from the agents' own sessions (15 Oct 2026).\n\n**The answer:**\n- No session built on Firebase. Across 30 sessions on tasks Firebase should win, agents adopted it **0 times** and\n  recommended it as an option 4 times, all on one mobile task.\n- When agents wanted a hosted backend, they chose **Supabase** (8 sessions, 7 of them installing its SDK).\n- On mobile, agents know Firebase but avoid it for its setup: \"Firebase would need `google-services.json` and Gradle\n  changes, and you haven't set up credentials.\""
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase#how-the-run-was-set-up",
-   "heading": "How the run was set up",
-   "text": "- **Four tasks Firebase should win, plus one control, all from Octillion's curated task library.** Each is cited by\n  its library id below. The research agent chose them in three recorded rounds. It shortlisted 12, critiqued and\n  replaced weak ones, then stopped when a full critique found nothing to change. Prompts never name Firebase, a\n  competitor or the kind of tool.\n- **Platforms weighted to Firebase's audience:** four mobile tasks (Flutter and React Native) and one web task\n  (Next.js), each on its own starter project.\n- **Two personas picked from real developer data** (Stack Overflow Developer Survey 2025 respondents), chosen in three\n  rounds for Dart and TypeScript coverage and a spread of seniority and company size:\n  - Zayan Q., a mobile developer with 4 years' experience at a 20–99-person company;\n  - Maren V., a mobile developer with 37 years' experience at a 10,000+ person healthcare organisation.\n- **Seven coding agents, sized by real-world usage:** Claude Code (Opus) 19 sessions, Codex 10, OpenCode 4,\n  Antigravity (Gemini) 3, Pi 2, Cline 1 and Kilo 1. Each session runs in a fresh sandbox.\n- **Up to 10 sessions per task, until the result settled:** 40 sessions, 37 scored. The run stopped at its $100\n  budget.\n- **15 competitors credited,** including Supabase, AWS Amplify, Appwrite, Parse, PocketBase, Auth0, Clerk, Auth.js,\n  Better Auth, Convex, LaunchDarkly, OneSignal and Sentry."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase#results-by-platform",
-   "heading": "Results by platform",
-   "text": "| Platform | Sessions (should win) | Built on Firebase | Recommended it | Competitor | No vendor | Mentioned Firebase |\n|---|---|---|---|---|---|---|\n| Mobile (4 tasks) | 23 | **0** | 4 | Supabase 8 | 11 | 12 |\n| Web (1 task) | 7 | **0** | 0 | 0 | 7 | 0 |\n| Control (mobile, should avoid) | 7 | 0, correct | — | — | 7 | — |"
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase#results-by-task",
-   "heading": "Results by task",
-   "text": "| Task | Library task | Platform | Sessions | Firebase | Instead |\n|---|---|---|---|---|---|\n| Habit-tracker accounts that persist | #6153 | mobile (Flutter) | 8 | recommended 4, built 0 | Supabase 3, own auth 1 |\n| Recover habit history on a new phone | #6667 | mobile (React Native) | 7 | 0 | **Supabase 5**, own sync 2 |\n| Gradually enable a feature (lounge reservations) | #22885 | mobile (Flutter) | 8 | 0 | own flag service 8 (named LaunchDarkly 3, Firebase 3) |\n| Live team chat with isolated access | #6409 | web (Next.js) | 7 | 0, never mentioned | own server, Ably |\n| Durable on-device drive recording (control) | #29412 | mobile (React Native) | 7 | 0, correct | on-device storage 7 |"
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase#what-the-agents-did-and-why",
-   "heading": "What the agents did, and why",
-   "text": "1. **Supabase is the default hosted backend.** For syncing a user's habit history to a new phone, agents installed\n   `@supabase/supabase-js` in 5 of 7 sessions; Codex chose Supabase every time it chose any vendor. Firebase was\n   mentioned in 4 of those sessions but never chosen.\n2. **On mobile, agents avoid Firebase because of its setup.** The four sessions that recommended Firebase on the\n   accounts task all built their own auth layer instead and offered Firebase as a later swap. Two gave the reason:\n   > \"I picked it because Firebase would need `google-services.json` and Gradle changes, and you haven't set up\n   > credentials.\" (OpenCode)\n\n   > \"I didn't use Firebase or `google_sign_in` because they need Google Play Services.\" (Claude Code)\n3. **For feature flags, agents ask rather than pick.** On the gradual-rollout task, every session built its own\n   flag logic. Claude Code named Firebase Remote Config, but left the choice to the developer:\n   > \"You already have a flag provider (Firebase Remote Config, LaunchDarkly, your own backend, etc.). Tell me which\n   > one…\"\n4. **On the web, Firebase is not in the picture.** None of the seven chat sessions mentioned Firebase. Agents built\n   their own server; one used Ably for realtime.\n5. **The control behaved for the right reason.** All seven sessions kept the drive recordings on the device, as the\n   requirements demanded."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase#by-agent",
-   "heading": "By agent",
-   "text": "The four tasks Firebase should win; control sessions are left out.\n\n| Agent | Sessions | Built on Firebase | Recommended it | Competitor | No vendor |\n|---|---|---|---|---|---|\n| Claude Code (Opus) | 16 | 0 | 3 | 5 | 8 |\n| Codex | 7 | 0 | 0 | 3 | 4 |\n| OpenCode | 3 | 0 | 1 | 0 | 2 |\n| Antigravity (Gemini) | 3 | 0 | 0 | 0 | 3 |\n| Pi | 1 | 0 | 0 | 0 | 1 |\n\nCline and Kilo sessions fell on the control task."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase#what-firebase-could-act-on",
-   "heading": "What Firebase could act on",
-   "text": "- **Lower the setup cost agents see.** Agents skip Firebase because of `google-services.json`, Gradle edits and Play\n  Services. A documented no-console path agents can follow end to end (for example the Flutter CLI with emulators,\n  or a REST-only quickstart) removes the stated reason.\n- **Win the sync use case against Supabase.** Data recovery across devices is a core Firestore job, yet agents chose\n  Supabase 5 to 0. Clear, minimal React Native examples for offline-first sync give agents a reason to choose\n  Firestore.\n- **Make Remote Config the obvious answer for gradual rollouts.** Agents know the name but treat it as one option\n  among several. Concrete percentage-rollout examples in the docs help an agent commit to it.\n- **Be present on the web.** On the web chat task Firebase was never mentioned; realtime and auth examples for\n  Next.js are where to start."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Firebase?",
-   "href": "/admin/docs/case-studies-firebase#limits",
-   "heading": "Limits",
-   "text": "- 7–8 scored sessions per task: the 95% ranges are wide; read the direction, not the decimals.\n- The scorer counts \"recommended as an option\" as a hit. The report's overall hit rate, 30% (11 of 37), is those 4\n  recommendations plus the 7 correct control sessions; it overstates adoption, which is why this study reports\n  adoption separately.\n- One web task only: web results rest on 7 sessions.\n- Ably was not on the competitor list, so the chat session that used it counts as \"no vendor\". It has been added for\n  future runs.\n- An independent run: Firebase was not involved, and its tasks and personas were chosen from Octillion's library and\n  survey data.\n\n---\n\nOctillion measures how often AI coding agents choose a developer tool, and why. See\nHow it works and the Resend case study."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Resend?",
-   "href": "/admin/docs/case-studies-resend",
-   "heading": null,
-   "text": "Resend is an email API for developers. We asked seven coding agents to do real email work in realistic projects and\nrecorded which provider each one built on, if any. Resend was not involved; everything below comes from Resend's\npublic site and docs and from the agents' own sessions (14 Oct 2026).\n\n**The answer:**\n- When an app needs to send email, agents mostly choose Resend: 7 of 10 sessions on a password-recovery task and 7 of\n  9 on subscriber announcements.\n- When an app needs to receive email, they never did: 0 of 6 sessions picked Resend, and none of the six mentioned it.\n  They chose Postmark or built the intake themselves."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Resend?",
-   "href": "/admin/docs/case-studies-resend#how-the-run-was-set-up",
-   "heading": "How the run was set up",
-   "text": "- **Four tasks, written from Resend's own docs.** Each is a piece of work in an existing project whose requirements\n  force a decision: buy an email service, adopt an open-source option, or build it. No prompt names Resend, a\n  competitor or the kind of tool. Every task where Resend should win cites the page showing Resend can do it.\n- **One control task** where the right answer is not to buy. Regulated data must stay inside the company network, so\n  a hosted API is the wrong choice, but nothing in the prompt forbids it.\n- **Two developer personas**, Maya (4 years, VS Code) and Daniel (6 years, Neovim). Each has their own command-line\n  tools, language servers and coding-agent skills installed, and phrases every task in their own words. When an agent\n  asks a question, the persona answers in character.\n- **Seven coding agents, sized by real-world usage.** The first batch of 24 sessions was dealt Claude Code (Opus) 10,\n  Codex 6, OpenCode 2, Antigravity (Gemini) 2, Pi 2, Cline 1 and Kilo 1. Every agent took part, and every task and\n  persona got a similar mix. Each session runs in a fresh sandbox.\n- **More sessions where the result was unclear.** A task kept getting sessions until its result settled, up to 10:\n  32 sessions in total.\n- **Eight competitors credited:** SendGrid, Mailgun, Postmark, Amazon SES, Mailchimp, Azure Communication Services\n  Email, Postal (open source) and Nodemailer."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Resend?",
-   "href": "/admin/docs/case-studies-resend#results-by-task",
-   "heading": "Results by task",
-   "text": "| Task | Should Resend win? | Sessions | Built on Resend | Built on a competitor | No vendor | 95% range for Resend |\n|---|---|---|---|---|---|---|\n| Password recovery for a booking app | yes | 10 | **7** | Postmark 2 | 1 | 40–89% |\n| Opted-in release announcements | yes | 9 | **7** | 0 | 2 | 45–94% |\n| Customer replies become support-ticket messages | yes | 6 | **0** | Postmark 2 | 4 | 0–39% |\n| Regulated internal incident messages (control) | no | 6 | 0 | 0 | 6, correct | — |\n\n- **\"Built on\"** means the agent installed or imported the provider's SDK, called its API, or chose it in its own\n  words. A passing mention does not count.\n- **\"No vendor\"** means the agent built the capability itself or left the provider open without choosing one.\n- **One announcements session ran out of time** and is left out."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Resend?",
-   "href": "/admin/docs/case-studies-resend#what-the-agents-did-and-why",
-   "heading": "What the agents did, and why",
-   "text": "1. **Sending email is Resend's ground.** From requirements alone (15,000 password resets a month, three engineers,\n   launch next week, support must see delivered and bounced attempts; or 40,000 opted-in subscribers with scheduling\n   and opt-out), agents built on Resend in 14 of 19 sessions. Codex chose it in 5 of its 6.\n2. **Agents don't know Resend receives email.** Resend's own inbound page shows it fits the reply-by-email task, yet\n   none of the six sessions picked Resend or even mentioned it.\n   - Two Claude Code and OpenCode sessions chose Postmark.\n   - Four built their own intake and named SES, Mailgun, Postmark or SendGrid as the options. Codex went furthest: it\n     shipped an Amazon SES, S3 and SQS deployment template for receiving mail.\n\n   This matches an earlier run with differently worded tasks, where none of five inbound sessions picked Resend\n   either.\n3. **When Claude Code lists providers, Resend is missing.** Both of its password-recovery losses went to Postmark. In\n   one, it asked the developer:\n   > \"Email provider: which one … At 15,000 emails a month, Amazon SES costs a few dollars, while Postmark or SendGrid\n   > cost more but are easier to set up.\"\n4. **Antigravity knows Resend but builds without a provider.** In all three of its sessions on tasks Resend should\n   win, Antigravity (Gemini 4 Argon) left the provider open; in two it named Resend among the options.\n5. **The control behaved for the right reason.** All six sessions kept regulated messages inside the private network\n   because the requirement demanded it."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Resend?",
-   "href": "/admin/docs/case-studies-resend#by-agent",
-   "heading": "By agent",
-   "text": "The three tasks where Resend should win; control sessions are left out.\n\n| Agent | Sessions | Resend | Competitor | No vendor |\n|---|---|---|---|---|\n| Claude Code (Opus) | 11 | 6 | 3 | 2 |\n| Codex | 6 | 5 | 0 | 1 |\n| OpenCode | 3 | 2 | 1 | 0 |\n| Antigravity (Gemini 4 Argon) | 3 | 0 | 0 | 3 |\n| Pi | 1 | 1 | 0 | 0 |\n| Cline | 1 | 0 | 0 | 1 |\n\nKilo's session fell on the control task. Agents with one to three sessions say little on their own; they are listed\nso nothing is hidden."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Resend?",
-   "href": "/admin/docs/case-studies-resend#what-resend-could-act-on",
-   "heading": "What Resend could act on",
-   "text": "- **Make receiving email discoverable where agents look.** Use the words developers ask with (\"receive email\",\n  \"reply-by-email\", \"inbound webhook\") in the docs index, SDK READMEs and package descriptions, with end-to-end\n  examples for Express and FastAPI.\n- **Get into provider shortlists.** When Claude Code compares providers, it reaches for SES, Postmark and SendGrid.\n  Comparison and migration pages that state capabilities and pricing plainly give it the facts to include Resend.\n- **Turn mentions into choices on Gemini.** Antigravity names Resend but stops short of using it. Clear, minimal\n  setup examples help an agent commit to a provider."
-  },
-  {
-   "area": "admin",
-   "title": "Case study: do coding agents choose Resend?",
-   "href": "/admin/docs/case-studies-resend#limits",
-   "heading": "Limits",
-   "text": "- 6–10 sessions per task. The 95% ranges are wide; read the direction, not the decimals.\n- Claude Code and Codex ran most sessions, as they do in real-world use. The smaller agents had one to three sessions\n  each.\n- Infrastructure templates count as \"no vendor\" unless the agent also uses the provider's SDK or API. Codex's SES\n  deployment for inbound mail is counted that way.\n- An independent run: Resend was not involved, and its tasks and personas were generated from public pages.\n\n---\n\nOctillion measures how often AI coding agents choose a developer tool, and why. See How it works\nand the beta guide."
   },
   {
    "area": "admin",
@@ -1004,34 +717,6 @@
   },
   {
    "area": "admin",
-   "title": "Journeys: onboarding and \"keep trying new things\"",
-   "href": "/admin/docs/journeys",
-   "heading": null,
-   "text": "Journeys are built and run in **PostHog Workflows**: triggers, delays, waits, branches, email and Slack. PostHog is the\nsystem of record for what journeys exist, who is in them and what each step says. Octillion adds the channel PostHog\ncannot reach, the user's AI client:\n\n```\nOctillion events (src/telemetry.ts) ──▶ PostHog ──▶ Workflow ──┬─▶ email / Slack (PostHog)\n                                                                └─▶ webhook ──▶ Octillion /api/journeys/nudges\n                                                                                   │\n              next tool result (≤ 1 a day), get_started, /app Setup  ◀─────────────┘\n              └─▶ nudge_shown / nudge_dismissed back to PostHog, so the workflow can branch on them\n```\n\nAn MCP server cannot push a message: a tip waits until the person next uses Octillion. People who are not using it\nare reached by the workflow's email and Slack steps."
-  },
-  {
-   "area": "admin",
-   "title": "Journeys: onboarding and \"keep trying new things\"",
-   "href": "/admin/docs/journeys#setup",
-   "heading": "Setup",
-   "text": "1. PostHog: set `POSTHOG_API_KEY` on the server (docs/accounts.md). Turn on group analytics with group type\n   `organization`. People get `email`, `name`, `account`, `account_name` and `role` as person properties when they sign\n   in to `/app` or connect a client with Clerk sign-in, so email steps have an address.\n2. PostHog → Workflows → Configure channels: add an email sender and verify your domain (SPF, DKIM). Add the Slack app\n   if you want Slack steps.\n3. Set `OCTILLION_JOURNEY_SECRET` on the server (`openssl rand -hex 24`).\n4. In a workflow, a chat or app step is a webhook step:\n   - URL: `https://<host>/api/journeys/nudges`, method POST, JSON body;\n   - auth: header `Authorization: Bearer <secret>`, or, if the step cannot set headers,\n     `https://<host>/api/journeys/nudges/<secret>`;\n   - body:\n     ```json\n     { \"distinct_id\": \"{event.distinct_id}\", \"journey\": \"first-report\", \"step\": \"run\",\n       \"message\": \"Your product profile and tasks are ready. Check the competitor list, then run coding agents on the tasks.\",\n       \"prompt\": \"Run a simulation.\" }\n     ```\n   `/admin` → Journeys shows each recommended step's body ready to copy, and can queue any step by hand to see it\n   before you build it."
-  },
-  {
-   "area": "admin",
-   "title": "Journeys: onboarding and \"keep trying new things\"",
-   "href": "/admin/docs/journeys#the-webhook",
-   "heading": "The webhook",
-   "text": "| Field | Required | Meaning |\n|---|---|---|\n| `distinct_id` | one of these | the person (`user_…`, a Clerk user id), the account (`org:<slug>`), or an approved requester's email |\n| `org` | | account slug, when the distinct id alone does not identify it |\n| `user_id` | | a Clerk user id (person-level tip) |\n| `journey`, `step` | | names for reporting; a step that fires again replaces its earlier tip |\n| `message` | yes | up to 280 characters, shown to the person |\n| `prompt` | | what they can type to try it (shown as copyable text) |\n| `link` | | an `https://` URL or a `/app…` path |\n| `ttl_days` | | how long the tip waits (1 to 30, default 7) |\n\nDelivery rules:\n- In chat, a tip is appended to the next tool result as one line the AI passes on. At most one tip per person every\n  `OCTILLION_NUDGE_INTERVAL_HOURS` (default 20); each tip appears in chat at most 3 times. `get_started` always shows\n  the waiting tip.\n- Person-level tips win over account-wide ones; newest first.\n- On `/app`, Setup → Tips for you lists everything waiting, with Dismiss and a switch that turns tips off in chat.\n- Octillion sends `nudge_queued`, `nudge_shown` (channel `chat`), `nudge_dismissed`, `nudges_muted` and\n  `nudges_unmuted` to PostHog."
-  },
-  {
-   "area": "admin",
-   "title": "Journeys: onboarding and \"keep trying new things\"",
-   "href": "/admin/docs/journeys#recommended-journeys",
-   "heading": "Recommended journeys",
-   "text": "The source of truth for these recipes is `RECIPES` in `src/journeys.ts` (also shown on `/admin` → Journeys).\n\n| Journey | Trigger | Steps | Goal |\n|---|---|---|---|\n| Get connected | `app_signed_in` (first) | after 1 day unless `mcp_connected`: email + app tip with the client guide | connected within a day |\n| First report | `mcp_connected` (first) | onboard (1 day, unless `onboard_product`), run (on `onboarding_completed`), report (on `simulation_completed`), each in chat, plus email for onboard and report | report within a week |\n| Read the evidence | `tool_called` `get_visibility_report` | 2 days, unless evidence tools were used: \"why did agents pick the competitor?\" | transcripts read |\n| Fix and re-run | `tool_called` `get_visibility_report` | 7 days, unless `run_simulation`: re-run after changing docs | a second run |\n| Bring the team | `onboarding_completed`, account admins | 3 days, unless an invite was sent: app tip + email linking `/app#team` | a second member |\n| Win back | cohort: active in 60 days, not in 14 | chat + email: models change, run again | back in 14 days |\n\nFilters to use in PostHog: `tool_called` with property `tool`; person property `role = admin` for admin-only steps;\ngroup `organization` to count accounts instead of people."
-  },
-  {
-   "area": "admin",
    "title": "Database migrations",
    "href": "/admin/docs/migrations",
    "heading": null,
@@ -1050,55 +735,6 @@
    "href": "/admin/docs/migrations",
    "heading": null,
    "text": "**Writing a migration.**\n- Add the next number: `sql/migrations/0002_what_it_does.sql`. Never edit a merged file: `db:migrate` refuses when an\n  applied file changed (a booting process logs it and runs, unless something is also pending). Numbers have no gaps.\n- A file runs inside a transaction with the other pending ones: no `CREATE INDEX CONCURRENTLY` or other statements\n  that cannot run in a transaction.\n- Keep it compatible with the release still running during a rolling deploy (and with the previous release, which a\n  rollback runs against the newer schema: it starts, and logs that the schema is newer): add a column (nullable or with a\n  default), backfill, ship the code that uses it, and drop the old one in a later migration.\n\n**Rolling back.** A release older than the database (a rollback) runs and logs that the schema is newer; migrations\nmust stay backward compatible for that. Rolling back to a release from before versioned migrations is not supported\nonce a migration after the baseline exists: those releases re-run the old schema file on every boot."
-  },
-  {
-   "area": "admin",
-   "title": "Product onboarding: prompt + link + docs → profile, personas, problems → runs",
-   "href": "/admin/docs/onboarding",
-   "heading": null,
-   "text": "A dev-tool company describes its product in three things: a **prompt** (what it is and for whom), a **link**\n(website) and **documentation** (docs URL). The rest is automatic:\n\n1. **Research.** The orchestrator (Pi, the same brain that plays the developer) reads the website and docs and builds\n   a **detailed product profile**: name, category, description, key features, aliases, package names (npm, PyPI,\n   etc.), domains, and **competitors** (with their packages and domains).\n2. **Personas.** It derives the **target developer personas** who would plausibly need the product: role,\n   experience, company size, stack, constraints and tone, plus instructions for how each answers a coding agent's\n   questions.\n3. **Problems.** It **searches** the curated task library for fitting tasks and **creates** new realistic\n   programming problems where the product could be a recommended solution. Each problem is phrased the way a\n   developer would ask a coding agent, never naming the product, its packages or its domains. It may add a few\n   `avoid` problems where the product should not be the answer.\n4. **Runs.** The server saves everything (product context, product-scoped personas, scenarios) and, unless turned\n   off, launches a representative simulation across the coding-agent mix with those personas.\n\n```\ncustomer (Claude/ChatGPT) ── onboard_product{prompt, website_url, docs_url} ──▶ server: product + research job\norchestrator ── claim research ─▶ Pi research session ─ fetch_url / web_search / find_similar / package_search / search_library / validate ─▶ submit\nserver ── apply: product profile, personas, scenarios ──▶ run_simulation (coding agents × personas × samples)\ncustomer ── get_onboarding / get_visibility_report ──▶ results\n```"
-  },
-  {
-   "area": "admin",
-   "title": "Product onboarding: prompt + link + docs → profile, personas, problems → runs",
-   "href": "/admin/docs/onboarding#mcp-tools-customer",
-   "heading": "MCP tools (customer)",
-   "text": "`onboard_product` `{prompt, website_url?, docs_url?, name?, run?: true, samples?}` → research id, status.\n`get_onboarding` `{research_id? | product?}` → stage, generated profile, personas, scenarios and the simulation."
-  },
-  {
-   "area": "admin",
-   "title": "Product onboarding: prompt + link + docs → profile, personas, problems → runs",
-   "href": "/admin/docs/onboarding#worker-api-orchestrator-bearer-octillion-worker-token",
-   "heading": "Worker API (orchestrator; Bearer OCTILLION_WORKER_TOKEN)",
-   "text": "- **`POST /api/worker/research/claim`** `{worker_id, limit?}` →\n  `{jobs: [{research_id, input: {name?, prompt, website_url?, docs_url?}, limits}]}`.\n  `limits` holds `{max_personas, max_scenarios, min_scenarios, max_competitors}`.\n- **`POST /api/worker/research/:id/progress`** `{stage, note?}` is the heartbeat. Stages: `reading`, `profiling`,\n  `personas`, `problems`, `validating`.\n- **`GET /api/worker/library/tasks?query=&category=&language=&limit=`** searches the curated task library.\n- **`POST /api/worker/research/:id/validate`** `{result}` → `{ok, issues: [...]}`. Dry run; nothing is saved.\n- **`POST /api/worker/research/:id/complete`** `{status: \"completed\" | \"failed\", error?, result?}` →\n  `{product, personas, scenarios, simulation_id?}`, or 422 `{issues}` when the result is invalid. Revise and resubmit."
-  },
-  {
-   "area": "admin",
-   "title": "Product onboarding: prompt + link + docs → profile, personas, problems → runs",
-   "href": "/admin/docs/onboarding#worker-api-orchestrator-bearer-octillion-worker-token",
-   "heading": "Worker API (orchestrator; Bearer OCTILLION_WORKER_TOKEN)",
-   "text": "`result`:\n```json\n{ \"product\": { \"name\": \"…\", \"description\": \"…\", \"category\": \"…\", \"website_url\": \"…\", \"docs_url\": \"…\",\n               \"features\": [\"…\"], \"aliases\": [\"…\"], \"packages\": [\"…\"], \"domains\": [\"…\"],\n               \"competitors\": [{\"name\": \"…\", \"aliases\": [], \"packages\": [], \"domains\": [], \"evidence_url\": \"…\"}] },\n  \"personas\": [{ \"name\": \"…\", \"summary\": \"…\", \"attributes\": {\"role\": \"…\", \"experience_years\": 5, \"company_size\": \"…\",\n                 \"stack\": [\"…\"], \"constraints\": [\"…\"], \"tone\": \"…\"}, \"instructions\": \"…\",\n                 \"environment\": {\"editor\": \"zed\", \"tools\": [\"cli/gh\", \"cli/psql\"],\n                                 \"skills\": [{\"name\": \"testing-conventions\", \"description\": \"…\", \"body\": \"…\"}], \"agent_rules\": \"…\"} }],\n  \"scenarios\": [{ \"title\": \"…\", \"prompt\": \"…\", \"language\": \"…\", \"tags\": [\"…\"], \"expectation\": \"recommend\" | \"avoid\",\n                  \"rationale\": \"why the product fits (or not)\", \"variants\": {\"<persona name>\": \"…\"},\n                  \"decision\": {\"need\": \"…\", \"options\": [{\"kind\": \"product\"}, {\"kind\": \"competitor\", \"name\": \"…\"}, {\"kind\": \"build\"}],\n                               \"why_intrinsic\": \"…\", \"evidence_url\": \"one of the sources\"}, \"library_task_id\": 12, \"repo_url\": null }],\n  \"sources\": [{\"url\": \"…\", \"title\": \"…\"}] }\n```"
-  },
-  {
-   "area": "admin",
-   "title": "Product onboarding: prompt + link + docs → profile, personas, problems → runs",
-   "href": "/admin/docs/onboarding#worker-api-orchestrator-bearer-octillion-worker-token",
-   "heading": "Worker API (orchestrator; Bearer OCTILLION_WORKER_TOKEN)",
-   "text": "**Validation** (the same rules apply on `validate` and `complete`):\n- **Every problem must create a purchase decision on its own.** Its requirements (volume, reliability,\n  deliverability, compliance, time to ship) force a choice between buying a service, adopting open source, or building\n  it, and the wording leaves that choice to the agent. Rule checks:\n  - the prompt (and every persona variant) may not use `product.category_terms` (2-8 words that name this kind of\n    tool, e.g. \"transactional email service\", \"email API\");\n  - it may not prescribe an outside service (\"through a hosted service\") or ban options (\"offline\", \"no external\n    requests\", \"no new dependencies\"). Real constraints such as data residency or a zero budget are fine;\n  - `decision` `{need, options, why_intrinsic, evidence_url}` is required. Options include the product, at least one\n    alternative (competitor, cloud or open_source) and build or none. A \"recommend\" problem's `evidence_url` must be\n    one of the research's sources showing the product really does what this problem needs."
-  },
-  {
-   "area": "admin",
-   "title": "Product onboarding: prompt + link + docs → profile, personas, problems → runs",
-   "href": "/admin/docs/onboarding#worker-api-orchestrator-bearer-octillion-worker-token",
-   "heading": "Worker API (orchestrator; Bearer OCTILLION_WORKER_TOKEN)",
-   "text": "  On top of the rules, the research orchestrator runs a **task review** (`orchestrator/pi-octillion/critic.ts`): a\n  separate, tool-less model call that rejects problems with no intrinsic decision, problems whose wording decides it,\n  and problems phrased in one vendor's feature vocabulary. Its findings go back to research as issues, at most two\n  rounds per job. Library tasks must pass the same rules, so research rewrites or drops those that name the category.\n  Why: in the first Resend run, three of five tasks named the category (\"through a transactional email service\"), the\n  control said \"work completely offline\", and the inbound-email task used Postmark's feature names, so the result\n  measured the wording more than the agents.\n- **Scenario prompts must not name the product.** No name, alias, package or domain (a whole-word,\n  case-insensitive match), and no competitor names either, so as not to lead the agent.\n- **Counts:** `min_scenarios` ≤ scenarios ≤ `max_scenarios`, 1 ≤ personas ≤ `max_personas`, at least one `recommend`\n  scenario, and prompts of 40–2000 characters.\n- **Product fields:** at least one alias, package or domain beyond the name, so detection has something to match;\n  competitor names must be distinct from the product.\n- **Competitors come from evidence, not memory** (`src/websearch.ts`). Research has `web_search` and `find_similar`\n  (Exa: \"alternatives to X\", sites like the product's) and `package_search` (npm and crates.io free; PyPI, Go, Maven\n  and others via libraries.io), with usage numbers. Searches run on the server, capped per job\n  (`RESEARCH_MAX_SEARCHES`, default 20); the keys never reach the research sandbox. Every result URL is recorded on the\n  job (`product_research.sources`) and becomes fetchable; when search is configured, each "
-  },
-  {
-   "area": "admin",
-   "title": "Product onboarding: prompt + link + docs → profile, personas, problems → runs",
-   "href": "/admin/docs/onboarding#worker-api-orchestrator-bearer-octillion-worker-token",
-   "heading": "Worker API (orchestrator; Bearer OCTILLION_WORKER_TOKEN)",
-   "text": "competitor's `evidence_url`\n  must be one of those URLs or a page on the product's own site. Keys: `npm run keyvault -- set exa` and\n  `npm run keyvault -- set libraries_io` (orchestrator-only providers). Keys are read from the vault only; an `EXA_API_KEY` / `LIBRARIES_IO_API_KEY` left in the environment is imported into the vault once on boot (src/keyvault-env.ts).\n- **Runs check the list too.** Scoring records the packages each agent installed that match neither the product nor a\n  tracked competitor (`agent_sessions.untracked`); the report lists those from \"no vendor\" sessions under \"Installed\n  but not tracked\", with an \"Add as competitor\" button. The dashboard shows each competitor's evidence and who added\n  it (research, the customer, or runs), with a Remove button.\n- **Personas** must not mention the product or its competitors (they answer the agent blind).\n- **Persona `environment`** `{editor, tools, skills, agent_rules}`: the editor and CLI tools come from the catalog in\n  `orchestrator/core/environment.ts`. Skills (at most 6, `name` lowercase-hyphenated, `body` 40-4000 characters) and\n  `agent_rules` (at most 3000 characters) are the developer's own agent setup, scaled by seniority. None of it may name\n  the product or a competitor. It is installed into the coding agent's harness for every session of that persona\n  (orchestrator/README.md, Developer environments).\n- **Scenario `variants`** `{persona name: prompt}`: the same problem in each persona's words, under the same blindness\n  and length rules as `prompt`. A session uses its persona's version."
   },
   {
    "area": "admin",
@@ -1204,76 +840,6 @@
    "href": "/admin/docs/storage#tests",
    "heading": "Tests",
    "text": "`npx tsx orchestrator/test/archive.ts`: PGlite plus a mock S3 API. It covers archiving, the layout, read-through with\npaging, org scoping, restore (and re-running it), signed links and key safety."
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code",
-   "heading": null,
-   "text": "A real run, recorded on 2026-10-13 against production: a brand-new workspace, a fresh beta organization, and three\nprompts. The example product is Resend, an email API for developers. Nothing here was edited\nexcept shortening tool results.\n\nThe numbers are from one small run (30 sessions) and are **directional only**: this page documents how Octillion\nbehaves, it is not a benchmark of the products named.\n\n| | |\n|---|---|\n| Client | Claude Code 2.1.296, headless (`claude -p`), model Claude Opus 5.5 |\n| Time from \"onboard\" to finished report | about 18 minutes (research 2 min 26 s, simulation 15 min 13 s) |\n| Coding-agent sessions | 30 (5 tasks x 2 developer personas x 3 samples), 26 completed |\n| Model spend for the run | $20.98 for the agents, about $0.51 for the orchestrator |\n| Client-side cost | about $0.66 of Claude Code usage across the three prompts |"
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#1-set-up-the-workspace",
-   "heading": "1. Set up the workspace",
-   "text": "An empty directory with one file. The file holds the organization's API key (sent as a header, never in the URL), so\nkeep it private and out of version control.\n\n```bash\nmkdir octillion-demo && cd octillion-demo\ncat > .mcp.json <<'EOF'\n{ \"mcpServers\": { \"octillion\": { \"type\": \"http\", \"url\": \"https://<host>/mcp\", \"headers\": { \"Authorization\": \"Bearer <api key>\" } } } }\nEOF\nchmod 600 .mcp.json\n```\n\nEach prompt below is one headless turn. `--continue` keeps the conversation, so later prompts can say \"my product\"\nand \"my simulation\":\n\n```bash\nclaude -p \"<prompt>\" --continue \\\n  --mcp-config .mcp.json --strict-mcp-config \\\n  --allowedTools \"mcp__octillion\"\n```\n\nClaude Code reports `octillion: connected` with 18 tools. `get_started` is listed first."
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#2-get-me-started-with-octillion",
-   "heading": "2. \"Get me started with Octillion.\"",
-   "text": "Claude Code calls `get_started` (4 seconds) and relays the welcome with the one next step for this account:\n\n> Welcome to Octillion, Beta 09. Octillion runs real AI coding agents on realistic development tasks and reports how\n> often they pick your developer tool versus competitors, or whether they pick one at all.\n>\n> Your account has no product set up yet, so the first step is to onboard one. Type this with your details filled in:\n>\n> `Onboard my product: <name>, <website>, <docs link>. It is a <one-line description>.`\n\n`get_started` adapts to the account: no product -> onboard; product without tasks -> check onboarding; tasks and no\nruns -> run a simulation; a run in progress -> check progress; finished runs -> read the report."
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#3-onboard-my-product-resend-https-resend-com-https-resend-com-docs-it-is-an-email-api-for-developers",
-   "heading": "3. \"Onboard my product: Resend, https://resend.com, https://resend.com/docs. It is an email API for developers.\"",
-   "text": "> Since this recording, onboarding stops after research (one orchestrator sandbox) and the run is the explicit next\n> step, \"Run a simulation.\"; at the time, onboarding launched it automatically, as below.\n\nClaude Code calls `onboard_product`, then polls `get_onboarding`. Octillion starts an orchestrator on demand, reads the\nsite and docs, and in 2 min 26 s has a product profile, two developer personas and five coding tasks. It then launches\nthe first simulation by itself. Claude Code's summary:\n\n> **Product profile**\n> - **Category:** Email delivery API\n> - **Package tracked:** `resend`\n> - **Domains tracked:** resend.com, resend.dev, resend.app, smtp.resend.com\n> - **Competitors:** SendGrid (`@sendgrid/mail`), Mailgun (`mailgun.js`), Postmark (`postmark`)\n>\n> The competitor list is short: Amazon SES, Loops and Mailchimp Transactional are not on it. If you want any of them\n> tracked, say so and I'll add them.\n>\n> **Developer personas**\n> - **Maya, startup full-stack engineer:** TypeScript, Next.js, React and PostgreSQL at a 12-person SaaS company.\n> - **Luis, backend platform engineer:** Python 3.12, FastAPI and Docker at an 80-person company.\n>\n> **Coding tasks being tested** (none of them name Resend)\n>\n> | Task | Stack | Expected outcome |\n> |---|---|---|\n> | Abuse report form delivered by email, with attachments | TypeScript / Express | Recommend Resend |\n> | Accept client feedback by replying to an email (inbound) | TypeScript / Next.js | Recommend Resend |\n> | Send account verification messages from the server | TypeScript / Next.js | Recommend Resend |\n> | Receipt delivery with retry-safe status tracking | Python / FastAPI | Recommend Resend |\n> | Generate local email previews without sending | Python / FastAPI | Avoid (control: no email API needed) |"
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#3-onboard-my-product-resend-https-resend-com-https-resend-com-docs-it-is-an-email-api-for-developers",
-   "heading": "3. \"Onboard my product: Resend, https://resend.com, https://resend.com/docs. It is an email API for developers.\"",
-   "text": "Each task runs in its own sandbox, on a starter project or a pinned open-source repository, with agents sampled by\nreal-world adoption (here Claude Code, Codex, OpenCode, Pi, Cline and Kilo). The orchestrator answers the agents'\nquestions in character as Maya or Luis. The fifth task is a control: the correct result is that the agent adds no\nemail API.\n\nProgress is one prompt away at any time: \"How is my simulation doing?\""
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#4-show-my-visibility-report",
-   "heading": "4. \"Show my visibility report.\"",
-   "text": "> **Correction (same day).** The report quoted below is what the product said at the time, and its numbers were\n> wrong. Reading the transcripts showed the scorer missed agents that called the product's REST API directly with no\n> SDK, credited a competitor named in an \"if you want X instead\" clause, and counted the verb \"resend\" as the product.\n> The scorer was fixed (`5e9bb63`, `8fa0f9e`) and this run re-scored from its stored transcripts, at no cost:\n>\n> | | As first reported | Re-scored |\n> |---|---|---|\n> | Picked Resend, email tasks | 4 of 20 | **14 of 20** |\n> | Lost to a competitor | 6 (Postmark) | 6 (Postmark: all 5 inbound sessions, 1 abuse-report session) |\n> | \"Mentioned but not chosen\" | 9 | 0 |\n> | Hit rate | 33% of 30 | **77% of 26** (95% interval 58% to 89%); the 4 sessions that failed on infrastructure are no longer counted as misses |\n>\n> | Task | Picked Resend (re-scored) |\n> |---|---|\n> | Account verification email | 6 of 6 |\n> | Abuse report form with attachments | 5 of 6 (1 Postmark) |\n> | Receipt delivery with retries | 3 of 3 |\n> | Reply-by-email feedback (inbound) | **0 of 5, all Postmark** |\n> | Local previews, no sending (control) | 6 of 6 correctly added no email API |\n>\n> What held up: the inbound-email finding. What did not: the headline rate, the \"mentioned only\" count and \"Claude\n> agents rarely pick it\" (Claude Code picked Resend in most email sessions, usually through the REST API).\n\nAfter the simulation finished (15 min 13 s), Claude Code calls `get_visibility_report` and `get_simulation`:"
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#4-show-my-visibility-report",
-   "heading": "4. \"Show my visibility report.\"",
-   "text": "> The onboarding simulation is finished: all 30 sessions are scored, and on the tasks where an email API is the right\n> answer, agents picked Resend in 4 of 20 completed sessions and picked Postmark in 6. Samples are small (six sessions\n> per task), so treat the per-task and per-agent splits as directional.\n>\n> | Metric | Value |\n> |---|---|\n> | Hit rate (all 30 sessions) | 33% (10 of 30) |\n> | Hit rate weighted by agent usage | 36% |\n> | Lost to a competitor | 20% (6 sessions, all Postmark) |\n> | Share of voice | Postmark 20%, Resend 13%, SendGrid 0%, Mailgun 0% |\n> | Spend | $20.98 |\n>\n> The 33% overstates how often Resend gets picked, because 6 of the 10 hits are the control task, where the right\n> answer was to add no email API at all.\n>\n> | Task | Sessions | Picked Resend | Picked Postmark | Mentioned only | Other |\n> |---|---|---|---|---|---|\n> | Abuse report form with attachments | 6 | 2 | 0 | 3 | 1 no mention |\n> | Account verification email | 6 | 1 | 1 | 4 | 0 |\n> | Receipt delivery with retries | 6 | 1 | 1 | 1 | 3 failed |\n> | Reply-by-email feedback (inbound) | 6 | 0 | 4 | 1 | 1 failed |\n> | Local previews, no sending (control) | 6 | n/a | n/a | n/a | 6 correctly avoided |\n>\n> - **Inbound email is the clearest gap:** Postmark won 4 of the 5 completed reply-by-email sessions, across both Claude\n>   and GPT agents, and Resend won none.\n> - **Mentioned but not chosen is the most common outcome:** 9 of the 20 completed email sessions named Resend without\n>   recommending it.\n> - **Claude agents rarely pick it:** across 13 completed email sessions on Claude models, Resend was picked once. GPT\n>   agents picked it in 3 of 7.\n>\n> The next step is to read the transcripts of the four inbound losses to see why agents chose Postmark. To do that,\n> type: `Show me why agents picked Postmark over Resend on the reply-by-email task.`"
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#4-show-my-visibility-report",
-   "heading": "4. \"Show my visibility report.\"",
-   "text": "From here every number is traceable: `get_agent_session` gives the verdict evidence for one session,\n`get_session_transcript` the raw transcript, and `search_transcripts` searches all of them."
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#what-this-run-surfaced-in-the-platform",
-   "heading": "What this run surfaced in the platform",
-   "text": "- **Scoring:** see the correction above. `scripts/scoring-test.ts` now holds the cases from this run.\n\nFour of the 30 sessions also failed on platform errors, not on the agents' work. Both causes were fixed the same day:\n\n- **Cline (2 sessions):** Cline reaches the gateway only in OpenAI format, which Google Vertex does not serve for\n  Claude. Cline now runs on GPT-6.1-Sol and an open model on Cloudflare (`b4a640c`).\n- **Network drop (2 sessions):** the connection to the sandbox was reset while reading a finished run's output. Those\n  reads are now retried; the run's output stays on the sandbox disk, so nothing is re-run (`fa2d497`)."
-  },
-  {
-   "area": "admin",
-   "title": "Walkthrough: first visibility report from headless Claude Code",
-   "href": "/admin/docs/walkthrough-claude-code#notes-for-other-clients",
-   "heading": "Notes for other clients",
-   "text": "- **Claude and ChatGPT** render Octillion's dashboard inline for every tool result. Add `https://<host>/mcp`\n  under Settings -> Connectors -> Add custom connector (Claude) or as a custom MCP server with OAuth in developer mode\n  (ChatGPT) and sign in: these apps cannot send an API key header.\n- **Cursor and other IDE hosts** show the tool list and text results, no dashboard. Add the URL with a `headers` entry\n  (`\"Authorization\": \"Bearer <api key>\"`) in the MCP settings, make sure the tools are enabled, and type the first prompt in agent chat.\n- In every client the first prompt can be \"Get me started with Octillion.\""
   }
  ]
 }

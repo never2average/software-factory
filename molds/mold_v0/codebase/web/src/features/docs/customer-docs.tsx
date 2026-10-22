@@ -8,6 +8,7 @@ import { DocsLayout } from './docs-layout';
 import { markdownHeadings, splitLead, type DocNavGroup } from './docs-data';
 // Generated from the MCP server itself (scripts/export-mcp-tools.ts; the smoke test fails when it is stale).
 import catalog from '@/content/mcp-tools.generated.json';
+import { profile } from '@/config/profile.generated';
 
 const PAGES = guidePages(catalog);
 const href = (slug: string) => `${CUSTOMER_DOCS_PATH}/${slug}`;
@@ -31,7 +32,7 @@ export function CustomerDocPage({ slug }: { slug: string }) {
   return (
     <DocsLayout nav={NAV} title={page.title} headings={markdownHeadings(rest)}
       description={lead ? <Markdown className='text-muted-foreground max-w-none text-lg [&_p]:my-0 [&_p]:leading-relaxed'>{lead}</Markdown> : undefined}
-      meta={tools ? <span>Generated from the Octillion MCP server: {catalog.tools.length} tools{catalog.prompts.length ? `, ${catalog.prompts.length} slash commands` : ''}.</span> : undefined}>
+      meta={tools ? <span>Generated from the {profile.name} MCP server: {catalog.tools.length} tools{catalog.prompts.length ? `, ${catalog.prompts.length} slash commands` : ''}.</span> : undefined}>
       <Markdown className='max-w-none'>{rest}</Markdown>
     </DocsLayout>
   );

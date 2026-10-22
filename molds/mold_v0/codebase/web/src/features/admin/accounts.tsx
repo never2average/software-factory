@@ -16,6 +16,7 @@ import { RecordView, type RecordCol, type RecordViewDef } from '@/components/lay
 import { AccountPeek, AccountPeekActions, accountActions, dollars, useAccountActions, type Org } from './account-peek';
 import { copyText, StageDots, StatusBadge, SubBadge, When } from './ui';
 import { Gate } from './role';
+import { hostFeature } from '@/features/packs/host-nav';
 
 interface Orgs { orgs: Org[]; stages: { id: string; label: string; next: string }[]; stripe_error?: string }
 
@@ -131,7 +132,7 @@ export function AdminAccounts() {
         primaryMenu={[{ label: 'Copy contact emails (current view)', icon: <Icons.teams />, onSelect: () => copyContacts(tabRows()) }]}
         bulk={(list) => [
           { label: 'Copy contact emails', icon: <Icons.teams />, onSelect: () => copyContacts(list) },
-          ctl.lock({ label: `Send a tip to ${list.length}`, icon: <Icons.chat />, onSelect: () => ctl.open('tip', ...list) }, 'journeys')
+          ...(hostFeature('tips') ? [ctl.lock({ label: `Send a tip to ${list.length}`, icon: <Icons.chat />, onSelect: () => ctl.open('tip', ...list) }, 'journeys')] : [])
         ]}
         actions={(o) => accountActions(o, ctl)}
         empty='No accounts yet. Approve an access request or create one.'

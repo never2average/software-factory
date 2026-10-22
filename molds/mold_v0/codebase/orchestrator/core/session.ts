@@ -2,7 +2,7 @@
  * WorkerSession: one claimed Octillion job running in one sandbox, possibly over several harness runs
  * (launch, then resumes carrying the simulated developer's replies).
  *
- * This is the deterministic core. The Pi orchestrator (pi-octillion/) drives it through tools; worker.ts drives
+ * This is the deterministic core. A host pack's orchestrator (orchestrator/packs/<id>/, e.g. the Pi one) drives it through tools; worker.ts drives
  * it with no LLM at all (launch -> nudge until done -> finish). Both share every guarantee here: heartbeats, the
  * MAX_SESSION_MINUTES deadline, server-side cancellation, max_user_turns, the git diff event, /complete, cleanup.
  *
