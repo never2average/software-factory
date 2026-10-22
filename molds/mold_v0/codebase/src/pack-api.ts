@@ -63,6 +63,7 @@ import type { AccountPermission, AccountRole } from "./account-roles.js";
 import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.js";
 import { parseCron } from "./cron.js";
 import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
+import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 
 export { z };
 
@@ -924,11 +925,13 @@ export type Chart = z.output<typeof ChartSchema>;
  *   runs          the workspace's runs; reports: finished runs and their results
  *   credentials, usage, schedules, notices, setup, billing, profile   the shell's own page
  *   page          one of the pack's own pages (pack.json pages, `page`)
+ *   files         the pack's workspace store in the console's file viewer (mold_v0-056; /app/files): versions, files,
+ *                 diffs, for the roles that may read every one of the pack's record areas
  * `label` is the tab's name in the app's words (default: the area's label, else the shell's word), `icon` one of
  * TAB_ICONS, `roles` who sees it (narrowing what its data allows: an area tab is never shown to a role that may not read
  * the area, an overview never to one that may read none of its metrics).
  */
-export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "page"] as const;
+export const TAB_KINDS = ["overview", "area", "runs", "reports", "credentials", "usage", "schedules", "notices", "setup", "billing", "profile", "page", "files"] as const;
 /** The icons a tab may use: names of the console's icon set (web/src/components/icons.tsx). */
 export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "gauge", "health", "kanban", "inbox", "building", "route", "rocket", "book",
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
@@ -1112,6 +1115,12 @@ export interface PackDefinition {
   /** The generated MCP tools' settings (mold_v0-060; src/mcp-tools.ts): prefix, include, exclude, rename, describe, admin_only. */
   mcp?: z.input<typeof McpSettingsSchema>;
   /**
+   * The workspace store's settings (mold_v0-056; src/workspace-store-policy.ts): how long old versions are kept
+   * (retention: keep_last, keep_days, under the platform's ceiling) and the files the console's viewer never shows
+   * (secret_paths). Needs a job kind with workspace: true (or an agent-workspace kind).
+   */
+  workspaceStore?: z.input<typeof WorkspaceStoreSchema>;
+  /**
    * After a run of one of this pack's job kinds with `workspace: true` succeeds and its write-back is committed
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
    * (its records, through ctx.records), so the results may name what the index made. Called with every file of the
@@ -1210,6 +1219,12 @@ export function validatePack(p: PackDefinition, partial = false): PackDefinition
   if (p.runResults !== undefined) {
     const v = RunResultsSchema.safeParse(p.runResults);
     if (!v.success) problems.push(at(`runResults: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));
+  }
+  if (p.workspaceStore !== undefined) {
+    const v = WorkspaceStoreSchema.safeParse(p.workspaceStore);
+    if (!v.success) problems.push(at(`workspaceStore: ${v.error.issues.map((e) => `${e.path.join(".") || "value"} ${e.message}`).join("; ")}`));
+    if (!(p.agentJobKinds ?? []).length && !(p.jobKinds ?? []).some((k) => (k as { workspace?: boolean })?.workspace))
+      problems.push(at("workspaceStore settles the workspace store's retention and viewer: declare a job kind with workspace: true (or agent-workspace)"));
   }
   const kinds = new Set((p.jobKinds ?? []).map((k) => k.name));
   for (const k of p.agentJobKinds ?? []) if (k?.name && kinds.has(k.name)) problems.push(at(`job kind ${k.name} is declared twice`)); else if (k?.name) kinds.add(k.name);
