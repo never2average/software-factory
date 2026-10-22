@@ -1,6 +1,6 @@
 'use client';
 // Operations › FinOps (/admin/finops; /admin/spend redirects here; src/revenue.ts, src/spend.ts and src/spend-usage.ts).
-// Six tabs in ?section=: Revenue (the default; GET /spend/revenue, Stripe subscriptions and invoices against metered model
+// Six tabs in ?section= (seven when the app bills runs: Run charges, GET /spend/run-charges, mold_v0-019): Revenue (the default; GET /spend/revenue, Stripe subscriptions and invoices against metered model
 // spend, by account), Plans (the same read by Stripe price: New plan, Experiment, Archive plan), Experiments (pricing A/B
 // tests: GET /spend/experiments, src/experiments.ts), Model spend (GET /spend, metered model cost), Compute hours (GET /spend/compute, sandbox time measured from
 // timestamps) and Data & storage (GET /spend/storage, sizes and rows). Measured figures only, never the boat price-table
@@ -141,12 +141,26 @@ interface Revenue {
     daily_mrr: number[]; daily_collected: number[]; daily_paying: number[]; daily_spend: number[]; daily_margin_pct: (number | null)[];
   } | null;
   accounts: RevenueAccount[]; plans: RevenuePlan[];
+  /** Price per run (mold_v0-019): present only when the app bills runs (or has billed them). */
+  run_charges?: RunCharges;
+}
+interface ChargeTotals { currency: string; charged: number; credited: number; net: number; runs: number; charged_runs: number; credits: number; pending: number; failed: number }
+interface ChargeRow {
+  id: string; run_id: string; kind: 'charge' | 'credit'; pack: string; job_kind: string; attempt: number; run_status: string; requested_by: string | null;
+  currency: string; amount_minor: number; amount: number; model_cost_usd: number; reason: string | null;
+  delivery: 'pending' | 'stripe' | 'ledger' | 'none'; delivery_error: string | null; created_at: string; delivered_at: string | null;
+  account: { slug: string; name: string | null };
+}
+interface RunCharges {
+  enabled: boolean; currency: string | null; meter: string | null; range: { from: string; to: string };
+  rules: { max_fixed: number; max_cost_plus_percent: number; charge_failed_runs: boolean; charge_cancelled_runs: boolean } | null;
+  totals: ChargeTotals[]; accounts: (ChargeTotals & { slug: string; name: string | null })[]; rows?: ChargeRow[];
 }
 
 // ---------------------------------------------------------------- shared bits
 
 const BASE = '/admin/finops';
-const TABS = [['revenue', 'Revenue'], ['plans', 'Plans'], ['experiments', 'Experiments'], ['spend', 'Model spend'], ['compute', 'Compute hours'], ['storage', 'Data & storage']] as const;
+const TABS = [['revenue', 'Revenue'], ['plans', 'Plans'], ['experiments', 'Experiments'], ['spend', 'Model spend'], ['compute', 'Compute hours'], ['storage', 'Data & storage'], ['charges', 'Run charges']] as const;
 type Tab = (typeof TABS)[number][0];
 /** Older links: the Accounts and Models tabs are Model spend now, Days became Compute hours. */
 const OLD: Record<string, Tab> = { accounts: 'spend', models: 'spend', days: 'compute' };
@@ -197,7 +211,10 @@ function SpendPage() {
   const spend = useAdmin<Spend>(tab === 'spend' ? `/spend?${q}` : null, { keep: true });
   const compute = useAdmin<Compute>(tab === 'compute' ? `/spend/compute?${q}` : null, { keep: true });
   const storage = useAdmin<Storage>(tab === 'storage' ? `/spend/storage?${q}` : null, { keep: true });
-  const active = tab === 'revenue' || tab === 'plans' ? revenue : tab === 'experiments' ? exps : tab === 'spend' ? spend : tab === 'compute' ? compute : storage;
+  const charges = useAdmin<RunCharges | { enabled: false }>(tab === 'charges' ? `/spend/run-charges?${q}` : null, { keep: true });
+  const active = tab === 'revenue' || tab === 'plans' ? revenue : tab === 'experiments' ? exps : tab === 'spend' ? spend : tab === 'compute' ? compute : tab === 'charges' ? charges : storage;
+  // Run charges (mold_v0-019) is a tab only when the app bills runs (the Revenue report says so), or a link opens it.
+  const tabs = TABS.filter(([id]) => id !== 'charges' || tab === 'charges' || !!revenue.data?.run_charges);
   const qc = useQueryClient();
   const fetching = useIsFetching({ queryKey: ['admin'] }) > 0;
   const bar = (
@@ -210,7 +227,7 @@ function SpendPage() {
   return (
     <PageContainer>
       <div className='flex min-w-0 flex-col gap-3'>
-        <UrlTabs tabs={TABS} tab={tab} base={BASE} right={
+        <UrlTabs tabs={tabs} tab={tab} base={BASE} right={
           <div className='flex flex-wrap items-center justify-end gap-2'>
             {unpriced > 0 && <span className={cn('text-sm', AMBER)} title={UNPRICED}>{unpriced.toLocaleString()} unpriced requests: spend is understated</span>}
             <Button variant='outline' size='sm' disabled={fetching} onClick={() => void qc.refetchQueries({ queryKey: ['admin'], type: 'active' })} title='Load the figures again'>
@@ -230,6 +247,8 @@ function SpendPage() {
         {tab === 'spend' && <SpendTab data={spend.data} loading={!spend.data && !spend.error} bar={bar} group={group} range={range} />}
         {tab === 'compute' && <ComputeTab data={compute.data} loading={!compute.data && !compute.error} bar={bar} group={group} />}
         {tab === 'storage' && <StorageTab data={storage.data} loading={!storage.data && !storage.error} bar={bar} group={group} />}
+        {tab === 'charges' && <ChargesTab data={charges.data && 'totals' in charges.data ? charges.data : undefined} off={charges.data?.enabled === false && !('totals' in charges.data)}
+          loading={!charges.data && !charges.error} bar={bar} group='account' />}
       </div>
     </PageContainer>
   );
@@ -838,6 +857,80 @@ function ArchivePlan({ plan, onClose }: { plan: RevenuePlan | null; onClose: () 
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+// ---------------------------------------------------------------- Run charges (mold_v0-019)
+
+const DELIVERY: Record<ChargeRow['delivery'], string> = { pending: 'Pending', stripe: 'Stripe', ledger: 'Ledger', none: 'Not billed' };
+const amountOf = (v: number, currency: string) => v.toLocaleString(undefined, { style: 'currency', currency: currency.toUpperCase() });
+
+/**
+ * Every account's run charges and credits in the range: totals in the app's currency, then one row per charge or
+ * credit (where it went: Stripe, the ledger, or still pending with its last error). An operator may credit a charged
+ * run once, with a reason (row ⋯ › Credit this run: POST /spend/run-charges/:run_id/credit).
+ */
+function ChargesTab({ data, loading, bar, off }: TabProps<RunCharges> & { off: boolean }) {
+  const role = useAdminRole();
+  const [crediting, setCrediting] = useState<ChargeRow | null>(null);
+  const t = data?.totals.find((x) => x.currency === data.currency) ?? data?.totals[0];
+  const rows = data?.rows ?? [];
+  const credited = new Set(rows.filter((r) => r.kind === 'credit').map((r) => r.run_id));
+  const cards = (
+    <StatStrip items={[
+      { label: 'Charged', value: t ? amountOf(t.charged, t.currency) : '—' },
+      { label: 'Credited', value: t ? amountOf(-t.credited, t.currency) : '—' },
+      { label: 'Net', value: t ? amountOf(t.net, t.currency) : '—' },
+      { label: 'Runs charged', value: t ? `${t.charged_runs.toLocaleString()} of ${t.runs.toLocaleString()}` : '—' }
+    ]} />
+  );
+  const mixed = (data?.totals.length ?? 0) > 1 ? <span className={cn('text-sm', AMBER)}>Charges in {data!.totals.map((x) => x.currency).join(', ').toUpperCase()}: the cards show {t?.currency.toUpperCase()}.</span> : null;
+  const owed = t && t.pending ? <span className={cn('text-sm', t.failed ? AMBER : 'text-muted-foreground')}>{t.pending} pending{t.failed ? `, ${t.failed} failing (see each row)` : ''}</span> : null;
+  const cols: RecordCol<ChargeRow>[] = [
+    { key: 'when', label: 'When', keep: true, type: 'date', value: (r) => r.created_at, render: (r) => num(new Date(r.created_at).toLocaleString()) },
+    { key: 'account', label: 'Account', title: true, type: 'select', value: (r) => r.account.name ?? r.account.slug, render: (r) => (
+      <a className='hover:underline' href={accountHref(r.account.slug)}>{r.account.name ?? r.account.slug}</a>) },
+    { key: 'kind', label: 'Run kind', type: 'select', value: (r) => `${r.pack}/${r.job_kind}`, render: (r) => (
+      <span className='flex min-w-0 flex-col gap-0.5'><span className='truncate'>{r.kind === 'credit' ? 'Credit · ' : ''}{r.job_kind}</span><Mono>{r.run_id}</Mono></span>) },
+    { key: 'status', label: 'Run', type: 'select', value: (r) => r.run_status, render: (r) => <span title={r.reason ?? undefined}>{r.run_status}{r.attempt > 1 ? ` (attempt ${r.attempt})` : ''}</span> },
+    { key: 'cost', label: 'Model cost', className: 'text-right', hidden: true, type: 'number', value: (r) => r.model_cost_usd, render: (r) => num(cents(r.model_cost_usd)) },
+    { key: 'amount', label: 'Amount', className: 'text-right', keep: true, type: 'number', value: (r) => r.amount, render: (r) => twoLine(amountOf(r.amount, r.currency), r.reason) },
+    { key: 'delivery', label: 'Billed to', type: 'select', value: (r) => DELIVERY[r.delivery], render: (r) => (
+      <span className={cn(r.delivery === 'pending' && r.delivery_error && AMBER)} title={r.delivery_error ?? undefined}>{DELIVERY[r.delivery]}{r.delivery === 'pending' && r.delivery_error ? ' (retrying)' : ''}</span>) }
+  ];
+  return (<>
+    <RecordView id='finops-run-charges' rows={rows} loading={loading} rowKey={(r) => r.id} cols={cols} noun='charges' initialSize={50} compact summary={cards}
+      searchText={(r) => `${r.account.name ?? ''} ${r.account.slug} ${r.run_id} ${r.pack}/${r.job_kind} ${r.reason ?? ''}`} searchPlaceholder='Search accounts, runs'
+      filters={<>{bar}{owed}{mixed}</>} defaultSort={[{ key: 'when', dir: 'desc' }]} exportName={exportName('run-charges', 'run', data?.range ? { ...data.range } : undefined)}
+      actions={(r) => [
+        { label: 'Copy run ID', icon: <Icons.page />, onSelect: () => copyText(r.run_id, 'Run ID copied') },
+        ...(r.kind === 'charge' && r.amount_minor > 0 && !credited.has(r.run_id) ? [role.lock({ label: 'Credit this run', icon: <Icons.billing />, separator: true, onSelect: () => setCrediting(r) }, 'accounts')] : [])
+      ]}
+      empty={off ? 'This app does not charge for runs (profile.json billing is off).' : 'No run charges in this range.'} />
+    <CreditRun row={crediting} onClose={() => setCrediting(null)} />
+  </>);
+}
+
+function CreditRun({ row, onClose }: { row: ChargeRow | null; onClose: () => void }) {
+  const [reason, setReason] = useState('');
+  const credit = useAdminAction((v: { run: string; reason: string }) => post(`/spend/run-charges/${encodeURIComponent(v.run)}/credit`, { reason: v.reason }), { success: 'Run credited' });
+  return (
+    <Dialog open={!!row} onOpenChange={(v) => { if (!v) { setReason(''); onClose(); } }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Credit this run?</DialogTitle>
+          <DialogDescription>
+            {row ? `${row.account.name ?? row.account.slug} gets ${amountOf(row.amount, row.currency)} back for run ${row.run_id}. ` : ''}
+            A run is credited once. When its charge went to Stripe, the credit comes off the customer&apos;s next invoice; otherwise it is recorded here.
+          </DialogDescription>
+        </DialogHeader>
+        <FormRow id='credit-reason' label='Reason (shown on the credit)'><Input id='credit-reason' value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder='Why it is credited' /></FormRow>
+        <DialogFooter>
+          <Button variant='outline' onClick={() => { setReason(''); onClose(); }}>Cancel</Button>
+          <Button disabled={!reason.trim() || credit.isPending} onClick={() => { if (row) credit.mutate({ run: row.run_id, reason: reason.trim() }, { onSettled: () => { setReason(''); onClose(); } }); }}>Credit run</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
