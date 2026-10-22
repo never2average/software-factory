@@ -381,6 +381,28 @@ export type RecordAction = keyof z.output<typeof PermissionsSchema>;
  * more than `max_unresolved` of them (default 100) and the run's results are refused as with "reject". A reference to
  * an area that is not declared, or not of the role it is used in, is a mistake in the pack: always refused.
  */
+/**
+ * Price per run (mold_v0-019; src/run-charges.ts): what one run of the kind is charged when it ends, in `currency`
+ * (ISO 4217, lower case: the app's billing currency). `fixed` is an amount in major units (2.5 is $2.50);
+ * `cost_plus_percent` charges the run's metered model cost (USD, from the gateway, never a figure the run reports) plus
+ * that percent, so it needs `currency` usd. Either or both. A succeeded run pays both. `on_failure` says what a failed
+ * run pays ("free", the default; "cost": the cost-plus part; "full") and `on_cancel` a cancelled one ("free" or
+ * "cost"); a run the platform failed (infrastructure) is never charged. A price does nothing unless the app's profile
+ * turns billing on (profile.json `billing`), and the profile's rules bound it: the currency must be the app's, the
+ * fixed amount and the percent are clamped to its ceilings, and a failed or cancelled run is charged only when the
+ * profile allows it. A pack can price its runs; it can never raise what the platform allows.
+ */
+export const RunPriceSchema = z.object({
+  currency: z.string().regex(/^[a-z]{3}$/, "a currency code in lower case, e.g. usd"),
+  fixed: z.number().min(0).max(1_000_000).optional(),
+  cost_plus_percent: z.number().min(0).max(10_000).optional(),
+  on_failure: z.enum(["free", "cost", "full"]).default("free"),
+  on_cancel: z.enum(["free", "cost"]).default("free"),
+}).strict()
+  .refine((p) => p.fixed !== undefined || p.cost_plus_percent !== undefined, "a price needs fixed, cost_plus_percent or both")
+  .refine((p) => p.cost_plus_percent === undefined || p.currency === "usd", { message: "cost_plus_percent charges model cost, which is in usd: the price's currency must be usd", path: ["cost_plus_percent"] })
+  .refine((p) => (p.on_failure !== "cost" && p.on_cancel !== "cost") || p.cost_plus_percent !== undefined, { message: "\"cost\" charges the cost-plus part: declare cost_plus_percent", path: ["on_failure"] });
+
 const jobKindBase = {
   name,
   label: z.string().min(1).max(80).optional(),
@@ -397,6 +419,7 @@ const jobKindBase = {
    */
   concurrency_per_workspace: z.number().int().min(1).max(100).optional(),
   month_budget_usd: z.number().positive().max(100_000).optional(),
+  price: RunPriceSchema.optional(),
   egress: z.array(host).max(50).default([]),
   /** The workspace store (mold_v0-033): check the workspace's snapshot out before the run, write it back after. */
   workspace: z.boolean().default(false),
@@ -461,6 +484,32 @@ export const AgentJobKindSchema = z.object({
   }
   for (const name of Object.keys(k.agent.env)) if (RESERVED_ENV.test(name))
     ctx.addIssue({ code: "custom", message: `${name} is set by the shell for every run (PATH, HOME, RUN_*, proxy and loader settings)`, path: ["agent", "env", name] });
+  // mold_v0-074: what a step or the command receives is one of the kind's credentials; git hosts are reachable.
+  const issue = (message: string, ...p: (string | number)[]) => ctx.addIssue({ code: "custom", message, path: ["agent", ...p] });
+  const own = new Set(k.credentials);
+  const onEgress = (h: string) => k.egress.some((e) => { const x = e.replace(/^\*\./, "").toLowerCase(); return h === x || h.endsWith(`.${x}`); });
+  for (const n of k.agent.credentials ?? []) if (!own.has(n)) issue(`${n} is not one of the kind's credentials`, "credentials");
+  for (const [j, g] of k.agent.git_credentials.entries()) {
+    if (!own.has(g.credential)) issue(`${g.credential} is not one of the kind's credentials`, "git_credentials", j, "credential");
+    if (!onEgress(g.host)) issue(`${g.host} is not in the kind's egress (git could not reach it)`, "git_credentials", j, "host");
+  }
+  let total = k.agent.timeout_seconds;
+  for (const [i, st] of k.agent.steps.entries()) {
+    total += st.timeout_seconds;
+    for (const n of st.credentials) if (!own.has(n)) issue(`${n} is not one of the kind's credentials`, "steps", i, "credentials");
+    for (const [j, g] of st.git_credentials.entries()) {
+      if (!own.has(g.credential)) issue(`${g.credential} is not one of the kind's credentials`, "steps", i, "git_credentials", j, "credential");
+      if (!onEgress(g.host)) issue(`${g.host} is not in the kind's egress (git could not reach it)`, "steps", i, "git_credentials", j, "host");
+    }
+    if (st.checkout?.credential && !own.has(st.checkout.credential)) issue(`${st.checkout.credential} is not one of the kind's credentials`, "steps", i, "checkout", "credential");
+    for (const h of st.checkout?.hosts ?? []) if (!onEgress(h)) issue(`${h} is not in the kind's egress`, "steps", i, "checkout", "hosts");
+  }
+  if (total > k.token_lifetime_seconds) issue(`the steps and the command may take ${total} s, longer than token_lifetime_seconds (the run's deadline)`, "steps");
+  // mold_v0-073: an input from the run's scope is one of the kind's declared arguments when it declares them.
+  if (k.args) for (const [name, inp] of Object.entries(k.agent.inputs)) {
+    const [root, key] = inp.from.split(".");
+    if (root === "scope" && !k.args.some((a) => a.name === key)) issue(`input ${name}: ${inp.from} is not one of the kind's arguments (args)`, "inputs", name, "from");
+  }
 });
 
 /**

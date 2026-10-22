@@ -1,9 +1,45 @@
 {
   "lane": "load",
   "order": 30,
-  "summary": "No harness: the product ships no load or concurrency test of its own, so this lane is recorded skipped, never pass.",
-  "not_covered": [
-    "Throughput and latency under concurrent MCP clients are not measured for mold_v0 apps. A load harness is a change to the mold's source (or a factory harness written for it), not a default here."
+  "summary": "A small, bounded, read-only load against the DEPLOYED app, with a row per pack: after a warm-up, 30 seconds of 4 concurrent clients under a cap of 8 requests a second and 240 requests, spread over the MCP connector's tools/list and every tool the server marks read-only that needs no argument (with the lane-check organisation's key), and the console's public pages (/, /healthz through the console to the API, and the pages a host pack serves signed out). Each pack's row (the tools and pages it owns, from the lane copy) and the overall row must keep the error rate at or under 1%, p50 at or under 1500 ms and p95 at or under 5000 ms; when a threshold trips, the measurement runs once more and the lane fails only if the second pass trips too. Requests go only to the app's own two addresses, each proven its own first (on Vercel: Vercel says one of this app's projects serves it; on its own server: the address its deploy recorded).",
+  "checks": [
+    {
+      "name": "load.mcp_and_pages",
+      "run": "python3 {testing}/load/load.py {app_id} --codebase {codebase}",
+      "cwd": "root",
+      "timeout_s": 900,
+      "emits": "markdown_table",
+      "expect": {
+        "exit": 0,
+        "stdout": [
+          "rows: [1-9][0-9]* \\(0 failed\\)"
+        ],
+        "stdout_not": [
+          "\\| fail \\|"
+        ]
+      },
+      "requires": [
+        {
+          "path": "{codebase}/node_modules/.bin/tsx",
+          "else": "Install the product's own dependencies into the codebase's ignored folders (no lockfile is written there): npm --prefix molds/mold_v0/codebase ci && npm --prefix molds/mold_v0/codebase/orchestrator ci && npm --prefix molds/mold_v0/codebase/web install --no-package-lock"
+        },
+        {
+          "cmd": "python3 {root}/.claude/scripts/lib/single_service.py lane-key-path {app_id}",
+          "else": "Deploy the app, then (with the operator's yes, it adds one organisation to the app's data) give the lanes an organisation of its own: python3 .claude/scripts/provision.py {app_id} --lane-key --dry-run, then --lane-key --yes"
+        },
+        {
+          "cmd": "python3 {testing}/load/load.py {app_id} --check-addresses",
+          "else": "The app's MCP connector or console address could not be shown to be its own (on Vercel: Vercel did not confirm that one of this app's projects serves it, or could not be asked), so nothing is sent. Run `python3 {testing}/load/load.py {app_id} --check-addresses` to see which, and re-deploy if state names an address that is not the app's: python3 .claude/scripts/provision.py {app_id} {deploy}"
+        }
+      ],
+      "why": "An MCP client lists tools and calls them, several at once: a connector whose read-only calls fail or crawl under four clients is one a team cannot use. A row per pack shows which pack's tools are slow or failing."
+    }
   ],
-  "checks": []
+  "not_covered": [
+    "Write paths. Only tools the server marks read-only and that need no argument are called (a tool that needs an identifier is not exercised under load); nothing that starts a run, spends inference or changes data. The app records its usual per-call usage rows for the lane-check organisation, as for any client.",
+    "Signed-in console pages: they need a Clerk session the factory cannot mint for a deployed app; the accessibility and responsiveness lanes render them from the lane copy instead.",
+    "Sustained soak, spikes and capacity: 30 seconds at a few requests a second finds a broken or crawling connector, not the point where the app falls over, connection-pool exhaustion or a cold database after hours idle (the warm-up hides the first cold start on purpose).",
+    "A tool's own work on real data: the lane-check organisation is usually empty, so a tool that answers 'nothing here yet' (a result marked isError, which is the tool answering) is timed but does no heavy work.",
+    "Pack tools the lane copy has that the deployed server does not list (a redeploy is due): they are named on their pack's row, not loaded."
+  ]
 }

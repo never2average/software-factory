@@ -1,0 +1,19 @@
+{
+  "name": "@clerk/nextjs",
+  "version": "0.0.0-lane-standin",
+  "private": true,
+  "type": "module",
+  "description": "A LANE STAND-IN for @clerk/nextjs, used only in build/<app_id>.lane-console/ (molds/mold_v0/testing/console/render.py), never in a deploy, a build copy or the mold. It reads the signed-in person from the __session cookie the lane's throwaway world signs (the shell's own mock Clerk, scripts/lib/mock-providers.ts), so the console's own pages render signed in against a local API on an embedded database. The API still verifies that token itself. Clerk's own sign-in and sign-up widgets are not reproduced: /auth pages are not graded. Its types are Clerk's own: render.py links types/ to the installed package's dist/types, so the console type-checks against the real API.",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./index.js"
+    },
+    "./server": {
+      "types": "./types/server/index.d.ts",
+      "default": "./server.js"
+    }
+  },
+  "main": "./index.js",
+  "types": "./types/index.d.ts"
+}
