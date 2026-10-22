@@ -787,21 +787,28 @@ release that served before, by itself): `provision.py <app> --set-remote host=<a
 `--remote-key`, then `--deploy-remote` (see every step first with `--dry-run`). It reuses vm_remote's host probe, SSH,
 DNS check, key pair, hidden prompt and env file, then:
 
-1. checks on this machine that the snapshot has every file the image build copies, that every name the compose file
-   requires is written from state or minted by the product's own `bootstrap.sh`, and that the compose project is
-   `sf-<app id>`, never the compose file's own default name, which another copy of the product uses;
+1. checks on this machine that the snapshot has every file the two image builds copy (the API's `Dockerfile` and the
+   console's `web/Dockerfile`), that every name the compose file requires is written from state or minted by the
+   product's own `bootstrap.sh`, that state lists the console's two sign-in names as the operator's values, and that
+   the compose project is `sf-<app id>`, never the compose file's own default name, which another copy of the product
+   uses;
 2. qualifies the server: Ubuntu 24.04, sudo, systemd, 4 GB, 2 CPUs, 20 GB free, no other web server, and the web
    ports free or held by this app's own project. It refuses a server where another stack already answers on 80/443;
 3. installs Docker and its compose plugin if absent, ufw (SSH, 80, 443 only) and fail2ban;
 4. copies the source into a new release directory beside the serving one;
 5. writes `DOMAIN` and `PUBLIC_URL` from state into `/etc/software-factory/<app>/env` (root, mode 600), then mints every
    name still missing (the database password and the product's keys) with the product's own `bootstrap.sh`, on the
-   server, in a private temp directory that sees names and never values. Optional keys (sign-in, billing, analytics)
-   stay off until the operator sets one with `provision.py <app> --set-secret NAME`;
-6. points `current` at the new release and runs `docker compose -p sf-<app> ... up -d --build --wait`; on failure it
+   server, in a private temp directory that sees names and never values. The console's sign-in keys
+   (`CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, mold.json `compose.console.operator_env`) are the operator's: the
+   deploy asks for each at a hidden prompt when the server lacks it (or the operator sets it first with
+   `provision.py <app> --set-secret NAME`). Other optional keys (billing, analytics) stay off until the operator sets one;
+6. points `current` at the new release, builds the API's image and then the console's, one at a time (a 4 GB server
+   cannot run both builds at once), and runs `docker compose -p sf-<app> ... up -d --build --wait`; on failure it
    switches back to the release that served before and brings that up;
-7. checks health: the app container healthy and not running as root, only Caddy publishing ports, and
-   `https://<domain>/healthz` answering 200 `{"ok": true}` from outside. Then old releases are removed.
+7. checks health: the API's and the console's containers healthy and not running as root, only Caddy publishing
+   ports, `https://<domain>/healthz` answering 200 `{"ok": true}` from outside **through the console** (so it reaches
+   the API), and `/admin` and `/app` answering without following a redirect (a page, its sign-in redirect, or
+   401/403; never a 5xx or nothing). Then old releases are removed.
 
 HTTPS comes from the stack's own Caddy (automatic certificate for `DOMAIN`), which is why the domain must point at the
 server first. `--rollback-remote` goes back to the previous release by hand.
@@ -857,9 +864,19 @@ image, no port, the Docker socket, `OCTILLION_RUN_API_URL=http://octillion:3333`
 default (`OCTILLION_RUN_SANDBOX`, `OCTILLION_MAX_RUN_SANDBOXES`); `deploy/rolling-deploy.sh` recreates the runner on the new
 image.
 
-**The console on a server of its own** is still not served the same way: the `Dockerfile` copies `/web/out` from its
-web stage, and the console's `next build` writes no static export (it is a server app). That is the server target's
-open question, not the Vercel one.
+**The console on a server of its own (mold_v0-020).** The compose stack runs the console as a service of its own,
+`console`: `web/Dockerfile` builds it with Next.js standalone output (`next.config.ts` `BUILD_STANDALONE`) from the
+codebase root, so the internal docs and a host pack's docs are bundled as on Vercel, and a host pack's console files
+(`web/src/packs/<id>/`, in the app's build copy) are in it. It runs as `node`, publishes no port, and is the second
+of the stack's two built services (the API's `Dockerfile` no longer has a web stage). The stack's Caddy sends the
+API's own paths (`/mcp`, `/api/*`, `/gw/*` with the model streams, `/.well-known/*`, `/admin/session`, `/admin/mcp`,
+`/install*`, `/preview/*`) straight to the API's replicas, and everything else (the console's pages and assets,
+sign-in, the public pages, `/healthz`) to the console, whose fallback rewrite reaches the API at
+`http://octillion:3333` inside the network for anything that is not one of its pages. The console holds that address
+and its two sign-in names, nothing else of the API's. Its build arguments are public values only (the API's address,
+the publishable key the browser needs, the public address); `CLERK_SECRET_KEY` is given at run time.
+`deploy/rolling-deploy.sh` builds both images one after the other and rolls the API, then the console, each a new
+replica healthy before the old one stops, and recreates Caddy when its routes changed.
 
 **Lanes** (`molds/mold_v0/testing/`, run by `lanes.py` as for any mold): *functional* runs the product's
 `npm run typecheck`, `npm run test:migrations` (embedded throwaway databases only; `MIGRATIONS_PG_URL` unset), `npm run

@@ -1,0 +1,14 @@
+# The build context of both images (Dockerfile, web/Dockerfile): never a secret, a local install or a build output.
+# The images install their own dependencies (npm ci) and build their own console.
+**/node_modules
+**/.next
+.git
+.env
+.env.*
+**/.env
+**/.env.*
+deploy/.env
+.pglite*
+.transcripts
+.vercel
+**/.vercel

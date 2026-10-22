@@ -68,10 +68,13 @@ answered its health checks or switches `current` back to the release that served
    env        state's settings (DOMAIN, PUBLIC_URL) and the operator's values merged into the env file; then every
               name still missing is minted ON THE SERVER by the mold's own bootstrap script, run in a private temp
               directory that sees the NAMES already present and never their values. Nothing is printed but names
-   up         `current` -> the new release; docker compose -p sf-<app> ... up -d --build --wait. On failure: back
+   up         `current` -> the new release; each image built on its own (the API's, then the console's), then
+              docker compose -p sf-<app> ... up -d --build --wait. On failure: back
               (and `previous` restored, so it never names the release that failed)
-   health     on the server: the app container healthy, running as a user other than root, and only the services
-              the compose file publishes holding a port; from here: https://<domain><health_path> answers 200 ok;
+   health     on the server: the app container (and the console's, when mold.json names one) healthy, running as a
+              user other than root, and only the services the compose file publishes holding a port; from here:
+              https://<domain><health_path> answers 200 ok (through the console, which reaches the API) and the
+              console's pages answer without following a redirect (a page, its sign-in redirect or 401/403);
               otherwise the server goes back to the release that served before (up.sh --back --drop), by itself
    keep       every release but the serving and the previous one removed
 
@@ -87,6 +90,14 @@ running_app_detail what was read); `provision.py <app> --verify-rls` reads it ag
 app is configured with has the product's policies and no organisation reaches another's rows. What it does not: it runs
 nothing inside a Vercel function; there the function's own probe (/healthz rls_probe, run by the product's cron at most
 hourly) is read and recorded as said, and "not run" is recorded as unmeasured, never as enforced.
+
+THE WEB CONSOLE ON THE SERVER (mold_v0-020). When mold.json names compose.console, the stack builds a second service,
+the console (mold_v0's web/, a server-rendered Next.js app, from its own web/Dockerfile: Next.js standalone output),
+with no published port, behind the stack's Caddy, which sends the API's own paths to the API service and everything
+else to the console. Its sign-in names (compose.console.operator_env) are the operator's values, like the Vercel
+console's, asked for at the deploy's hidden prompt when the server lacks them; a state that does not list them in
+secrets_user is refused before contact. Build arguments carry public values only (the API's address inside the
+network, the publishable key, the public address); the console's secret is given at run time.
 
 The database is the stack's own Postgres container on the compose network (no published port). Its password and the
 app's keys exist only in the env file on the server. State records names, the release, the health verdict and the
@@ -207,9 +218,11 @@ REF = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}")
 def parse_compose(text):
     """What a compose file says, read without a YAML library: the default project name, each service (whether it is
     built here, publishes ports, sits behind a profile, the ports it exposes, the names its environment block reads
-    whole), and every ${NAME...} reference with its operator. `$${...}` is compose's escape and is not a reference."""
+    whole), and every ${NAME...} reference with its operator. `$${...}` is compose's escape and is not a reference.
+    A built service also says which Dockerfile it is built from (`build: { dockerfile: X }` or a `build:` block's own
+    `dockerfile: X`), so the API's and the console's builds are told apart (mold_v0-020)."""
     out = {"name": "", "services": {}, "refs": []}
-    section, svc = None, None
+    section, svc, key4 = None, None, None
     for raw in text.splitlines():
         line = raw.split(" #", 1)[0].rstrip() if not raw.lstrip().startswith("#") else ""
         if not line.strip(): continue
@@ -221,16 +234,20 @@ def parse_compose(text):
         for n, op, dflt in REF.findall(line): out["refs"].append((n, op or "", dflt))
         if section != "services": continue
         if ind == 2 and line.strip().endswith(":") and not line.strip().startswith("-"):
-            svc = line.strip()[:-1]; out["services"][svc] = {"build": False, "ports": False, "profiles": False, "expose": [], "reads": [], "required_reads": []}
+            svc = line.strip()[:-1]; key4 = None
+            out["services"][svc] = {"build": False, "dockerfile": "", "ports": False, "profiles": False, "expose": [], "reads": [], "required_reads": []}
             continue
         if not svc: continue
         s = out["services"][svc]; t = line.strip()
         if ind == 4:
-            key = t.split(":", 1)[0]
-            if key == "build": s["build"] = True
+            key = key4 = t.split(":", 1)[0]
+            if key == "build":
+                s["build"] = True; m = re.search(r"\bdockerfile:\s*([^,}\s]+)", t)
+                if m: s["dockerfile"] = m.group(1).strip("'\"")
             elif key == "ports": s["ports"] = True
             elif key == "profiles": s["profiles"] = True
             elif key == "expose": s["expose"] += re.findall(r"\d+", t.split(":", 1)[1])
+        if ind == 6 and key4 == "build" and t.startswith("dockerfile:"): s["dockerfile"] = t.split(":", 1)[1].strip().strip("'\"")
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):\s*\$\{([A-Za-z_][A-Za-z0-9_]*)(:?[-?])?", t) if ind == 6 else None
         if m and m.group(1) == m.group(2):
             s["reads"].append(m.group(1))
@@ -252,14 +269,35 @@ def dockerfile_sources(text):
         out += parts[:-1]
     return out
 
+def console_service(cb, man, P):
+    """The web console as a service of the compose stack (mold_v0-020), when mold.json names one (compose.console): its
+    own image (a Dockerfile of its own, built from the codebase root like the API's), a port it exposes and publishes
+    nowhere, its health (the API's health path read THROUGH it), the pages read after a deploy, and the sign-in names
+    the operator holds for it. None when the mold names no console (the API is then the whole stack, as before)."""
+    c = man.get("compose") or {}; k = c.get("console") or {}
+    if not k.get("service"): return None
+    name = k["service"]; svc = P["services"].get(name)
+    if not svc or not svc["build"]:
+        raise Stop(f"{c.get('file')} has no service {name!r} built from the codebase, the console mold.json names (compose.console). Nothing was done.")
+    df = svc["dockerfile"] or "Dockerfile"
+    dtext = open(os.path.join(cb, df)).read() if os.path.isfile(os.path.join(cb, df)) else ""
+    env = k.get("operator_env") or {}
+    return {"service": name, "port": (svc["expose"] or [""])[0], "dockerfile": df, "present": bool(dtext),
+            "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)), "dockerfile_sources": [df] + dockerfile_sources(dtext),
+            "required": sorted(n for n, v in env.items() if v == "required"), "optional": sorted(n for n, v in env.items() if v != "required"),
+            "proxied_health": k.get("proxied_health") or man.get("health_path", "/healthz"), "pages": list(k.get("pages") or [])}
+
 def compose_facts(cb, man):
     """Everything the plan needs from the snapshot's own files. Raises Stop with one sentence if a file is missing."""
     c = man.get("compose") or {}
     cf = os.path.join(cb, c.get("file", ""))
     if not os.path.isfile(cf): raise Stop(f"the mold's compose file {c.get('file')} is not in molds/{man['mold_id']}/codebase. Nothing was done.")
     P = parse_compose(open(cf).read())
-    built = [n for n, s in P["services"].items() if s["build"]]
-    if len(built) != 1: raise Stop(f"{c.get('file')} builds {len(built)} services ({', '.join(built) or 'none'}); a single-service mold builds exactly one. Nothing was done.")
+    K = console_service(cb, man, P)
+    built = [n for n, s in P["services"].items() if s["build"] and not (K and n == K["service"])]
+    if len(built) != 1:
+        raise Stop(f"{c.get('file')} builds {len(built)} services ({', '.join(built) or 'none'}) besides {('its console, ' + K['service']) if K else 'nothing else'}; "
+                   f"a single-service mold builds exactly one (and, when mold.json names it, its console). Nothing was done.")
     app = built[0]; svc = P["services"][app]
     req = sorted({n for n, op, _ in P["refs"] if op.endswith("?")})
     opt = sorted({n for n, op, d in P["refs"] if op.endswith("-") and d == "" and n not in req})
@@ -271,8 +309,9 @@ def compose_facts(cb, man):
             "required": req, "optional": opt, "optional_secrets": [n for n in opt if CRED.search(n)],
             "app_reads_required": svc["required_reads"], "config": dict(c.get("config") or {}), "minted": minted,
             "mint": c.get("mint", ""), "publishers": sorted(n for n, s in P["services"].items() if s["ports"] and not s["profiles"]),
-            "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)), "dockerfile_sources": dockerfile_sources(dtext),
-            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man)}
+            "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)),
+            "dockerfile_sources": dockerfile_sources(dtext) + [x for x in (K["dockerfile_sources"] if K else []) if x not in dockerfile_sources(dtext)],
+            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "console": K}
 
 def missing_build_inputs(cb, F):
     """Files the image build copies that the snapshot does not have: the build would stop on the server."""
@@ -303,6 +342,14 @@ def preflight(cb, F, S):
     if nobody:
         bad.append(f"{F['file']} requires {', '.join(nobody)}, which neither state ({', '.join(F['config']) or 'nothing'}) nor the mold's "
                    f"own {F['mint'] or 'bootstrap script'} provides")
+    K = F.get("console")
+    if K and not K["present"]:
+        bad.append(f"the console's image is built from {K['dockerfile']}, which the mold's codebase does not contain. " + _codebase_fix(S["mold_id"], "add it"))
+    lack = [n for n in ((K or {}).get("required") or []) if n not in S["secrets_user"]]
+    if lack:
+        bad.append(f"the web console ({K['service']}) cannot sign anyone in without {', '.join(lack)}, which this app's state does not list as values "
+                   f"you hold (infrastructure.json secrets_user). Add {', '.join(lack)} to secrets_user (and take them out of secrets_optional), then "
+                   f"run python3 .claude/scripts/factory.py validate; the deploy then asks for each at a hidden prompt")
     if not PROJECT_RE.match(S["project"]) or S["project"] == F["default_project"]:
         bad.append(f"the compose project for this app is {S['project']!r}; it must be sf-<app id> and never {F['default_project']!r}, the "
                    f"compose file's own default, which names another copy's containers and volumes")
@@ -319,9 +366,11 @@ def secret_names(F, target, K=None):
     from state or minted on the server; vercel: DATABASE_URL comes from the app's own Neon database (provisioned at the
     first deploy), the names the app reads whole are minted by the same bootstrap script, plus CRON_SECRET for Vercel's
     own cron calls, all on the api project. With K (console_facts), the console's sign-in names join them: the operator's
-    to set when mold.json says the console needs them, else optional. Nothing else is the operator's to type."""
-    if target == "compose_remote":
-        return [], [n for n in F["required"] if n not in F["config"]], list(F["optional_secrets"])
+    to set when mold.json says the console needs them, else optional. On compose_remote the console's own sign-in names
+    (mold.json compose.console.operator_env) are the operator's in the same way. Nothing else is the operator's to type."""
+    if target == "compose_remote":   # the console's sign-in names (mold_v0-020) are the operator's to give, at the deploy's hidden prompt
+        cu = list((F.get("console") or {}).get("required") or [])
+        return cu, [n for n in F["required"] if n not in F["config"]], [n for n in F["optional_secrets"] if n not in cu]
     derived = ["DATABASE_URL"] + [n for n in F["app_reads_required"] if n not in F["config"]] + ["CRON_SECRET"]
     opt = [n for n in F["optional_secrets"] if n not in derived]
     user = list(K["required"]) if K else []
@@ -345,7 +394,8 @@ def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defa
     dom = (ans.get("domain") or "").strip().lower()
     if target == "compose_remote":
         cr = {"provider": "digitalocean", "ssh_user": "root", "ssh_port": 22, "ssh_key_ref": f"sf_{app_id}", "install_path": install_path(app_id),
-              "compose": {"project": f"sf-{slug(app_id)}", "file": F["file"], "service": F["service"]}}
+              "compose": dict({"project": f"sf-{slug(app_id)}", "file": F["file"], "service": F["service"]},
+                              **({"console": F["console"]["service"]} if F.get("console") else {}))}
         if hints.get("remote_host"): cr["host"] = hints["remote_host"]
         if dom: cr["domain"] = dom
         infra["compose_remote"] = cr
@@ -508,13 +558,19 @@ echo "firewall: fail2ban on for ssh"
 """, RULES=" ".join(shlex.quote(r) for r in rules), ALLOWS="\n".join("  " + r for r in rules), FACTORY=S["factory_dir"],
         PORTS=", ".join(str(p) for p in sorted({S["port"], 80, 443})) + (f" (SSH from {S['ssh_allow_from']} only)" if S["ssh_allow_from"] else ""))
 
-def up_sh(S):
+def built_services(F):
+    """The services `up` builds, API first: one at a time, so the console's `next build` never runs beside the API's install."""
+    return [F["service"]] + ([F["console"]["service"]] if F.get("console") else [])
+
+def up_sh(S, F=None):
     """`up.sh <release>`: `current` -> that release, the stack up and healthy; on failure, back to the one before, with
     `previous` restored to what it said before this deploy (so it never names the release that failed).
     `up.sh --back`: the operator's rollback: to `previous`, which then names the release just left (run again: forward).
     `up.sh --back --drop`: the deploy's own rollback after a failed health check: to `previous`, which is then restored
-    to what it said before this deploy. Either --back says NOTHING= and changes nothing when there is nowhere to go."""
+    to what it said before this deploy. Either --back says NOTHING= and changes nothing when there is nowhere to go.
+    Every image is built first, one service at a time (built_services), then the stack comes up on them."""
     return _head(S) + _dc(S) + VR.fill("""cd @INSTALL@
+upw() { for s in @BUILT@; do dc build "$s" || return 1; done; dc up -d --build --wait --wait-timeout @WAIT@; }
 point() { ln -sfn "releases/$1" current.new && mv -T current.new current; }
 cur=""; [ -L current ] && cur="$(basename "$(readlink current)")"
 restore() { if [ -n "$1" ]; then echo "$1" > previous; else rm -f previous; fi; }
@@ -524,7 +580,7 @@ if [ "${1:-}" = "--back" ]; then
     echo "NOTHING=no earlier release to go back to (serving ${cur:-nothing}); nothing was changed"; echo "SERVING=$cur"; exit 0
   fi
   point "$to"
-  if dc up -d --build --wait --wait-timeout @WAIT@; then
+  if upw; then
     if [ "${2:-}" = "--drop" ]; then restore "$(cat previous.before 2>/dev/null || true)"; else echo "$cur" > previous; fi
     echo "ROLLED_BACK=$to"; echo "SERVING=$to"; exit 0
   fi
@@ -537,29 +593,32 @@ was="$(cat previous 2>/dev/null || true)"
 if [ -n "$was" ]; then echo "$was" > previous.before; else rm -f previous.before; fi
 point "$REL"
 if [ -n "$cur" ] && [ "$cur" != "$REL" ]; then echo "$cur" > previous; fi
-if dc up -d --build --wait --wait-timeout @WAIT@; then echo "UP=ok"; echo "SERVING=$REL"; exit 0; fi
+if upw; then echo "UP=ok"; echo "SERVING=$REL"; exit 0; fi
 echo "UP=failed"
 if [ -n "$cur" ] && [ "$cur" != "$REL" ] && [ -d "releases/$cur" ]; then
   point "$cur"; restore "$was"
-  if dc up -d --build --wait --wait-timeout @WAIT@; then echo "ROLLED_BACK=$cur"; else echo "ROLLBACK_FAILED=$cur"; fi
+  if upw; then echo "ROLLED_BACK=$cur"; else echo "ROLLBACK_FAILED=$cur"; fi
 else
   echo "SWITCH_BACK=none"
 fi
 exit 1
-""", INSTALL=S["install"], WAIT=UP_WAIT_S)
+""", INSTALL=S["install"], WAIT=UP_WAIT_S, BUILT=" ".join(shlex.quote(x) for x in (built_services(F) if F else [])))
 
-def health_sh(S, F):
-    return _head(S) + _dc(S) + VR.fill("""cid="$(dc ps -q @SERVICE@ 2>/dev/null | head -n 1)"
+SERVICE_READ = """cid="$(dc ps -q @SERVICE@ 2>/dev/null | head -n 1)"
 if [ -n "$cid" ]; then
-  echo "APP_STATE=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid")"
-  echo "APP_UID=$(dc exec -T @SERVICE@ id -u 2>/dev/null || echo unknown)"
+  echo "@P@_STATE=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid")"
+  echo "@P@_UID=$(dc exec -T @SERVICE@ id -u 2>/dev/null || echo unknown)"
 else
-  echo "APP_STATE=absent"; echo "APP_UID=unknown"
+  echo "@P@_STATE=absent"; echo "@P@_UID=unknown"
 fi
-echo "PUBLISHED=$(docker ps --filter label=com.docker.compose.project=@PROJECT@ --format '{{.Label "com.docker.compose.service"}} {{.Ports}}' | awk '/->/ {print $1}' | sort -u | paste -sd, -)"
+"""
+def health_sh(S, F):
+    K = F.get("console")
+    reads = VR.fill(SERVICE_READ, SERVICE=shlex.quote(F["service"]), P="APP") + (VR.fill(SERVICE_READ, SERVICE=shlex.quote(K["service"]), P="CONSOLE") if K else "")
+    return _head(S) + _dc(S) + reads + VR.fill("""echo "PUBLISHED=$(docker ps --filter label=com.docker.compose.project=@PROJECT@ --format '{{.Label "com.docker.compose.service"}} {{.Ports}}' | awk '/->/ {print $1}' | sort -u | paste -sd, -)"
 echo "SERVING=$(basename "$(readlink @INSTALL@/current)")"
 echo "DISK_PERCENT=$(df -P / | awk 'NR==2 {gsub("%", "", $5); print $5}')"
-""", SERVICE=shlex.quote(F["service"]), PROJECT=shlex.quote(S["project"]), INSTALL=S["install"])
+""", PROJECT=shlex.quote(S["project"]), INSTALL=S["install"])
 
 def keep_sh(S):
     return _head(S) + VR.fill("""cd @INSTALL@/releases
@@ -575,7 +634,7 @@ echo "keep: serving $cur${prev:+, previous $prev}"
 
 def bundle(S, F):
     return {"qualify.sh": (VR.QUALIFY_SH + COMPOSE_PROBE, 0o755), "packages.sh": (packages_sh(S), 0o755), "firewall.sh": (firewall_sh(S), 0o755),
-            "up.sh": (up_sh(S), 0o755), "health.sh": (health_sh(S, F), 0o755), "keep.sh": (keep_sh(S), 0o755),
+            "up.sh": (up_sh(S, F), 0o755), "health.sh": (health_sh(S, F), 0o755), "keep.sh": (keep_sh(S), 0o755),
             "fail2ban-sshd.local": (VR.fail2ban_jail(S), 0o644)}
 
 def write_bundle(S, F, out):
@@ -625,9 +684,11 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
                                f"missing minted ON the server by the mold's own {F['mint'] or 'tool'}, which sees names, never values", "argv": ssh(env_cmd), "stdin": "NAME=value lines", "timeout": 120},
         {"id": "up", "title": f"current -> {rel}; docker compose -p {S['project']} up -d --build --wait (on failure: back to the release that served)",
          "argv": ssh(g(f"bash {S['factory_dir']}/up.sh {rel}")), "timeout": UP_WAIT_S * 2 + 1800},
-        {"id": "health", "title": f"on the server: {F['service']} {'healthy' if F['healthcheck'] else 'running'}, not root, only {', '.join(F['publishers']) or 'nothing'} publishing ports",
+        {"id": "health", "title": f"on the server: {' and '.join(built_services(F))} {'healthy' if F['healthcheck'] else 'running'}, not root, only {', '.join(F['publishers']) or 'nothing'} publishing ports",
          "argv": ssh(g(f"bash {S['factory_dir']}/health.sh")), "timeout": 120},
-        {"id": "public", "title": f"from here: {S['url']}{S['health_path']} answers 200 with ok", "argv": None, "timeout": PUBLIC_WAIT_S},
+        {"id": "public", "title": f"from here: {S['url']}{S['health_path']} answers 200 with ok" + (
+            f" (through the console, so it reaches the API), and {', '.join(F['console']['pages'])} answer (a page, its sign-in redirect or a refusal; never a 5xx)"
+            if F.get("console") else ""), "argv": None, "timeout": PUBLIC_WAIT_S},
     ] + ([
         {"id": "rls", "title": f"row-level security on the deployed database: the product's own `npm run {F['rls']['script']}` in a one-off "
                                f"container of the new release, with the server's env file (catalog + live probe, rolled back)",
@@ -678,16 +739,23 @@ def qualify(facts, S):
                    f"Two stacks cannot share those ports, and this deploy never stops or changes another one. Use a server of its own.")
     return bad
 
-def health_verdict(F, kv, public):
-    """Why the stack is not serving, from the server's read and the read from outside; [] when it is."""
-    bad = []; want = "healthy" if F["healthcheck"] else "running"
-    if kv.get("APP_STATE") != want: bad.append(f"the {F['service']} container is {kv.get('APP_STATE') or 'absent'}, not {want}")
-    if kv.get("APP_UID", "") in NOT_ROOT: bad.append(f"the {F['service']} container runs as root (uid {kv.get('APP_UID') or 'unknown'}), not as the image's own user")
+def health_verdict(F, kv, public, pages=None):
+    """Why the stack is not serving, from the server's read and the read from outside; [] when it is. With a console
+    (mold_v0-020) its container is judged as the API's is, and each of its pages must answer (PAGE_OK)."""
+    bad = []; K = F.get("console")
+    for svc, p, hc in [(F["service"], "APP", F["healthcheck"])] + ([(K["service"], "CONSOLE", K["healthcheck"])] if K else []):
+        want = "healthy" if hc else "running"
+        if kv.get(f"{p}_STATE") != want: bad.append(f"the {svc} container is {kv.get(p + '_STATE') or 'absent'}, not {want}")
+        if kv.get(f"{p}_UID", "") in NOT_ROOT: bad.append(f"the {svc} container runs as root (uid {kv.get(p + '_UID') or 'unknown'}), not as the image's own user")
     extra = sorted(set(x for x in (kv.get("PUBLISHED") or "").split(",") if x) - set(F["publishers"]))
     if extra: bad.append(f"{', '.join(extra)} publish(es) a port, but only {', '.join(F['publishers']) or 'nothing'} may (the compose file's own)")
     code, doc, why = public
     if str(code) != "200" or not (isinstance(doc, dict) and doc.get("ok") is True):
-        bad.append(f"the health address answered {('HTTP ' + str(code)) if code else 'nothing'}{(' (' + why + ')') if why else ''}")
+        bad.append(f"the health address answered {('HTTP ' + str(code)) if code else 'nothing'}{(' (' + why + ')') if why else ''}"
+                   + (", so the console does not reach the API (or does not serve)" if K else ""))
+    for pg in ((K or {}).get("pages") or []):
+        code, why = (pages or {}).get(pg) or ("", "not read")
+        if not PAGE_OK.match(code or ""): bad.append(f"the console's {pg} answered {('HTTP ' + code) if code else 'nothing'}{(' (' + why + ')') if why else ''}")
     return bad
 
 # ---------------------------------------------------------------------------------------------------------
@@ -732,8 +800,9 @@ def check(app_id, app, infra, adir, say=print, root=None):
     F = compose_facts(cb, man)
     say(f"  server: {S['host'] or 'not supplied yet'} · domain: {S['domain'] or 'not supplied yet'} · login: {S['user']} on port {S['port']} · "
         f"SSH key name: {S['key_ref']} ({'present' if os.path.isfile(VR.key_path(S)) else 'not on this VM yet'} at {VR.key_shown(S)})")
-    say(f"  the mold's own stack: {F['file']} (service {F['service']}, port {F['port'] or '?'}), compose project {S['project']} (never {F['default_project']!r}); "
-        f"health {S['health_path']}")
+    K = F.get("console")
+    say(f"  the mold's own stack: {F['file']} (service {F['service']}, port {F['port'] or '?'}" + (f"; console {K['service']}, port {K['port'] or '?'}, built from {K['dockerfile']}" if K else "")
+        + f"), compose project {S['project']} (never {F['default_project']!r}); health {S['health_path']}" + (" through the console" if K else ""))
     errs = VR.state_problems(app_id, adir)
     for e in errs: say("  state: " + e)
     pre = preflight(cb, F, S)
@@ -779,7 +848,7 @@ def set_remote(app_id, adir, pairs, say=print):
 
 def _kv(text): return VR.parse_kv(text)
 
-def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_public=None, say=print, release=None, wait=time.sleep, bundle_dir=None):
+def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_public=None, say=print, release=None, wait=time.sleep, bundle_dir=None, read_page=None):
     """Run the plan. Returns {"health", "release", "facts"}; raises Stop with one instruction otherwise. Every outside
     call goes through `runner`, `resolver` and `read_public`, so the whole sequence runs offline in the self-test."""
     runner = runner or VR.real_runner; release = release or release_id()
@@ -827,7 +896,8 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
             public = (read_public or _read_public)(url)
             if str(public[0]) == "200": break
             wait(10)
-        bad = health_verdict(F, kv, public); rls = None
+        pages = {pg: (read_page or _read_page)(S["url"] + pg) for pg in ((F.get("console") or {}).get("pages") or [])}   # without following a redirect
+        bad = health_verdict(F, kv, public, pages); rls = None
         if not bad and F.get("rls"):
             r = run("rls", check=False); out = (r.stdout or "") + "\n" + (r.stderr or "")
             rls = {"passed": rls_passed(r.returncode, out, F["rls"]), "said": rls_said(out, F["rls"]), "exit": r.returncode}
@@ -841,11 +911,12 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
                     f"the switch back to {bk.get('ROLLBACK_FAILED') or 'the earlier release'} FAILED too; try: python3 .claude/scripts/provision.py {S['app_id']} --rollback-remote")
             e = Stop(f"release {release} came up but does not serve as it should: " + "; ".join(bad) + f". {what}. Fix the cause and deploy again.")
             e.rls = rls; raise e
-        say(f"[public] {url} answered 200 ok")
+        say(f"[public] {url} answered 200 ok" + (f" through the console; {', '.join(f'{p} {c[0]}' for p, c in pages.items())}" if F.get("console") else ""))
         run("keep", check=False)
-        return {"release": release, "facts": facts,
-                "health": {"app": kv.get("APP_STATE", ""), "uid": kv.get("APP_UID", ""), "published": kv.get("PUBLISHED", ""),
-                           "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}, "rls": rls}
+        health = {"app": kv.get("APP_STATE", ""), "uid": kv.get("APP_UID", ""), "published": kv.get("PUBLISHED", ""),
+                  "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}
+        if F.get("console"): health.update(console=kv.get("CONSOLE_STATE", ""), console_uid=kv.get("CONSOLE_UID", ""), pages={p: c[0] for p, c in pages.items()})
+        return {"release": release, "facts": facts, "health": health, "rls": rls}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
