@@ -92,10 +92,13 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
   - **Clients:** a client ID metadata document (the `client_id` is an https URL; fetched with SSRF guards: https only, no
     IP literal or localhost, every address the name resolves to public, no redirects, at most 5 KB, 5 seconds; cached an
     hour) or, as the deprecated fallback, dynamic client registration at `/oauth/register` (RFC 7591: 20 an hour per
-    address, ten redirect URIs at most; https, http on a loopback address, or an app's own scheme; never `javascript:`,
-    `data:`, `file:` and the like; registrations nobody used go after a day).
+    address, ten redirect URIs at most; https, http on a loopback address, a reverse-domain scheme (`com.example.app:`) or a
+    known editor's own (`cursor:`, `vscode:`, …); never `javascript:`, `data:`, `file:` or a browser's or the system's
+    handler scheme; registrations nobody used go after a day).
   - **Authorization code + PKCE:** S256 only (no PKCE, `plain` or no method is refused); redirect URIs match exactly (a
-    loopback http URI may change port, RFC 8252); a wrong client or redirect URI gets an error page, never a redirect.
+    loopback http URI may change port, RFC 8252). Any error before the person answers (a wrong client or redirect URI, no
+    PKCE, a wrong resource) is an error page, never a redirect, so the server is no open redirector; a refusal on the
+    consent screen returns `access_denied` to the app.
     `resource` is required and must be this server's `/mcp` (`$PUBLIC_URL/mcp` or a `CLERK_MCP_AUDIENCE` URI, RFC 8707);
     the token is bound to it and `/mcp` checks it on every call. Codes last two minutes and are used once: a second use
     revokes everything the first gave.
@@ -108,7 +111,8 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
     revokes the grant). A token acts as its person with their current role in the one workspace they chose, read live on
     every call: removing or suspending them, or a role change, holds on the next request. Scope `mcp` (the default); a
     token without it gets a 403 `insufficient_scope`. Revocation: `/oauth/revoke` (RFC 7009) for the client;
-    `GET /api/oauth/grants` and `POST /api/oauth/grants/<id>/revoke` for the person.
+    `GET /api/oauth/grants` and `POST /api/oauth/grants/<id>/revoke` for the person; signing out everywhere signs every
+    connected app out too.
   - **Clerk on:** none of this answers; Clerk stays the authorization server, exactly as below.
 - **Platform admins:** the same roles as under Clerk, kept on the person (`auth_users.public_metadata`); an
   `OCTILLION_PLATFORM_ADMINS` address is an owner once its person signs in with it.

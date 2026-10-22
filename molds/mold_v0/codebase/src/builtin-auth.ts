@@ -707,6 +707,11 @@ export function builtinAuthRouter(): Router {
     const s = await signedIn(req, res);
     if (!s) return;
     const n = await revokeSessions(s.userId, { why: "signed_out_everywhere" });
+    // Apps connected through the MCP authorization server (src/mcp-oauth.ts, mold_v0-013) are signed out too.
+    await P(async (db) => {
+      await db.query("UPDATE oauth_tokens SET revoked_at = now() WHERE revoked_at IS NULL AND grant_id IN (SELECT id FROM oauth_grants WHERE user_id = $1 AND revoked_at IS NULL)", [s.userId]);
+      await db.query("/* tenant: platform: the signed-in person's own grants, across their workspaces */ UPDATE oauth_grants SET revoked_at = now(), revoked_why = 'signed_out_everywhere' WHERE user_id = $1 AND revoked_at IS NULL", [s.userId]);
+    });
     res.append("Set-Cookie", clearSessionCookies(res)).json({ ok: true, ended: n });
   }));
   r.post("/sign-out/others", change, wrap(async (req, res) => {
