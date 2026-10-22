@@ -34,6 +34,12 @@ A pack is a directory `packs/<id>/` (the factory's `packs.py apply` copies an ap
 `npm run gen:packs` writes the registries the server, console and orchestrator import; `npm run check:packs` refuses a
 pack whose code or SQL gets past the seam.
 
+A pack's `upstream` pin with a copyleft licence is offered to the people who use the build (the MCP server's
+instructions, the root and install pages' footer, the console's About page: `src/source-offer.ts`); `profile.json`
+`source_offer` says where the build's own source is, or that its licensor's exception applies. `npm run gen:data-map`
+writes `DATA-MAP.md`, the data-flow and residency statement (`src/data-map.ts`), from the packs and the factory's
+`deploy-facts.json`; the console's About page serves it with what the running server measures.
+
 ## Layout
 
 ```
