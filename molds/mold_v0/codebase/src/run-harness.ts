@@ -327,10 +327,18 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     }
   }
   const as = user ? { uid: user.uid, gid: user.gid } : null;
-  if (as) { killUser(as); sweepUserFiles(as.uid); } // nothing of an earlier holder of this uid is left for this run
   /** The agent-workspace runner's configuration (mold_v0-061), or null for a program of the pack's own. */
   const agent = spec.runner === "agent-workspace" ? spec.agent : null;
-  const scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `run-${run.id.slice(4, 12)}-`));
+  let scratch: string;
+  try {
+    if (as) { killUser(as); sweepUserFiles(as.uid); } // nothing of an earlier holder of this uid is left for this run
+    scratch = mkdtempSync(path.join(opts.tmp ?? tmpdir(), `run-${run.id.slice(4, 12)}-`));
+    for (const d of ["workspace", "checkout", "out", "home"]) if (d !== (agent ? "workspace" : "checkout")) mkdirSync(path.join(scratch, d), { recursive: true, mode: 0o700 });
+  } catch (e) {
+    // Before the run's own clean-up is in place: the leased user goes back now (never held by a run that is not going).
+    if (user && iso?.mode !== "given") await user.release().catch(() => false);
+    throw e;
+  }
   // An agent run's directory is the agent repository's checkout; its snapshot is unpacked beside it, where only the
   // runner can read it (the run's user gets the write-back paths restored into the checkout, nothing else).
   const work = path.join(scratch, agent ? "checkout" : "workspace"), out = path.join(scratch, "out"), home = path.join(scratch, "home"), pack = path.join(scratch, "pack");
@@ -338,7 +346,6 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
   // The pinned tree as it stood before the agent ran (after setup, without the workspace): the validation runs on a copy
   // of it with the staged write-back laid over, never on files the agent could have changed (its validator, its deps).
   const pristine = path.join(scratch, "pristine"), vdir = path.join(scratch, "validate");
-  for (const d of [work, out, home]) mkdirSync(d, { recursive: true });
   let proxy: RunProxy | null = null;
   let delivered: RunCredentials | null = null;
   const proc: { child: ChildProcess | null; timedOut?: boolean } = { child: null };
@@ -507,7 +514,12 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       }
       if ((opts.egress ?? "proxy") === "proxy") proxy = await startRunProxy(claim.egress.hosts, path.join(scratch, "egress"), claim.egress.exact ?? []);
       else if (opts.egress === "system") proxy = { port: EGRESS_PROXY_PORT, env: proxyEnv(), log: path.join(EGRESS_LOG_DIR, "octi-egress.log"), stop: () => {} };
-      if (as) { if (!agent) chownTree(pack, as.uid, as.gid); for (const d of [work, out, home]) chownTree(d, as.uid, as.gid); chmodSync(scratch, 0o711); }
+      if (as) {
+        if (!agent) chownTree(pack, as.uid, as.gid);
+        // 0700: the run's user only (on a runner that carries out several runs at once, never another run's user).
+        for (const d of [work, out, home]) { chownTree(d, as.uid, as.gid); chmodSync(d, 0o700); }
+        chmodSync(scratch, 0o711);
+      }
     } catch (e) {
       dropSecrets();
       const kind = e instanceof AgentRunError ? e.kind : "infrastructure";
@@ -518,6 +530,16 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
       RUN_ID: run.id, RUN_ATTEMPT: String(run.attempt), RUN_KIND: run.kind, RUN_OUT: out, RUN_WORKSPACE: work,
       RUN_SCOPE: JSON.stringify(run.scope), RUN_TARGETS: JSON.stringify(run.targets), RUN_DEADLINE: claim.deadline_at,
     };
+    // mold_v0-079: a gated write is given the preview's output that was approved (its run, results and recorded files,
+    // and the sha256 the approver saw), to apply exactly that.
+    if (claim.approval) {
+      try {
+        const f = path.join(scratch, "approved-preview.json");
+        writeFileSync(f, JSON.stringify(claim.approval, null, 2), { mode: 0o400, flag: "wx" });
+        if (as) chownSync(f, as.uid, as.gid);
+        runEnv.RUN_APPROVED_PREVIEW = f;
+      } catch (e) { return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: the approved preview: ${(e as Error).message}` }); }
+    }
     if (agent?.setup) {
       // The repository's own preparation (its dependencies): the run's egress, no credential, no gateway token.
       const s0 = Date.now();
@@ -672,8 +694,9 @@ export async function runWorkspaceHarness(client: RunnerClient, claim: Claim, op
     let env: Record<string, string>;
     // The command: the credentials it names, else all the kind's but a checkout's (that one is the runner's own).
     const checkoutCreds = new Set((agent?.steps ?? []).flatMap((st) => st.checkout?.credential ? [st.checkout.credential] : []));
-    // mold_v0-075: and the kind's operator credentials (the platform's, never the workspace's to see).
-    try { env = agent ? deliver(agent.credentials ?? [...(spec.credentials ?? []).filter((n: string) => !checkoutCreds.has(n)), ...(spec.operator_credentials ?? [])], agent.git_credentials) : deliver(null, []); }
+    // mold_v0-075: an operator credential reaches an agent's command only when its `credentials` name it (never by
+    // default: an agent reads the workspace's files, which its people write). A program of the pack's own gets all.
+    try { env = agent ? deliver(agent.credentials ?? (spec.credentials ?? []).filter((n: string) => !checkoutCreds.has(n)), agent.git_credentials) : deliver(null, []); }
     catch (e) { dropSecrets(); return await complete({ outcome: "failed", error_kind: "infrastructure", error: `prepare: ${(e as Error).message}` }); }
     let err = "", errCut = false;
     const c0 = Date.now();
@@ -842,6 +865,8 @@ function killGroup(c: ChildProcess, signal: NodeJS.Signals) {
   try { if (c.pid) process.kill(-c.pid, signal); } catch { /* already gone */ }
 }
 
+/** Event types the harness and the engine write: a program's line claiming one is a log line. */
+export const RESERVED_EVENT = /^(queued|claimed|retry|succeeded|failed|cancelled|cancel_requested|waiting|approved|approval_used|run_user.*|credentials.*|git_credentials.*|agent_.*|workspace_.*|results?_.*|stderr|setup_log|validate_log|step_log|log|redacted)$/;
 function lineEvent(line: string, step?: "setup" | "validate"): { type: string; data?: Record<string, unknown> } {
   const l = line.slice(0, 8000);
   // A setup or validation step's lines are its log, never events of the run (they could not pose as one).
@@ -849,7 +874,9 @@ function lineEvent(line: string, step?: "setup" | "validate"): { type: string; d
   if (l.startsWith("{")) {
     try {
       const j = JSON.parse(l);
-      if (j && typeof j.event === "string" && /^[a-z][a-z0-9_.:-]{0,63}$/.test(j.event)) { const { event, ...data } = j; return { type: event, data }; }
+      // The harness's and the engine's own event types are never a program's (it could not pose as one: an approval, a
+      // recorded file that a preview's digest counts, its run user, its credentials). Found by the review of mold_v0-078.
+      if (j && typeof j.event === "string" && /^[a-z][a-z0-9_.:-]{0,63}$/.test(j.event) && !RESERVED_EVENT.test(j.event)) { const { event, ...data } = j; return { type: event, data }; }
     } catch { /* plain text */ }
   }
   return { type: "log", data: { line: l.slice(0, 2000) } };

@@ -79,7 +79,7 @@ try {
     const s = await ru.leaseRunUser("run_s", { range, dir, note });
     assert.equal(s.uid, stale, "the dead runner's uid is taken over");
     assert.ok(!alive(left) && !existsSync(leftFile), "after its process was killed and its file removed");
-    assert.ok(notes.some((n) => n.type === "run_user_reclaimed" && n.data.from_run === "run_dead"));
+    assert.ok(notes.some((n) => n.type === "run_user_reclaimed" && n.data.uid === stale && !("from_run" in n.data)), "(review) which run held it is never in this run's events");
     await s.release();
 
     // A uid with a process this runner never leased (no lease file): skipped, its process left alone.
@@ -97,6 +97,9 @@ try {
     await f.release();
     process.kill(fpid, "SIGKILL");
 
+    // (review) The lock is a file in the root-only lease directory: a run's user can neither take nor block it.
+    const squat = spawnSync("flock", ["-n", path.join(dir, "mutex"), "true"], { uid: range.first + 2, gid: range.first + 2, encoding: "utf8" });
+    assert.notEqual(squat.status, 0, "a run's user cannot open the lock");
     // Eight runner processes leasing from one range at once: eight different uids.
     const many = await Promise.all(Array.from({ length: 8 }, () => new Promise<number>((resolve, reject) => {
       const c = spawn(process.execPath, ["--import", "tsx", path.join(FIX, "lease.ts")], { cwd: ROOT, env: { ...process.env, RU_DIR: path.join(TMP, "leases3"), RU_RANGE: "66200-66207" }, stdio: ["ignore", "pipe", "inherit"] });
@@ -158,6 +161,8 @@ try {
       const ua = (await events(short.id, "run_user"))[0].uid, ub = (await events(long.id, "run_user"))[0].uid;
       assert.notEqual(ua, ub, "each run had a user of its own");
       assert.equal(sd.uid, ua); assert.equal(ls.uid, ub);
+      assert.equal((await events(short.id, "run_user")).length, 1, "(review) a program's line posing as the harness's event is a log line");
+      assert.deepEqual([ls.home_mode, ls.out_mode], ["700", "700"], "(review) a run's directories are its user's alone (0700)");
       const range = ru.runUidRange();
       for (const u of [ua, ub]) assert.ok(u >= range.first && u <= range.last && u !== 64321, `a uid of the reserved range (${u}), not OCTILLION_RUN_UID`);
       assert.ok(!alive(ls.child), "and once it ended, its own leftovers went too");

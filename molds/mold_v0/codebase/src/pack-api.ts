@@ -453,6 +453,13 @@ const jobKindBase = {
     format: z.enum(["markdown", "text", "json"]).default("markdown"),
   }).strict().optional(),
 };
+/**
+ * A kind given the platform's operator credentials never reaches hosts a workspace chose (mold_v0-075 review: the
+ * workspace's owner could list a host of their own and have the run send the operator's value there).
+ */
+const OP_EGRESS = "a kind with operator_credentials cannot take company_egress (a host the workspace chose would reach the operator's credential)";
+/** A gated write runs once per approval (mold_v0-079 review: a retried attempt would write again on one yes). */
+const ONE_ATTEMPT = "a kind that waits for an approval runs once per approval: max_attempts must be 1";
 export const JobKindSchema = z.object({
   ...jobKindBase,
   runner: z.literal("workspace-harness"),
@@ -462,6 +469,8 @@ export const JobKindSchema = z.object({
 }).strict()
   .refine((k) => new Set((k.args ?? []).map((a) => a.name)).size === (k.args ?? []).length, "an argument is declared twice")
   .refine((k) => k.approval?.preview !== k.name, { message: "a kind is not its own preview", path: ["approval", "preview"] })
+  .refine((k) => !(k.operator_credentials.length && k.company_egress), { message: OP_EGRESS, path: ["company_egress"] })
+  .refine((k) => !k.approval || k.max_attempts === 1, { message: ONE_ATTEMPT, path: ["max_attempts"] })
   .refine((k) => !k.report || k.workspace, { message: "a report is a file of the run's workspace: the kind needs workspace: true", path: ["report"] });
 
 /**
@@ -496,6 +505,8 @@ export const AgentJobKindSchema = z.object({
   const onEgress = (h: string) => k.egress.some((e) => { const x = e.replace(/^\*\./, "").toLowerCase(); return h === x || h.endsWith(`.${x}`); });
   for (const n of k.agent.credentials ?? []) if (!own.has(n)) issue(`${n} is not one of the kind's credentials`, "credentials");
   if (k.approval?.preview === k.name) ctx.addIssue({ code: "custom", message: "a kind is not its own preview", path: ["approval", "preview"] });
+  if (k.operator_credentials.length && k.company_egress) ctx.addIssue({ code: "custom", message: OP_EGRESS, path: ["company_egress"] });
+  if (k.approval && k.max_attempts !== 1) ctx.addIssue({ code: "custom", message: ONE_ATTEMPT, path: ["max_attempts"] });
   for (const n of k.operator_credentials) if (k.credentials.includes(n)) ctx.addIssue({ code: "custom", message: `${n} is both a workspace and an operator credential`, path: ["operator_credentials"] });
   for (const [j, g] of k.agent.git_credentials.entries()) {
     if (!own.has(g.credential)) issue(`${g.credential} is not one of the kind's credentials`, "git_credentials", j, "credential");
