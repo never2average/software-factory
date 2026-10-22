@@ -265,13 +265,16 @@ try {
       // As a user of its own (a runner started as root).
       if (process.getuid?.() === 0) {
         const iso = await start(ca, "report", { asset: "app-x", environment: "staging" });
-        const v = await runIt(iso.id, ["fixture_vault/report"], { allowSameUser: false, runAs: { uid: 65534, gid: 65534 } });
+        // The harness's default as root: a user of the run's own (mold_v0-078).
+        const v = await runIt(iso.id, ["fixture_vault/report"], { allowSameUser: false });
         assert.equal(v?.status, "succeeded", JSON.stringify(v));
         const ri = await report(iso.id);
-        assert.deepEqual([ri.uid, ri.file.uid, ri.sha], [65534, 65534, shaA], "as the run's user: its file, its values");
-        // Runs share their user: nothing one leaves in the shared temporary directories survives it.
+        const ru = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'run_user'", [iso.id]))[0]!.data.uid;
+        assert.deepEqual([ri.uid, ri.file.uid, ri.sha], [ru, ru, shaA], "as the run's user: its file, its values");
+        // A run's uid is handed to a later run (mold_v0-078: after the others): nothing one leaves in the shared temporary
+        // directories survives it.
         const st = await start(ca, "stash", { asset: "app-x", environment: "staging", mode: "stash" });
-        assert.equal((await runIt(st.id, ["fixture_vault/stash"], { allowSameUser: false, runAs: { uid: 65534, gid: 65534 } }))?.status, "succeeded");
+        assert.equal((await runIt(st.id, ["fixture_vault/stash"], { allowSameUser: false }))?.status, "succeeded");
         const left: string[] = (await db.query<{ data: any }>("SELECT data FROM run_events WHERE run_id = $1 AND type = 'stashed'", [st.id]))[0]!.data.left;
         assert.ok(left.length >= 2, `it did leave copies (${left.join(", ")})`);
         assert.deepEqual(left.filter((f) => existsSync(f)), [], "and none is there after the run");

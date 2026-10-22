@@ -65,6 +65,32 @@ export function runAppRouter(): Router {
     // A pack that withholds its results tool (mold_v0-067) shows no result counts either.
     return { runs: runs.map((x) => ({ ...x, results: packOpWithheld(x.pack, "run_results") ? {} : Object.fromEntries(counts.filter((c) => c.run_id === x.id).map((c) => [c.status, c.n])) })) };
   }));
+  // mold_v0-079: a preview's approval, by the workspace's owner, signed in (a key never approves: an agent holding one
+  // cannot say yes for a person). Only when a kind of the build waits for one.
+  if (packs().some((p) => [...(p.definition.jobKinds ?? []), ...(p.definition.agentJobKinds ?? [])].some((k) => (k as { approval?: unknown }).approval))) {
+    r.use(express.json({ limit: "4kb" }));
+    r.get("/:id/approval", answer(async (req, res) => {
+      // The whole output (every result, unfiltered by the areas' read roles: the digest covers all of it): the approver's.
+      if (session(res).accountRole !== "owner") throw new PackError("Only the workspace's owner sees a preview to approve", 403);
+      const id = String(req.params.id);
+      if (!/^run_[A-Za-z0-9_-]{1,80}$/.test(id)) throw new PackError("Not found", 404);
+      const { approvalView } = await import("./run-approvals.js");
+      return approvalView(session(res).org, id);
+    }));
+    r.post("/:id/approve", answer(async (req, res) => {
+      if (res.locals.viaCookie && req.get("x-pack-request") !== "1") throw new PackError("Missing X-Pack-Request header", 403);
+      const s = session(res);
+      if (s.accountRole !== "owner") throw new PackError("Only the workspace's owner approves a preview", 403);
+      const id = String(req.params.id);
+      if (!/^run_[A-Za-z0-9_-]{1,80}$/.test(id)) throw new PackError("Not found", 404);
+      const { approvePreview } = await import("./run-approvals.js");
+      const { log } = await import("./admin.js");
+      const who = `customer:${s.email ?? s.user ?? s.slug}`;
+      const a = await approvePreview(s.org, id, (req.body ?? {}) as Record<string, unknown>, { role: "owner", by: who });
+      log(who, "run.approve", s.slug, { run: id, approval: a.id, kind: a.write_kind, sha256: a.output_sha256 });
+      return { approval: a };
+    }));
+  }
   r.get("/:id", answer(async (req, res) => {
     const { getRun, runResults } = await import("./runs.js");
     const id = String(req.params.id);
