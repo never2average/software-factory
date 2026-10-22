@@ -17,6 +17,7 @@ import * as billing from "./billing.js";
 import * as experiments from "./experiments.js";
 import { getDb } from "./db.js";
 import { HIT, orgMonthSpendUsd, SCENARIO_ROWS } from "./session-engine.js";
+import { sessionEngine } from "./host-tables.js";
 import { RUN_USD } from "./run-spend.js";
 import { workspaceRunUsage } from "./usage-report.js";
 import { endpointLimit } from "./rate-limits.js";
@@ -124,6 +125,8 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
   const sim = users.length ? " AND created_by = ANY($4)" : "";
   const p = users.length ? [s.org, range.start, range.end, users] : [s.org, range.start, range.end];
   const month = "date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'";
+  // The session engine's tables are a host pack's (mold_v0-049): with none, no simulations or sessions, runs only.
+  const eng = sessionEngine();
   const [daily, tools, people, runs, spentBy, byTool, perDay] = await Promise.all([
     db.query<{ day: string; calls: number; errors: number; people: number }>(
       `SELECT to_char(date_trunc('day', at), 'YYYY-MM-DD') AS day, count(*) AS calls, count(*) FILTER (WHERE NOT ok) AS errors,
@@ -135,7 +138,7 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
     db.query<{ user_id: string; calls: number }>(
       `SELECT user_id, count(*) FILTER (WHERE method = 'tools/call'${toolSql}) AS calls
          FROM mcp_events WHERE org_id = $1 AND at >= $2 AND at < $3 AND user_id IS NOT NULL GROUP BY user_id`, [s.org, range.start, range.end]),
-    db.query<{ simulations: number; sessions: number; completed: number }>(
+    !eng ? Promise.resolve([{ simulations: 0, sessions: 0, completed: 0 }]) : db.query<{ simulations: number; sessions: number; completed: number }>(
       `SELECT (SELECT count(*) FROM simulations WHERE org_id = $1 AND created_at >= $2 AND created_at < $3${sim}) AS simulations,
               count(*) AS sessions, count(*) FILTER (WHERE status = 'completed') AS completed
          FROM agent_sessions WHERE org_id = $1 AND queued_at >= $2 AND queued_at < $3
@@ -143,9 +146,9 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
     // This month's spend on the selected people's runs (session cost, or the gateway's live total while it runs).
     // And on the runs they started (mold_v0-053).
     users.length ? db.query<{ usd: number }>(
-      `SELECT (SELECT coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0)
+      `SELECT ${!eng ? "0" : `(SELECT coalesce(sum(GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))), 0)
                  FROM agent_sessions s JOIN simulations r ON r.id = s.simulation_id
-                WHERE s.org_id = $1 AND r.created_by = ANY($2) AND s.queued_at >= ${month})
+                WHERE s.org_id = $1 AND r.created_by = ANY($2) AND s.queued_at >= ${month})`}
             + (SELECT coalesce(sum(${RUN_USD}), 0) FROM runs r WHERE r.org_id = $1 AND r.requested_by = ANY($2) AND r.created_at >= ${month}) AS usd`,
       [s.org, users]) : Promise.resolve(null),
     // Tool calls by tool for the people picked but any use case: each use case's count in the Use cases filter.
@@ -154,22 +157,23 @@ async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unkno
     // The cards' sparklines: simulations and finished agent sessions per day of the period, and model spend per day
     // this month (each with the same people filter as its card).
     db.query<{ k: string; day: string; v: unknown }>(
-      `SELECT 'simulations' AS k, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) AS v
+      `${eng ? `SELECT 'simulations' AS k, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, count(*) AS v
          FROM simulations WHERE org_id = $1 AND created_at >= $2 AND created_at < $3${sim} GROUP BY 2
        UNION ALL
        SELECT 'completed', to_char(queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), count(*) FILTER (WHERE status = 'completed')
          FROM agent_sessions WHERE org_id = $1 AND queued_at >= $2 AND queued_at < $3
           ${users.length ? "AND simulation_id IN (SELECT id FROM simulations WHERE org_id = $1 AND created_by = ANY($4))" : ""} GROUP BY 2
        UNION ALL
-       SELECT 'spend', day, sum(v)::float FROM (
+       ` : ""}SELECT 'spend', day, sum(v)::float FROM (${eng ? `
          SELECT to_char(s.queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
                 GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0)) AS v
            FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= ${month}
             ${users.length ? "AND s.simulation_id IN (SELECT id FROM simulations WHERE org_id = $1 AND created_by = ANY($4))" : ""}
-         UNION ALL
+         UNION ALL` : ""}
          -- Runs (mold_v0-053): the same day rule, by who started them.
-         SELECT to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), ${RUN_USD}
-           FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${month}${users.length ? " AND r.requested_by = ANY($4)" : ""}) x GROUP BY 2`, p),
+         SELECT to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day, ${RUN_USD} AS v
+           FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${month}${users.length ? " AND r.requested_by = ANY($4)" : ""}
+            ${eng ? "" : "AND $2::timestamptz IS NOT NULL AND $3::timestamptz IS NOT NULL"}) x GROUP BY 2`, p),
   ]);
   const periodDays = dayKeys(range.start, range.end), monthDays = sparkSpans().monthDays;
   const toolCalls = new Map(byTool.map((x) => [x.name, Number(x.calls)]));
@@ -224,6 +228,8 @@ async function usageCharts(s: Session, range: ReturnType<typeof reportRange>, us
   const wk = (c: string) => `to_char(date_trunc('week', ${c} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`;
   const month = "date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'";
   const cost = "/* tenant: per session, of agent_sessions rows already filtered by org_id */ GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))";
+  // The session engine's tables are a host pack's (mold_v0-049): with none, no simulations or sessions, runs only.
+  const eng = sessionEngine();
   const [clients, sims, harnesses, spendBy, recent] = await Promise.all([
     db.query<{ client: string; calls: unknown }>(
       `WITH ev AS (
@@ -233,24 +239,25 @@ async function usageCharts(s: Session, range: ReturnType<typeof reportRange>, us
        grouped AS (SELECT *, count(fam) OVER (PARTITION BY p ORDER BY at, is_call ROWS UNBOUNDED PRECEDING) AS g FROM ev),
        tagged AS (SELECT at, is_call, max(fam) OVER (PARTITION BY p, g) AS fam FROM grouped)
        SELECT coalesce(nullif(fam, ''), 'unknown') AS client, count(*) AS calls FROM tagged WHERE is_call AND at >= $2 GROUP BY 1 ORDER BY 2 DESC`, p),
-    db.query<{ week: string; completed: unknown; other: unknown }>(
+    !eng ? Promise.resolve([] as { week: string; completed: unknown; other: unknown }[]) : db.query<{ week: string; completed: unknown; other: unknown }>(
       `SELECT ${wk("created_at")} AS week, count(*) FILTER (WHERE status = 'completed') AS completed, count(*) FILTER (WHERE status <> 'completed') AS other
          FROM simulations sim WHERE org_id = $1 AND created_at >= $2 AND created_at < $3${simBy} GROUP BY 1`, p),
-    db.query<{ harness: string; sessions: unknown; completed: unknown }>(
+    !eng ? Promise.resolve([] as { harness: string; sessions: unknown; completed: unknown }[]) : db.query<{ harness: string; sessions: unknown; completed: unknown }>(
       `SELECT s.harness, count(*) AS sessions, count(*) FILTER (WHERE s.status = 'completed') AS completed
          FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= $2 AND s.queued_at < $3${sesBy} GROUP BY 1 ORDER BY 2 DESC`, p),
     // This month's spend, like the card: by who launched the run (billing roles), else by simulation; runs (mold_v0-053)
     // by who started them, else by their kind.
     db.query<{ key: string | null; name: string | null; usd: number }>(
-      `SELECT key, name, sum(usd)::float AS usd FROM (
+      `SELECT key, name, sum(usd)::float AS usd FROM (${eng ? `
          SELECT ${billingRole ? "sim.created_by AS key, NULL AS name" : "sim.id AS key, sim.name AS name"}, ${cost} AS usd
            FROM agent_sessions s JOIN simulations sim ON sim.id = s.simulation_id AND sim.org_id = $1
           WHERE s.org_id = $1 AND s.queued_at >= ${month}${sesBy.replace("$4", "$2")}
-         UNION ALL
-         SELECT ${billingRole ? "r.requested_by AS key, NULL AS name" : "'run:' || r.pack || '/' || r.kind AS key, r.kind AS name"}, ${RUN_USD}
+         UNION ALL` : ""}
+         SELECT ${billingRole ? "r.requested_by AS key, NULL AS name" : "'run:' || r.pack || '/' || r.kind AS key, r.kind AS name"}, ${RUN_USD} AS usd
            FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${month}${users.length ? " AND r.requested_by = ANY($2)" : ""}) x
         GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10`, users.length ? [s.org, users] : [s.org]),
-    db.query<{ id: string; name: string; status: string; created_at: Date; created_by: string | null; product: string; sessions: unknown; scored: unknown; hits: unknown }>(
+    !eng ? Promise.resolve([] as { id: string; name: string; status: string; created_at: Date; created_by: string | null; product: string; sessions: unknown; scored: unknown; hits: unknown }[])
+    : db.query<{ id: string; name: string; status: string; created_at: Date; created_by: string | null; product: string; sessions: unknown; scored: unknown; hits: unknown }>(
       `SELECT sim.id, sim.name, sim.status, sim.created_at, sim.created_by, pr.name AS product, count(s.id) AS sessions,
               count(s.id) FILTER (WHERE s.verdict IS NOT NULL) AS scored, count(s.id) FILTER (WHERE s.verdict IS NOT NULL AND ${HIT}) AS hits
          FROM simulations sim JOIN products pr ON pr.id = sim.product_id AND pr.org_id = $1
@@ -306,18 +313,20 @@ async function billingUsage(s: Session) {
   // A session's cost: what it recorded when it finished, or the gateway's live total while it runs (whichever is larger).
   const sc = `sc AS (SELECT s.*, GREATEST(s.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = s.id), 0))::float AS usd
                 FROM agent_sessions s WHERE s.org_id = $1 AND s.queued_at >= ${month})`;
-  const daily = await db.query<{ day: string; usd: number; sessions: number }>(
+  // The session engine's tables are a host pack's (mold_v0-049): with none, no sessions, runs only.
+  const eng = sessionEngine();
+  const daily = !eng ? [] as { day: string; usd: number; sessions: number }[] : await db.query<{ day: string; usd: number; sessions: number }>(
     `WITH ${sc} SELECT to_char(date_trunc('day', queued_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day, sum(usd)::float AS usd, count(*)::int AS sessions
        FROM sc GROUP BY 1 ORDER BY 1`, [s.org]);
-  const [m] = await db.query<{ metered: number; finished: number; running: number }>(
+  const [m] = !eng ? [{ metered: 0, finished: 0, running: 0 }] : await db.query<{ metered: number; finished: number; running: number }>(
     `SELECT coalesce(sum(cost_usd) FILTER (WHERE status IN ('completed', 'failed', 'timeout', 'cancelled')), 0)::float AS metered,
             count(*) FILTER (WHERE status IN ('completed', 'failed', 'timeout', 'cancelled'))::int AS finished,
             count(*) FILTER (WHERE status IN ('queued', 'running'))::int AS running
        FROM agent_sessions WHERE org_id = $1 AND queued_at >= ${month}`, [s.org]);
-  const byAgent = await db.query<{ agent: string; usd: number; sessions: number }>(
+  const byAgent = !eng ? [] as { agent: string; usd: number; sessions: number }[] : await db.query<{ agent: string; usd: number; sessions: number }>(
     `WITH ${sc} SELECT coalesce(agent_id, harness || '/' || model) AS agent, sum(usd)::float AS usd, count(*)::int AS sessions
        FROM sc GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, [s.org]);
-  const byPerson = await db.query<{ user_id: string | null; usd: number; runs: number }>(
+  const byPerson = !eng ? [] as { user_id: string | null; usd: number; runs: number }[] : await db.query<{ user_id: string | null; usd: number; runs: number }>(
     `/* tenant: sc is this account's sessions (org_id = $1) */ WITH ${sc} SELECT r.created_by AS user_id, sum(sc.usd)::float AS usd, count(DISTINCT r.id)::int AS runs
        FROM sc JOIN simulations r ON r.id = sc.simulation_id GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, [s.org]);
   // Runs (mold_v0-053): their spend by day and by who started them, merged in only when this month has any.

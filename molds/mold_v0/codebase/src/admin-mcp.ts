@@ -31,9 +31,7 @@ import { getDb } from "./db.js";
 import * as onboarding from "./admin.js";
 import { modelKeys, saveSettingValues } from "./platform-keys.js";
 import { hosts, type HostAdminTool } from "./host.js";
-import * as records from "./compute-records.js";
 import * as jobs from "./compute-jobs.js";
-import * as actions from "./compute-actions.js";
 import * as spend from "./spend.js";
 import { computeSummary } from "./compute.js";
 import { platformAnalytics } from "./insights.js";
@@ -94,14 +92,14 @@ export const ADMIN_TOOLS = {
   },
   get_account: {
     title: "Account detail", needs: "read",
-    description: "One account (by slug): its row from list_accounts plus people and invitations (Clerk), API keys (prefixes only), tool use, recent errors, products, research, simulations, invoices and links to Clerk and Stripe.",
+    description: "One account (by slug): its row from list_accounts plus people and invitations (Clerk), API keys (prefixes only), tool use, recent errors, invoices and links to Clerk and Stripe.",
     input: { slug: z.string().describe("Account slug (list_accounts)") },
     run: async (a) => {
       const d = await onboarding.orgDetail(String(a.slug));
       const { daily: _d, plans: _p, integrations: _i, connect: _c, org, ...rest } = d;
       return { account: accountRow(org), ...rest };
     },
-    summary: (d) => `${d.account.name} (${d.account.slug}): ${d.account.stage_label}, ${d.members.length} member(s), ${d.simulations.length} recent simulation(s).`,
+    summary: (d) => `${d.account.name} (${d.account.slug}): ${d.account.stage_label}, ${d.members.length} member(s).`,
   },
   list_access_requests: {
     title: "Access requests", needs: "read",
@@ -122,26 +120,6 @@ export const ADMIN_TOOLS = {
       return { ...s, ...(a.failures ? { failures: await jobs.computeFailures({}) } : {}) };
     },
     summary: (d) => `${d.verdict.map((v: any) => `${v.level}: ${v.text}`).join(" | ") || "No verdict."} Queue ${d.queue.sessions} session(s); running ${d.running.sessions}; failures 24h ${d.failures_24h.sessions}.`,
-  },
-  list_simulations: {
-    title: "Simulations (all accounts)", needs: "read",
-    description: "Recent and active jobs across every account (simulations by default; research too with kind), waiting first then running then finished, each with why it waits, progress, failures and spend. Same as Compute › Jobs.",
-    input: { state: z.enum(["all", "active", "waiting", "queued", "booting", "running", "draining", "failed", "finished"]).optional().describe("Default all"),
-             kind: z.enum(["simulation", "research", "prospect"]).optional().describe("Default simulation"), since: z.enum(["1h", "24h", "7d"]).optional().describe("Finished within (default 24h)"),
-             q: z.string().optional().describe("Job id, account, product or company"), has_failures: z.boolean().optional(),
-             limit: z.number().int().min(1).max(200).optional().describe("Default 25"), offset: z.number().int().min(0).optional() },
-    run: async (a) => jobs.listJobs({ state: a.state, kind: a.kind ?? "simulation", since: a.since ?? "24h", q: a.q, has_failures: a.has_failures ? "1" : undefined, limit: a.limit ?? 25, offset: a.offset }),
-    summary: (d) => `${d.total} job(s); showing ${d.rows.length}.`,
-  },
-  get_simulation: {
-    title: "Simulation detail", needs: "read",
-    description: "One job (simulation or research) by id: its row, why it waits (with the numbers compared), sessions by agent with whether each agent can run, its orchestrators and research details. Add sessions: true for its sessions.",
-    input: { id: z.string().describe("Simulation (or research) id"), sessions: z.boolean().optional().describe("Also list its sessions (up to 100)") },
-    run: async (a) => {
-      const d = await jobs.jobDetail(String(a.id));
-      return { ...d, ...(a.sessions ? { sessions: await records.listSessions({ job_id: String(a.id), since: "7d", limit: 100 }) } : {}) };
-    },
-    summary: (d) => `${d.job.kind} ${d.job.id}: ${d.job.state}${d.why ? ` (${d.why.text})` : ""}.`,
   },
   finops_revenue: {
     title: "Revenue", needs: "read",
@@ -283,21 +261,6 @@ export const ADMIN_TOOLS = {
     },
     summary: (d) => `${d.key} = ${JSON.stringify(d.value)} (${d.source}).`,
   },
-  cancel_simulation: {
-    title: "Cancel a simulation", needs: "compute", destructive: true,
-    description: "Cancel a queued or running session (session_id), or every open session of a simulation (simulation_id). Running sandboxes stop at their orchestrator's next heartbeat; the run then finishes without sampling more.",
-    input: { simulation_id: z.string().optional(), session_id: z.string().optional() },
-    run: async (a, c) => {
-      if (!!a.simulation_id === !!a.session_id) throw Object.assign(new Error("Pass simulation_id or session_id (one of them)"), { status: 400 });
-      if (a.session_id) return { cancelled: [await actions.cancelSession(c.actor, String(a.session_id))] };
-      const open = await records.listSessions({ job_id: String(a.simulation_id), status: "queued,running", since: "7d", limit: 500 });
-      if (!open.rows.length) throw Object.assign(new Error(`Simulation ${a.simulation_id} has no queued or running sessions`), { status: 409 });
-      const cancelled = [];
-      for (const s of open.rows) cancelled.push(await actions.cancelSession(c.actor, s.id).catch((e) => ({ id: s.id, error: (e as Error).message })));
-      return { simulation_id: a.simulation_id, cancelled };
-    },
-    summary: (d) => `Cancelled ${d.cancelled.filter((x: any) => x.status === "cancelled").length} session(s)${d.simulation_id ? ` of ${d.simulation_id}` : ""}.`,
-  },
 } satisfies Record<string, AdminTool>;
 
 // The build reads the shell's own admin tools from src/shell-tools.ts (mold_v0-067): a change here alone does not
@@ -310,7 +273,14 @@ export type AdminToolName = string;
  * after the shell tool it names (else after the shell's reads).
  */
 export function adminTools(): Record<string, AdminTool> {
-  const out: [string, AdminTool][] = Object.entries(ADMIN_TOOLS as Record<string, AdminTool>);
+  const out: [string, AdminTool][] = Object.entries(ADMIN_TOOLS as Record<string, AdminTool>).map(([name, t]) => [name, { ...t }]);
+  // A host pack may reword a shell tool (mold_v0-049): its description and summary, never its input, permission or run.
+  for (const h of hosts()) for (const [name, w] of Object.entries(h.adminMcp?.reword ?? {})) {
+    const at = out.find(([n]) => n === name);
+    if (!at) throw new Error(`host pack ${h.id}: rewords admin tool ${name}, which is not the shell's`);
+    if (w.description !== undefined) at[1].description = w.description;
+    if (w.summary !== undefined) at[1].summary = w.summary;
+  }
   for (const h of hosts()) for (const [name, t] of Object.entries(h.adminMcp?.tools ?? {})) {
     if (out.some(([n]) => n === name)) throw new Error(`host pack ${h.id}: admin tool ${name} is already the shell's`);
     let lastRead = -1;
@@ -396,7 +366,7 @@ export const ADMIN_SKILLS = {
     args: {},
     text: () => [
       `Do ${PROFILE.name}'s daily operations review.`,
-      "1. health_summary with failures: true. 2. list_simulations with state 'failed' since '24h', then state 'active'. 3. list_access_requests with status 'pending'. 4. list_accounts with attention_only: true.",
+      "1. health_summary with failures: true. 2. list_access_requests with status 'pending'. 3. list_accounts with attention_only: true.",
       "Write a short report: **Health** (verdict, orchestrators, anything degraded), **Failures** (grouped by reason, with counts and the fix the data points to), " +
       "**Runs** (active ones and any stuck: queued or booting a long time), **Access requests** (who is waiting and for how long), **Accounts** (what needs attention and why). " +
       "End with at most 5 next steps, most urgent first, each naming the tool that would do it. " + CONFIRM,
@@ -420,7 +390,7 @@ export const ADMIN_SKILLS = {
     args: { account: z.string().describe("Account slug or name (list_accounts finds it)") },
     text: ({ account }: { account?: string }) => [
       `Review the ${PROFILE.name} account "${account ?? ""}".`,
-      "1. list_accounts with q set to it to find the slug if needed, then get_account. 2. model_spend with account set to the slug. 3. list_simulations with since '7d' and pick this account's runs.",
+      "1. list_accounts with q set to it to find the slug if needed, then get_account. 2. model_spend with account set to the slug.",
       "Write: **Where they are** (stage, next step, people and who is active), **Usage** (tool calls, runs and their outcomes, errors), **Money** (model spend this month against the allowance, plan, " +
       "subscription state), **Problems** (anything blocking or wrong, with evidence), **Next step** (one concrete action for us, one for them). " + CONFIRM,
     ].join("\n"),
@@ -475,7 +445,7 @@ export function createAdminServer(c: AdminCaller): McpServer {
     { instructions:
         `${PROFILE.name}'s admin panel across every customer account, for ${PROFILE.name} staff. Reads: ${Object.entries(tools).filter(([, t]) => t.needs === "read").map(([n]) => n).join(", ")}. ` +
         "Changes (each needs a role; refusals name it): approve/decline_access_request, " +
-        "set_account_allowance, allow_prepaid_plans, create_plan (dry_run first), archive_plan, set_plan_experiment, update_setting, cancel_simulation. " +
+        `set_account_allowance, allow_prepaid_plans, create_plan (dry_run first), archive_plan, set_plan_experiment, ${["update_setting", ...hostChanges(tools)].join(", ")}. ` +
         "Skills (prompts, slash commands): ops_review, triage_requests, account_review, finops_digest, pricing_experiment, cost_check. " +
         `Confirm with the user before any change. This connection is ${c.actor}, role ${ROLE_LABELS[c.role]}.` + generatedAdminInstructions() },
   );
@@ -500,9 +470,14 @@ export function createAdminServer(c: AdminCaller): McpServer {
     }, (args: Args) => runAdminToolWith(c, g.name, t, args));
   }
   for (const [name, sk] of Object.entries(ADMIN_SKILLS))
-    server.registerPrompt(name, { title: sk.title, description: sk.description, argsSchema: sk.args }, (a: any) => say(sk.text(a)));
+    server.registerPrompt(name, { title: sk.title, description: sk.description, argsSchema: sk.args }, (a: any) => say(skillText(name, sk.text(a))));
   return server;
 }
+
+/** The host packs' changes among the admin tools (mold_v0-049: the session engine's cancel), named after the shell's. */
+const hostChanges = (tools: Record<string, AdminTool>) => Object.entries(tools).filter(([n, t]) => t.needs !== "read" && !(n in ADMIN_TOOLS)).map(([n]) => n);
+/** A skill's text with each host pack's rewording (its own tools in the steps, mold_v0-049). */
+export const skillText = (name: string, text: string) => hosts().reduce((x, h) => h.adminMcp?.skills?.[name]?.(x) ?? x, text);
 
 // ---------- HTTP: /admin/mcp and /api/admin/mcp, with OAuth discovery like /mcp ----------
 

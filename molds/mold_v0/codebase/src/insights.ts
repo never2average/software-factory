@@ -12,6 +12,7 @@
  */
 import * as clerk from "./clerk.js";
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 
 const DAY = 86_400_000;
 const isoDay = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) ? new Date(`${v}T00:00:00Z`) : null);
@@ -86,7 +87,8 @@ export async function parseFilters(q: AnalyticsQuery, range: ReturnType<typeof r
   if (filters.account.length)
     orgIds = intersect(orgIds, ids(await db.query<{ id: number }>(`SELECT id FROM organizations WHERE slug = ANY(${texts(filters.account)})`)));
   if (filters.product.length) {
-    const ps = await db.query<{ id: number; org_id: number }>(`SELECT id, org_id FROM products WHERE lower(name) = ANY(${texts(filters.product.map((x) => x.toLowerCase()))})`);
+    // Products are the session engine's, a host pack's table (mold_v0-049): with none in this build, none matches.
+    const ps = !sessionEngine() ? [] : await db.query<{ id: number; org_id: number }>(`SELECT id, org_id FROM products WHERE lower(name) = ANY(${texts(filters.product.map((x) => x.toLowerCase()))})`);
     productIds = ps.map((p) => Number(p.id));
     orgIds = intersect(orgIds, [...new Set(ps.map((p) => Number(p.org_id)))]);
   }
@@ -190,7 +192,7 @@ async function growth(range: ReturnType<typeof reportRange>, { sql, orgIds }: Aw
        tagged AS (SELECT at, is_call, max(fam) OVER (PARTITION BY org_id, p, g) AS fam FROM grouped)
        SELECT ${wk("at")} AS week, coalesce(nullif(fam, ''), 'unknown') AS client, count(*) AS calls
          FROM tagged WHERE is_call AND at >= ${W0} GROUP BY 1, 2`),
-    db.query<{ week: string; completed: unknown; other: unknown }>(
+    !sessionEngine() ? Promise.resolve([] as { week: string; completed: unknown; other: unknown }[]) : db.query<{ week: string; completed: unknown; other: unknown }>(
       `/* tenant: internal: admin Analytics (onboarding admin routes), every account */ SELECT ${wk("created_at")} AS week, count(*) FILTER (WHERE status = 'completed') AS completed, count(*) FILTER (WHERE status IS DISTINCT FROM 'completed') AS other
          FROM simulations WHERE created_at >= ${W0} AND created_at < ${T}${ORG("", "sim")} GROUP BY 1`),
     orgsOnce().then((x) => x.orgs, () => null),
@@ -266,7 +268,7 @@ async function facets(range: ReturnType<typeof reportRange>, orgsOnce: () => Pro
   const [accounts, products, tools, clients, people] = await Promise.all([
     db.query<{ slug: string; name: string; calls: unknown }>(`SELECT o.slug, o.name, coalesce(c.n, 0) AS calls FROM organizations o LEFT JOIN
       (SELECT org_id, count(*) AS n FROM mcp_events WHERE method = 'tools/call' AND at >= ${F} AND at < ${T} GROUP BY org_id) c ON c.org_id = o.id ORDER BY lower(o.name)`),
-    db.query<{ name: string; n: unknown }>(`SELECT name, count(DISTINCT org_id) AS n FROM products GROUP BY name ORDER BY 1`),
+    !sessionEngine() ? Promise.resolve([] as { name: string; n: unknown }[]) : db.query<{ name: string; n: unknown }>(`SELECT name, count(DISTINCT org_id) AS n FROM products GROUP BY name ORDER BY 1`),
     db.query<{ name: string; n: unknown }>(`/* tenant: internal: admin Analytics (onboarding admin routes), every account */ SELECT name, count(*) AS n FROM mcp_events WHERE method = 'tools/call' AND name IS NOT NULL AND at >= ${F} AND at < ${T} GROUP BY name ORDER BY 1`),
     db.query<{ client: string; n: unknown }>(`/* tenant: internal: admin Analytics (onboarding admin routes), every account */ SELECT split_part(client, ' ', 1) AS client, count(*) AS n FROM mcp_events WHERE method = 'initialize' AND client IS NOT NULL AND at >= ${F} AND at < ${T} GROUP BY 1 ORDER BY 1`),
     db.query<{ user_id: string; account: string; calls: unknown }>(
@@ -310,7 +312,10 @@ export async function platformAnalytics(q: AnalyticsQuery) {
   const orgsOnce = memo(loadOrgs);
   const [parsed, facetLists] = await Promise.all([parseFilters(q, range, orgsOnce), facets(range, orgsOnce)]);
   const { filters, sql: { EV, CL, ORG, O, scoped } } = parsed;
-  const GW = scoped ? `gateway_usage g JOIN agent_sessions s ON s.id = g.session_id WHERE g.last_at >= ${F} AND g.last_at < ${T}${ORG("s.", "session")}`
+  // The session engine's tables are a host pack's (mold_v0-049): with none in this build its figures are 0.
+  const eng = sessionEngine(), research = researchJobs();
+  const GW = scoped ? (eng ? `gateway_usage g JOIN agent_sessions s ON s.id = g.session_id WHERE g.last_at >= ${F} AND g.last_at < ${T}${ORG("s.", "session")}`
+                           : `gateway_usage g WHERE false`)
     : `gateway_usage g WHERE g.last_at >= ${F} AND g.last_at < ${T}`;
   // In the period, and in the period just before it.
   const inW = (c: string) => `${c} >= ${F} AND ${c} < ${T}`, inP = (c: string) => `${c} >= ${PF} AND ${c} < ${F}`;
@@ -345,7 +350,7 @@ export async function platformAnalytics(q: AnalyticsQuery) {
       `SELECT split_part(client, ' ', 1) AS client, count(DISTINCT org_id) AS accounts, count(DISTINCT ${person}) AS people, count(*) AS connections
          FROM mcp_events WHERE method = 'initialize' AND client IS NOT NULL AND ${inW("at")}${CL()} GROUP BY 1 ORDER BY 2 DESC, 4 DESC LIMIT 12`),
     db.query(
-      `SELECT o.slug, o.name, (SELECT string_agg(p.name, ', ' ORDER BY p.name) FROM products p WHERE p.org_id = o.id) AS products, count(*) FILTER (WHERE ${inW("e.at")}) AS calls, count(*) FILTER (WHERE ${inP("e.at")}) AS prev_calls,
+      `SELECT o.slug, o.name, ${eng ? "(SELECT string_agg(p.name, ', ' ORDER BY p.name) FROM products p WHERE p.org_id = o.id)" : "NULL::text"} AS products, count(*) FILTER (WHERE ${inW("e.at")}) AS calls, count(*) FILTER (WHERE ${inP("e.at")}) AS prev_calls,
               count(*) FILTER (WHERE ${inW("e.at")} AND NOT e.ok) AS errors, count(DISTINCT ${person.replace(/user_id|org_id/g, (c) => `e.${c}`)}) FILTER (WHERE ${inW("e.at")}) AS people,
               max(e.at) AS last_seen, count(*) OVER () AS total
          FROM mcp_events e JOIN organizations o ON o.id = e.org_id
@@ -361,16 +366,18 @@ export async function platformAnalytics(q: AnalyticsQuery) {
         WHERE f.cohort >= date_trunc('week', now()) - interval '7 weeks'
         GROUP BY f.cohort, a.wk ORDER BY f.cohort, week`),
     db.query<Record<string, number>>(
-      `/* tenant: internal: admin Analytics (onboarding admin routes), every account */ SELECT (SELECT count(*) FROM simulations WHERE ${inW("created_at")}${ORG("", "sim")}) AS sims,
+      `/* tenant: internal: admin Analytics (onboarding admin routes), every account */ SELECT ${eng ? `(SELECT count(*) FROM simulations WHERE ${inW("created_at")}${ORG("", "sim")}) AS sims,
               (SELECT count(*) FROM simulations WHERE ${inW("created_at")} AND status = 'completed'${ORG("", "sim")}) AS sims_completed,
               (SELECT count(*) FROM simulations WHERE status IN ('queued', 'running')${ORG("", "sim")}) AS sims_open,
               (SELECT count(*) FROM agent_sessions WHERE ${inW("queued_at")}${ORG("", "session")}) AS sessions,
               (SELECT count(*) FROM agent_sessions WHERE ${inW("queued_at")} AND status = 'completed'${ORG("", "session")}) AS sessions_completed,
               (SELECT count(*) FROM agent_sessions WHERE ${inW("queued_at")} AND status IN ('failed', 'timeout')${ORG("", "session")}) AS sessions_failed,
               (SELECT count(*) FROM agent_sessions WHERE status = 'queued'${ORG("", "session")}) AS sessions_queued,
-              (SELECT coalesce(sum(cost_usd), 0) FROM agent_sessions WHERE ${inW("queued_at")}${ORG("", "session")}) AS model_cost_usd,
-              (SELECT count(*) FROM product_research WHERE kind = 'product' AND ${inW("created_at")}${ORG("", "research")}) AS onboardings,
-              (SELECT count(*) FROM product_research WHERE kind = 'product' AND ${inW("created_at")} AND status = 'failed'${ORG("", "research")}) AS onboardings_failed,
+              (SELECT coalesce(sum(cost_usd), 0) FROM agent_sessions WHERE ${inW("queued_at")}${ORG("", "session")}) AS model_cost_usd,`
+            : "0 AS sims, 0 AS sims_completed, 0 AS sims_open, 0 AS sessions, 0 AS sessions_completed, 0 AS sessions_failed, 0 AS sessions_queued, 0 AS model_cost_usd,"}
+              ${research ? `(SELECT count(*) FROM product_research WHERE kind = 'product' AND ${inW("created_at")}${ORG("", "research")}) AS onboardings,
+              (SELECT count(*) FROM product_research WHERE kind = 'product' AND ${inW("created_at")} AND status = 'failed'${ORG("", "research")}) AS onboardings_failed,`
+            : "0 AS onboardings, 0 AS onboardings_failed,"}
               (SELECT coalesce(sum(g.errors), 0) FROM ${GW}) AS gateway_errors,
               (SELECT coalesce(sum(g.requests), 0) FROM ${GW}) AS gateway_requests`),
     db.query(
@@ -382,15 +389,18 @@ export async function platformAnalytics(q: AnalyticsQuery) {
     // The Health figures day by day, for their sparklines (same filters as ops). Queued is the autoscaler's daily peak.
     db.query<Record<string, unknown>>(
       `/* tenant: internal: admin Analytics (onboarding admin routes), every account */ WITH days AS (
+         SELECT NULL::text AS day, 0::bigint AS sims, 0::bigint AS sims_completed, 0::bigint AS sessions, 0::bigint AS sessions_failed, 0::numeric AS model_cost_usd,
+                0::bigint AS onboardings, 0::bigint AS onboardings_failed, 0::numeric AS gateway_errors, 0::numeric AS gateway_requests, 0 AS queued WHERE false${eng ? `
+         UNION ALL
          SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day, count(*) AS sims, count(*) FILTER (WHERE status = 'completed') AS sims_completed,
                 0 AS sessions, 0 AS sessions_failed, 0 AS model_cost_usd, 0 AS onboardings, 0 AS onboardings_failed, 0 AS gateway_errors, 0 AS gateway_requests, 0 AS queued
            FROM simulations WHERE ${inW("created_at")}${ORG("", "sim")} GROUP BY 1
          UNION ALL
          SELECT to_char(date_trunc('day', queued_at), 'YYYY-MM-DD'), 0, 0, count(*), count(*) FILTER (WHERE status IN ('failed', 'timeout')), coalesce(sum(cost_usd), 0), 0, 0, 0, 0, 0
-           FROM agent_sessions WHERE ${inW("queued_at")}${ORG("", "session")} GROUP BY 1
+           FROM agent_sessions WHERE ${inW("queued_at")}${ORG("", "session")} GROUP BY 1` : ""}${research ? `
          UNION ALL
          SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), 0, 0, 0, 0, 0, count(*), count(*) FILTER (WHERE status = 'failed'), 0, 0, 0
-           FROM product_research WHERE kind = 'product' AND ${inW("created_at")}${ORG("", "research")} GROUP BY 1
+           FROM product_research WHERE kind = 'product' AND ${inW("created_at")}${ORG("", "research")} GROUP BY 1` : ""}
          UNION ALL
          SELECT to_char(date_trunc('day', g.last_at), 'YYYY-MM-DD'), 0, 0, 0, 0, 0, 0, 0, sum(g.errors), sum(g.requests), 0 FROM ${GW} GROUP BY 1
          UNION ALL
@@ -454,6 +464,9 @@ export async function platformErrors(q: AnalyticsQuery) {
       `product_research r JOIN organizations o ON o.id = r.org_id JOIN products p ON p.id = r.product_id
         WHERE r.status = 'failed' AND ${inW("r.created_at")}${ORG("r.", "research")}`],
   }[kind];
+  // Sessions and onboarding research are the session engine's, a host pack's tables (mold_v0-049): none without them.
+  if ((kind === "session" && !sessionEngine()) || (kind === "onboarding" && !researchJobs()))
+    return { kind, rows: [], total: 0, offset, limit, range: { from: range.from, to: range.to, days: range.days } };
   const db = await getDb();
   const [rows, total] = await Promise.all([
     db.query(`SELECT ${select} FROM ${from} ORDER BY 1 DESC LIMIT ${limit} OFFSET ${offset}`),

@@ -8,6 +8,7 @@
  * from compute_events, and jobs by when they were created. Admin only, across orgs.
  */
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import { classifySession } from "./error-classes.js";
 import { groupOrchestratorEnds } from "./compute-jobs.js";
 
@@ -29,6 +30,8 @@ export async function computeTrends(q: { hours?: unknown } = {}) {
     s[k] = out;
   };
 
+  // Sessions, simulations and research are the session engine's, a host pack's tables (mold_v0-049): none without them.
+  const eng = sessionEngine(), none = <T,>() => Promise.resolve([] as T[]);
   const [ticks, ended, waits, orch, jobs, failed, deletes] = await Promise.all([
     db.query<{ h: unknown; queued: unknown; running: unknown; research: unknown; orchestrators: unknown; unclaimable: unknown; in_use: unknown; free: unknown;
                ticks: unknown; tick_errors: unknown; launched: unknown; reaped: unknown }>(
@@ -37,11 +40,11 @@ export async function computeTrends(q: { hours?: unknown } = {}) {
               count(*) AS ticks, count(*) FILTER (WHERE error IS NOT NULL) AS tick_errors,
               sum(jsonb_array_length(launched)) AS launched, sum(jsonb_array_length(reaped)) AS reaped
          FROM autoscaler_ticks WHERE at >= $1 GROUP BY 1`, [from]),
-    db.query<{ h: unknown; ended: unknown; failed: unknown; usd: unknown }>(
+    !eng ? none<{ h: unknown; ended: unknown; failed: unknown; usd: unknown }>() : db.query<{ h: unknown; ended: unknown; failed: unknown; usd: unknown }>(
       `/* tenant: internal: admin Health trends across all orgs */
        SELECT ${hour("ended_at")} AS h, count(*) AS ended, count(*) FILTER (WHERE status IN ('failed', 'timeout')) AS failed, coalesce(sum(cost_usd), 0) AS usd
          FROM agent_sessions WHERE ended_at >= $1 GROUP BY 1`, [from]),
-    db.query<{ h: unknown; v: unknown; starts: unknown }>(
+    !eng ? none<{ h: unknown; v: unknown; starts: unknown }>() : db.query<{ h: unknown; v: unknown; starts: unknown }>(
       `/* tenant: internal: admin Health trends across all orgs */
        SELECT ${hour("started_at")} AS h, percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM started_at - queued_at)) AS v,
               count(*) FILTER (WHERE sandbox_id IS NOT NULL) AS starts
@@ -51,16 +54,17 @@ export async function computeTrends(q: { hours?: unknown } = {}) {
       `SELECT ${hour("created_at")} AS created_h, ${hour("deleted_at")} AS deleted_h, state, launch_step, launch_error, reap_reason, error, ready_at,
               coalesce(deleted_at, created_at) AS at
          FROM orchestrator_sandboxes WHERE created_at >= $1 OR deleted_at >= $1 LIMIT 20000`, [from]),
-    db.query<{ h: unknown; jobs: unknown; failed: unknown }>(
+    !eng ? none<{ h: unknown; jobs: unknown; failed: unknown }>() : db.query<{ h: unknown; jobs: unknown; failed: unknown }>(
       `/* tenant: internal: admin Health trends across all orgs */
        SELECT h, sum(jobs) AS jobs, sum(failed) AS failed FROM (
          SELECT ${hour("s.created_at")} AS h, count(*) AS jobs,
                 count(*) FILTER (WHERE EXISTS (SELECT 1 FROM agent_sessions a WHERE a.simulation_id = s.id AND a.status IN ('failed', 'timeout'))) AS failed
-           FROM simulations s WHERE s.created_at >= $1 GROUP BY 1
+           FROM simulations s WHERE s.created_at >= $1 GROUP BY 1${researchJobs() ? `
          UNION ALL
          SELECT ${hour("created_at")} AS h, count(*) AS jobs, count(*) FILTER (WHERE status = 'failed') AS failed
-           FROM product_research WHERE created_at >= $1 GROUP BY 1) x GROUP BY h`, [from]),
-    db.query<{ h: unknown; status: string; agent_id: string | null; error_message: string | null; completed_reason: string | null; infra_error: string | null }>(
+           FROM product_research WHERE created_at >= $1 GROUP BY 1` : ""}) x GROUP BY h`, [from]),
+    !eng ? none<{ h: unknown; status: string; agent_id: string | null; error_message: string | null; completed_reason: string | null; infra_error: string | null }>()
+    : db.query<{ h: unknown; status: string; agent_id: string | null; error_message: string | null; completed_reason: string | null; infra_error: string | null }>(
       `/* tenant: internal: admin Health trends, classified into counts across all orgs */
        SELECT ${hour("ended_at")} AS h, status, agent_id, error_message, completed_reason, metadata->>'infra_error' AS infra_error
          FROM agent_sessions WHERE status IN ('failed', 'timeout') AND ended_at >= $1 ORDER BY ended_at DESC LIMIT 5000`, [from]),

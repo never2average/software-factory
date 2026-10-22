@@ -21,6 +21,7 @@ import { getDb, type Queryable } from "./db.js";
 import { settingNumber } from "./settings.js";
 import { accountRefusal, canAccount, type AccountRole } from "./account-roles.js";
 import { monthRunSpendByPerson, RUN_USD } from "./run-spend.js";
+import { sessionEngine } from "./host-tables.js";
 
 /** Why a launch was refused, for /app to show beside the message; validation errors carry no code. */
 export type LimitCode = "viewer_role" | "no_allowance" | "account_cap" | "budget_error" | "launch_access" | "person_limit" | "team_budget" | "rest_pot" | "buffer" |
@@ -71,7 +72,8 @@ async function load(orgId: number, q?: Queryable) {
  */
 async function usageByPerson(orgId: number) {
   const db = await getDb();
-  const rows = await db.query<{ user_id: string; spent: number; in_flight: number; tokens_in: number; tokens_out: number; running: number }>(
+  // The session engine's tables are a host pack's (mold_v0-049): with none, only the runs people started count.
+  const rows = !sessionEngine() ? [] : await db.query<{ user_id: string; spent: number; in_flight: number; tokens_in: number; tokens_out: number; running: number }>(
     `WITH sims AS (SELECT id, created_by, status FROM simulations WHERE org_id = $1 AND created_by IS NOT NULL),
           live AS (SELECT s.created_by, a.status, a.tokens_in, a.tokens_out,
                           GREATEST(a.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = a.id), 0)) AS usd
@@ -298,9 +300,11 @@ const AVG_MIN_SESSIONS = 20;
 export async function monthFigures(orgId: number) {
   // The pace counts runs too (mold_v0-053); the average per session is the sessions' own (a launch's estimate).
   const [r] = await (await getDb()).query<{ finished: number; avg_usd: number | null; recent: number; recent_days: number }>(
-    `WITH s AS (SELECT a.status, a.queued_at,
+    `WITH s AS (${sessionEngine() ? `SELECT a.status, a.queued_at,
                        GREATEST(a.cost_usd, coalesce((SELECT sum(g.cost_usd) FROM gateway_usage g WHERE g.session_id = a.id), 0)) AS usd
-                  FROM agent_sessions a WHERE a.org_id = $1 AND a.queued_at >= ${MONTH}),
+                  FROM agent_sessions a WHERE a.org_id = $1 AND a.queued_at >= ${MONTH}`
+                  // No session engine tables in this build (mold_v0-049): no sessions, runs only.
+                  : "SELECT NULL::text AS status, NULL::timestamptz AS queued_at, NULL::numeric AS usd WHERE false"}),
           rr AS (SELECT r.created_at, ${RUN_USD} AS usd FROM runs r WHERE r.org_id = $1 AND r.created_at >= ${MONTH})
      SELECT count(*) FILTER (WHERE status IN ('completed', 'failed', 'timeout')) AS finished,
             avg(usd) FILTER (WHERE status IN ('completed', 'failed', 'timeout')) AS avg_usd,

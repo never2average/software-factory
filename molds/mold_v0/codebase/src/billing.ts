@@ -18,6 +18,7 @@
  */
 import { createHash } from "node:crypto";
 import { getDb } from "./db.js";
+import { sessionEngine } from "./host-tables.js";
 import { componentJson, componentSummary, configJson, DEFAULT_TAX_CODE, METRIC_IDS, METRICS, meterFor, stripeTiers, usageFromTiers, usageLookup,
   type Metric, type PlanConfig, type UsageComponent } from "./plan-config.js";
 
@@ -416,7 +417,7 @@ async function reportUsage(metric: Metric, identifier: string, customer: string,
  * rounded up (sandbox_hours). Only for an account with a Stripe customer. Best effort, never throws.
  */
 export function reportSessionSpend(sessionId: string): void {
-  if (!stripeEnabled()) return;
+  if (!stripeEnabled() || !sessionEngine()) return;
   void (async () => {
     const [r] = await (await getDb()).query<{ stripe_customer_id: string | null; cost_usd: number | null; status: string; minutes: number | null }>(
       `SELECT o.stripe_customer_id, s.cost_usd, s.status, ceil(extract(epoch FROM (s.ended_at - s.started_at)) / 60)::int AS minutes
@@ -433,7 +434,7 @@ export function reportSessionSpend(sessionId: string): void {
 
 /** A completed simulation run, to the simulations meter (1 per run; identifier the run id). Best effort, never throws. */
 export function reportSimulationUsage(simulationId: string): void {
-  if (!stripeEnabled()) return;
+  if (!stripeEnabled() || !sessionEngine()) return;
   void (async () => {
     const [r] = await (await getDb()).query<{ stripe_customer_id: string | null }>(
       "SELECT o.stripe_customer_id FROM simulations sim JOIN organizations o ON o.id = sim.org_id WHERE sim.id = $1 AND sim.status = 'completed'", [simulationId]);

@@ -18,7 +18,7 @@ broad permissions, so they must not reach credentials, other tenants or the scor
 |---|---|---|
 | Every MCP read path is scoped to the caller's organization | `src/queries.ts` resolvers and queries | before 2026-10 |
 | Real vendor keys (direct-mode providers) are never stored or brokered unless `OCTILLION_DIRECT_KEYS=allow`, never to a session running a customer-written task, never orchestrator-only keys (`boat`) | `src/gateway.ts` `brokerSessionCredentials`, `src/keyvault.ts` `setCredential` | 2026-10-15 |
-| A developer profile is shared exactly when it comes from the vault: `CHECK ((org_id IS NULL) = (source = 'vault'))`, no default source | `sql/migrations/0001_baseline.sql` | 2026-10-15 |
+| A developer profile is shared exactly when it comes from the vault: `CHECK ((org_id IS NULL) = (source = 'vault'))`, no default source | the host pack's `migrations/0001_tables.sql` (`sql/migrations/0001_baseline.sql` before mold_v0-049) | 2026-10-15 |
 | Vault sync never overwrites an organization's persona, even on a slug clash | `src/vault.ts` | 2026-10-15 |
 | Database errors reach callers as a generic message (a unique-key clash would otherwise reveal another org's slug) | `src/server.ts` `runTool` | 2026-10-15 |
 | Customer inputs (URLs, prompts) are not written to orchestrator logs | `orchestrator/pi-octillion/research.ts` | 2026-10-15 |
