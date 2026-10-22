@@ -205,8 +205,9 @@ services:
       POSTHOG_PROJECT_URL: ${POSTHOG_PROJECT_URL:-}
       NEW_RELIC_DASHBOARD_URL: ${NEW_RELIC_DASHBOARD_URL:-}
     expose: ["3333"]
-    # The runs network (below) is where run containers reach this API; the database is not on it.
-    networks: [default, runs]
+    # The runs network (below) is where run containers reach this API; the database is not on it. The edge network is
+    # where Caddy and the console reach it.
+    networks: [default, runs, edge]
 
   # Run sandboxes on this server (mold_v0-055, src/run-fleet.ts): a container per queued run, from the image above, on
   # the runs network, torn down when its run's attempt ends. The only service with the Docker socket; it serves nothing
@@ -263,6 +264,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     expose: ["3400"]
+    # The edge network only: Caddy and the API, never the database or the run containers.
+    networks: [edge]
 
   caddy:
     logging: *logging
@@ -280,11 +283,14 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
+    networks: [edge]
 
 networks:
   default:
   # Run containers and the API only (mold_v0-055): named <project>_runs, which the runner service looks up.
   runs:
+  # Caddy, the console and the API (mold_v0-020): what the public side reaches; the database is not on it.
+  edge:
 
 volumes:
   pg_data:

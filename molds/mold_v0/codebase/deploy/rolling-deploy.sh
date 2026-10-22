@@ -54,8 +54,10 @@ roll() {
   echo "deployed: $(dc ps "$svc" --format '{{.Name}} {{.Status}}')"
 }
 
-# The API first (in-flight model streams get OCTILLION_DRAIN_SECONDS), then the console, which proxies to it and holds no
-# streams (Caddy sends those to the API directly).
+# The API first (in-flight model streams get OCTILLION_DRAIN_SECONDS), then the console, which holds no streams (Caddy
+# sends those to the API directly). The console's Next.js server exits as soon as it is stopped: new requests already go
+# to the new replica (Caddy retries a refused connection), but a page render in flight on the old one at that moment
+# is cut, and its browser retries it.
 roll octillion $(( ${OCTILLION_DRAIN_SECONDS:-300} + 30 ))
 roll console 30
 # Caddy reads its routes from deploy/Caddyfile, mounted as a file: when the file on disk differs from the one the
@@ -65,7 +67,8 @@ if dc ps -q caddy | grep -q . && ! dc exec -T caddy cat /etc/caddy/Caddyfile | c
   echo "caddy: its routes changed; recreating it on deploy/Caddyfile"
   dc up -d --no-deps --force-recreate caddy
 else
-  dc up -d --no-deps caddy
+  # a file edited in place is seen by the container but not by Caddy until it reloads (a reload keeps connections)
+  dc up -d --no-deps caddy && { dc exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile || echo "caddy: reload failed; its routes are the ones it started with" >&2; }
 fi
 # The runner service (run sandboxes, mold_v0-055) runs the same image: recreated on it. Runs in flight keep their own
 # containers; the new runner tears them down when their runs end.

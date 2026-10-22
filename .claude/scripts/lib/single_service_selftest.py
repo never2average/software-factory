@@ -248,6 +248,9 @@ def run():
     for blk in re.findall(r"(?m)^      args:\n((?:        .+\n)+)", ctext): args += re.findall(r"^\s+([A-Z0-9_]+):\s*(.*)$", blk, re.M)
     ok(args and all(not SS.CRED.search(re.sub(r"PUBLISHABLE_KEY", "", v)) for _, v in args) and all("PASSWORD" not in v and "SECRET" not in v and "VAULT" not in v for _, v in args),
        f"no build argument in mold_v0's compose file carries a secret (Next.js writes build arguments into the image): {args}")
+    cblock = (re.search(r"(?ms)^  console:\n(.*?)(?=^  [a-z])", ctext) or [None, ""])[1]
+    ok(re.search(r"(?m)^    networks: \[edge\]$", cblock) and "DATABASE_URL" not in cblock and "VAULT" not in cblock and "TOKEN" not in cblock and "\n    ports:" not in cblock,
+       "the console is on the edge network only (Caddy and the API, never the database), holds no database URL, vault key or token, and publishes nothing")
     wdf = open(os.path.join(SS.codebase("mold_v0"), "web", "Dockerfile")).read()
     ok(re.search(r"(?m)^USER node$", wdf) and "CLERK_SECRET_KEY" not in re.sub(r"(?m)^#.*$", "", wdf) and "--from=web" not in open(os.path.join(SS.codebase("mold_v0"), "Dockerfile")).read(),
        "the console's image runs as node, never sees the sign-in secret at build, and the API's image no longer copies a static export that is never built")
@@ -392,7 +395,8 @@ def run():
             ok("nope" in bad_c, f"a console mold.json names but the compose file does not build is refused: {bad_c}")
             # the generated scripts: both services built one at a time, both judged on the server
             BC = SS.bundle(SC0, FC)
-            ok("for s in app web; do dc build" in BC["up.sh"][0] and BC["up.sh"][0].count("upw") == 4, "up.sh builds the API, then the console, one at a time, then brings the stack up (every path)")
+            ok("for s in app web; do" in BC["up.sh"][0] and BC["up.sh"][0].count("if upw; then") == 3 and "&& fresh" in BC["up.sh"][0],
+               "up.sh builds the API, then the console, one at a time, then brings the stack up and refreshes stale mounted files (every path)")
             ok("CONSOLE_STATE=" in BC["health.sh"][0] and "dc ps -q web" in BC["health.sh"][0] and "APP_STATE=" in BC["health.sh"][0], "health.sh reads the console's container as it reads the API's")
             ok("APP_STATE" not in "".join(l for l in B["health.sh"][0].splitlines() if "CONSOLE" in l) and "CONSOLE_STATE" not in B["health.sh"][0], "a stack without a console reads no console")
             outc = os.path.join(t, "bundle-console"); SS.write_bundle(SC0, FC, outc); ok(SS.rehearse(outc) == [], f"the console bundle rehearses clean: {SS.rehearse(outc)}")
@@ -908,10 +912,27 @@ def run():
                 FCu = SS.compose_facts(fixture_mold(os.path.join(t, "upc"), console=True), SS.manifest("mold_vx", os.path.join(t, "upc")))
                 upc = os.path.join(t, "upc.sh"); open(upc, "w").write(SS.up_sh(SU, FCu)); dlog = os.path.join(t, "docker.log")
                 for f in os.listdir(stubs): os.remove(os.path.join(stubs, f))
-                stub("docker", f'echo "$*" >> {dlog}; exit 0')
-                r = subprocess.run(["bash", upc, "20261003T000000Z"], env={"PATH": stubs + ":/usr/bin:/bin", "SF_REMOTE_DEPLOY": SU["app_id"]}, capture_output=True, text=True)
-                calls_ = [" ".join(l.split()[l.split().index("compose") + 7:]) if "compose" in l else l for l in open(dlog).read().splitlines()]
-                ok(r.returncode == 0 and [c_.split(" --")[0] for c_ in calls_] == ["build app", "build web", "up -d"], f"up.sh with a console: build app, build web, then up: {calls_} {r.stderr[-200:]}")
+                def upc_run(services, mounted=""):
+                    # services: what the release's compose file has; mounted: what a running caddy holds of the file `current` mounts
+                    if os.path.exists(dlog): os.remove(dlog)
+                    for f in os.listdir(stubs): os.remove(os.path.join(stubs, f))
+                    cur_file = os.path.join(inst, "current", "Caddyfile"); open(cur_file, "w").write("new routes\n")
+                    held = os.path.join(t, "held"); os.makedirs(held, exist_ok=True); open(os.path.join(held, "Caddyfile"), "w").write(mounted or "new routes\n")
+                    stub("docker", f'echo "$*" >> {dlog}\ncase "$*" in\n *"config --services"*) printf "{services}";;\n *"ps -q"*) echo cid1;;\n'
+                                   f' "inspect -f {{{{range"*) echo "{inst}/current/Caddyfile|/etc/caddy/Caddyfile";;\n "inspect -f {{{{index"*) echo caddy;;\n'
+                                   f' "cp cid1:"*) tar -C {held} -cf - Caddyfile;;\nesac\nexit 0')
+                    r = subprocess.run(["bash", upc, "20261003T000000Z"], env={"PATH": stubs + ":/usr/bin:/bin", "SF_REMOTE_DEPLOY": SU["app_id"]}, capture_output=True, text=True)
+                    calls_ = [" ".join(l.split()[l.split().index("compose") + 7:]) if l.startswith("compose") else l for l in open(dlog).read().splitlines()]
+                    return r, [c_.split(" --")[0] for c_ in calls_ if c_.startswith(("build", "up"))]
+                r, calls_ = upc_run("app\\nweb\\n")
+                ok(r.returncode == 0 and calls_ == ["build app", "build web", "up -d"], f"up.sh with a console: build app, build web, then up: {calls_} {r.stderr[-200:]}")
+                r, calls_ = upc_run("app\\n")
+                ok(r.returncode == 0 and calls_ == ["build app", "up -d"], f"a release from before the console (a rollback) builds only what its compose file has: {calls_} {r.stderr[-200:]}")
+                r, calls_ = upc_run("app\\nweb\\n", mounted="old routes\n")
+                ok(r.returncode == 0 and calls_[-1].startswith("up -d") and any("force-recreate" in l and l.rstrip().endswith("caddy") for l in open(dlog).read().splitlines()),
+                   f"a container still holding the older release's mounted Caddyfile is recreated on the new one: {open(dlog).read()[-300:]}")
+                r, calls_ = upc_run("app\\nweb\\n")
+                ok("force-recreate" not in open(dlog).read(), "a container holding the current file is left running")
             except BaseException as e_: ok(False, f"up.sh with a console: crashed: {type(e_).__name__}: {e_}"[:300])
             R4 = Runner({"rollback": (0, "NOTHING=no earlier release to go back to (serving x); nothing was changed\nSERVING=x\n")}); said4 = []
             SS.rollback_remote("zz_shop", S, F, runner=R4, say=said4.append)

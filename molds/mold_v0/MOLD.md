@@ -868,7 +868,8 @@ image.
 `console`: `web/Dockerfile` builds it with Next.js standalone output (`next.config.ts` `BUILD_STANDALONE`) from the
 codebase root, so the internal docs and a host pack's docs are bundled as on Vercel, and a host pack's console files
 (`web/src/packs/<id>/`, in the app's build copy) are in it. It runs as `node`, publishes no port, and is the second
-of the stack's two built services (the API's `Dockerfile` no longer has a web stage). The stack's Caddy sends the
+of the stack's two built services (the API's `Dockerfile` no longer has a web stage). It sits on the stack's `edge`
+network only, with Caddy and the API: it cannot reach the database or the run containers. The stack's Caddy sends the
 API's own paths (`/mcp`, `/api/*`, `/gw/*` with the model streams, `/.well-known/*`, `/admin/session`, `/admin/mcp`,
 `/install*`, `/preview/*`) straight to the API's replicas, and everything else (the console's pages and assets,
 sign-in, the public pages, `/healthz`) to the console, whose fallback rewrite reaches the API at
@@ -876,7 +877,10 @@ sign-in, the public pages, `/healthz`) to the console, whose fallback rewrite re
 and its two sign-in names, nothing else of the API's. Its build arguments are public values only (the API's address,
 the publishable key the browser needs, the public address); `CLERK_SECRET_KEY` is given at run time.
 `deploy/rolling-deploy.sh` builds both images one after the other and rolls the API, then the console, each a new
-replica healthy before the old one stops, and recreates Caddy when its routes changed.
+replica healthy before the old one stops, and recreates Caddy when its routes changed (a few seconds without
+answers, once) or reloads it otherwise. The factory's `up.sh` does the same for any container still holding a file the
+previous release mounted (the Caddyfile is mounted through `current`, a path every release shares), and a rollback to
+a release from before the console builds only the services that release has.
 
 **Lanes** (`molds/mold_v0/testing/`, run by `lanes.py` as for any mold): *functional* runs the product's
 `npm run typecheck`, `npm run test:migrations` (embedded throwaway databases only; `MIGRATIONS_PG_URL` unset), `npm run
