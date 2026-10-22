@@ -38,6 +38,8 @@
     "test:credentials": "tsx scripts/credentials-test.ts",
     "test:onboarding": "tsx scripts/onboarding-test.ts",
     "test:run-spend": "tsx scripts/run-spend-test.ts",
+    "test:run-charges": "tsx scripts/run-charges-test.ts",
+    "test:run-charges-race": "tsx scripts/run-charges-race.ts",
     "test:usage": "tsx scripts/usage-test.ts",
     "test:limits": "tsx scripts/limits-test.ts",
     "test:run-start-race": "tsx scripts/run-start-race.ts",
