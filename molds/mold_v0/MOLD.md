@@ -797,6 +797,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
   shell yet. The product's own setup steps and tool groups are its host pack's Setup route (mold_v0-039, below); the
   shell's own Setup page asks for joining, a connection, the tools and a first call, in the profile's words.
+  The same steps are the admin console's account stages after the shell's own five (account created to first tool
+  call; mold_v0-103): `src/admin.ts` `accountStages`, each account's step times read across workspaces in one grouped
+  query per condition (`src/onboarding.ts` `stageStepsReached`, steps other than `workspace`, `connected` and
+  `first_call`), and an account two days at a stage with the next step not done (nothing of its running) is named under
+  Needs attention with that step. With zero packs the funnel ends at the first tool call and asks nothing more. A build
+  with the session engine (a host pack's tables) keeps that engine's stages and messages word for word instead.
+- **Admin sections per build** (mold_v0-104, built): the account pages, Analytics, Health and the plan editor show the
+  session engine's products, research, simulations, jobs and metered units only when the build has its tables
+  (`web/src/features/admin/engine.ts`, the console's copy of `src/host-tables.ts`, from `build-facts.generated.ts`:
+  the host pack's tables and the packs' job kinds with their labels). Without it they show the packs' runs per job kind,
+  by the kind's label and in the build's word for a run: an account's runs and latest runs (`orgDetail` `runs`), the
+  weekly chart (Analytics), Health's runs tab (`GET /compute/runs`, `src/compute-jobs.ts` `runKinds`); an account's
+  month spend is its runs'. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
+  build, and, run in a host pack's build, that the engine's stages, messages, account page and funnel are unchanged.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
   by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a

@@ -3,6 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { adminApi } from '@/lib/api-client';
+import { W } from '@/lib/vocabulary';
 
 /** GET /api/admin/onboarding<path>, cached under ['admin', path]. `keep`: show the last result while a new path loads
  * (server-paged tables), so the table does not flash empty between pages. */
@@ -38,6 +39,10 @@ export const ACCOUNT_ROLES = [{ id: 'owner', label: 'Owner' }, { id: 'billing', 
 export const accountRoleOf = (x: { role?: string | null; account_role?: string | null }) => x.account_role ?? (x.role === 'admin' ? 'owner' : 'member');
 export const accountRoleLabel = (x: { role?: string | null; account_role?: string | null }) => ACCOUNT_ROLES.find((r) => r.id === accountRoleOf(x))?.label ?? 'Member';
 
+/**
+ * The shell's account stages and the session engine's, by id (src/admin.ts accountStages); a pack's onboarding steps
+ * (`<pack>:<step>`) are labelled by the server's list (GET /orgs `stages`).
+ */
 export const STAGE_LABELS: Record<string, string> = {
   created: 'Account created',
   invited: 'Invited',
@@ -45,7 +50,7 @@ export const STAGE_LABELS: Record<string, string> = {
   connected: 'Connected',
   first_call: 'First tool call',
   onboarded: 'Product onboarded',
-  simulated: 'Simulation run',
+  simulated: `${W.Run} run`,
   reported: 'Report read'
 };
 
@@ -84,6 +89,8 @@ export interface OrgRow {
   last_seen: string | null;
   calls_7d: number;
   errors_7d: number;
+  /** The packs' runs queued or running (a build without the session engine). */
+  runs_running?: number;
   month_spend_usd: number;
   budget_usd: number;
   /** Where budget_usd comes from: an admin-set allowance, a live prepaid plan, or the default ($0: no runs). */

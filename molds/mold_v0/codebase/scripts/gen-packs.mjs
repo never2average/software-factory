@@ -996,7 +996,7 @@ for (const [id, json, file] of entries) {
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
       store: (def.agentJobKinds ?? []).length > 0 || (def.jobKinds ?? []).some((k) => k.workspace === true),
       resultChecks: def.runResults?.check ?? [],
-      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })) };
+      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })) };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 3000) }; }
 }
 // Metrics, charts and tabs across the build (mold_v0-063, 058): checked together once every pack loaded.
@@ -1182,6 +1182,14 @@ files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
   `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n`);
+// What the admin console's shared pages show for this build (mold_v0-104): the host pack's own tables (the console's
+// copy of src/host-tables.ts reads them, so the session engine's sections show only in a build that has its tables)
+// and every job kind the packs declare, with its label (the pack's runs, in its words, where those sections were).
+files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HEADER +
+  "/** A host pack's own tables (pack.json host.schema.tables), as src/pack-migrations.generated.ts lists them; none with zero packs. */\n" +
+  `export const HOST_TABLES: readonly string[] = ${json(packs.flatMap((p) => p.schema?.tables ?? []))};\n` +
+  "/** The packs' job kinds (jobKinds and agentJobKinds): the pack, the kind's name and its label (null: the name). */\n" +
+  `export const JOB_KINDS: readonly { pack: string; name: string; label: string | null }[] = ${json(packs.flatMap((p) => (defsByPack[p.id]?.kinds ?? []).map((k) => ({ pack: p.id, name: k.name, label: k.label ?? null }))))};\n`);
 // The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
 const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
 const hostPacks = packs.filter((p) => p.host && p.host.entry);
