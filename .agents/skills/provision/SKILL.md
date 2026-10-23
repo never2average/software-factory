@@ -173,6 +173,11 @@ the Vercel project and prints the one DNS record its owner must create; nothing 
 once the domain serves the app: it moves `production_url` and `WEB_ORIGIN` (emailed links, the MCP origin check) and
 lists what follows — a redeploy, the Google sign-in origin, and a new version of the app's agent package, which has
 the address baked in. A deploy keeps a switched domain as the front door. The `*.vercel.app` address keeps working.
+For a single-service mold (mold_v0: the console project and the `-api` project) the domain is the console's: `verify`
+reads the mold's health path (`/healthz`) through the console on the domain and wants the API's `{"ok": true}`, and
+`switch` (once Vercel files the domain under the console project) writes `OCTILLION_CONSOLE_URL` on the API project
+instead of `WEB_ORIGIN` (sign-in codes, invitations, emailed links and Clerk's accepted sign-in origins are built on
+it), moves `production_url`, and says a redeploy is needed for the API to read it.
 
 ## A server of its own (`target: vm_remote`)
 
