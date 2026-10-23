@@ -9,7 +9,7 @@ import { StatStrip } from '@/components/layout/section';
 import { Box, RankBars, top } from '@/components/layout/chart-grid';
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { appApi } from '@/lib/api-client';
-import { num, usd } from '@/lib/octillion-format';
+import { num, usd } from '@/lib/display-format';
 import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
 import { MultiSelectFilter, type FilterOption } from '@/components/layout/multi-select-filter';
 import { Icons } from '@/components/icons';

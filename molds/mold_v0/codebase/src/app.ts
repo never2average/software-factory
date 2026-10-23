@@ -113,7 +113,7 @@ async function setup(s: Session, since?: string) {
 /**
  * /app Usage for a period, optionally for some people only (?user=id,id): their own tool calls, the runs they launched
  * and those runs' model spend. Without a filter it is the whole team. `people` lists who can be picked: everyone on the
- * team plus anyone who used Octillion in the period.
+ * team plus anyone who used the app in the period.
  */
 async function usage(s: Session, q: { from?: unknown; to?: unknown; days?: unknown; user?: unknown; use_case?: unknown }) {
   const range = reportRange(q), days = range.days;

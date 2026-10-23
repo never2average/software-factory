@@ -3,7 +3,7 @@
  * usage event per finished run, off by default.
  *
  *   rules     the app's profile.json `billing` (src/profile.ts ProfileBilling) turns it on; absent or `enabled: false`,
- *             nothing here does anything and every run's price is NULL. OCTILLION_RUN_BILLING=off turns it off again on a
+ *             nothing here does anything and every run's price is NULL. APP_RUN_BILLING=off turns it off again on a
  *             server (the environment can only turn it off, never on).
  *   price     a pack declares one per job kind (src/pack-api.ts RunPriceSchema). At start (src/runs.ts startRun) the
  *             platform freezes what it allows into runs.price: the app's currency only, the fixed amount and the
@@ -29,6 +29,7 @@ import { getDb } from "./db.js";
 import { PackError, RunPriceSchema, z } from "./pack-api.js";
 import { PROFILE, type ProfileBilling } from "./profile.js";
 import { asPlatform } from "./tenant-scope.js";
+import { ENV } from "./env-names.js";
 
 /** The app's billing rules in force (defaults filled in), or null when billing is off. */
 export interface BillingRules {
@@ -46,7 +47,7 @@ const THREE_DECIMAL = new Set(["bhd", "jod", "kwd", "omr", "tnd"]);
 export const exponentOf = (currency: string) => (ZERO_DECIMAL.has(currency) ? 0 : THREE_DECIMAL.has(currency) ? 3 : 2);
 
 export function billingRules(): BillingRules | null {
-  if ((process.env.OCTILLION_RUN_BILLING ?? "").trim().toLowerCase() === "off") return null;
+  if ((ENV.APP_RUN_BILLING ?? "").trim().toLowerCase() === "off") return null;
   const b = testRules !== undefined ? testRules : (PROFILE as { billing?: ProfileBilling }).billing;
   if (!b || b.enabled !== true) return null;
   const currency = /^[a-z]{3}$/.test(String(b.currency ?? "")) ? String(b.currency) : "usd";
@@ -142,11 +143,11 @@ const backoffSeconds = (attempts: number) => Math.min(3600, 60 * 2 ** Math.max(0
 /** After this many failed sends a row is no longer tried by itself: it stays pending, with its error, on FinOps. */
 export const MAX_DELIVERY_ATTEMPTS = 20;
 /**
- * How long after a run ended its charge waits before it is sent (OCTILLION_RUN_CHARGE_GRACE_SECONDS, default 120): a
+ * How long after a run ended its charge waits before it is sent (APP_RUN_CHARGE_GRACE_SECONDS, default 120): a
  * model response still streaming when the run ended is metered when it finishes, and the charge is refreshed with it
  * before it goes. Credits do not wait.
  */
-const graceSeconds = () => { const v = Number(process.env.OCTILLION_RUN_CHARGE_GRACE_SECONDS ?? 120); return Number.isFinite(v) && v >= 0 ? Math.min(v, 3600) : 120; };
+const graceSeconds = () => { const v = Number(ENV.APP_RUN_CHARGE_GRACE_SECONDS ?? 120); return Number.isFinite(v) && v >= 0 ? Math.min(v, 3600) : 120; };
 /** The Stripe identifier of a run's charge, and the idempotency keys: the run's own, so every resend is the same event. */
 export const chargeIdentifier = (runId: string) => `run_charge:${runId}`;
 export const creditKey = (runId: string) => `run_credit:${runId}`;

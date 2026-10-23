@@ -1,7 +1,7 @@
 /**
  * Per-organization encryption of private text at rest (docs/security.md): the personas and task prompts an
  * organization brings are stored encrypted with that organization's own data key (AES-256-GCM). The data key is kept
- * only wrapped by the vault master key (OCTILLION_VAULT_KEY, src/keyvault.ts), in org_keys. Deleting the
+ * only wrapped by the vault master key (APP_VAULT_KEY, src/keyvault.ts), in org_keys. Deleting the
  * organization deletes its key, so its private text in the database cannot be read any more.
  *
  * A database dump alone (without the master key) does not reveal private text. Hourly dumps still hold the wrapped
@@ -85,7 +85,7 @@ const BYTES_MAGIC = Buffer.from("WSE1");
  * moved under another row or another workspace does not open. Fails closed: refuses while the vault is locked.
  */
 export async function sealBytes(orgId: number, body: Buffer, aad: string): Promise<Buffer> {
-  if (!vaultUnlocked()) throw new Error("the key vault is locked (OCTILLION_VAULT_KEY): workspace data is never stored unsealed");
+  if (!vaultUnlocked()) throw new Error("the key vault is locked (APP_VAULT_KEY): workspace data is never stored unsealed");
   const key = (await dataKey(orgId, true))!;
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", key, iv);
@@ -110,7 +110,7 @@ export async function openBytes(orgId: number, sealed: Buffer, aad: string): Pro
  * that key (a plain hash of a short value could be guessed). Refused while the vault is locked.
  */
 export async function orgMac(orgId: number, purpose: string, text: string): Promise<string> {
-  if (!vaultUnlocked()) throw new Error("the key vault is locked (OCTILLION_VAULT_KEY): a sealed record's fingerprint needs the workspace's key");
+  if (!vaultUnlocked()) throw new Error("the key vault is locked (APP_VAULT_KEY): a sealed record's fingerprint needs the workspace's key");
   const key = (await dataKey(orgId, true))!;
   const k = createHmac("sha256", key).update(`orgmac/v1/${purpose}`).digest();
   return createHmac("sha256", k).update(text, "utf8").digest("hex");

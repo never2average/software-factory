@@ -39,6 +39,7 @@ import { packs } from "./packs.js";
 import { checkData, conform, isSealedArea, recordAreas, storedMarks, SYSTEM_ACTOR, writeFromRepository, type RecordArea } from "./record-areas.js";
 import { pageInMemory, type Parsed } from "./record-query.js";
 import { asPlatform } from "./tenant-scope.js";
+import { ENV } from "./env-names.js";
 
 void SYSTEM_ACTOR;
 const run = promisify(execFile);
@@ -108,8 +109,8 @@ export function filesSource(files: { path: string; body: Uint8Array | string }[]
 }
 
 /** The test switches: file:// upstreams (a local fixture repository) and private API addresses. Off in production. */
-const allowFileUpstream = () => process.env.OCTILLION_DATA_ALLOW_FILE_UPSTREAM === "1";
-const allowPrivate = () => process.env.OCTILLION_DATA_ALLOW_PRIVATE === "1";
+const allowFileUpstream = () => ENV.APP_DATA_ALLOW_FILE_UPSTREAM === "1";
+const allowPrivate = () => ENV.APP_DATA_ALLOW_PRIVATE === "1";
 
 /**
  * An upstream repository at its pinned commit, by git: a fresh empty repository fetches that one commit (shallow, no

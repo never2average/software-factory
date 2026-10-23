@@ -10,15 +10,15 @@ export async function adminTokenChecks({ base, db, ADMIN_TOKEN, staff }: { base:
   const at = await import("../src/admin-tokens.js");
   const get = (t: string, path = "/keyvault/providers") => fetch(`${base}/api/admin${path}`, { headers: { authorization: `Bearer ${t}` } });
   // The retired variable opens nothing, whatever its value.
-  process.env.OCTILLION_ADMIN_TOKEN = "smoke-static-admin-token";
+  process.env.APP_ADMIN_TOKEN = "smoke-static-admin-token";
   try {
-    assert.equal((await get("smoke-static-admin-token")).status, 401, "OCTILLION_ADMIN_TOKEN is not accepted on /api/admin");
+    assert.equal((await get("smoke-static-admin-token")).status, 401, "APP_ADMIN_TOKEN is not accepted on /api/admin");
     const init = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "x", version: "1" } } });
     assert.equal((await fetch(`${base}/admin/mcp`, { method: "POST", body: init, headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer smoke-static-admin-token" } })).status, 401, "nor on the admin MCP");
     assert.equal((await fetch(`${base}/api/cron/autoscale`, { headers: { authorization: "Bearer smoke-static-admin-token" } })).status, 401, "nor on the cron");
     const v = await fetch(`${base}/admin/mcp`, { method: "POST", body: init, headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${staff.token}` } });
     assert.equal(v.status, 200, "an admin token works on the admin MCP"); await v.text();
-  } finally { delete process.env.OCTILLION_ADMIN_TOKEN; }
+  } finally { delete process.env.APP_ADMIN_TOKEN; }
   // Hashed at rest: the token appears nowhere in the table.
   const rows = await db.query<any>("SELECT * FROM admin_tokens WHERE id = $1", [staff.id]);
   assert.ok(rows.length === 1 && !JSON.stringify(rows).includes(staff.token) && rows[0].token_prefix === staff.token.slice(0, 10), "only a hash and a prefix are stored");
@@ -49,7 +49,7 @@ export async function adminTokenChecks({ base, db, ADMIN_TOKEN, staff }: { base:
   assert.equal((await get(staff.token)).status, 401, "a revoked token is refused at once");
   assert.equal((await fetch(`${base}/api/admin/tokens/${staff.id}`, { method: "DELETE", headers: { authorization: `Bearer ${ADMIN_TOKEN}` } })).status, 404, "revoking twice is a 404");
   assert.equal((await get("adm_not-a-real-token")).status, 401);
-  console.log("✓ admin tokens: the static OCTILLION_ADMIN_TOKEN opens nothing; tokens are hashed, scoped to a role, expiring, revocable, minted only by signed-in owners");
+  console.log("✓ admin tokens: the static APP_ADMIN_TOKEN opens nothing; tokens are hashed, scoped to a role, expiring, revocable, minted only by signed-in owners");
 }
 
 /** API keys in headers, never in URLs (src/auth.ts): Bearer or X-API-Key; legacy URL keys deprecated, logged, switchable off. */
@@ -73,22 +73,22 @@ export async function apiKeyHeaderChecks({ base, a, probe }: { base: string; a: 
     console.error = (...xs: unknown[]) => { lines.push(xs.map(String).join(" ")); };
     let old!: Response;
     try { old = await legacy(); await old.text(); } finally { console.error = err; }
-    assert.equal(old.status, 200, "a legacy connector URL keeps working while OCTILLION_URL_KEYS allows it");
+    assert.equal(old.status, 200, "a legacy connector URL keeps working while APP_URL_KEYS allows it");
     assert.equal(old.headers.get("deprecation"), "@1792454400", "and is marked deprecated (RFC 9745, since 2026-10-20)");
     assert.match(old.headers.get("link") ?? "", /\/mcp>; rel="successor-version"/);
     assert.ok(lines.some((l) => l.includes(`mcp url-key deprecated org=${a.org.slug} key=${a.key.slice(0, 10)}`)), "who still uses one is logged");
     assert.ok(!lines.some((l) => l.includes(a.key)), "the key itself is never logged");
-    process.env.OCTILLION_URL_KEYS = "off";
+    process.env.APP_URL_KEYS = "off";
     try {
       const off = await legacy();
-      assert.equal(off.status, 401, "OCTILLION_URL_KEYS=off refuses keys in the URL");
+      assert.equal(off.status, 401, "APP_URL_KEYS=off refuses keys in the URL");
       assert.match((await off.json()).error.message, /Authorization: Bearer/, "and says how to send it instead");
       const viaHeader = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${a.key}` }, body: init });
       assert.equal(viaHeader.status, 200, "the same key in a header still works");
       await viaHeader.text();
-    } finally { delete process.env.OCTILLION_URL_KEYS; }
+    } finally { delete process.env.APP_URL_KEYS; }
   }
-  console.log("✓ /mcp requires a key in a header (Bearer or X-API-Key) and serves that org; keys in the URL are deprecated, logged by prefix, and refused with OCTILLION_URL_KEYS=off");
+  console.log("✓ /mcp requires a key in a header (Bearer or X-API-Key) and serves that org; keys in the URL are deprecated, logged by prefix, and refused with APP_URL_KEYS=off");
 }
 
 /** Origin and Host validation on every MCP endpoint (src/origin.ts), the MCP spec's DNS-rebinding guidance. */
@@ -123,13 +123,13 @@ export async function originChecks({ base, a }: { base: string; a: { key: string
       process.env.CLERK_MCP_AUDIENCE = "https://aud.example/mcp";
       try { const r = await hit("/mcp", "https://aud.example"); assert.equal(r.status, 200, "a CLERK_MCP_AUDIENCE origin is served"); await r.text(); }
       finally { delete process.env.CLERK_MCP_AUDIENCE; }
-      process.env.OCTILLION_MCP_ALLOWED_ORIGINS = "http://localhost:6274, https://inspector.example";
+      process.env.APP_MCP_ALLOWED_ORIGINS = "http://localhost:6274, https://inspector.example";
       try {
         const r = await hit("/mcp", "http://localhost:6274");
-        assert.equal(r.status, 200, "an origin listed in OCTILLION_MCP_ALLOWED_ORIGINS is served");
+        assert.equal(r.status, 200, "an origin listed in APP_MCP_ALLOWED_ORIGINS is served");
         await r.text();
         assert.equal((await hit("/mcp", "http://localhost:6275")).status, 403, "a different port is a different origin");
-      } finally { delete process.env.OCTILLION_MCP_ALLOWED_ORIGINS; }
+      } finally { delete process.env.APP_MCP_ALLOWED_ORIGINS; }
       // Every method is checked, not only POST: GET (an SSE stream), DELETE, OPTIONS, HEAD.
       for (const path of ["/mcp", "/admin/mcp"])
         for (const method of ["GET", "DELETE", "OPTIONS", "HEAD"])
@@ -156,7 +156,7 @@ export async function originChecks({ base, a }: { base: string; a: { key: string
 
 /**
  * OAuth access tokens on /mcp (src/clerk.ts verifyOAuthToken): the issuer always; a token naming another audience is
- * refused, one naming none is accepted and logged (auto), refused with OCTILLION_OAUTH_AUDIENCE=enforce.
+ * refused, one naming none is accepted and logged (auto), refused with APP_OAUTH_AUDIENCE=enforce.
  */
 export async function audienceChecks({ uid, token, callWith, bad, mcpAudience, adminMcpResource }: {
   uid: string;
@@ -183,9 +183,9 @@ export async function audienceChecks({ uid, token, callWith, bad, mcpAudience, a
     const { r, lines } = await capture(() => callWith(none));
     assert.ok(!r.isError, `${kind}: auto accepts a token that names no audience`);
     assert.ok(lines.some((l) => l.startsWith("oauth audience missing") && l.includes("accepted")) && !lines.some((l) => l.includes(none)), `${kind}: and logs it, never the token`);
-    process.env.OCTILLION_OAUTH_AUDIENCE = "enforce";
+    process.env.APP_OAUTH_AUDIENCE = "enforce";
     try { assert.equal(await bad(await token({ user_id: uid, jwt })), 401, `${kind}: enforce refuses a token with no audience`); }
-    finally { delete process.env.OCTILLION_OAUTH_AUDIENCE; }
+    finally { delete process.env.APP_OAUTH_AUDIENCE; }
   }
   // An aud that names no resource (the client id, the issuer) counts as none: accepted in auto.
   assert.ok(!(await callWith(await token({ user_id: uid, jwt: true, aud: "mock_client" }))).isError, "aud = the client id names no resource");
@@ -201,14 +201,14 @@ export async function audienceChecks({ uid, token, callWith, bad, mcpAudience, a
     assert.equal(mcpAudience(), process.env.CLERK_MCP_AUDIENCE!.split(",")[1]!.trim(), "the first non-blank one is the resource the metadata names");
   } finally { delete process.env.CLERK_MCP_AUDIENCE; }
   // Report mode: a mismatch is accepted and logged (claims only); the issuer is still checked.
-  process.env.OCTILLION_OAUTH_AUDIENCE = "report";
+  process.env.APP_OAUTH_AUDIENCE = "report";
   const reported = await token({ user_id: uid, jwt: true, aud: "https://other-product.example.com/mcp" });
   try {
     const { r, lines } = await capture(() => callWith(reported));
-    assert.ok(!r.isError, "OCTILLION_OAUTH_AUDIENCE=report accepts a mismatch");
+    assert.ok(!r.isError, "APP_OAUTH_AUDIENCE=report accepts a mismatch");
     assert.ok(lines.some((l) => l.includes("oauth audience mismatch") && l.includes("other-product.example.com") && l.includes("accepted")) && !lines.some((l) => l.includes(reported)), "and logs it, never the token");
     assert.equal(await bad(await token({ user_id: uid, jwt: true, iss: "https://evil.example.com" })), 401, "report still checks the issuer");
-  } finally { delete process.env.OCTILLION_OAUTH_AUDIENCE; }
+  } finally { delete process.env.APP_OAUTH_AUDIENCE; }
   assert.equal(await bad(reported), 401, "back to auto: refused again");
 }
 

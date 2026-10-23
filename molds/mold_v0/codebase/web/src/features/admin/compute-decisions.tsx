@@ -13,7 +13,7 @@ import { MultiSelectFilter } from '@/components/layout/multi-select-filter';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
-import { counted } from '@/lib/octillion-format';
+import { counted } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { useAdmin } from './lib';
 import { copyText, Mono, Section, When } from './ui';

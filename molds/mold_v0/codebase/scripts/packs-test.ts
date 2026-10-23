@@ -231,7 +231,7 @@ export default defineHost({ id: "${HOST}" });
     assert.match(g.stdout, /1 pack\(s\) \(fixture_notes\), 2 page\(s\), 1 record area\(s\), 1 credential\(s\), 1 onboarding step\(s\), 1 with migrations; profile "Fixture Desk"/);
     assert.deepEqual(JSON.parse(/PACK_MIGRATION_DIRS[^=]*= (\[[\s\S]*\]);/.exec(readFileSync(path.join(copy, "src", "pack-migrations.generated.ts"), "utf8"))![1]!),
       [{ pack: "fixture_notes", dir: "packs/fixture_notes/migrations" }], "the ordered pack migration directories");
-    const env: Record<string, string | undefined> = { ...process.env, PGLITE_DIR: path.join(tmp, "pglite"), OCTILLION_REGISTRY: "scripts/fixtures/registry.json" };
+    const env: Record<string, string | undefined> = { ...process.env, PGLITE_DIR: path.join(tmp, "pglite"), APP_REGISTRY: "scripts/fixtures/registry.json" };
     delete env.DATABASE_URL; // always the throwaway embedded database
     const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
     const run = (what: string, cmd: string, args: string[], cwd = copy) => {

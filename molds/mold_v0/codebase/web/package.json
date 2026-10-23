@@ -1,5 +1,5 @@
 {
-  "name": "octillion-web",
+  "name": "app-web",
   "version": "1.0.0",
   "private": true,
   "author": {
@@ -81,5 +81,5 @@
     "postcss": "8.5.25",
     "sharp": "^0.35.3"
   },
-  "description": "Octillion admin panel (/admin) and customer portal (/app): Next.js, Clerk, shadcn/ui. Based on Kiranism/next-shadcn-dashboard-starter (MIT)."
+  "description": "The admin panel (/admin) and customer portal (/app): Next.js, Clerk, shadcn/ui. Based on Kiranism/next-shadcn-dashboard-starter (MIT)."
 }

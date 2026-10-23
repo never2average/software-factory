@@ -4,17 +4,18 @@ import * as billing from "./billing.js";
 import { wilson } from "./session-engine.js";
 import { payingAt, subMonthly } from "./revenue.js";
 import { spendRange, spendReport } from "./spend.js";
+import { NS_KEYS, nsGet } from "./namespace.js";
 
 /**
  * Pricing experiments (FinOps › Experiments, GET /api/admin/onboarding/spend/experiments): A/B tests between plans.
  * Stripe is the system of record for everything but who was shown what:
- *   - an experiment is a key on Stripe price metadata (octillion_experiment); the live plans sharing it are its
- *     variants, each with a traffic weight (octillion_weight, default 1). Set on New plan or a plan's ⋯ › Experiment.
+ *   - an experiment is a key on Stripe price metadata (NS_KEYS.experiment, src/namespace.ts); the live plans sharing it are its
+ *     variants, each with a traffic weight (NS_KEYS.weight, default 1). Set on New plan or a plan's ⋯ › Experiment.
  *   - assignment: an account allowed plans sees every plan in no experiment, and one variant per experiment: the one it
  *     was first shown (sticky, while that plan is live), else a weighted pick from sha256(experiment:account id).
  *   - exposure: the first time an account's Billing page shows it a variant (plan_exposures, one row per account and
  *     experiment). The only thing kept here: Stripe has no record of a page view.
- *   - attribution: checkout puts {octillion_slug, octillion_experiment, octillion_variant} on the session and the
+ *   - attribution: checkout puts NS_KEYS {slug, experiment, variant} on the session and the
  *     subscription (billing.checkoutUrl), so started checkouts and conversions are read back from Stripe.
  *
  * Per variant (UTC days of the range, as the other FinOps tabs; counts up to the range's end):
@@ -74,7 +75,7 @@ export async function offeredPlans(orgId: number, plans: billing.Plan[]): Promis
 
 /** What checkout tags a plan's session and subscription with (Stripe metadata). */
 export const checkoutMeta = (slug: string, plan: billing.Plan): Record<string, string> =>
-  ({ octillion_slug: slug, ...(plan.experiment ? { octillion_experiment: plan.experiment, octillion_variant: plan.price_id } : {}) });
+  ({ [NS_KEYS.slug]: slug, ...(plan.experiment ? { [NS_KEYS.experiment]: plan.experiment, [NS_KEYS.variant]: plan.price_id } : {}) });
 
 const empty = (R: ReturnType<typeof spendRange>, configured: boolean, error: string | null) =>
   ({ range: { from: R.from, to: R.to, days: R.days }, stripe: { configured, error }, totals: null, experiments: [] as string[], variants: [] });
@@ -100,7 +101,7 @@ export async function experimentsReport(q: { from?: unknown; to?: unknown } = {}
   const endAt = Math.min(Date.parse(`${R.to}T00:00:00Z`) + DAY - 1, now);
   const inRange = (ms: number) => { const d = dayOf(ms); return d >= R.from && d <= R.to; };
   const slugOfCustomer = new Map(orgs.filter((o) => o.stripe_customer_id).map((o) => [o.stripe_customer_id!, o.slug]));
-  // Octillion's customers only (as FinOps Revenue): checkouts and subscriptions of a Stripe customer no account is
+  // The app's own customers only (as FinOps Revenue): checkouts and subscriptions of a Stripe customer no account is
   // linked to (a deleted test customer) are left out.
   sessions = sessions.filter((x) => x.customer != null && slugOfCustomer.has(x.customer));
   subs = subs.filter((x) => slugOfCustomer.has(x.customer));
@@ -134,18 +135,18 @@ export async function experimentsReport(q: { from?: unknown; to?: unknown } = {}
   }
   for (const s of sessions) {
     const m = s.metadata ?? {};
-    if (!m.octillion_experiment || !m.octillion_variant || !inRange(s.created * 1000)) continue;
-    const x = v(m.octillion_experiment, m.octillion_variant);
+    if (!nsGet(m, "experiment") || !nsGet(m, "variant") || !inRange(s.created * 1000)) continue;
+    const x = v(nsGet(m, "experiment"), nsGet(m, "variant"));
     x.checkouts++; if (s.status === "complete") x.completed++;
   }
   const subVariant = new Map<string, V>();
   for (const s of subs) {
     const m = s.metadata ?? {};
-    if (!m.octillion_experiment || !m.octillion_variant || NEVER_PAID.has(s.status)) continue;
+    if (!nsGet(m, "experiment") || !nsGet(m, "variant") || NEVER_PAID.has(s.status)) continue;
     const start = (s.start_date ?? s.created ?? 0) * 1000;
     if (start > endAt) continue;
     const price = s.items.data[0]?.price;
-    const x = v(m.octillion_experiment, m.octillion_variant, price?.nickname ?? null);
+    const x = v(nsGet(m, "experiment"), nsGet(m, "variant"), price?.nickname ?? null);
     x.subs.push(s); subVariant.set(s.id, x);
     if (!x.converted.has(s.customer)) { x.converted.add(s.customer); if (inRange(start)) x.daily_converted[idx.get(dayOf(start))!]++; }
   }
@@ -163,7 +164,7 @@ export async function experimentsReport(q: { from?: unknown; to?: unknown } = {}
     const trialing = x.subs.filter((s) => s.trial_end != null && s.trial_end * 1000 > endAt && !(s.ended_at && s.ended_at * 1000 <= endAt)).length;
     const churned = x.subs.filter((s) => (s.ended_at ?? (s.status === "canceled" ? s.canceled_at : null) ?? Infinity) * 1000 <= endAt).length;
     const collected = r2(sum(x.daily_collected));
-    const spent = r2(sum([...x.converted].map((c) => spendOf.get(slugOfCustomer.get(c) ?? x.subs.find((s) => s.customer === c)?.metadata?.octillion_slug ?? "") ?? 0)));
+    const spent = r2(sum([...x.converted].map((c) => spendOf.get(slugOfCustomer.get(c) ?? nsGet(x.subs.find((s) => s.customer === c)?.metadata, "slug") ?? "") ?? 0)));
     const ci = wilson(converted, exposed);
     return { experiment: x.experiment, price_id: x.price_id, name: x.name, amount_usd: x.amount == null ? null : x.amount / 100, interval: x.interval, weight: x.weight, live: x.live,
       created: x.created, exposed, new_in_range: x.new_in_range, checkouts: x.checkouts, completed: x.completed, converted,

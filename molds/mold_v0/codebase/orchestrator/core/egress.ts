@@ -61,7 +61,7 @@ export function proxyEnv(): Record<string, string> {
 
 /** The proxy program written into the VM (Node, no dependencies). Args: allowlist JSON path, log path. */
 export function proxySource(): string {
-  return `// Octillion egress proxy (orchestrator/core/egress.ts): CONNECT to allowlisted hosts on 443 only.
+  return `// Egress proxy (orchestrator/core/egress.ts): CONNECT to allowlisted hosts on 443 only.
 import http from "node:http"; import net from "node:net"; import dns from "node:dns/promises"; import fs from "node:fs";
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const allow = cfg.hosts;

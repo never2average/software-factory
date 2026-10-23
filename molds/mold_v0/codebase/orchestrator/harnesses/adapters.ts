@@ -55,7 +55,7 @@ export interface HarnessAdapter {
    */
   canResume: boolean;
   bin: string;
-  /** Env for the harness process only (API key + quiet flags). Nothing Octillion-specific. */
+  /** Env for the harness process only (API key + quiet flags). Nothing of the shell's own. */
   env(keys: ApiKeys): Record<string, string>;
   /** Is the key this harness needs present? */
   hasKey(keys: ApiKeys): boolean;

@@ -6,8 +6,8 @@
  *   1. the shell's defaults (DEFAULTS below);
  *   2. the profile (profile.json `limits`, merged by scripts/gen-packs.mjs into src/profile.generated.ts): the build's own;
  *   3. the workspace's plan (profile.json `limits.plans.<plan name>`), when the workspace has a live plan;
- *   4. the server's environment (OCTILLION_LIMIT_<SECTION>_<NAME>, e.g. OCTILLION_LIMIT_MCP_PER_KEY_PER_MINUTE; the
- *      older OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE still sets runs.live_per_workspace): the operator's knob.
+ *   4. the server's environment (APP_LIMIT_<SECTION>_<NAME>, e.g. APP_LIMIT_MCP_PER_KEY_PER_MINUTE; the
+ *      older APP_RUNS_MAX_LIVE_PER_WORKSPACE still sets runs.live_per_workspace): the operator's knob.
  * A pack has no say in any of them: packs add files only under packs/<id>/ and never the profile (molds/mold_v0/MOLD.md),
  * and a job kind's own limits are clamped to the platform's (src/runs.ts effectiveKindLimits).
  *
@@ -22,6 +22,7 @@ import { getDb } from "./db.js";
 import { PROFILE } from "./profile.js";
 import { asPlatform } from "./tenant-scope.js";
 import { entitlementsProfile, resolvePlan } from "./entitlements.js";
+import { ENV } from "./env-names.js";
 
 export interface McpLimits {
   per_key_per_minute: number; per_member_per_minute: number; per_workspace_per_minute: number; per_ip_per_minute: number;
@@ -48,8 +49,8 @@ export const DEFAULTS: Readonly<Limits> = Object.freeze({
 
 const positive = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
 const envOf = (section: string, key: string) => {
-  const legacy = section === "runs" && key === "live_per_workspace" ? process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE : undefined;
-  const raw = process.env[`OCTILLION_LIMIT_${section}_${key}`.toUpperCase()] ?? legacy;
+  const legacy = section === "runs" && key === "live_per_workspace" ? ENV.APP_RUNS_MAX_LIVE_PER_WORKSPACE : undefined;
+  const raw = ENV[`APP_LIMIT_${section}_${key}`.toUpperCase()] ?? legacy;
   return raw === undefined || raw === "" ? undefined : positive(Number(raw));
 };
 

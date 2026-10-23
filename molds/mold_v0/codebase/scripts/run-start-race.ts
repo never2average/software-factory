@@ -6,13 +6,13 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
 if (!process.env.DATABASE_URL) { console.error("run-start-race: set DATABASE_URL to a throwaway Postgres"); process.exit(2); }
-process.env.OCTILLION_VAULT_KEY ??= randomBytes(32).toString("base64");
-process.env.OCTILLION_REGISTRY ??= "scripts/fixtures/registry.json";
-process.env.OCTILLION_AUTOSCALE ??= "off";
+process.env.APP_VAULT_KEY ??= randomBytes(32).toString("base64");
+process.env.APP_REGISTRY ??= "scripts/fixtures/registry.json";
+process.env.APP_AUTOSCALE ??= "off";
 process.env.REASONS_ENABLED = "off";
-process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ??= "1000";
+process.env.APP_ORG_MONTHLY_BUDGET_USD ??= "1000";
 const CAP = 3, N = Number(process.env.RACE_N ?? 40), ROUNDS = Number(process.env.RACE_ROUNDS ?? 5);
-process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE = String(CAP);
+process.env.APP_RUNS_MAX_LIVE_PER_WORKSPACE = String(CAP);
 
 const { getDb } = await import("../src/db.js");
 const db = await getDb();

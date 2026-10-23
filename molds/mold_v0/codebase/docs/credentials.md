@@ -1,10 +1,10 @@
 # Credentials: key vault, broker and inference gateway
 
 **Goal.** Provider keys exist only in the encrypted vault on the server. Sub-agents in pods and sandboxes never
-hold a real key. Orchestrator hosts hold only `OCTILLION_URL` and `OCTILLION_WORKER_TOKEN`.
+hold a real key. Orchestrator hosts hold only `APP_URL` and `APP_WORKER_TOKEN`.
 
 ```
-operator ──vault CLI / admin API──▶ vault (Postgres, AES-256-GCM, master key OCTILLION_VAULT_KEY)
+operator ──vault CLI / admin API──▶ vault (Postgres, AES-256-GCM, master key APP_VAULT_KEY)
 orchestrator ──POST /api/worker/orchestrator/credentials──▶ boat key + its own LLM access (gateway token)
 orchestrator ──POST /api/worker/sessions/:id/credentials──▶ per-session env for the harness
 sub-agent (pod / boat VM) ──ogw_ token──▶ /gw/<provider>/… ──real key from vault──▶ provider API
@@ -28,18 +28,18 @@ environment variable. On boot the server imports any provider key still set in i
 vault once (`src/keyvault-env.ts`, label `imported from environment`, one marker per provider in `vault_env_imports`):
 only when that provider has no enabled vault key, never overwriting one, and never again after the marker. The Key
 vault page notes "Also set in the server environment — safe to delete there" for each such variable. Environment
-variables that stay: `OCTILLION_VAULT_KEY` (the vault's own master key), infra secrets (`DATABASE_URL`,
-`OCTILLION_WORKER_TOKEN`, `CRON_SECRET`, `CLERK_*`, `STRIPE_*`, `NEW_RELIC_*`, `POSTHOG_*`) and non-secret
+variables that stay: `APP_VAULT_KEY` (the vault's own master key), infra secrets (`DATABASE_URL`,
+`APP_WORKER_TOKEN`, `CRON_SECRET`, `CLERK_*`, `STRIPE_*`, `NEW_RELIC_*`, `POSTHOG_*`) and non-secret
 config (URLs, model names, limits, `CLOUDFLARE_ACCOUNT_ID`).
 
 `mode: gateway`: the sub-agent gets `base_url = {PUBLIC_URL}/gw/<provider>` and `api_key = ogw_…`. The gateway
 accepts the token in any of `x-api-key`, `Authorization: Bearer`, `x-goog-api-key` or `?key=`. It strips it,
 injects the real key, streams the request and response through, and meters usage.
 
-`mode: direct`: the real key is returned by the broker for that one session, short-lived from Octillion's
+`mode: direct`: the real key is returned by the broker for that one session, short-lived from the app's
 side. Use it only for vendor-hosted agents that can't take a custom base URL.
 
-## Worker API (Bearer `OCTILLION_WORKER_TOKEN`)
+## Worker API (Bearer `APP_WORKER_TOKEN`)
 
 `POST /api/worker/orchestrator/credentials` `{orchestrator_id}` →
 ```json
@@ -63,15 +63,15 @@ The token is valid for 12h; refetch on 401 or near expiry.
 - `providers` lists those the session's agent needs, taken from the registry's `requires_env`.
 - `env` is a suggested mapping for common CLIs. Harness adapters may map `providers` to their own variables
   instead, for example `GOOGLE_GEMINI_BASE_URL`.
-- The token expires when the session finishes, or after `OCTILLION_LEASE_MINUTES`, whichever comes first.
+- The token expires when the session finishes, or after `APP_LEASE_MINUTES`, whichever comes first.
 - One token per session covers all of that session's gateway providers.
 
 ## Gateway limits
 
-- **Per-session caps:** `OCTILLION_GATEWAY_MAX_COST_USD` (default $10, the main limit),
-  `OCTILLION_GATEWAY_MAX_REQUESTS` (default 1000) and `OCTILLION_GATEWAY_MAX_TOKENS` (default 30M input+output, cache
+- **Per-session caps:** `APP_GATEWAY_MAX_COST_USD` (default $10, the main limit),
+  `APP_GATEWAY_MAX_REQUESTS` (default 1000) and `APP_GATEWAY_MAX_TOKENS` (default 30M input+output, cache
   reads included; a backstop for unpriced models). Over a cap the gateway returns 429 with
-  `{"error": {"type": "octillion_budget_exceeded"}}`.
+  `{"error": {"type": "<namespace>_budget_exceeded"}}`.
 - **Metering:** usage is recorded per session and provider: requests, input/output tokens parsed from JSON or SSE,
   and bytes.
 

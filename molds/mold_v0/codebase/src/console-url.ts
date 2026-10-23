@@ -3,7 +3,7 @@
  * (a Host or X-Forwarded-Host header names whatever the sender wants, so a link built from one could point anywhere):
  *
  *   publicUrl()   PUBLIC_URL: where this API answers (MCP clients, webhooks, the install pages)
- *   consoleUrl()  OCTILLION_CONSOLE_URL, else PUBLIC_URL: where people open the console (sign-in, /app, /admin). On a
+ *   consoleUrl()  APP_CONSOLE_URL, else PUBLIC_URL: where people open the console (sign-in, /app, /admin). On a
  *                 server of its own one address serves both (the stack's Caddy sends the console's pages to the console),
  *                 and the factory sets it to that address; on Vercel the console is its own project in front of this
  *                 API, and the factory sets it on the API project to the console project's address, so sign-in codes,
@@ -12,6 +12,7 @@
  * Only an http(s) origin, with an optional path, is taken: anything else (another scheme, credentials in the address,
  * a query or a fragment) is ignored, with one line on stderr, for the address it would replace.
  */
+import { ENV } from "./env-names.js";
 const fallbackPublic = () => `http://127.0.0.1:${process.env.PORT ?? 3333}`;
 
 const warned = new Set<string>();
@@ -32,5 +33,5 @@ export function cleanAddress(raw: string | undefined | null, name = "address"): 
 /** Where this API answers: PUBLIC_URL, else this process's own local address. */
 export const publicUrl = () => cleanAddress(process.env.PUBLIC_URL, "PUBLIC_URL") ?? fallbackPublic();
 
-/** Where people open the console: OCTILLION_CONSOLE_URL, else PUBLIC_URL. Every link in an email is built on this. */
-export const consoleUrl = () => cleanAddress(process.env.OCTILLION_CONSOLE_URL, "OCTILLION_CONSOLE_URL") ?? publicUrl();
+/** Where people open the console: APP_CONSOLE_URL, else PUBLIC_URL. Every link in an email is built on this. */
+export const consoleUrl = () => cleanAddress(ENV.APP_CONSOLE_URL, "APP_CONSOLE_URL") ?? publicUrl();

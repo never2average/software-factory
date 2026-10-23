@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Icons } from '@/components/icons';
 import { adminApi } from '@/lib/api-client';
-import { money, usd } from '@/lib/octillion-format';
+import { money, usd } from '@/lib/display-format';
 import { TablePager, usePaged } from '@/components/layout/table-pager';
 import { cn } from '@/lib/utils';
 import { Sparkline } from '@/components/layout/section';
@@ -26,6 +26,7 @@ import { copyText, ErrorBox, Mono, When, type Tone } from './ui';
 import { Gate, useAdminRole, type AdminPermission } from './role';
 import { profile } from '@/config/profile.generated';
 import { hostFeature } from '@/features/packs/host-nav';
+import { KEY_PREFIX } from '@/lib/namespace';
 
 /** A row of GET /orgs: lib.ts's OrgRow plus the fields shapeOrg (src/admin.ts) also returns. */
 export type Org = OrgRow & {
@@ -192,7 +193,7 @@ function AccountDialog({ kind, orgs, run, show, close }: { kind: Kind; orgs: Org
             </NativeSelectOption>
           ))}
         </NativeSelect>
-      ) : <p className='text-muted-foreground text-sm'>No plans: add Stripe prices with a lookup_key starting <Mono>octillion_</Mono>.</p>,
+      ) : <p className='text-muted-foreground text-sm'>No plans: add Stripe prices with a lookup_key starting <Mono>{KEY_PREFIX}</Mono>.</p>,
       act: async () => { const r = await run(() => post<{ url: string }>(`${p}/billing/checkout`, { price_id: plan })); if (r) { copyText(r.url, 'Checkout link copied'); close(); } }
     },
     allowance: {

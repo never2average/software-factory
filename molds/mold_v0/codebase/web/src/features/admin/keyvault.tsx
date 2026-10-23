@@ -1,5 +1,5 @@
 'use client';
-// The Key vault: every key Octillion uses, one row per provider. Keys live in the vault only (keys once set as server
+// The Key vault: every key the app uses, one row per provider. Keys live in the vault only (keys once set as server
 // environment variables were imported on boot); add, import, disable and delete; keys are only ever shown as hints.
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -42,7 +42,7 @@ const useOf = (p: { slug: string; mode: string }) => (SERVER_ONLY.has(p.slug) ? 
 /** 12400 → "12.4k". */
 const COMPACT = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 
-/** Every key Octillion uses, one row per provider; keys are added, disabled and deleted from the row's ⋯ menu. */
+/** Every key the app uses, one row per provider; keys are added, disabled and deleted from the row's ⋯ menu. */
 export function AdminKeyVault() {
   const { lock } = useAdminRole();
   const { data, error, isLoading } = useAdmin<{ unlocked: boolean; providers: Provider[]; credentials: Credential[] }>('/compute/keys');
@@ -88,7 +88,7 @@ export function AdminKeyVault() {
   return (
     <PageContainer>
       <ErrorBox error={error} />
-      {data && !data.unlocked && <Notice>The key vault is locked: set <Mono>OCTILLION_VAULT_KEY</Mono> on the server to add keys.</Notice>}
+      {data && !data.unlocked && <Notice>The key vault is locked: set <Mono>APP_VAULT_KEY</Mono> on the server to add keys.</Notice>}
       <RecordView id='key-vault' rows={data?.providers ?? []} loading={isLoading} rowKey={(p) => p.slug} cols={cols} noun='providers'
         searchText={(p) => `${p.slug} ${nameOf(p.slug)} ${typeOf(p.slug)} ${keysOf(p).map((c) => `${c.label} ${c.hint} ${c.project_id ?? ''}`).join(' ')}`}
         searchPlaceholder='Search providers and keys · encrypted at rest; agents get scoped gateway tokens, never these keys'
@@ -208,7 +208,7 @@ function checkServiceAccount(text: string): { project_id: string; client_email: 
   return { project_id: j.project_id as string, client_email: j.client_email as string };
 }
 
-/** Environment variable names Octillion knows, to the vault provider that holds them. */
+/** Environment variable names the app knows, to the vault provider that holds them. */
 const ENV_PROVIDER: Record<string, string> = {
   ANTHROPIC_API_KEY: 'anthropic', OPENAI_API_KEY: 'openai', CODEX_API_KEY: 'openai', GEMINI_API_KEY: 'google', GOOGLE_API_KEY: 'google',
   CLOUDFLARE_API_TOKEN: 'cloudflare', CF_API_TOKEN: 'cloudflare', DASHSCOPE_API_KEY: 'dashscope', BOAT_API_KEY: 'boat', EXA_API_KEY: 'exa',

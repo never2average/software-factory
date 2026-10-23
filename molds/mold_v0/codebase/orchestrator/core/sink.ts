@@ -1,5 +1,5 @@
 /**
- * Transcript sink: batches events every FLUSH_INTERVAL_MS to the Octillion API (`/events`, NDJSON), to ClickHouse
+ * Transcript sink: batches events every FLUSH_INTERVAL_MS to the server's API (`/events`, NDJSON), to ClickHouse
  * directly (HTTP interface, JSONEachRow), or both (TRANSCRIPT_SINK=api|clickhouse|both).
  *
  * api:        harness lines are sent verbatim; the server assigns seq/ts.

@@ -13,7 +13,7 @@ The schema is versioned: `sql/migrations/NNNN_name.sql`, applied once each, in o
 **When they run.** The VM deploy (`deploy/rolling-deploy.sh`) runs `db:migrate` in a one-off container of the new
 image before starting the new replica; a failed migration stops the deploy with the old replicas still serving. Every
 process also checks on first database use: a current database costs two catalog reads (no DDL, no lock); pending
-migrations are applied there too (Vercel has no release step), unless `OCTILLION_MIGRATE_ON_BOOT=off`, in which case
+migrations are applied there too (Vercel has no release step), unless `APP_MIGRATE_ON_BOOT=off`, in which case
 the process refuses to start until `db:migrate` has run. Vercel preview deployments (`VERCEL_ENV=preview`) only check
 by default, so a preview's unmerged migration is never recorded in a database production also uses. A migration waits
 at most 15 seconds for a table or the migration lock (`lock_timeout`), so it fails instead of queueing traffic behind

@@ -1,11 +1,12 @@
 /**
  * Helpers the launcher runs INSIDE an orchestrator sandbox (never on the main VM):
  *   tsx deploy/in-sandbox.ts guard                      host-guard verdict as JSON (production rules, RUNNER from env)
- *   tsx deploy/in-sandbox.ts preflight                  can this sandbox reach $OCTILLION_URL/healthz over HTTPS?
+ *   tsx deploy/in-sandbox.ts preflight                  can this sandbox reach $APP_URL/healthz over HTTPS?
  *   tsx deploy/in-sandbox.ts nested <boat-key-file>     selftest: create + exec + delete ONE worker sandbox from here
  */
 import { readFileSync, rmSync } from "node:fs";
 import { checkHost } from "../core/host-guard.js";
+import { ENV, ENV_PREFIX, LEGACY_ENV_PREFIX } from "../core/env-names.js";
 
 const [cmd, arg] = process.argv.slice(2);
 
@@ -19,9 +20,9 @@ if (cmd === "guard") {
 }
 
 if (cmd === "preflight") {
-  const url = (process.env.OCTILLION_URL ?? "").replace(/\/+$/, "");
+  const url = (ENV.APP_URL ?? "").replace(/\/+$/, "");
   if (!/^https:\/\//.test(url)) {
-    console.log(JSON.stringify({ ok: false, reason: `OCTILLION_URL must be the server's PUBLIC https URL (got ${url || "nothing"}); orchestrator and worker sandboxes reach it over the internet` }));
+    console.log(JSON.stringify({ ok: false, reason: `APP_URL must be the server's PUBLIC https URL (got ${url || "nothing"}); orchestrator and worker sandboxes reach it over the internet` }));
     process.exit(4);
   }
   try {
@@ -55,7 +56,7 @@ if (cmd === "nested") {
       if (["ready", "idle", "running"].includes(s)) break;
       await new Promise((r) => setTimeout(r, 2000));
     }
-    const r = await boatExec(id, "echo ok; claude --version | head -1; env | grep -c OCTILLION_ || true", 60);
+    const r = await boatExec(id, `echo ok; claude --version | head -1; env | grep -cE '^(${ENV_PREFIX}|${LEGACY_ENV_PREFIX})' || true`, 60);
     out.exec = r.stdout.trim().split("\n");
   } catch (e) {
     out.error = String(e).replace(key, "<boat key>");

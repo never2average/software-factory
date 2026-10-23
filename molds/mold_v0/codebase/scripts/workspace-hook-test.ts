@@ -18,7 +18,7 @@ import path from "node:path";
 import { cleanup, connect, STAMP, TMP } from "./lib/test-world.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 try {
   const { getDb } = await import("../src/db.js");
@@ -127,10 +127,10 @@ try {
       assert.equal(await version(), before + 1, "the snapshot stays committed");
       assert.match(r.of("workspace_hook_failed")[0].snapshot, /kept/);
       mode = "slow";
-      process.env.OCTILLION_WORKSPACE_HOOK_SECONDS = "1";
+      process.env.APP_WORKSPACE_HOOK_SECONDS = "1";
       const s = await run(["app-4"]);
       assert.equal(s.view?.status, "failed"); assert.match(s.view!.error!, /took longer than 1 s/);
-      delete process.env.OCTILLION_WORKSPACE_HOOK_SECONDS;
+      delete process.env.APP_WORKSPACE_HOOK_SECONDS;
       await new Promise((r) => setTimeout(r, 2500));
       assert.match(String(late.result), /time is up: refused/, "a hook past its time cannot write on");
       assert.ok(!(await aRecords()).includes("late-write"));

@@ -2,7 +2,7 @@
  * Clerk is the system of record for people: users, organizations, memberships, roles and invitations (Clerk sends the
  * invite email), sign-in with passwords and social providers (Google, Microsoft, GitHub, set up in the Clerk
  * dashboard), and the OAuth server for /mcp, so Claude and ChatGPT sign people in instead of pasting a secret URL.
- * Octillion keeps only organizations.clerk_org_id to join Clerk organizations to its own product data.
+ * The app keeps only organizations.clerk_org_id to join Clerk organizations to its own product data.
  * Plain REST over fetch, like the other integrations. Unset CLERK_SECRET_KEY = Clerk is off and per-org API keys
  * (src/auth.ts) are the only way in.
  *
@@ -11,17 +11,18 @@
  *   CLERK_JWT_KEY               optional PEM public key: verify session tokens without calling Clerk (else JWKS)
  *   CLERK_AUTHORIZED_PARTIES    origins allowed in a session token's azp (default: PUBLIC_URL's origin)
  *   CLERK_MCP_AUDIENCE          the /mcp resource URI(s) OAuth tokens must be issued for, comma-separated (default PUBLIC_URL/mcp)
- *   OCTILLION_OAUTH_AUDIENCE    auto (default), enforce or report: see audienceOk
+ *   APP_OAUTH_AUDIENCE    auto (default), enforce or report: see audienceOk
  *   CLERK_API_URL               override for the smoke test only (it points it at its local mock, scripts/lib/mock-providers.ts)
  *   CLERK_FRONTEND_API_URL      the Frontend API (the OAuth server and the issuer of its JWTs); set it in production when
  *                               Clerk runs behind a proxy URL, whose address then appears as the tokens' issuer
  *
  * Suspending a person: Clerk memberships have no "deactivated" state, so suspension is the membership's
- * public_metadata.suspended = true, which Octillion enforces on /mcp and /api/app; removing a member deletes the
+ * public_metadata.suspended = true, which the app enforces on /mcp and /api/app; removing a member deletes the
  * membership in Clerk.
  */
 import { createLocalJWKSet, importSPKI, jwtVerify, decodeProtectedHeader, type JWTPayload } from "jose";
 import { authProvider } from "./auth-provider.js";
+import { ENV } from "./env-names.js";
 import { consoleUrl } from "./console-url.js";
 
 /** Clerk is on when it is the server's sign-in (src/auth-provider.ts: AUTH_PROVIDER=clerk, or unset with this key) and
@@ -187,13 +188,13 @@ async function verifyJwt(token: string): Promise<JWTPayload & Record<string, any
 }
 const OAUTH_JWT_TYPES = ["at+jwt", "application/at+jwt"];
 
-// Sessions are made where people sign in: the console. On the two-project shape that is OCTILLION_CONSOLE_URL, not the
+// Sessions are made where people sign in: the console. On the two-project shape that is APP_CONSOLE_URL (or its old spelling), not the
 // API's own PUBLIC_URL, so both origins are authorized unless CLERK_AUTHORIZED_PARTIES names them explicitly.
 const authorizedParties = () => {
   if (process.env.CLERK_AUTHORIZED_PARTIES !== undefined) return process.env.CLERK_AUTHORIZED_PARTIES.split(",").map((x) => x.trim()).filter(Boolean);
   const origins = new Set<string>();
   if (process.env.PUBLIC_URL) origins.add(new URL(publicUrl()).origin);
-  if (process.env.OCTILLION_CONSOLE_URL) { try { origins.add(new URL(consoleUrl()).origin); } catch { /* unusable address: ignored */ } }
+  if (ENV.APP_CONSOLE_URL) { try { origins.add(new URL(consoleUrl()).origin); } catch { /* unusable address: ignored */ } }
   return [...origins];
 };
 export const authorizedPartiesForTest = authorizedParties;
@@ -225,7 +226,7 @@ export async function verifySessionToken(token: string | null | undefined): Prom
  * The audience check (RFC 8707 / the MCP authorization spec: a server accepts only tokens issued for it). Without it,
  * an access token the same Clerk instance issued for another resource (another product on the instance, or the admin
  * MCP's token on /mcp and the other way round) would be accepted. A JWT's issuer must also be the instance's Frontend
- * API, always. OCTILLION_OAUTH_AUDIENCE:
+ * API, always. APP_OAUTH_AUDIENCE:
  *   auto (default)  a token that names an audience (a JWT's `aud`; for an opaque token an aud/audience/resource field
  *                   in the verify response) must name this resource; a token that names none is accepted and logged,
  *                   because Clerk does not document putting the resource (RFC 8707) into its tokens
@@ -235,7 +236,7 @@ export async function verifySessionToken(token: string | null | undefined): Prom
  */
 type AudienceMode = "auto" | "enforce" | "report";
 const audienceMode = (): AudienceMode => {
-  const v = (process.env.OCTILLION_OAUTH_AUDIENCE ?? "").trim().toLowerCase();
+  const v = (ENV.APP_OAUTH_AUDIENCE ?? "").trim().toLowerCase();
   return v === "enforce" || v === "report" ? v : "auto";
 };
 /** A resource URI in comparable form: scheme and host lower-cased, default port and trailing slash dropped, query kept. */
@@ -262,7 +263,7 @@ function audienceLog(key: string, line: string) {
   console.error(line);
 }
 
-/** Whether a token's audiences (and a JWT's issuer) fit the expected resources, per OCTILLION_OAUTH_AUDIENCE. */
+/** Whether a token's audiences (and a JWT's issuer) fit the expected resources, per APP_OAUTH_AUDIENCE. */
 function audienceOk(gotRaw: string[], expected: string[], extra: { jwt: boolean; iss?: unknown; client?: string | null }): boolean {
   const want = new Set(expected.map(canonicalResource));
   // Only absolute http(s) URIs name a resource. Some servers put the client id or their own address in `aud`: that names
@@ -281,12 +282,12 @@ function audienceOk(gotRaw: string[], expected: string[], extra: { jwt: boolean;
   const mode = audienceMode();
   const detail = `on ${expected[0]}: aud=${JSON.stringify(gotRaw.slice(0, 4))} expected=${JSON.stringify([...want])} client=${JSON.stringify(client)}`;
   if (!got.length) {
-    if (mode === "enforce") { audienceLog(`none ${mode} ${client}`, `oauth audience missing ${detail} (refused: OCTILLION_OAUTH_AUDIENCE=enforce)`); return false; }
+    if (mode === "enforce") { audienceLog(`none ${mode} ${client}`, `oauth audience missing ${detail} (refused: APP_OAUTH_AUDIENCE=enforce)`); return false; }
     audienceLog(`none ${mode} ${client}`, `oauth audience missing ${detail} (accepted: the token names no audience)`);
     return true;
   }
   if (got.some((a) => want.has(canonicalResource(a)))) return true;
-  if (mode === "report") { audienceLog(`bad ${mode} ${client}`, `oauth audience mismatch ${detail} (accepted: OCTILLION_OAUTH_AUDIENCE=report)`); return true; }
+  if (mode === "report") { audienceLog(`bad ${mode} ${client}`, `oauth audience mismatch ${detail} (accepted: APP_OAUTH_AUDIENCE=report)`); return true; }
   audienceLog(`bad ${mode} ${client}`, `oauth audience mismatch ${detail} (refused)`);
   return false;
 }
@@ -349,7 +350,7 @@ export const mcpAudience = () => mcpAudiences()[0]!;
 // ---------- platform admins ----------
 
 /**
- * OCTILLION_PLATFORM_ADMINS: comma-separated addresses or *@domain entries (anything after a colon is ignored, so old
+ * APP_PLATFORM_ADMINS: comma-separated addresses or *@domain entries (anything after a colon is ignored, so old
  * password entries still name their admin). Clerk must have verified the address. Roles: src/admin-roles.ts.
  */
 export function isPlatformAdminEmail(email: string | null): boolean {
@@ -358,5 +359,5 @@ export function isPlatformAdminEmail(email: string | null): boolean {
   const entries = platformAdminEntries();
   return entries.includes(e) || entries.includes(`*@${e.split("@")[1]}`);
 }
-/** An address OCTILLION_PLATFORM_ADMINS names (exact entries only, for listing; domain entries match anyone there). */
-export const platformAdminEntries = () => (process.env.OCTILLION_PLATFORM_ADMINS ?? "").split(",").map((x) => x.trim().split(":")[0].toLowerCase()).filter(Boolean);
+/** An address APP_PLATFORM_ADMINS names (exact entries only, for listing; domain entries match anyone there). */
+export const platformAdminEntries = () => (ENV.APP_PLATFORM_ADMINS ?? "").split(",").map((x) => x.trim().split(":")[0].toLowerCase()).filter(Boolean);

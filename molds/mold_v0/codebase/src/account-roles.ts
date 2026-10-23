@@ -7,11 +7,12 @@
  *   billing  "Billing manager": member, plus Billing (plan, cards) and Budget rules; no team management
  *   owner    everything, including the Team (invite, remove, roles) and the company's context and products
  *
- * The role is Clerk's: the organization membership's public_metadata.octillion_role refines Clerk's own role, so
+ * The role is Clerk's: the organization membership's public_metadata NS_KEYS.role (src/namespace.ts) refines Clerk's own role, so
  * org:admin is always owner, and org:member is member unless the metadata says billing or viewer. Setting owner also
  * makes the person org:admin in Clerk (and anything else org:member), so Clerk's admin semantics stay the same.
  */
 import type * as clerk from "./clerk.js";
+import { NS_KEYS, nsGet } from "./namespace.js";
 
 export const ACCOUNT_ROLES = ["viewer", "member", "billing", "owner"] as const;
 export type AccountRole = (typeof ACCOUNT_ROLES)[number];
@@ -43,14 +44,14 @@ export const accountPermissionsOf = (role: AccountRole | null) => (Object.keys(A
 /** A role from a request body: one of the four, or the old admin / member. Null when it is neither. */
 export const parseAccountRole = (r: unknown): AccountRole | null => (r === "admin" ? "owner" : isAccountRole(r) ? r : null);
 
-/** The role of a Clerk membership (or invitation): Clerk's role, refined by public_metadata.octillion_role. */
+/** The role of a Clerk membership (or invitation): Clerk's role, refined by public_metadata NS_KEYS.role. */
 export function accountRoleOf(m: { role: string; public_metadata?: Record<string, unknown> | null }): AccountRole {
   if (String(m.role).replace(/^org:/, "") === "admin") return "owner";
-  const r = m.public_metadata?.octillion_role;
+  const r = nsGet(m.public_metadata, "role");
   return r === "billing" || r === "viewer" ? r : "member";
 }
 /** What Clerk stores for a role: its organization role and the metadata refinement. */
-export const clerkRoleFor = (r: AccountRole) => ({ role: r === "owner" ? ("admin" as const) : ("member" as const), metadata: { octillion_role: r } });
+export const clerkRoleFor = (r: AccountRole) => ({ role: r === "owner" ? ("admin" as const) : ("member" as const), metadata: { [NS_KEYS.role]: r } });
 
 /** A refusal in plain words, with a code the UI and the connector can act on. */
 export function accountRefusal(p: AccountPermission): { message: string; code: string; needs: AccountRole } {

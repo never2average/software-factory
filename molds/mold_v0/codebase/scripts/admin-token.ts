@@ -1,4 +1,4 @@
-// Admin API tokens (src/admin-tokens.ts), on the server: the replacement for the old static OCTILLION_ADMIN_TOKEN.
+// Admin API tokens (src/admin-tokens.ts), on the server: the replacement for the old static APP_ADMIN_TOKEN.
 //   npm run admin:token -- create --label "ci deploy" --role operator [--days 30]   prints the token once
 //   npm run admin:token -- list
 //   npm run admin:token -- revoke <id>

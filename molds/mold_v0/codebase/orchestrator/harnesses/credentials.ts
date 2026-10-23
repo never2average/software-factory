@@ -41,7 +41,7 @@ function need(p: Providers, id: string): ProviderCred {
 }
 const trim = (u: string) => u.replace(/\/+$/, "");
 /** Codex gateway provider id (a copy of the built-in openai provider with WebSockets off; see the codex entry). */
-const CODEX_GW_PROVIDER = "octillion_gateway";
+const CODEX_GW_PROVIDER = "app_gateway";
 /** Append `suffix` unless the URL already ends with it. */
 const withSuffix = (u: string, suffix: string) => (trim(u).endsWith(suffix) ? trim(u) : trim(u) + suffix);
 

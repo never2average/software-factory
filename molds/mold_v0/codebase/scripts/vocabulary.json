@@ -1,0 +1,101 @@
+{
+  "$comment": "The shell's vocabulary check (mold_v0-045, scripts/check-vocabulary.ts, npm run check:vocabulary; the smoke test runs it too). `words`: the product words no file of the shell may carry, in any case, in its text or its path. Each `allow` entry lets one exact spelling stay, in the listed files only, and says what holds it: the old env prefix where the alias must name it, and names that outlive a release (a database's functions and roles, built images and boat templates, files on running orchestrator sandboxes), which only a migration of what holds them can rename. An entry that matches nothing fails the check too, so the list cannot outgrow what is there. `files`: whole files the check does not read, each with why. A pack's own files (packs/<id>/, web/src/packs/<id>/, orchestrator/packs/<id>/) and, in a build with packs, the generated files are the pack's and are not read.",
+  "words": [
+    "octillion"
+  ],
+  "files": {
+    "sql/migrations/*.sql": "applied migrations are checksummed (src/migrate.ts) and replayed on every new database: their text, comments included, stays as it was applied",
+    "scripts/fixtures/pre-049-migrations/*.sql": "byte copies of the migrations as they were before mold_v0-049, the fixture test:migrations upgrades from",
+    "web/src/lib/octillion-format.ts": "the module path host packs' console pages written before mold_v0-045 import; it only re-exports display-format.ts"
+  },
+  "allow": [
+    {
+      "id": "legacy-env-prefix",
+      "pattern": "\\bOCTILLION_(?=[\";'`$])|\\bLEGACY=OCTILLION_\\b|OCTILLION_\\$\\{",
+      "paths": [
+        "orchestrator/core/env-names.ts",
+        "web/src/lib/env-names.ts",
+        "web/next.config.ts",
+        "deploy/bootstrap.sh"
+      ],
+      "why": "the env names' prefix before mold_v0-045, spelled once per place that reads the old names as a fallback (src/env-names.ts; the console's own copy; the console's build config; bootstrap.sh, which carries a .env's old names to the new ones)"
+    },
+    {
+      "id": "legacy-env-fallback",
+      "pattern": "\\$\\{APP_([A-Z0-9_]+):-\\$\\{OCTILLION_\\1\\b",
+      "paths": [
+        "deploy/*.sh"
+      ],
+      "why": "a deploy script reading an env name, its old spelling as the fallback of the new one only"
+    },
+    {
+      "id": "database-identifiers",
+      "pattern": "\\boctillion_(?:tenant_role|tenant_org|session_org|run_charge(?:_refresh|_figures|_on_end)?|platform_of)\\b|\\boctillion_tenant_(?=<|\\[|\\$|\\{|[0-9a-f]{10}\\b)|\\boctillion\\\\?\\.org_id\\b",
+      "paths": [
+        "src/rls.ts",
+        "src/migrate.ts",
+        "src/tenant-scope.ts",
+        "src/run-charges.ts",
+        "scripts/gen-packs.mjs",
+        "scripts/migrations-test.ts",
+        "scripts/packs-test.ts",
+        "scripts/packs-fixture-check.ts",
+        "scripts/record-areas-test.ts",
+        "scripts/run-charges-test.ts",
+        "docs/migrations.md",
+        "docs/security.md",
+        "src/docs-corpus.generated.json",
+        "web/src/content/admin-docs.generated.ts"
+      ],
+      "why": "functions, the tenant role and its setting that sql/migrations created and that every row-level security policy on a live database names: renaming them is a migration of every policy (follow-up), not a rename"
+    },
+    {
+      "id": "agent-images",
+      "pattern": "\\boctillion/agent-|\\boctillion-sandbox\\b",
+      "paths": [
+        "harnesses/registry.json",
+        "harnesses/README.md",
+        "scripts/fixtures/registry.json",
+        "src/agents.ts",
+        "orchestrator/fleet/plan.ts",
+        "orchestrator/core/pool.ts",
+        "orchestrator/core/config.ts",
+        "orchestrator/images/build.sh",
+        "orchestrator/images/README.md",
+        "orchestrator/Dockerfile.sandbox",
+        "orchestrator/README.md",
+        "orchestrator/harnesses/fixtures/tools/e2e.mts",
+        "deploy/cleanup.sh",
+        "docs/storage.md",
+        "src/docs-corpus.generated.json",
+        "web/src/content/admin-docs.generated.ts"
+      ],
+      "why": "the tags of the coding agents' images and the sandbox image, already built on hosts and pinned in harnesses/registry.json (image.docker): a new tag needs every image rebuilt (follow-up)"
+    },
+    {
+      "id": "boat-templates",
+      "pattern": "\\boctillion-(?:<harness>|[a-z]+(?:-[a-z]+)*-[0-9][0-9a-z.-]*)",
+      "paths": [
+        "harnesses/registry.json",
+        "harnesses/README.md",
+        "scripts/fixtures/registry.json",
+        "orchestrator/images/README.md"
+      ],
+      "why": "the boat named snapshots (image.boat_snapshot) the harnesses' sandboxes start from, which exist under these names in the boat account"
+    },
+    {
+      "id": "orchestrator-hosts",
+      "pattern": "/etc/octillion\\b|/home/user/octillion\\b|\\boctillion-orchestrator\\b",
+      "paths": [
+        "orchestrator/deploy/boat-lib.ts",
+        "orchestrator/deploy/in-sandbox.ts",
+        "orchestrator/core/host-guard.ts",
+        "orchestrator/test/boat-fleet.ts",
+        "orchestrator/images/boat-setup/_common.sh",
+        "orchestrator/images/README.md",
+        "orchestrator/README.md"
+      ],
+      "why": "the orchestrator sandboxes' service unit, home and host marker, and the harness manifests in the boat templates: running sandboxes hold them, and the next release stops, restarts and checks those (boat-lib stopService, host-guard)"
+    }
+  ]
+}

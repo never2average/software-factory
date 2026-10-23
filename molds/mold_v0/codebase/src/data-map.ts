@@ -96,7 +96,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     const rows: DataMapRow[] = [];
     const db = facts?.database;
     rows.push({ item: "Database", detail: db ? `${DB_WORDS[db.exposure === "compose_network" ? "compose" : db.provider] ?? db.provider}${db.resource ? ` (resource ${code(db.resource)})` : ""}${db.region ? `, region ${code(db.region)}` : ", region not recorded in the factory's state (the About page shows the region read from the running server's database address)"}` : "Postgres at the address the server is configured with (DATABASE_URL), else an embedded database on the server's disk" });
-    rows.push({ item: "In the database", detail: "workspaces, people, keys (hashed), runs and their results, usage, settings, and every record area's rows; each workspace's rows under row-level security. Workspace credentials and the key vault's provider keys are stored sealed (AES-256-GCM): credentials with the workspace's own data key, provider keys with the vault's master key (OCTILLION_VAULT_KEY), never in clear" });
+    rows.push({ item: "In the database", detail: "workspaces, people, keys (hashed), runs and their results, usage, settings, and every record area's rows; each workspace's rows under row-level security. Workspace credentials and the key vault's provider keys are stored sealed (AES-256-GCM): credentials with the workspace's own data key, provider keys with the vault's master key (APP_VAULT_KEY), never in clear" });
     const areas = list_.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => ({ p, a })));
     for (const p of list_) {
       const own = areas.filter((x) => x.p === p);
@@ -109,7 +109,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     }
     const store = facts?.object_store;
     const usesStore = list_.some((p) => (p.definition.agentJobKinds ?? []).length || (p.definition.jobKinds ?? []).some((k) => k.workspace));
-    rows.push({ item: "Object store", detail: `${store ? `${STORE_WORDS[store.provider] ?? store.provider}${store.bucket ? ` (bucket ${code(store.bucket)})` : ""}${store.region ? `, region ${code(store.region)}` : ""} in the factory's state; ` : ""}this server uses Cloudflare R2 when R2_BUCKET, R2_ENDPOINT and its two keys are set, else a directory named by OCTILLION_STORAGE_DIR (the About page shows which)${usesStore ? ". It holds each workspace's files between runs (the workspace store), sealed with the workspace's data key" : ""}` });
+    rows.push({ item: "Object store", detail: `${store ? `${STORE_WORDS[store.provider] ?? store.provider}${store.bucket ? ` (bucket ${code(store.bucket)})` : ""}${store.region ? `, region ${code(store.region)}` : ""} in the factory's state; ` : ""}this server uses Cloudflare R2 when R2_BUCKET, R2_ENDPOINT and its two keys are set, else a directory named by APP_STORAGE_DIR (the About page shows which)${usesStore ? ". It holds each workspace's files between runs (the workspace store), sealed with the workspace's data key" : ""}` });
     sections.push({ id: "data", title: "Where data is stored", rows });
   }
 

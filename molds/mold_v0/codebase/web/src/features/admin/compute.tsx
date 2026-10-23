@@ -24,7 +24,8 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { adminApi } from '@/lib/api-client';
-import { counted } from '@/lib/octillion-format';
+import { persistedKey } from '@/lib/env-names';
+import { counted } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { post, useAdmin, useAdminAction } from './lib';
 import { Gate, useAdminRole } from './role';
@@ -326,13 +327,13 @@ function Limits({ s, onEditing }: { s: Summary; onEditing: (key: string, on: boo
         status: statusOf(l.our_starts[w], limit, false, false), source: <span className='text-muted-foreground'>boat plan · database</span>, noBinding: true };
     }),
     ...(l.per_job_mode ? [
-      { key: 'job_orch', label: 'Job orchestrators', used: l.job_orch_live, limit: l.job_orch_cap, setting: set('OCTILLION_MAX_JOB_ORCHESTRATORS'),
+      { key: 'job_orch', label: 'Job orchestrators', used: l.job_orch_live, limit: l.job_orch_cap, setting: set(persistedKey('MAX_JOB_ORCHESTRATORS')),
         sub: l.job_orch_draining > 0 && <>booting or running · {l.job_orch_draining} draining, not counted</>,
         status: statusOf(l.job_orch_live, l.job_orch_cap, l.binding === 'job_orch'), source: null },
-      { key: 'pods', label: 'Worker pods per job orchestrator', used: l.pods_max_reserved, limit: l.pods_cap, setting: set('OCTILLION_JOB_POD_CAPACITY'),
+      { key: 'pods', label: 'Worker pods per job orchestrator', used: l.pods_max_reserved, limit: l.pods_cap, setting: set(persistedKey('JOB_POD_CAPACITY')),
         sub: <>most reserved by one · avg running {l.pods_avg_running}</>, status: statusOf(l.pods_max_reserved, l.pods_cap, l.binding === 'pods'), source: null }
     ] : [
-      { key: 'shared', label: 'Shared orchestrators', used: l.shared_orch_live, limit: l.shared_orch_cap, setting: set('OCTILLION_MAX_ORCHESTRATORS'),
+      { key: 'shared', label: 'Shared orchestrators', used: l.shared_orch_live, limit: l.shared_orch_cap, setting: set(persistedKey('MAX_ORCHESTRATORS')),
         status: statusOf(l.shared_orch_live, l.shared_orch_cap, false), source: null }
     ]),
     { key: 'size', label: 'Worker sandbox size', used: null, limit: null, setting: size, status: null, source: null }
@@ -412,7 +413,7 @@ function LimitInput({ s, onSave, onDirty, disabled }: { s: Setting; onSave: (v: 
 /** Settings that shape compute but are changed elsewhere: shown read only, with a link to their page. */
 const RELATED: { key: string; page: string; href: string }[] = [
   { key: 'ORCHESTRATOR_MODEL', page: 'Agent configuration', href: '/admin/configuration' },
-  { key: 'OCTILLION_MAX_SESSIONS_PER_RUN', page: 'Agent configuration', href: '/admin/configuration' },
+  { key: persistedKey('MAX_SESSIONS_PER_RUN'), page: 'Agent configuration', href: '/admin/configuration' },
   { key: 'RESEARCH_MAX_COST_USD', page: 'Agent configuration', href: '/admin/configuration' }
 ];
 
@@ -421,7 +422,7 @@ interface EnvRow { name: string; value: string; source: ReactNode; sourceText: s
 function Environment({ s, onTest, testing }: { s: Summary; onTest: () => void; testing: boolean }) {
   const p = s.provider;
   const t = useTrend();
-  // The boat account's facts are rows here (the runtime and OCTILLION_AUTOSCALE are knobs); the cards are what the
+  // The boat account's facts are rows here (the runtime and APP_AUTOSCALE are knobs); the cards are what the
   // environment did in the last 24 hours.
   const boatRows: EnvRow[] = [
     { name: 'boat.dev', value: p.ok ? 'Connected' : 'Not connected', source: <span className='text-xs'>boat API</span>, sourceText: 'boat API',

@@ -3,6 +3,7 @@ import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
 import { getObject, keys, putObject, storageEnabled } from "./storage.js";
 import { baseTranscripts, type StoredEvent } from "./transcripts.js";
+import { ENV } from "./env-names.js";
 
 /**
  * Off-machine archive of what the live stores hold (docs/storage.md). ClickHouse Cloud is a trial that can lapse, so
@@ -19,8 +20,8 @@ import { baseTranscripts, type StoredEvent } from "./transcripts.js";
  *    working. scripts/restore-transcripts.ts loads archives back into whichever store is configured.
  */
 
-const BATCH = () => Math.max(1, Number(process.env.OCTILLION_ARCHIVE_BATCH ?? 25));
-const INTERVAL_MS = () => Math.max(10, Number(process.env.OCTILLION_ARCHIVE_INTERVAL_SECONDS ?? 300)) * 1000;
+const BATCH = () => Math.max(1, Number(ENV.APP_ARCHIVE_BATCH ?? 25));
+const INTERVAL_MS = () => Math.max(10, Number(ENV.APP_ARCHIVE_INTERVAL_SECONDS ?? 300)) * 1000;
 const FINAL = ["completed", "failed", "timeout", "cancelled"];
 
 async function allLiveEvents(orgId: number, sessionId: string): Promise<StoredEvent[]> {
@@ -97,9 +98,9 @@ export async function archiveSweep(): Promise<{ sessions: number; research: numb
 }
 
 let timer: NodeJS.Timeout | null = null;
-/** Background sweeper (every OCTILLION_ARCHIVE_INTERVAL_SECONDS, 300). Off when R2 is not configured. */
+/** Background sweeper (every APP_ARCHIVE_INTERVAL_SECONDS, 300). Off when R2 is not configured. */
 export function startArchiver(log: (m: string) => void = (m) => console.error(m)) {
-  if (timer || !storageEnabled() || (process.env.OCTILLION_ARCHIVE ?? "on").toLowerCase() === "off") return;
+  if (timer || !storageEnabled() || (ENV.APP_ARCHIVE ?? "on").toLowerCase() === "off") return;
   const loop = async () => {
     try {
       // Keep sweeping while a sweep is full (the backfill), then fall back to the interval.

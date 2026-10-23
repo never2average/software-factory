@@ -14,6 +14,7 @@
  *  - codex, cline, pi, antigravity: no native LSP -> Serena (LSP over MCP) in the harness's MCP config
  */
 
+import { ENV } from "./env-names.js";
 export type EditorId = "vscode" | "zed" | "intellij" | "neovim" | "terminal";
 export type LanguageId = "typescript" | "javascript" | "python" | "go" | "rust" | "java" | "cpp" | "dart";
 
@@ -133,10 +134,10 @@ export const ACP_ROUTES: Record<string, { command: string[]; pkg?: string; bin?:
 export const ACP_CLIENT_DIR = "/usr/local/lib/acp-client";
 export const ACP_CLIENT_PATH = `${ACP_CLIENT_DIR}/acp-client.mjs`;
 
-/** Whether this session runs the harness over ACP (a Zed persona, a harness with a route, OCTILLION_ZED_ACP=on). */
+/** Whether this session runs the harness over ACP (a Zed persona, a harness with a route, APP_ZED_ACP=on). */
 export function usesAcp(harness: string, env: SessionEnvironment | null | undefined): boolean {
-  // Off until a live run per adapter has confirmed credentials and model selection: OCTILLION_ZED_ACP=on enables it.
-  return env?.editor === "zed" && !!ACP_ROUTES[harness] && (process.env.OCTILLION_ZED_ACP ?? "off").toLowerCase() === "on";
+  // Off until a live run per adapter has confirmed credentials and model selection: APP_ZED_ACP=on enables it.
+  return env?.editor === "zed" && !!ACP_ROUTES[harness] && (ENV.APP_ZED_ACP ?? "off").toLowerCase() === "on";
 }
 
 /** The ACP client (uploaded next to the install script as acp-client.mjs) plus the harness's ACP adapter, when it has one. */

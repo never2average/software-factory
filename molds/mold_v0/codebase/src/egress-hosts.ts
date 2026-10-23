@@ -26,6 +26,7 @@ import { PackError } from "./pack-api.js";
 import { packs } from "./packs.js";
 import { checkKey, findArea, getFor } from "./record-areas.js";
 import { asPlatform } from "./tenant-scope.js";
+import { ENV } from "./env-names.js";
 
 export const MAX_HOSTS_PER_SLOT = 20;
 const LOCAL_SUFFIXES = ["localhost", "local", "internal", "localdomain", "home.arpa", "arpa", "lan", "corp", "intranet", "test", "invalid", "onion"];
@@ -49,7 +50,7 @@ export function privateAddress(ip: string): boolean {
 }
 
 /** The platform's own hosts (its public address, the gateway's): never a company's to list. */
-const ownHosts = () => [process.env.PUBLIC_URL, process.env.OCTILLION_GATEWAY_URL, process.env.OCTILLION_RUN_API_URL].flatMap((u) => {
+const ownHosts = () => [process.env.PUBLIC_URL, ENV.APP_GATEWAY_URL, ENV.APP_RUN_API_URL].flatMap((u) => {
   try { return u ? [new URL(u).hostname.toLowerCase()] : []; } catch { return []; }
 });
 

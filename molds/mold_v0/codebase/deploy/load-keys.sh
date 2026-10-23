@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Load provider credentials into the Octillion key vault (AES-256-GCM in Postgres).
+# Load provider credentials into the key vault (AES-256-GCM in Postgres).
 #
 #   ./load-keys.sh                 interactive: hidden prompt per provider, Enter skips
 #   ./load-keys.sh --from-env      non-interactive: reads BOAT_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, ... from the env
 #   ./load-keys.sh --list          show what the vault holds (hints only)
 #
-# Options: --project NAME (compose project, default octillion), --label NAME (default main),
+# Options: --project NAME (compose project, default app), --label NAME (default main),
 #          --no-verify (skip the provider check), --force (store even if verification fails).
 #
 # Keys never touch argv, shell history, the terminal or logs: they are read silently and piped over stdin into
-# `scripts/keyvault.ts set` inside the running server container, which encrypts them with OCTILLION_VAULT_KEY.
+# `scripts/keyvault.ts set` inside the running server container, which encrypts them with APP_VAULT_KEY.
 # Verification calls each provider's read-only "list models" (or boat's /limits) endpoint, passing the key as a
 # header via stdin (curl -H @-), so it is not visible in the process list either.
 set -euo pipefail
 
-PROJECT=octillion LABEL=main MODE=interactive VERIFY=1 FORCE=0
+PROJECT=app LABEL=main MODE=interactive VERIFY=1 FORCE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --from-env) MODE=env ;;
@@ -31,7 +31,7 @@ done
 
 # provider | env var | what it unlocks
 PROVIDERS="
-boat|BOAT_API_KEY|sandboxes for worker agents (create the key with: boat api-key create octillion --preset ci)
+boat|BOAT_API_KEY|sandboxes for worker agents (create the key with: boat api-key create app --preset ci)
 anthropic|ANTHROPIC_API_KEY|Claude Code, OpenCode, Pi, Cline, Kilo, and the orchestrator itself
 openai|OPENAI_API_KEY|Codex
 google|GEMINI_API_KEY|Gemini CLI, Antigravity (paused agents)
@@ -44,9 +44,9 @@ exa|EXA_API_KEY|web search for onboarding research (competitors with evidence; s
 libraries_io|LIBRARIES_IO_API_KEY|PyPI/Go/Maven package search for research (optional; server only)
 "
 
-vault() { docker compose -p "$PROJECT" exec -T octillion node --import tsx scripts/keyvault.ts "$@"; }
+vault() { docker compose -p "$PROJECT" exec -T api node --import tsx scripts/keyvault.ts "$@"; }
 
-if ! docker compose -p "$PROJECT" ps --status running --services 2>/dev/null | grep -qx octillion; then
+if ! docker compose -p "$PROJECT" ps --status running --services 2>/dev/null | grep -qx api; then
   echo "The '$PROJECT' stack is not running. Start it first: docker compose -f docker-compose.prod.yml --env-file .env up -d --wait" >&2
   exit 1
 fi
@@ -121,8 +121,8 @@ else
 fi
 if [ -n "${project:-}" ]; then
   [ -r "$safile" ] || { echo "    cannot read service-account key at '$safile'" >&2; exit 1; }
-  docker compose -p "$PROJECT" exec -T octillion node --import tsx scripts/keyvault.ts set anthropic --label vertex < "$safile" | sed 's/^/    /'
-  docker compose -p "$PROJECT" exec -T octillion node --import tsx scripts/keyvault.ts provider anthropic --backend vertex \
+  docker compose -p "$PROJECT" exec -T api node --import tsx scripts/keyvault.ts set anthropic --label vertex < "$safile" | sed 's/^/    /'
+  docker compose -p "$PROJECT" exec -T api node --import tsx scripts/keyvault.ts provider anthropic --backend vertex \
     --vertex-project "$project" --vertex-region "$region" >/dev/null && echo "    anthropic now routes through Vertex AI ($project, $region)"
 fi
 

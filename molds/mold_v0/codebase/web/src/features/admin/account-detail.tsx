@@ -9,7 +9,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Icons } from '@/components/icons';
-import { money, usd } from '@/lib/octillion-format';
+import { money, usd } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { adminApi } from '@/lib/api-client';
 import { ACCOUNT_ROLES, accountRoleLabel, accountRoleOf, post, STAGE_LABELS, useAdmin, useAdminAction, type InviteResult, type OrgList } from './lib';
@@ -18,6 +18,7 @@ import { useResult } from './result-dialog';
 import { StatStrip } from '@/components/layout/section';
 import { ConfirmButton, copyText, DataList, ErrorBox, Mono, Notice, Section, StatusBadge, SubBadge, When, type Tone } from './ui';
 import { profile } from '@/config/profile.generated';
+import { KEY_PREFIX } from '@/lib/namespace';
 
 type Detail = any; // GET /orgs/:slug (src/admin.ts orgDetail)
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : '—');
@@ -372,7 +373,7 @@ function Billing({ d, path }: { d: Detail; path: string }) {
             </>
           ) : (
             <span className='text-muted-foreground text-sm'>
-              No plans: add Stripe prices with a lookup_key starting <Mono>octillion_</Mono>.
+              No plans: add Stripe prices with a lookup_key starting <Mono>{KEY_PREFIX}</Mono>.
             </span>
           )}
           <Gate need='accounts'><Button variant='outline' disabled={portal.isPending} onClick={() => portal.mutate(undefined, { onSuccess: (r) => window.open(r.url, '_blank', 'noopener') })}>

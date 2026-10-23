@@ -91,7 +91,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   if (!lane) { console.error("usage: surface.mts <lane copy>"); process.exit(2); }
   // Modules that read these at load must not reach a real service: the inventory opens nothing.
   delete process.env.DATABASE_URL;
-  process.env.OCTILLION_VAULT_KEY ??= Buffer.alloc(32, 7).toString("base64");
+  process.env.APP_VAULT_KEY ??= Buffer.alloc(32, 7).toString("base64");
   const s = await surface(lane);
   process.stdout.write(JSON.stringify(s, null, 1) + "\n");
   process.exit(0);

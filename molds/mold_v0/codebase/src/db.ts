@@ -149,7 +149,7 @@ export const openDb = (): Promise<Db> => createDb();
 
 /**
  * Shared connection. On first use it brings the schema up to date: the versioned migrations in sql/migrations that
- * this database has not applied yet (src/migrate.ts), or, with OCTILLION_MIGRATE_ON_BOOT=off, it only checks that
+ * this database has not applied yet (src/migrate.ts), or, with APP_MIGRATE_ON_BOOT=off, it only checks that
  * none are pending (a deploy step runs `npm run db:migrate` first) and refuses to start otherwise.
  */
 export function getDb(): Promise<Db> {

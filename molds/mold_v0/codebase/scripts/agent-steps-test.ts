@@ -36,7 +36,7 @@ import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 /** AGENT_STEPS_ONLY=071,074 runs those sections only (to show each fails without its change); all by default. */
 const want = (t: string) => !process.env.AGENT_STEPS_ONLY || process.env.AGENT_STEPS_ONLY.split(",").includes(t);

@@ -15,6 +15,7 @@ import { currentOffer, dataMap, type DataMapRow, type DataMapSection, type Deplo
 import { packs } from "./packs.js";
 import { asPlatform } from "./tenant-scope.js";
 import { authProvider } from "./auth-provider.js";
+import { appEnv } from "./env-names.js";
 
 /** The host of a URL from the environment, or null: never its user, password, path or query. */
 export const urlHost = (u: string | undefined): string | null => { if (!u) return null; try { return new URL(u).hostname.toLowerCase() || null; } catch { return null; } };
@@ -39,13 +40,14 @@ export function databaseWords(url: string | undefined): string {
 }
 
 /** The object store this server uses (src/storage.ts objectStore): R2 with its bucket and jurisdiction, a directory, or none. */
-export function objectStoreWords(env: NodeJS.ProcessEnv = process.env): string {
+export function objectStoreWords(source: NodeJS.ProcessEnv = process.env): string {
+  const env = appEnv(source);
   if (env.R2_BUCKET && env.R2_ENDPOINT && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) {
     const h = urlHost(env.R2_ENDPOINT) ?? "";
     const j = h.match(/\.(eu|fedramp)\.r2\.cloudflarestorage\.com$/)?.[1];
     return `Cloudflare R2, bucket ${env.R2_BUCKET}${j ? `, ${j === "eu" ? "EU" : "FedRAMP"} jurisdiction` : ", no jurisdiction set (R2 places the bucket itself)"}`;
   }
-  if (env.OCTILLION_STORAGE_DIR) return "a directory on this server's disk (OCTILLION_STORAGE_DIR)";
+  if (env.APP_STORAGE_DIR) return "a directory on this server's disk (APP_STORAGE_DIR)";
   return "none configured (a feature that needs one refuses to run)";
 }
 
@@ -54,7 +56,8 @@ export function objectStoreWords(env: NodeJS.ProcessEnv = process.env): string {
  * `staff` (the admin page) adds what only operators need: the bucket's name, key counts, the sandbox setting, webhook and
  * telemetry hosts. A workspace's people get where things are: regions and providers.
  */
-export async function measured(env: NodeJS.ProcessEnv = process.env, staff = true): Promise<DataMapSection> {
+export async function measured(source: NodeJS.ProcessEnv = process.env, staff = true): Promise<DataMapSection> {
+  const env = appEnv(source);
   const rows: DataMapRow[] = [];
   rows.push({ item: "Answering from", detail: env.VERCEL ? `a Vercel function in the region ${env.VERCEL_REGION || "(Vercel did not say)"}` : "a server process (not a Vercel function): its location is the server's" });
   rows.push({ item: "Database", detail: databaseWords(env.DATABASE_URL) });
@@ -91,7 +94,7 @@ export async function measured(env: NodeJS.ProcessEnv = process.env, staff = tru
     // The setting only: which provider a launch picks is decided where runs are launched (on a server of its own, the
     // runner service, which alone holds the Docker socket), never probed from a request.
     const { RUN_SANDBOXES } = await import("./run-sandboxes.js");
-    rows.push({ item: "Run sandboxes", detail: `OCTILLION_RUN_SANDBOX is ${RUN_SANDBOXES.mode()} (auto: the sandbox provider whose key is in the key vault, else the server's Docker from its runner service)` });
+    rows.push({ item: "Run sandboxes", detail: `APP_RUN_SANDBOX is ${RUN_SANDBOXES.mode()} (auto: the sandbox provider whose key is in the key vault, else the server's Docker from its runner service)` });
   }
   const third: [string, boolean, string, boolean][] = [
     // The server's sign-in (src/auth-provider.ts): Clerk, or its own (people and sessions in the database).
@@ -100,7 +103,7 @@ export async function measured(env: NodeJS.ProcessEnv = process.env, staff = tru
     ["Product analytics", Boolean(env.POSTHOG_API_KEY), `PostHog (${urlHost(env.POSTHOG_HOST) ?? "us.i.posthog.com"}): product events, and the signed-in person's email address and name`, true],
     ["Traces and metrics", Boolean(env.OTEL_EXPORTER_OTLP_ENDPOINT) && env.OTEL_SDK_DISABLED !== "true", `OpenTelemetry export to ${urlHost(env.OTEL_EXPORTER_OTLP_ENDPOINT) ?? "?"}`, staff],
     ["Access-request alerts", Boolean(env.ACCESS_REQUEST_WEBHOOK_URL), `a webhook at ${urlHost(env.ACCESS_REQUEST_WEBHOOK_URL) ?? "?"}`, staff],
-    ["Spend alerts", Boolean(env.OCTILLION_ALERT_WEBHOOK_URL), `a webhook at ${urlHost(env.OCTILLION_ALERT_WEBHOOK_URL) ?? "?"}`, staff],
+    ["Spend alerts", Boolean(env.APP_ALERT_WEBHOOK_URL), `a webhook at ${urlHost(env.APP_ALERT_WEBHOOK_URL) ?? "?"}`, staff],
   ];
   for (const [item, on, what, shown] of third) if (shown) rows.push({ item, detail: on ? what : "not configured" });
   const { emailStatus } = await import("./email.js");

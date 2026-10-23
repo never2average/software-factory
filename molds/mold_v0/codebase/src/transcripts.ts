@@ -4,11 +4,12 @@ import path from "node:path";
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 import { getDb } from "./db.js";
 import { sessionEngine } from "./host-tables.js";
+import { NS } from "./namespace.js";
 
 /**
  * Raw sub-agent transcripts: one JSONL line per event, stored verbatim.
  *
- * Production: ClickHouse (`octillion.transcript_events`), one row per event, with a full-text index on a
+ * Production: ClickHouse (`<CLICKHOUSE_DATABASE, default the namespace>.transcript_events`), one row per event, with a full-text index on a
  * lowercased copy of the searchable text. Retried writes are collapsed by ReplacingMergeTree on
  * (org_id, session_id, seq) and reads take one row per seq.
  * Local dev / tests: when CLICKHOUSE_URL is unset the same rows go to Postgres (`transcript_events`).
@@ -122,7 +123,7 @@ function chConfig(): ClickHouseConfig | null {
     url,
     username: file.username ?? file.user ?? process.env.CLICKHOUSE_USER ?? "default",
     password: file.password ?? process.env.CLICKHOUSE_PASSWORD ?? "",
-    database: process.env.CLICKHOUSE_DATABASE ?? "octillion",
+    database: process.env.CLICKHOUSE_DATABASE ?? NS,
   };
 }
 

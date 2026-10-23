@@ -8,7 +8,7 @@
  *
  * Cold start (measured live 2026-10-10): code upload as a tarball through the files API + `npm ci` there -> service
  * active ~8s after the create call. Optional named snapshot image "octi-orch-img-<code hash>" (code + node_modules):
- * ~22s (lazy disk hydration) and a ~170s build per code change, so it is opt-in (OCTILLION_ORCH_SNAPSHOT=on).
+ * ~22s (lazy disk hydration) and a ~170s build per code change, so it is opt-in (APP_ORCH_SNAPSHOT=on).
  */
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { BOAT } from "../core/config.js";
 import { boatApi, boatCreate, boatExec, BoatError } from "../core/boat.js";
 import { sleep } from "../core/util.js";
+import { ENV } from "../core/env-names.js";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 /**
@@ -25,7 +26,7 @@ export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url
  * sandboxes: each autoscaler reaps "orphans" by name prefix. "octi" (the VM production) by default; the Vercel
  * preview uses "octv". Orchestrators get it as a tuning var, so their worker sandboxes carry it too.
  */
-export const BOAT_NAMESPACE = (process.env.OCTILLION_BOAT_NAMESPACE || (process.env.VERCEL ? "octv" : "octi")).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi";
+export const BOAT_NAMESPACE = (ENV.APP_BOAT_NAMESPACE || (process.env.VERCEL ? "octv" : "octi")).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi";
 export const ORCH_PREFIX = `${BOAT_NAMESPACE}-orch-`;
 export const WORKER_PREFIX = `${BOAT_NAMESPACE}-w-`;
 export const IMAGE_PREFIX = `${BOAT_NAMESPACE}-orch-img-`;
@@ -41,7 +42,7 @@ const CHUNK = 3_500_000; // raw bytes per files-API PUT (limit: 5 MiB after base
 
 /** Non-secret tuning knobs that may go into an orchestrator's env file (nothing else is ever written). */
 export const TUNING_VARS = ["ORCHESTRATOR_MODEL", "MAX_SESSION_MINUTES", "MAX_BUDGET_USD", "MAX_USER_TURNS", "ORCHESTRATOR_THINKING", "BOAT_SANDBOX_SIZE",
-  "RESEARCH_MAX_COST_USD", "OCTILLION_ORCH_IDLE_MINUTES", "MAX_AGENT_TURNS", "GIVE_UP_RUNS", "ORCHESTRATOR_JOB", "OCTILLION_ZED_ACP", "OCTILLION_EGRESS", "OCTILLION_BOAT_NAMESPACE"] as const;
+  "RESEARCH_MAX_COST_USD", "APP_ORCH_IDLE_MINUTES", "MAX_AGENT_TURNS", "GIVE_UP_RUNS", "ORCHESTRATOR_JOB", "APP_ZED_ACP", "APP_EGRESS", "APP_BOAT_NAMESPACE"] as const;
 
 export interface LaunchContext {
   url: string;               // public HTTPS server URL
@@ -257,13 +258,13 @@ cd ${HOME}; rm -rf app.old; [ -d app ] && mv app app.old; mv app.new app; rm -rf
 export async function configure(id: string, orchId: string, ctx: LaunchContext) {
   const tuning = Object.entries(ctx.tuning ?? {}).filter(([k, v]) => (TUNING_VARS as readonly string[]).includes(k) && /^[A-Za-z0-9._-]{1,32}$/.test(v)).map(([k, v]) => `${k}=${v}`);
   const envBody = [
-    `OCTILLION_URL=${ctx.url}`, `OCTILLION_WORKER_TOKEN=${ctx.placeholderToken ? "selftest-placeholder-not-a-token" : ctx.workerToken}`, `ORCHESTRATOR_ID=${orchId}`,
-    "RUNNER=boat", `POD_CAPACITY=${ctx.podCapacity}`, "OCTILLION_HOST_ROLE=boat-orchestrator", ...tuning, "",
+    `APP_URL=${ctx.url}`, `APP_WORKER_TOKEN=${ctx.placeholderToken ? "selftest-placeholder-not-a-token" : ctx.workerToken}`, `ORCHESTRATOR_ID=${orchId}`,
+    "RUNNER=boat", `POD_CAPACITY=${ctx.podCapacity}`, "APP_HOST_ROLE=boat-orchestrator", ...tuning, "",
   ].join("\n");
   await run(id, `install -d -m 700 ${HOME}`, 30);
   await put(id, `${HOME}/orchestrator.env.new`, envBody);
   const unit = `[Unit]
-Description=Octillion orchestrator (${orchId})
+Description=Orchestrator (${orchId})
 After=network-online.target
 [Service]
 User=${SERVICE_USER}
@@ -298,7 +299,7 @@ sudo systemctl daemon-reload`, 120);
   if (r.code !== 0) throw new Error(`configure failed: ${r.stderr.slice(-500)}`);
 }
 
-/** From inside the sandbox, with the orchestrator's own env: is OCTILLION_URL reachable over public HTTPS? */
+/** From inside the sandbox, with the orchestrator's own env: is APP_URL reachable over public HTTPS? */
 export async function preflight(id: string): Promise<{ ok: boolean; reason: string }> {
   const r = await run(id, `cd ${HOME}/app/orchestrator && set -a && . ${HOME}/orchestrator.env && set +a && node_modules/.bin/tsx deploy/in-sandbox.ts preflight`, 60);
   try { const j = JSON.parse(r.stdout.trim().split("\n").pop()!); return { ok: !!j.ok, reason: j.reason }; }

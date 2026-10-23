@@ -35,7 +35,7 @@ THIS MONTH
   $500.00        $220.10 (live)      $14.60 · 3 runs    $379 by Oct 31       $279.90
 ──────────────────────────────────────────────────────────────────────────────────────────────
 YOUR POLICY
-  This account can spend  $500.00  in October.                               (set by Octillion)
+  This account can spend  $500.00  in October.                               (set by the app)
   Hold back  [$ 50.00  ]  as a buffer for runs that go over.
      Nobody can launch into this. It absorbs runs that finish past a limit.
   [Platform ▾]  gets  [$ 100.00 ]  this month.                                         [Remove]
@@ -49,7 +49,7 @@ YOUR POLICY
 ──────────────────────────────────────────────────────────────────────────────────────────────
 RUN LIMITS  (these limit size and speed, not who gets which dollars)
   Each person can have        [    ]  simulations running at once.   placeholder "no limit"
-  Each simulation can use up to [ 20 ] agent sessions.   Octillion's maximum is 100. Applies to
+  Each simulation can use up to [ 20 ] agent sessions.   The app's maximum is 100. Applies to
                                                          every batch, including adaptive runs.
   Each simulation can spend up to [$     ]   placeholder "no limit"
                                   Adaptive runs stop adding sessions once a run reaches this.
@@ -101,7 +101,7 @@ WHO GETS WHAT                                                     Showing your u
 | Item | Copy | Source |
 |---|---|---|
 | Title / subtitle | "Budget rules" / "Changes apply right away to this month's spend." | static |
-| Last changed | "Last changed by {name}, {Mon D, HH:MM} UTC · History". With no row: "Using Octillion's default rules" | newest `usage_rule_changes` row, falling back to `policy.updated_by`/`updated_at`. Names are resolved from Clerk (new `updated_by_name`) |
+| Last changed | "Last changed by {name}, {Mon D, HH:MM} UTC · History". With no row: "Using the app's default rules" | newest `usage_rule_changes` row, falling back to `policy.updated_by`/`updated_at`. Names are resolved from Clerk (new `updated_by_name`) |
 | History | Opens a side panel with the last 50 entries, one sentence each, e.g. "Oct 12 14:03 · Priya S. · Buffer $0 → $50; Platform $80 → $100". No undo in v1 | new `GET /limits/history` |
 | Reset | "Month resets {1st of next month}, 00:00 UTC." | new `period_end` (UTC month, as limits.ts:35) |
 
@@ -117,7 +117,7 @@ WHO GETS WHAT                                                     Showing your u
 ### 3.3 Your policy
 | # | Exact copy | Control / default | Validation | Maps to |
 |---|---|---|---|---|
-| P1 | "This account can spend **$X** in {Month}." Side note "(set by Octillion)". Tooltip: "Your prepaid monthly allowance. Contact Octillion to change it." | read-only | — | `budget_usd` |
+| P1 | "This account can spend **$X** in {Month}." Side note "(set by the app)". Tooltip: "Your prepaid monthly allowance. Contact the app to change it." | read-only | — | `budget_usd` |
 | P2 | "Hold back [$ ] as a buffer for runs that go over." Hint: "Nobody can launch into this. It absorbs runs that finish past a limit." | money, default $0.00, step 0.01, empty = $0 | 0 ≤ v ≤ cap. Inline error above the cap: "Can't hold back more than your ${cap} allowance." | `usage_policies.reserve_usd`. **It now applies in every mode** (§7, change B) |
 | P3 | "[Team ▾] gets [$ ] this month." plus [Remove]. Then "+ Give another team its own budget", whose dropdown lists teams with no budget. With no teams: "No teams yet. Create one on Teams →" | team select + money. A new row starts empty; saving it empty shows "Enter an amount or remove this row." | 0 ≤ v ≤ 1e7, cents. **$0 is allowed** and the row then reads "gets $0. Its people can't launch." A team with 0 members shows "No one is in {team}, so this ${b} sits unused." (warning) | `usage_teams.budget_usd`. [Remove] sets it to null. Saved through `PUT /limits/plan` |
 | P4 | "Everyone else shares the remaining **$R**." With no team rows: "Everyone shares **$R**." With one person: "You can spend **$R**." | computed | R < 0 shows in red: "Team budgets and the buffer are ${-R} more than your allowance." | R = cap − reserve − Σ team budgets |
@@ -129,7 +129,7 @@ WHO GETS WHAT                                                     Showing your u
 | # | Exact copy | Control / default | Validation | Maps to |
 |---|---|---|---|---|
 | R1 | "Each person can have [ ] simulations running at once." Hint: "Counts whole simulations, not agent sessions. Teams and people can set their own; the most specific one wins. ({n} do)" | integer, empty = "no limit" (as today; no silent default) | 1–10000. 0 is rejected with "Use 'can launch' to stop launches." | `policy.max_concurrent_runs` |
-| R2 | "Each simulation can use up to [ ] agent sessions." Side note: "Octillion's maximum is {N}." Hint: "Applies to every batch, including adaptive runs." | integer, empty = Octillion's maximum (the placeholder shows N) | 1 ≤ v ≤ `server_max_sessions`. 0 is rejected | `policy.max_sessions_per_run` + new `server_max_sessions` |
+| R2 | "Each simulation can use up to [ ] agent sessions." Side note: "The app's maximum is {N}." Hint: "Applies to every batch, including adaptive runs." | integer, empty = the app's maximum (the placeholder shows N) | 1 ≤ v ≤ `server_max_sessions`. 0 is rejected | `policy.max_sessions_per_run` + new `server_max_sessions` |
 | R3 | "Each simulation can spend up to [$ ]." Hint: "Adaptive runs stop adding sessions once a run reaches this. Sessions already running finish." Live: "≈ {n} sessions at this month's average of ${avg} per session." With fewer than 20 sessions this month: "Not enough runs yet to estimate." | money, empty = "no limit" | $0.01–cap. A warning (not an error) when it is below one average session | **new** `usage_policies.max_run_usd` |
 
 ### 3.5 Exceptions
@@ -231,7 +231,7 @@ Every message ends with: "Ask {admin names} to change Budget rules on the Billin
 
 | Code | Message |
 |---|---|
-| no_allowance | "Your account has no prepaid allowance this month, so simulations can't run. Contact Octillion." (no admin suffix) |
+| no_allowance | "Your account has no prepaid allowance this month, so simulations can't run. Contact the app." (no admin suffix) |
 | account_cap | "Your account has used its ${cap} for {Month}." |
 | launch_access | "You haven't been allowed to launch simulations yet. Reports and transcripts stay available." |
 | person_limit | "You've used your ${a} for {Month} (${s} spent)." |
@@ -260,15 +260,15 @@ Every message ends with: "Ask {admin names} to change Budget rules on the Billin
 
 | State | What shows |
 |---|---|
-| $0 allowance | P1 reads "This account has **no prepaid allowance** this month, so nobody can launch. Contact Octillion to add one." The "This month" tiles read "None". The rules stay editable, and the preview shows $0 with the chip "No allowance". The wrong line at billing.tsx:412 is removed |
+| $0 allowance | P1 reads "This account has **no prepaid allowance** this month, so nobody can launch. Contact the app to add one." The "This month" tiles read "None". The rules stay editable, and the preview shows $0 with the chip "No allowance". The wrong line at billing.tsx:412 is removed |
 | Allowance lookup failed | Banner: "We couldn't load your monthly allowance, so the preview is unavailable and saving is off." The server returns `budget_error: true`. `checkRun` refuses with "We couldn't check your account's allowance. Try again in a minute." (fail closed). `extendAdaptive` stops instead of using Infinity (queries.ts:467) |
 | Member list unavailable (Clerk off or empty) | Banner: "We can't load your people, so personal and team limits aren't being applied. Only the account allowance and run limits are." The table is hidden. Account, buffer and run checks still apply |
 | No teams | P3 reads "No teams yet. Create one on Teams → to give a group its own budget." P4 reads "Everyone shares $R." The table shows Buffer and Everyone |
 | Teams but none budgeted | Only "+ Give a team its own budget" |
 | Budgeted team with no members | Warning on the row: "No one is in {team}, so this ${b} sits unused." |
 | One person | P4 reads "You can spend $R." The equal-share hint is hidden and the table lists one person |
-| Over-allocated (including after Octillion lowers the cap) | Red overflow plus the P4 error text. Saving is allowed through Review with the checkbox. The server never refuses a save for over-allocation, so unrelated saves (e.g. on Teams) keep working |
-| Never saved | Header reads "Using Octillion's default rules". Defaults are shown and the preview is live |
+| Over-allocated (including after the app lowers the cap) | Red overflow plus the P4 error text. Saving is allowed through Review with the checkbox. The server never refuses a save for over-allocation, so unrelated saves (e.g. on Teams) keep working |
+| Never saved | Header reads "Using the app's default rules". Defaults are shown and the preview is live |
 | Upgrade pending (change B not yet applied, §7) | Notice at the top: "Your team budgets don't yet limit people outside teams. Turning this on gives Everyone else a real ${R} limit. {n} people would be blocked right away. [Preview] [Turn on]" |
 | Save conflict (409) | Inline: "Someone changed these rules while you were editing." [Reload and keep my edits] re-applies the draft on top of the latest rules |
 | Loading | Skeleton for the tiles and sentences. Inputs stay disabled until GET /limits returns |
@@ -369,7 +369,7 @@ There are no column renames and no changes to `usage_teams` or `usage_members`.
 4. **Preview and plan:** `POST /limits/preview`, `PUT /limits/plan` (If-Match, transaction), and the new GET fields (`server_max_sessions`, `period_end`, tile figures).
 5. **New tab UI:** header, This month strip, policy sentences, run limits R1–R2, exceptions, the Who gets what table and bar, save bar and Review, and all the states. It ships behind a per-org flag, with the old tab as fallback.
 6. **Meaning change A + C:** the `cap_usd` and custom→pool migration, with equal share counting only launchers. Ship it with the notices and the People dialog change.
-7. **Meaning change B:** the `set_aside_enforced` column and migration, the `rest_pot` and `buffer` checks, the upgrade notice with [Preview] [Turn on], and the affected-org list given to Octillion support.
+7. **Meaning change B:** the `set_aside_enforced` column and migration, the `rest_pot` and `buffer` checks, the upgrade notice with [Preview] [Turn on], and the affected-org list given to the app support.
 8. **Run dollar cap:** `max_run_usd` (R3), `avg_session_usd`, and the stop in extendAdaptive.
 9. **Member surfaces:** the "Your budget" card, plain summary, launch form line and estimate, and the admin 80% / pace banner.
 10. **People and Teams updates:** effective columns, Limited by and Left, the exceptions filter, and the team-delete impact confirm.
@@ -379,9 +379,9 @@ There are no column renames and no changes to `usage_teams` or `usage_members`.
 
 ## 10. Open questions for the product owner
 
-1. **Turning on change B for existing pool or custom accounts with team budgets.** Should admins opt in through the notice (the proposal), or should Octillion switch it on for everyone after a notice period?
+1. **Turning on change B for existing pool or custom accounts with team budgets.** Should admins opt in through the notice (the proposal), or should the app switch it on for everyone after a notice period?
 2. **The buffer.** Should it be reachable by admins (guardrails-first's "held back for admins") or by nobody, as proposed? "Nobody" keeps one meaning but makes the money reachable only through overshoot and connector keys.
 3. **Connector-key spend.** It is shown but stays unlimited in v1. Do you want a separate monthly cap for connector keys now, or later?
 4. **Phase 2 alerts and "Request more".** Is adding an email provider (e.g. Resend or Postmark, a new SaaS dependency) approved, and should increase requests be one-month-only, permanent, or both?
 
-Sources: /root/octillion-live/octillion-admin/web/src/features/portal/billing.tsx, /root/octillion-live/octillion-admin/src/limits.ts, /root/octillion-live/octillion-admin/src/app.ts, /root/octillion-live/octillion-admin/src/queries.ts, /root/octillion-live/octillion-admin/src/research.ts, /root/octillion-live/octillion-admin/src/billing.ts, /root/octillion-live/octillion-admin/sql/schema.sql
+Sources: the product's repository: web/src/features/portal/billing.tsx, the product's repository: src/limits.ts, the product's repository: src/app.ts, the product's repository: src/queries.ts, the product's repository: src/research.ts, the product's repository: src/billing.ts, the product's repository: sql/schema.sql

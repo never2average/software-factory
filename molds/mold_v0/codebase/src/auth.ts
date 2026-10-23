@@ -3,6 +3,8 @@ import { getDb } from "./db.js";
 import { clerkEnabled, isSuspended, mcpAudiences, memberships, onMembershipChange, organizations, verifyOAuthToken } from "./clerk.js";
 import { people } from "./people.js";
 import { accountRoleOf, type AccountRole } from "./account-roles.js";
+import { ENV } from "./env-names.js";
+import { NS_KEYS, nsGet } from "./namespace.js";
 
 /** The tenant a request acts for. Every query in queries.ts is scoped by orgId. */
 export interface Org {
@@ -106,9 +108,9 @@ export async function memberRole(userId: string, clerkOrgId: string | null): Pro
   }
 }
 
-/** Constant-time check of the orchestrator's shared worker token (OCTILLION_WORKER_TOKEN). */
+/** Constant-time check of the orchestrator's shared worker token (APP_WORKER_TOKEN). */
 export function isWorkerToken(token: string | undefined | null): boolean {
-  const expected = process.env.OCTILLION_WORKER_TOKEN;
+  const expected = ENV.APP_WORKER_TOKEN;
   if (!expected || !token) return false;
   const a = Buffer.from(sha256(token));
   const b = Buffer.from(sha256(expected));
@@ -141,13 +143,13 @@ export function headerCredential(headers: Record<string, string | string[] | und
 }
 
 /**
- * Legacy connector URLs (/mcp/oct_...) put the key in the URL. OCTILLION_URL_KEYS:
+ * Legacy connector URLs (/mcp/oct_...) put the key in the URL. APP_URL_KEYS:
  *   allow (default)  still accepted, deprecated: each response says so (Deprecation header) and the server logs which
  *                    account and key used one, so those people can be moved to a header or to sign-in
  *   off              refused with a 401 that says how to send the key instead
  * New keys are never issued as URLs (src/admin.ts connectInfo).
  */
-export const urlKeysAllowed = () => (process.env.OCTILLION_URL_KEYS ?? "allow").trim().toLowerCase() !== "off";
+export const urlKeysAllowed = () => (ENV.APP_URL_KEYS ?? "allow").trim().toLowerCase() !== "off";
 
 // ---------- Clerk users on /mcp (OAuth) ----------
 
@@ -156,7 +158,7 @@ onMembershipChange((userId) => tokenOrgs.delete(userId)); // a suspended person 
 
 /**
  * Resolve a Clerk OAuth access token issued for /mcp (its audience is checked, src/clerk.ts) to the organization the user acts for: their oldest Clerk membership that is not
- * suspended. A Clerk organization created in the Clerk dashboard gets its Octillion row on first use.
+ * suspended. A Clerk organization created in the Clerk dashboard gets its row here on first use.
  */
 export async function resolveUserToken(token: string): Promise<Org | null> {
   const claims = await verifyOAuthToken(token, mcpAudiences()); // issued for /mcp, not another resource
@@ -172,10 +174,10 @@ export async function resolveUserToken(token: string): Promise<Org | null> {
   return org;
 }
 
-/** The Octillion organization joined to a Clerk organization, created (and linked by slug metadata) on first sight. */
-const selfServe = () => (process.env.OCTILLION_SELF_SERVE_ACCOUNTS ?? "off").toLowerCase() === "on";
+/** The app's organization joined to a Clerk organization, created (and linked by slug metadata) on first sight. */
+const selfServe = () => (ENV.APP_SELF_SERVE_ACCOUNTS ?? "off").toLowerCase() === "on";
 
-/** The Octillion account for a Clerk organization: linked by id, or by the octillion_slug Octillion wrote when it
+/** The app's account for a Clerk organization: linked by id, or by the NS_KEYS.slug the app wrote when it
  *  created the organization; a new account only in self-serve mode. */
 export async function orgForClerk(clerkOrgId: string): Promise<Org | null> {
   const db = await getDb();
@@ -185,19 +187,19 @@ export async function orgForClerk(clerkOrgId: string): Promise<Org | null> {
   if (!row) {
     if (!clerkEnabled()) return null;
     const c = await organizations.get(clerkOrgId);
-    const known = typeof c.public_metadata?.octillion_slug === "string" ? c.public_metadata.octillion_slug : null;
+    const known = typeof nsGet(c.public_metadata, "slug") === "string" ? nsGet(c.public_metadata, "slug") : null;
     const bySlug = known
       ? (await db.query<{ id: number }>("SELECT id FROM organizations WHERE slug = $1 AND clerk_org_id IS NULL", [known]))[0]
       : undefined;
     if (bySlug) await db.query("UPDATE organizations SET clerk_org_id = $2 WHERE id = $1", [bySlug.id, clerkOrgId]);
-    // Accounts are invite-only: a Clerk organization someone made for themselves is not an Octillion account unless
-    // self-serve is switched on (OCTILLION_SELF_SERVE_ACCOUNTS=on).
+    // Accounts are invite-only: a Clerk organization someone made for themselves is not an account of the app unless
+    // self-serve is switched on (APP_SELF_SERVE_ACCOUNTS=on).
     else if (!selfServe()) return null;
     else {
       let slug = slugify(c.name);
       if ((await db.query("SELECT 1 FROM organizations WHERE slug = $1", [slug])).length) slug = `${slug.slice(0, 40)}-${randomBytes(3).toString("hex")}`;
       await db.query("INSERT INTO organizations (slug, name, clerk_org_id) VALUES ($1, $2, $3) ON CONFLICT (clerk_org_id) DO NOTHING", [slug, c.name, clerkOrgId]);
-      await organizations.setMetadata(clerkOrgId, { octillion_slug: slug }).catch((err) => console.error("clerk metadata:", (err as Error).message));
+      await organizations.setMetadata(clerkOrgId, { [NS_KEYS.slug]: slug }).catch((err) => console.error("clerk metadata:", (err as Error).message));
     }
     row = await find();
   }

@@ -16,8 +16,8 @@ import { EGRESS_DNS_PORT, EGRESS_PROXY_PORT, egressPolicy, probeSource, proxyEnv
 const results: { name: string; ok: boolean; detail: string }[] = [];
 const check = (name: string, ok: boolean, detail = "") => { results.push({ name, ok, detail }); console.log(`[egress] ${ok ? "PASS" : "FAIL"} ${name}${detail ? ` - ${detail}` : ""}`); };
 
-const pol = egressPolicy({ gatewayUrls: ["https://gw.octillion.example/gw/anthropic", "https://gw.octillion.example/gw/openai/v1"], repoUrl: "https://github.com/acme/app.git" });
-check("policy: gateway, registries and the repo's git host", pol.gatewayHost === "gw.octillion.example" && pol.hosts.includes("registry.npmjs.org") &&
+const pol = egressPolicy({ gatewayUrls: ["https://gw.app.example/gw/anthropic", "https://gw.app.example/gw/openai/v1"], repoUrl: "https://github.com/acme/app.git" });
+check("policy: gateway, registries and the repo's git host", pol.gatewayHost === "gw.app.example" && pol.hosts.includes("registry.npmjs.org") &&
   pol.hosts.includes("github.com") && pol.hosts.includes("codeload.github.com") && !pol.hosts.includes("example.com"), pol.hosts.join(","));
 let refused = false;
 try { egressPolicy({ gatewayUrls: ["http://127.0.0.1:3000/gw/anthropic"] }); } catch { refused = true; }

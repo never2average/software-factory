@@ -51,11 +51,11 @@ try {
   };
   const call = (key: string, name = "fixture_spend_echo", args: Record<string, unknown> = { n: 1 }) => rpc(key, { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name, arguments: args } });
   const MCP_ENV = ["PER_KEY_PER_MINUTE", "PER_MEMBER_PER_MINUTE", "PER_WORKSPACE_PER_MINUTE", "PER_IP_PER_MINUTE", "CONCURRENT_PER_WORKSPACE", "MAX_REQUEST_BYTES", "MAX_RESPONSE_BYTES"];
-  const mcpLimits = (v: Partial<Record<string, number>>) => env(Object.fromEntries(MCP_ENV.map((k) => [`OCTILLION_LIMIT_MCP_${k}`, v[k] == null ? undefined : String(v[k])])));
+  const mcpLimits = (v: Partial<Record<string, number>>) => env(Object.fromEntries(MCP_ENV.map((k) => [`APP_LIMIT_MCP_${k}`, v[k] == null ? undefined : String(v[k])])));
   try {
     // ---------- 1. a pack cannot raise its own limits ----------
     {
-      env({ OCTILLION_LIMIT_RUNS_BUDGET_USD_MAX: "2", OCTILLION_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE: "2", OCTILLION_LIMIT_RUNS_KIND_MONTH_BUDGET_USD: "0.3" });
+      env({ APP_LIMIT_RUNS_BUDGET_USD_MAX: "2", APP_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE: "2", APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD: "0.3" });
       const { org: A } = await org(), { org: B } = await org();
       const r = await w.start(A.orgId, "greedy");
       assert.equal(r.budget_usd, 2, "the kind asks $10 000 a run; the platform's ceiling ($2) is frozen into the run");
@@ -67,7 +67,7 @@ try {
       await assert.rejects(w.start(A.orgId, "greedy"), /used this workspace's \$0\.30/, "and no new run of the kind starts in A");
       assert.ok((await w.start(B.orgId, "greedy")).id, "B's month for the kind is its own");
       await w.complete(c1!); await w.complete(c2!);
-      env({ OCTILLION_LIMIT_RUNS_BUDGET_USD_MAX: undefined, OCTILLION_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE: undefined, OCTILLION_LIMIT_RUNS_KIND_MONTH_BUDGET_USD: undefined });
+      env({ APP_LIMIT_RUNS_BUDGET_USD_MAX: undefined, APP_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE: undefined, APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD: undefined });
       // Drain what is left so later sections see an empty queue.
       for (let c = await w.claim(["greedy"]); c; c = await w.claim(["greedy"])) await w.complete(c);
       console.log("✓ a pack cannot raise its own limits: budget per run, concurrency and month budget clamped to the platform's");
@@ -110,15 +110,15 @@ try {
 
     // ---------- 4. live runs per workspace ----------
     {
-      env({ OCTILLION_LIMIT_RUNS_LIVE_PER_WORKSPACE: "2" });
+      env({ APP_LIMIT_RUNS_LIVE_PER_WORKSPACE: "2" });
       const { org: L } = await org();
       await w.start(L.orgId, "plain"); await w.start(L.orgId, "plain");
       await assert.rejects(w.start(L.orgId, "plain"), /already has 2 runs queued or running \(at most 2\)/);
-      env({ OCTILLION_LIMIT_RUNS_LIVE_PER_WORKSPACE: undefined, OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE: "1" });
+      env({ APP_LIMIT_RUNS_LIVE_PER_WORKSPACE: undefined, APP_RUNS_MAX_LIVE_PER_WORKSPACE: "1" });
       const { org: L2 } = await org();
       await w.start(L2.orgId, "plain");
       await assert.rejects(w.start(L2.orgId, "plain"), /at most 1/, "the older setting still works");
-      env({ OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE: undefined });
+      env({ APP_RUNS_MAX_LIVE_PER_WORKSPACE: undefined });
       for (let c = await w.claim(["plain"]); c; c = await w.claim(["plain"])) await w.complete(c);
       console.log("✓ runs queued or running per workspace, at start");
     }
@@ -213,7 +213,7 @@ try {
 
     // ---------- 8. sign-up, invitation and key-creation endpoints ----------
     {
-      env({ OCTILLION_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP: "2", OCTILLION_LIMIT_ENDPOINTS_INVITES_PER_HOUR_PER_WORKSPACE: "1", OCTILLION_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE: "1" });
+      env({ APP_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP: "2", APP_LIMIT_ENDPOINTS_INVITES_PER_HOUR_PER_WORKSPACE: "1", APP_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE: "1" });
       const statuses = [];
       for (let i = 0; i < 3; i++) statuses.push((await w.http.req("POST", "/api/access-requests", {}, { email: `p${i}@example.org`, company: `Co ${i}` })).status);
       assert.ok(statuses[0] !== 429 && statuses[1] !== 429 && statuses[2] === 429, `sign-up requests: ${statuses}`);
@@ -223,10 +223,10 @@ try {
       const i1 = await inv(`a-${STAMP}@example.org`), i2 = await inv(`b-${STAMP}@example.org`);
       assert.ok(i1 !== 429 && i2 === 429, `invitations: ${i1}, ${i2}`);
       const admin = await w.http.adminToken("owner");
-      const key = async () => (await w.http.req("POST", `/api/admin/onboarding/orgs/${I.slug}/keys`, { authorization: `Bearer ${admin}`, "x-octillion-admin": "1" }, { label: "extra" })).status;
+      const key = async () => (await w.http.req("POST", `/api/admin/onboarding/orgs/${I.slug}/keys`, { authorization: `Bearer ${admin}`, "x-app-admin": "1" }, { label: "extra" })).status;
       const k1 = await key(), k2 = await key();
       assert.ok(k1 === 201 && k2 === 429, `new keys: ${k1}, ${k2}`);
-      env({ OCTILLION_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP: undefined, OCTILLION_LIMIT_ENDPOINTS_INVITES_PER_HOUR_PER_WORKSPACE: undefined, OCTILLION_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE: undefined });
+      env({ APP_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP: undefined, APP_LIMIT_ENDPOINTS_INVITES_PER_HOUR_PER_WORKSPACE: undefined, APP_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE: undefined });
       console.log("✓ sign-up, invitation and key-creation endpoints are rate limited (429 with Retry-After)");
     }
 
@@ -237,9 +237,9 @@ try {
       assert.equal(limitsFor(null, profile).mcp.per_key_per_minute, 50, "the build's profile");
       assert.equal(limitsFor("pro", profile).mcp.per_key_per_minute, 500, "the workspace's plan");
       assert.equal(limitsFor("pro", profile).runs.budget_usd_max, 7, "the profile's run ceiling under a plan that does not change it");
-      env({ OCTILLION_LIMIT_MCP_PER_KEY_PER_MINUTE: "9" });
+      env({ APP_LIMIT_MCP_PER_KEY_PER_MINUTE: "9" });
       assert.equal(limitsFor("pro", profile).mcp.per_key_per_minute, 9, "the server's environment over both");
-      env({ OCTILLION_LIMIT_MCP_PER_KEY_PER_MINUTE: undefined });
+      env({ APP_LIMIT_MCP_PER_KEY_PER_MINUTE: undefined });
       const dir = mkdtempSync(path.join(tmpdir(), "limits-gen-"));
       try {
         mkdirSync(path.join(dir, "packs")); mkdirSync(path.join(dir, "out"));
@@ -260,7 +260,7 @@ try {
         const pk = path.join(dir, "packs", "env_raiser");
         mkdirSync(pk);
         writeFileSync(path.join(pk, "pack.json"), JSON.stringify({ id: "env_raiser", name: "Env raiser", version: "1", entry: "index.ts" }));
-        writeFileSync(path.join(pk, "index.ts"), 'import { definePack } from "../../src/pack-api.js";\nprocess.env.OCTILLION_LIMIT_RUNS_BUDGET_USD_MAX = "100000";\nexport default definePack({ id: "env_raiser" });\n');
+        writeFileSync(path.join(pk, "index.ts"), 'import { definePack } from "../../src/pack-api.js";\nprocess.env.APP_LIMIT_RUNS_BUDGET_USD_MAX = "100000";\nexport default definePack({ id: "env_raiser" });\n');
         const raised = gen(profile);
         assert.ok(raised.status !== 0 && /uses process/.test(raised.stderr), `gen-packs refuses a pack whose server code touches process: ${raised.stderr.slice(0, 300)}`);
       } finally { rmSync(dir, { recursive: true, force: true }); }

@@ -1,5 +1,5 @@
 'use client';
-// Operations › Emails (GET /emails, src/email.ts): every email Octillion tried to send through Resend, newest first,
+// Operations › Emails (GET /emails, src/email.ts): every email the app tried to send through Resend, newest first,
 // with what became of it (sent, skipped and why, failed and why). Addresses are never stored: the domain only. The
 // cards are the last 24 hours, hour by hour. Owners can send a test email to an address typed in.
 import { useState } from 'react';

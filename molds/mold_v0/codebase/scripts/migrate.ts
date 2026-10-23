@@ -5,7 +5,7 @@
 // The server reads the database through getDb, which migrates on first use; this script opens the database without
 // that, so --status and --check never change anything. It names its target (host and database, never credentials)
 // and refuses the local PGlite when NODE_ENV=production (a container without DATABASE_URL would migrate nothing).
-process.env.OCTILLION_MIGRATE_ON_BOOT = "off";
+process.env.APP_MIGRATE_ON_BOOT = "off";
 const { MigrationError, migrationStatus, runMigrations } = await import("../src/migrate.js");
 const { openDb } = await import("../src/db.js");
 

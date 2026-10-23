@@ -1,17 +1,18 @@
 /**
  * Pool status: pods per POD GROUP (registry agent = harness + model) on this Docker host, idle vs busy, next to the plan.
  *   npx tsx orchestrator/fleet/status.ts [--owner <ORCHESTRATOR_ID>] [--json]
- * Plan column: the server's global fleet (GET /api/worker/fleet, needs OCTILLION_URL + OCTILLION_WORKER_TOKEN),
+ * Plan column: the server's global fleet (GET /api/worker/fleet, needs APP_URL + APP_WORKER_TOKEN),
  * else the standalone plan (fleet/plan.ts, POD_CAPACITY). Busy pods are named octi-busy-*, idle ones octi-pool-*.
  */
 import { execFileSync } from "node:child_process";
 import { planFleet } from "./plan.js";
+import { ENV } from "../core/env-names.js";
 
 const args = process.argv.slice(2);
 const owner = args.includes("--owner") ? args[args.indexOf("--owner") + 1] : undefined;
-const filters = ["--filter", "label=octillion.pool=1", ...(owner ? ["--filter", `label=octillion.pool.owner=${owner}`] : [])];
+const filters = ["--filter", "label=app.pool=1", ...(owner ? ["--filter", `label=app.pool.owner=${owner}`] : [])];
 const out = execFileSync("docker", ["ps", ...filters, "--format",
-  '{{.Names}}\t{{.Label "octillion.agent"}}\t{{.Label "octillion.harness"}}\t{{.Label "octillion.model"}}\t{{.Label "octillion.pool.owner"}}'], { encoding: "utf8" });
+  '{{.Names}}\t{{.Label "app.agent"}}\t{{.Label "app.harness"}}\t{{.Label "app.model"}}\t{{.Label "app.pool.owner"}}'], { encoding: "utf8" });
 
 interface Row { agent: string; harness: string; model: string; idle: number; busy: number; planned?: number; assigned?: number }
 const rows = new Map<string, Row>();
@@ -31,8 +32,8 @@ for (const line of out.split("\n").filter(Boolean)) {
 
 let source = "standalone plan";
 let header = "";
-const url = (process.env.OCTILLION_URL ?? "").replace(/\/+$/, "");
-const token = process.env.OCTILLION_WORKER_TOKEN;
+const url = (ENV.APP_URL ?? "").replace(/\/+$/, "");
+const token = ENV.APP_WORKER_TOKEN;
 let server: any = null;
 if (url && token) {
   try {

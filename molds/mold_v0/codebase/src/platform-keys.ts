@@ -46,7 +46,7 @@ export async function modelKeys() {
 export async function addModelKey(actor: string, body: { provider?: unknown; secret?: unknown; label?: unknown; priority?: unknown }) {
   const provider = str(body.provider, 40), secret = typeof body.secret === "string" ? body.secret : "";
   if (!provider || !secret) throw new AdminError("provider and secret are required");
-  if (!kv.vaultUnlocked()) throw new AdminError("The key vault is locked: set OCTILLION_VAULT_KEY on the server first");
+  if (!kv.vaultUnlocked()) throw new AdminError("The key vault is locked: set APP_VAULT_KEY on the server first");
   const label = str(body.label, 60) || undefined, priority = body.priority === undefined || body.priority === "" ? undefined : Math.trunc(Number(body.priority));
   if (priority !== undefined && !Number.isFinite(priority)) throw new AdminError("Priority must be a whole number");
   const saved = await kv.setCredential(provider, secret, { label, priority }).catch((e) => { throw vaultError(e); });

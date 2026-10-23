@@ -124,7 +124,7 @@
     },
     {
       "id": "local-inspection",
-      "title": "Octillion: inspection of pinned harness builds (2026-10-10)",
+      "title": "Inspection of pinned harness builds (2026-10-10)",
       "url": "harnesses/README.md#verification",
       "note": "Model ids/defaults read from the pinned binaries: claude-opus-5-5 and claude-sonnet-5-5 in Claude Code 2.1.296; Codex 0.162.1 bundled catalog priority 1 = gpt-6.1-sol; `droid exec --help` default gpt-6-sol."
     },
@@ -505,7 +505,7 @@
       "resume": true,
       "adapter_evidence": "captured-fixture",
       "enabled": true,
-      "notes": "Pi on OpenAI through the Octillion gateway (built-in openai provider, baseUrl override in ~/.pi/agent/models.json).",
+      "notes": "Pi on OpenAI through the gateway (built-in openai provider, baseUrl override in ~/.pi/agent/models.json).",
       "usage_share": 0.015,
       "model_variants": {
         "pi/gpt": 0.5,
@@ -540,7 +540,7 @@
       "resume": true,
       "adapter_evidence": "captured-fixture",
       "enabled": true,
-      "notes": "Pi on an open model via Cloudflare Workers AI through the Octillion gateway (custom openai-completions provider 'cloudflare').",
+      "notes": "Pi on an open model via Cloudflare Workers AI through the gateway (custom openai-completions provider 'cloudflare').",
       "model_mix": "Model mix: not split. OpenRouter slice: deepseek-v4.1-flash 40.4%, glm-5.3-flash 15.7%, claude-opus-5.5 2.7%; no second model >=20%, and BYOK Anthropic/OpenAI usage is invisible, so the Opus choice remains an assumption. claude-opus-5-5 verified in `pi --list-models` (1.1.0)."
     },
     {
@@ -600,7 +600,7 @@
       "resume": false,
       "adapter_evidence": "captured-fixture",
       "enabled": true,
-      "notes": "Cline+Roo+Kilo 2.2% of SO2025 IDE respondents; split Cline 1.0 / Roo 0.5 / Kilo 0.5 (judgement, unverified). Cline is mostly a VS Code extension; the CLI is a proxy. Key passed per run with -P anthropic -k (from env). No headless resume (cline --id fails with --json in 3.0.70), so no simulated-developer replies. `-p` means plan mode, not print. Cline on OpenAI through the Octillion gateway (Cline's OpenAI-compatible provider, native /v1/chat/completions).",
+      "notes": "Cline+Roo+Kilo 2.2% of SO2025 IDE respondents; split Cline 1.0 / Roo 0.5 / Kilo 0.5 (judgement, unverified). Cline is mostly a VS Code extension; the CLI is a proxy. Key passed per run with -P anthropic -k (from env). No headless resume (cline --id fails with --json in 3.0.70), so no simulated-developer replies. `-p` means plan mode, not print. Cline on OpenAI through the gateway (Cline's OpenAI-compatible provider, native /v1/chat/completions).",
       "model_mix": "Model mix: not split. OpenRouter slice is led by a stealth model (space-bunny-alpha 43.3%, not a stable target) and muse-spark-1.3 13.3%; no stable second model >=20%; Cline-provider and BYOK usage is invisible.",
       "usage_share": 0.01,
       "model_variants": {
@@ -634,7 +634,7 @@
       "resume": false,
       "adapter_evidence": "captured-fixture",
       "enabled": true,
-      "notes": "Cline on an open model via Cloudflare Workers AI through the Octillion gateway (Cline's OpenAI-compatible provider).",
+      "notes": "Cline on an open model via Cloudflare Workers AI through the gateway (Cline's OpenAI-compatible provider).",
       "model_mix": "Model mix: not split. OpenRouter slice is led by a stealth model (space-bunny-alpha 43.3%, not a stable target) and muse-spark-1.3 13.3%; no stable second model >=20%; Cline-provider and BYOK usage is invisible."
     },
     {
@@ -734,7 +734,7 @@
       "adapter_evidence": "captured-fixture",
       "enabled": true,
       "notes": "Long-tail share (~0.4%, ±100%), mostly enterprise; most installs use the curl script, so npm (11k/wk) undercounts. Default model gpt-6-sol per `droid exec --help` in 0.238.0.",
-      "model_mix": "Model mix: not split. No published shares (Amplifying lists Factory as unmeasured); droid default gpt-6-sol per --help; Octillion runs it on gpt-6.1-sol.",
+      "model_mix": "Model mix: not split. No published shares (Amplifying lists Factory as unmeasured); droid default gpt-6-sol per --help; the fleet runs it on gpt-6.1-sol.",
       "paused": true,
       "paused_reason": "no credentials yet (2026-10-10); runs on Anthropic + OpenAI keys only for now"
     },
@@ -1013,7 +1013,7 @@
       ],
       "enabled": true,
       "worker_adapter": "supported",
-      "notes": "Open model on Cloudflare Workers AI via the Octillion gateway (provider 'cloudflare'). 262K context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
+      "notes": "Open model on Cloudflare Workers AI via the gateway (provider 'cloudflare'). 262K context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
     },
     {
       "id": "opencode/cf-glm-5.3",
@@ -1036,7 +1036,7 @@
       ],
       "enabled": true,
       "worker_adapter": "supported",
-      "notes": "Open model on Cloudflare Workers AI via the Octillion gateway (provider 'cloudflare'). 1M context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
+      "notes": "Open model on Cloudflare Workers AI via the gateway (provider 'cloudflare'). 1M context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
     },
     {
       "id": "opencode/cf-deepseek-v4-pro",
@@ -1059,7 +1059,7 @@
       ],
       "enabled": true,
       "worker_adapter": "supported",
-      "notes": "Open model on Cloudflare Workers AI via the Octillion gateway (provider 'cloudflare'). 1M context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
+      "notes": "Open model on Cloudflare Workers AI via the gateway (provider 'cloudflare'). 1M context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
     },
     {
       "id": "opencode/cf-gpt-oss-120b",
@@ -1082,7 +1082,7 @@
       ],
       "enabled": true,
       "worker_adapter": "supported",
-      "notes": "Open model on Cloudflare Workers AI via the Octillion gateway (provider 'cloudflare'). 128K context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
+      "notes": "Open model on Cloudflare Workers AI via the gateway (provider 'cloudflare'). 128K context; function calling: yes (Cloudflare model page, 2026-10-10). Weight 0 in the global seed: use the 'open-models' developer population or pick it explicitly."
     }
   ]
 }

@@ -1,6 +1,6 @@
 # Harness registry
 
-`registry.json` lists every coding agent Octillion can run, as a harness (CLI) plus a model, with a pinned
+`registry.json` lists every coding agent the fleet can run, as a harness (CLI) plus a model, with a pinned
 harness version, a worker image and a **weight**. The weight is that agent's share of real-world developer
 usage, renormalized over the agents we can actually run. A default ("representative") simulation samples
 agents in proportion to these weights, so a customer's adoption numbers reflect the mix of agents developers
@@ -132,7 +132,7 @@ The usual sources of model-mix evidence are below. Recheck them each quarter:
 - Vendor announcements.
 
 **What we did not use.** The Amplifying.ai "picks" studies and the Armature study (`armature2026`) measure what
-agents *choose*, not how much they are used. They are relevant to Octillion's product but not to weights.
+agents *choose*, not how much they are used. They are relevant to a product that measures agents' choices, but not to weights.
 Menlo's enterprise LLM-API share (`menlo2025`) is model-vendor share and is used only as a cross-check.
 
 ### Uncertainty (read before quoting numbers)

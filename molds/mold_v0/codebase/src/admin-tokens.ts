@@ -1,6 +1,6 @@
 /**
  * Admin API tokens: how scripts (and people without a browser) call /api/admin and the admin MCP, replacing the old
- * static OCTILLION_ADMIN_TOKEN, a single never-expiring owner secret in the environment that could not be told apart,
+ * static APP_ADMIN_TOKEN, a single never-expiring owner secret in the environment that could not be told apart,
  * scoped or revoked without a redeploy.
  *
  * Each token is minted for one purpose (`npm run admin:token -- create --label "ci deploy" --role operator`, on the
@@ -11,6 +11,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
 import { isRole, type PlatformRole } from "./admin-roles.js";
+import { ENV } from "./env-names.js";
 
 export const ADMIN_TOKEN_PREFIX = "adm_";
 export const ADMIN_TOKEN_MAX_DAYS = 90;
@@ -64,6 +65,6 @@ export async function revokeAdminToken(id: number): Promise<boolean> {
 
 /** Said once at startup when the retired variable is still set: it no longer opens anything. */
 export function warnRetiredAdminToken() {
-  if (process.env.OCTILLION_ADMIN_TOKEN)
-    console.error("OCTILLION_ADMIN_TOKEN is set but no longer accepted: mint a scoped, expiring token with `npm run admin:token -- create --label <purpose> --role <role>` and remove the variable");
+  if (ENV.APP_ADMIN_TOKEN)
+    console.error("APP_ADMIN_TOKEN is set but no longer accepted: mint a scoped, expiring token with `npm run admin:token -- create --label <purpose> --role <role>` and remove the variable");
 }

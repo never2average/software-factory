@@ -1,7 +1,7 @@
 /**
  * Worker-sandbox side of developer environments (core/environment.ts): the install script (system-wide, as the
  * sandbox's sudo user) and the harness wiring (as the agent user, into its HOME only). Names the agent can see are
- * neutral: nothing says Octillion, simulation or test.
+ * neutral: nothing names the product, a simulation or a test.
  */
 import { acpTools, SERENA, TOOL, usesAcp, type EnvTool, type SessionEnvironment } from "./environment.js";
 

@@ -1,6 +1,6 @@
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
-import { settingNumber } from "./settings.js";
+import { ENGINE_SETTINGS, settingNumber } from "./settings.js";
 import { apportion, findAgent, scheduledAgents, variantsOf } from "./agents.js";
 import { codeHash } from "../orchestrator/deploy/boat-lib.js";
 
@@ -10,11 +10,12 @@ export function claimIds(agentId: string): string[] {
   return [...new Set([agentId, ...(spec ? variantsOf(spec).map((v) => v.id) : [])])];
 }
 import { currentPopulation } from "./agent-mix.js";
+import { ENV } from "./env-names.js";
 
 /**
  * Global pod fleet across horizontally scaled orchestrators.
  *
- * Each orchestrator runs up to OCTILLION_PODS_PER_ORCHESTRATOR (20) warm worker pods. Orchestrators register and
+ * Each orchestrator runs up to APP_PODS_PER_ORCHESTRATOR (20) warm worker pods. Orchestrators register and
  * heartbeat via POST /api/worker/fleet; the server apportions the *total* capacity of live orchestrators across
  * worker agents by real-world usage, then deals pods out so each orchestrator gets a near-identical mix.
  * A pod group is one registry agent = harness + model: a harness with several popular models gets one group per
@@ -23,11 +24,11 @@ import { currentPopulation } from "./agent-mix.js";
  * Planning globally avoids the rounding drift of every orchestrator planning 20 pods on its own.
  */
 
-export const PODS_PER_ORCHESTRATOR = () => Math.max(1, Number(process.env.OCTILLION_PODS_PER_ORCHESTRATOR ?? 20));
+export const PODS_PER_ORCHESTRATOR = () => Math.max(1, Number(ENV.APP_PODS_PER_ORCHESTRATOR ?? 20));
 /** Worker sandboxes one per-job orchestrator may run at once (one simulation's sessions). */
-export const JOB_POD_CAPACITY = () => Math.max(1, Math.min(50, settingNumber("OCTILLION_JOB_POD_CAPACITY"))); // global setting (/admin/compute), else env
+export const JOB_POD_CAPACITY = () => Math.max(1, Math.min(50, settingNumber(ENGINE_SETTINGS.jobPodCapacity))); // global setting (/admin/compute), else env
 export const JOB_ID = /^(sim|rsh)_[A-Za-z0-9_-]{1,40}$/;
-const STALE_SECONDS = () => Number(process.env.OCTILLION_FLEET_STALE_SECONDS ?? 90);
+const STALE_SECONDS = () => Number(ENV.APP_FLEET_STALE_SECONDS ?? 90);
 
 export interface AgentShare { agent_id: string; harness: string; model: string; weight: number; image?: string; version?: string }
 
@@ -132,7 +133,7 @@ export async function fleetLeave(orchestratorId: string) {
  * deploy's code and is retired without waiting for its idle timeout: it gets an empty assignment (so it claims nothing
  * new, and fresh orchestrators take the pods), and the autoscaler deletes it as soon as it has checked in again with
  * nothing running. All of it is in the database, so several server replicas agree, and a plain restart (same code)
- * recycles nothing. OCTILLION_RECYCLE_ON_DEPLOY=off keeps the old behaviour (they live until idle).
+ * recycles nothing. APP_RECYCLE_ON_DEPLOY=off keeps the old behaviour (they live until idle).
  */
 export const SERVER_STARTED_AT = new Date();
 let currentHash: string | undefined;
@@ -142,7 +143,7 @@ export const currentCodeHash = () => (currentHash ??= codeHash());
 
 /** Autoscaler-launched orchestrators running other code than this server ships (manually run ones are never retired). */
 export async function staleOrchestratorIds(): Promise<Set<string>> {
-  if ((process.env.OCTILLION_RECYCLE_ON_DEPLOY ?? "on").toLowerCase() === "off") return new Set();
+  if ((ENV.APP_RECYCLE_ON_DEPLOY ?? "on").toLowerCase() === "off") return new Set();
   const db = await getDb();
   // Rows from before code_hash existed have none: those are stale when they predate this server process.
   const rows = await db.query<{ orchestrator_id: string }>(

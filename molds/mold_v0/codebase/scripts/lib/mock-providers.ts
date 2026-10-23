@@ -1,6 +1,6 @@
 // Fake Clerk Backend API + Stripe + Resend for the smoke test only: scripts/smoke.ts starts it in memory on 127.0.0.1 and points
 // CLERK_API_URL / STRIPE_API_URL at it. Never mounted by the server; production always talks to the real services.
-// Not a simulator of either product: only the fields Octillion reads, with the same shapes.
+// Not a simulator of either product: only the fields the app reads, with the same shapes.
 // Test hooks: POST /_mock/clerk/users {email, first_name?, verified?, platform_admin?, platform_role?}, POST /_mock/invitations/:id/accept
 // {first_name?}, POST /_mock/clerk/memberships {org_id, user_id, role?, public_metadata?}, POST /_mock/session {user_id, org_id?, org_role?,
 // azp?, expired?, v1?} -> a Clerk session token, POST /_mock/oauth {user_id, jwt?, revoked?, expired?, aud?, iss?} -> an OAuth
@@ -20,6 +20,8 @@ import express from "express";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { exportJWK, exportSPKI, generateKeyPair, importJWK, SignJWT } from "jose";
+import { KEY_PREFIX } from "../../src/namespace.js";
+import { PROFILE } from "../../src/profile.js";
 
 export interface MockPersistence { load(): Promise<string | null>; save(state: string): Promise<void> }
 
@@ -42,10 +44,10 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
     // Cloudflare Workers AI: every chat request (its body), and how to answer one (status and/or content; unset: 503).
     aiRequests: [] as any[], aiReply: null as null | ((body: any) => { status?: number; content?: string }),
     prices: [
-      { id: "price_mock_starter", object: "price", active: true, lookup_key: "octillion_starter", unit_amount: 49900, currency: "usd", recurring: { interval: "month" },
-        nickname: "Starter", metadata: { monthly_budget_usd: "300" }, product: { id: "prod_mock_1", name: "Octillion", metadata: {} } },
-      { id: "price_mock_growth", object: "price", active: true, lookup_key: "octillion_growth", unit_amount: 149900, currency: "usd", recurring: { interval: "month" },
-        nickname: "Growth", metadata: { monthly_budget_usd: "1500" }, product: { id: "prod_mock_1", name: "Octillion", metadata: {} } },
+      { id: "price_mock_starter", object: "price", active: true, lookup_key: `${KEY_PREFIX}starter`, unit_amount: 49900, currency: "usd", recurring: { interval: "month" },
+        nickname: "Starter", metadata: { monthly_budget_usd: "300" }, product: { id: "prod_mock_1", name: PROFILE.name, metadata: {} } },
+      { id: "price_mock_growth", object: "price", active: true, lookup_key: `${KEY_PREFIX}growth`, unit_amount: 149900, currency: "usd", recurring: { interval: "month" },
+        nickname: "Growth", metadata: { monthly_budget_usd: "1500" }, product: { id: "prod_mock_1", name: PROFILE.name, metadata: {} } },
       { id: "price_unrelated", object: "price", active: true, lookup_key: "other_thing", unit_amount: 100, currency: "usd", recurring: null, nickname: null, metadata: {}, product: { name: "x", metadata: {} } },
     ] as any[],
     products: [] as any[],
@@ -237,7 +239,7 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
     const p = { id: id("prod"), object: "product", active: true, name: req.body.name, description: req.body.description ?? null, tax_code: req.body.tax_code ?? null, metadata: req.body.metadata ?? {} };
     s.products.push(p); if (k) keyed.set(k, p); res.json(p);
   });
-  st.get("/v1/products", (_req, res) => void res.json({ object: "list", data: [{ id: "prod_mock_1", object: "product", name: "Octillion", metadata: {} }, ...s.products], has_more: false }));
+  st.get("/v1/products", (_req, res) => void res.json({ object: "list", data: [{ id: "prod_mock_1", object: "product", name: PROFILE.name, metadata: {} }, ...s.products], has_more: false }));
   st.post("/v1/prices", (req, res) => {
     const k = req.get("idempotency-key");
     if (k && keyed.has(k)) return void res.json(keyed.get(k));
@@ -418,14 +420,14 @@ export async function createMockApp(getBase: () => string, persist?: MockPersist
     const b = req.body;
     const price = { id: b.id, object: "price", active: false, lookup_key: b.lookup_key ?? null, unit_amount: b.unit_amount, currency: "usd",
       recurring: { interval: b.interval ?? "month", interval_count: b.interval_count ?? 1 }, nickname: b.nickname ?? null, metadata: {},
-      product: { id: "prod_mock_1", name: "Octillion", metadata: {} } };
+      product: { id: "prod_mock_1", name: PROFILE.name, metadata: {} } };
     s.prices = [...s.prices.filter((p) => p.id !== b.id), price];
     res.json(price);
   });
   app.post("/_mock/invoices", (req, res) => void res.json(invoice(req.body)));
   app.post("/_mock/stripe/outage", (req, res) => { s.stripeDown = Boolean(req.body?.down); res.json({ down: s.stripeDown }); });
 
-  // ---------- Resend (POST /emails): only the fields Octillion sends ----------
+  // ---------- Resend (POST /emails): only the fields the app sends ----------
   const resendErr = (res: express.Response, statusCode: number, name: string, message: string) => void res.status(statusCode).json({ statusCode, name, message });
   app.post("/emails", (req, res) => {
     if (!/^Bearer re_\S+$/.test(req.get("authorization") ?? "")) return resendErr(res, 401, "missing_api_key", "Missing API key in the authorization header.");

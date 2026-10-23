@@ -20,7 +20,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog';
 import { Icons } from '@/components/icons';
-import { relative } from '@/lib/octillion-format';
+import { relative } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import type { Subscription } from './lib';
 

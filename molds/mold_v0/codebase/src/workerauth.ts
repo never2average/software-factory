@@ -1,6 +1,6 @@
 /**
  * Worker credentials (docs/security.md, phase 0b). Two kinds:
- *  - the fleet token (OCTILLION_WORKER_TOKEN): Octillion's own shared orchestrators; can serve any job.
+ *  - the fleet token (APP_WORKER_TOKEN): the platform's own shared orchestrators; can serve any job.
  *  - a job token (owk_...): minted by the autoscaler for each per-job orchestrator it launches, bound to that one job
  *    (sim_ or rsh_) and its organization. It can claim and act on that job's sessions or research only, so a sandbox
  *    that leaks its token exposes one job, not every customer's data.
@@ -14,6 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
 import { isWorkerToken } from "./auth.js";
+import { ENV } from "./env-names.js";
 
 export type WorkerAuth =
   | { kind: "fleet" }
@@ -21,7 +22,7 @@ export type WorkerAuth =
   | { kind: "run"; runId: string; orgId: number | null; runSandboxId: number };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
-const TOKEN_HOURS = () => Number(process.env.OCTILLION_JOB_TOKEN_HOURS ?? 48);
+const TOKEN_HOURS = () => Number(ENV.APP_JOB_TOKEN_HOURS ?? 48);
 
 /** The organization a job belongs to (a simulation or an onboarding research). */
 async function orgOfJob(jobId: string): Promise<number | null> {

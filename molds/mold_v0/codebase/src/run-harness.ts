@@ -6,7 +6,7 @@
  *                  a lease token, a deadline, gateway env for the kind's providers, and the egress allowlist
  *   2. workspace   (kinds with workspace: true) check the workspace's latest snapshot out into an empty directory
  *   3. run         the kind's entry, a program in (the run's own copy of) the pack, with node, in that directory, as a
- *                  user of the run's own (a uid leased for this run alone from OCTILLION_RUN_UIDS, src/run-users.ts,
+ *                  user of the run's own (a uid leased for this run alone from APP_RUN_UIDS, src/run-users.ts,
  *                  mold_v0-078; never the runner's), with an environment built from
  *                  nothing: PATH, a private HOME, RUN_* (id, attempt, scope, targets, the output directory) and the
  *                  gateway env. Never the runner's own environment (database URL, vault key, worker token), which the
@@ -56,6 +56,7 @@ import { AgentRunError, argValues, collectWriteBack, expand, fetchPinned, record
 import { checkInput, CheckoutCache, field, gitCredentialFiles, mapResults, mountInto, readManifests, writeInputFile, type GitCredential, type InputSchema, type ResultsFrom } from "./agent-workspace-steps.js";
 import { linkTools, RUN_TOOL_CATALOG, RunToolError, verifyTools, type ToolCatalog } from "./run-tools.js";
 import { killUser, leaseRunUser, processesOf, runUidRange, RunUserError, sweepUserFiles, type RunUser, type UidRange } from "./run-users.js";
+import { ENV } from "./env-names.js";
 
 /** Kept here for callers that imported it from the harness (it lives in src/run-users.ts, mold_v0-078). */
 export { sweepUserFiles };
@@ -159,7 +160,7 @@ export async function startRunProxy(hosts: string[], dir: string, exact: string[
 export interface HarnessOptions {
   /**
    * The run's user (mold_v0-078): by default every run gets a uid of its own, leased from the reserved range
-   * (src/run-users.ts: OCTILLION_RUN_UIDS, default 61000-64999) for that run alone and given back when it ends, never
+   * (src/run-users.ts: APP_RUN_UIDS, default 61000-64999) for that run alone and given back when it ends, never
    * the runner's own. A program cannot read the runner's memory or environment (/proc/<runner>/environ is the runner's),
    * its scratch is its own (mode 0700), and when the run ends every process of that user is killed and its files in the
    * shared temporary directories are removed: since no other run has that uid, that never touches another run. Needs
@@ -169,11 +170,11 @@ export interface HarnessOptions {
    * asks for the same uid while the first runs is refused (an infrastructure failure, retried) rather than sharing it.
    */
   runAs?: { uid: number; gid: number };
-  /** The reserved range to lease from (default OCTILLION_RUN_UIDS, else 61000-64999). */
+  /** The reserved range to lease from (default APP_RUN_UIDS, else 61000-64999). */
   runUsers?: UidRange;
   /** A run user the caller already leased (a run sandbox's runner, which locks its uid down first); the caller releases it. */
   runUser?: RunUser;
-  /** Where the leases are kept (default OCTILLION_RUN_UID_DIR, else /run/octi-run-uids). Tests only. */
+  /** Where the leases are kept (default APP_RUN_UID_DIR, else /run/octi-run-uids). Tests only. */
   runUidDir?: string;
   /**
    * Run the programs as the runner's own user, without the protection above (offline tests only). A program can then
@@ -205,20 +206,20 @@ export interface HarnessOptions {
    * the run's user nothing (a run sandbox, mold_v0-055).
    */
   noNewPrivs?: boolean;
-  /** The run tools (mold_v0-072): where the image installed them (OCTILLION_RUN_TOOLS_DIR, /opt/octi-tools) and, for the offline tests only, another catalogue. */
+  /** The run tools (mold_v0-072): where the image installed them (APP_RUN_TOOLS_DIR, /opt/octi-tools) and, for the offline tests only, another catalogue. */
   runTools?: { dir?: string; catalog?: ToolCatalog };
   /**
-   * The checkout cache's directory (mold_v0-074): OCTILLION_RUN_CACHE_DIR, else /var/cache/octi-checkouts for a runner
+   * The checkout cache's directory (mold_v0-074): APP_RUN_CACHE_DIR, else /var/cache/octi-checkouts for a runner
    * started as root, else one under the system's temp directory. Per workspace inside it, capped at
-   * OCTILLION_RUN_CACHE_MAX_BYTES (2 GiB) per workspace, entries unused for OCTILLION_RUN_CACHE_DAYS (7) removed.
+   * APP_RUN_CACHE_MAX_BYTES (2 GiB) per workspace, entries unused for APP_RUN_CACHE_DAYS (7) removed.
    */
   cacheDir?: string;
 }
 
 /** The checkout cache's settings (mold_v0-074). */
-const cacheBase = (o: HarnessOptions) => o.cacheDir ?? process.env.OCTILLION_RUN_CACHE_DIR ?? (process.getuid?.() === 0 ? "/var/cache/octi-checkouts" : path.join(tmpdir(), `octi-checkouts-${process.getuid?.() ?? 0}`));
-const cacheMaxBytes = () => Math.max(1024 * 1024, Number(process.env.OCTILLION_RUN_CACHE_MAX_BYTES ?? 2 * 1024 ** 3) || 2 * 1024 ** 3);
-const cacheDays = () => Math.max(0, Number(process.env.OCTILLION_RUN_CACHE_DAYS ?? 7) || 7);
+const cacheBase = (o: HarnessOptions) => o.cacheDir ?? ENV.APP_RUN_CACHE_DIR ?? (process.getuid?.() === 0 ? "/var/cache/octi-checkouts" : path.join(tmpdir(), `octi-checkouts-${process.getuid?.() ?? 0}`));
+const cacheMaxBytes = () => Math.max(1024 * 1024, Number(ENV.APP_RUN_CACHE_MAX_BYTES ?? 2 * 1024 ** 3) || 2 * 1024 ** 3);
+const cacheDays = () => Math.max(0, Number(ENV.APP_RUN_CACHE_DAYS ?? 7) || 7);
 
 export class HarnessConfigError extends Error {}
 /** How a run's programs are isolated: a run user leased per run (the default for a runner started as root), a given one, or (tests) none. */
@@ -237,14 +238,14 @@ export function runIsolation(opts: HarnessOptions): Isolation {
   }
   if (opts.allowSameUser) return null;
   if (root) {
-    if (process.env.OCTILLION_RUN_UID && !warnedRunUid) {
+    if (ENV.APP_RUN_UID && !warnedRunUid) {
       warnedRunUid = true;
-      console.error("OCTILLION_RUN_UID is no longer read (mold_v0-078): every run leases a uid of its own from OCTILLION_RUN_UIDS (default 61000-64999)");
+      console.error("APP_RUN_UID is no longer read (mold_v0-078): every run leases a uid of its own from APP_RUN_UIDS (default 61000-64999)");
     }
     try { return { mode: "pool", range: opts.runUsers ?? runUidRange() }; }
     catch (e) { throw new HarnessConfigError((e as Error).message); }
   }
-  throw new HarnessConfigError("the workspace harness runs programs only as a run user of their own (a runner started as root leases one per run, OCTILLION_RUN_UIDS): start it as root, or set allowSameUser in offline tests");
+  throw new HarnessConfigError("the workspace harness runs programs only as a run user of their own (a runner started as root leases one per run, APP_RUN_UIDS): start it as root, or set allowSameUser in offline tests");
 }
 
 const INFRA_EXIT = 75;

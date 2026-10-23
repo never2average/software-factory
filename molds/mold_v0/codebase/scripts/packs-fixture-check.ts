@@ -14,8 +14,9 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { NS_KEYS } from "../src/namespace.js";
 
-process.env.OCTILLION_VAULT_KEY ??= (await import("node:crypto")).randomBytes(32).toString("base64");
+process.env.APP_VAULT_KEY ??= (await import("node:crypto")).randomBytes(32).toString("base64");
 const { packs, packRegistry } = await import("../src/packs.js");
 assert.deepEqual(packs().map((p) => p.id), ["fixture_notes"], "run inside a build copy with the fixture pack (scripts/packs-test.ts)");
 const PACK = "fixture_notes";
@@ -129,7 +130,7 @@ const A = (await createOrg(`Pack A ${stamp}`)).org, B = (await createOrg(`Pack B
     const member = await mockPost("/_mock/clerk/users", { email: `member+${stamp}@example.org` });
     const viewerUser = await mockPost("/_mock/clerk/users", { email: `viewer+${stamp}@example.org` });
     await mockPost("/_mock/clerk/memberships", { org_id: corg.id, user_id: member.id, role: "org:member" });
-    await mockPost("/_mock/clerk/memberships", { org_id: corg.id, user_id: viewerUser.id, role: "org:member", public_metadata: { octillion_role: "viewer" } });
+    await mockPost("/_mock/clerk/memberships", { org_id: corg.id, user_id: viewerUser.id, role: "org:member", public_metadata: { [NS_KEYS.role]: "viewer" } });
     const session = async (u: string) => (await mockPost("/_mock/session", { user_id: u, org_id: corg.id })).token as string;
     const sm = await session(member.id), sv = await session(viewerUser.id);
     const req = (method: string, p: string, h: Record<string, string> = {}, body?: unknown) =>

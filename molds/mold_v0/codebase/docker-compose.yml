@@ -1,8 +1,8 @@
-# Local dev stack for Octillion: Postgres (config, queue, scores) and ClickHouse (raw transcripts + search).
+# Local dev stack: Postgres (config, queue, scores) and ClickHouse (raw transcripts + search).
 # All credentials are local-only defaults; do not reuse them anywhere real.
 #
-#   Postgres         postgres://postgres:postgres@localhost:5432/octillion
-#   ClickHouse HTTP  http://localhost:8123   user octillion/octillion, database octillion
+#   Postgres         postgres://postgres:postgres@localhost:5432/app
+#   ClickHouse HTTP  http://localhost:8123   user app/app, database app
 
 services:
   postgres:
@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: octillion
+      POSTGRES_DB: app
       TZ: UTC
     ports:
       - 127.0.0.1:5432:5432
@@ -34,7 +34,7 @@ services:
     ports:
       - 127.0.0.1:8123:8123
     volumes:
-      - ./docker/clickhouse/users.d-octillion.xml:/etc/clickhouse-server/users.d/octillion.xml:ro
+      - ./docker/clickhouse/users.d-app.xml:/etc/clickhouse-server/users.d/app.xml:ro
       - clickhouse_data:/var/lib/clickhouse
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1

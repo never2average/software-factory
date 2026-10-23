@@ -4,11 +4,12 @@ import * as kv from "./keyvault.js";
 import { AUTOSCALE, computeDemand, kickConfigured, type TickState } from "./autoscaler.js";
 import { scheduledAgents, variantsOf } from "./agents.js";
 import { currentPopulation } from "./agent-mix.js";
-import { listSettings } from "./settings.js";
+import { ENGINE_SETTINGS, listSettings } from "./settings.js";
 import { classifySession } from "./error-classes.js";
 import { directKeysAllowed, HARNESS_ENV, ORCHESTRATOR_ONLY_PROVIDERS } from "./gateway.js";
 import { BOAT, BOAT_PRICE_PER_HOUR } from "../orchestrator/core/config.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
+import { ENV, legacyEnvName } from "./env-names.js";
 
 /**
  * The admin Compute page's server side (docs/compute-and-traces-spec.md §2): one summary that answers "is compute
@@ -21,7 +22,7 @@ import * as lib from "../orchestrator/deploy/boat-lib.js";
  * served marked stale (or just the error), and everything backed by the database still renders.
  */
 
-const env = process.env;
+const env = ENV;
 const MIN = 60_000;
 const n = (v: unknown) => Number(v ?? 0) || 0;
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
@@ -251,7 +252,7 @@ export type Binding = "plan" | "job_orch" | "pods" | null;
  */
 export function bindingLimit(x: { note: string | null; budget_reason: string | undefined; queued: number; per_job: boolean; free: number | null;
   job_orch_live: number; job_orch_cap: number; pods_max_reserved: number; pods_cap: number }): Binding {
-  if (x.note && /at OCTILLION_MAX_JOB_ORCHESTRATORS/.test(x.note)) return "job_orch";
+  if (x.note && x.note.includes(`at ${ENGINE_SETTINGS.maxJobOrchestrators}`)) return "job_orch";
   if (x.note && /waits for boat plan capacity/.test(x.note)) return "plan";
   // Shared fleet: the whole fleet at full pods does not fit the plan. Per job: each orchestrator reserves only its own
   // pods, so the plan binds only when work waits and not one more sandbox is free.
@@ -283,34 +284,40 @@ export function sandboxUsage(sb: { ok: boolean; sandboxes: ClassifiedSandbox[] }
 // ---------------------------------------------------------------- environment knobs
 
 const KNOBS: { name: string; def: string; meaning: string }[] = [
-  { name: "OCTILLION_AUTOSCALE", def: "on", meaning: "Kill switch: off launches and deletes nothing; running orchestrators idle out." },
-  { name: "OCTILLION_ORCH_PER_JOB", def: "on", meaning: "One orchestrator per simulation or research job, instead of a shared fleet." },
-  { name: "OCTILLION_AUTOSCALE_TICK_SECONDS", def: "15", meaning: "How often the autoscaler ticks on a VM (Vercel ticks on events instead)." },
-  { name: "OCTILLION_ORCH_LAUNCHES_PER_TICK", def: "2", meaning: "Most orchestrators launched in one tick." },
-  { name: "OCTILLION_ORCH_IDLE_MINUTES", def: "10", meaning: "An orchestrator with nothing to claim this long drains and exits." },
-  { name: "OCTILLION_ORCH_STALE_MINUTES", def: "5", meaning: "A running orchestrator with no check-in this long is deleted." },
-  { name: "OCTILLION_ORCH_BOOT_MINUTES", def: "10", meaning: "An orchestrator still booting after this long is deleted." },
-  { name: "OCTILLION_ORCH_SNAPSHOT", def: "off", meaning: "Boot orchestrators from a snapshot image (measured slower than a code upload)." },
-  { name: "OCTILLION_POD_CAPACITY", def: "20", meaning: "Worker sandboxes per shared orchestrator (per-job mode uses the Limits setting)." },
-  { name: "OCTILLION_FLEET_STALE_SECONDS", def: "90", meaning: "An orchestrator not seen this long no longer counts as live in the fleet." },
-  { name: "OCTILLION_RESEARCH_STALE_MINUTES", def: "20", meaning: "Running research with no heartbeat this long gets a new orchestrator." },
-  { name: "OCTILLION_SESSION_INFRA_RETRIES", def: "1", meaning: "Times a session that failed on infrastructure is queued again." },
-  { name: "OCTILLION_LEASE_MINUTES", def: "30", meaning: "How long a claimed session is held before it can be claimed again." },
+  { name: "APP_AUTOSCALE", def: "on", meaning: "Kill switch: off launches and deletes nothing; running orchestrators idle out." },
+  { name: "APP_ORCH_PER_JOB", def: "on", meaning: "One orchestrator per simulation or research job, instead of a shared fleet." },
+  { name: "APP_AUTOSCALE_TICK_SECONDS", def: "15", meaning: "How often the autoscaler ticks on a VM (Vercel ticks on events instead)." },
+  { name: "APP_ORCH_LAUNCHES_PER_TICK", def: "2", meaning: "Most orchestrators launched in one tick." },
+  { name: "APP_ORCH_IDLE_MINUTES", def: "10", meaning: "An orchestrator with nothing to claim this long drains and exits." },
+  { name: "APP_ORCH_STALE_MINUTES", def: "5", meaning: "A running orchestrator with no check-in this long is deleted." },
+  { name: "APP_ORCH_BOOT_MINUTES", def: "10", meaning: "An orchestrator still booting after this long is deleted." },
+  { name: "APP_ORCH_SNAPSHOT", def: "off", meaning: "Boot orchestrators from a snapshot image (measured slower than a code upload)." },
+  { name: "APP_POD_CAPACITY", def: "20", meaning: "Worker sandboxes per shared orchestrator (per-job mode uses the Limits setting)." },
+  { name: "APP_FLEET_STALE_SECONDS", def: "90", meaning: "An orchestrator not seen this long no longer counts as live in the fleet." },
+  { name: "APP_RESEARCH_STALE_MINUTES", def: "20", meaning: "Running research with no heartbeat this long gets a new orchestrator." },
+  { name: "APP_SESSION_INFRA_RETRIES", def: "1", meaning: "Times a session that failed on infrastructure is queued again." },
+  { name: "APP_LEASE_MINUTES", def: "30", meaning: "How long a claimed session is held before it can be claimed again." },
   { name: "MAX_SESSION_MINUTES", def: "45", meaning: "Longest an agent session may run before it is stopped as timed out." },
   { name: "BOAT_TTL_MARGIN_MINUTES", def: "15", meaning: "Extra lifetime a worker sandbox gets beyond the session limit." },
   { name: "BOAT_READY_TIMEOUT_SECONDS", def: "300", meaning: "How long a new sandbox may take to become ready." },
 ];
 
+/**
+ * A knob's name as the Compute page shows it: in a build with the session engine (a host pack's tables) the spelling its
+ * admins have always seen, which the server still reads (src/env-names.ts); otherwise the shell's own APP_ name.
+ */
+const shownName = (n: string) => (sessionEngine() ? legacyEnvName(n) ?? n : n);
+
 export function computeKnobs(runtime: "vm" | "vercel") {
   const set = (k: string) => env[k] !== undefined && env[k] !== "";
   return [
-    ...KNOBS.map((k) => ({ name: k.name, value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: k.meaning })),
-    { name: "OCTILLION_BOAT_NAMESPACE", value: lib.BOAT_NAMESPACE, source: set("OCTILLION_BOAT_NAMESPACE") ? "env" as const : "default" as const,
+    ...KNOBS.map((k) => ({ name: shownName(k.name), value: set(k.name) ? String(env[k.name]) : k.def, source: set(k.name) ? "env" as const : "default" as const, meaning: k.meaning })),
+    { name: shownName("APP_BOAT_NAMESPACE"), value: lib.BOAT_NAMESPACE, source: set("APP_BOAT_NAMESPACE") ? "env" as const : "default" as const,
       meaning: "Name prefix of this deployment's sandboxes; it only ever touches sandboxes named with it." },
     { name: "Runtime", value: runtime === "vercel" ? "Vercel" : "VM", source: set("VERCEL") ? "env" as const : "default" as const,
       meaning: runtime === "vercel" ? "Serverless: the autoscaler ticks on events and a cron every 5 minutes." : "A long-running server: the autoscaler ticks on a timer." },
     { name: "Kick configured", value: kickConfigured() ? "yes" : "no", source: "env" as const,
-      meaning: "Events can trigger a tick: the autoscaler is on, PUBLIC_URL is HTTPS and OCTILLION_WORKER_TOKEN is set." },
+      meaning: "Events can trigger a tick: the autoscaler is on, PUBLIC_URL is HTTPS and APP_WORKER_TOKEN is set." },
   ];
 }
 
@@ -380,7 +387,7 @@ async function buildSummary(fresh: boolean) {
   const podsOf = (r: (typeof live)[number]) => r.pods ?? (r.job_id ? 0 : AUTOSCALE.podCapacity());
   const podsReserved = live.reduce((a, r) => a + podsOf(r), 0);
   const jobLive = live.filter((r) => r.job_id);
-  // What OCTILLION_MAX_JOB_ORCHESTRATORS counts, as the autoscaler does: booting and running, not draining.
+  // What the per-job orchestrator cap (ENGINE_SETTINGS.maxJobOrchestrators) counts, as the autoscaler does: booting and running, not draining.
   const jobActive = jobLive.filter((r) => r.state === "booting" || r.state === "running");
   const heartbeatAge = (r: (typeof live)[number]) => {
     const t = r.fleet_seen ?? r.last_seen ?? r.ready_at;

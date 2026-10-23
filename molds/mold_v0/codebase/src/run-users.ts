@@ -4,10 +4,10 @@
  * in the shared temporary directories removed) only ever touches that run. Before, every run of a host shared one uid
  * and the sweep was host-wide: a run that ended killed the steps of another still running (seen as exit 128).
  *
- *   range      OCTILLION_RUN_UIDS ("first-last", default 61000-64999): uids no account of the machine has (a uid
+ *   range      APP_RUN_UIDS ("first-last", default 61000-64999): uids no account of the machine has (a uid
  *              /etc/passwd names is skipped, unless it is one this module registered, octirun-<uid>), never root, never
  *              nobody (65534) or 65535. The gid of a run user is its uid. No supplementary groups (node drops them).
- *   lease      a file per uid in a directory only root can enter (OCTILLION_RUN_UID_DIR, default /run/octi-run-uids,
+ *   lease      a file per uid in a directory only root can enter (APP_RUN_UID_DIR, default /run/octi-run-uids,
  *              cleared at boot with the processes it guards), naming the process that holds it (pid and start time,
  *              so a reused pid is not mistaken for it), a random token and the run. Taken and given back under a
  *              host-wide lock (flock on a file of that directory, held by a child process: released by the kernel
@@ -33,6 +33,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { ENV } from "./env-names.js";
 
 export const DEFAULT_RUN_UIDS = "61000-64999";
 /** The prefix of the accounts this module may register for a run user inside a sandbox (octirun-<uid>). */
@@ -44,19 +45,19 @@ export class RunUserError extends Error {
 }
 
 export interface UidRange { first: number; last: number }
-/** The reserved range from OCTILLION_RUN_UIDS ("first-last"). Throws on a range that holds root, nobody or the like. */
-export function runUidRange(spec = process.env.OCTILLION_RUN_UIDS || DEFAULT_RUN_UIDS): UidRange {
+/** The reserved range from APP_RUN_UIDS ("first-last"). Throws on a range that holds root, nobody or the like. */
+export function runUidRange(spec = ENV.APP_RUN_UIDS || DEFAULT_RUN_UIDS): UidRange {
   const m = /^\s*(\d{1,10})\s*-\s*(\d{1,10})\s*$/.exec(spec);
-  if (!m) throw new RunUserError(`OCTILLION_RUN_UIDS: "first-last" (e.g. ${DEFAULT_RUN_UIDS}), got ${JSON.stringify(spec.slice(0, 40))}`);
+  if (!m) throw new RunUserError(`APP_RUN_UIDS: "first-last" (e.g. ${DEFAULT_RUN_UIDS}), got ${JSON.stringify(spec.slice(0, 40))}`);
   const first = Number(m[1]), last = Number(m[2]);
-  if (!(first >= 1000 && last >= first && last <= 2 ** 31 - 2)) throw new RunUserError("OCTILLION_RUN_UIDS: 1000 <= first <= last < 2^31-1");
-  if (last - first > 1_000_000) throw new RunUserError("OCTILLION_RUN_UIDS: at most 1 000 001 uids");
-  if (first <= 65534 && last >= 65534) throw new RunUserError("OCTILLION_RUN_UIDS: the range holds 65534 (nobody) or 65535: choose one that does not");
+  if (!(first >= 1000 && last >= first && last <= 2 ** 31 - 2)) throw new RunUserError("APP_RUN_UIDS: 1000 <= first <= last < 2^31-1");
+  if (last - first > 1_000_000) throw new RunUserError("APP_RUN_UIDS: at most 1 000 001 uids");
+  if (first <= 65534 && last >= 65534) throw new RunUserError("APP_RUN_UIDS: the range holds 65534 (nobody) or 65535: choose one that does not");
   return { first, last };
 }
 
-/** The lease directory: OCTILLION_RUN_UID_DIR, else /run/octi-run-uids (root), else one under the temp directory. */
-export const runUidDir = () => process.env.OCTILLION_RUN_UID_DIR
+/** The lease directory: APP_RUN_UID_DIR, else /run/octi-run-uids (root), else one under the temp directory. */
+export const runUidDir = () => ENV.APP_RUN_UID_DIR
   || (process.getuid?.() === 0 && existsSync("/run") ? "/run/octi-run-uids" : path.join(tmpdir(), `octi-run-uids-${process.getuid?.() ?? 0}`));
 
 // ---------- processes and files of a uid ----------

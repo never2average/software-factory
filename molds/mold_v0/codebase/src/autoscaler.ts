@@ -9,7 +9,7 @@ import { currentPopulation } from "./agent-mix.js";
 import { hosts } from "./host.js";
 import { JOB_POD_CAPACITY, jobState, orchestratorBusy, setCurrentCodeHash, staleOrchestratorIds } from "./fleet.js";
 import { BOAT } from "../orchestrator/core/config.js";
-import { freshSettings, setting, settingNumber } from "./settings.js";
+import { ENGINE_SETTINGS, freshSettings, setting, settingNumber } from "./settings.js";
 import { freshPlatformHarnesses } from "./harnesses.js";
 import { launchFailure, recordComputeEvent } from "./compute-events.js";
 import { pruneComputeHistory, recordTick } from "./autoscaler-ticks.js";
@@ -18,18 +18,19 @@ import * as lib from "../orchestrator/deploy/boat-lib.js";
 import { RunScaler, runSandboxStatus, type RunTick } from "./run-sandboxes.js";
 import { queuedRunsByKind } from "./runs.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
+import { ENV } from "./env-names.js";
 
 /**
  * On-demand orchestrators: scale from zero to zero.
  *
- * Every OCTILLION_AUTOSCALE_TICK_SECONDS (15) the leader (a lease row in Postgres, so several server replicas never
+ * Every APP_AUTOSCALE_TICK_SECONDS (15) the leader (a lease row in Postgres, so several server replicas never
  * double-launch) computes demand: claimable queued+running agent sessions and queued+running product research.
  *   desired = 0 without demand, else max(ceil(sessions / pod capacity), research ? 1 : 0),
- * clamped to OCTILLION_MAX_ORCHESTRATORS and to the boat plan (orchestrators + their workers <= plan concurrency).
+ * clamped to APP_MAX_ORCHESTRATORS and to the boat plan (orchestrators + their workers <= plan concurrency).
  * Missing orchestrators are launched with the boat key from the vault (orchestrator/deploy/boat-lib.ts), preferably
- * optionally from a named snapshot image (OCTILLION_ORCH_SNAPSHOT=on; measured slower than a fresh `npm ci`, ~22s vs ~8s).
+ * optionally from a named snapshot image (APP_ORCH_SNAPSHOT=on; measured slower than a fresh `npm ci`, ~22s vs ~8s).
  *
- * Scale down: an orchestrator with no claimable work for OCTILLION_ORCH_IDLE_MINUTES (10) drains, leaves the fleet
+ * Scale down: an orchestrator with no claimable work for APP_ORCH_IDLE_MINUTES (10) drains, leaves the fleet
  * (DELETE /api/worker/fleet/:id marks its row `draining`) and exits; the next tick deletes its sandbox. The tick also
  * reaps stale (no fleet check-in for 5 min), stuck-booting (> 10 min), expired and orphan sandboxes, reconciling
  * against boat's own listing by name prefix, so nothing leaks across server restarts.
@@ -38,36 +39,36 @@ import { researchJobs, sessionEngine } from "./host-tables.js";
  * sandbox per claimable run (its own lease, "runs", so the compose project's runner service can hold it instead when
  * the run sandboxes are local containers), and tears each down when its run's attempt ends.
  *
- * Kill switch: OCTILLION_AUTOSCALE=off (no launches, no deletes; existing orchestrators keep running and idle out).
+ * Kill switch: APP_AUTOSCALE=off (no launches, no deletes; existing orchestrators keep running and idle out).
  *
- * One orchestrator per job (OCTILLION_ORCH_PER_JOB=on, the default): instead of a shared fleet sized by total demand,
+ * One orchestrator per job (APP_ORCH_PER_JOB=on, the default): instead of a shared fleet sized by total demand,
  * every onboarding research and every simulation with claimable sessions gets its own orchestrator, launched with
  * ORCHESTRATOR_JOB=<id>. It claims only that job (claims filtered by simulation_id / research_id), runs a simulation's
- * sessions on up to OCTILLION_JOB_POD_CAPACITY (40) worker sandboxes, and exits when its check-in says the job is
+ * sessions on up to APP_JOB_POD_CAPACITY (40) worker sandboxes, and exits when its check-in says the job is
  * over. Launches fit the boat plan: each reserves 1 + its pods; a job that does not fit waits for the next tick. At
- * most OCTILLION_MAX_JOB_ORCHESTRATORS (12) at once. Context passes between the two kinds only through the database
+ * most APP_MAX_JOB_ORCHESTRATORS (12) at once. Context passes between the two kinds only through the database
  * (research writes personas with their developer environment and the problems in each persona's words; jobs carry them).
  */
 
-const env = process.env;
+const env = ENV;
 const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
 export const AUTOSCALE = {
-  enabled: () => (env.OCTILLION_AUTOSCALE ?? "on").toLowerCase() !== "off",
-  tickMs: () => Math.max(1, num(env.OCTILLION_AUTOSCALE_TICK_SECONDS, 15)) * 1000,
-  podCapacity: () => Math.max(1, Math.min(20, num(env.OCTILLION_POD_CAPACITY, num(env.OCTILLION_PODS_PER_ORCHESTRATOR, 20)))),
-  maxOrchestrators: () => settingNumber("OCTILLION_MAX_ORCHESTRATORS"), // global setting (/admin/compute), else env
-  idleMinutes: () => num(env.OCTILLION_ORCH_IDLE_MINUTES, 10),
-  staleMinutes: () => num(env.OCTILLION_ORCH_STALE_MINUTES, 5),
-  bootMinutes: () => num(env.OCTILLION_ORCH_BOOT_MINUTES, 10),
+  enabled: () => (env.APP_AUTOSCALE ?? "on").toLowerCase() !== "off",
+  tickMs: () => Math.max(1, num(env.APP_AUTOSCALE_TICK_SECONDS, 15)) * 1000,
+  podCapacity: () => Math.max(1, Math.min(20, num(env.APP_POD_CAPACITY, num(env.APP_PODS_PER_ORCHESTRATOR, 20)))),
+  maxOrchestrators: () => settingNumber(ENGINE_SETTINGS.maxOrchestrators), // global setting (/admin/compute), else env
+  idleMinutes: () => num(env.APP_ORCH_IDLE_MINUTES, 10),
+  staleMinutes: () => num(env.APP_ORCH_STALE_MINUTES, 5),
+  bootMinutes: () => num(env.APP_ORCH_BOOT_MINUTES, 10),
   // Measured live 2026-10-10: code upload + `npm ci` boots in ~8s; booting from the named snapshot took ~22s (lazy
   // disk hydration) and each image costs a ~170s build per code change. So the image path is opt-in.
-  snapshots: () => (env.OCTILLION_ORCH_SNAPSHOT ?? "off").toLowerCase() === "on",
-  maxLaunchesPerTick: () => Math.max(1, num(env.OCTILLION_ORCH_LAUNCHES_PER_TICK, 2)),
-  perJob: () => (env.OCTILLION_ORCH_PER_JOB ?? "on").toLowerCase() !== "off",
+  snapshots: () => (env.APP_ORCH_SNAPSHOT ?? "off").toLowerCase() === "on",
+  maxLaunchesPerTick: () => Math.max(1, num(env.APP_ORCH_LAUNCHES_PER_TICK, 2)),
+  perJob: () => (env.APP_ORCH_PER_JOB ?? "on").toLowerCase() !== "off",
   jobPodCapacity: () => JOB_POD_CAPACITY(),
-  maxJobOrchestrators: () => Math.max(1, settingNumber("OCTILLION_MAX_JOB_ORCHESTRATORS")),
-  // Where orchestrators reach the API: OCTILLION_INTERNAL_URL (the API itself) when the public URL is a proxy in front of it.
-  publicUrl: () => (env.OCTILLION_INTERNAL_URL || env.PUBLIC_URL || "").replace(/\/$/, ""),
+  maxJobOrchestrators: () => Math.max(1, settingNumber(ENGINE_SETTINGS.maxJobOrchestrators)),
+  // Where orchestrators reach the API: APP_INTERNAL_URL (the API itself) when the public URL is a proxy in front of it.
+  publicUrl: () => (env.APP_INTERNAL_URL || env.PUBLIC_URL || "").replace(/\/$/, ""),
 };
 
 export interface Demand {
@@ -132,7 +133,7 @@ export async function computeJobDemand(): Promise<JobDemand[]> {
   const research = !researchJobs() ? [] : await db.query<{ id: string }>(
     `/* tenant: internal: autoscaler job demand across all orgs, ids go to the orchestrator only */ SELECT id FROM product_research WHERE status = 'queued'
         OR (status = 'running' AND heartbeat_at < now() - make_interval(mins => $1)) ORDER BY created_at`,
-    [num(env.OCTILLION_RESEARCH_STALE_MINUTES, 20)]);
+    [num(env.APP_RESEARCH_STALE_MINUTES, 20)]);
   const sims = await db.query<{ id: string; sessions: number; queued: number; last_queued: Date | null }>(
     `/* tenant: internal: autoscaler job demand across all orgs, ids go to the orchestrator only */ SELECT simulation_id AS id, count(*) AS sessions, count(*) FILTER (WHERE status = 'queued') AS queued,
             max(queued_at) FILTER (WHERE status = 'queued') AS last_queued
@@ -246,7 +247,7 @@ export class Autoscaler {
     await freshSettings(); // caps and launch tuning come from global settings
     await freshPlatformHarnesses(); // demand and pod plans count admin-added harnesses (registry())
     const st: TickState = { at: new Date().toISOString(), enabled: AUTOSCALE.enabled(), leader: false, holder: this.holder };
-    if (!st.enabled) { this.last = { ...st, note: "OCTILLION_AUTOSCALE=off" }; return this.last; }
+    if (!st.enabled) { this.last = { ...st, note: "APP_AUTOSCALE=off" }; return this.last; }
     // Runs first, under their own lease: they need no orchestrator, and a run's sandbox must not wait on a boat outage
     // of the orchestrators' (mold_v0-055).
     st.runs = await this.runs.tick().catch((e) => ({ provider: null, leader: false, error: (e as Error).message }));
@@ -433,7 +434,7 @@ export class Autoscaler {
     for (const j of jobs) {
       if (served.has(j.id)) continue;
       if (st.launched.length >= AUTOSCALE.maxLaunchesPerTick()) break;
-      if (active >= AUTOSCALE.maxJobOrchestrators()) { notes.push(`at OCTILLION_MAX_JOB_ORCHESTRATORS (${AUTOSCALE.maxJobOrchestrators()})`); break; }
+      if (active >= AUTOSCALE.maxJobOrchestrators()) { notes.push(`at ${ENGINE_SETTINGS.maxJobOrchestrators} (${AUTOSCALE.maxJobOrchestrators()})`); break; }
       const drained = this.jobDrainAt.get(j.id);
       if (drained && now - drained < AUTOSCALE.idleMinutes() * min && !(j.last_queued && j.last_queued.getTime() > drained - FRESH_MS)) {
         notes.push(`cooldown: ${j.id}'s orchestrator idled out with its sessions still queued`);
@@ -460,12 +461,12 @@ export class Autoscaler {
       [image, lib.codeHash(this.opts.root), job?.id ?? null, job ? job.pods : null]);
     const id = row!.id;
     // A per-job orchestrator gets a token bound to its job, never the fleet token (docs/security.md, phase 0b).
-    const workerToken = job ? await mintJobWorkerToken(job.id, id) : env.OCTILLION_WORKER_TOKEN ?? "";
-    const tuning: Record<string, string> = { OCTILLION_ORCH_IDLE_MINUTES: String(AUTOSCALE.idleMinutes()) };
+    const workerToken = job ? await mintJobWorkerToken(job.id, id) : env.APP_WORKER_TOKEN ?? "";
+    const tuning: Record<string, string> = { APP_ORCH_IDLE_MINUTES: String(AUTOSCALE.idleMinutes()) };
     // Global settings (/admin/compute) win over this server's env: e.g. BOAT_SANDBOX_SIZE, RESEARCH_MAX_COST_USD, ORCHESTRATOR_MODEL.
     for (const k of lib.TUNING_VARS) { const v = setting(k) ?? env[k]; if (v != null && v !== "") tuning[k] = String(v); }
     if (job) tuning.ORCHESTRATOR_JOB = job.id;
-    tuning.OCTILLION_BOAT_NAMESPACE = lib.BOAT_NAMESPACE; // its worker sandboxes carry this deployment's prefix
+    tuning.APP_BOAT_NAMESPACE = lib.BOAT_NAMESPACE; // its worker sandboxes carry this deployment's prefix
     const p = lib.launchOrchestrator(
       { url: AUTOSCALE.publicUrl(), workerToken, podCapacity: job ? Math.max(1, job.pods) : AUTOSCALE.podCapacity(), tuning, root: this.opts.root, log: (m) => this.log(m) },
       { image, onCreated: async (sandboxId, orchId) => { await db.query("UPDATE orchestrator_sandboxes SET sandbox_id = $2, orchestrator_id = $3 WHERE id = $1", [id, sandboxId, orchId]); } },
@@ -497,7 +498,7 @@ let singleton: Autoscaler | null = null;
 let lastKick = 0;
 /** Can this deployment kick the autoscaler at all: on, an HTTPS URL orchestrators reach, and a worker token. A null
  * from kickAutoscaler means this is false, or the kick was debounced. */
-export const kickConfigured = (): boolean => AUTOSCALE.enabled() && /^https:\/\//.test(AUTOSCALE.publicUrl()) && !!env.OCTILLION_WORKER_TOKEN;
+export const kickConfigured = (): boolean => AUTOSCALE.enabled() && /^https:\/\//.test(AUTOSCALE.publicUrl()) && !!env.APP_WORKER_TOKEN;
 export async function kickAutoscaler(opts: { force?: boolean } = {}): Promise<TickState | null> {
   // Cross-tenant by design: demand across every organization (src/tenant-scope.ts).
   return asPlatform(async () => {
@@ -526,7 +527,7 @@ export async function kickAutoscaler(opts: { force?: boolean } = {}): Promise<Ti
  * finish in the background (kept alive on Vercel). Throws 409 when this deployment cannot tick.
  */
 export async function runTickNow(): Promise<TickState> {
-  if (!AUTOSCALE.enabled()) throw Object.assign(new Error("Autoscaling is off on this deployment (OCTILLION_AUTOSCALE=off), so there is nothing to tick."), { status: 409 });
+  if (!AUTOSCALE.enabled()) throw Object.assign(new Error("Autoscaling is off on this deployment (APP_AUTOSCALE=off), so there is nothing to tick."), { status: 409 });
   const vercel = !!process.env.VERCEL;
   if (vercel && !kickConfigured()) throw Object.assign(new Error("This deployment cannot trigger the autoscaler: PUBLIC_URL is not HTTPS or the worker token is unset."), { status: 409 });
   lastKick = Date.now();

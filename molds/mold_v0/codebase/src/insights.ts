@@ -1,9 +1,9 @@
 /**
  * Platform analytics and health for /admin (Analytics): product usage across every account and the state of the
- * machinery behind it, in one view for Octillion staff. Customers see only their own team's usage (/app Usage).
+ * machinery behind it, in one view for the platform's staff. Customers see only their own team's usage (/app Usage).
  *
  * PostHog stays the system of record for product analytics and New Relic for traces. This view replicates the
- * numbers an admin checks daily from the records Octillion already keeps (the connector log mcp_events, accounts,
+ * numbers an admin checks daily from the records the app already keeps (the connector log mcp_events, accounts,
  * simulations, sessions, onboarding research), so it works before either is connected and never disagrees with
  * the account pages. Deeper questions go to PostHog and New Relic (links when configured).
  *

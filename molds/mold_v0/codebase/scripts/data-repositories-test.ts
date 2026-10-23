@@ -27,8 +27,8 @@ import { cleanup, STAMP, startHttp, TMP } from "./lib/test-world.js";
 import { catalogPack, catalogPackDir, catalogRepo, fixtureJson, workspaceFiles } from "./lib/catalog-fixture.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_DATA_ALLOW_FILE_UPSTREAM = "1";
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_DATA_ALLOW_FILE_UPSTREAM = "1";
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 const listen = (h: http.RequestListener) => new Promise<{ port: number; close: () => void }>((ok) => { const s = http.createServer(h).listen(0, "127.0.0.1", () => ok({ port: (s.address() as AddressInfo).port, close: () => s.close() })); });
 
@@ -150,9 +150,9 @@ try {
       await new Promise((done) => execFile("git", ["ls-remote", `http://127.0.0.1:${redirector.port}/x.git`], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "http", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" }, timeout: 30_000 }, done));
       assert.ok(targetHits > 0, "git's default follows a redirect");
     } finally { target.close(); redirector.close(); }
-    delete process.env.OCTILLION_DATA_ALLOW_FILE_UPSTREAM;
+    delete process.env.APP_DATA_ALLOW_FILE_UPSTREAM;
     await assert.rejects(repos.gitSource({ repo: up.url, commit: up.c1 }), /for tests only/, "file:// and http:// upstreams are refused outside tests");
-    process.env.OCTILLION_DATA_ALLOW_FILE_UPSTREAM = "1";
+    process.env.APP_DATA_ALLOW_FILE_UPSTREAM = "1";
     console.log("✓ a redirect is refused (git without the setting follows it); file:// and http:// upstreams only with the test switch");
   }
 
@@ -283,7 +283,7 @@ try {
       if (!it) { s.statusCode = 404; return s.end(); }
       s.end(JSON.stringify(it));
     });
-    process.env.OCTILLION_DATA_ALLOW_PRIVATE = "1";
+    process.env.APP_DATA_ALLOW_PRIVATE = "1";
     repos.setResolverForTest(async (h) => (h === "vendor.test.example" ? [{ address: "127.0.0.1", family: 4 }] : []));
     const live = await catalogPack((j) => { j.repositories.vendor_api.base_url = `http://vendor.test.example:${api.port}/v1`; });
     setPacksForTest([live]);
@@ -318,7 +318,7 @@ try {
       };
       assert.match(await msg((j) => { j.repositories.vendor_api.list.path = "/redirect"; }), /^502 the API redirected \(302\): refused/);
       repos.setResolverForTest(async (h) => (h === "vendor.test.example" ? [{ address: "10.1.2.3", family: 4 }] : []));
-      delete process.env.OCTILLION_DATA_ALLOW_PRIVATE;
+      delete process.env.APP_DATA_ALLOW_PRIVATE;
       assert.match(await msg(() => {}), /^502 an API repository is reached over https only/);
       assert.match(await msg((j) => { j.repositories.vendor_api.base_url = "https://vendor.test.example/v1"; }), /^502 the API host vendor\.test\.example resolves to a private address: refused/);
       assert.equal(await repos.apiGet("https://elsewhere.example/x", ["vendor.test.example"], {}).catch((e) => e.message), "the API host elsewhere.example is not in the repository's egress list: refused");
@@ -330,7 +330,7 @@ try {
       assert.throws(() => definePack({ id: "pk", recordAreas: [{ name: "pp", label: "P", role: "check", scope: "workspace", repository: "files", fields: [{ name: "xx", label: "X" }] }],
         repositories: { files: { kind: "workspace_files", path: "a/{n}.json", map: { pp: { key: "{@constructor}" } } } } }), /template/, "nor a template");
       assert.ok(!repos.isPrivateAddress("93.184.216.34"));
-      process.env.OCTILLION_DATA_ALLOW_PRIVATE = "1";
+      process.env.APP_DATA_ALLOW_PRIVATE = "1";
       repos.setResolverForTest(async (h) => (h === "vendor.test.example" ? [{ address: "127.0.0.1", family: 4 }] : []));
       assert.ok(!got.some((u) => u.includes("tok-")), "the token never travels in a URL");
       console.log("✓ external API, live: each workspace's own credential and items, filters and sorts, keys encoded, read only, over REST; a redirect, a private address, plain http and a host outside egress refused; tokens in no answer");

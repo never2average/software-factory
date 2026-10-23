@@ -22,6 +22,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const RUNS_DIR = path.join(ROOT, "scripts", "fixtures", "runs");
@@ -153,7 +154,7 @@ try {
       assert.ok(ev.some((e) => e.type === "log" && e.data.line === "plain log line"), "stdout lines are events");
       assert.deepEqual(ev.find((e) => e.type === "gateway")?.data.statuses, [200], "the program reached the model through the gateway");
       const keys: string[] = ev.find((e) => e.type === "env")!.data.keys;
-      for (const secret of ["DATABASE_URL", "OCTILLION_VAULT_KEY", "OCTILLION_WORKER_TOKEN", "CLERK_SECRET_KEY", "PGLITE_DIR", "R2_SECRET_ACCESS_KEY"])
+      for (const secret of ["DATABASE_URL", "APP_VAULT_KEY", "APP_WORKER_TOKEN", "CLERK_SECRET_KEY", "PGLITE_DIR", "R2_SECRET_ACCESS_KEY"])
         assert.ok(!keys.includes(secret), `the run's program does not see ${secret}`);
       // Cost per run: its gateway usage. 120 in x $500/M + 30 out x $2000/M = $0.12.
       const [u] = await db.query<{ cost: number }>("SELECT sum(cost_usd)::float AS cost FROM gateway_usage WHERE run_id = $1", [claim.run.id]);
@@ -310,7 +311,7 @@ try {
       const probe = await rlsProbe(db);
       assert.deepEqual(probe.problems, [], "the live probe passes with the run tables");
       // The worker API: fleet token, then the lease token; a whole run over HTTP.
-      const W = process.env.OCTILLION_WORKER_TOKEN!;
+      const W = ENV.APP_WORKER_TOKEN!;
       const post = (p: string, body: unknown, h: Record<string, string> = {}) => http.req("POST", `/api/worker/runs${p}`, h, body);
       assert.equal((await post("/claim", { worker_id: "w" })).status, 401, "no worker token");
       assert.equal((await post("/claim", { worker_id: "w" }, { authorization: "Bearer owk_forged" })).status, 401, "a forged one");
@@ -323,13 +324,13 @@ try {
       const vh = await harness.runWorkspaceHarness(viaHttp, ch, { allowSameUser: true, egress: "off" });
       assert.equal(vh?.status, "succeeded", "a run carried out over the worker API");
       assert.equal((await db.query("SELECT 1 FROM run_results WHERE run_id = $1", [rh.id])).length, 1);
-      // A workspace cannot fill the queue: at most OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE runs queued or running.
-      process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE = "3";
+      // A workspace cannot fill the queue: at most APP_RUNS_MAX_LIVE_PER_WORKSPACE runs queued or running.
+      process.env.APP_RUNS_MAX_LIVE_PER_WORKSPACE = "3";
       for (let i = 0; i < 3; i++) await start(cb, "failing");
       const over = await cb.call("fixture_start_run", { kind: "failing" });
       assert.ok(over.isError && /already has 3 runs/.test(over.content[0]!.text), `the per-workspace cap: ${over.content[0]?.text}`);
       assert.ok(!(await ca.call("fixture_start_run", { kind: "failing" })).isError, "another workspace is not held to it");
-      delete process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE;
+      delete process.env.APP_RUNS_MAX_LIVE_PER_WORKSPACE;
       while (await client.claim(["fixture_runs/failing"]).then(async (c) => c && (await harness.runWorkspaceHarness(client, c, { allowSameUser: true, egress: "off" }), true))) { /* drain */ }
       // Deleting a workspace takes its runs.
       await db.query("DELETE FROM organizations WHERE id = $1", [B.orgId]);

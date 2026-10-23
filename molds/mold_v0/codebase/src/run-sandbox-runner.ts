@@ -13,15 +13,15 @@
  *   3. run       src/run-harness.ts with egress "system" (the proxy above) as the run's user (never root)
  *
  * What it reads from its environment (written by the autoscaler into a file only root can read):
- *   OCTILLION_URL, OCTILLION_WORKER_TOKEN   the API and the run-bound token (never the fleet token)
- *   OCTILLION_RUN_ID                        the run (for logs; the token alone decides what is claimed)
- *   OCTILLION_RUN_UIDS                      the range the run's user is leased from (mold_v0-078, src/run-users.ts;
+ *   APP_URL, APP_WORKER_TOKEN   the API and the run-bound token (never the fleet token)
+ *   APP_RUN_ID                        the run (for logs; the token alone decides what is claimed)
+ *   APP_RUN_UIDS                      the range the run's user is leased from (mold_v0-078, src/run-users.ts;
  *                                           default 61000-64999): a uid of its own for this run, locked down by number
  *                                           and given an account (octirun-<uid>) in the sandbox, which lives one run.
- *                                           (OCTILLION_RUN_USER, a fixed account by name, from an older autoscaler.)
- *   OCTILLION_RUN_PACK_DIR                  the pack's directory, relative to the code (programs of the pack's own)
- *   OCTILLION_RUN_LOCKDOWN                  "on" (the autoscaler always writes it). "off" runs with no firewall and is
- *                                           refused unless OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes (test stand-ins only)
+ *                                           (APP_RUN_USER, a fixed account by name, from an older autoscaler.)
+ *   APP_RUN_PACK_DIR                  the pack's directory, relative to the code (programs of the pack's own)
+ *   APP_RUN_LOCKDOWN                  "on" (the autoscaler always writes it). "off" runs with no firewall and is
+ *                                           refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes (test stand-ins only)
  *
  * It imports only node's own modules and these files (the sandbox gets them and the orchestrator's tsx; nothing else):
  * keep it that way (orchestrator/deploy/boat-lib.ts runnerCodeFiles walks the imports; npm run test:run-sandboxes runs
@@ -35,16 +35,17 @@ import { fileURLToPath } from "node:url";
 import { probeSource, proxySource, setupScript } from "../orchestrator/core/egress.js";
 import { httpRunnerClient, runWorkspaceHarness, type HarnessOptions } from "./run-harness.js";
 import { leaseRunUser, registerSandboxRunUser, RUN_USER_PREFIX, type RunUser } from "./run-users.js";
+import { ENV } from "./env-names.js";
 
-const env = process.env;
+const env = ENV;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const log = (m: string) => console.error(`run-sandbox: ${m}`);
 
-/** A fixed run user by name (OCTILLION_RUN_USER, an older autoscaler's): its uid and gid. Null: one is leased per run. */
+/** A fixed run user by name (APP_RUN_USER, an older autoscaler's): its uid and gid. Null: one is leased per run. */
 function namedRunUser(): { uid: number; gid: number; name: string } | null {
-  const name = env.OCTILLION_RUN_USER || null;
+  const name = env.APP_RUN_USER || null;
   if (!name) return null;
-  if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(name)) throw new Error(`OCTILLION_RUN_USER: not a user name`);
+  if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(name)) throw new Error(`APP_RUN_USER: not a user name`);
   const id = (flag: string) => Number(spawnSync("id", [flag, name], { encoding: "utf8" }).stdout.trim());
   const uid = id("-u"), gid = id("-g");
   if (!(uid > 0) || !(gid > 0)) throw new Error(`the run user ${name} does not exist in this sandbox`);
@@ -80,22 +81,22 @@ export function lockDown(hosts: string[] | { hosts: string[]; exact?: string[] }
 }
 
 async function main(): Promise<number> {
-  const url = env.OCTILLION_URL ?? "", token = env.OCTILLION_WORKER_TOKEN ?? "";
-  if (!url || !token) { log("OCTILLION_URL and OCTILLION_WORKER_TOKEN are required"); return 2; }
-  const lockdown = (env.OCTILLION_RUN_LOCKDOWN ?? "on") !== "off";
-  const unsandboxed = env.OCTILLION_ALLOW_UNSANDBOXED_RUNS === "yes";
+  const url = env.APP_URL ?? "", token = env.APP_WORKER_TOKEN ?? "";
+  if (!url || !token) { log("APP_URL and APP_WORKER_TOKEN are required"); return 2; }
+  const lockdown = (env.APP_RUN_LOCKDOWN ?? "on") !== "off";
+  const unsandboxed = env.APP_ALLOW_UNSANDBOXED_RUNS === "yes";
   // Refused before anything is claimed: the run stays queued for a sandbox that does lock down.
-  if (!lockdown && !unsandboxed) { log("OCTILLION_RUN_LOCKDOWN=off is refused (no firewall): only test stand-ins set it, with OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes"); return 2; }
+  if (!lockdown && !unsandboxed) { log("APP_RUN_LOCKDOWN=off is refused (no firewall): only test stand-ins set it, with APP_ALLOW_UNSANDBOXED_RUNS=yes"); return 2; }
   const named = namedRunUser();
   const root = process.getuid?.() === 0;
   if (lockdown && !root) { log("the lockdown needs the runner to be root in the sandbox"); return 2; }
   const client = httpRunnerClient(url, token, `sbx-${hostname()}`.replace(/[^A-Za-z0-9._:-]/g, "-").slice(0, 100));
   const claim = await client.claim();
-  if (!claim) { log(`nothing to claim (run ${env.OCTILLION_RUN_ID ?? "?"} was taken, ended or is not claimable now)`); return 0; }
+  if (!claim) { log(`nothing to claim (run ${env.APP_RUN_ID ?? "?"} was taken, ended or is not claimable now)`); return 0; }
   log(`claimed ${claim.run.id} (attempt ${claim.run.attempt})`);
   // mold_v0-078: the run's own user, leased for this run (a named one only from an older autoscaler); locked down by uid.
   let leased: RunUser | null = null;
-  if (root && !(unsandboxed && env.OCTILLION_RUN_SAME_USER === "yes")) {
+  if (root && !(unsandboxed && env.APP_RUN_SAME_USER === "yes")) {
     try { leased = await leaseRunUser(claim.run.id, named ? { fixed: { uid: named.uid, gid: named.gid } } : {}); }
     catch (e) {
       await client.complete(claim.run.id, claim.lease_token, { outcome: "failed", error_kind: "infrastructure", error: `the run's user: ${String((e as Error).message)}`.slice(0, 2000) }).catch(() => {});
@@ -103,7 +104,7 @@ async function main(): Promise<number> {
       return 1;
     }
   }
-  const iso: HarnessOptions = leased ? { runUser: leased } : unsandboxed && env.OCTILLION_RUN_SAME_USER === "yes" ? { allowSameUser: true } : {};
+  const iso: HarnessOptions = leased ? { runUser: leased } : unsandboxed && env.APP_RUN_SAME_USER === "yes" ? { allowSameUser: true } : {};
   try {
     if (lockdown) {
       // The sandbox lives one run: its run user gets an account (tools that look their user up find one).
@@ -116,7 +117,7 @@ async function main(): Promise<number> {
         return 1;
       }
     }
-    const packRel = env.OCTILLION_RUN_PACK_DIR ?? "";
+    const packRel = env.APP_RUN_PACK_DIR ?? "";
     const packDir = () => {
       const p = path.resolve(ROOT, packRel);
       if (!packRel || (p !== ROOT && !p.startsWith(ROOT + path.sep))) throw new Error("this sandbox has no pack directory for the run");

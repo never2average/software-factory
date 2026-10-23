@@ -22,6 +22,7 @@ import { closeSync, constants, copyFileSync, fstatSync, lstatSync, mkdirSync, op
 import path from "node:path";
 import type { AgentWorkspaceConfig } from "./agent-workspace-config.js";
 import { globRegex, placeholders } from "./agent-workspace-paths.js";
+import { ENV } from "./env-names.js";
 
 export class AgentRunError extends Error {
   /** "run": the configuration or the run's own doing (final); "infrastructure": the network or the machine (retried). */
@@ -63,12 +64,12 @@ export function upstreamProtocol(url: string, o: FetchOptions = {}): "https" | "
   const proto = /^([a-z]+):\/\//.exec(url)?.[1];
   if (proto === "https") {
     // The runner fetches outside the run's egress proxy: never an address or a local name, and, when the operator
-    // lists hosts (OCTILLION_AGENT_REPO_HOSTS, comma-separated; a host allows its subdomains), only those.
+    // lists hosts (APP_AGENT_REPO_HOSTS, comma-separated; a host allows its subdomains), only those.
     const host = new URL(url).hostname.toLowerCase();
     if (/^[\d.]+$/.test(host) || host.includes(":") || host === "localhost" || !host.includes(".") || /\.(local|internal|localhost)$/.test(host))
       throw new AgentRunError(`the agent repository's host ${host} is an address or a local name: refused`);
-    const allow = (process.env.OCTILLION_AGENT_REPO_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
-    if (allow.length && !allow.some((a) => host === a || host.endsWith(`.${a}`))) throw new AgentRunError(`the agent repository's host ${host} is not in OCTILLION_AGENT_REPO_HOSTS`);
+    const allow = (ENV.APP_AGENT_REPO_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+    if (allow.length && !allow.some((a) => host === a || host.endsWith(`.${a}`))) throw new AgentRunError(`the agent repository's host ${host} is not in APP_AGENT_REPO_HOSTS`);
     return "https";
   }
   if (proto === "file" && o.allowFile) return "file";
@@ -148,8 +149,8 @@ export async function fetchPinned(url: string, commit: string, dest: string, o: 
 
 // ---------- paths in the checkout ----------
 
-const MAX_FILES = () => Number(process.env.OCTILLION_WORKSPACE_MAX_FILES ?? 20_000);
-const MAX_BYTES = () => Number(process.env.OCTILLION_WORKSPACE_MAX_BYTES ?? 256 * 1024 * 1024);
+const MAX_FILES = () => Number(ENV.APP_WORKSPACE_MAX_FILES ?? 20_000);
+const MAX_BYTES = () => Number(ENV.APP_WORKSPACE_MAX_BYTES ?? 256 * 1024 * 1024);
 const MAX_DEPTH = 64, MAX_ENTRIES = 500_000;
 /** Every entry under `root` (lstat, never following a link), breadth first, at most 64 deep and 500 000 entries. */
 const walk = (root: string, visit: (rel: string, st: import("node:fs").Stats) => "skip" | void) => {

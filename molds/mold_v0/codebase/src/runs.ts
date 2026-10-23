@@ -35,6 +35,7 @@ import { checkRunStart, maxRunConcurrency, underConcurrency } from "./run-limits
 import { runCompanyHosts } from "./egress-hosts.js";
 import { APPROVAL_ID, approvalStale, approvedPreview, takeApproval } from "./run-approvals.js";
 import { priceForStart } from "./run-charges.js";
+import { ENV } from "./env-names.js";
 
 /** A job kind: a program of the pack's own (jobKinds) or an agent repository at a pin (agentJobKinds, mold_v0-061). */
 export type JobKind = (z.output<typeof JobKindSchema> | z.output<typeof AgentJobKindSchema>) & { pack: string };
@@ -611,7 +612,7 @@ export async function completeRun(runId: string, leaseToken: string, c: Completi
 /** The start of a run's error when the shell's index of its workspace files refused the commit (mold_v0-059). */
 const INDEX_REFUSED = "the index of the workspace's files refused the commit: ";
 /** How long a pack's onWorkspaceCommit hook may take (mold_v0-064). */
-const hookSeconds = () => Math.min(Math.max(Number(process.env.OCTILLION_WORKSPACE_HOOK_SECONDS ?? 120) || 120, 1), 1800);
+const hookSeconds = () => Math.min(Math.max(Number(ENV.APP_WORKSPACE_HOOK_SECONDS ?? 120) || 120, 1), 1800);
 
 /**
  * mold_v0-064: a succeeded workspace run of a pack with onWorkspaceCommit. Its snapshot is committed first, in its own

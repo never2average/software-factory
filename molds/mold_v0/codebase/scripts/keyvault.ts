@@ -37,7 +37,7 @@ async function main() {
   switch (cmd) {
     case "gen-master-key":
       console.log(randomBytes(32).toString("base64"));
-      console.error("Store this as OCTILLION_VAULT_KEY in your secret manager. Losing it makes the vault unreadable.");
+      console.error("Store this as APP_VAULT_KEY in your secret manager. Losing it makes the vault unreadable.");
       return;
     case "providers":
       console.table((await kv.listProviders()).map((p) => ({ ...p, env_vars: p.env_vars.join(",") })));

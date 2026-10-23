@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { profile } from '@/config/profile.generated';
+import { ADMIN_HEADERS } from '@/lib/env-names';
 
 interface DocsSource { n: number; title: string; heading: string | null; href: string }
 interface DocsAnswer {
@@ -47,7 +48,7 @@ function useStreamedAnswer(area: string, question: string | null): AnswerState &
     const url = area === 'admin' ? '/api/admin/onboarding/docs/answer/stream' : '/api/app/docs/answer/stream';
     (async () => {
       const res = await fetch(url, { method: 'POST', credentials: 'same-origin', signal: ctl.signal, body: JSON.stringify({ question }),
-        headers: { 'Content-Type': 'application/json', accept: 'text/event-stream', ...(area === 'admin' ? { 'X-Octillion-Admin': '1' } : {}) } });
+        headers: { 'Content-Type': 'application/json', accept: 'text/event-stream', ...(area === 'admin' ? ADMIN_HEADERS : {}) } });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? `Request failed (${res.status})`);

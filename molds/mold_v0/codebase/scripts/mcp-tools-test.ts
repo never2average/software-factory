@@ -31,7 +31,7 @@ import { cleanup, connect, startHttp, STAMP, TMP } from "./lib/test-world.js";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const UPDATE = process.argv.includes("--update");
 const GOLDEN = path.join(ROOT, "scripts", "fixtures", "mcp", "generated-surface.json");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 
 type Org = import("../src/auth.js").Org;
@@ -339,14 +339,14 @@ try {
     const { PROFILE } = await import("../src/profile.js");
     const rpc = (key: string, id: number) => fetch(`${http.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${key}` },
       body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "review_list_review_items", arguments: {} } }) });
-    process.env.OCTILLION_LIMIT_MCP_PER_KEY_PER_MINUTE = "3";
+    process.env.APP_LIMIT_MCP_PER_KEY_PER_MINUTE = "3";
     const statuses: number[] = [];
     for (let i = 0; i < 5; i++) { const r = await rpc(A.key, i); statuses.push(r.status); await r.text(); }
     assert.deepEqual(statuses.slice(0, 3), [200, 200, 200], `the first calls go through: ${statuses}`);
     assert.ok(statuses.slice(3).every((s) => s === 429), `then a generated tool is rate limited per key: ${statuses}`);
     const last = await rpc(A.key, 9);
     assert.equal(last.status, 429); assert.ok(last.headers.get("retry-after"), "with Retry-After"); await last.text();
-    delete process.env.OCTILLION_LIMIT_MCP_PER_KEY_PER_MINUTE;
+    delete process.env.APP_LIMIT_MCP_PER_KEY_PER_MINUTE;
 
     const guide = await (await http.req("GET", "/install.json")).json();
     assert.match(guide.url, /^http:\/\/[^/]+\/mcp$/, "the deployed address's /mcp");

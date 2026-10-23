@@ -25,6 +25,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
 
 // Everything this process writes to its logs, for the canary grep (7).
 const logged: string[] = [];
@@ -34,7 +35,7 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 const seen: string[] = []; // every MCP and HTTP answer
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const canary = (label: string) => `canary-${label}-${randomBytes(12).toString("hex")}`;
@@ -254,13 +255,13 @@ try {
       await runIt(tokOnly.id, ["fixture_vault/report_token"]);
       assert.deepEqual((await report(tokOnly.id)).sha, { api_token: shaA.api_token, app_key: null, db_password: null }, "a kind gets the fields it names, no others");
       // Over HTTP, with the fleet token and the lease.
-      const viaHttp = harness.httpRunnerClient(http.base, process.env.OCTILLION_WORKER_TOKEN!, "w-http");
+      const viaHttp = harness.httpRunnerClient(http.base, ENV.APP_WORKER_TOKEN!, "w-http");
       const rh = await start(cb, "report", { asset: "app-x", environment: "staging" });
       await runIt(rh.id, ["fixture_vault/report"], {}, viaHttp);
       assert.deepEqual((await report(rh.id)).sha, shaB, "over the worker API: B's own values");
       const lease = (await client.claim(["fixture_vault/report"]));
       assert.equal(lease, null);
-      const cr = await req("GET", `/api/worker/runs/${rh.id}/credentials`, { authorization: `Bearer ${process.env.OCTILLION_WORKER_TOKEN}`, "x-run-lease": "orl_forged" });
+      const cr = await req("GET", `/api/worker/runs/${rh.id}/credentials`, { authorization: `Bearer ${ENV.APP_WORKER_TOKEN}`, "x-run-lease": "orl_forged" });
       assert.equal(cr.status, 409, "a forged (or spent) lease gets nothing");
       // As a user of its own (a runner started as root).
       if (process.getuid?.() === 0) {
@@ -363,7 +364,7 @@ try {
     assert.equal((await db.query("SELECT 1 FROM workspace_credentials WHERE org_id = $1", [B.orgId])).length, 0, "deleting a workspace deletes its values");
     await db.query("CHECKPOINT").catch(() => {});
     const dbFiles = files(process.env.PGLITE_DIR!).reduce((n, f) => n + (statSync(f).size < 512 * 1024 * 1024 ? hits(readFileSync(f)) : 0), 0);
-    const objects = files(process.env.OCTILLION_STORAGE_DIR!).reduce((n, f) => n + hits(readFileSync(f)), 0);
+    const objects = files(ENV.APP_STORAGE_DIR!).reduce((n, f) => n + hits(readFileSync(f)), 0);
     const shm = existsSync("/dev/shm") ? readdirSync("/dev/shm").filter((f) => f.startsWith("run-cred-")).length : 0;
     const answers = hits(seen.join("\n"));
     const logs = hits(logged.join(""));

@@ -10,6 +10,7 @@ import { SCENARIO_ROWS } from "./session-engine.js";
 import { sessionEngine } from "./host-tables.js";
 import { hosts } from "./host.js";
 import { revokeSessionTokens, sessionGatewayUsage } from "./gateway.js";
+import { ENV } from "./env-names.js";
 
 /**
  * The orchestrator's side: agent_sessions rows are the job queue.
@@ -24,8 +25,8 @@ import { revokeSessionTokens, sessionGatewayUsage } from "./gateway.js";
  * a session id names no session.
  */
 
-const LEASE_MINUTES = () => Number(process.env.OCTILLION_LEASE_MINUTES ?? 30);
-const MAX_USER_TURNS = () => Number(process.env.OCTILLION_MAX_USER_TURNS ?? 5);
+const LEASE_MINUTES = () => Number(ENV.APP_LEASE_MINUTES ?? 30);
+const MAX_USER_TURNS = () => Number(ENV.APP_MAX_USER_TURNS ?? 5);
 /** A product or competitor as the claim's blindness check reads it (the products table; its row's words). */
 interface NamedTool { name: string; aliases?: string[]; packages?: string[]; domains?: string[] }
 /** Event type an orchestrator uses when the simulated developer answers the sub-agent. */
@@ -51,7 +52,7 @@ export interface Job {
   profile: { slug: string; name: string; summary: string; attributes: Record<string, unknown>; instructions: string } | null;
   /**
    * The persona's developer environment for this session: its editor's language servers for the task's language plus
-   * its CLI tools, minus any that would name the product or a competitor. null with OCTILLION_DEV_ENV=off.
+   * its CLI tools, minus any that would name the product or a competitor. null with APP_DEV_ENV=off.
    */
   environment: SessionEnvironment | null;
 }
@@ -116,7 +117,7 @@ export async function claimJobs(workerId: string, opts: { limit?: number; models
           "/* tenant: internal: links of the profiles and products this claim just took */ SELECT product_id, profile_id, environment FROM product_personas WHERE profile_id = ANY($1) AND product_id = ANY($2)",
           [profileIds, productIds])
       : [];
-    const devEnv = (process.env.OCTILLION_DEV_ENV ?? "on").toLowerCase() !== "off";
+    const devEnv = (ENV.APP_DEV_ENV ?? "on").toLowerCase() !== "off";
     return rows.map(({ profile_id, prompt_variants, run_prompts, scenario_id, ...r }) => {
       const p = profiles.find((x) => x!.id === profile_id);
       const spec = r.agent_id ? findAgent(r.agent_id) : undefined;
@@ -203,7 +204,7 @@ export async function allEvents(orgId: number, sessionId: string): Promise<Store
 const INFRA_FAILURE = /boat runner:|boat command stream error|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|socket connection was closed|fetch failed|No heartbeat for \d+ minutes|\b(502|503|504|529)\b|overloaded/i;
 /** Config errors that can carry an infrastructure-looking number (a status, an id): a spent budget, a missing vault key. */
 const NOT_INFRA = /budget is used up|missing_credential|No vault provider supplies/i;
-const INFRA_RETRIES = () => Math.max(0, Number(process.env.OCTILLION_SESSION_INFRA_RETRIES ?? 1));
+const INFRA_RETRIES = () => Math.max(0, Number(ENV.APP_SESSION_INFRA_RETRIES ?? 1));
 
 /**
  * Put an infrastructure-failed session back in the queue (at most INFRA_RETRIES times) instead of failing it: its

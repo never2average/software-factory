@@ -14,7 +14,7 @@
  * others pending; it must not contain statements that cannot run in a transaction (CREATE INDEX CONCURRENTLY).
  *
  * When: `npm run db:migrate` (deploys run it before starting the new release), and on first database use in each
- * process unless OCTILLION_MIGRATE_ON_BOOT=off, in which case a process with pending migrations refuses to start.
+ * process unless APP_MIGRATE_ON_BOOT=off, in which case a process with pending migrations refuses to start.
  * Already-current databases cost one SELECT at boot: no DDL, no lock.
  *
  * Packs (mold_v0-038): each pack's own migrations (pack.json `migrations`, listed in src/pack-migrations.generated.ts
@@ -39,6 +39,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Db, Queryable } from "./db.js";
 import { PACK_MIGRATION_DIRS, type HostSchema } from "./pack-migrations.generated.js";
+import { ENV } from "./env-names.js";
 
 export const MIGRATIONS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "sql", "migrations");
 /** The codebase root: pack migration directories are relative to it. */
@@ -431,12 +432,12 @@ export async function runMigrations(db: Db, opts: { dir?: string; packDirs?: rea
 }
 
 /**
- * Whether a process applies pending migrations itself on first database use. OCTILLION_MIGRATE_ON_BOOT=on|off; by
+ * Whether a process applies pending migrations itself on first database use. APP_MIGRATE_ON_BOOT=on|off; by
  * default on, except on Vercel preview deployments (VERCEL_ENV=preview), which only check: a preview's unmerged
  * migration must never be recorded in a database production also uses.
  */
 export const migrateOnBoot = () => {
-  const v = (process.env.OCTILLION_MIGRATE_ON_BOOT ?? "").trim().toLowerCase();
+  const v = (ENV.APP_MIGRATE_ON_BOOT ?? "").trim().toLowerCase();
   if (v) return v !== "off";
   return process.env.VERCEL_ENV !== "preview";
 };
@@ -460,6 +461,6 @@ export async function ensureMigrated(db: Db): Promise<void> {
   if (conflicts.length) console.error(`MIGRATION CONFLICT (running anyway, nothing pending): ${conflicts.join("; ")}`);
   if (!pending.length) return;
   if (!migrateOnBoot())
-    throw new MigrationError(`the database is ${pending.length} migration(s) behind (${pending.map((m) => m.version).join(", ")}): run \`npm run db:migrate\` (OCTILLION_MIGRATE_ON_BOOT=off)`);
+    throw new MigrationError(`the database is ${pending.length} migration(s) behind (${pending.map((m) => m.version).join(", ")}): run \`npm run db:migrate\` (APP_MIGRATE_ON_BOOT=off)`);
   await runMigrations(db, { log: (l) => console.error(l) });
 }

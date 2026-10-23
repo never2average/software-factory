@@ -22,7 +22,7 @@ import { cleanup, STAMP, startHttp, TMP } from "./lib/test-world.js";
 import type { Resolver } from "../src/egress-hosts.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 const FIX = path.join(ROOT, "scripts", "fixtures", "run-access");
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");

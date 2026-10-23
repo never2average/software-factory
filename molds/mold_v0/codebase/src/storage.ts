@@ -2,9 +2,10 @@ import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObject
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname as pathDirname, join as pathJoin, relative as pathRelative, resolve as pathResolve, sep as pathSep } from "node:path";
+import { ENV } from "./env-names.js";
 
 /**
- * Off-machine object storage: one private Cloudflare R2 bucket (R2_BUCKET, today `octillion-backup`) with one prefix per
+ * Off-machine object storage: one private Cloudflare R2 bucket (R2_BUCKET) with one prefix per
  * kind of data. This module is the only place that knows the layout (docs/storage.md):
  *
  *   postgres/                                      hourly pg_dump files (pg-backup-offsite service, 30-day retention)
@@ -20,7 +21,7 @@ import { dirname as pathDirname, join as pathJoin, relative as pathRelative, res
  * the slug) is used: slugs can be renamed, ids cannot.
  */
 
-const env = process.env;
+const env = ENV;
 export const storageEnabled = () => Boolean(env.R2_BUCKET && env.R2_ENDPOINT && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY);
 const bucket = () => env.R2_BUCKET!;
 
@@ -99,7 +100,7 @@ export async function signedUrl(key: string, seconds = 3600, filename?: string):
 
 /**
  * The object store a feature that must work offline uses (the workspace store, mold_v0-033): the bucket above when R2
- * is configured, else a local directory when OCTILLION_STORAGE_DIR is set (one machine, tests). Same keys, same layout.
+ * is configured, else a local directory when APP_STORAGE_DIR is set (one machine, tests). Same keys, same layout.
  * Neither configured: it refuses, rather than keep data somewhere nobody chose.
  */
 export interface ObjectStore {
@@ -110,7 +111,7 @@ export interface ObjectStore {
   remove(keys: string[]): Promise<void>;
 }
 
-const localDir = () => (env.OCTILLION_STORAGE_DIR ? pathResolve(env.OCTILLION_STORAGE_DIR) : null);
+const localDir = () => (env.APP_STORAGE_DIR ? pathResolve(env.APP_STORAGE_DIR) : null);
 const localPath = (root: string, key: string) => {
   if (!/^[A-Za-z0-9._\-/]+$/.test(key) || key.split("/").some((x) => !x || x === "." || x === "..")) throw new Error(`unsafe storage key: ${key.slice(0, 80)}`);
   return pathJoin(root, key);
@@ -125,7 +126,7 @@ export function objectStore(): ObjectStore {
     remove: (list) => deleteKeys(list),
   };
   const root = localDir();
-  if (!root) throw new Error("no object store: configure R2 (R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) or OCTILLION_STORAGE_DIR");
+  if (!root) throw new Error("no object store: configure R2 (R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) or APP_STORAGE_DIR");
   return {
     kind: "local",
     put: async (key, body) => { const p = localPath(root, key); await mkdir(pathDirname(p), { recursive: true }); await writeFile(p, body, { mode: 0o600 }); },

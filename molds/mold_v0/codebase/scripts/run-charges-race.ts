@@ -12,13 +12,13 @@ import express from "express";
 import { createMockApp } from "./lib/mock-providers.js";
 
 if (!process.env.DATABASE_URL) { console.error("run-charges-race: set DATABASE_URL to a throwaway Postgres"); process.exit(2); }
-process.env.OCTILLION_VAULT_KEY ??= randomBytes(32).toString("base64");
-process.env.OCTILLION_REGISTRY ??= "scripts/fixtures/registry.json";
-process.env.OCTILLION_AUTOSCALE ??= "off";
+process.env.APP_VAULT_KEY ??= randomBytes(32).toString("base64");
+process.env.APP_REGISTRY ??= "scripts/fixtures/registry.json";
+process.env.APP_AUTOSCALE ??= "off";
 process.env.REASONS_ENABLED = "off";
-process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ??= "1000";
-process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE = "1000";
-process.env.OCTILLION_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE = "1000";
+process.env.APP_ORG_MONTHLY_BUDGET_USD ??= "1000";
+process.env.APP_RUNS_MAX_LIVE_PER_WORKSPACE = "1000";
+process.env.APP_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE = "1000";
 const N = Number(process.env.RACE_N ?? 30), ROUNDS = Number(process.env.RACE_ROUNDS ?? 3);
 
 // The Stripe stand-in, behind a recorder of every meter event request.
@@ -32,7 +32,7 @@ front.use(mock);
 const server = front.listen(0, "127.0.0.1");
 await new Promise((r) => server.once("listening", r));
 url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_race", STRIPE_API_URL: url, OCTILLION_RUN_CHARGE_GRACE_SECONDS: "0" });
+Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_race", STRIPE_API_URL: url, APP_RUN_CHARGE_GRACE_SECONDS: "0" });
 const post = async (p: string, body: Record<string, string>) =>
   (await fetch(`${url}${p}`, { method: "POST", headers: { authorization: "Bearer sk_test_race", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(body) })).json() as Promise<any>;
 const meter = await post("/v1/billing/meters", { event_name: "run_charges", display_name: "Run charges" });

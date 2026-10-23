@@ -1,6 +1,6 @@
 # Object storage (Cloudflare R2)
 
-One private R2 bucket (`R2_BUCKET`, today `octillion-backup`) holds everything that must survive the machine and the
+One private R2 bucket (`R2_BUCKET`, one per app) holds everything that must survive the machine and the
 managed services. There is one prefix per kind of data, and `src/storage.ts` is the only code that builds keys.
 
 | Prefix | What | Written by | Kept |
@@ -23,14 +23,14 @@ A session's archive is gzipped JSONL. The first line is a header, `{"_session": 
 simulation, scenario, persona, agent, harness, model, status, completed reason, verdict, winner, cost and tokens. Every
 following line is one stored event, exactly as the transcript store returns it (`seq`, `ts`, `type`, `text`, `raw`).
 
-- **When:** the server's archive sweeper runs every `OCTILLION_ARCHIVE_INTERVAL_SECONDS` (300). It claims unarchived
+- **When:** the server's archive sweeper runs every `APP_ARCHIVE_INTERVAL_SECONDS` (300). It claims unarchived
   finished sessions (2+ minutes after they end) and finished research with `FOR UPDATE SKIP LOCKED`, so several
   replicas never double-write; a failed upload is retried after 15 minutes. The first sweeps after a deploy backfill
   everything recorded before archiving existed.
 - **Tracking:** `agent_sessions.archive_key`, `archived_at`, `archive_events`; `product_research.archive_key`,
   `archived_at`. An infrastructure retry that wipes a transcript also clears its archive key, so the retry is
   archived afresh.
-- **Off switch:** `OCTILLION_ARCHIVE=off`, or leave `R2_BUCKET` unset.
+- **Off switch:** `APP_ARCHIVE=off`, or leave `R2_BUCKET` unset.
 
 ## If ClickHouse goes away
 
@@ -47,19 +47,19 @@ ClickHouse Cloud is on a trial. When it lapses:
 
 ## Host disk
 
-The server shares its machine with other projects. `deploy/cleanup.sh` keeps Octillion's own footprint bounded. It
-runs after every rolling deploy and daily at 04:17 UTC (`/etc/cron.d/octillion-cleanup`, installed by
-`deploy/install-cleanup.sh`, log `/var/log/octillion-cleanup.log`). `--dry-run` shows what it would remove.
+The server shares its machine with other projects. `deploy/cleanup.sh` keeps the app's own footprint bounded. It
+runs after every rolling deploy and daily at 04:17 UTC (`/etc/cron.d/app-cleanup`, installed by
+`deploy/install-cleanup.sh`, log `/var/log/app-cleanup.log`). `--dry-run` shows what it would remove.
 
-- **Old server images:** untagged images of the `octillion` compose project (each deploy leaves one, about 1 GB).
-- **Build cache:** capped at `OCTILLION_BUILD_CACHE_KEEP` (5 GB), oldest first. Docker's cache is shared; it is only
+- **Old server images:** untagged images of the app's compose project (each deploy leaves one, about 1 GB).
+- **Build cache:** capped at `APP_BUILD_CACHE_KEEP` (5 GB), oldest first. Docker's cache is shared; it is only
   cache.
 - **Local agent images** (`octillion/agent-*`, for the local Docker runner): removed when not at the version pinned in
   `harnesses/registry.json`. Rebuild with `orchestrator/images/build.sh`.
 - **Test leftovers** in `/tmp` older than a day.
 - **Container logs:** capped at 20 MB x 5 files per container (`x-logging` in the compose file). The cap applies when
   a container is recreated: the server on its next deploy, the database services at the next maintenance restart.
-- **Disk guard:** above 90% the job logs a warning; above 95% it also removes every unused Octillion image.
+- **Disk guard:** above 90% the job logs a warning; above 95% it also removes every unused the app image.
 
 It never touches volumes, running containers, or other projects' images and files. On 2026-10-14 the disk reached 99%
 (about 30 GB of `/tmp` and 80 sandbox images belong to other projects). Removing local agent images and old build
@@ -67,7 +67,7 @@ cache brought it to 90%.
 
 ## Restoring the database
 
-`rclone copy r2:<bucket>/postgres/<file> . && pg_restore -d octillion <file>` (see the `pg-backup-offsite` service).
+`rclone copy r2:<bucket>/postgres/<file> . && pg_restore -d app <file>` (see the `pg-backup-offsite` service).
 
 ## Tests
 

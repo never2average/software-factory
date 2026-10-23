@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { ENV } from "./env-names.js";
 
 /**
  * The worker-agent registry (harnesses/registry.json): every coding agent we can run (harness + model + pinned
  * image + adapter). Its `weight`s are only the cited seed for the default developer population; the live mix
  * (shares, pauses, sandbox unit) is in Postgres under developer populations (src/populations.ts).
- * Without a registry file, agents come from OCTILLION_MODELS x OCTILLION_HARNESS with equal weights.
+ * Without a registry file, agents come from APP_MODELS x APP_HARNESS with equal weights.
  */
 
 export interface AgentSpec {
@@ -34,14 +35,14 @@ let cached: { file: string; registry: Registry } | undefined;
 
 /** harnesses/registry.json only (or the env fallback), without admin-added harnesses. */
 export function fileRegistry(): Registry {
-  const file = path.resolve(ROOT, process.env.OCTILLION_REGISTRY ?? "harnesses/registry.json");
+  const file = path.resolve(ROOT, ENV.APP_REGISTRY ?? "harnesses/registry.json");
   if (cached?.file === file) return cached.registry;
   let reg: Registry;
   try {
     reg = JSON.parse(readFileSync(file, "utf8")) as Registry;
   } catch {
-    const models = (process.env.OCTILLION_MODELS ?? "claude-sonnet-5-5,claude-opus-5-5").split(",").map((s) => s.trim()).filter(Boolean);
-    const harness = process.env.OCTILLION_HARNESS ?? "claude-code";
+    const models = (ENV.APP_MODELS ?? "claude-sonnet-5-5,claude-opus-5-5").split(",").map((s) => s.trim()).filter(Boolean);
+    const harness = ENV.APP_HARNESS ?? "claude-code";
     reg = { version: 0, agents: models.map((model) => ({ id: `${harness}/${model}`, harness, label: `${harness} · ${model}`, model, weight: 1 / models.length, enabled: true })) };
   }
   for (const a of reg.agents) a.origin ??= "registry";

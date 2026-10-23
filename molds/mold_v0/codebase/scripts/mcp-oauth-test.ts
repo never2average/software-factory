@@ -25,7 +25,7 @@ const PROVIDER = process.argv[2] === "clerk" ? "clerk" : "builtin";
 process.env.AUTH_PROVIDER = PROVIDER;
 // The test stands in for the one proxy in front of the server (src/proxy-trust.ts, mold_v0-084): each request's
 // X-Forwarded-For is the address that proxy saw.
-process.env.OCTILLION_PROXY_HOPS = "1";
+process.env.APP_PROXY_HOPS = "1";
 const { cleanup, startHttp, STAMP } = await import("./lib/test-world.js");
 const ROOT = path.resolve(import.meta.dirname, "..");
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");

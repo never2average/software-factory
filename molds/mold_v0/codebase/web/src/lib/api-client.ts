@@ -1,7 +1,8 @@
 /**
- * The Octillion API, same origin (next.config.ts proxies it), so Clerk's session cookie authenticates every call.
- * Admin writes carry X-Octillion-Admin: 1, which a cross-site form cannot send (CSRF).
+ * The app's API, same origin (next.config.ts proxies it), so Clerk's session cookie authenticates every call.
+ * Admin writes carry X-App-Admin: 1 (src/lib/env-names.ts ADMIN_HEADERS), which a cross-site form cannot send (CSRF).
  */
+import { ADMIN_HEADERS } from '@/lib/env-names';
 export class ApiError extends Error {
   constructor(message: string, public status: number, public body: Record<string, unknown> = {}) {
     super(message);
@@ -24,7 +25,7 @@ async function request<T>(url: string, method: string, body?: unknown, headers: 
 
 /** /api/admin/onboarding/* (platform admins). */
 export const adminApi = <T = any>(method: string, path: string, body?: unknown) =>
-  request<T>(`/api/admin/onboarding${path}`, method, body, method === 'GET' ? {} : { 'X-Octillion-Admin': '1' });
+  request<T>(`/api/admin/onboarding${path}`, method, body, method === 'GET' ? {} : ADMIN_HEADERS);
 
 /** /api/app/* (the signed-in person's active account). `headers`: say, If-Match on a save that checks the version. */
 export const appApi = <T = any>(method: string, path: string, body?: unknown, headers?: Record<string, string>) =>

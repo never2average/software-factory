@@ -1,4 +1,4 @@
-# Octillion server: landing page, MCP endpoint, orchestrator worker API.
+# The server: landing page, MCP endpoint, orchestrator worker API.
 # The admin panel and portal (web/, a server-rendered Next.js app) are their own image, web/Dockerfile, and their own
 # service in deploy/docker-compose.prod.yml behind the same Caddy (mold_v0-020); nothing of web/ is in this image.
 FROM node:22-slim

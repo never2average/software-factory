@@ -4,16 +4,17 @@
  * run on the main VM, which hosts only the server stack.
  *
  * A host passes when ALL of these hold:
- *  1. OCTILLION_HOST_ROLE=boat-orchestrator (written by the launcher into the orchestrator's env file)
+ *  1. APP_HOST_ROLE=boat-orchestrator (written by the launcher into the orchestrator's env file)
  *  2. the launcher's marker file (/etc/octillion/host-role, root-owned) says {"role":"boat-orchestrator", ...}
  *  3. boat's own indicators (seen on live boat VMs, 2026-10-10): BOAT_ID or BOX_ID in the env, /etc/ascii and
  *     /home/user/.ascii present (boat's agent + CLI)
  *  4. when the marker records a sandbox id and BOAT_ID looks like one (bx_...), they match
  * and RUNNER is `boat`.
  *
- * OCTILLION_DEV_ALLOW_LOCAL=1 bypasses all of it (tests and local development only) with a loud warning.
+ * APP_DEV_ALLOW_LOCAL=1 bypasses all of it (tests and local development only) with a loud warning.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { appEnv } from "./env-names.js";
 
 export const HOST_ROLE = "boat-orchestrator";
 export const MARKER_PATH = "/etc/octillion/host-role";
@@ -33,13 +34,13 @@ export const realProbe: HostProbe = {
 export interface GuardResult { ok: boolean; dev: boolean; problems: string[]; warning?: string }
 
 export function checkHost(runner: string, probe: HostProbe = realProbe): GuardResult {
-  const env = probe.env;
-  if (env.OCTILLION_DEV_ALLOW_LOCAL === "1") {
+  const env = appEnv(probe.env);
+  if (env.APP_DEV_ALLOW_LOCAL === "1") {
     return {
       ok: true, dev: true, problems: [],
       warning: [
         "#".repeat(78),
-        "# OCTILLION_DEV_ALLOW_LOCAL=1: HOST GUARD DISABLED. Tests / local development ONLY.",
+        "# APP_DEV_ALLOW_LOCAL=1: HOST GUARD DISABLED. Tests / local development ONLY.",
         `# This process may run coding agents on THIS machine (RUNNER=${runner}). Never set this in production:`,
         "# production orchestrators run only inside boat.dev sandboxes (orchestrator/deploy/boat-orchestrators.ts).",
         "#".repeat(78),
@@ -47,10 +48,10 @@ export function checkHost(runner: string, probe: HostProbe = realProbe): GuardRe
     };
   }
   const problems: string[] = [];
-  if (runner !== "boat") problems.push(`RUNNER=${runner} is not allowed in production (only "boat"; pool/docker/local need OCTILLION_DEV_ALLOW_LOCAL=1, tests only)`);
+  if (runner !== "boat") problems.push(`RUNNER=${runner} is not allowed in production (only "boat"; pool/docker/local need APP_DEV_ALLOW_LOCAL=1, tests only)`);
   // The coding agent runs task text written by customers: never as boat's sudo-capable user (docs/security.md).
   if (env.BOAT_AGENT_USER === "user") problems.push("BOAT_AGENT_USER=user runs the coding agent with passwordless sudo; not allowed in production (the default agent user has none)");
-  if (env.OCTILLION_HOST_ROLE !== HOST_ROLE) problems.push(`OCTILLION_HOST_ROLE is not "${HOST_ROLE}" (set by the launcher's env file)`);
+  if (env.APP_HOST_ROLE !== HOST_ROLE) problems.push(`APP_HOST_ROLE is not "${HOST_ROLE}" (set by the launcher's env file)`);
   const markerRaw = probe.read(MARKER_PATH);
   let marker: { role?: string; sandbox_id?: string } | null = null;
   try { marker = markerRaw ? JSON.parse(markerRaw) : null; } catch { marker = null; }
@@ -70,7 +71,7 @@ export function assertOrchestratorHost(runner: string, probe: HostProbe = realPr
   if (r.warning && !warned) { console.error(r.warning); warned = true; }
   if (!r.ok) {
     throw new Error(
-      "Refusing to start: the Octillion orchestrator runs only inside a boat.dev orchestrator sandbox " +
+      "Refusing to start: the orchestrator runs only inside a boat.dev orchestrator sandbox " +
       "(start it with `npm run boat-orchestrators -- up <n>` from orchestrator/).\n  - " + r.problems.join("\n  - "));
   }
 }

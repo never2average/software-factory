@@ -1,6 +1,6 @@
 'use client';
 // Platform analytics and health across every account (src/insights.ts). PostHog and New Relic hold the full record;
-// this replicates what staff check daily, from the records Octillion already keeps. Range and filters live in the URL,
+// this replicates what staff check daily, from the records the app already keeps. Range and filters live in the URL,
 // so a filtered view can be shared; both views share the toolbar, the Filters popover and the export.
 import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -27,12 +27,13 @@ import { Box, RankBars, top } from '@/components/layout/chart-grid';
 import { Icons } from '@/components/icons';
 import { adminApi } from '@/lib/api-client';
 import { downloadCsv, downloadJson, type CsvValue } from '@/lib/csv';
-import { counted, num, usd } from '@/lib/octillion-format';
+import { counted, num, usd } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { ErrorBox, LoadingCards, Mono, Section, StatusBadge, Trend, When } from './ui';
 import { ComputeJobs } from './compute-jobs';
 import { UrlTabs } from './compute-common';
 import { ComputeSessions } from './compute-sessions';
+import { NS } from '@/lib/namespace';
 
 type ErrorKind = 'tool' | 'session' | 'onboarding';
 interface ErrorRow { at: string; account: string; slug: string; [k: string]: string | number | null }
@@ -314,7 +315,7 @@ const textOf = (r: object) => Object.values(r).filter((v) => typeof v === 'strin
 
 function useExport(view: 'analytics' | 'health', a: Analytics | undefined, base: string, match: (r: object) => boolean) {
   const [busy, setBusy] = useState(false);
-  const name = (section: string, ext = 'csv') => `octillion-${view}-${section}-${a?.range?.from ?? ''}_${a?.range?.to ?? ''}.${ext}`;
+  const name = (section: string, ext = 'csv') => `${NS}-${view}-${section}-${a?.range?.from ?? ''}_${a?.range?.to ?? ''}.${ext}`;
   const sheet = async (id: string): Promise<Sheet> => {
     if (!a) return { header: [], rows: [] };
     const t = a.totals;

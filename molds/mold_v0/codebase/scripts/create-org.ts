@@ -3,6 +3,7 @@
 //   npm run org:create -- --key <slug> [label]     (add another key to an existing org)
 import { createApiKey, createOrg } from "../src/auth.js";
 import { getDb } from "../src/db.js";
+import { PROFILE } from "../src/profile.js";
 
 const args = process.argv.slice(2);
 const base = (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/$/, "");
@@ -24,6 +25,6 @@ API key (shown once): ${key}
 
 Connector URL: ${base}/mcp
 Send the key in a header, never in the URL:  Authorization: Bearer ${key}
-  Claude Code: claude mcp add --transport http octillion ${base}/mcp --header "Authorization: Bearer ${key}"
+  Claude Code: claude mcp add --transport http ${PROFILE.mcp_server_name} ${base}/mcp --header "Authorization: Bearer ${key}"
 Claude and ChatGPT's apps cannot send a header: they need sign-in (an invitation from /admin, where Clerk is set up).`);
 await db.close();

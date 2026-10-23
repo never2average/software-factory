@@ -18,6 +18,7 @@ import { researchJobs, sessionEngine } from "./host-tables.js";
 import { keys, listKeys, deleteKeys, objectStore, storageEnabled } from "./storage.js";
 import { baseTranscripts } from "./transcripts.js";
 import { forgetArchivedOrg } from "./archive.js";
+import { ENV } from "./env-names.js";
 
 const PREFIX_KINDS = ["transcripts", "research", "reports", "diffs", "exports", "workspaces"] as const;
 
@@ -79,12 +80,12 @@ export async function deleteOrg(orgId: number, opts: { dryRun?: boolean; log?: (
     if (left.length) throw new Error(`org ${orgId}: ${left.length} object(s) still in R2 after the purge; re-run deleteOrg`);
   }
   log(`org ${orgId}: ${objects.length} object(s) purged from R2`);
-  // Workspace snapshots kept in a local directory instead (mold_v0-033, OCTILLION_STORAGE_DIR without R2).
-  if (!storageEnabled() && process.env.OCTILLION_STORAGE_DIR) {
+  // Workspace snapshots kept in a local directory instead (mold_v0-033, APP_STORAGE_DIR without R2).
+  if (!storageEnabled() && ENV.APP_STORAGE_DIR) {
     const local = objectStore();
     const mine = await local.list(keys.orgPrefix("workspaces", orgId));
     await local.remove(mine);
-    log(`org ${orgId}: ${mine.length} workspace snapshot(s) removed from ${process.env.OCTILLION_STORAGE_DIR}`);
+    log(`org ${orgId}: ${mine.length} workspace snapshot(s) removed from ${ENV.APP_STORAGE_DIR}`);
   }
 
   // 5-6. Postgres cascade, then the tombstone.

@@ -5,6 +5,7 @@ import { agentRunnability, scheduledIds } from "./compute-records.js";
 import { classifyOrchestrator, classifySession, FIX_LINKS, ROUTINE_REAPS, reapKind, type ReapKind, type SessionErrorKey } from "./error-classes.js";
 import { BOAT_PRICE_PER_HOUR } from "../orchestrator/core/config.js";
 import * as lib from "../orchestrator/deploy/boat-lib.js";
+import { ENGINE_SETTINGS } from "./settings.js";
 
 /**
  * The Compute page's Jobs table and Failures by reason (docs/compute-and-traces-spec.md §2.2 F, G). A job is a
@@ -78,7 +79,7 @@ export function whyWaiting(job: { id: string; kind: "simulation" | "research"; u
     return { text: `Waiting for boat capacity (${free} free, needs ${needed})`, note: own!, ...base, free };
   }
   if (own?.startsWith("cooldown:")) return { text: "Relaunch cooldown: its orchestrator idled out with sessions it could not claim", note: own, ...base };
-  const cap = entry && notes.find((x) => x.startsWith("at OCTILLION_MAX_JOB_ORCHESTRATORS"));
+  const cap = entry && notes.find((x) => x.startsWith(`at ${ENGINE_SETTINGS.maxJobOrchestrators}`));
   if (cap) return { text: `At the orchestrator limit (${tick?.cap ?? "?"} per-job orchestrators)`, note: cap, ...base };
   return { text: "No orchestrator yet", note: own ?? null, ...base };
 }

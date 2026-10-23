@@ -49,9 +49,9 @@ export interface HostDefinition {
     registerPrompts?(server: McpServer, org: Org): void;
     /** Text appended to the instructions for this caller (the account's and the person's context). */
     context?(org: Org): Promise<string>;
-    /** One tool call outside MCP (the local widget preview, OCTILLION_PREVIEW=1). */
+    /** One tool call outside MCP (the local widget preview, APP_PREVIEW=1). */
     runTool?(org: Org, name: string, args: Record<string, unknown>): Promise<CallToolResult>;
-    /** The widget's HTML, for the local preview. */
+    /** The widget's HTML, for the local preview: its first <script> gets window.__<NAMESPACE>_PREVIEW__ (src/namespace.ts, upper case) with the call's result. */
     widgetHtml?: string;
   };
   /** The admin MCP server (src/admin-mcp.ts): tools and prompts the host adds, in the shell's order. */

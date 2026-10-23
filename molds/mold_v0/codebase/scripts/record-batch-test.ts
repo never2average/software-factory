@@ -14,6 +14,7 @@
 import assert from "node:assert/strict";
 import { cleanup, connect, STAMP } from "./lib/test-world.js";
 import { catalogPack } from "./lib/catalog-fixture.js";
+import { ENV } from "../src/env-names.js";
 
 try {
   const { getDb } = await import("../src/db.js");
@@ -118,12 +119,12 @@ try {
     assert.ok((await cb.call("get_record", { area: "notes", key: "n2" })).isError, "B cannot get A's sealed record");
     await ca.close(); await cb.close();
     // The vault locked: a sealed write is refused and nothing is stored.
-    const key = process.env.OCTILLION_VAULT_KEY;
-    delete process.env.OCTILLION_VAULT_KEY;
+    const key = ENV.APP_VAULT_KEY;
+    delete process.env.APP_VAULT_KEY;
     try {
       await assert.rejects(ownerA.put("notes", "n-locked", { data: { body: "should not be stored" } }), (e: any) => e.status === 503 && /sealed and the key vault is locked/.test(e.message));
       await assert.rejects(ownerA.batch([{ op: "put", area: "tasks", key: "lk1", data: { summary: "x" } }, { op: "put", area: "notes", key: "n-locked", data: { body: "x" } }]), (e: any) => e.status === 503);
-    } finally { process.env.OCTILLION_VAULT_KEY = key; }
+    } finally { process.env.APP_VAULT_KEY = key; }
     assert.equal((await db.query("SELECT 1 FROM workspace_records WHERE key IN ('n-locked', 'lk1')")).length, 0, "nothing stored while locked");
     // A row written before its area was sealed still opens; the next write seals it.
     const plainDef = JSON.parse(JSON.stringify(fx.declared));

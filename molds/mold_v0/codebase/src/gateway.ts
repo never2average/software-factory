@@ -9,6 +9,11 @@ import { adaptGeminiBody, geminiWantsThinkingLevel, toVertex, toVertexGemini, ve
 import { costOf, recordModelUsage } from "./usage.js";
 import { SCENARIO_ROWS } from "./session-engine.js";
 import { sessionEngine } from "./host-tables.js";
+import { ENV } from "./env-names.js";
+import { PROFILE } from "./profile.js";
+import { NS } from "./namespace.js";
+/** The error type a request over its budget gets (the namespace's, src/namespace.ts). */
+const BUDGET_EXCEEDED = `${NS}_budget_exceeded`;
 
 /**
  * Inference gateway + credential broker (docs/credentials.md).
@@ -20,15 +25,15 @@ import { sessionEngine } from "./host-tables.js";
  */
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
-/** Agent sandboxes and orchestrators call the gateway here: the API directly (OCTILLION_INTERNAL_URL) when the public
+/** Agent sandboxes and orchestrators call the gateway here: the API directly (APP_INTERNAL_URL) when the public
  *  URL is a proxy in front of it (long model streams should not take the extra hop), else PUBLIC_URL. */
-const PUBLIC_URL = () => (process.env.OCTILLION_INTERNAL_URL || process.env.PUBLIC_URL || `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/$/, "");
-const SESSION_TOKEN_MINUTES = () => Number(process.env.OCTILLION_SESSION_TOKEN_MINUTES ?? 90);
-const MAX_REQUESTS = () => Number(process.env.OCTILLION_GATEWAY_MAX_REQUESTS ?? 1000);
+const PUBLIC_URL = () => (ENV.APP_INTERNAL_URL || process.env.PUBLIC_URL || `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/$/, "");
+const SESSION_TOKEN_MINUTES = () => Number(ENV.APP_SESSION_TOKEN_MINUTES ?? 90);
+const MAX_REQUESTS = () => Number(ENV.APP_GATEWAY_MAX_REQUESTS ?? 1000);
 // Per-session budget. Cost is the real limit: token counts include cache reads, so long agent sessions re-read
 // millions of cheap cached tokens. The token cap is a backstop for models without a price.
-const MAX_TOKENS = () => Number(process.env.OCTILLION_GATEWAY_MAX_TOKENS ?? 30_000_000);
-const MAX_COST_USD = () => Number(process.env.OCTILLION_GATEWAY_MAX_COST_USD ?? 10);
+const MAX_TOKENS = () => Number(ENV.APP_GATEWAY_MAX_TOKENS ?? 30_000_000);
+const MAX_COST_USD = () => Number(ENV.APP_GATEWAY_MAX_COST_USD ?? 10);
 
 /** Requires-env fallback for sessions whose agent is not in the registry. */
 export const HARNESS_ENV: Record<string, string[]> = { "claude-code": ["ANTHROPIC_API_KEY"], codex: ["CODEX_API_KEY", "OPENAI_API_KEY"] };
@@ -59,7 +64,7 @@ export function tokenRefusal(t: { expires_at: Date | string; revoked_at: Date | 
 }
 
 /** A run's ceiling on metered tokens, a backstop for models without a price (its budget in dollars is the real limit). */
-const RUN_MAX_TOKENS = () => Number(process.env.OCTILLION_RUN_MAX_TOKENS ?? 200_000_000);
+const RUN_MAX_TOKENS = () => Number(ENV.APP_RUN_MAX_TOKENS ?? 200_000_000);
 
 /**
  * Gateway access for one attempt of a run (mold_v0-041; src/runs.ts claimRun): one token for the job kind's providers,
@@ -114,7 +119,7 @@ export async function brokerSessionCredentials(sessionId: string) {
   const withheld = needs.filter((v) => !providers.some((p) => p.env_vars.includes(v)) && all.some((p) => p.env_vars.includes(v)));
   if (withheld.length)
     throw Object.assign(new Error(`Real vendor keys (${withheld.join(", ")}) are not given to this session: direct-mode keys are off ` +
-                                  "(OCTILLION_DIRECT_KEYS) or the task was written by a customer"), { status: 403 });
+                                  "(APP_DIRECT_KEYS) or the task was written by a customer"), { status: 403 });
   const missing = needs.filter((v) => !providers.some((p) => p.env_vars.includes(v)));
   // 424, not 5xx: a missing key is configuration, not an outage. A 503 here matched the infrastructure-failure rule in
   // src/worker.ts, so the session was requeued and failed again on the same missing key.
@@ -153,8 +158,8 @@ const SDK_BASE_SUFFIX: Record<string, string> = { openai: "/v1", dashscope: "/co
 
 /** Direct-mode providers whose key only the orchestrator uses; never brokered to an agent session. */
 export const ORCHESTRATOR_ONLY_PROVIDERS = new Set(["boat", "vertex"]);
-/** Real vendor keys in agent sessions are off unless OCTILLION_DIRECT_KEYS=allow (see docs/security.md). */
-export const directKeysAllowed = () => process.env.OCTILLION_DIRECT_KEYS === "allow";
+/** Real vendor keys in agent sessions are off unless APP_DIRECT_KEYS=allow (see docs/security.md). */
+export const directKeysAllowed = () => ENV.APP_DIRECT_KEYS === "allow";
 function directKeyAllowed(provider: string, taskSource: string | null): boolean {
   if (ORCHESTRATOR_ONLY_PROVIDERS.has(provider) || !directKeysAllowed()) return false;
   return taskSource === "library" || taskSource === "generated"; // curated or research-written, never customer-written
@@ -251,7 +256,7 @@ class UsageMeter {
 export async function gatewayHandler(req: Request, res: Response) {
   const slug = String(req.params.provider);
   const token = tokenFrom(req);
-  if (!token) return gwError(res, 401, "authentication_error", "Missing Octillion gateway token");
+  if (!token) return gwError(res, 401, "authentication_error", `Missing ${PROFILE.name} gateway token`);
   const db = await getDb();
   const hash = sha256(token);
   const [t] = await db.query<{ kind: string; session_id: string | null; orchestrator_id: string | null; run_id: string | null; providers: string[]; expires_at: Date; revoked_at: Date | null }>(
@@ -259,7 +264,7 @@ export async function gatewayHandler(req: Request, res: Response) {
   if (!t || tokenRefusal(t)) return gwError(res, 401, "authentication_error", "Gateway token is invalid, expired or revoked");
   if (!t.providers.includes(slug)) return gwError(res, 403, "permission_error", `Token is not allowed to use ${slug}`);
   // Some CLIs (Codex) probe a WebSocket transport first; refuse fast so they fall back to HTTP immediately.
-  if (req.headers.upgrade) return gwError(res, 426, "invalid_request_error", "WebSocket is not supported by the Octillion gateway; use HTTP");
+  if (req.headers.upgrade) return gwError(res, 426, "invalid_request_error", `WebSocket is not supported by the ${PROFILE.name} gateway; use HTTP`);
   let p: ProviderRow | null = await getProvider(slug);
   if (!p?.enabled || p.mode !== "gateway" || (!p.upstream_url && p.backend !== "vertex")) return gwError(res, 404, "not_found_error", `No gateway provider ${slug}`);
 
@@ -269,17 +274,17 @@ export async function gatewayHandler(req: Request, res: Response) {
       "/* tenant: the run this gateway token was minted for */ SELECT status, cancel_requested_at, budget_usd, org_id, pack, kind, spec FROM runs WHERE id = $1", [t.run_id]);
     if (!run || run.status !== "running" || run.cancel_requested_at) return gwError(res, 401, "authentication_error", "This run is not running");
     const u = await runGatewayUsage(t.run_id!);
-    if (u.tokens >= RUN_MAX_TOKENS()) return gwError(res, 429, "octillion_budget_exceeded", "This run's gateway budget is used up");
+    if (u.tokens >= RUN_MAX_TOKENS()) return gwError(res, 429, BUDGET_EXCEEDED, "This run's gateway budget is used up");
     // Its budget (never above today's ceiling), its kind's month budget in the workspace and the account's allowance,
     // all live (mold_v0-018, 053; src/run-limits.ts): many small runs cannot spend past what one could.
     const { runSpendRefusal } = await import("./run-limits.js");
     const refusal = await runSpendRefusal({ ...run, spec: run.spec as never }, u.cost_usd);
-    if (refusal) return gwError(res, 429, "octillion_budget_exceeded", refusal);
+    if (refusal) return gwError(res, 429, BUDGET_EXCEEDED, refusal);
   } else {
     const [used] = await db.query<{ requests: number; tokens: number; cost: number }>(
       "/* tenant: by the gateway token's own hash (budget of that token) */ SELECT coalesce(sum(requests), 0) AS requests, coalesce(sum(input_tokens + output_tokens), 0) AS tokens, coalesce(sum(cost_usd), 0) AS cost FROM gateway_usage WHERE token_hash = $1", [hash]);
     if (Number(used.requests) >= MAX_REQUESTS() || Number(used.tokens) >= MAX_TOKENS() || Number(used.cost) >= MAX_COST_USD())
-      return gwError(res, 429, "octillion_budget_exceeded", "This session's gateway budget is used up");
+      return gwError(res, 429, BUDGET_EXCEEDED, "This session's gateway budget is used up");
   }
 
   let cred: { id: number; secret: string };
@@ -371,7 +376,7 @@ export async function gatewayHandler(req: Request, res: Response) {
       method: req.method, headers, redirect: "manual", body,
       // @ts-expect-error Node's fetch needs duplex for streamed request bodies
       duplex: body instanceof ReadableStream ? "half" : undefined,
-      signal: AbortSignal.timeout(Number(process.env.OCTILLION_GATEWAY_TIMEOUT_MS ?? 600_000)),
+      signal: AbortSignal.timeout(Number(ENV.APP_GATEWAY_TIMEOUT_MS ?? 600_000)),
     });
   } catch (e) {
     await record(hash, slug, t, { requests: 1, errors: 1, input: 0, cached: 0, output: 0, bytes: 0, model: requestModel });
