@@ -7,6 +7,8 @@ import { limitsFor } from "./rate-limits.js";
 import { registerPackTools } from "./packs.js";
 import { generatedInstructions } from "./mcp-tools.js";
 import { PROFILE } from "./profile.js";
+import { instructionsParagraph } from "./source-offer.js";
+import { currentOffer } from "./data-map.js";
 import type { SameNames, ShellToolName } from "./shell-tools.js";
 
 /**
@@ -99,9 +101,11 @@ export function createServer(org: Org, context = ""): McpServer {
     { name: PROFILE.mcp_server_name, version: PROFILE.mcp_server_version ?? "2.0.0" },
     {
       // The profile's instructions when it has its own (mold_v0-060), else a host pack's (mold_v0-039), else the shell's;
-      // then a paragraph for the tools generated from the packs that this caller may use, then the context.
+      // then a paragraph for the tools generated from the packs that this caller may use, then the source offer (mold_v0-050:
+      // only when a pack's upstream is copyleft or the profile offers the app's own source; nothing in a zero-pack build),
+      // then the context.
       instructions: (PROFILE.mcp_instructions ?? hosts().find((h) => h.mcp?.instructions)?.mcp?.instructions ?? SHELL_INSTRUCTIONS) +
-        generatedInstructions(org) + context,
+        generatedInstructions(org) + instructionsParagraph(currentOffer()) + context,
     },
   );
   // tools/list answers even when the build has no tool at all (zero packs): a tool registered and removed at once installs

@@ -164,6 +164,13 @@ export default function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
+          {/* About (mold_v0-050): the source this service runs and where its code, data and model calls go, in every build. */}
+          <SidebarMenuItem>
+            <SidebarMenuButton size='sm' tooltip='About' isActive={pathname === `${base}/about`} render={<Link href={`${base}/about`} />}>
+              <Icons.info />
+              <span>About and source code</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem className='group/me'>
             <SidebarMenuButton tooltip='Profile' className='h-10' isActive={pathname === `${base}/profile`} render={<Link href={`${base}/profile`} aria-label='Your profile' />}>
               {user && <UserAvatarProfile className='size-7 rounded-lg' showInfo compact user={user} />}

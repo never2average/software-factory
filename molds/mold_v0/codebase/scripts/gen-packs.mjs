@@ -13,6 +13,9 @@
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
 //   orchestrator/packs.generated.ts      the host packs' orchestrator entries (orchestrator/packs/<id>/main.ts)
+//   src/deploy-facts.generated.ts        the deploy facts the factory wrote into this build copy (deploy-facts.json at the
+//                                        codebase root, mold_v0-050): names, places and providers, never a value; null
+//                                        without the file. Read by src/data-map.ts (DATA-MAP.md and the About page)
 //
 // Host packs (mold_v0-039): a pack whose pack.json has `host` (an entry with defineHost, src/host.ts) is the product's
 // own surface: tools, routes and hooks at the shell's fixed points, console pages (web/src/packs/<id>/), an orchestrator
@@ -41,13 +44,18 @@
 //     migrations, by SELECT shell_pack_tenant_table('<table>') (a workspace table: org_id NOT NULL, a policy that
 //     limits the tenant role to its own workspace, fails closed) or shell_pack_private_table('<table>') (no tenant
 //     access at all). src/migrate.ts checks the same again in the database when it applies them.
+//     A host pack whose tables keep the names they had in the shell's base schema (mold_v0-049) declares them in
+//     pack.json host.schema (tables, functions, adopts); its migrations may also name those tables, define those
+//     functions and run DO blocks, GRANT, REVOKE and policies, which only the database can check: src/migrate.ts
+//     refuses any change outside the pack's own tables and functions, and any of its tables without row-level security.
 //
 // Record areas are declared in code (definePack({ recordAreas })), so once every check above passes, each pack's entry
 // is loaded once (through tsx, as the server loads it) to read them; with no packs nothing is loaded.
 //
 //   node scripts/gen-packs.mjs            write the files (npm run gen:packs)
 //   node scripts/gen-packs.mjs --check    exit 1 when a written file differs from what the packs say (npm run check:packs)
-//   --packs <dir> --out <dir> --profile <file>   another packs directory, output root or profile (tests)
+//   --packs <dir> --out <dir> --profile <file> --facts <file>   another packs directory, output root, profile or deploy
+//                                                facts file (tests)
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -63,6 +71,7 @@ const ROOT = path.resolve(HERE, "..");
 const PACKS_DIR = path.resolve(opt("--packs") ?? path.join(ROOT, "packs"));
 const OUT = path.resolve(opt("--out") ?? ROOT);
 const PROFILE_FILE = path.resolve(opt("--profile") ?? path.join(ROOT, "profile.json"));
+const FACTS_FILE = path.resolve(opt("--facts") ?? path.join(ROOT, "deploy-facts.json"));
 const CHECK = argv.includes("--check");
 const PACK_API = path.join(ROOT, "src", "pack-api.ts");
 const PACK_HOST = path.join(ROOT, "src", "pack-host.ts");
@@ -283,7 +292,7 @@ async function checkGraphs() {
  * (so a quote can neither hide a comment marker nor carry a banned word). Escape-string (E'…'), Unicode (U&'…') and
  * dollar quoting are refused outright. Returns null (and records why) when the text cannot be lexed safely.
  */
-function lex(sql, where) {
+function lex(sql, where, host = false) {
   let code = "", blank = "", i = 0;
   const n = sql.length;
   while (i < n) {
@@ -299,7 +308,15 @@ function lex(sql, where) {
       if (depth > 0) { fail(where, "an unterminated /* comment"); return null; }
       code += " "; blank += " "; continue;
     }
-    if (ch === "$" && /^\$[a-z_0-9]*\$/i.test(sql.slice(i))) { fail(where, "uses dollar-quoted bodies (DO blocks, functions): not allowed in a pack migration"); return null; }
+    if (ch === "$" && /^\$[a-z_0-9]*\$/i.test(sql.slice(i)) && !/[a-z0-9_$]/i.test(sql[i - 1] ?? "")) {
+      // A host pack's schema (mold_v0-049) carries DO blocks and its declared functions: the body stays in the text the
+      // banned-word scan reads (so nothing banned hides in it) and is one opaque token for the statement checks.
+      if (!host) { fail(where, "uses dollar-quoted bodies (DO blocks, functions): not allowed in a pack migration"); return null; }
+      const tag = /^\$[a-z_0-9]*\$/i.exec(sql.slice(i))[0];
+      const end = sql.indexOf(tag, i + tag.length);
+      if (end < 0) { fail(where, `an unterminated ${tag} body`); return null; }
+      code += `${tag} BODY ${tag}`; blank += ` ${sql.slice(i + tag.length, end)} `; i = end + tag.length; continue;
+    }
     if (ch === "'" || ch === '"') {
       // E'…' interprets backslash escapes (E'\'' is a quote inside the string); U&'…' has escapes too: refuse both.
       if (ch === "'" && /(^|[^a-z0-9_$])(e|u&)$/i.test(sql.slice(Math.max(0, i - 3), i))) {
@@ -342,13 +359,30 @@ const BANNED_SQL = [
   [/\bOWNER\s+TO\b/i, "OWNER TO"], [/\bINHERITS\b/i, "INHERITS"], [/\bPARTITION\s+OF\b/i, "PARTITION OF"],
 ];
 
+/**
+ * A host pack's schema (mold_v0-049) may grant, revoke, write policies and run DO blocks on its own tables (the database
+ * holds it to that: src/migrate.ts securitySnapshot); never the rest of BANNED_SQL, nor objects that act outside a table.
+ */
+const HOST_ALLOWED = new Set(["GRANT", "REVOKE", "policies (the shell's helpers write them)", "dollar-quoted bodies (DO blocks, functions)"]);
+const HOST_BANNED_SQL = [
+  [/\b(CREATE|ALTER|DROP)\s+(ROLE|USER|GROUP)\b/i, "roles"], [/\bDEFAULT\s+PRIVILEGES\b/i, "default privileges"],
+  [/\b(CREATE|ALTER)\s+(OR\s+REPLACE\s+)?(TRIGGER|RULE|VIEW|EXTENSION|EVENT\s+TRIGGER|PUBLICATION|SCHEMA|AGGREGATE|OPERATOR|CAST)\b/i, "triggers, rules, views, extensions, schemas or operators"],
+  [/\bLANGUAGE\s+(c|internal|plpython\w*|plperl\w*|pltcl\w*)\b/i, "an untrusted function language"],
+  [/\bCOPY\b/i, "COPY"], [/\bpg_read_|\blo_import\b|\blo_export\b|\bdblink\b/i, "server file or connection functions"],
+];
+
 const NAME = String.raw`"?([a-z_][a-z0-9_]*)"?`;
 const unq = (s) => s.replace(/"/g, "").toLowerCase();
 
-function checkMigrations(dir, id, where) {
+function checkMigrations(dir, id, where, schema = null) {
   const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
   const prefix = `${id}_`;
-  const own = (t) => unq(t).replace(/^public\./, "").startsWith(prefix);
+  // A host pack's declared tables (mold_v0-049) are its own too, under their names.
+  const declared = new Set(schema?.tables ?? []);
+  const fns = new Set(schema?.functions ?? []);
+  const own = (t) => { const n = unq(t).replace(/^public\./, ""); return n.startsWith(prefix) || declared.has(n); };
+  const createdNames = new Set();
+  const definedFns = new Set();
   const created = []; // [table, file]
   const secured = new Map(); // table -> "tenant" | "private"
   const order = [];
@@ -357,19 +391,30 @@ function checkMigrations(dir, id, where) {
     if (!m) return fail(`${where}/${f}`, "name it NNNN_lowercase_words.sql");
     if (Number(m[1]) !== i + 1) fail(`${where}/${f}`, `expected version ${String(i + 1).padStart(4, "0")} (no gaps or duplicates)`);
     const sql = readFileSync(path.join(dir, f), "utf8");
-    const lexed = lex(sql, `${where}/${f}`);
+    const lexed = lex(sql, `${where}/${f}`, !!schema);
     if (!lexed) return;
-    for (const [re, what] of BANNED_SQL) if (re.test(lexed.blank)) fail(`${where}/${f}`, `uses ${what}: not allowed in a pack migration`);
+    for (const [re, what] of BANNED_SQL) if (re.test(lexed.blank) && !(schema && HOST_ALLOWED.has(what))) fail(`${where}/${f}`, `uses ${what}: not allowed in a pack migration`);
+    if (schema) for (const [re, what] of HOST_BANNED_SQL) if (re.test(lexed.blank)) fail(`${where}/${f}`, `uses ${what}: not allowed in a pack migration`);
     for (const st of statements(lexed.code)) {
       const at = `${where}/${f}: ${st.slice(0, 80)}`;
       let x;
+      if (schema && /^DO (\$[a-z_0-9]*\$) BODY \1$/i.test(st)) continue; // checked in the database (src/migrate.ts)
+      if (schema && (x = new RegExp(String.raw`^CREATE (?:OR REPLACE )?FUNCTION (?:public\.)?${NAME} ?\(`, "i").exec(st))) {
+        if (!fns.has(unq(x[1]))) fail(at, `defines function ${unq(x[1])}, which pack.json host.schema.functions does not declare`);
+        else definedFns.add(unq(x[1]));
+        if (/\bSECURITY\s+DEFINER\b/i.test(st)) fail(at, "SECURITY DEFINER");
+        continue;
+      }
       if ((x = new RegExp(String.raw`^CREATE (?:UNLOGGED )?TABLE (?:IF NOT EXISTS )?(?:public\.)?${NAME} ?\((.*)\)$`, "i").exec(st))) {
         const t = unq(x[1]);
-        if (!own(t)) { fail(at, `table ${t} must be named ${prefix}…`); continue; }
+        if (!own(t)) { fail(at, `table ${t} must be named ${prefix}…${schema ? " or declared in pack.json host.schema.tables" : ""}`); continue; }
+        createdNames.add(t);
+        // A declared table is secured by the pack's own policies, which the database checks (src/migrate.ts).
+        if (declared.has(t)) continue;
         created.push({ t, f, body: x[2], i: order.length });
         order.push({ kind: "create", t });
       } else if ((x = new RegExp(String.raw`^CREATE (?:UNIQUE )?INDEX (?:CONCURRENTLY )?(?:IF NOT EXISTS )?(?:${NAME} )?ON (?:ONLY )?(?:public\.)?${NAME}\b`, "i").exec(st))) {
-        if (x[1] && !own(x[1])) fail(at, `index ${unq(x[1])} must be named ${prefix}…`);
+        if (x[1] && !own(x[1]) && !declared.has(unq(x[2]))) fail(at, `index ${unq(x[1])} must be named ${prefix}…`);
         if (!own(x[2])) fail(at, `an index on ${unq(x[2])}, which is not this pack's table`);
       } else if ((x = new RegExp(String.raw`^ALTER TABLE (?:IF EXISTS )?(?:ONLY )?(?:public\.)?${NAME} (.*)$`, "i").exec(st))) {
         if (!own(x[1])) fail(at, `alters ${unq(x[1])}, which is not this pack's table`);
@@ -392,6 +437,9 @@ function checkMigrations(dir, id, where) {
       } else fail(at, "not a statement a pack migration may run (CREATE TABLE/INDEX, ALTER/DROP its own tables, seed rows, COMMENT, SELECT shell_pack_*_table)");
     }
   });
+  // A declared table (mold_v0-049) must be one this pack's migrations create, and a declared function one they define.
+  for (const t of declared) if (!createdNames.has(t)) fail(where, `pack.json host.schema.tables names ${t}, which no migration here creates`);
+  for (const fn of fns) if (!definedFns.has(fn)) fail(where, `pack.json host.schema.functions names ${fn}, which no migration here defines`);
   // Every table created must be secured after its (last) creation, and a workspace table must carry org_id NOT NULL.
   for (const c of created) {
     const later = order.slice(c.i + 1).find((o) => o.t === c.t);
@@ -405,6 +453,43 @@ function checkMigrations(dir, id, where) {
 }
 
 // ---------- packs ----------
+
+/**
+ * pack.json host.schema (mold_v0-049), or null. Only a host pack of this build may declare one; its tables are not the
+ * shell's (checked once the shell's tables are known, below) and its names are plain identifiers.
+ */
+function hostSchemaOf(m, dirName, where) {
+  const sc = m?.host && typeof m.host === "object" ? m.host.schema : undefined;
+  if (sc === undefined) return null;
+  const IDENT = /^[a-z][a-z0-9_]{1,62}$/;
+  if (!HOST_PACKS.has(dirName)) { fail(where, "host.schema: only a host pack of this build may declare its own tables"); return null; }
+  if (!sc || typeof sc !== "object" || Array.isArray(sc)) { fail(where, "host.schema must be an object {tables, functions?, adopts?}"); return null; }
+  for (const k of Object.keys(sc)) if (!["tables", "functions", "adopts", "platform_read", "references"].includes(k)) fail(where, `host.schema: unknown field ${k}`);
+  const list = (v, what) => Array.isArray(v) && v.every((x) => typeof x === "string" && IDENT.test(x)) && new Set(v).size === v.length ? v : (fail(where, `host.schema.${what} must be a list of distinct lowercase names`), []);
+  const tables = list(sc.tables, "tables");
+  if (!tables.length) fail(where, "host.schema.tables names no table");
+  const functions = sc.functions === undefined ? [] : list(sc.functions, "functions");
+  for (const fn of functions) if (fn.startsWith("shell_pack_")) fail(where, `host.schema.functions: ${fn} is the shell's`);
+  const platformRead = sc.platform_read === undefined ? [] : list(sc.platform_read, "platform_read");
+  for (const t of platformRead) if (!tables.includes(t)) fail(where, `host.schema.platform_read: ${t} is not one of host.schema.tables`);
+  const adopts = {};
+  if (sc.adopts !== undefined) {
+    if (!sc.adopts || typeof sc.adopts !== "object" || Array.isArray(sc.adopts)) fail(where, "host.schema.adopts must be an object of pack migration -> shell migration");
+    else for (const [k, v] of Object.entries(sc.adopts)) {
+      if (!/^\d{4}_[a-z0-9_]+$/.test(k) || typeof v !== "string" || !/^\d{4}_[a-z0-9_]+$/.test(v)) fail(where, `host.schema.adopts.${k}: NNNN_name -> NNNN_name (file names without .sql)`);
+      else adopts[k] = v;
+    }
+  }
+  const references = {};
+  if (sc.references !== undefined) {
+    if (!sc.references || typeof sc.references !== "object" || Array.isArray(sc.references)) fail(where, "host.schema.references must be an object of shell table.column -> its table");
+    else for (const [k, v] of Object.entries(sc.references)) {
+      if (!/^[a-z][a-z0-9_]{1,62}\.[a-z][a-z0-9_]{1,62}$/.test(k) || typeof v !== "string" || !tables.includes(v)) fail(where, `host.schema.references.${k}: a shell table.column -> one of host.schema.tables`);
+      else references[k] = v;
+    }
+  }
+  return { tables, functions, adopts, platform_read: platformRead, references };
+}
 
 function loadPack(dirName) {
   const dir = path.join(PACKS_DIR, dirName);
@@ -424,12 +509,20 @@ function loadPack(dirName) {
   const entry = m.entry ?? (existsSync(path.join(dir, "index.ts")) ? "index.ts" : null);
   if (entry !== null && (typeof entry !== "string" || !/^[a-z0-9_\-/]+\.ts$/i.test(entry) || entry.includes(".."))) fail(where, "entry must be a .ts file inside the pack");
   else if (entry !== null && !existsSync(path.join(dir, entry))) fail(where, `entry ${entry} does not exist`);
+  // A host pack's schema (mold_v0-049): its tables under their own names, its functions, the migrations it adopts.
+  const schema = hostSchemaOf(m, dirName, where);
   let migrations = null;
   if (m.migrations !== undefined) {
     if (typeof m.migrations !== "string" || !/^[a-z0-9_\-/]+$/i.test(m.migrations) || m.migrations.includes("..")) fail(where, "migrations must be a directory inside the pack");
     else if (!existsSync(path.join(dir, m.migrations)) || !statSync(path.join(dir, m.migrations)).isDirectory()) fail(where, `migrations directory ${m.migrations} does not exist`);
-    else if (checkMigrations(path.join(dir, m.migrations), id, `packs/${dirName}/${m.migrations}`) === 0) fail(where, `migrations directory ${m.migrations} has no .sql files`);
+    else if (checkMigrations(path.join(dir, m.migrations), id, `packs/${dirName}/${m.migrations}`, schema) === 0) fail(where, `migrations directory ${m.migrations} has no .sql files`);
     else migrations = m.migrations;
+  }
+  if (schema) {
+    if (!migrations) fail(where, "host.schema needs the pack's migrations (pack.json migrations), which create those tables");
+    else for (const [mine, shell] of Object.entries(schema.adopts ?? {}))
+      if (!existsSync(path.join(dir, m.migrations, `${mine}.sql`))) fail(where, `host.schema.adopts names ${mine}, which is not one of its migrations`);
+      else if (!existsSync(path.join(ROOT, "sql", "migrations", `${shell}.sql`))) fail(where, `host.schema.adopts maps ${mine} to ${shell}, which is not a shell migration`);
   }
   const pages = [];
   if (m.pages !== undefined && !Array.isArray(m.pages)) fail(where, "pages must be a list");
@@ -476,7 +569,7 @@ function loadPack(dirName) {
   let host = null;
   if (m.host !== undefined) {
     const h = m.host;
-    const HOST_KEYS = new Set(["entry", "scripts", "profile"]);
+    const HOST_KEYS = new Set(["entry", "scripts", "profile", "schema"]);
     if (!h || typeof h !== "object" || Array.isArray(h)) fail(where, "host must be an object {entry, scripts?, profile?}");
     else {
       for (const k of Object.keys(h)) if (!HOST_KEYS.has(k)) fail(where, `host: unknown field ${k}`);
@@ -500,7 +593,9 @@ function loadPack(dirName) {
   if (entry === null && !host) for (const e of walk(dir)) if (!e.dir && !e.link && CODE_FILE.test(e.p) && !(runnerDir !== null && within(runnerDir, e.p)))
     fail(where, `${posix(path.relative(dir, e.p))} is server code but the pack has no entry (name it in pack.json \`entry\`, or move a run program under \`runner\`)`);
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
-  return { id, dir, json: m, host, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)) }, pages };
+  // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
+  const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
+  return { id, dir, json: m, host, schema, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -574,9 +669,20 @@ const SHELL_TABLES = new Set(["pack_schema_migrations", "schema_migrations"]);
 for (const f of existsSync(path.join(ROOT, "sql", "migrations")) ? readdirSync(path.join(ROOT, "sql", "migrations")).filter((x) => x.endsWith(".sql")) : [])
   for (const m of readFileSync(path.join(ROOT, "sql", "migrations", f), "utf8").matchAll(/CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)/gi))
     SHELL_TABLES.add(m[1].toLowerCase());
+// The shell's own functions (its migrations define them): no host pack may declare one (mold_v0-049).
+const SHELL_FUNCTIONS = new Set();
+for (const f of existsSync(path.join(ROOT, "sql", "migrations")) ? readdirSync(path.join(ROOT, "sql", "migrations")).filter((x) => x.endsWith(".sql")) : [])
+  for (const m of readFileSync(path.join(ROOT, "sql", "migrations", f), "utf8").matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?"?([a-z_][a-z0-9_]*)/gi))
+    SHELL_FUNCTIONS.add(m[1].toLowerCase());
 for (const p of packs) {
   const clash = [...SHELL_TABLES].filter((t) => t.startsWith(`${p.id}_`));
   if (clash.length) fail(`packs/${p.id}`, `its table prefix ${p.id}_ is taken by the shell's ${clash.join(", ")}: choose another id`);
+  for (const t of p.schema?.tables ?? []) {
+    if (SHELL_TABLES.has(t)) fail(`packs/${p.id}/pack.json`, `host.schema.tables: ${t} is a shell table`);
+    for (const q of packs) if (`${t}`.startsWith(`${q.id}_`) && q !== p) fail(`packs/${p.id}/pack.json`, `host.schema.tables: ${t} is named with pack ${q.id}'s prefix`);
+    for (const q of packs) if (q !== p && q.schema?.tables.includes(t)) fail(`packs/${p.id}/pack.json`, `host.schema.tables: ${t} is also pack ${q.id}'s`);
+  }
+  for (const fn of p.schema?.functions ?? []) if (SHELL_FUNCTIONS.has(fn)) fail(`packs/${p.id}/pack.json`, `host.schema.functions: ${fn} is a shell function`);
 }
 // One pack's table prefix may not be another's (pack "a" would own "a_b_…", pack "a_b"'s tables).
 for (const a of packs) for (const b of packs) if (a !== b && `${b.id}_`.startsWith(`${a.id}_`)) fail(`packs/${b.id}`, `its id starts with pack ${a.id}'s table prefix ${a.id}_`);
@@ -609,6 +715,62 @@ function limitsProblem(v, plans = true) {
   }
   return null;
 }
+
+/** profile.json `source_offer` (mold_v0-050): null when it is well formed, else what is wrong. */
+const SPDX = /^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/;
+function sourceOfferProblem(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app}";
+  for (const k of Object.keys(v)) if (k !== "app" && k !== "$comment") return `unknown field ${k} (known: app)`;
+  const a = v.app;
+  if (a === undefined || a === "licensor_exception") return null;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return 'app must be "licensor_exception" or {url, license}';
+  for (const k of Object.keys(a)) if (k !== "url" && k !== "license") return `app: unknown field ${k} (known: url, license)`;
+  if (typeof a.url !== "string" || !/^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~%/+=-]*)?$/.test(a.url) || a.url.length > 300) return "app.url must be an https:// address of the source (no query, no user or password)";
+  if (typeof a.license !== "string" || !SPDX.test(a.license)) return "app.license must be an SPDX licence id or expression";
+  return null;
+}
+
+/**
+ * deploy-facts.json (mold_v0-050): what the factory knows from the app's state about where this build is deployed, written
+ * into the build copy before the generators run (.claude/scripts/packs.py). Names, places and providers only: every value
+ * is a short word, a name, a host or an https:// address without a user, password or query, and each secret is a NAME.
+ * Anything else is refused, so a value can never be carried into the build by this file. -> the facts or null.
+ */
+function readFacts() {
+  if (!existsSync(FACTS_FILE)) return null;
+  const where = rel(FACTS_FILE);
+  const f = readJson(FACTS_FILE, where);
+  if (!f) return null;
+  const WORD = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,79}$/, HOST = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/, URL_ = /^https:\/\/[a-z0-9.-]+(:\d{1,5})?\/?$/, SECRET = /^[A-Z][A-Z0-9_]{1,62}$/;
+  const SOURCE = /^[A-Za-z0-9 .,_:/()<>'-]{1,300}$/;
+  const shape = {
+    $comment: "text", app_id: "id", target: ["vercel", "compose_remote"], source: "source",
+    vercel: { team: "word", api_project: "word", web_project: "word", production_url: "url", api_url: "url", function_region: "word" },
+    server: { provider: "word", host: "host", domain: "host", region: "word", compose_project: "word" },
+    database: { provider: "word", exposure: "word", resource: "word", region: "word" },
+    object_store: { provider: "word", bucket: "word", region: "word" },
+    secret_store: "word", secrets: { required: "names", optional: "names" },
+  };
+  const ok = {
+    text: (x) => typeof x === "string" && x.length <= 2000, id: (x) => typeof x === "string" && ID.test(x), word: (x) => x === null || (typeof x === "string" && WORD.test(x)),
+    host: (x) => x === null || (typeof x === "string" && HOST.test(x)), url: (x) => x === null || (typeof x === "string" && URL_.test(x)),
+    source: (x) => typeof x === "string" && SOURCE.test(x), names: (x) => Array.isArray(x) && x.length <= 200 && x.every((n) => typeof n === "string" && SECRET.test(n)),
+  };
+  const walkFacts = (obj, spec, at) => {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return fail(where, `${at || "the file"} must be an object`);
+    for (const [k, v] of Object.entries(obj)) {
+      const s = spec[k], here = at ? `${at}.${k}` : k;
+      if (s === undefined) fail(where, `unknown field ${here}: deploy facts carry names, places and providers only`);
+      else if (Array.isArray(s)) { if (!s.includes(v)) fail(where, `${here} must be one of ${s.join(", ")}`); }
+      else if (typeof s === "object") walkFacts(v, s, here);
+      else if (!ok[s](v)) fail(where, `${here} is not a ${s === "names" ? "list of secret NAMES (A-Z, 0-9, _)" : s === "url" ? "an https:// address with no path, user or query" : s} (a deploy fact is never a value)`);
+    }
+  };
+  walkFacts(f, shape, "");
+  for (const k of ["app_id", "target", "source", "database", "object_store", "secret_store", "secrets"]) if (f[k] === undefined) fail(where, `${k} is required`);
+  return f;
+}
+const deployFacts = readFacts();
 
 /**
  * The profile's optional `billing` (mold_v0-019, src/run-charges.ts): price per run, off unless `enabled` is true.
@@ -652,6 +814,9 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
+      // Where the build's own source is offered (mold_v0-050, src/source-offer.ts), optional: {app: {url, license}} or
+      // {app: "licensor_exception"} (the licensor's additional permission applies to this deployment, and it says so).
+      if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
       if (k === "install_clients") {
         const known = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)"/g)].map((m) => m[1]).filter((id) => id !== "header");
@@ -661,7 +826,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, mcp_server_version, mcp_instructions, install_clients)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, mcp_server_version, mcp_instructions, install_clients, source_offer)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -697,11 +862,12 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
 const { checkViews, viewsOf, tabRoles, tabLabel, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
 const out = {};
 const loaded = [];
 for (const [id, json, file] of entries) {
@@ -713,6 +879,9 @@ for (const [id, json, file] of entries) {
     if (file) { const m = await import(pathToFileURL(file).href); code = m.default?.default ?? m.default ?? null; }
     const def = validatePack(mergePack(id, declared, code));
     if (def.id !== id) throw new Error(\`its entry defines pack \${JSON.stringify(def.id)}; the ids must match\`);
+    // The source offer names the commit that runs (mold_v0-050): an agent kind on the upstream's repository runs its pin.
+    const offerProblems = upstreamProblems([{ id, manifest: { name: json.name, upstream: json.upstream }, definition: def }]);
+    if (offerProblems.length) throw new Error(offerProblems.join("; "));
     loaded.push({ id, name: json.name, words: json.words ?? {}, definition: def });
     out[id] = { declared, areas: (def.recordAreas ?? []).map((a) => RecordAreaSchema.parse(a)),
       credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label })),
@@ -763,7 +932,7 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
       packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
-      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts")]));
+      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts")]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
@@ -847,7 +1016,7 @@ files.set(srcPacks, HEADER +
   packs.map((p, i) => p.manifest.entry === null ? "" : `import pack${i} from ${JSON.stringify(importPath(srcPacks, path.join(p.dir, p.manifest.entry)))};\n`).join("") +
   `\n/**\n * Every pack in this build, in pack order (by id): its pack.json, the definePack fields its declarations compile to\n` +
   ` * (mold_v0-057; null for none) and its code entry's definePack export (null for a pack.json alone). src/packs.ts merges and checks them.\n */\n` +
-  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string }; readonly declared: unknown; readonly definition: unknown }[] = [` +
+  `export const PACKS: readonly { readonly manifest: { id: string; name: string; version: string; entry: string | null; migrations: string | null; words: Record<string, string>; dir: string; upstream?: { repo: string; commit: string; license?: string } }; readonly declared: unknown; readonly definition: unknown }[] = [` +
   (packs.length ? `\n${packs.map((p, i) => `  { manifest: ${JSON.stringify(p.manifest)}, declared: ${Object.keys(defsByPack[p.id]?.declared ?? {}).length ? JSON.stringify(defsByPack[p.id].declared) : "null"}, definition: ${p.manifest.entry === null ? "null" : `pack${i}`} },`).join("\n")}\n` : "") + "];\n");
 // The run tools the packs' agent kinds need (mold_v0-072; src/run-tools.ts): the runner image is built with exactly
 // these (scripts/install-run-tools.ts, the Dockerfile), each at its pinned version and checksum.
@@ -856,8 +1025,10 @@ files.set(path.join(OUT, "src", "run-tools.generated.json"), json({
   tools: [...new Set(packs.flatMap((p) => (defsByPack[p.id]?.kinds ?? []).flatMap((k) => k.tools ?? [])))].sort(),
 }) + "\n");
 files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
+  "/** A host pack's own schema (mold_v0-049): its tables under their own names, its functions, the shell migrations it adopts. */\n" +
+  "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
-  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir })))};\n`);
+  `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n`);
 // The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
 const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
 const hostPacks = packs.filter((p) => p.host && p.host.entry);
@@ -918,6 +1089,9 @@ if (existsSync(path.join(OUT, "orchestrator")))
   files.set(path.join(OUT, "orchestrator", "packs.generated.ts"), HEADER +
     "/** The host packs' orchestrator entries (mold_v0-039), relative to orchestrator/: main.ts runs the first, else the deterministic worker. */\n" +
     `export const ORCHESTRATOR_ENTRIES: readonly string[] = ${JSON.stringify(orchPacks.map((id) => `./packs/${id}/main.ts`))};\n`);
+files.set(path.join(OUT, "src", "deploy-facts.generated.ts"), HEADER +
+  "/** The deploy facts the factory wrote into this build copy (deploy-facts.json, mold_v0-050), read by src/data-map.ts; null without them. */\n" +
+  `export const DEPLOY_FACTS: unknown = ${deployFacts ? json(deployFacts) : "null"};\n`);
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
   `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);

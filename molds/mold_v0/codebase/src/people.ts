@@ -4,8 +4,9 @@
  *   clerk    src/clerk.ts, exactly as before: Clerk keeps people, organizations, memberships, invitations and sessions;
  *            Clerk is also the OAuth server for /mcp and the admin MCP
  *   builtin  src/builtin-auth.ts: an emailed code and Google, people and sessions in this server's Postgres, invitations
- *            emailed by src/email.ts. No OAuth server yet (mold_v0-013): MCP clients use keys in a header (a member's
- *            own key, src/member-keys.ts, or the workspace's key), never sign-in
+ *            emailed by src/email.ts. This server is the OAuth server for /mcp (src/mcp-oauth.ts, mold_v0-013):
+ *            connectors sign in; other MCP clients may use keys in a header (a member's own key, src/member-keys.ts,
+ *            or the workspace's key)
  *
  * Both speak Clerk's shapes (ClerkUser, ClerkMembership, ClerkInvitation, ClerkOrg), so the code that reads a person's
  * workspaces and role (src/app.ts customerSession, src/auth.ts memberRole), manages a team (src/admin.ts), finds platform

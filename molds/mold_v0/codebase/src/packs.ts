@@ -17,6 +17,7 @@ import { mergePack, type DeclaredPack } from "./pack-manifest.js";
 import { generateCatalog } from "./mcp-catalog.js";
 import { registerGeneratedTools } from "./mcp-tools.js";
 import { checkViews, viewsOf } from "./metric-spec.js";
+import { upstreamProblems, type UpstreamPin } from "./source-offer.js";
 import { PACKS } from "./packs.generated.js";
 import { RECORD_TOOL_NAMES, registerRecordTools, workspaceRecords } from "./record-areas.js";
 import { hostToolNames } from "./host.js";
@@ -33,6 +34,8 @@ export interface PackManifest {
   words: Record<string, string>;
   /** The pack's directory, relative to the codebase root (absolute in tests): where a run's programs are (mold_v0-041). */
   dir?: string;
+  /** pack.json `upstream` (mold_v0-050): the pinned project it runs or reads, offered by src/source-offer.ts. */
+  upstream?: UpstreamPin;
 }
 /**
  * One pack of the generated registry: its manifest, the definePack fields its pack.json declares (mold_v0-057; compiled
@@ -108,6 +111,8 @@ export function installPacks(list: readonly GeneratedPack[], reservedTools: read
     if (!areaOwner.has(c)) problems.push(`pack ${p.id}: run_results.check names ${c}, which is not a record area of this build`);
   // Metrics, charts and tabs (mold_v0-063, 058): what each names across the build (areas, fields, states, job kinds).
   if (!problems.length) problems.push(...checkViews(viewsOf(out)));
+  // The source offer names the upstream commit that runs (mold_v0-050): an agent kind on the upstream runs that commit.
+  problems.push(...upstreamProblems(out));
   if (problems.length) throw new PackDefinitionError(`packs refused:\n  ${problems.join("\n  ")}`);
   return out;
 }

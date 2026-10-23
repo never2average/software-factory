@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 import { getDb } from "./db.js";
+import { sessionEngine } from "./host-tables.js";
 
 /**
  * Raw sub-agent transcripts: one JSONL line per event, stored verbatim.
@@ -285,10 +286,13 @@ function facets(rows: { model: string; type: string; n: string | number }[]) {
 
 // ---------- Postgres fallback ----------
 
+// The table is the session engine's, a host pack's (mold_v0-049): in a build without it there is no session, so no
+// transcript to read, remove or search.
 const postgresStore: TranscriptStore = {
   kind: "postgres",
   async stats() { return null; },
   async append(s, events) {
+    if (!sessionEngine()) throw Object.assign(new Error(`No session ${s.id}`), { status: 404 });
     const db = await getDb();
     for (const e of events)
       await db.query(
@@ -299,14 +303,17 @@ const postgresStore: TranscriptStore = {
   },
   warm() {},
   async removeOrg(orgId) {
+    if (!sessionEngine()) return;
     const db = await getDb();
     await db.query("DELETE FROM transcript_events WHERE session_id IN (SELECT id FROM agent_sessions WHERE org_id = $1)", [orgId]);
   },
   async remove(orgId, sessionId) {
+    if (!sessionEngine()) return;
     const db = await getDb();
     await db.query("DELETE FROM transcript_events WHERE session_id = $1 AND EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = $1 AND s.org_id = $2)", [sessionId, orgId]);
   },
   async read(orgId, sessionId, offset, limit) {
+    if (!sessionEngine()) return { total: 0, events: [] };
     const db = await getDb();
     const owned = "session_id = $1 AND EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = $1 AND s.org_id = $2)";
     const [{ total }] = await db.query<{ total: number }>(`/* tenant: org_id check in the owned filter (EXISTS on agent_sessions) */ SELECT count(*) AS total FROM transcript_events WHERE ${owned}`, [sessionId, orgId]);
@@ -317,6 +324,7 @@ const postgresStore: TranscriptStore = {
     return { total, events: rows.map((r) => ({ ...r, ts: new Date(r.ts).toISOString() })) };
   },
   async search(p) {
+    if (!sessionEngine()) return { total: 0, hits: [], facets: facets([]), stats: { ms: 0, backend: "postgres" } };
     const db = await getDb();
     const started = Date.now();
     const params: unknown[] = [p.orgId];

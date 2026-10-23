@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import { AUTOSCALE, type TickState } from "./autoscaler.js";
 import { agentRunnability, scheduledIds } from "./compute-records.js";
 import { classifyOrchestrator, classifySession, FIX_LINKS, ROUTINE_REAPS, reapKind, type ReapKind, type SessionErrorKey } from "./error-classes.js";
@@ -236,10 +237,11 @@ export async function listJobs(q: Record<string, unknown>) {
   const include = str(q.include);
   const hours = RANGES[since];
   const recent = (t: string) => `(${t}.status IN ('queued', 'running') OR coalesce(${t}.finished_at, ${t}.created_at) > now() - make_interval(hours => $1) OR ${t}.id = $2)`;
-  // Every kind is read (the kind filter runs after, with the others) so the Kind facet can count each one.
+  // Every kind is read (the kind filter runs after, with the others) so the Kind facet can count each one. Jobs are the
+  // session engine's, a host pack's tables (mold_v0-049): a build without them has none.
   const [sims, rsh] = await Promise.all([
-    db.query<JobDb>(`${SIM_SQL} WHERE ${recent("s")} ORDER BY s.created_at DESC LIMIT 2000`, [hours, include]),
-    db.query<JobDb>(`${RSH_SQL} WHERE ${recent("r")} ORDER BY r.created_at DESC LIMIT 2000`, [hours, include]),
+    !sessionEngine() ? [] : db.query<JobDb>(`${SIM_SQL} WHERE ${recent("s")} ORDER BY s.created_at DESC LIMIT 2000`, [hours, include]),
+    !researchJobs() ? [] : db.query<JobDb>(`${RSH_SQL} WHERE ${recent("r")} ORDER BY r.created_at DESC LIMIT 2000`, [hours, include]),
   ]);
   const needle = str(q.q)?.toLowerCase();
   let rows = (await buildRows([...sims, ...rsh])).map(publicRow);
@@ -277,8 +279,9 @@ export async function listJobs(q: Record<string, unknown>) {
  * agent can run, its orchestrators, and research details.
  */
 export async function jobDetail(id: string) {
+  if (!sessionEngine()) throw notFound("Job"); // no session engine tables in this build (mold_v0-049)
   const db = await getDb();
-  const found = (await db.query<JobDb>(`${SIM_SQL} WHERE s.id = $1`, [id]))[0] ?? (await db.query<JobDb>(`${RSH_SQL} WHERE r.id = $1`, [id]))[0];
+  const found = (await db.query<JobDb>(`${SIM_SQL} WHERE s.id = $1`, [id]))[0] ?? (researchJobs() ? (await db.query<JobDb>(`${RSH_SQL} WHERE r.id = $1`, [id]))[0] : undefined);
   if (!found) throw notFound("Job");
   const [built] = await buildRows([found]);
   const now = Date.now();
@@ -391,6 +394,8 @@ export async function computeFailures(q: Record<string, unknown>) {
       WHERE kind IN ('worker_deleted', 'orphan_deleted', 'image_builder_deleted') AND at > now() - make_interval(hours => $1) GROUP BY kind ORDER BY count(*) DESC`, [hours]))
     .map((e) => ({ kind: e.kind, label: UNATTENDED[e.kind] ?? e.kind, count: n(e.count), last_at: iso(e.last_at), message: e.message }));
   const scheduled = await scheduledIds();
+  // Sessions are the session engine's, a host pack's table (mold_v0-049): a build without it has none.
+  if (!sessionEngine()) return { hours, launches, reaps, unattended, sessions: groupSessionFailures([], 0, scheduled), ended: 0 };
   const failed = await db.query<FailedSession>(
     `/* tenant: internal: admin Compute page, failed and unclaimable sessions across all orgs (admin only) */
      SELECT status, agent_id, simulation_id, left(error_message, 2000) AS error_message, completed_reason, metadata->>'infra_error' AS infra_error,

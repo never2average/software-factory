@@ -2,15 +2,24 @@
 -- src/run-spend.ts, src/usage-report.ts, src/rate-limits.ts, molds/mold_v0/MOLD.md).
 
 -- 053: a workspace's own runs' gateway usage, readable by its tenant work, so the month figures and spend pages it
--- reads count a running run's live cost. The policy stays the session rule, widened to runs of the same workspace
--- (runs is itself under tenant_isolation, so the subquery sees only the workspace's own runs).
+-- reads count a running run's live cost. The policy stays the session rule (octillion_session_org, 0003; mold_v0-049),
+-- widened to runs of the same workspace (runs is itself under tenant_isolation, so the subquery sees only the
+-- workspace's own runs). The function is defined again here for a database whose 0003 ran before mold_v0-049.
+CREATE OR REPLACE FUNCTION octillion_session_org(sid TEXT) RETURNS INT LANGUAGE plpgsql STABLE AS $$
+DECLARE o INT;
+BEGIN
+  IF sid IS NULL OR to_regclass('public.agent_sessions') IS NULL THEN RETURN NULL; END IF;
+  -- Static SQL, planned on first use (never while the table is missing) and cached: as cheap as the EXISTS it replaces.
+  SELECT s.org_id INTO o FROM public.agent_sessions s WHERE s.id = sid;
+  RETURN o;
+END $$;
 DO $mig$
 DECLARE
   r TEXT := octillion_tenant_role();
 BEGIN
   DROP POLICY IF EXISTS tenant_isolation ON gateway_usage;
   EXECUTE format('CREATE POLICY tenant_isolation ON gateway_usage TO %I USING ('
-    || 'EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = session_id AND s.org_id = octillion_tenant_org())'
+    || 'octillion_session_org(session_id) = octillion_tenant_org()'
     || ' OR (run_id IS NOT NULL AND EXISTS (SELECT 1 FROM runs x WHERE x.id = run_id AND x.org_id = octillion_tenant_org())))', r);
 END $mig$;
 -- A run's month: the month it was queued in (as a session's is its queued_at month).

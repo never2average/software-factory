@@ -20,15 +20,27 @@ $$ SELECT 'octillion_tenant_' || substr(md5(current_database()), 1, 10) $$;
 CREATE OR REPLACE FUNCTION octillion_tenant_org() RETURNS INT LANGUAGE sql STABLE AS
 $$ SELECT NULLIF(current_setting('octillion.org_id', true), '')::INT $$;
 
+-- The organization of the session a gateway token or usage row names (mold_v0-049): the session engine's sessions are
+-- a host pack's table (agent_sessions), absent from a build without one, so the gateway's policies look it up here
+-- instead of naming it. The lookup runs as the caller, under that table's own policy: for the tenant role it finds only
+-- its own organization's sessions; with no such table, or no such session, NULL (no rows).
+CREATE OR REPLACE FUNCTION octillion_session_org(sid TEXT) RETURNS INT LANGUAGE plpgsql STABLE AS $$
+DECLARE o INT;
+BEGIN
+  IF sid IS NULL OR to_regclass('public.agent_sessions') IS NULL THEN RETURN NULL; END IF;
+  -- Static SQL, planned on first use (never while the table is missing) and cached: as cheap as the EXISTS it replaces.
+  SELECT s.org_id INTO o FROM public.agent_sessions s WHERE s.id = sid;
+  RETURN o;
+END $$;
+
 DO $mig$
 DECLARE
   r TEXT := octillion_tenant_role();
   t TEXT;
   fk RECORD;
   seq RECORD;
-  -- Parent-scoped tables: visible when the parent row is the tenant's (the EXISTS runs under the parent's own policy).
-  via_product CONSTANT TEXT := 'EXISTS (SELECT 1 FROM products p WHERE p.id = product_id AND p.org_id = octillion_tenant_org())';
-  via_session CONSTANT TEXT := 'EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = session_id AND s.org_id = octillion_tenant_org())';
+  -- Gateway rows of a session: visible when the session is the tenant's (octillion_session_org, above).
+  via_session CONSTANT TEXT := 'octillion_session_org(session_id) = octillion_tenant_org()';
 BEGIN
   BEGIN
     EXECUTE format('CREATE ROLE %I NOLOGIN NOINHERIT', r);
@@ -41,12 +53,12 @@ BEGIN
   -- read-only on platform tables tenant code reads, read-write only where a policy limits the rows.
   EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %I', r);
   EXECUTE format('GRANT USAGE ON SCHEMA public TO %I', r);
-  EXECUTE format('GRANT SELECT ON library_tasks, platform_settings, platform_harnesses, model_prices, schema_migrations, journey_seed TO %I', r);
+  EXECUTE format('GRANT SELECT ON platform_settings, platform_harnesses, model_prices, schema_migrations TO %I', r);
 
-  -- Every table with an org_id column, except the shared libraries below: the tenant reads and writes its own rows only.
+  -- Every table with an org_id column: the tenant reads and writes its own rows only. (A host pack's tables are
+  -- secured by its own migrations, mold_v0-049, which also set their shared libraries' rules.)
   FOR t IN SELECT c.table_name FROM information_schema.columns c JOIN information_schema.tables x USING (table_schema, table_name)
-            WHERE c.table_schema = 'public' AND c.column_name = 'org_id' AND x.table_type = 'BASE TABLE'
-              AND c.table_name NOT IN ('developer_profiles', 'developer_populations', 'journey_templates') LOOP
+            WHERE c.table_schema = 'public' AND c.column_name = 'org_id' AND x.table_type = 'BASE TABLE' LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
     EXECUTE format('CREATE POLICY tenant_isolation ON %I TO %I USING (org_id = octillion_tenant_org()) WITH CHECK (org_id = octillion_tenant_org())', t, r);
@@ -59,32 +71,15 @@ BEGIN
   EXECUTE format('GRANT INSERT ON org_keys TO %I', r);
   EXECUTE format('REVOKE ALL ON access_requests, org_deletions FROM %I', r);
 
-  -- Shared libraries: rows with no organization are Octillion's public ones (readable by every tenant, changed by
-  -- none); an organization's own rows are its alone.
-  FOREACH t IN ARRAY ARRAY['developer_profiles', 'developer_populations', 'journey_templates'] LOOP
-    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('DROP POLICY IF EXISTS tenant_read ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS tenant_write ON %I', t);
-    EXECUTE format('CREATE POLICY tenant_read ON %I FOR SELECT TO %I USING (org_id IS NULL OR org_id = octillion_tenant_org())', t, r);
-    EXECUTE format('CREATE POLICY tenant_write ON %I TO %I USING (org_id = octillion_tenant_org()) WITH CHECK (org_id = octillion_tenant_org())', t, r);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO %I', t, r);
-  END LOOP;
-
   -- The organization itself: read its own row, nothing else (plans, budgets and links are set by the platform).
   ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
   DROP POLICY IF EXISTS tenant_isolation ON organizations;
   EXECUTE format('CREATE POLICY tenant_isolation ON organizations FOR SELECT TO %I USING (id = octillion_tenant_org())', r);
   EXECUTE format('GRANT SELECT ON organizations TO %I', r);
 
-  FOREACH t IN ARRAY ARRAY['scenarios', 'product_personas'] LOOP
-    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
-    EXECUTE format('CREATE POLICY tenant_isolation ON %I TO %I USING (%s) WITH CHECK (%s)', t, r, via_product, via_product);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO %I', t, r);
-  END LOOP;
-  -- Transcripts and gateway usage: read only. Session gateway tokens: a tenant may revoke its own sessions' tokens
-  -- (cancelling a run), never issue one.
-  FOREACH t IN ARRAY ARRAY['transcript_events', 'gateway_usage', 'gateway_tokens'] LOOP
+  -- Gateway usage: read only. Session gateway tokens: a tenant may revoke its own sessions' tokens (cancelling a run),
+  -- never issue one.
+  FOREACH t IN ARRAY ARRAY['gateway_usage', 'gateway_tokens'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
     EXECUTE format('CREATE POLICY tenant_isolation ON %I TO %I USING (%s)', t, r, via_session);
@@ -92,23 +87,13 @@ BEGIN
   END LOOP;
   EXECUTE format('GRANT UPDATE, DELETE ON gateway_tokens TO %I', r);
 
-  -- A population's agents: readable with the population (public ones too), changed only in the tenant's own.
-  ALTER TABLE developer_population_agents ENABLE ROW LEVEL SECURITY;
-  DROP POLICY IF EXISTS tenant_read ON developer_population_agents;
-  DROP POLICY IF EXISTS tenant_write ON developer_population_agents;
-  EXECUTE format('CREATE POLICY tenant_read ON developer_population_agents FOR SELECT TO %I USING (EXISTS (SELECT 1 FROM developer_populations p WHERE p.id = population_id))', r);
-  EXECUTE format('CREATE POLICY tenant_write ON developer_population_agents TO %I USING (EXISTS (SELECT 1 FROM developer_populations p WHERE p.id = population_id AND p.org_id = octillion_tenant_org())) WITH CHECK (EXISTS (SELECT 1 FROM developer_populations p WHERE p.id = population_id AND p.org_id = octillion_tenant_org()))', r);
-  EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON developer_population_agents TO %I', r);
-
   -- Narrower writes where tenant work changes only some columns, and audit-style tables it only appends to.
   EXECUTE format('REVOKE UPDATE, DELETE ON gateway_tokens FROM %I', r);
   EXECUTE format('GRANT UPDATE (revoked_at) ON gateway_tokens TO %I', r);
-  EXECUTE format('REVOKE UPDATE ON library_submissions FROM %I', r);
-  EXECUTE format('GRANT UPDATE (status, updated_at) ON library_submissions TO %I', r);
   EXECUTE format('REVOKE UPDATE, DELETE ON mcp_events, usage_rule_changes FROM %I', r);
 
   -- References: foreign-key checks bypass row-level security, so a tenant row could otherwise point at another
-  -- organization's product, scenario, persona or run. Every single-column reference from a table the tenant writes to a
+  -- organization's row. Every single-column reference from a table the tenant writes to a
   -- table under a tenant policy must name a row the tenant can see (its own, or a shared one).
   FOR fk IN
     SELECT c.conrelid::regclass::text AS child, a.attname AS col, c.confrelid::regclass::text AS parent, pa.attname AS pcol, c.conname

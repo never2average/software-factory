@@ -8,7 +8,7 @@
 
 **Edited in place (mold_v0-040).** AGENTS.md says a mold's codebase is never edited in place and base-code changes go to the mold's source by pull request. mold_v0 is the one exception: its source is this repository. A change to the shell is a pull request here that touches `molds/mold_v0/codebase`; the deploy gate then reads this repository's checks for the commit being deployed (below). mold_v1 keeps the rule unchanged: its snapshot is only ever written by `mold.py fetch|refresh` from its own source, and nothing in this exception reads or writes it.
 
-**A product, being made a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 started as the opposite, a working product copied as it is, so the factory could reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets). Since mold_v0-039 the product's own surface (its 31 MCP tools, widget and slash commands, its domain modules, its routes, console pages, landing page, docs, orchestrator extension, client skill and operator scripts) is the factory's **host pack `octillion`** (`packs/octillion/`, git-ignored like every pack: "Host packs" below), and an app minted from mold_v0 with no packs gets a neutral shell. What still carries the product in the shell: its tables in the base schema (mold_v0-049), the session engine that reads them (the job queue, the autoscaler's jobs, the Compute and Accounts pages), and words and environment names (mold_v0-045).
+**A product, being made a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 started as the opposite, a working product copied as it is, so the factory could reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets). Since mold_v0-039 the product's own surface (its 31 MCP tools, widget and slash commands, its domain modules, its routes, console pages, landing page, docs, orchestrator extension, client skill and operator scripts) is the factory's **host pack `octillion`** (`packs/octillion/`, git-ignored like every pack: "Host packs" below), and an app minted from mold_v0 with no packs gets a neutral shell. Since mold_v0-049 its tables are the pack's own migrations too: a shell with no packs has none of them. What still carries the product in the shell: the session engine that reads those tables in a build that has them (the job queue, the autoscaler's jobs, the Compute and Accounts pages; dormant without them), and words and environment names (mold_v0-045).
 
 ## What is in it today
 
@@ -30,8 +30,9 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
   Clerk is an optional adapter (`AUTH_PROVIDER=clerk`), kept unchanged for apps already on it: with `AUTH_PROVIDER` unset
   a server with `CLERK_SECRET_KEY` (a console with `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`) runs Clerk. One adapter
   (`src/people.ts`, Clerk's shapes) serves the portal's and the admin console's sessions, team management, member keys
-  and the workspace emails under either. Under the built-in sign-in MCP clients use keys in a header (a member's own
-  key, or the workspace's); its OAuth server is mold_v0-013. `npm run test:sign-in` runs one suite through both
+  and the workspace emails under either. Under the built-in sign-in the server is its own OAuth 2.1 authorization
+  server for `/mcp` (mold_v0-013, `src/mcp-oauth.ts`), so connectors that only sign in connect; other MCP clients may use
+  keys in a header (a member's own key, or the workspace's). `npm run test:sign-in` runs one suite through both
   adapters. Details: `codebase/docs/accounts.md`, "Sign-in: built-in or Clerk".
 - The source has no licence constraints (a hackathon project).
 - The operator's live copy moves to a factory-managed app through a new subdomain, two weeks side by side, then a public address switch only with the operator's yes (mold_v0-032).
@@ -45,8 +46,8 @@ API keys out of URLs, OAuth token audience checked, Origin validated on the MCP 
 ## Pack and record-area contract
 
 This is the seam the generalised shell exposes (mold_v0-038, record areas mold_v0-047, host packs mold_v0-039). **The
-shell side is built**; the product's own surface is the host pack `octillion` since mold_v0-039 (its tables stay in the
-base schema until mold_v0-049). The factory side is built too (mold_v0-024): `packs.py` applies a mold_v0 app's packs under the rules in
+shell side is built**; the product's own surface is the host pack `octillion` since mold_v0-039, its tables its own
+migrations since mold_v0-049 ("Host packs": its schema). The factory side is built too (mold_v0-024): `packs.py` applies a mold_v0 app's packs under the rules in
 [mold.json](mold.json) `packs` (see "In the factory" below). What 038 wired, in `molds/mold_v0/codebase`:
 
 - `scripts/gen-packs.mjs` (`npm run gen:packs`, `npm run check:packs`; the smoke test fails on a stale registry) reads
@@ -877,9 +878,57 @@ base schema until mold_v0-049). The factory side is built too (mold_v0-024): `pa
   adding a name is a change to the shell's contract and is reviewed as one. Nothing in the shell imports a pack: the
   host list is imported only by the processes' entries (`src/http.ts`, `src/stdio.ts`, `api/index.ts` through it, and
   the scripts that need the product), so no shell module's own imports reach pack code.
-  **Not covered:** the product's tables and the session engine's SQL over them stay in the shell until mold_v0-049, and
-  so do the admin MCP's job tools named for them (`list_simulations`, `get_simulation`, `cancel_simulation`) and the
-  admin skills' mentions of them; with zero packs admin-added harnesses cannot be managed in the console (their routes
+  *Its schema* (mold_v0-049). The product's 24 tables (`products`, `scenarios`, `simulations`, `agent_sessions`,
+  `transcript_events`, personas and tasks, populations, research, context and memory, journeys, nudges, task sets,
+  private harnesses, contributions, reports, product personas) left the shell's base schema for the host pack's own
+  migrations (`packs/octillion/migrations/`: `0001_tables`, every statement of the earlier `0001_baseline` about them, in
+  order; `0002_row_level_security`, the earlier `0003`'s policies, grants, reference checks and sequence grants for
+  them), so a database built with no packs has none of them (`npm run test:zero-pack`). They keep
+  their names, which the seam's pack-SQL rules cannot express; this is the **allowance**, for a host pack only (one
+  `profile.json` `host_packs` lists), declared in its pack.json `host.schema` and nowhere else:
+  - `tables`: its tables under names outside its `<id>_` prefix; never a shell table, another pack's, or a name in another
+    pack's prefix (gen-packs and `src/migrate.ts` refuse each). Their indexes and the sequences they own are its own too.
+  - Its migrations may also run DO blocks and GRANT, REVOKE and policy statements on those tables (the seam's helpers
+    cannot express a parent-scoped table such as `scenarios` through `products`, a shared library readable by every
+    workspace, or column-level grants), and define the functions it declares in `functions` (never a shell function,
+    never SECURITY DEFINER). The build's scan still refuses, in DO block bodies too as written (a DO block can build a
+    statement at run time, so the database check below is the guard that holds): roles, default privileges, SET/RESET ROLE,
+    SESSION AUTHORIZATION, `set_config`, disabling or un-forcing row-level security, OWNER TO, inheritance and partitions,
+    triggers, rules, views, extensions, schemas, operators, COPY, untrusted function languages and server file functions.
+  - `platform_read`: its platform libraries (`library_tasks`, `journey_seed`), which every workspace reads and none
+    writes and which had no row-level security in the shell; they stay so (the only pack tables without it): the runner
+    refuses one with an `org_id` column or that tenant work may write, and `check:rls` keeps them read-only.
+  - The database holds it to the rest whatever the build let through (`src/migrate.ts`): before and after its migrations,
+    every relation, policy, grant, column, constraint, function, trigger, rule, role, membership, default privilege,
+    inheritance, event trigger, publication and schema that is not its own must be unchanged; the one change allowed on a
+    shell table is a foreign key it declares in `references` (a shell column to one of its tables: octillion's is
+    `gateway_tokens.session_id` to `agent_sessions`, as before). Rows are not compared: a host pack's migration is the
+    product's reviewed code, as its server code is, and could write shell rows; every
+    declared table must exist and be under row-level security (but its platform libraries); `check:rls` checks and
+    probes them (its policies are the product's: `tenant_isolation`, `tenant_read`, `tenant_write`, `ref_*`).
+  - `adopts`: three shell migrations were split once for this (`SPLIT_MIGRATIONS` in `src/migrate.ts`: `0001_baseline`,
+    `0003_row_level_security`, `0009_usage_and_limits`, the only merged migrations ever edited, each accepted at its
+    earlier checksum, kept in `scripts/fixtures/pre-049-migrations/`). A database that applied the earlier version of a
+    split file has the product's part already, rows and all: the host pack's migration that adopts it is recorded there
+    without running (its one-time repairs, which already ran, never run again), and refused if its tables are missing.
+    Elsewhere it runs (on a schema-on-boot database too, as its baseline did once more before). The gateway's session rule no longer names `agent_sessions` (`octillion_session_org()`, 0003,
+    0009 and `0017_gateway_session_policies`, which rewrites it the same way on a database from before), so the shell's
+    own policies hold with or without the pack.
+  The session engine stays in the shell and reads those tables only in a build whose host pack has them
+  (`src/host-tables.ts`, from the build's registry, never from the database); with none it is dormant: no demand, no
+  claims, no spend, empty Compute, Accounts, Usage and Billing figures, and a workspace deletes without them. Its admin MCP
+  job tools named for simulations (`list_simulations`, `get_simulation`, `cancel_simulation`) are the host pack's, at the
+  same places (`adminMcp.tools`, with `adminMcp.reword` for `get_account`'s words and `adminMcp.skills` for the two skills
+  that name them); the reads and the cancel behind them are the shell's (`src/pack-host.ts`).
+  `npm run test:migrations` proves it: databases at the shell's older versions (schema-on-boot, and the pre-049
+  migrations recorded up to 0001, 0003, 0008, 0013 and 0016, each with rows in every table) upgrade with every row identical;
+  with no packs their shell schema equals a new one's and the product's tables stay with their rows; with the host pack
+  every one comes out identical to a new database, which equals the earlier schema table for table, column for column,
+  constraint, index, policy and grant, but for the pack's own bookkeeping and the gateway's rule through its function.
+  **Not covered:** the session engine itself is still the shell's code, named for its sessions (a generic job engine is
+  `jobKinds`, mold_v0-041); a database built before mold_v0-049 that runs with no packs keeps the product's tables, unused;
+  a rollback to a release from before mold_v0-049 runs (its schema is there) but its `db:migrate` reports the split files as
+  edited; with zero packs admin-added harnesses cannot be managed in the console (their routes
   add to the product's developer population, so they are the host pack's);
   the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
   console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
@@ -910,7 +959,7 @@ by its code entry's `definePack({...})` when it has one (tools and routes are co
 | `credentials` (`credentials`) | fields a workspace must give: label, help, bound to the workspace, an asset or an environment, how a run receives it (environment name, or tmpfs file and optionally the variable naming its path) | the workspace credential vault (mold_v0-034, built): the console's Credentials page; a kind's `credentials` names what its runs receive; only names reach a run's definition |
 | `schedules` (`schedules`) | default schedules per workspace (a run kind over the workspace's asset records, a cron expression in UTC) | the scheduler (mold_v0-035, built: `src/schedules.ts`), editable per workspace by owners at `/app/schedules`; record areas' `due` dates post notices and email owners daily |
 | `onboarding` (`onboarding`) | checklist steps and the event that ticks each off | the `/app` setup checklist (mold_v0-011, built: `src/onboarding.ts`, `/api/onboarding`) |
-| `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id; every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
+| `migrations` | versioned SQL for the pack's own tables, prefixed with the pack id (a host pack's under their own names: `host.schema`, mold_v0-049); every workspace-owned table carries the workspace id under row-level security that fails closed | applied after the shell's migrations (mold_v0-031), in pack order; the context lane checks every pack table |
 | nav and profile words | console navigation entries, and words the pack shows instead of the shell's (a workspace shown as a "company", a run as an "audit") | the console sidebar (today `web/src/config/nav-config.ts`) and the profile |
 
 Record-area roles: a `source` is where requirements come from (versioned, read-only to customers); a `check` is a unit
@@ -922,6 +971,22 @@ run's results are rows of (run, workspace, check, asset, status, finding fingerp
 A pack that wraps an upstream project (the second app's audit-agent pack, for one) pins it by commit in its manifest
 and runs it at a process boundary inside the run's sandbox; it is never vendored into the pack or the shell, and never
 patched locally (changes go upstream by pull request).
+
+**Source offer and data map (mold_v0-050).** A pack's `upstream` pin (`{repo, commit, license}`, the licence an SPDX id)
+is offered when its licence is copyleft (AGPL, GPL, LGPL, MPL, EUPL, ...): the customer MCP server adds a "Source code:"
+paragraph to its instructions, and the root page and every install page end with a footer, each naming the project, its
+licence and the exact commit's address (`src/source-offer.ts`); an agent kind that runs the same repository at another
+commit is refused, so the commit offered is the one that runs. The build's own source is the profile's `source_offer`:
+`{"app": {"url", "license"}}` offers it; `{"app": "licensor_exception"}` (the factory's LICENSE-EXCEPTION.md
+permission covers whoever runs this deployment; the factory writes it from `defaults.source_offer`) offers no link and
+says why; absent, the build says nothing about its own source. With zero packs and no setting nothing changes. The
+data-flow and residency statement (`src/data-map.ts`) maps, per pack, where the code runs, where data is stored, the
+credentials by name, where model calls go and which hosts runs may reach, from the packs' declarations and the deploy
+facts the factory writes into the build copy (`deploy-facts.json`, names and places only, checked by gen-packs); it is
+`DATA-MAP.md` in the build copy (`scripts/data-map.ts`) and the console's About page (`/app/about`, `/admin/about`,
+linked from the sidebar's footer), which adds what the running server measures (its region, its database's provider and
+region, the object store, where each model provider's calls go now). Never a secret value: names, providers, regions and
+hosts only.
 
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
@@ -960,7 +1025,7 @@ run in its unbranded lane copy `build/<app_id>.lane/` (`packs.py lane-copy`), as
 
 - **Zero packs is a neutral shell.** A build with `packs: []` signs in, has workspaces, keys, the console, the vaults
   and the run engine, passes the smoke test and the tenant-SQL check, and has none of the product's tools, pages or
-  tables (mold_v0-038, 039, 049); the vocabulary check finds no product word in it (mold_v0-045).
+  tables (mold_v0-038, 039, 049; `npm run test:zero-pack`); the vocabulary check finds no product word in it (mold_v0-045).
 - **`["octillion"]` reproduces today's product.** A build of the new shell plus `packs/octillion` has the same surface as
   the old pin: the same MCP tools with the same schemas (the list `scripts/export-mcp-tools.ts` writes), the same HTTP
   routes, the same console pages and navigation, and the same tables. The surface diff between the two must be empty,

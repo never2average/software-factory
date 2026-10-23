@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { sessionEngine } from "./host-tables.js";
 import { AUTOSCALE } from "./autoscaler.js";
 import { scheduledAgents, variantsOf } from "./agents.js";
 import { currentPopulation } from "./agent-mix.js";
@@ -121,6 +122,8 @@ export async function listSessions(q: Record<string, unknown>) {
   const cond = [base, statusCond, stale ? STALE : null].filter(Boolean).join(" AND ");
   const sort = SORTS[str(q.sort) ?? "recent"];
   if (!sort) throw badRequest("sort must be recent, queued_at, wait or ended_at");
+  // Sessions are the session engine's, a host pack's table (mold_v0-049): a build without it has none.
+  if (!sessionEngine()) return { total: 0, facets: { status: {}, class: { "": 0 }, stale: { "": 0, "1": 0 } }, rows: [] };
   const include = str(q.include);
   const incP = include ? p(include) : null;
   const match = incP ? `((${cond}) OR s.id = ${incP})` : cond;
@@ -188,6 +191,7 @@ const SESSION_META = ["wall_ms", "harness_runs", "agent_turns", "max_agent_turns
 
 /** One session for its peek: the row, timing and run metadata, gateway rows, a fix hint, runnability and the last 20 events. */
 export async function sessionDetail(id: string) {
+  if (!sessionEngine()) throw notFound("Session"); // no session engine tables in this build (mold_v0-049)
   const db = await getDb();
   const [r] = await db.query<SessionDb & { tokens_in: unknown; tokens_out: unknown; metadata: Record<string, unknown> }>(
     `/* tenant: internal: admin Compute page, one session by id (admin only) */
@@ -395,7 +399,7 @@ export async function orchestratorDetail(id: number) {
 
   // Workers now: boat's worker sandboxes named for this orchestrator, with the session running in each.
   const mine = r.orchestrator_id ? listing.sandboxes.filter((s) => s.kind === "worker" && s.live && s.parent_orchestrator_id === r.orchestrator_id) : [];
-  const bySandbox = new Map((mine.length ? await db.query<{ id: string; agent_id: string | null; status: string; heartbeat_at: Date | null; sandbox_id: string }>(
+  const bySandbox = new Map((mine.length && sessionEngine() ? await db.query<{ id: string; agent_id: string | null; status: string; heartbeat_at: Date | null; sandbox_id: string }>(
     `/* tenant: internal: admin Compute page, sessions by worker sandbox id */
      SELECT DISTINCT ON (sandbox_id) id, agent_id, status, heartbeat_at, sandbox_id FROM agent_sessions WHERE sandbox_id = ANY($1) ORDER BY sandbox_id, queued_at DESC`,
     [mine.map((s) => s.id)]) : []).map((x) => [x.sandbox_id, x]));
@@ -408,7 +412,7 @@ export async function orchestratorDetail(id: number) {
 
   // Recent sessions on it: claimed by its worker id; once its fleet row is gone, the job's sessions started in its lifetime.
   const worker = r.meta?.worker_id ?? null;
-  const sessions = (await db.query<{ id: string; agent_id: string | null; status: string; queued_at: Date; started_at: Date | null; ended_at: Date | null; error_message: string | null }>(
+  const sessions = (!sessionEngine() ? [] : await db.query<{ id: string; agent_id: string | null; status: string; queued_at: Date; started_at: Date | null; ended_at: Date | null; error_message: string | null }>(
     `/* tenant: internal: admin Compute page, sessions of one orchestrator (worker id or its job) */
      SELECT id, agent_id, status, queued_at, started_at, ended_at, left(error_message, 200) AS error_message FROM agent_sessions
       WHERE ($1::text IS NOT NULL AND worker_id = $1)

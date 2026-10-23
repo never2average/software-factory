@@ -100,7 +100,7 @@
     "base_pattern": "Connector URL: (https?://\\S+/mcp)\\b"
   },
   "packs": {
-    "$comment": "Where an app's packs go and what proves the mold takes them (.claude/scripts/packs.py; mold_v0-024; MOLD.md \"Pack and record-area contract\"). A factory pack packs/<id>/files/ mirrors the codebase root and may add files ONLY under packs/<its own id>/ ({pack} is substituted with the pack's id, so it cannot write into another pack or the shell): its pack.json, its definePack entry, its migrations, its run programs. Its console pages need no files of their own: they render through the shell's generic page (web/src/app/{app,admin}/packs/[pack]/[page]) from pack.json. A file that already exists in the codebase is refused (a pack only adds). The id pattern is the shell's own (scripts/gen-packs.mjs: it is also the pack's table prefix). After copying, the shell's generator writes the registry the server and the console import; gen-packs refuses a pack whose code or SQL gets past the seam. `prune`: a pack folder an earlier apply left in the build copy for a pack the app no longer names is removed, so the registry never lists it. Host packs (mold_v0-039; src/host.ts): a pack named in `host_packs` that the app names is written into the build's profile.json `host_packs`, so it may carry the product's own surface: a host entry, operator scripts, console pages under web/src/packs/{pack}/ and an orchestrator extension under orchestrator/packs/{pack}/, each held to its own import rules by gen-packs. Every other pack is an ordinary one. The generators also write what depends on the packs' surface (mold_v0-039): the console's tool list (scripts/export-mcp-tools.ts), the docs answers' corpus (scripts/sync-docs-corpus.ts) and the internal docs (web/scripts/sync-docs.mjs, which reads a host pack's docs/); `verify` checks each is current.",
+    "$comment": "Where an app's packs go and what proves the mold takes them (.claude/scripts/packs.py; mold_v0-024; MOLD.md \"Pack and record-area contract\"). A factory pack packs/<id>/files/ mirrors the codebase root and may add files ONLY under packs/<its own id>/ ({pack} is substituted with the pack's id, so it cannot write into another pack or the shell): its pack.json, its definePack entry, its migrations, its run programs. Its console pages need no files of their own: they render through the shell's generic page (web/src/app/{app,admin}/packs/[pack]/[page]) from pack.json. A file that already exists in the codebase is refused (a pack only adds). The id pattern is the shell's own (scripts/gen-packs.mjs: it is also the pack's table prefix). After copying, the shell's generator writes the registry the server and the console import; gen-packs refuses a pack whose code or SQL gets past the seam. `prune`: a pack folder an earlier apply left in the build copy for a pack the app no longer names is removed, so the registry never lists it. Host packs (mold_v0-039; src/host.ts): a pack named in `host_packs` that the app names is written into the build's profile.json `host_packs`, so it may carry the product's own surface: a host entry, operator scripts, console pages under web/src/packs/{pack}/ and an orchestrator extension under orchestrator/packs/{pack}/, each held to its own import rules by gen-packs. Every other pack is an ordinary one. The generators also write what depends on the packs' surface (mold_v0-039): the console's tool list (scripts/export-mcp-tools.ts), the docs answers' corpus (scripts/sync-docs-corpus.ts) and the internal docs (web/scripts/sync-docs.mjs, which reads a host pack's docs/); `verify` checks each is current. The deploy copy also gets the deploy facts (`deploy_facts`, mold_v0-050): the factory writes deploy-facts.json at its root from the app's state (names, places and providers; never a value) and the operator's source offer into its profile.json before the generators run; gen-packs checks and copies them, and scripts/data-map.ts writes DATA-MAP.md (the data-flow and residency statement), which `verify` checks is current.",
     "pack_id": "^[a-z][a-z0-9_]{1,30}$",
     "allowed": [
       "^packs/{pack}/.+$",
@@ -137,6 +137,10 @@
       [
         "node",
         "web/scripts/sync-docs.mjs"
+      ],
+      [
+        "node_modules/.bin/tsx",
+        "scripts/data-map.ts"
       ]
     ],
     "verify": [
@@ -154,9 +158,15 @@
         "node_modules/.bin/tsx",
         "scripts/sync-docs-corpus.ts",
         "--check"
+      ],
+      [
+        "node_modules/.bin/tsx",
+        "scripts/data-map.ts",
+        "--check"
       ]
     ],
-    "prune": "packs"
+    "prune": "packs",
+    "deploy_facts": "deploy-facts.json"
   },
   "build_copy": {
     "$comment": "How build/<app_id>/ is made from the codebase (.claude/scripts/branding.py build_copy) for an app with packs or a brand: the source tree without these paths (the same the server deploy leaves out), and each node_modules folder the codebase has installed hard-linked in (never written), so the generators and the lanes' npm checks run in the copy. A folder that is not installed is left out; the image and the Vercel builds install their own.",
