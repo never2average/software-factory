@@ -22,6 +22,7 @@
  */
 import { createLocalJWKSet, importSPKI, jwtVerify, decodeProtectedHeader, type JWTPayload } from "jose";
 import { authProvider } from "./auth-provider.js";
+import { consoleUrl } from "./console-url.js";
 
 /** Clerk is on when it is the server's sign-in (src/auth-provider.ts: AUTH_PROVIDER=clerk, or unset with this key) and
  *  its key is set. With AUTH_PROVIDER=builtin it is off even when a key is left in the environment. */
@@ -100,7 +101,7 @@ export const invitations = {
    *  invitation's public_metadata (the account role, src/account-roles.ts). */
   send: (orgId: string, email: string, role: "admin" | "member" = "member", publicMetadata: Record<string, unknown> = {}) =>
     call<ClerkInvitation>("POST", `/organizations/${encodeURIComponent(orgId)}/invitations`, {
-      email_address: email, role: roleKey(role), public_metadata: publicMetadata, redirect_url: `${publicUrl()}/app/`,
+      email_address: email, role: roleKey(role), public_metadata: publicMetadata, redirect_url: `${consoleUrl()}/app/`,
     }),
   list: (orgId: string) => all<ClerkInvitation>(`/organizations/${encodeURIComponent(orgId)}/invitations`),
   revoke: (orgId: string, invitationId: string) =>
@@ -186,8 +187,16 @@ async function verifyJwt(token: string): Promise<JWTPayload & Record<string, any
 }
 const OAUTH_JWT_TYPES = ["at+jwt", "application/at+jwt"];
 
-const authorizedParties = () => (process.env.CLERK_AUTHORIZED_PARTIES ?? (process.env.PUBLIC_URL ? new URL(publicUrl()).origin : ""))
-  .split(",").map((x) => x.trim()).filter(Boolean);
+// Sessions are made where people sign in: the console. On the two-project shape that is OCTILLION_CONSOLE_URL, not the
+// API's own PUBLIC_URL, so both origins are authorized unless CLERK_AUTHORIZED_PARTIES names them explicitly.
+const authorizedParties = () => {
+  if (process.env.CLERK_AUTHORIZED_PARTIES !== undefined) return process.env.CLERK_AUTHORIZED_PARTIES.split(",").map((x) => x.trim()).filter(Boolean);
+  const origins = new Set<string>();
+  if (process.env.PUBLIC_URL) origins.add(new URL(publicUrl()).origin);
+  if (process.env.OCTILLION_CONSOLE_URL) { try { origins.add(new URL(consoleUrl()).origin); } catch { /* unusable address: ignored */ } }
+  return [...origins];
+};
+export const authorizedPartiesForTest = authorizedParties;
 
 export interface SessionClaims { userId: string; sessionId: string | null; orgId: string | null; orgRole: "admin" | "member" | null }
 
