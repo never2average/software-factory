@@ -9,8 +9,10 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: 'bg-card text-card-foreground',
+        // The red is the border and the icon; the words stay in the foreground colour (the destructive red on a card is
+        // about 4.4:1 in the dark theme, under WCAG AA's 4.5:1 for body text).
         destructive:
-          'bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current'
+          'bg-card text-foreground border-destructive/60 *:data-[slot=alert-description]:text-foreground/90 *:[svg]:text-destructive'
       }
     },
     defaultVariants: {

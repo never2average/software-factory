@@ -56,7 +56,7 @@ export function DocsToc({ headings }: { headings: DocHeading[] }) {
               onClick={() => setActive(h.id)}
               className={cn('flex gap-2 py-1 leading-snug transition-colors', h.depth === 3 && 'pl-4 text-[13px]',
                 active === h.id ? 'text-primary font-medium' : 'text-muted-foreground hover:text-foreground')}>
-              <span className='shrink-0 tabular-nums opacity-70'>{n}</span>
+              <span className='shrink-0 tabular-nums'>{n}</span>
               <span>{h.text}</span>
             </a>
           </li>

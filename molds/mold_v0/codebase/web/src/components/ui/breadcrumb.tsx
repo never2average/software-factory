@@ -50,12 +50,11 @@ function BreadcrumbLink({ className, render, ...props }: useRender.ComponentProp
   });
 }
 
+// The current page: plain text marked aria-current, not a disabled "link" (a control that does nothing).
 function BreadcrumbPage({ className, ...props }: React.ComponentProps<'span'>) {
   return (
     <span
       data-slot='breadcrumb-page'
-      role='link'
-      aria-disabled='true'
       aria-current='page'
       className={cn('font-normal text-foreground', className)}
       {...props}
@@ -63,17 +62,18 @@ function BreadcrumbPage({ className, ...props }: React.ComponentProps<'span'>) {
   );
 }
 
-function BreadcrumbSeparator({ children, className, ...props }: React.ComponentProps<'li'>) {
+// Decoration inside a BreadcrumbItem, after its link: never a list item of its own, so the list holds only items
+// (axe `list`: an <ol> may contain only <li>; a presentational <li> is not a list item).
+function BreadcrumbSeparator({ children, className, ...props }: React.ComponentProps<'span'>) {
   return (
-    <li
+    <span
       data-slot='breadcrumb-separator'
-      role='presentation'
       aria-hidden='true'
       className={cn('[&>svg]:size-3.5', className)}
       {...props}
     >
       {children ?? <IconChevronRight />}
-    </li>
+    </span>
   );
 }
 
