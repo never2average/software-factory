@@ -31,7 +31,8 @@
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
  *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
  *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json
- *                      `words`, over the neutral BASE; a host pack's host.profile.words come under the app's. Never
+ *                      `words`, over the neutral BASE; a host pack's host.profile.words come under the app's (and
+ *                      name its own engine's work only, not the generic runs of the usage pages). Never
  *                      part of the profile modules: gen-packs writes them to src/vocabulary.generated.ts (this layer)
  *                      and web/src/config/vocabulary.generated.ts (the build's words, resolved)
  *

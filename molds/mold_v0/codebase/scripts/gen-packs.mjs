@@ -849,8 +849,8 @@ function entitlementsProblem(v, limits) {
 }
 
 let profile = { ...DEFAULT_PROFILE };
-/** The profile's own `words` (mold_v0-100): a host pack's `host.profile.words` with profile.json `words` over them, word by word. */
-let profileWords = {};
+/** The profile's own `words` (mold_v0-100): profile.json `words` (the app's) and a host pack's `host.profile.words` (its engine's). */
+const appWords = {}, hostWords = {};
 /** profile.json `landing` (mold_v0-091): the app's own landing block, over a pack's; checked and written below, never part of the profile modules. */
 let profileLanding;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
@@ -869,13 +869,15 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "$comment") continue;
       // The app's words (mold_v0-100, src/words.ts): the shell's word keys (and their plurals) -> the app's word.
       if (k === "words") {
-        const layer = { ...(hostProfiles[0]?.host.profile?.words ?? {}), ...(filePf?.words ?? {}) };
         const known = new Set([...WORD_KEYS, ...WORD_KEYS.map((w) => `${w}s`)]);
-        if (!v || typeof v !== "object" || Array.isArray(v)) fail(rel(PROFILE_FILE), "words: an object of shell word -> the app's word");
-        else for (const [w, x] of Object.entries(layer)) {
-          if (!known.has(w)) fail(rel(PROFILE_FILE), `words.${w}: not a shell word (known: ${[...known].join(", ")})`);
-          else if (wordProblem(x)) fail(rel(PROFILE_FILE), `words.${w}: ${wordProblem(x)}`);
-          else profileWords[w] = x.trim();
+        for (const [where, layer, into] of [[`packs/${hostProfiles[0]?.id}: host.profile`, hostProfiles[0]?.host.profile?.words, hostWords], [rel(PROFILE_FILE), filePf?.words, appWords]]) {
+          if (layer === undefined) continue;
+          if (!layer || typeof layer !== "object" || Array.isArray(layer)) { fail(where, "words: an object of shell word -> the app's word"); continue; }
+          for (const [w, x] of Object.entries(layer)) {
+            if (!known.has(w)) fail(where, `words.${w}: not a shell word (known: ${[...known].join(", ")})`);
+            else if (wordProblem(x)) fail(where, `words.${w}: ${wordProblem(x)}`);
+            else into[w] = x.trim();
+          }
         }
         continue;
       }
@@ -1224,10 +1226,12 @@ files.set(path.join(OUT, "src", "deploy-facts.generated.ts"), HEADER +
   `export const DEPLOY_FACTS: unknown = ${deployFacts ? json(deployFacts) : "null"};\n`);
 // The build's words (mold_v0-100): the profile's own layer for the server (which lays it over the packs it loads,
 // src/vocabulary.ts), the resolved words for the console, and the engine's own source for the console to run.
-const buildWords = resolveWords([profileWords, ...packs.map((p) => p.manifest.words)]);
+const buildWords = resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]);
 files.set(path.join(OUT, "src", "vocabulary.generated.ts"), HEADER +
-  "/** The profile's own words (profile.json `words` over a host pack's host.profile.words), laid over the packs' by src/vocabulary.ts. */\n" +
-  `export const PROFILE_WORDS: Readonly<Record<string, string>> = ${json(profileWords)};\n`);
+  "/** The app's own words (profile.json `words`), laid over the host pack's and the packs' by src/vocabulary.ts. */\n" +
+  `export const PROFILE_WORDS: Readonly<Record<string, string>> = ${json(appWords)};\n` +
+  "/** A host pack's words for its own engine (host.profile.words): the shared copy's, never the generic run engine's pages'. */\n" +
+  `export const HOST_WORDS: Readonly<Record<string, string>> = ${json(hostWords)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "vocabulary.generated.ts"), HEADER +
   "/** The build's words (src/words.ts: the neutral BASE, under the packs' pack.json words, under the profile's), for the console. */\n" +
   `export const WORDS = ${json(buildWords)} as const;\n`);
