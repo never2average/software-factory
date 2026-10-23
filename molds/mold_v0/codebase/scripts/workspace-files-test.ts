@@ -1,5 +1,5 @@
 // The workspace store's retention and file viewer (mold_v0-056; src/workspace-retention.ts, src/workspace-files.ts,
-// src/workspace-store-policy.ts), offline: an embedded database, a local object store (OCTILLION_STORAGE_DIR), runs of
+// src/workspace-store-policy.ts), offline: an embedded database, a local object store (APP_STORAGE_DIR), runs of
 // a fixture program that writes what it is told (scripts/fixtures/runs/files.mjs), the HTTP server behind a fake Clerk.
 //   npm run test:workspace-files
 //
@@ -21,11 +21,12 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
-const VAULT = process.env.OCTILLION_VAULT_KEY!;
+const VAULT = ENV.APP_VAULT_KEY!;
 const PACK = "fixture_files";
 const sha = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
 try {
@@ -60,11 +61,11 @@ try {
     assert.deepEqual(policy.expiredVersions(busy, p(null, 7, 5), new Set([2]), now), [7, 6, 5, 4, 3, 1], "past the newest 5, only the protected version 2 stays");
     assert.deepEqual(policy.expiredVersions(vs, p(8, null, 100, 10), new Set(), now), [5, 4, 3, 2, 1], "keep_last 8, but none older than the ceiling's 10 days");
     // The ceiling: no pack keeps more than it; a pack that declares nothing gets it.
-    process.env.OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS = "5"; process.env.OCTILLION_WORKSPACE_RETENTION_MAX_DAYS = "30";
+    process.env.APP_WORKSPACE_RETENTION_MAX_VERSIONS = "5"; process.env.APP_WORKSPACE_RETENTION_MAX_DAYS = "30";
     assert.deepEqual(policy.retentionPolicy({ keep_last: 50, keep_days: 400 }), { keep_last: 5, keep_days: 30, max_versions: 5, max_days: 30, source: "pack" }, "capped by the ceiling");
     assert.deepEqual(policy.retentionPolicy({ keep_last: 3 }), { keep_last: 3, keep_days: null, max_versions: 5, max_days: 30, source: "pack" });
     assert.deepEqual(policy.retentionPolicy(undefined), { keep_last: 5, keep_days: 30, max_versions: 5, max_days: 30, source: "platform" }, "nothing declared: the ceiling");
-    delete process.env.OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS; delete process.env.OCTILLION_WORKSPACE_RETENTION_MAX_DAYS;
+    delete process.env.APP_WORKSPACE_RETENTION_MAX_VERSIONS; delete process.env.APP_WORKSPACE_RETENTION_MAX_DAYS;
     assert.deepEqual(policy.retentionPolicy(null), { keep_last: 100, keep_days: 365, max_versions: 100, max_days: 365, source: "platform" }, "the default ceiling");
     // Paths never shown.
     const rules = policy.pathRules({ workspaceStore: { secret_paths: ["private/**", "*.sqlite"] }, agentJobKinds: [{ agent: { strip: ["vendor/cache/**"] } }], credentials: [{ deliver_as: { file: "access.cfg" } }, { deliver_as: { env: "X_TOKEN" } }] });
@@ -140,7 +141,7 @@ try {
     "SELECT version FROM workspace_snapshots WHERE org_id = $1 AND store = $2 AND status = 'committed' ORDER BY version", [orgId, PACK])).map((r) => Number(r.version));
   const rowOf = async (orgId: number, v: number) => (await db.query<{ id: number; object_key: string; run_id: string }>(
     "SELECT id, object_key, run_id FROM workspace_snapshots WHERE org_id = $1 AND store = $2 AND version = $3", [orgId, PACK, v]))[0];
-  const objectPath = (key: string) => path.join(process.env.OCTILLION_STORAGE_DIR!, key);
+  const objectPath = (key: string) => path.join(ENV.APP_STORAGE_DIR!, key);
   const age = (orgId: number, versions: number[], days: number) => db.query(
     `UPDATE workspace_snapshots SET committed_at = now() - make_interval(days => $4) WHERE org_id = $1 AND store = $2 AND version = ANY ($3::int[])`, [orgId, PACK, versions, days]);
   const http = await startHttp();
@@ -285,13 +286,13 @@ try {
         assert.equal((await api(ownerA, `/${PACK}/diff?from=7&to=8&path=${encodeURIComponent(p)}`)).status, 403, `diff refused: ${p}`);
       }
       // Huge files: past the view limit, past the download limit.
-      process.env.OCTILLION_WORKSPACE_VIEW_MAX_BYTES = "1000"; process.env.OCTILLION_WORKSPACE_DOWNLOAD_MAX_BYTES = "2000"; process.env.OCTILLION_WORKSPACE_DIFF_MAX_BYTES = "1000";
+      process.env.APP_WORKSPACE_VIEW_MAX_BYTES = "1000"; process.env.APP_WORKSPACE_DOWNLOAD_MAX_BYTES = "2000"; process.env.APP_WORKSPACE_DIFF_MAX_BYTES = "1000";
       assert.equal((await api(ownerA, `/${PACK}/versions/8/file?path=big.txt`)).status, 413, "too large to show");
       assert.equal((await api(ownerA, `/${PACK}/versions/8/download?path=big.txt`)).status, 413, "too large to download");
-      delete process.env.OCTILLION_WORKSPACE_DOWNLOAD_MAX_BYTES;
+      delete process.env.APP_WORKSPACE_DOWNLOAD_MAX_BYTES;
       assert.equal((await api(ownerA, `/${PACK}/versions/8/download?path=big.txt`)).status, 200, "downloaded under the default limit");
       assert.equal((await api(ownerA, `/${PACK}/diff?from=7&to=8&path=big.txt`)).status, 413, "too large to compare");
-      delete process.env.OCTILLION_WORKSPACE_VIEW_MAX_BYTES; delete process.env.OCTILLION_WORKSPACE_DIFF_MAX_BYTES;
+      delete process.env.APP_WORKSPACE_VIEW_MAX_BYTES; delete process.env.APP_WORKSPACE_DIFF_MAX_BYTES;
       // Diffs: which files changed (none of the never-shown ones named), and a file's lines.
       const d = await json(ownerA, `/${PACK}/diff?from=7&to=8`);
       assert.equal(d.status, 200);
@@ -346,7 +347,7 @@ try {
     // ---------- 5. the vault locked ----------
     {
       await age(A.orgId, [6, 7], 30);
-      delete process.env.OCTILLION_VAULT_KEY;
+      delete process.env.APP_VAULT_KEY;
       const r = await retention.retentionSweep(new Date(Date.now() + 86_400_000));
       assert.equal(r.ran, false); assert.match(r.reason ?? "", /key vault is locked/);
       await assert.rejects(retention.sweepStore(A.orgId, PACK), /key vault is locked/);
@@ -356,7 +357,7 @@ try {
       assert.equal((await api(ownerA, `/${PACK}/versions`)).status, 200, "versions are listed");
       for (const p of [`/${PACK}/versions/8/files`, `/${PACK}/diff?from=7&to=8`, `/${PACK}/versions/8/file?path=notes.txt`, `/${PACK}/versions/8/download?path=notes.txt`, `/${PACK}/diff?from=7&to=8&path=notes.txt`])
         assert.equal((await api(ownerA, p)).status, 503, `no file while the vault is locked: ${p}`);
-      process.env.OCTILLION_VAULT_KEY = VAULT;
+      process.env.APP_VAULT_KEY = VAULT;
       const after = await retention.retentionSweep(new Date(Date.now() + 86_400_000));
       assert.equal(after.ran, true);
       assert.deepEqual(await versionsOf(A.orgId), [2, 3, 4, 8, 9], "unlocked, the next tick sweeps: v6 (now a month old) and v7 (no longer among the newest two) expire");

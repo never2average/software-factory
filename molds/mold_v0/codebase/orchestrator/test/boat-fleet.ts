@@ -1,6 +1,6 @@
 /**
  * Hermetic tests for production topology (orchestrators only inside boat sandboxes; worker sandboxes from there):
- *  - host guard: refuses a non-boat host, refuses RUNNER=pool|docker|local without OCTILLION_DEV_ALLOW_LOCAL=1,
+ *  - host guard: refuses a non-boat host, refuses RUNNER=pool|docker|local without APP_DEV_ALLOW_LOCAL=1,
  *    accepts a boat host with the launcher's markers; the real entry point refuses on this (non-boat) machine
  *  - RUNNER=boat fleet semantics: the server assignment caps concurrent worker sandboxes per agent group, claims carry
  *    {agent_ids:[group]} with limit = free slots, one fresh worker sandbox per session, deleted afterwards
@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { checkHost, type HostProbe } from "../core/host-guard.js";
 import { StartGate } from "../core/boat.js";
 import { computeBudget } from "../deploy/boat-orchestrators.js";
+import { isShellEnvName } from "../core/env-names.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TSX = path.join(ROOT, "node_modules", ".bin", "tsx");
@@ -36,10 +37,10 @@ const probe = (env: Record<string, string>, files: Record<string, string | true>
   env, exists: (p) => p in files, read: (p) => (typeof files[p] === "string" ? (files[p] as string) : null),
 });
 const boatFiles = { "/etc/ascii": true as const, "/home/user/.ascii": true as const, "/etc/octillion/host-role": '{"role":"boat-orchestrator","sandbox_id":"bx_abcd2345"}' };
-const boatEnv = { OCTILLION_HOST_ROLE: "boat-orchestrator", BOAT_ID: "bx_abcd2345" };
+const boatEnv = { APP_HOST_ROLE: "boat-orchestrator", BOAT_ID: "bx_abcd2345" };
 const g1 = checkHost("boat", probe({}, {}));
 const g2 = checkHost("local", probe(boatEnv, boatFiles));
-const g3 = checkHost("pool", probe({ OCTILLION_DEV_ALLOW_LOCAL: "1" }, {}));
+const g3 = checkHost("pool", probe({ APP_DEV_ALLOW_LOCAL: "1" }, {}));
 const g4 = checkHost("boat", probe(boatEnv, boatFiles));
 const g5 = checkHost("boat", probe({ ...boatEnv, BOAT_ID: "bx_zzzz9999" }, boatFiles));
 const g6 = checkHost("boat", probe({ BOAT_ID: "bx_abcd2345" }, { "/etc/ascii": true, "/home/user/.ascii": true }));
@@ -52,7 +53,7 @@ check("guard refuses a boat VM without the launcher's markers", !g6.ok && /HOST_
 const g7 = checkHost("boat", probe({ ...boatEnv, BOAT_AGENT_USER: "user" }, boatFiles));
 check("guard refuses running the coding agent as the sudo-capable boat user", !g7.ok && /BOAT_AGENT_USER=user/.test(g7.problems.join()), g7.problems.join());
 const real = spawnSync(TSX, ["orchestrator/worker.ts"], { cwd: ROOT, encoding: "utf8", timeout: 60_000,
-  env: { PATH: process.env.PATH, HOME: process.env.HOME, OCTILLION_URL: "http://127.0.0.1:1", OCTILLION_WORKER_TOKEN: "x", RUNNER: "local" } });
+  env: { PATH: process.env.PATH, HOME: process.env.HOME, APP_URL: "http://127.0.0.1:1", APP_WORKER_TOKEN: "x", RUNNER: "local" } });
 check("the real entry point refuses to start on this machine", real.status !== 0 && /Refusing to start/.test(real.stderr + real.stdout),
   (real.stderr + real.stdout).split("\n").find((l) => /Refusing/.test(l))?.slice(0, 140) ?? `exit ${real.status}`);
 
@@ -71,7 +72,7 @@ for (let i = 0; i < 3; i++) await gate.acquire();
 w.push(gate.waitMs());
 check("start gate: 3/min allows 3 immediately, then makes the 4th wait ~60s", w[0] === 0 && w[1]! > 55_000 && Date.now() - t0 < 1000, `4th waits ${Math.round(w[1]! / 1000)}s`);
 
-// ---------------------------------------------------------------- 3. mock boat + mock Octillion, real worker (RUNNER=boat)
+// ---------------------------------------------------------------- 3. mock boat + mock server, real worker (RUNNER=boat)
 
 const GROUPS = { "claude-code/opus": 2, "claude-code/sonnet": 1 };
 interface Sb { id: string; name: string; alive: boolean; files: Map<string, string>; cmds: string[]; procs: Map<number, { end: number; n: number }> }
@@ -203,8 +204,8 @@ await new Promise<void>((r) => boat.listen(BOAT_PORT, "127.0.0.1", () => r()));
 await new Promise<void>((r) => octi.listen(OCTI_PORT, "127.0.0.1", () => r()));
 const worker = spawn(TSX, ["orchestrator/worker.ts"], {
   cwd: ROOT, stdio: ["ignore", "pipe", "pipe"],
-  env: { PATH: process.env.PATH, HOME: process.env.HOME, OCTILLION_URL: `http://127.0.0.1:${OCTI_PORT}`, OCTILLION_WORKER_TOKEN: WORKER_TOKEN,
-    RUNNER: "boat", POD_CAPACITY: "3", ORCHESTRATOR_ID: "btest", OCTILLION_DEV_ALLOW_LOCAL: "1", BOAT_API_URL: `http://127.0.0.1:${BOAT_PORT}/api/v1`,
+  env: { PATH: process.env.PATH, HOME: process.env.HOME, APP_URL: `http://127.0.0.1:${OCTI_PORT}`, APP_WORKER_TOKEN: WORKER_TOKEN,
+    RUNNER: "boat", POD_CAPACITY: "3", ORCHESTRATOR_ID: "btest", APP_DEV_ALLOW_LOCAL: "1", BOAT_API_URL: `http://127.0.0.1:${BOAT_PORT}/api/v1`,
     POLL_INTERVAL_SECONDS: "1", BOAT_STARTS_PER_MINUTE: "100", HEARTBEAT_SECONDS: "30" },
 });
 let wlog = "";
@@ -229,7 +230,7 @@ const leaks = [...sandboxes.values()].filter((s) => [...s.files.values(), ...s.c
 const envFiles = [...sandboxes.values()].flatMap((s) => [...s.files.entries()].filter(([p]) => /\/env-\d+$/.test(p)).map(([, c]) => c));
 const envKeys = [...new Set(envFiles.flatMap((c) => c.split("\n").map((l) => l.split("=")[0]).filter(Boolean)))].sort();
 check("worker token (and boat key) never reach a worker sandbox; env files hold only harness creds",
-  !leaks.length && envFiles.length === 8 && envKeys.every((k) => !/OCTILLION|BOAT|WORKER/.test(k)) && envFiles.every((c) => /ANTHROPIC_API_KEY='ogw_/.test(c)),
+  !leaks.length && envFiles.length === 8 && envKeys.every((k) => !isShellEnvName(k) && !/BOAT|WORKER/.test(k)) && envFiles.every((c) => /ANTHROPIC_API_KEY='ogw_/.test(c)),
   `leaks ${leaks.length}; env keys: ${envKeys.join(",")}`);
 check("SIGTERM: left the fleet", fleetLeft, "");
 

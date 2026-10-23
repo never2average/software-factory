@@ -12,7 +12,7 @@ if ("assignments" in s) console.table(s.assignments);
 
 const a = await autoscalerStatus();
 const d = await computeDemand();
-console.log(`\nautoscaler: ${a.enabled ? "on" : "OFF (OCTILLION_AUTOSCALE=off)"}; leader ${a.leader ? `${a.leader.holder} (lease until ${new Date(a.leader.expires_at).toISOString()})` : "none"}`);
+console.log(`\nautoscaler: ${a.enabled ? "on" : "OFF (APP_AUTOSCALE=off)"}; leader ${a.leader ? `${a.leader.holder} (lease until ${new Date(a.leader.expires_at).toISOString()})` : "none"}`);
 console.log(`knobs: ${JSON.stringify(a.knobs)}`);
 console.log(`demand now: ${d.sessions} claimable sessions (${d.queued_sessions} queued), ${d.research} research, ${d.unclaimable_sessions} unclaimable`);
 if (a.last_tick) console.log(`last tick: ${JSON.stringify(a.last_tick)}`);

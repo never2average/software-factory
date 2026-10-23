@@ -1086,6 +1086,8 @@ files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
 const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
 const hostPacks = packs.filter((p) => p.host && p.host.entry);
 files.set(srcHosts, HEADER +
+  // First, before any host pack's module runs: the shell's env names under their old spelling too (src/host-env.ts).
+  (hostPacks.length ? `import "./host-env.js";\n` : "") +
   hostPacks.map((p, i) => `import host${i} from ${JSON.stringify(importPath(srcHosts, path.join(p.dir, p.host.entry)))};\n`).join("") +
   (hostPacks.length ? "\n" : "") +
   "/** The host packs of this build (src/host.ts), in pack order; none with zero packs. */\n" +
@@ -1193,6 +1195,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
   viewsModule());
+// The share image's alternative text (Next.js's opengraph-image.alt.txt beside the image): the console's description.
+files.set(path.join(OUT, "web", "src", "app", "opengraph-image.alt.txt"), `${profile.console_description}\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);

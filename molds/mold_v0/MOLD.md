@@ -8,7 +8,7 @@
 
 **Edited in place (mold_v0-040).** AGENTS.md says a mold's codebase is never edited in place and base-code changes go to the mold's source by pull request. mold_v0 is the one exception: its source is this repository. A change to the shell is a pull request here that touches `molds/mold_v0/codebase`; the deploy gate then reads this repository's checks for the commit being deployed (below). mold_v1 keeps the rule unchanged: its snapshot is only ever written by `mold.py fetch|refresh` from its own source, and nothing in this exception reads or writes it.
 
-**A product, being made a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 started as the opposite, a working product copied as it is, so the factory could reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets). Since mold_v0-039 the product's own surface (its 31 MCP tools, widget and slash commands, its domain modules, its routes, console pages, landing page, docs, orchestrator extension, client skill and operator scripts) is the factory's **host pack `octillion`** (`packs/octillion/`, git-ignored like every pack: "Host packs" below), and an app minted from mold_v0 with no packs gets a neutral shell. Since mold_v0-049 its tables are the pack's own migrations too: a shell with no packs has none of them. What still carries the product in the shell: the session engine that reads those tables in a build that has them (the job queue, the autoscaler's jobs, the Compute and Accounts pages; dormant without them), and words and environment names (mold_v0-045).
+**A product, being made a general shell.** Molds are general-purpose: no product or customer words, apps declared through a profile and packs. mold_v0 started as the opposite, a working product copied as it is, so the factory could reproduce it straight away (ticket mold_v0-029) and mint a second product from it (mold_v0-030). It becomes general step by step: [SCOPE.md](SCOPE.md) names each capability of the **agent-run shell**, where it lives and the ticket that generalises it (mold_v0-038 to 050, with the surviving older tickets). Since mold_v0-039 the product's own surface (its 31 MCP tools, widget and slash commands, its domain modules, its routes, console pages, landing page, docs, orchestrator extension, client skill and operator scripts) is the factory's **host pack `octillion`** (`packs/octillion/`, git-ignored like every pack: "Host packs" below), and an app minted from mold_v0 with no packs gets a neutral shell. Since mold_v0-049 its tables are the pack's own migrations too: a shell with no packs has none of them. What still carries the product in the shell: the session engine that reads those tables in a build that has them (the job queue, the autoscaler's jobs, the Compute and Accounts pages; dormant without them). Its name left the shell's words and environment names in mold_v0-045 ("Neutral words and environment names" below): what is left of it is listed, with what holds each, in the vocabulary check's allow list.
 
 ## What is in it today
 
@@ -21,6 +21,202 @@
 ## Hardening (ticket mold_v0-031, done)
 
 API keys out of URLs, OAuth token audience checked, Origin validated on the MCP endpoint, no static admin token, database row-level security proven on every deploy, and versioned migrations: all in the codebase since the fork point. The factory's side of it is mold_v0-051 (intake, the deploy's RLS check, the lanes; below).
+
+## Neutral words and environment names (mold_v0-045)
+
+**Environment names.** Every variable the shell reads is `APP_` and a name (`APP_VAULT_KEY`, `APP_WORKER_TOKEN`,
+`APP_PROXY_HOPS`, ...): short, the factory's own word for what it mints, and no clash with the shell's `SHELL` or a
+product's name. Until mold_v0-045 they had the first product's prefix, and apps deployed before then (the re-mint
+`octillion`, Maxwell) hold their values under those names on Vercel or in a server's env file: **each old name is still
+read, as a fallback** (`src/env-names.ts`, the code in `orchestrator/core/env-names.ts`, which the orchestrator and the run
+sandbox runner carry). The new name wins when both are set; reading an old name logs one line per name and process
+(`[env] <old> is a deprecated name, read as a fallback for <new>`), and an old name set beside a different new value logs
+that it is ignored. The server reads through `ENV` (a live view of `process.env`: a value set later, as tests do, is
+seen), any other environment through `appEnv(source)`; writes and the environments the shell builds for its children
+(the orchestrators' env file, a run sandbox's) use the new names only, and the children read both. The console's API
+address is read the same way (`web/src/lib/env-names.ts`, `web/next.config.ts`). A host pack written before then may
+read some names itself under the old spelling: in a build with a host pack (`src/host-env.ts`, imported first by the
+generated host list) every `APP_` name is also set under its old spelling, to the same value. The image env a coding
+agent's sandbox may never see is filtered on both spellings (`orchestrator/core/runners.ts`).
+
+What is kept as written, because something outside the release holds it (the vocabulary check's allow list says what):
+the session engine's four platform settings keep their stored keys (`src/settings.ts` `ENGINE_SETTINGS`: rows on live
+databases and the host pack read them by name; their environment value is read under the `APP_` name first); the database's
+row-level security functions, tenant role and setting (`sql/migrations` made them and every policy names them); the agent
+images' tags and boat templates (built, pinned in `harnesses/registry.json`); the orchestrator sandboxes' service unit,
+home and host marker (running sandboxes hold them, and the next release stops and restarts those).
+
+**The factory's side.** `mold.json` `env_names` declares the prefix and the old one. For a **new** app the factory reads
+the new names from the codebase as before (the compose file, `deploy/bootstrap.sh`, the console's `next.config.ts`,
+`mold.json` settings), so intake writes `APP_VAULT_KEY`, `APP_WORKER_TOKEN`. An **existing** app is left as it is: its
+state's names (`OCTILLION_VAULT_KEY`, ...) stay its secrets, a value held under the old name counts as present (never minted
+again under the new one, which would win over it), a value minted for a state name in the old spelling is the bootstrap's
+new one, and `--set-secret` takes the old names. On a server, the deploy's env step copies each old name's value to its new
+name once, before anything is minted (`lib/single_service.py` `server_env`), and `deploy/bootstrap.sh` does the same for a
+hand-made `.env`. Nothing on Vercel is renamed: the API reads the old names, and the factory writes only its own
+settings (`APP_CONSOLE_URL`, `APP_PROXY_HOPS`, the console's `APP_API_URL`) beside them at the next deploy.
+
+**Words.** The shell's text names the build by its profile (`PROFILE.name`, "Workspace" with no packs), and what it writes
+into Stripe and Clerk (lookup keys, metadata keys, meter names), its telemetry names, its default ClickHouse database and
+its run sandboxes' labels use the build's namespace (`src/namespace.ts`: the MCP server name, `workspace` with no packs), so
+a build with the host pack `octillion` keeps every key it wrote. The admin console's CSRF header is `X-App-Admin` (the
+namespace's old header is still accepted, so a console deployed before the API keeps working). The self-hosted stack's
+compose project, API service, database and backups are `app` and `api`.
+
+**The vocabulary check** (`npm run check:vocabulary`, also run by the smoke test; `npm run test:vocabulary` proves it)
+fails when a product word (`scripts/vocabulary.json` `words`) is in a file of the shell, in its text or its path, outside
+the allow list, where each entry is an exact spelling, the files it may be in and what holds it; an entry that covers
+nothing fails too. A pack's own files are not read. It also checks the table below, which it writes
+(`npm run check:vocabulary -- --write`) from every `APP_` name in the shell's code and deploy files.
+
+<!-- env-names:begin (generated by `npm run check:vocabulary -- --write` in the codebase; do not edit) -->
+
+140 names. The old name is read only when the new one is unset (src/env-names.ts); a family (`*`) is every name with that start.
+
+| Old name (still read) | Name |
+|---|---|
+| `OCTILLION_ADMIN_TOKEN` | `APP_ADMIN_TOKEN` |
+| `OCTILLION_AGENT_REPO_HOSTS` | `APP_AGENT_REPO_HOSTS` |
+| `OCTILLION_ALERT_WEBHOOK_URL` | `APP_ALERT_WEBHOOK_URL` |
+| `OCTILLION_ALLOW_UNSANDBOXED_RUNS` | `APP_ALLOW_UNSANDBOXED_RUNS` |
+| `OCTILLION_API_KEY` | `APP_API_KEY` |
+| `OCTILLION_API_URL` | `APP_API_URL` |
+| `OCTILLION_ARCHIVE` | `APP_ARCHIVE` |
+| `OCTILLION_ARCHIVE_BATCH` | `APP_ARCHIVE_BATCH` |
+| `OCTILLION_ARCHIVE_INTERVAL_SECONDS` | `APP_ARCHIVE_INTERVAL_SECONDS` |
+| `OCTILLION_AUTH_ORIGINS` | `APP_AUTH_ORIGINS` |
+| `OCTILLION_AUTH_SECRET` | `APP_AUTH_SECRET` |
+| `OCTILLION_AUTOSCALE` | `APP_AUTOSCALE` |
+| `OCTILLION_AUTOSCALE_TICK_SECONDS` | `APP_AUTOSCALE_TICK_SECONDS` |
+| `OCTILLION_BOAT_NAMESPACE` | `APP_BOAT_NAMESPACE` |
+| `OCTILLION_BUILD_CACHE_KEEP` | `APP_BUILD_CACHE_KEEP` |
+| `OCTILLION_CONSOLE_URL` | `APP_CONSOLE_URL` |
+| `OCTILLION_DATA_ALLOW_FILE_UPSTREAM` | `APP_DATA_ALLOW_FILE_UPSTREAM` |
+| `OCTILLION_DATA_ALLOW_PRIVATE` | `APP_DATA_ALLOW_PRIVATE` |
+| `OCTILLION_DEFAULT_SAMPLES` | `APP_DEFAULT_SAMPLES` |
+| `OCTILLION_DEV_ALLOW_LOCAL` | `APP_DEV_ALLOW_LOCAL` |
+| `OCTILLION_DEV_ENV` | `APP_DEV_ENV` |
+| `OCTILLION_DIRECT_KEYS` | `APP_DIRECT_KEYS` |
+| `OCTILLION_DOCKER_SOCKET` | `APP_DOCKER_SOCKET` |
+| `OCTILLION_DRAIN_SECONDS` | `APP_DRAIN_SECONDS` |
+| `OCTILLION_EGRESS` | `APP_EGRESS` |
+| `OCTILLION_EMAIL_NOTIFICATIONS` | `APP_EMAIL_NOTIFICATIONS` |
+| `OCTILLION_EMAIL_PROVIDER` | `APP_EMAIL_PROVIDER` |
+| `OCTILLION_FLEET_STALE_SECONDS` | `APP_FLEET_STALE_SECONDS` |
+| `OCTILLION_GATEWAY_MAX_COST_USD` | `APP_GATEWAY_MAX_COST_USD` |
+| `OCTILLION_GATEWAY_MAX_REQUESTS` | `APP_GATEWAY_MAX_REQUESTS` |
+| `OCTILLION_GATEWAY_MAX_TOKENS` | `APP_GATEWAY_MAX_TOKENS` |
+| `OCTILLION_GATEWAY_TIMEOUT_MS` | `APP_GATEWAY_TIMEOUT_MS` |
+| `OCTILLION_GATEWAY_URL` | `APP_GATEWAY_URL` |
+| `OCTILLION_HARNESS` | `APP_HARNESS` |
+| `OCTILLION_HOST_ROLE` | `APP_HOST_ROLE` |
+| `OCTILLION_INTERNAL_URL` | `APP_INTERNAL_URL` |
+| `OCTILLION_JOB_POD_CAPACITY` | `APP_JOB_POD_CAPACITY` |
+| `OCTILLION_JOB_TOKEN_HOURS` | `APP_JOB_TOKEN_HOURS` |
+| `OCTILLION_JOURNEY_SECRET` | `APP_JOURNEY_SECRET` |
+| `OCTILLION_LEASE_MINUTES` | `APP_LEASE_MINUTES` |
+| `OCTILLION_LIMIT_*` | `APP_LIMIT_*` |
+| `OCTILLION_LIMIT_ENDPOINTS_*` | `APP_LIMIT_ENDPOINTS_*` |
+| `OCTILLION_LIMIT_ENDPOINTS_INVITES_PER_HOUR_PER_WORKSPACE` | `APP_LIMIT_ENDPOINTS_INVITES_PER_HOUR_PER_WORKSPACE` |
+| `OCTILLION_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE` | `APP_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE` |
+| `OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP` | `APP_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP` |
+| `OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS` | `APP_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS` |
+| `OCTILLION_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP` | `APP_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP` |
+| `OCTILLION_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP` | `APP_LIMIT_ENDPOINTS_SIGNUP_PER_HOUR_PER_IP` |
+| `OCTILLION_LIMIT_MCP_*` | `APP_LIMIT_MCP_*` |
+| `OCTILLION_LIMIT_MCP_PER_KEY_PER_MINUTE` | `APP_LIMIT_MCP_PER_KEY_PER_MINUTE` |
+| `OCTILLION_LIMIT_MCP_PER_MEMBER_PER_MINUTE` | `APP_LIMIT_MCP_PER_MEMBER_PER_MINUTE` |
+| `OCTILLION_LIMIT_RUNS_BUDGET_USD_MAX` | `APP_LIMIT_RUNS_BUDGET_USD_MAX` |
+| `OCTILLION_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE` | `APP_LIMIT_RUNS_CONCURRENCY_PER_WORKSPACE` |
+| `OCTILLION_LIMIT_RUNS_KIND_MONTH_BUDGET_USD` | `APP_LIMIT_RUNS_KIND_MONTH_BUDGET_USD` |
+| `OCTILLION_LIMIT_RUNS_LIVE_PER_WORKSPACE` | `APP_LIMIT_RUNS_LIVE_PER_WORKSPACE` |
+| `OCTILLION_MAX_JOB_ORCHESTRATORS` | `APP_MAX_JOB_ORCHESTRATORS` |
+| `OCTILLION_MAX_ORCHESTRATORS` | `APP_MAX_ORCHESTRATORS` |
+| `OCTILLION_MAX_RUN_SANDBOXES` | `APP_MAX_RUN_SANDBOXES` |
+| `OCTILLION_MAX_SAMPLES` | `APP_MAX_SAMPLES` |
+| `OCTILLION_MAX_SESSIONS_PER_RUN` | `APP_MAX_SESSIONS_PER_RUN` |
+| `OCTILLION_MAX_USER_TURNS` | `APP_MAX_USER_TURNS` |
+| `OCTILLION_MCP_ALLOWED_ORIGINS` | `APP_MCP_ALLOWED_ORIGINS` |
+| `OCTILLION_MIGRATE_ON_BOOT` | `APP_MIGRATE_ON_BOOT` |
+| `OCTILLION_MIN_ONE_SANDBOX` | `APP_MIN_ONE_SANDBOX` |
+| `OCTILLION_MODELS` | `APP_MODELS` |
+| `OCTILLION_MODEL_DAILY_BUDGETS` | `APP_MODEL_DAILY_BUDGETS` |
+| `OCTILLION_NUDGE_INTERVAL_HOURS` | `APP_NUDGE_INTERVAL_HOURS` |
+| `OCTILLION_OAUTH_ACCESS_MINUTES` | `APP_OAUTH_ACCESS_MINUTES` |
+| `OCTILLION_OAUTH_AUDIENCE` | `APP_OAUTH_AUDIENCE` |
+| `OCTILLION_OAUTH_REFRESH_DAYS` | `APP_OAUTH_REFRESH_DAYS` |
+| `OCTILLION_ORCH_BOOT_MINUTES` | `APP_ORCH_BOOT_MINUTES` |
+| `OCTILLION_ORCH_IDLE_MINUTES` | `APP_ORCH_IDLE_MINUTES` |
+| `OCTILLION_ORCH_LAUNCHES_PER_TICK` | `APP_ORCH_LAUNCHES_PER_TICK` |
+| `OCTILLION_ORCH_PER_JOB` | `APP_ORCH_PER_JOB` |
+| `OCTILLION_ORCH_SNAPSHOT` | `APP_ORCH_SNAPSHOT` |
+| `OCTILLION_ORCH_STALE_MINUTES` | `APP_ORCH_STALE_MINUTES` |
+| `OCTILLION_ORG_MONTHLY_BUDGET_USD` | `APP_ORG_MONTHLY_BUDGET_USD` |
+| `OCTILLION_PLATFORM_ADMINS` | `APP_PLATFORM_ADMINS` |
+| `OCTILLION_PODS_PER_ORCHESTRATOR` | `APP_PODS_PER_ORCHESTRATOR` |
+| `OCTILLION_POD_CAPACITY` | `APP_POD_CAPACITY` |
+| `OCTILLION_PREVIEW` | `APP_PREVIEW` |
+| `OCTILLION_PROXY_HOPS` | `APP_PROXY_HOPS` |
+| `OCTILLION_RECYCLE_ON_DEPLOY` | `APP_RECYCLE_ON_DEPLOY` |
+| `OCTILLION_REGISTRY` | `APP_REGISTRY` |
+| `OCTILLION_REQUIRE_SUBSCRIPTION` | `APP_REQUIRE_SUBSCRIPTION` |
+| `OCTILLION_RESEARCH_STALE_MINUTES` | `APP_RESEARCH_STALE_MINUTES` |
+| `OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE` | `APP_RUNS_MAX_LIVE_PER_WORKSPACE` |
+| `OCTILLION_RUN_API_URL` | `APP_RUN_API_URL` |
+| `OCTILLION_RUN_BILLING` | `APP_RUN_BILLING` |
+| `OCTILLION_RUN_BOOT_MINUTES` | `APP_RUN_BOOT_MINUTES` |
+| `OCTILLION_RUN_CACHE_DAYS` | `APP_RUN_CACHE_DAYS` |
+| `OCTILLION_RUN_CACHE_DIR` | `APP_RUN_CACHE_DIR` |
+| `OCTILLION_RUN_CACHE_MAX_BYTES` | `APP_RUN_CACHE_MAX_BYTES` |
+| `OCTILLION_RUN_CHARGE_GRACE_SECONDS` | `APP_RUN_CHARGE_GRACE_SECONDS` |
+| `OCTILLION_RUN_CPUS` | `APP_RUN_CPUS` |
+| `OCTILLION_RUN_GID` | `APP_RUN_GID` |
+| `OCTILLION_RUN_ID` | `APP_RUN_ID` |
+| `OCTILLION_RUN_IMAGE` | `APP_RUN_IMAGE` |
+| `OCTILLION_RUN_LAUNCHES_PER_TICK` | `APP_RUN_LAUNCHES_PER_TICK` |
+| `OCTILLION_RUN_LAUNCH_ATTEMPTS` | `APP_RUN_LAUNCH_ATTEMPTS` |
+| `OCTILLION_RUN_LAUNCH_BACKOFF_SECONDS` | `APP_RUN_LAUNCH_BACKOFF_SECONDS` |
+| `OCTILLION_RUN_LOCKDOWN` | `APP_RUN_LOCKDOWN` |
+| `OCTILLION_RUN_MAX_TOKENS` | `APP_RUN_MAX_TOKENS` |
+| `OCTILLION_RUN_MEMORY_MB` | `APP_RUN_MEMORY_MB` |
+| `OCTILLION_RUN_NETWORK` | `APP_RUN_NETWORK` |
+| `OCTILLION_RUN_PACK_DIR` | `APP_RUN_PACK_DIR` |
+| `OCTILLION_RUN_PIDS` | `APP_RUN_PIDS` |
+| `OCTILLION_RUN_SAME_USER` | `APP_RUN_SAME_USER` |
+| `OCTILLION_RUN_SANDBOX` | `APP_RUN_SANDBOX` |
+| `OCTILLION_RUN_TOOLS_DIR` | `APP_RUN_TOOLS_DIR` |
+| `OCTILLION_RUN_UID` | `APP_RUN_UID` |
+| `OCTILLION_RUN_UIDS` | `APP_RUN_UIDS` |
+| `OCTILLION_RUN_UID_DIR` | `APP_RUN_UID_DIR` |
+| `OCTILLION_RUN_USER` | `APP_RUN_USER` |
+| `OCTILLION_SANDBOX_UNIT` | `APP_SANDBOX_UNIT` |
+| `OCTILLION_SCHEDULER` | `APP_SCHEDULER` |
+| `OCTILLION_SCHEDULES_MAX_PER_WORKSPACE` | `APP_SCHEDULES_MAX_PER_WORKSPACE` |
+| `OCTILLION_SELF_SERVE_ACCOUNTS` | `APP_SELF_SERVE_ACCOUNTS` |
+| `OCTILLION_SESSION_DAYS` | `APP_SESSION_DAYS` |
+| `OCTILLION_SESSION_INFRA_RETRIES` | `APP_SESSION_INFRA_RETRIES` |
+| `OCTILLION_SESSION_TOKEN_MINUTES` | `APP_SESSION_TOKEN_MINUTES` |
+| `OCTILLION_STORAGE_DIR` | `APP_STORAGE_DIR` |
+| `OCTILLION_TRACEPARENT` | `APP_TRACEPARENT` |
+| `OCTILLION_URL` | `APP_URL` |
+| `OCTILLION_URL_KEYS` | `APP_URL_KEYS` |
+| `OCTILLION_VAULT_KEY` | `APP_VAULT_KEY` |
+| `OCTILLION_VAULT_KEY_PREVIOUS` | `APP_VAULT_KEY_PREVIOUS` |
+| `OCTILLION_WORKER_TOKEN` | `APP_WORKER_TOKEN` |
+| `OCTILLION_WORKSPACE_DIFF_MAX_BYTES` | `APP_WORKSPACE_DIFF_MAX_BYTES` |
+| `OCTILLION_WORKSPACE_DOWNLOAD_MAX_BYTES` | `APP_WORKSPACE_DOWNLOAD_MAX_BYTES` |
+| `OCTILLION_WORKSPACE_HOOK_SECONDS` | `APP_WORKSPACE_HOOK_SECONDS` |
+| `OCTILLION_WORKSPACE_MAX_BUNDLE_BYTES` | `APP_WORKSPACE_MAX_BUNDLE_BYTES` |
+| `OCTILLION_WORKSPACE_MAX_BYTES` | `APP_WORKSPACE_MAX_BYTES` |
+| `OCTILLION_WORKSPACE_MAX_FILES` | `APP_WORKSPACE_MAX_FILES` |
+| `OCTILLION_WORKSPACE_RETENTION` | `APP_WORKSPACE_RETENTION` |
+| `OCTILLION_WORKSPACE_RETENTION_MAX_DAYS` | `APP_WORKSPACE_RETENTION_MAX_DAYS` |
+| `OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS` | `APP_WORKSPACE_RETENTION_MAX_VERSIONS` |
+| `OCTILLION_WORKSPACE_VIEW_CONCURRENCY` | `APP_WORKSPACE_VIEW_CONCURRENCY` |
+| `OCTILLION_WORKSPACE_VIEW_MAX_BYTES` | `APP_WORKSPACE_VIEW_MAX_BYTES` |
+| `OCTILLION_ZED_ACP` | `APP_ZED_ACP` |
+
+<!-- env-names:end -->
 
 ## Decisions
 
@@ -135,7 +331,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   over it, so an agent that rewrites its validator or a dependency changes nothing; only when it exits 0 is that same
   set staged; a value of a credential or the gateway token anywhere in it refuses the write-back. The runner fetches
   outside the run's proxy, so the repository's host is never an address or a local name, and only one of
-  `OCTILLION_AGENT_REPO_HOSTS` when the operator lists them. Results are read from a plain file only (never a link or a
+  `APP_AGENT_REPO_HOSTS` when the operator lists them. Results are read from a plain file only (never a link or a
   pipe). Everything the run prints, its stderr and results are redacted of its credentials and its gateway token.
   Egress is the run's proxy allowlist (the kind's `egress`), as for every run: enforced for programs that use the proxy
   settings, and for one that connects directly by the run sandbox's firewall (mold_v0-055). `npm run test:agent-runner`
@@ -195,11 +391,11 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
     kind's egress), at a full commit id, fetched at exactly that commit as the agent repository is (outside the run's
     proxy, with the step's `credential`, which no step and not the command receive, through the same helper for that
     host only; the commit's size is counted from git's objects before anything is checked out) into the **checkout cache**: outside the workspace store,
-    per workspace (`<OCTILLION_RUN_CACHE_DIR or /var/cache/octi-checkouts>/ws-<id>`, root's, traversable by the run's
+    per workspace (`<APP_RUN_CACHE_DIR or /var/cache/octi-checkouts>/ws-<id>`, root's, traversable by the run's
     user only during that workspace's run, closed again after), per repository and commit (an unguessable directory
     name), each checkout at most `max_bytes` (512 MB default) and the workspace's cache at most
-    `OCTILLION_RUN_CACHE_MAX_BYTES` (2 GiB; least recently used entries go first, never one the run uses), entries unused
-    for `OCTILLION_RUN_CACHE_DAYS` (7) and unfinished fetches removed; entering one workspace's cache closes every other.
+    `APP_RUN_CACHE_MAX_BYTES` (2 GiB; least recently used entries go first, never one the run uses), entries unused
+    for `APP_RUN_CACHE_DAYS` (7) and unfinished fetches removed; entering one workspace's cache closes every other.
     Each is linked at its `mount` (with `{name}`; never at or over a write-back path, an input or the results, and never
     over files the workspace holds) in the checkout, read-only to the run's user (root's files); the links are removed before the write-back is
     collected, so a checkout never enters the store. The write-back is still validated and gated as before.
@@ -209,7 +405,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `npm run test:run-tools` the catalogue, the installer (each format, a mismatched artifact, a tampered or linked
   program), the build's union and `--verify`. **Not covered:** the real tools are never downloaded by a test (their
   checksums were measured once, when pinned); a run sandbox lives one run, so on boat and docker the checkout cache is
-  per run unless the operator mounts `OCTILLION_RUN_CACHE_DIR` (a runner on its own server keeps it); a boat sandbox
+  per run unless the operator mounts `APP_RUN_CACHE_DIR` (a runner on its own server keeps it); a boat sandbox
   downloads the tools in its set-up (checked against the same checksums) rather than starting from a built image; only
   each tool's program is re-hashed per run (aws's `dist/` libraries and the rest of a tool's tree are trusted by being
   root's alone), and a tool the kind did not declare is off its PATH but still on disk; the checkout fetch runs git as
@@ -238,18 +434,18 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `system` (that proxy). **Teardown:** completing marks the sandbox for teardown and the next tick deletes it; a tick
   also deletes a sandbox whose run ended, was taken elsewhere, was queued again after its attempt lapsed (a crashed
   runner: the sweep requeues the run, a new sandbox carries out the next attempt), that never claimed within
-  `OCTILLION_RUN_BOOT_MINUTES` (10), that died, or that is past its run's deadline (a container also has its own
+  `APP_RUN_BOOT_MINUTES` (10), that died, or that is past its run's deadline (a container also has its own
   `timeout` at the run's lifetime and a margin); orphans of this deployment (by name prefix, or a label per compose
   project) go too, never a sandbox of a launch in flight. A sandbox of another provider (the provider changed) is left
-  alone, not reaped blind. The kill switch `OCTILLION_AUTOSCALE=off` stops run launches and deletes as well, and with
-  `OCTILLION_RUN_SANDBOX=off` or no provider nothing is torn down either (tokens still expire; boat sandboxes have the
-  provider's TTL, containers their own deadline). **Cost:** at most `OCTILLION_MAX_RUN_SANDBOXES` (10; 4 on a server) at once and
-  `OCTILLION_RUN_LAUNCHES_PER_TICK` (4) a tick, within the provider plan's free sandboxes; the provider's TTL is the
+  alone, not reaped blind. The kill switch `APP_AUTOSCALE=off` stops run launches and deletes as well, and with
+  `APP_RUN_SANDBOX=off` or no provider nothing is torn down either (tokens still expire; boat sandboxes have the
+  provider's TTL, containers their own deadline). **Cost:** at most `APP_MAX_RUN_SANDBOXES` (10; 4 on a server) at once and
+  `APP_RUN_LAUNCHES_PER_TICK` (4) a tick, within the provider plan's free sandboxes; the provider's TTL is the
   run's lifetime plus a margin; one live sandbox per run (a unique index); a failed start (the launch failed, or the
   sandbox died, never claimed, or claimed without starting the run) is retried with a back-off and the run fails after
-  `OCTILLION_RUN_LAUNCH_ATTEMPTS` (3) of them. The kind's budget and the account's limits (mold_v0-018, 053) are
+  `APP_RUN_LAUNCH_ATTEMPTS` (3) of them. The kind's budget and the account's limits (mold_v0-018, 053) are
   unchanged: the gateway stops a run's spend.
-  **Providers** (`OCTILLION_RUN_SANDBOX`, default `auto`): `boat` (the orchestrators' provider, its key in the vault: a
+  **Providers** (`APP_RUN_SANDBOX`, default `auto`): `boat` (the orchestrators' provider, its key in the vault: a
   small sandbox per run, the runner's code uploaded as the orchestrators' is, with the same `npm ci` for tsx; the runner
   imports only node's modules and its own files, walked from its entry, plus the pack's directory; git and nft are
   installed in the sandbox when missing; the run's user is leased by the runner and given an account, `octirun-<uid>`); `docker` (a server of its own: the compose project's
@@ -259,7 +455,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   privileges, no mount, memory, CPU and process limits); `off`. `auto` takes boat when its key is in the vault, else
   docker when this process has the socket. **With no provider nothing runs unsandboxed:** queued runs wait, each with
   one `waiting` event that says why, and the tick says so too. `process` (the runner as a child process, no sandbox,
-  no firewall) and a runner told `OCTILLION_RUN_LOCKDOWN=off` are refused unless `OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes`
+  no firewall) and a runner told `APP_RUN_LOCKDOWN=off` are refused unless `APP_ALLOW_UNSANDBOXED_RUNS=yes`
   (offline tests only).
   **What is enforced where.** The run's proxy allowlist: the proxy in the sandbox, for every connection through it.
   Direct egress (a program ignoring proxy settings, raw sockets to any port, DNS): the sandbox's firewall by the run
@@ -290,7 +486,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   committed snapshot (path, size, sha256, bytes) and `ctx` (the run's own workspace from the run row, its `records` and
   `db` under row-level security, the run, the snapshot's version and whether this run changed it), then the results are
   checked, so they may name what the hook indexed. It is called also when the run changed nothing, so an index can catch
-  up. If it throws or passes `OCTILLION_WORKSPACE_HOOK_SECONDS` (120) the run fails (`run`), its results are not written,
+  up. If it throws or passes `APP_WORKSPACE_HOOK_SECONDS` (120) the run fails (`run`), its results are not written,
   and **the snapshot stays committed** (it passed the run's validation; `workspace_hook_failed` says so); the next run's
   commit calls the hook again. Its own writes before failing are not undone; past its time its `records` and `db`
   refuse every further call. The results are checked for everything but their records' existence before the commit
@@ -329,7 +525,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `npm run test:usage`.
 - **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
   profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
-  non-positive one), the workspace's plan, and the server's environment (`OCTILLION_LIMIT_<SECTION>_<NAME>`), last wins.
+  non-positive one), the workspace's plan, and the server's environment (`APP_LIMIT_<SECTION>_<NAME>`), last wins.
   *MCP:* per address before sign-in, then per key, per member (all their keys) and per workspace (all its keys), counted
   in fixed one-minute windows in `rate_limit_hits` (platform rows, no tenant access) so they hold across instances; a
   refusal is HTTP 429 with `Retry-After` and a JSON-RPC error (`-32029`) naming the limit, its number and when to retry,
@@ -348,7 +544,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the requests in flight when it is reached). An account with no allowance (no plan, no override) starts no run and
   its running ones stop spending, as its own launches do. For these checks a run queued in an earlier month and still
   live counts in the current month too. The per-address count reads the client's address behind the real number of proxies (mold_v0-084,
-  `src/proxy-trust.ts`): `OCTILLION_PROXY_HOPS`, which the factory sets per target (1 on a server: the stack's Caddy; 1
+  `src/proxy-trust.ts`): `APP_PROXY_HOPS`, which the factory sets per target (1 on a server: the stack's Caddy; 1
   on Vercel: its edge; unset, 0, or 1 on Vercel), so the address is the one the nearest proxy saw and an entry a client
   writes into `X-Forwarded-For` is never read (`npm run test:proxy-hops`). A run container on the stack's internal runs
   network reaches the API with no proxy in front and could still name an address; the key, member and workspace
@@ -358,17 +554,17 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   invitations (`src/builtin-auth.ts` asks it for both), access requests, library submissions, usage alerts (80% and
   100% of the month's allowance, after a session or a run ends), due dates (`src/schedules.ts`) and billing notices (a
   run's charge given up on, `src/run-charges.ts`) are all built and sent there; `npm run test:email` fails if any other
-  file in `src/` talks to a provider or builds a message. The transport is `OCTILLION_EMAIL_PROVIDER`, else the
+  file in `src/` talks to a provider or builds a message. The transport is `APP_EMAIL_PROVIDER`, else the
   profile's `email.provider`, else Resend (its key in the Key vault); `test` keeps messages in the process (never in
   production); `none` sends nothing. Sign-in codes and invitations are always on; every other group (`access_requests`,
   `library`, `usage`, `due_dates`, `billing`) only when the app's profile lists it in `email.notifications` (a host
-  pack's profile may, for its product); `OCTILLION_EMAIL_NOTIFICATIONS` only narrows that list. An app built before
+  pack's profile may, for its product); `APP_EMAIL_NOTIFICATIONS` only narrows that list. An app built before
   this change sent every group whenever Resend was connected: before its next deploy its profile (or its host pack's)
   lists the groups it sends (the Octillion product: `access_requests`, `library`, `usage`; a pack with due dates such
   as ComplianceOS: `due_dates`), or they are logged as skipped. With no transport that
   can send, the About page and `/admin/emails` say so in one sentence. Every message is a row in `email_log` with a hash
   and the domain of its one address, never the address, a code or a key; subjects, senders and recipients lose line
-  breaks; every link is on the console's address from the environment (`src/console-url.ts`: `OCTILLION_CONSOLE_URL`,
+  breaks; every link is on the console's address from the environment (`src/console-url.ts`: `APP_CONSOLE_URL`,
   else `PUBLIC_URL`; anything but a plain http(s) address is ignored).
 - **Plan entitlements** (mold_v0-083, built; `src/entitlements.ts`): the app's own `profile.json` may declare
   `entitlements: { plans: { <plan>: { features: [...], run_charges: "charged" | "included" } }, without_plan }`
@@ -380,7 +576,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
 - **Price per run** (mold_v0-019, built; `src/run-charges.ts`, `sql/migrations/0014_run_charges.sql`): a billing usage
   event per finished run, **off by default**. Only the app's own `profile.json` turns it on (`billing: { enabled: true,
   currency, max_fixed, max_cost_plus_percent, charge_failed_runs, charge_cancelled_runs, stripe_meter }`; gen-packs
-  refuses a typo, and refuses `billing` in a host pack's profile); `OCTILLION_RUN_BILLING=off` turns it off on a server,
+  refuses a typo, and refuses `billing` in a host pack's profile); `APP_RUN_BILLING=off` turns it off on a server,
   never on. A job kind may declare `price: { currency, fixed, cost_plus_percent, on_failure, on_cancel }`: a fixed
   amount and/or the run's metered model cost plus a percent (usd only; the gateway's figure for the run's last attempt,
   never one the run reports, and never the attempts the platform failed).
@@ -394,7 +590,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the trigger could not. A succeeded run pays fixed + cost-plus; a failed one as `on_failure` (`free`, `cost`, `full`)
   unless the platform failed it (`infrastructure`: never charged); a cancelled one as `on_cancel` (`free`, `cost`).
   *Delivery:* each charge is an outbox row, sent by the server's loop (every minute) and the cron entry once the run has
-  been over for a grace period (`OCTILLION_RUN_CHARGE_GRACE_SECONDS`, default 120; model usage still streaming when it
+  been over for a grace period (`APP_RUN_CHARGE_GRACE_SECONDS`, default 120; model usage still streaming when it
   ended is refreshed into it first). Each row is claimed alone just before it is sent, so two deliverers never send it
   at once. With a Stripe customer and a live subscription priced on the meter (`stripe_meter`), it is one meter event
   (value in the currency's minor unit, identifier and idempotency key `run_charge:<run id>`, so a resend after a lost
@@ -433,7 +629,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   snapshot out before the program runs (each file checked against the sha256 manifest), and writes the directory back
   only when the program and the validator exited 0: it is staged, and becomes the next version inside the run's
   completion as succeeded; any other end discards it. Objects live in the product's storage (`src/storage.ts`
-  `objectStore()`: the R2 bucket, or `OCTILLION_STORAGE_DIR` on one machine and in tests) under
+  `objectStore()`: the R2 bucket, or `APP_STORAGE_DIR` on one machine and in tests) under
   `workspaces/org-<id>/<store>/`, sealed with the workspace's data key (`src/orgcrypto.ts` `sealBytes`, refused while
   the vault is locked) and bound by AES-GCM additional data to their workspace, store, row and manifest. A runner names
   a run and its lease token, never a workspace (`GET`/`PUT /api/worker/runs/:id/workspace`); packing never follows a
@@ -441,13 +637,13 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `npm run test:workspace-store` proves it with two workspaces.
   **Retention and the file viewer** (mold_v0-056, built): a pack declares `workspace_store` (`src/workspace-store-policy.ts`):
   `retention` keeps the newest `keep_last` versions and/or those committed within `keep_days`, each capped by the
-  platform's ceiling (`OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS`, 100; `OCTILLION_WORKSPACE_RETENTION_MAX_DAYS`, 365;
+  platform's ceiling (`APP_WORKSPACE_RETENTION_MAX_VERSIONS`, 100; `APP_WORKSPACE_RETENTION_MAX_DAYS`, 365;
   a pack that declares nothing gets the ceiling). Whatever the rules, the latest version, every version a run's results
   or a report reference (the version the run left, as the report tool reads it) and the version a store lease checked
   out are kept. A daily sweep from the scheduler's tick (`src/workspace-retention.ts`; `scheduler_marks`
   "workspace_retention") deletes the rest per workspace and store in one transaction, then their objects, and any object
   under that store's own prefix with no live row; never a key outside it. Idempotent; refused with the vault locked
-  (the day is then not marked). `OCTILLION_WORKSPACE_RETENTION=off` stops it. The console's **Files** page (`/app/files`,
+  (the day is then not marked). `APP_WORKSPACE_RETENTION=off` stops it. The console's **Files** page (`/app/files`,
   `src/workspace-files.ts` at `/api/workspace-files`, a `files` tab for a build with tabs) lists a store's versions
   (time, the run that wrote it, size), browses a version's files, shows a text file (at most 1 MiB, as text, never
   markup), downloads a file (an attachment, at most 25 MiB) and diffs two versions (files changed; a text file's lines),
@@ -489,11 +685,11 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   delivered); no rotation reminder or expiry.
 - **A run user per run** (mold_v0-078, built; `src/run-users.ts`, used by `src/run-harness.ts` and
   `src/run-sandbox-runner.ts`): every run's programs run as a uid of their own, leased for that run alone from a reserved
-  range (`OCTILLION_RUN_UIDS`, default `61000-64999`: never root, nobody or 65535; a uid `/etc/passwd` names is skipped)
+  range (`APP_RUN_UIDS`, default `61000-64999`: never root, nobody or 65535; a uid `/etc/passwd` names is skipped)
   and given back when it ends; the gid is the uid, with no supplementary groups. Before, every run of a host shared one
-  uid (`OCTILLION_RUN_UID`, no longer read) and the end-of-run sweep (every process of that user killed, its files in
+  uid (`APP_RUN_UID`, no longer read) and the end-of-run sweep (every process of that user killed, its files in
   the shared temporary directories removed) was host-wide: a concurrent run on the same host lost its steps (exit 128).
-  Leases are files in a root-only directory (`OCTILLION_RUN_UID_DIR`, default `/run/octi-run-uids`) naming the holding
+  Leases are files in a root-only directory (`APP_RUN_UID_DIR`, default `/run/octi-run-uids`) naming the holding
   process (pid and start time, so a reused pid is not mistaken for it) and its run, taken and given back under a
   host-wide lock (flock on a file of that directory, held by a child process: the kernel frees it when its holder dies,
   and no run's user can reach it), round robin (a released uid comes
@@ -510,7 +706,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   a dead runner's uid only after its leftovers are gone, foreign processes left alone, a fixed uid in use refused, eight
   runner processes at once get eight uids), and the bug: two runs at once on one host in two runner processes, one ends
   early and its sweep runs while the other keeps running; the other keeps its processes and files and finishes (on the
-  code before this, with `OCTILLION_RUN_UID` set, both failed "the run exited with 128"). `test:run-firewall` locks a
+  code before this, with `APP_RUN_UID` set, both failed "the run exited with 128"). `test:run-firewall` locks a
   leased uid with no account down by number; `test:run-sandboxes` sees two concurrent sandbox runs as two uids.
   **Not covered:** uids are per PID namespace and host: two docker run containers lease independently, so two of them
   may hold the same uid (their processes and files are apart, their per-uid kernel limits and keyrings are not); files
@@ -763,7 +959,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   workspace on the same page, with whose it is, and revoke any (`revoked_by` keeps who, staff included). Staff revoke a
   member key but never rotate one (409: a replacement would be an unscoped key). The tenant role still cannot
   write `api_keys` (`check:rls` probes un-revoking). **Migration path:** existing keys keep working exactly as before:
-  the account's own keys (no person, no role limits; also in the deprecated URL until `OCTILLION_URL_KEYS=off`) and
+  the account's own keys (no person, no role limits; also in the deprecated URL until `APP_URL_KEYS=off`) and
   the older keys staff issued for a person (their person, no role, no expiry). To move a client: the person makes a
   member key on `/app/keys`, pastes the setup shown, and they (or an owner) revoke the old key on the same page.
   `npm run test:member-keys`.
@@ -835,7 +1031,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   runs" until they are started, so one cut short is visible. Runs start through the run engine (`startRun`, requested by
   `schedule:<id>`, under its per-workspace cap); the run engine is unchanged. The tick runs from the product's existing
   cron entry on Vercel (`/api/cron/autoscale`, `CRON_SECRET` only, every 5 minutes) and from a one-minute loop on a
-  server (`startScheduler`, `OCTILLION_SCHEDULER=off` turns it off). **Due dates:** a check area of workspace scope may
+  server (`startScheduler`, `APP_SCHEDULER=off` turns it off). **Due dates:** a check area of workspace scope may
   declare `due` (one of its date fields, `within_days`, default 7, and the `notify` roles, owners by default), a sealed
   one too (mold_v0-076: its rows' dates are ciphertext in the database, so the check opens each workspace's sealed rows
   with that workspace's own key inside its own tenant scope, a page of 500 at a time, and applies the same window in
@@ -960,7 +1156,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the starter workspaces (`orchestrator/workspaces/`, neutral framework projects) stay with the engine; the shell's
   console pages still name some of the engine's concepts (simulations on Usage, Billing and Accounts; the library
   contribution credits on Billing; an access request's product fields), the default icons and Open Graph image are the
-  first product's, and environment names keep their `OCTILLION_` prefix (mold_v0-045); the shell features a host
+  first product's; the shell features a host
   pack's routes serve (in-chat tips, Setup's journeys, a requester's research) show only when its `nav.ts` names them; a dropped host pack's console and orchestrator folders are not
   pruned from a reused build copy (gen-packs then refuses the build, which the deploy rebuilds from scratch anyway).
 - The profile (`profile.json` over a host pack's own profile over a neutral default, `src/profile.ts`) names the MCP
@@ -1159,7 +1355,7 @@ typed by hand, and nothing in the snapshot changes:
   sends a visitor without a session cookie to `/auth/sign-in`. An app whose state already lists them in
   `secrets_user` (the re-mint and its live copy) keeps Clerk, and the check still asks for them. For the built-in
   sign-in on two Vercel projects, the factory writes the console's address on the API project as
-  `OCTILLION_CONSOLE_URL` (mold.json `vercel.projects.api.env`, mold_v0-084), with `OCTILLION_PROXY_HOPS=1`: sign-in
+  `APP_CONSOLE_URL` (mold.json `vercel.projects.api.env`, mold_v0-084), with `APP_PROXY_HOPS=1`: sign-in
   codes, invitations and every other email link to the console. On a server of its own both are in the env file
   (`compose.config`: the domain, and the stack's Caddy).
 - Order: the API first (twice on a first deploy, so it reads its own address as `PUBLIC_URL`), its `/healthz` must
@@ -1182,9 +1378,9 @@ typed by hand, and nothing in the snapshot changes:
 **Run sandboxes on both targets (mold_v0-055).** On Vercel the api project's cron and a kick when a run is queued
 launch runs into the sandbox provider whose key is in the vault (its function includes `src/**` so it can upload the
 runner); with no key, runs wait and say so. On a server of its own the compose project's `runner` service (the app's
-image, no port, the Docker socket, `OCTILLION_RUN_API_URL=http://octillion:3333`) launches a container per run on the
+image, no port, the Docker socket, `APP_RUN_API_URL=http://api:3333`) launches a container per run on the
 `runs` network, or uses the provider when its key is in the vault. Neither needs a new env name: every setting has a
-default (`OCTILLION_RUN_SANDBOX`, `OCTILLION_MAX_RUN_SANDBOXES`); `deploy/rolling-deploy.sh` recreates the runner on the new
+default (`APP_RUN_SANDBOX`, `APP_MAX_RUN_SANDBOXES`); `deploy/rolling-deploy.sh` recreates the runner on the new
 image.
 
 **The console on a server of its own (mold_v0-020).** The compose stack runs the console as a service of its own,
@@ -1196,7 +1392,7 @@ network only, with Caddy and the API: it cannot reach the database or the run co
 API's own paths (`/mcp`, `/api/*`, `/gw/*` with the model streams, `/.well-known/*`, `/admin/session`, `/admin/mcp`,
 `/install*`, `/preview/*`) straight to the API's replicas, and everything else (the console's pages and assets,
 sign-in, the public pages, `/healthz`) to the console, whose fallback rewrite reaches the API at
-`http://octillion:3333` inside the network for anything that is not one of its pages. The console holds that address
+`http://api:3333` inside the network for anything that is not one of its pages. The console holds that address
 and its two sign-in names, nothing else of the API's. Its build arguments are public values only (the API's address,
 the publishable key the browser needs, the public address); `CLERK_SECRET_KEY` is given at run time.
 `deploy/rolling-deploy.sh` builds both images one after the other and rolls the API, then the console, each a new

@@ -2,7 +2,7 @@
 // database and the server on a local port; every "proxy" is a header this test writes.
 //   npm run test:proxy-hops
 //
-// 1. OCTILLION_PROXY_HOPS: unset is 0 (reached directly) or 1 on Vercel; 0 to 5 taken; anything else refused at start.
+// 1. APP_PROXY_HOPS: unset is 0 (reached directly) or 1 on Vercel; 0 to 5 taken; anything else refused at start.
 // 2. Which address a request is from, for each hop count: the N-th from the right of X-Forwarded-For, never an entry to
 //    its left (the client's to write); with 0, the connection's own address.
 // 3. The server: behind one proxy (a server's Caddy, Vercel's edge), a client that writes a new X-Forwarded-For entry
@@ -13,7 +13,7 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 
 process.env.AUTH_PROVIDER = "builtin";
-process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP = "3";
+process.env.APP_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP = "3";
 const { cleanup } = await import("./lib/test-world.js");
 const { proxyHops } = await import("../src/proxy-trust.js");
 
@@ -29,10 +29,10 @@ try {
   // ---------- 1. the setting ----------
   assert.equal(proxyHops({}), 0, "unset: reached directly");
   assert.equal(proxyHops({ VERCEL: "1" }), 1, "unset on Vercel: its edge");
-  for (const v of ["0", "1", "2", "5"]) assert.equal(proxyHops({ OCTILLION_PROXY_HOPS: v }), Number(v));
-  assert.equal(proxyHops({ OCTILLION_PROXY_HOPS: "0", VERCEL: "1" }), 0, "set wins");
-  for (const v of ["true", "-1", "6", "1.5", "1e0", "loopback", " 2x"]) assert.throws(() => proxyHops({ OCTILLION_PROXY_HOPS: v }), /whole number from 0 to 5/, v);
-  ok("OCTILLION_PROXY_HOPS: unset is 0 (1 on Vercel); 0 to 5 taken; anything else refused");
+  for (const v of ["0", "1", "2", "5"]) assert.equal(proxyHops({ APP_PROXY_HOPS: v }), Number(v));
+  assert.equal(proxyHops({ APP_PROXY_HOPS: "0", VERCEL: "1" }), 0, "set wins");
+  for (const v of ["true", "-1", "6", "1.5", "1e0", "loopback", " 2x"]) assert.throws(() => proxyHops({ APP_PROXY_HOPS: v }), /whole number from 0 to 5/, v);
+  ok("APP_PROXY_HOPS: unset is 0 (1 on Vercel); 0 to 5 taken; anything else refused");
 
   // ---------- 2. the address, per hop count ----------
   for (const [hops, xff, want] of [
@@ -43,7 +43,7 @@ try {
     [2, "6.6.6.6, 203.0.113.9, 10.0.0.2", "203.0.113.9"],
   ] as const) {
     const app = express();
-    app.set("trust proxy", proxyHops({ OCTILLION_PROXY_HOPS: String(hops) }));
+    app.set("trust proxy", proxyHops({ APP_PROXY_HOPS: String(hops) }));
     app.get("/ip", (req, res) => void res.json({ ip: req.ip }));
     const s = await listen(app);
     const got = (await (await fetch(`${s.base}/ip`, { headers: xff ? { "x-forwarded-for": xff } : {} })).json()).ip;
@@ -57,7 +57,7 @@ try {
   const ask = (base: string, xff?: string) => fetch(`${base}/api/auth/email/request`, { method: "POST",
     headers: { "content-type": "application/json", ...(xff ? { "x-forwarded-for": xff } : {}) }, body: JSON.stringify({ email: "someone@example.org" }) }).then((r) => r.status);
   {
-    process.env.OCTILLION_PROXY_HOPS = "1"; // a server's Caddy, or Vercel's edge
+    process.env.APP_PROXY_HOPS = "1"; // a server's Caddy, or Vercel's edge
     const s = await listen(createApp());
     const seen: number[] = [];
     // The client writes a new address of its own before the one the proxy saw, every time.
@@ -68,7 +68,7 @@ try {
     await s.close();
   }
   {
-    process.env.OCTILLION_PROXY_HOPS = "0"; // reached directly: X-Forwarded-For means nothing
+    process.env.APP_PROXY_HOPS = "0"; // reached directly: X-Forwarded-For means nothing
     const s = await listen(createApp());
     const seen: number[] = [];
     for (let i = 0; i < 4; i++) seen.push(await ask(s.base, `203.0.114.${i + 1}`));
@@ -78,7 +78,7 @@ try {
   ok("the server: behind one proxy a client cannot step around the per-IP limit by writing X-Forwarded-For; with none it is ignored");
   console.log(`PROXY HOPS TEST PASS (${n} groups)`);
 } finally {
-  delete process.env.OCTILLION_PROXY_HOPS;
+  delete process.env.APP_PROXY_HOPS;
   cleanup();
 }
 process.exit(0);

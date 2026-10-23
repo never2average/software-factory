@@ -8,7 +8,7 @@
  * request, so a request whose Origin is not one of ours is refused before anything else looks at it. MCP clients that
  * are not browsers (Claude's and ChatGPT's connectors, Claude Code, Cursor, the SDKs) send no Origin and are unaffected.
  *
- * Allowed: PUBLIC_URL's origin, the origins of the URIs in CLERK_MCP_AUDIENCE, and OCTILLION_MCP_ALLOWED_ORIGINS
+ * Allowed: PUBLIC_URL's origin, the origins of the URIs in CLERK_MCP_AUDIENCE, and APP_MCP_ALLOWED_ORIGINS
  * (comma-separated origins, e.g. a browser-based MCP client you trust: http://localhost:6274 for the MCP Inspector).
  * The opaque origin "null" (sandboxed iframes, file: pages) is never allowed. Allowing an origin only passes this check:
  * the endpoints send no CORS headers, so a cross-origin browser client still needs a proxy (the MCP Inspector's own).
@@ -17,6 +17,7 @@
  * refuses a Host header that is not localhost, 127.0.0.1 or [::1], which covers requests that carry no Origin.
  */
 import type { NextFunction, Request, Response } from "express";
+import { ENV } from "./env-names.js";
 
 const originOf = (u: string): string | null => {
   try {
@@ -34,7 +35,7 @@ export function allowedMcpOrigins(): Set<string> {
   const list = [
     publicUrl(),
     ...(process.env.CLERK_MCP_AUDIENCE ?? "").split(","),
-    ...(process.env.OCTILLION_MCP_ALLOWED_ORIGINS ?? "").split(","),
+    ...(ENV.APP_MCP_ALLOWED_ORIGINS ?? "").split(","),
   ];
   return new Set(list.map((x) => (x.trim() ? originOf(x) : null)).filter((x): x is string => Boolean(x)));
 }

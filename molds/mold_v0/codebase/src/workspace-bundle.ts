@@ -14,11 +14,12 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
+import { ENV } from "./env-names.js";
 
 export type Manifest = Record<string, { sha256: string; size: number }>;
 const MAGIC = Buffer.from("WSB1\n");
-const MAX_FILES = () => Number(process.env.OCTILLION_WORKSPACE_MAX_FILES ?? 20_000);
-const MAX_BYTES = () => Number(process.env.OCTILLION_WORKSPACE_MAX_BYTES ?? 256 * 1024 * 1024);
+const MAX_FILES = () => Number(ENV.APP_WORKSPACE_MAX_FILES ?? 20_000);
+const MAX_BYTES = () => Number(ENV.APP_WORKSPACE_MAX_BYTES ?? 256 * 1024 * 1024);
 export class BundleError extends Error { status = 400; }
 
 const sha256 = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");

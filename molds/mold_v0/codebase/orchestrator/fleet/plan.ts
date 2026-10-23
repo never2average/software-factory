@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENV } from "../core/env-names.js";
 
 /**
  * Standalone fleet plan (FLEET_MODE=standalone; in server mode the server plans globally, src/fleet.ts).
@@ -43,7 +44,7 @@ export function mergeAgents(file: RegistryAgent[], extra: Iterable<RegistryAgent
   return [...file, ...[...extra].filter((a) => !ids.has(a.id) && ids.add(a.id))];
 }
 
-export function loadRegistry(file = process.env.OCTILLION_REGISTRY ?? "harnesses/registry.json"): { agents: RegistryAgent[] } {
+export function loadRegistry(file = ENV.APP_REGISTRY ?? "harnesses/registry.json"): { agents: RegistryAgent[] } {
   const reg = JSON.parse(readFileSync(path.resolve(ROOT, file), "utf8")) as { agents: RegistryAgent[] };
   return remembered.size ? { ...reg, agents: mergeAgents(reg.agents, remembered.values()) } : reg;
 }
@@ -68,8 +69,8 @@ export function planFleet(size: number, agents: RegistryAgent[] = loadRegistry()
     r.g.pods++;
   }
   // Same as the server's sandbox unit: honest rounding by default (agents may round to 0 sandboxes); with
-  // OCTILLION_MIN_ONE_SANDBOX=1 every agent gets at least one, taken from whoever is most over its exact share.
-  if (process.env.OCTILLION_MIN_ONE_SANDBOX === "1" && size >= list.length)
+  // APP_MIN_ONE_SANDBOX=1 every agent gets at least one, taken from whoever is most over its exact share.
+  if (ENV.APP_MIN_ONE_SANDBOX === "1" && size >= list.length)
     for (const empty of list.filter((g) => g.pods === 0)) {
       const donor = list.filter((g) => g.pods > 1).sort((a, b) => (b.pods - b.weight * size) - (a.pods - a.weight * size))[0];
       if (!donor) break;

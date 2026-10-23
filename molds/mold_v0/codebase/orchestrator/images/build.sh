@@ -44,7 +44,7 @@ for row in "${ROWS[@]}"; do
   df="$HERE/Dockerfile.$harness"
   [ -f "$df" ] || { echo "missing $df for enabled harness $harness" >&2; exit 1; }
   cmd=(docker build -f "$df" --build-arg "HARNESS_VERSION=$version" -t "$tag"
-       --label "dev.octillion.harness=$harness" --label "dev.octillion.harness_version=$version")
+       --label "dev.app.harness=$harness" --label "dev.app.harness_version=$version")
   [ -n "${PLATFORM:-}" ] && cmd+=(--platform "$PLATFORM")
   cmd+=("$HERE")
   echo "==> $harness $version -> $tag"

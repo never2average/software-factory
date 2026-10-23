@@ -15,11 +15,11 @@
  *               removed only under that prefix, never one a row names elsewhere (another workspace's object)
  *   idempotent  a second sweep finds nothing to delete; one cut short (a crash) is finished by the next tick, one whose
  *               store failed (counted in `failed`) by the next day's
- *   locked      with the key vault locked (OCTILLION_VAULT_KEY unset) the sweep refuses: nothing is read or deleted, and
+ *   locked      with the key vault locked (APP_VAULT_KEY unset) the sweep refuses: nothing is read or deleted, and
  *               the day is not marked, so the next tick tries again
  *
  * Run from the scheduler's tick (src/schedules.ts schedulerTick: the server's one-minute loop, or the cron entry on
- * Vercel); marked done for the day in scheduler_marks ("workspace_retention"). OCTILLION_WORKSPACE_RETENTION=off stops it.
+ * Vercel); marked done for the day in scheduler_marks ("workspace_retention"). APP_WORKSPACE_RETENTION=off stops it.
  */
 import { getDb, type Queryable } from "./db.js";
 import { vaultUnlocked } from "./keyvault.js";
@@ -27,12 +27,13 @@ import { packs } from "./packs.js";
 import { keys, objectStore } from "./storage.js";
 import { asPlatform } from "./tenant-scope.js";
 import { expiredVersions, retentionPolicy, type RetentionPolicy } from "./workspace-store-policy.js";
+import { ENV } from "./env-names.js";
 
 export interface StoreSweep { org_id: number; store: string; policy: RetentionPolicy; versions: number; kept: number; deleted: number[]; objects_removed: number; error?: string }
 export interface RetentionReport { ran: boolean; reason?: string; day: string; stores: number; deleted: number; objects_removed: number; failed: number; sweeps: StoreSweep[] }
 
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
-const off = () => (process.env.OCTILLION_WORKSPACE_RETENTION ?? "on").toLowerCase() === "off";
+const off = () => (ENV.APP_WORKSPACE_RETENTION ?? "on").toLowerCase() === "off";
 
 /** The packs of the build with a workspace store (a kind with workspace: true, or an agent-workspace kind). */
 export const storePacks = () => packs().filter((p) => (p.definition.agentJobKinds ?? []).length > 0 || (p.definition.jobKinds ?? []).some((k) => (k as { workspace?: boolean }).workspace));
@@ -82,7 +83,7 @@ const underPrefix = (orgId: number, store: string, key: string) => {
 export async function sweepStore(orgId: number, store: string, now = new Date()): Promise<StoreSweep> {
   const policy = storePolicy(store);
   const out: StoreSweep = { org_id: orgId, store, policy, versions: 0, kept: 0, deleted: [], objects_removed: 0 };
-  if (!vaultUnlocked()) throw new Error("the key vault is locked (OCTILLION_VAULT_KEY): the workspace store's retention does not run");
+  if (!vaultUnlocked()) throw new Error("the key vault is locked (APP_VAULT_KEY): the workspace store's retention does not run");
   const db = await getDb();
   const gone = await asPlatform(() => db.transaction(async (tx) => {
     // Two sweeps of one workspace take turns (the Vercel cron and a server's loop, two replicas).
@@ -148,8 +149,8 @@ async function removeOrphans(orgId: number, store: string): Promise<number> {
 export async function retentionSweep(now = new Date(), opts: { force?: boolean } = {}): Promise<RetentionReport> {
   const day = dayOf(now);
   const report: RetentionReport = { ran: false, day, stores: 0, deleted: 0, objects_removed: 0, failed: 0, sweeps: [] };
-  if (off()) return { ...report, reason: "turned off (OCTILLION_WORKSPACE_RETENTION=off)" };
-  if (!vaultUnlocked()) return { ...report, reason: "the key vault is locked (OCTILLION_VAULT_KEY): not run, tried again at the next tick" };
+  if (off()) return { ...report, reason: "turned off (APP_WORKSPACE_RETENTION=off)" };
+  if (!vaultUnlocked()) return { ...report, reason: "the key vault is locked (APP_VAULT_KEY): not run, tried again at the next tick" };
   const db = await getDb();
   if (!opts.force) {
     // The day as text: a DATE read back as a Date is local midnight, a day early on a server east of UTC.

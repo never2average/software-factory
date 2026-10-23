@@ -1,7 +1,7 @@
 /**
- * Manual launcher for Octillion orchestrators (the server's autoscaler, src/autoscaler.ts, normally does this on
+ * Manual launcher for the orchestrators (the server's autoscaler, src/autoscaler.ts, normally does this on
  * demand). Orchestrators run ONLY inside boat.dev sandboxes and create their worker sandboxes from there. Run from
- * the main VM or a laptop; needs only OCTILLION_URL + OCTILLION_WORKER_TOKEN (the boat key comes from the broker).
+ * the main VM or a laptop; needs only APP_URL + APP_WORKER_TOKEN (the boat key comes from the broker).
  *
  *   npm run boat-orchestrators -- budget [n]                 plan limits vs n orchestrators x (1 + POD_CAPACITY)
  *   npm run boat-orchestrators -- up <n> [--skip-preflight]  ensure n orchestrator sandboxes exist and run
@@ -22,6 +22,7 @@ import { BOAT, CFG } from "../core/config.js";
 import { boatApi } from "../core/boat.js";
 import { api, sleep } from "../core/util.js";
 import * as lib from "./boat-lib.js";
+import { ENV } from "../core/env-names.js";
 
 export { computeBudget, TUNING_VARS, ORCH_PREFIX, WORKER_PREFIX, MAX_TTL_SECONDS } from "./boat-lib.js";
 export type { Budget, BoatLimits } from "./boat-lib.js";
@@ -33,7 +34,7 @@ const out = (...a: unknown[]) => console.log(redact(a.map((x) => (typeof x === "
 
 const ctx = (placeholderToken = false): lib.LaunchContext => ({
   url: CFG.url, workerToken: CFG.token, podCapacity: POD_CAPACITY, placeholderToken, log: (m) => out(m),
-  tuning: Object.fromEntries(lib.TUNING_VARS.filter((k) => process.env[k]).map((k) => [k, process.env[k]!])),
+  tuning: Object.fromEntries(lib.TUNING_VARS.filter((k) => ENV[k]).map((k) => [k, ENV[k]!])),
 });
 
 function printBudget(b: lib.Budget, l: lib.BoatLimits) {
@@ -44,7 +45,7 @@ function printBudget(b: lib.Budget, l: lib.BoatLimits) {
 }
 
 async function boatKey(): Promise<void> {
-  if (!CFG.token) throw new Error("OCTILLION_WORKER_TOKEN is required");
+  if (!CFG.token) throw new Error("APP_WORKER_TOKEN is required");
   const r = (await api("/api/worker/orchestrator/credentials", { json: { orchestrator_id: "launcher" } })) as { boat?: { api_key?: string } | null };
   if (!r?.boat?.api_key) throw new Error("the credential broker returned no boat key (store one: npm run keyvault -- set boat)");
   BOAT.apiKey = r.boat.api_key;

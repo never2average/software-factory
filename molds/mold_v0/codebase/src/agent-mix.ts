@@ -1,5 +1,6 @@
 import { registry, type Population } from "./agents.js";
 import { hosts } from "./host.js";
+import { ENV } from "./env-names.js";
 
 /**
  * The agent mix the session engine schedules by (the autoscaler's warm orchestrators, the fleet plan, the Compute
@@ -13,7 +14,7 @@ export async function currentPopulation(): Promise<Population> {
   return {
     id: 0, slug: "registry", name: "Registry agents", description: "Every agent of the harness registry at its registry weight.",
     as_of: reg.as_of ?? null, methodology: reg.methodology ?? "", sources: reg.sources ?? [], unrepresented_share: reg.unrepresented_share ?? null,
-    sandbox_unit: Math.max(1, Math.trunc(Number(process.env.OCTILLION_SANDBOX_UNIT ?? 20))), min_one_sandbox: process.env.OCTILLION_MIN_ONE_SANDBOX !== "0",
+    sandbox_unit: Math.max(1, Math.trunc(Number(ENV.APP_SANDBOX_UNIT ?? 20))), min_one_sandbox: ENV.APP_MIN_ONE_SANDBOX !== "0",
     is_default: true, org_id: null, agents: reg.agents,
   };
 }

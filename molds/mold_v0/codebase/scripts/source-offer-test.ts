@@ -26,9 +26,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, startHttp, STAMP, TMP } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const REPO = "https://github.com/example-org/fixture-agent";
 const COMMIT_URL = `${REPO}/tree/${SHA}`;
@@ -53,7 +54,7 @@ try {
   const { createOrg } = await import("../src/auth.js");
   const { SHELL_INSTRUCTIONS } = await import("../src/server.js");
   // The instructions the server starts from (src/server.ts createServer): the profile's own, else a host pack's, else the
-  // shell's. A zero-pack build has neither, so its are exactly the shell's; a build with a host pack (octillion) has the
+  // shell's. A zero-pack build has neither, so its are exactly the shell's; a build with a host pack has the
   // pack's. The source offer is a paragraph after them either way.
   await import("../src/hosts.js"); // the build's host packs, registered as the server's entry module does (none with zero packs)
   const OWN_INSTRUCTIONS = (await import("../src/profile.js")).PROFILE.mcp_instructions ?? (await import("../src/host.js")).hosts().find((h) => h.mcp?.instructions)?.mcp?.instructions;
@@ -144,14 +145,14 @@ try {
     assert.ok(!("$comment" in (a.deploy ?? {})), "no comment in the answer");
     const staffTok = await http.adminToken("viewer");
     const st = await (await http.req("GET", "/api/admin/about", { authorization: `Bearer ${staffTok}` })).json();
-    assert.match(mrow(st.measured.rows, "Run sandboxes"), /^OCTILLION_RUN_SANDBOX is (auto|off|boat|docker|process) /, "staff: the sandbox setting (never probed from a request)");
+    assert.match(mrow(st.measured.rows, "Run sandboxes"), /^APP_RUN_SANDBOX is (auto|off|boat|docker|process) /, "staff: the sandbox setting (never probed from a request)");
     assert.equal(mrow(st.measured.rows, "Model provider anthropic"), "api.anthropic.com, but the vault holds no key for it (runs that need it fail); 0 keys of its own and 0 Vertex AI keys enabled in the key vault");
     const kv = await import("../src/keyvault.js");
     await kv.setCredential("vertex", JSON.stringify({ type: "service_account", project_id: "p", client_email: "x@p.iam.gserviceaccount.com", private_key: "-----BEGIN PRIVATE KEY-----\nstand-in\n-----END PRIVATE KEY-----\n" }), { label: "default" });
     const st2 = await (await http.req("GET", "/api/admin/about", { authorization: `Bearer ${staffTok}` })).json();
     assert.ok(mrow(st2.measured.rows, "Model provider anthropic").startsWith("Google Cloud Vertex AI, location global (aiplatform.googleapis.com): the vault has no Anthropic key of its own but a Vertex AI key; 0 keys of its own and 1 Vertex AI key"), `the gateway's Vertex fallback: ${mrow(st2.measured.rows, "Model provider anthropic")}`);
     assert.ok(!JSON.stringify(st2).includes("stand-in"), "never the key");
-    for (const v of [process.env.OCTILLION_VAULT_KEY!, process.env.OCTILLION_WORKER_TOKEN!, process.env.CLERK_SECRET_KEY!, process.env.CLERK_JWT_KEY!.split("\n")[1]!])
+    for (const v of [ENV.APP_VAULT_KEY!, ENV.APP_WORKER_TOKEN!, process.env.CLERK_SECRET_KEY!, process.env.CLERK_JWT_KEY!.split("\n")[1]!])
       assert.ok(!text.includes(v), "no secret value of the server's in the answer");
     const md = dataMapMarkdown(dataMap());
     assert.ok(md.includes(COMMIT_URL) && md.includes("| Job kind `audit_scan` (Fixture vulnerabilities) | HTTPS (port 443) to github.com, registry.npmjs.org"), "the Markdown carries the same");
@@ -220,14 +221,14 @@ try {
     const good = { app_id: "maxwell", target: "vercel", source: "state/application/maxwell/infrastructure.json and datastores.json",
       vercel: { team: "acme-team", api_project: "maxwell-api", web_project: "maxwell", production_url: "https://maxwell.vercel.app", api_url: "https://maxwell-api.vercel.app" },
       database: { provider: "neon", exposure: "managed_provider", resource: "maxwell" }, object_store: { provider: "none" }, secret_store: "vercel_env",
-      secrets: { required: ["DATABASE_URL", "OCTILLION_VAULT_KEY"], optional: ["R2_ACCESS_KEY_ID"] } };
+      secrets: { required: ["DATABASE_URL", "APP_VAULT_KEY"], optional: ["R2_ACCESS_KEY_ID"] } };
     const withFacts = (f: unknown) => { writeFileSync(facts, JSON.stringify(f)); return gen(["--packs", none, "--out", out, "--facts", facts]); };
     const g = withFacts(good);
     assert.equal(g.status, 0, g.stderr);
     const generated = readFileSync(path.join(out, "src", "deploy-facts.generated.ts"), "utf8");
     assert.ok(generated.includes('"api_project": "maxwell-api"') && generated.includes('"DATABASE_URL"'), "gen-packs copies the facts");
     const md = dataMapMarkdown(dataMap([], good as any));
-    for (const want of ["Vercel project `maxwell-api` of the team `acme-team`", "Neon Postgres", "(resource `maxwell`)", "the Vercel projects' environment variables: DATABASE_URL, OCTILLION_VAULT_KEY", "used when set: R2_ACCESS_KEY_ID", "Deploy facts: app `maxwell`, target Vercel"])
+    for (const want of ["Vercel project `maxwell-api` of the team `acme-team`", "Neon Postgres", "(resource `maxwell`)", "the Vercel projects' environment variables: DATABASE_URL, APP_VAULT_KEY", "used when set: R2_ACCESS_KEY_ID", "Deploy facts: app `maxwell`, target Vercel"])
       assert.ok(md.includes(want), `the statement names: ${want}\n${md}`);
     const compose = dataMapMarkdown(dataMap([], { ...good, target: "compose_remote", vercel: undefined, server: { provider: "digitalocean", host: "203.0.113.7", domain: "audit.example.com", compose_project: "sf-maxwell" }, database: { provider: "self_hosted", exposure: "compose_network" }, secret_store: "compose_remote_env_file" } as any));
     assert.ok(compose.includes("one Docker Compose stack (project `sf-maxwell`) on a server of the app's own rented from digitalocean (203.0.113.7), served at https://audit.example.com") && compose.includes("the stack's own Postgres container") && compose.includes("an env file on the server"), "a server of its own");

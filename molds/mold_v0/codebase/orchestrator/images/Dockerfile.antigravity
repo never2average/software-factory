@@ -1,4 +1,4 @@
-# Octillion worker image: Google Antigravity CLI (`agy`).
+# Worker image: Google Antigravity CLI (`agy`).
 # The official installer (https://antigravity.google/cli/install.sh) reads a "latest" manifest from
 # https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_<amd64|arm64>.json
 # and downloads a tarball (one binary, `antigravity`, which it links as `agy`) from storage.googleapis.com. We download that tarball directly, pinned by
@@ -40,8 +40,8 @@ ENV HOME=/home/agent \
     PATH=/home/agent/.npm-global/bin:/home/agent/.local/bin:$PATH \
     PIP_BREAK_SYSTEM_PACKAGES=1
 # Metadata as labels, not env: env would be visible to the agent and leak context into its session.
-LABEL dev.octillion.harness="antigravity" \
-      dev.octillion.harness_version="${HARNESS_VERSION}"
+LABEL dev.app.harness="antigravity" \
+      dev.app.harness_version="${HARNESS_VERSION}"
 WORKDIR /home/agent/work
 # Healthcheck prints the harness version (docker inspect --format '{{json .State.Health}}' <c>).
 HEALTHCHECK --interval=5m --timeout=30s --start-period=30s --start-interval=5s --retries=2 CMD agy --version || exit 1

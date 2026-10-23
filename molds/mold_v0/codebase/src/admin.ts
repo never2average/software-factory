@@ -1,11 +1,11 @@
 /**
  * Onboarding admin console (/admin): the work between "someone asked for access" and "they read their first report".
- * Octillion is not the system of record for any of it:
+ * The app is not the system of record for any of it:
  *  - people (organizations, users, memberships, roles, invitations) live in Clerk (src/clerk.ts); Clerk sends the
  *    invite email and handles sign-in (passwords, Google, Microsoft, GitHub, enterprise SSO);
  *  - money (plans, subscriptions, invoices, cards) lives in Stripe (src/billing.ts); customers self-serve in Stripe;
  *  - Postgres keeps the joins (clerk_org_id, stripe_customer_id), a landing-page request's triage state, and the
- *    product usage Octillion already records (connector events, products, onboarding, simulations).
+ *    product usage the app already records (connector events, products, onboarding, simulations).
  * This module reads all three and puts the funnel in one place. Admin actions are logged to stderr; Clerk and Stripe
  * keep their own event history for what changes there.
  *
@@ -27,6 +27,9 @@ import { people as directory } from "./people.js";
 import * as mail from "./email.js";
 import { currentAdminRole } from "./admin-roles.js";
 import { accountRoleOf, clerkRoleFor, parseAccountRole, ACCOUNT_ROLE_LABELS, type AccountRole } from "./account-roles.js";
+import { ENV } from "./env-names.js";
+import { KEY_PREFIX, NS_KEYS, nsGet } from "./namespace.js";
+import { PROFILE } from "./profile.js";
 
 export class AdminError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -49,8 +52,8 @@ export function integrations() {
   return {
     clerk: clerk.clerkEnabled(), clerk_frontend_api: clerk.frontendApi(), oauth_on_mcp: Boolean(clerk.clerkEnabled() && clerk.frontendApi()),
     stripe: billing.stripeEnabled(), stripe_test_mode: /^(sk|rk)_test_/.test(key), spend_meter: process.env.STRIPE_SPEND_METER || null,
-    require_subscription: process.env.OCTILLION_REQUIRE_SUBSCRIPTION === "1",
-    default_budget_usd: Number(process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ?? 0),
+    require_subscription: ENV.APP_REQUIRE_SUBSCRIPTION === "1",
+    default_budget_usd: Number(ENV.APP_ORG_MONTHLY_BUDGET_USD ?? 0),
     // The built-in sign-in (mold_v0-004) says so; Clerk's answer is unchanged.
     ...(directory().provider === "builtin" ? { auth_provider: "builtin" } : {}),
   };
@@ -65,13 +68,13 @@ export function integrations() {
 export function connectInfo(key?: string) {
   const base = publicUrl();
   const url = `${base}/mcp`;
-  // Every client Octillion supports, with its exact way in (src/connect-catalog.ts).
+  // Every client the app supports, with its exact way in (src/connect-catalog.ts).
   const signInAvailable = Boolean(clerk.clerkEnabled() && clerk.frontendApi());
   const clients = clientCatalog(url, key, { signInAvailable });
-  const subject = "Your Octillion access";
+  const subject = `Your ${PROFILE.name} access`;
   const body = `Hi,
 
-You now have access to Octillion. Add this connector URL to your AI client:
+You now have access to ${PROFILE.name}. Add this connector URL to your AI client:
 
 ${url}
 ${key ? `\nYour personal API key is:\n\n${key}\n\nIt is your login: anyone with it can use your account, so keep it private. Your client sends it as a header\n(Authorization: Bearer <key>); it never goes in the URL. ${signInAvailable ? "Claude and ChatGPT's own apps cannot send it: ask us for a\nsign-in invitation to use them." : "Claude and ChatGPT's own apps cannot send it: use a client that can (listed below)."}\n` : "\nIt has no secret in it: you sign in with your work email (accept the invitation email first).\n"}
@@ -79,7 +82,7 @@ Connect it:
 ${clients.filter((c) => ["claude", "chatgpt", "claude-code", "cursor", "codex"].includes(c.id)).map((c) => `- ${c.client}: ${c.command ? `${c.steps} ${c.command}` : c.steps}`).join("\n")}
 Every other client (Copilot, OpenCode, Gemini CLI, VS Code, Windsurf and more) is listed at ${base}/app
 
-Then type: "Get me started with Octillion."
+Then type: "Get me started with ${PROFILE.name}."
 
 Reply to this email with anything that gets in your way.`;
   return { connector_url: url, secret: Boolean(key), clients, email: { subject, body } };
@@ -127,7 +130,7 @@ ${researchJobs() ? `
 
 /**
  * A member, keyed by Clerk user id (Clerk's membership endpoints are). Suspended = public_metadata.suspended. `role` is
- * Clerk's (admin or member); `account_role` is the Octillion role (src/account-roles.ts).
+ * Clerk's (admin or member); `account_role` is the app's own role (src/account-roles.ts).
  */
 export interface Member { id: string; user_id: string; status: "active" | "inactive"; role: "admin" | "member"; account_role: AccountRole; created_at: string | null; email: string | null; name: string | null }
 export interface Invite { id: string; email: string; state: clerk.ClerkInvitation["status"]; role: "admin" | "member"; account_role: AccountRole; created_at: string | null; expires_at: string | null }
@@ -181,7 +184,7 @@ export const STAGES = [
   { id: "created", label: "Account created", next: "Invite the first person" },
   { id: "invited", label: "Invited", next: "Accept the invitation email" },
   { id: "joined", label: "Joined", next: "Add the connector in Claude, ChatGPT or an IDE and sign in" },
-  { id: "connected", label: "Connected", next: "Ask: \"Get me started with Octillion\"" },
+  { id: "connected", label: "Connected", next: `Ask: "Get me started with ${PROFILE.name}"` },
   { id: "first_call", label: "First tool call", next: "Onboard a product (name, website, docs)" },
   { id: "onboarded", label: "Product onboarded", next: "Run a simulation" },
   { id: "simulated", label: "Simulation run", next: "Open the visibility report" },
@@ -407,7 +410,7 @@ const cleanEmail = (v: unknown) => {
 };
 
 /**
- * A new account: the Clerk organization (public_metadata.octillion_slug), the Octillion row joined to it, and a Stripe
+ * A new account: the Clerk organization (public_metadata NS_KEYS.slug), the app's row joined to it, and a Stripe
  * customer set on both. Without Clerk, a local organization with a legacy API key.
  */
 async function newAccount(actor: string, nameIn: string, slugIn: string | undefined, email: string | null) {
@@ -420,7 +423,7 @@ async function newAccount(actor: string, nameIn: string, slugIn: string | undefi
   let key: string | undefined, clerkOrgId: string | null = null;
   const dir = directory();
   if (dir.enabled()) {
-    clerkOrgId = (await dir.organizations.create(name, slug, { octillion_slug: slug })).id;
+    clerkOrgId = (await dir.organizations.create(name, slug, { [NS_KEYS.slug]: slug })).id;
     await db.query("INSERT INTO organizations (slug, name, clerk_org_id) VALUES ($1, $2, $3)", [slug, name, clerkOrgId]);
   } else {
     key = (await createOrg(name, slug)).key;
@@ -534,7 +537,7 @@ export async function revokeInvitation(actor: string, slug: string, invitationId
 
 /**
  * Suspend a person's access (or restore it). Clerk memberships have no deactivated state: suspension is the
- * membership's public_metadata.suspended, enforced by Octillion on /mcp and /api/app within a minute (caches).
+ * membership's public_metadata.suspended, enforced by the app on /mcp and /api/app within a minute (caches).
  * `memberId` is the Clerk user id.
  */
 export async function setMemberActive(actor: string, slug: string, memberId: string, active: boolean) {
@@ -558,7 +561,7 @@ function lastOwnerGuard(members: Member[], m: Member, what: "demote" | "suspend"
 
 /**
  * Change a member's account role (owner, billing, member, viewer; admin means owner). Owner is Clerk's org:admin and
- * the rest org:member, with the role in the membership's public_metadata.octillion_role.
+ * the rest org:member, with the role in the membership's public_metadata NS_KEYS.role.
  */
 export async function setMemberRole(actor: string, slug: string, memberId: string, roleIn: unknown) {
   const role = parseAccountRole(roleIn);
@@ -599,7 +602,7 @@ export async function linkClerk(actor: string, slug: string) {
   const f = await factsBySlug(slug);
   if (f.clerk_org_id) return { clerk_org_id: f.clerk_org_id };
   if (!directory().enabled()) throw new AdminError("Clerk is not configured (CLERK_SECRET_KEY)", 503);
-  const c = await directory().organizations.create(f.name, f.slug, { octillion_slug: f.slug, ...(f.stripe_customer_id ? { stripe_customer_id: f.stripe_customer_id } : {}) });
+  const c = await directory().organizations.create(f.name, f.slug, { [NS_KEYS.slug]: f.slug, ...(f.stripe_customer_id ? { stripe_customer_id: f.stripe_customer_id } : {}) });
   await (await getDb()).query("UPDATE organizations SET clerk_org_id = $2 WHERE id = $1", [f.id, c.id]);
   log(actor, "org.link_clerk", slug, { clerk_org_id: c.id });
   return { clerk_org_id: c.id };
@@ -662,16 +665,16 @@ export async function checkoutLink(actor: string, slug: string, priceId: unknown
   const db = await getDb();
   const [o] = await db.query<{ id: number; prepaid_allowed: boolean }>("SELECT id, prepaid_allowed FROM organizations WHERE slug = $1", [slug]);
   if (!o) throw new AdminError(`No account ${slug}`, 404);
-  if (opts.requireAllowed && !o.prepaid_allowed) throw new AdminError("Prepaid plans are invite-only: ask your Octillion contact to enable one for this account.", 403);
+  if (opts.requireAllowed && !o.prepaid_allowed) throw new AdminError(`Prepaid plans are invite-only: ask your ${PROFILE.name} contact to enable one for this account.`, 403);
   const plans = await billing.listPlans();
   const offered = opts.requireAllowed ? await experiments.offeredPlans(o.id, plans) : plans;
   const plan = offered.find((p) => p.price_id === priceId);
-  if (!plan) throw new AdminError(opts.requireAllowed && plans.some((p) => p.price_id === priceId) ? "That plan is not offered to this account" : "Unknown plan: use a price whose lookup_key starts with octillion_");
+  if (!plan) throw new AdminError(opts.requireAllowed && plans.some((p) => p.price_id === priceId) ? "That plan is not offered to this account" : `Unknown plan: use a price whose lookup_key starts with ${KEY_PREFIX}`);
   const [shown] = plan.experiment ? await db.query<{ price_id: string }>("SELECT price_id FROM plan_exposures WHERE org_id = $1 AND experiment = $2", [o.id, plan.experiment]) : [];
-  const meta = shown?.price_id === plan.price_id ? experiments.checkoutMeta(slug, plan) : { octillion_slug: slug };
+  const meta = shown?.price_id === plan.price_id ? experiments.checkoutMeta(slug, plan) : { [NS_KEYS.slug]: slug };
   const customer = await ensureCustomer(actor, slug);
   billing.invalidateSubscriptions();
-  log(actor, "billing.checkout_link", slug, { price: plan.price_id, ...(meta.octillion_experiment ? { experiment: meta.octillion_experiment } : {}) });
+  log(actor, "billing.checkout_link", slug, { price: plan.price_id, ...(nsGet(meta, "experiment") ? { experiment: nsGet(meta, "experiment") } : {}) });
   return { url: await billing.checkoutUrl(customer, plan.price_id, returnUrl, meta, plan.trial_days, plan.usage.map((u) => u.price_id)) };
 }
 
@@ -683,7 +686,7 @@ export async function portalLink(actor: string, slug: string, returnUrl = `${pub
   return { url: await billing.portalUrl(customer, returnUrl) };
 }
 
-// ---------- plans (Stripe prices with an octillion_ lookup key; FinOps › Plans › New plan) ----------
+// ---------- plans (Stripe prices with a KEY_PREFIX lookup key; FinOps › Plans › New plan) ----------
 
 export async function plans() {
   if (!billing.stripeEnabled()) return { configured: false, plans: [] as billing.Plan[] };
