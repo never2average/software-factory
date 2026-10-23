@@ -148,7 +148,7 @@ export default function AppSidebar() {
                 size='sm'
                 tooltip={area === 'admin' ? 'Customer portal' : 'Platform admin'}
                 render={<Link href={area === 'admin' ? '/app' : '/admin'} />}
-                className='border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary h-6 w-fit gap-1.5 rounded-full border px-2.5 text-xs [&_svg]:size-3.5 group-data-[collapsible=icon]:w-8'
+                className='border-primary/40 bg-primary/10 text-foreground hover:bg-primary/20 hover:text-foreground [&_svg]:text-primary h-6 w-fit gap-1.5 rounded-full border px-2.5 text-xs [&_svg]:size-3.5 group-data-[collapsible=icon]:w-8'
               >
                 {area === 'admin' ? <Icons.arrowRight /> : <Icons.shield />}
                 <span className='font-medium'>{area === 'admin' ? 'Customer portal' : 'Platform admin'}</span>

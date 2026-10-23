@@ -315,7 +315,7 @@ function StepHelp({ help, done, prompt }: { help: string; done: boolean; prompt:
   const p = prompt ?? m?.[1] ?? null;
   return (
     <div className='mt-1 flex flex-col gap-2'>
-      <p className={cn('text-sm select-text', done ? 'text-muted-foreground/70' : 'text-muted-foreground')}>{text}{after && <> {after}</>}</p>
+      <p className={cn('text-sm select-text', 'text-muted-foreground')}>{text}{after && <> {after}</>}</p>
       {!done && p && (
         <div className='bg-muted/50 flex items-center gap-2 rounded-md border px-3 py-2'>
           <code className='min-w-0 flex-1 font-mono text-xs break-words select-all'>{p}</code>
@@ -371,7 +371,7 @@ function Timeline({ s }: { s: Setup }) {
   return (
     <TimelineSection title='Get set up' done={s.done} total={s.total} noun='steps'
       items={s.steps.map((x) => ({ id: x.id, label: x.label.replace(' (team)', ''), done: x.done, body: <StepHelp help={x.help} done={x.done} prompt={x.prompt ?? null} /> }))}
-      footer={hostFeature('journeys') ? <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline-offset-4 hover:underline'>Journeys</a>.</> : null} />
+      footer={hostFeature('journeys') ? <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>Journeys</a>.</> : null} />
   );
 }
 
