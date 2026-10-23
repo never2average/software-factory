@@ -2070,6 +2070,12 @@
             "type": "string",
             "maxLength": 500
           },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069<>`]*$"
+          },
           "done_when": {
             "type": "string",
             "pattern": "^(workspace|connected|first_call|(tool|credential|record|run):[a-z][a-z0-9_]{0,63})$"
@@ -3164,6 +3170,12 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{0,63}$"
           }
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
         }
       },
       "additionalProperties": false

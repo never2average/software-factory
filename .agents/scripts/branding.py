@@ -792,6 +792,16 @@ def self_test_v0(ok):
             ok_(any(why in e for e in app_profile.problems(prof, "mold_v0", f)), f"mold_v0-101: refused: {prof} ({why})")
         ok_(app_profile.problems({"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"], "provider": "resend"}}, "mold_v0", f) == [],
             "mold_v0-101: a sender and known groups validate")
+        # mold_v0-116: member_keys false leaves signing in as the only way into /mcp: refused when the codebase has no sign-in for it
+        ok_(app_profile.problems({"member_keys": False}, "mold_v0", f) == [], "mold_v0-116: member_keys false validates where the codebase has a sign-in for /mcp")
+        nf = os.path.join(t, "nosignin"); ncb = os.path.join(nf, "molds", "mold_v0", "codebase")
+        os.makedirs(os.path.join(nf, "molds", "mold_v0", "branding")); os.makedirs(os.path.join(ncb, "src"))
+        shutil.copyfile(os.path.join(mold, "branding", "rules.json"), os.path.join(nf, "molds", "mold_v0", "branding", "rules.json"))
+        ne = app_profile.problems({"member_keys": False}, "mold_v0", nf)
+        ok_(len(ne) == 1 and "no way into /mcp" in ne[0] and "src/mcp-oauth.ts" in ne[0], f"mold_v0-116: member_keys false with no sign-in for /mcp in the codebase is refused: {ne}")
+        ok_(app_profile.problems({"member_keys": True}, "mold_v0", nf) == [], "mold_v0-116: member_keys true needs no sign-in")
+        open(os.path.join(ncb, "src", "clerk.ts"), "w").write("// stand-in\n")
+        ok_(app_profile.problems({"member_keys": False}, "mold_v0", nf) == [], "mold_v0-116: either sign-in (Clerk's here) is enough for the profile; the deployed one is provision.py's check")
         bp, berrs, _ = app_profile.from_brief("## Profile\n- email_from_address = hello@brand.example.test\n- `email.notifications`: access_requests, due_dates\nlimits.runs.budget_usd_max = 40\n")
         ok_(bp == {"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"]}, "limits": {"runs": {"budget_usd_max": 40}}} and berrs == [],
             f"mold_v0-101: the brief's ## Profile sets the sender and the notifications: {bp} {berrs}")

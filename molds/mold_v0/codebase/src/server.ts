@@ -2,10 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Org } from "./auth.js";
 import { jsonBytes, recordMcpEvent } from "./analytics.js";
-import { hostToolNames, hosts } from "./host.js";
+import { hostToolNames, hosts, type HostDefinition } from "./host.js";
 import { limitsFor } from "./rate-limits.js";
 import { registerPackTools } from "./packs.js";
-import { generatedInstructions } from "./mcp-tools.js";
+import { generatedInstructions, packInstructions } from "./mcp-tools.js";
 import { PROFILE } from "./profile.js";
 import { instructionsParagraph } from "./source-offer.js";
 import { currentOffer } from "./data-map.js";
@@ -94,18 +94,25 @@ export const ownToolNames = (): string[] => hostToolNames();
 const sameShellNames: SameNames<never, ShellToolName> = true;
 void sameShellNames;
 
+/**
+ * The instructions' lead: the profile's `mcp_instructions` (mold_v0-060), else a host pack's (mold_v0-039), else the
+ * packs' pack.json `mcp.instructions` (mold_v0-105), else the shell's neutral two sentences.
+ */
+export function leadInstructions(profile: Pick<typeof PROFILE, "mcp_instructions"> = PROFILE, hostList: readonly HostDefinition[] = hosts()): string {
+  return profile.mcp_instructions ?? hostList.find((h) => h.mcp?.instructions)?.mcp?.instructions ?? packInstructions() ?? SHELL_INSTRUCTIONS;
+}
+
 /** `context`: the account's and the person's context (a host pack's, src/host.ts), appended to the instructions. */
 export function createServer(org: Org, context = ""): McpServer {
   const server = new McpServer(
     // The server's name and version are the profile's (src/profile.ts), never a word in the code (mold_v0-038, 060).
     { name: PROFILE.mcp_server_name, version: PROFILE.mcp_server_version ?? "2.0.0" },
     {
-      // The profile's instructions when it has its own (mold_v0-060), else a host pack's (mold_v0-039), else the shell's;
-      // then a paragraph for the tools generated from the packs that this caller may use, then the source offer (mold_v0-050:
-      // only when a pack's upstream is copyleft or the profile offers the app's own source; nothing in a zero-pack build),
-      // then the context.
-      instructions: (PROFILE.mcp_instructions ?? hosts().find((h) => h.mcp?.instructions)?.mcp?.instructions ?? SHELL_INSTRUCTIONS) +
-        generatedInstructions(org) + instructionsParagraph(currentOffer()) + context,
+      // The lead (leadInstructions), then (mold_v0-105) the line telling clients to call the packs' get_started tools
+      // first, when the caller is offered one, and a paragraph for the tools generated from the packs that this caller
+      // may use, then the source offer (mold_v0-050: only when a pack's upstream is copyleft or the profile offers the
+      // app's own source; nothing in a zero-pack build), then the context.
+      instructions: leadInstructions() + generatedInstructions(org) + instructionsParagraph(currentOffer()) + context,
     },
   );
   // tools/list answers even when the build has no tool at all (zero packs): a tool registered and removed at once installs
