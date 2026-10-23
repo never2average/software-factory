@@ -23,8 +23,14 @@ export interface Concepts { $comment?: string; words: string[]; scan: string[]; 
 export interface ConceptHit { file: string; line: number; word: string; text: string }
 export interface ConceptReport { hits: ConceptHit[]; problems: string[]; counts: Record<string, number>; scanned: number }
 
-/** The TypeScript compiler (parse only): the console's copy (web/node_modules; the root has the native compiler, no API). */
-function loadTs(root: string): typeof import("typescript") {
+/**
+ * The TypeScript compiler (parse only): the console's copy (web/node_modules; the root has the native compiler, which
+ * has no API and no types for one, hence the loose type).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Ts = any;
+type TsNode = Ts;
+function loadTs(root: string): Ts {
   for (const from of [path.join(root, "web", "package.json"), path.join(root, "package.json")]) {
     try { const ts = createRequire(from)("typescript"); if (typeof ts.createSourceFile === "function") return ts; } catch { /* next */ }
   }
@@ -66,11 +72,11 @@ export function checkConcepts(root: string, c: Concepts, only?: (rel: string) =>
     scanned++;
     const src = readFileSync(path.join(root, rel), "utf8");
     const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, rel.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-    const add = (node: import("typescript").Node, text: string) => {
+    const add = (node: TsNode, text: string) => {
       for (const word of proseHits(text, c.words))
         hits.push({ file: rel, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, word, text: text.trim().replace(/\s+/g, " ").slice(0, 140) });
     };
-    const visit = (node: import("typescript").Node): void => {
+    const visit = (node: TsNode): void => {
       if (ts.isTaggedTemplateExpression(node) || ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isRegularExpressionLiteral(node)) return;
       if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
         // a module specifier, a property key or an enum-like comparison is a name, not text
