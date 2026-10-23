@@ -19,7 +19,7 @@ import brief_pack as BP
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 ST = os.path.join(ROOT, "state")
 
-HEAD = "Mold: mold_v0\nIt runs on its own server.\n"
+HEAD = "Mold: mold_v0\nIt runs on its own server.\nAdmins: ops@example.com\n"   # the platform administrator intake asks for otherwise
 
 VULNS = HEAD + """Product name: Vuln Desk
 Domain: vulns.example.org
@@ -320,7 +320,8 @@ def run(n=0, fails=None):
               "- command: node 'unterminated\n- env PATH: /tmp\n\n## Records\n"
         r = go("zz_bad", bad); n += 1
         lines = re.findall(r"^\s+line (\d+):", out(r), re.M)
-        if r.returncode != 2 or lines != ["6", "8", "9", "10", "11", "12", "13", "17", "18", "19", "20", "22"] or os.path.exists(os.path.join(P, "broken")) \
+        # the numbers count the brief's own lines, HEAD's three (Mold, where it runs, Admins) among them
+        if r.returncode != 2 or lines != ["7", "9", "10", "11", "12", "13", "14", "18", "19", "20", "21", "23"] or os.path.exists(os.path.join(P, "broken")) \
            or os.path.exists(os.path.join(A, "zz_bad", "application.json")):
             fails.append(f"a malformed brief must list each problem with its line, writing nothing: rc={r.returncode} lines={lines} {out(r)[-900:]}")
 

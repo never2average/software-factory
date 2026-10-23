@@ -153,21 +153,28 @@ def st_brand(app, a, i):
     return (DONE, f"{b['product_name']}, {b.get('brand_color', 'default colour')}") if b.get("product_name") else (NA, "the mold's own look (set one with branding.py <app> set --name … --color … --logo …)")
 
 MISSING_KEYS = {}   # app -> the key names st_keys found missing (for --json's needs)
+MISSING_ADMIN = {}  # app -> True when provision.py's check found no platform administrator, recorded or on the target
 def st_keys(app, a, i):
     if i.get("target") in ("vm_remote", "compose_remote"):
         # Its own server (mold_v1-075): the check is offline, and what is left is the server, the domain and the key
         # name. The values themselves are asked for at a hidden prompt during the deploy and stored on the server.
         r = quiet(os.path.join(S, "provision.py"), app, "--check"); out = clean(r.stdout + r.stderr)
+        MISSING_ADMIN[app] = single_service.ADMIN_MARK in out; MISSING_KEYS[app] = []   # values are asked for during its deploy
         todo = [l.strip()[2:] for l in out.splitlines() if l.startswith("  - ")]
         if r.returncode == 0: return DONE, "server, domain and key name are in place; your own values are asked for during the deploy"
         return OPERATOR, ("; ".join(todo) or (out.strip().splitlines() or ["the check could not run"])[-1])[:420]
     if i.get("target") != "vercel": return NA, "a vm application's keys live in its own environment file"
     r = quiet(os.path.join(S, "provision.py"), app, "--check"); out = clean(r.stdout + r.stderr)
+    # A single-service app with nobody to run its admin console (no platform administrator in state, none on the API
+    # project): the check stops for the operator, who names the address(es); never a key, so it is said in the chat.
+    admin = MISSING_ADMIN[app] = single_service.ADMIN_MARK in out
     if r.returncode == 0: return DONE, (re.search(r"secrets present: \S+", out) or [""])[0] or "all present"
     missing = list(dict.fromkeys(n for n in re.findall(r"--set-secret ([A-Z][A-Z0-9_]*)(?![\w)])", out) if n != "NAME"))   # not the usage line's "--set-secret NAME):"
     MISSING_KEYS[app] = missing
+    if not missing and admin: return OPERATOR, single_service.admin_todo(app)
     if not missing: return FAILED, out.strip().splitlines()[-1][:220]
-    if single_service.applies(a, ROOT): return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)} (this app's own; never another app's)"
+    if single_service.applies(a, ROOT):
+        return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)} (this app's own; never another app's)" + (f"; and {single_service.admin_todo(app)}" if admin else "")
     return OPERATOR, f"{len(missing)} key(s) not set yet: {', '.join(missing)}. If another of your apps already runs: mint.py {app} reuse-keys <that_app>"
 
 def st_deploy(app, a, i):
@@ -816,6 +823,21 @@ def single_self_test():
             except SystemExit as e: ok("Nothing was sent" in str(e) or "its own" in str(e), f"{fn.__name__} refuses a single-service app: {e}")
         ran.clear(); st_packs("zz", {"mold_id": "mold_v0", "packs": ["notes"]}, {}); st_packs("zz", {"mold_id": "mold_v1", "packs": ["other-pack"]}, {})
         ok(ran[0][1:] == ("check", "notes", "--mold", "mold_v0") and ran[1][1:] == ("check", "other-pack", "--mold", "mold_v1"), f"the packs station checks a pack by its app's mold's rules, whatever its pack.json says: {ran}")
+        # no platform administrator (none in state, none on the API project): the keys station asks the operator for the address
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, f"  - {single_service.admin_todo('zz')}\nNot ready: ...\n", "")
+        st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
+        ok(st_[0] == OPERATOR and single_service.ADMIN_MARK in st_[1] and [x["name"] for x in nd] == ["platform administrator address"] and nd[0]["kind"] == "approval"
+           and "answers.json" in nd[0]["how"] and "--set-secret" not in nd[0]["how"], f"no administrator: the keys station asks for the address in plain words, never as a secret: {st_} {nd}")
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, f"  python3 .claude/scripts/provision.py zz --set-secret CLERK_SECRET_KEY\n  - {single_service.admin_todo('zz')}\n", "")
+        st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
+        ok(st_[0] == OPERATOR and "CLERK_SECRET_KEY" in st_[1] and single_service.ADMIN_MARK in st_[1] and [x["name"] for x in nd] == ["CLERK_SECRET_KEY", "platform administrator address"],
+           f"a key and the administrator both missing: both asked for: {st_} {nd}")
+        i["target"] = "compose_remote"
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 1, f"Still to do:\n  - supply the server and the domain: x\n  - {single_service.admin_todo('zz')}\n", "")
+        st_ = st_keys("zz", a, i); nd = needs_for("zz", "keys", st_[1])
+        ok(st_[0] == OPERATOR and [x["name"] for x in nd] == ["platform administrator address", "server, domain and key name"] and single_service.ADMIN_MARK not in nd[1]["how"],
+           f"on its own server: the administrator and the server asked for separately: {nd}")
+        i["target"] = "vercel"; MISSING_KEYS.pop("zz", None); MISSING_ADMIN.pop("zz", None)
         globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 0, "ok\n", "")
         st_ = st_state("zz", dict(a, profile={"limits": {"runs": {"budget_usd_max": 40, "kind_month_budget_usd": 500}}}), i)
         ok(st_[0] == DONE and "limits.runs.budget_usd_max 40, limits.runs.kind_month_budget_usd 500" in st_[1] and st_state("zz", a, i)[1] == "four state files, valid",
@@ -968,8 +990,10 @@ def workspace_self_test():
 def needs_for(app, name, why):
     """What a person must give at an OPERATOR station, as `needs` entries with plain instructions."""
     if name == "keys":
-        return [{"kind": "secret", "name": k, "how": AR.secret_how(app, k)} for k in MISSING_KEYS.get(app) or []] or \
-               [{"kind": "approval", "name": "server, domain and key name", "how": why}]
+        keys = [{"kind": "secret", "name": k, "how": AR.secret_how(app, k)} for k in MISSING_KEYS.get(app) or []]
+        adm = [{"kind": "approval", "name": "platform administrator address", "how": single_service.admin_ask(app, (docs(app)[0] or {}))}] if MISSING_ADMIN.get(app) else []
+        rest = "; ".join(x for x in (why or "").split("; ") if single_service.ADMIN_MARK not in x)   # anything else the server check still lists
+        return keys + adm + ([] if keys or (adm and not rest) else [{"kind": "approval", "name": "server, domain and key name", "how": rest or why}])
     if name == "tests" and single_service.applies(docs(app)[0], ROOT):
         return [{"kind": "approval", "name": "lane-check organisation", "how": why}]
     if name == "tests":
