@@ -201,7 +201,11 @@ def rehearsal(ok):
         lines = [json.loads(l) for l in calls().splitlines()]
         dep = [x["argv"][x["argv"].index("--project") + 1] for x in lines if x.get("tool") == "vercel" and x["argv"][:1] == ["deploy"]]
         adds = [" ".join(x["argv"]) for x in lines if x.get("tool") == "vercel" and x["argv"][:2] == ["project", "add"]]
-        ok(dep[-1] == "zz-shop" and set(dep[:-1]) == {"zz-shop-api"} and adds == [], f"rehearsal: the API deploys first, the console last, into the project --set-secret made: {dep} {adds}")
+        ok(dep.index("zz-shop") > 0 and set(dep[:dep.index("zz-shop")]) == {"zz-shop-api"} and dep[dep.index("zz-shop") + 1:] == ["zz-shop-api"] and adds == [],
+           f"rehearsal: the API deploys first, then the console, into the project --set-secret made, then the API once more with the console's address: {dep} {adds}")
+        ok(w["projects"]["zz-shop-api"]["env"].get("OCTILLION_CONSOLE_URL") == web_u and w["projects"]["zz-shop-api"]["env"].get("OCTILLION_PROXY_HOPS") == "1"
+           and "OCTILLION_CONSOLE_URL" not in w["projects"]["zz-shop"]["env"],
+           f"rehearsal: the API holds the console's address (its emails link to the console) and its one proxy; the console holds neither (mold_v0-084): {sorted(w['projects']['zz-shop-api']['env'])}")
         r = subprocess.run([sys.executable, os.path.join(t, ".claude", "scripts", "lib", "single_service.py"), "lane-key-path", "zz_shop"], cwd=t, env=env, capture_output=True, text=True)
         ok(r.returncode == 1 and api_u in r.stderr and web_u not in r.stderr, f"rehearsal: the lanes' MCP check is for the API's address: {r.stderr.strip()[-200:]}")
         good = prod()
@@ -347,7 +351,8 @@ def run():
         ok(ids == ["qualify", "bundle", "packages", "firewall", "names", "release-dir", "source", "up", "health", "keep"] or ids == ["qualify", "bundle", "packages", "firewall", "names", "release-dir", "source", "env", "up", "health", "keep"],
            f"the deploy's steps, in order: {ids}")
         env = next(c for c in R.calls if c[0] == "env")
-        ok(env[2] == "DOMAIN=shop.example.org\nPUBLIC_URL=https://shop.example.org\n", f"the env step gets state's settings on stdin: {env[2]!r}")
+        ok(env[2] == "DOMAIN=shop.example.org\nPUBLIC_URL=https://shop.example.org\nOCTILLION_CONSOLE_URL=https://shop.example.org\nOCTILLION_PROXY_HOPS=1\n",
+           f"the env step gets state's settings on stdin, the console's address (one address serves both on a server: emails link to it) and the one proxy (the stack's Caddy) among them (mold_v0-084): {env[2]!r}")
         ok(all("-p sf-zz-shop" not in " ".join(c[1]) or "shop " not in " ".join(c[1]) for c in R.calls), "no step names the default project")
         ok(reads == ["https://shop.example.org/healthz"] and res["health"]["public"] == "200" and res["release"] == "20261020T000000Z", f"the public health read: {reads}")
         # mold_v0-024: an app with packs or a brand sends build/<app_id>/ (made afresh just before contact), never the codebase
@@ -674,10 +679,62 @@ def run():
             fp = FakeP(projects=["zz-shop-api", "zz-shop"])
             a_, i_, err = vdeploy(fp)
             deploys = [c for c in fp.calls if c[0] == "deploy"]; v_ = i_["vercel"]
-            ok(not err and [d[1] for d in deploys] == ["zz-shop-api", "zz-shop-api", "zz-shop"] and deploys[0][2] == os.path.join("build", "zz_shop")
-               and deploys[-1][2] == os.path.join("build", "zz_shop", "web") and all("--scope team-x" in d[3] for d in deploys),
-               f"the API first (twice on a first deploy: it learns its own address), then the console from its own directory, all under the team scope: {err[:200]} {deploys}")
-            ok(fp.calls.index(("set_env", "zz-shop", "SHOP_API_URL")) < fp.calls.index(deploys[-1]) and fp.projects["zz-shop"]["env"] == {"SHOP_API_URL": api_u},
+            ok(not err and [d[1] for d in deploys] == ["zz-shop-api", "zz-shop-api", "zz-shop", "zz-shop-api"] and deploys[0][2] == os.path.join("build", "zz_shop")
+               and deploys[2][2] == os.path.join("build", "zz_shop", "web") and deploys[3][2] == os.path.join("build", "zz_shop") and all("--scope team-x" in d[3] for d in deploys),
+               f"the API first (twice on a first deploy: it learns its own address), then the console from its own directory, then the API once more (it learns the console's address), all under the team scope: {err[:200]} {deploys}")
+            # mold_v0-084: the API's emails link to the console. Its address is written on the API project after the console's
+            # deploy (read back from Vercel), BEFORE the API's last deploy, which is health-checked; the proxy hops before the first.
+            ae = fp.projects["zz-shop-api"]["env"]
+            at = [i for i, c in enumerate(fp.calls) if c[0] == "deploy"]     # where each deploy is in the call list
+            ok(ae.get("OCTILLION_CONSOLE_URL") == web_u and ae.get("OCTILLION_PROXY_HOPS") == "1"
+               and fp.calls.index(("set_env", "zz-shop-api", "OCTILLION_PROXY_HOPS")) < at[0]
+               and at[2] < fp.calls.index(("set_env", "zz-shop-api", "OCTILLION_CONSOLE_URL")) < at[3]
+               and [c for c in fp.calls if c[0] == "health"][-1] == ("health", api_u + "/healthz"),
+               f"a first deploy: the console's address set on the API after the console's deploy and before the API's last, which is health-checked; one proxy: {ae} {fp.calls[-6:]}")
+            ok(SS.api_settings(man) == {"OCTILLION_PROXY_HOPS": "1"} and SS.api_settings(man, "https://c.example/") == {"OCTILLION_CONSOLE_URL": "https://c.example", "OCTILLION_PROXY_HOPS": "1"}
+               and SS.api_settings({"vercel": {"projects": {"api": {"env": {"bad name": "x", "X_Y": "a\nb", "Z": 3, "$comment": "c"}}}}}) == {},
+               "the mold's api settings: {console_url} only once known, no line breaks, no odd names, no comments")
+            # A later deploy: the API already holds the console's address (the one this deploy reads back): no extra deploy.
+            fp2 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before={"zz-shop-api": "dpl_api_old", "zz-shop": "dpl_web_old"})
+            fp2.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "OCTILLION_CONSOLE_URL": web_u, "OCTILLION_PROXY_HOPS": "1"})
+            _, i2, err2 = vdeploy(fp2, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url=web_u)))
+            ok(not err2 and [c[1] for c in fp2.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"]
+               and not any(c[0] == "set_env" and c[1] == "zz-shop-api" and c[2] in ("OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS") for c in fp2.calls),
+               f"a later deploy with the console's address already on the API: one deploy each, nothing rewritten: {err2[:200]} {[c for c in fp2.calls if c[0] in ('deploy', 'set_env')]}")
+            # The console's address moved (a new domain): written, and the API deployed once more.
+            fp3 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"])
+            fp3.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "OCTILLION_CONSOLE_URL": "https://old-console.example", "OCTILLION_PROXY_HOPS": "1"})
+            _, i3, err3 = vdeploy(fp3, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url="https://old-console.example")))
+            ok(not err3 and [c[1] for c in fp3.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop", "zz-shop-api"] and fp3.projects["zz-shop-api"]["env"]["OCTILLION_CONSOLE_URL"] == web_u,
+               f"a console at a new address: the API is told and deployed once more: {err3[:200]} {[c[1] for c in fp3.calls if c[0] == 'deploy']}")
+            # A console on its own domain (domain.py switch made it the front door): emails link to the domain, not *.vercel.app,
+            # and the recorded production address stays the domain; no extra deploy when the API already holds it.
+            fp5 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"])
+            fp5.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "OCTILLION_CONSOLE_URL": "https://shop.example.org", "OCTILLION_PROXY_HOPS": "1"})
+            fp5._front_door = lambda infra, url, cb: "https://shop.example.org" if (infra.get("vercel") or {}).get("production_url") == "https://shop.example.org" else url
+            _, i5, err5 = vdeploy(fp5, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], custom_domain="shop.example.org", production_url="https://shop.example.org")))
+            ok(not err5 and [c[1] for c in fp5.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"] and fp5.projects["zz-shop-api"]["env"]["OCTILLION_CONSOLE_URL"] == "https://shop.example.org"
+               and i5["vercel"]["production_url"] == "https://shop.example.org",
+               f"a console on its own domain: emails keep linking to it, it stays the production address, no extra deploy: {err5[:200]} {[c[1] for c in fp5.calls if c[0] == 'deploy']} {i5['vercel'].get('production_url')}")
+            # A failed read of the API's settings (names there, no values) is not taken for stale: nothing written, no extra deploy.
+            fp6 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "PUBLIC_URL", "OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS"]}, projects=["zz-shop"])
+            fp6.pull_env = lambda cb, proj, required=False, environment="production": {}
+            _, i6, err6 = vdeploy(fp6, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url=web_u)))
+            ok(not any(c[0] == "set_env" and c[1] == "zz-shop-api" and c[2] in ("OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS") for c in fp6.calls)
+               and [c[1] for c in fp6.calls if c[0] == "deploy"].count("zz-shop-api") <= 2,
+               f"a failed read of the API's settings writes nothing and adds no deploy: {err6[:200]} {[c for c in fp6.calls if c[0] in ('deploy', 'set_env')]}")
+            # The API failing its health after it learns the console's address: both projects back on what served before.
+            fp4 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before={"zz-shop-api": "dpl_api_old", "zz-shop": "dpl_web_old"})
+            fp4.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u})
+            real = fp4._read_health; n_api = []
+            def late_fail(url, real=real, n_api=n_api):
+                if url.startswith(api_u): n_api.append(url)
+                return ("500", {"ok": False}, "") if url.startswith(api_u) and len(n_api) == 2 and not fp4.rolled else real(url)
+            fp4._read_health = late_fail
+            _, i4, err4 = vdeploy(fp4)
+            ok(("point", "zz-shop-api", "dpl_api_old", "rollback") in fp4.calls and ("point", "zz-shop", "dpl_web_old", "rollback") in fp4.calls and "console's address" in err4,
+               f"the API's last deploy failing its health rolls both projects back: {err4[:200]}")
+            ok(fp.calls.index(("set_env", "zz-shop", "SHOP_API_URL")) < fp.calls.index(deploys[2]) and fp.projects["zz-shop"]["env"] == {"SHOP_API_URL": api_u},
                f"the console gets the API's address before its deploy, and nothing else: {fp.projects['zz-shop']['env']}")
             ok("DATABASE_URL" in fp.projects["zz-shop-api"]["env"] and {"APP_VAULT_KEY", "CRON_SECRET"} <= set(fp.projects["zz-shop-api"]["env"]) and fp.projects["zz-shop-api"]["env"]["PUBLIC_URL"] == api_u,
                "the API alone gets the database, the minted keys and PUBLIC_URL (its own address)")

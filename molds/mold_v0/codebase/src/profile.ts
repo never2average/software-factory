@@ -22,6 +22,10 @@
  *                      either way)
  *   billing            optional (mold_v0-019): price per run, off unless `enabled` is true (src/run-charges.ts); only
  *                      the app's own profile.json sets it, never a host pack's profile
+ *   email              optional (mold_v0-083): the email adapter's transport and which notifications are on
+ *                      (src/email.ts); absent, Resend and sign-in codes and invitations only
+ *   entitlements       optional (mold_v0-083): what each plan unlocks (src/entitlements.ts); absent, every workspace has
+ *                      every feature. Only the app's own profile.json sets it, never a host pack's profile
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
@@ -44,6 +48,30 @@ export interface Profile {
   install_clients?: readonly string[];
   source_offer?: SourceOfferSetting;
   billing?: ProfileBilling;
+  email?: ProfileEmail;
+  entitlements?: ProfileEntitlements;
+}
+
+/**
+ * The email adapter (mold_v0-083, src/email.ts). `provider`: resend (default), test (kept in the process; never in
+ * production) or none; OCTILLION_EMAIL_PROVIDER overrides it on a server. `notifications`: the groups that are on
+ * besides sign-in codes and invitations (always on): access_requests, library, usage, due_dates, billing; absent, none.
+ */
+export interface ProfileEmail {
+  provider?: "resend" | "test" | "none";
+  notifications?: string[];
+}
+
+/**
+ * Plan entitlements (mold_v0-083, src/entitlements.ts): what each plan unlocks. A workspace's plan is its live
+ * subscription's (src/billing.ts orgBudget) when this declares it, else `without_plan`. Each plan lists its `features`
+ * (the shell's: src/entitlements.ts FEATURES) and whether its runs are charged (`run_charges`, default charged; only
+ * when billing is on). Its limits are the profile's `limits.plans.<name>` (src/rate-limits.ts), read for the same plan.
+ * Absent, nothing is gated: every workspace has every feature and runs are charged as billing says.
+ */
+export interface ProfileEntitlements {
+  plans: Record<string, { features: string[]; run_charges?: "charged" | "included" }>;
+  without_plan: string;
 }
 
 /**

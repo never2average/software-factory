@@ -188,6 +188,8 @@ try {
   try {
     process.env.RESEND_API_URL = http.mock.url;
     await (await import("../src/keyvault.js")).setCredential("resend", `re_test_${STAMP}_secret`);
+    // Due-date emails are a notification the app's profile turns on (mold_v0-083, src/email.ts): this app's does.
+    (await import("../src/email.js")).setEmailProfileForTest({ notifications: ["due_dates"] });
     await http.signIn(A, "owner");
     await http.signIn(B, "owner");
     const emails = () => (http.mock.state.emails as any[]).filter((e) => e.tags?.some((t: any) => t.value === "due_soon"));

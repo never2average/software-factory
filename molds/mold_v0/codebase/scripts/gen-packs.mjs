@@ -790,6 +790,55 @@ function billingProblem(v) {
   return null;
 }
 
+/** The keys of an `export const NAME = { key: ..., ... }` block in a shell file: the one list both sides read. */
+const blockKeys = (file, name) => {
+  const m = new RegExp(`export const ${name} = \\{([\\s\\S]*?)\\n\\}`).exec(readFileSync(path.join(ROOT, "src", file), "utf8"));
+  return m ? [...m[1].matchAll(/^\s{2}([a-z_]+):/gm)].map((x) => x[1]) : [];
+};
+
+/**
+ * The profile's optional `email` (mold_v0-083, src/email.ts): `provider` (resend, test or none) and `notifications`
+ * (the groups that are on besides sign-in codes and invitations, from src/email.ts NOTIFICATION_GROUPS, each once).
+ */
+function emailProblem(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
+  for (const k of Object.keys(v)) if (!["$comment", "provider", "notifications"].includes(k)) return `${k} is not an email setting (known: provider, notifications)`;
+  if (v.provider !== undefined && !["resend", "test", "none"].includes(v.provider)) return "provider must be resend, test or none";
+  const groups = blockKeys("email.ts", "NOTIFICATION_GROUPS");
+  if (v.notifications !== undefined) {
+    if (!Array.isArray(v.notifications) || new Set(v.notifications).size !== v.notifications.length) return "notifications must be a list of groups, each once";
+    const bad = v.notifications.filter((g) => !groups.includes(g));
+    if (bad.length) return `notifications: ${bad.map(String).join(", ").slice(0, 120)} ${bad.length === 1 ? "is not a group" : "are not groups"} (known: ${groups.join(", ")})`;
+  }
+  return null;
+}
+
+/**
+ * The profile's optional `entitlements` (mold_v0-083, src/entitlements.ts): `plans` (name -> {features, run_charges?})
+ * and `without_plan` (one of them). Features from src/entitlements.ts FEATURES, each once. Every plan `limits.plans`
+ * names must be declared here too (else its limits could never apply). Only the app's own profile.json sets it.
+ */
+const PLAN_NAME = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$/;
+function entitlementsProblem(v, limits) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
+  for (const k of Object.keys(v)) if (!["$comment", "plans", "without_plan"].includes(k)) return `${k} is not an entitlements setting (known: plans, without_plan)`;
+  if (!v.plans || typeof v.plans !== "object" || Array.isArray(v.plans) || !Object.keys(v.plans).length) return "plans must be an object of plan name -> {features, run_charges}";
+  const features = blockKeys("entitlements.ts", "FEATURES");
+  for (const [name, p] of Object.entries(v.plans)) {
+    if (!PLAN_NAME.test(name) || name === "__proto__") return `plans: ${JSON.stringify(name.slice(0, 60))} is not a plan name (letters, digits, space, _ . -; up to 60)`;
+    if (!p || typeof p !== "object" || Array.isArray(p)) return `plans.${name} must be an object {features, run_charges}`;
+    for (const k of Object.keys(p)) if (!["features", "run_charges"].includes(k)) return `plans.${name}.${k} is not a plan setting (known: features, run_charges)`;
+    if (!Array.isArray(p.features) || new Set(p.features).size !== p.features.length) return `plans.${name}.features must be a list of features, each once`;
+    const bad = p.features.filter((f) => !features.includes(f));
+    if (bad.length) return `plans.${name}.features: ${bad.map(String).join(", ").slice(0, 120)} (known: ${features.join(", ")})`;
+    if (p.run_charges !== undefined && !["charged", "included"].includes(p.run_charges)) return `plans.${name}.run_charges must be charged or included`;
+  }
+  if (typeof v.without_plan !== "string" || !Object.hasOwn(v.plans, v.without_plan)) return "without_plan must name one of the plans (the plan of a workspace with no live subscription)";
+  const undeclared = Object.keys(limits?.plans ?? {}).filter((n) => !Object.hasOwn(v.plans, n));
+  if (undeclared.length) return `limits.plans names ${undeclared.join(", ").slice(0, 120)}, which entitlements.plans does not declare (its limits would never apply)`;
+  return null;
+}
+
 let profile = { ...DEFAULT_PROFILE };
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
@@ -800,6 +849,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   const pf = { ...(hostProfiles[0]?.host.profile ?? {}), ...(filePf && typeof filePf === "object" && !Array.isArray(filePf) ? filePf : {}) };
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
+  if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
   {
     for (const [k, v] of Object.entries(pf)) {
       if (k === "$comment") continue;
@@ -807,6 +857,9 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "host_packs") { if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !ID.test(x))) fail(rel(PROFILE_FILE), "host_packs: a list of pack ids"); continue; }
       if (k === "limits") { const bad = limitsProblem(v); if (bad) fail(rel(PROFILE_FILE), `limits: ${bad}`); else profile.limits = v; continue; }
       if (k === "billing") { const bad = billingProblem(v); if (bad) fail(rel(PROFILE_FILE), `billing: ${bad}`); else profile.billing = v; continue; }
+      // The email adapter (mold_v0-083): a host pack's profile may set it (the product's notifications), the app's wins.
+      if (k === "email") { const bad = emailProblem(v); if (bad) fail(rel(PROFILE_FILE), `email: ${bad}`); else profile.email = v; continue; }
+      if (k === "entitlements") { const bad = entitlementsProblem(v, pf.limits); if (bad) fail(rel(PROFILE_FILE), `entitlements: ${bad}`); else profile.entitlements = v; continue; }
       // The customer MCP server's own version and instructions (mold_v0-060), optional: absent, the shell's.
       if (k === "mcp_server_version") { if (typeof v !== "string" || !/^\d{1,6}\.\d{1,6}\.\d{1,6}([-+][0-9A-Za-z.-]{1,40})?$/.test(v)) fail(rel(PROFILE_FILE), "mcp_server_version: a version like 1.2.3"); else profile[k] = v; continue; }
       if (k === "mcp_instructions") {
@@ -826,7 +879,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, mcp_server_version, mcp_instructions, install_clients, source_offer)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1142,7 +1195,7 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   viewsModule());
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
-  `export const profile = ${json((({ limits: _l, billing: _b, ...p }) => p)(profile))} as const;\n`);
+  `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);
 
 /**
  * The packs' metrics, charts and tabs for the console (mold_v0-063, 058): what each chart shows, and the declared tabs
