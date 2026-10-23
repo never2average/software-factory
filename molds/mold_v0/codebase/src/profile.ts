@@ -26,6 +26,8 @@
  *                      (src/email.ts); absent, Resend and sign-in codes and invitations only
  *   entitlements       optional (mold_v0-083): what each plan unlocks (src/entitlements.ts); absent, every workspace has
  *                      every feature. Only the app's own profile.json sets it, never a host pack's profile
+ *   landing            optional (mold_v0-091, src/landing.ts): the app's landing page at /, over a pack's pack.json
+ *                      `landing`; never part of this profile: gen-packs writes it to web/src/config/landing.generated.ts
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.

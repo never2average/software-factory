@@ -18,6 +18,7 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
+import { LandingSchema } from "./landing.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
@@ -103,6 +104,12 @@ export const PackJsonSchema = z.object({
   mcp: McpSettingsSchema.optional(),
   /** The workspace store's retention and the viewer's secret paths (mold_v0-056; src/workspace-store-policy.ts). */
   workspace_store: WorkspaceStoreSchema.optional(),
+  /**
+   * The app's public landing page at / (mold_v0-091; src/landing.ts): hero, coverage, value points, how it works, features,
+   * FAQ, closing call to action, footer and SEO, all plain text. The app's own profile.json `landing` comes over it section
+   * by section; at most one pack of a build declares one (scripts/gen-packs.mjs).
+   */
+  landing: LandingSchema.optional(),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;
 
