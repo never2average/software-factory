@@ -369,9 +369,14 @@ def _put(doc, path, v):
     for parent, part in reversed(chain):
         if parent[part] == {}: parent.pop(part)
 
-def write(build_dir, app, root):
+# Settings that name the app's packs: gen-packs refuses them until the packs are in the build copy, so branding.py
+# prepare (which runs before packs.py apply) leaves them out and packs.py apply writes them.
+NEEDS_PACKS = ("source_offer.upstreams",)
+
+def write(build_dir, app, root, packs_applied=True):
     """Write the app's `profile` into build_dir's profile file over the mold's own (each settable field: the app's value,
     else the mold's, else absent). Raises ValueError with the problems when the profile is wrong (nothing written).
+    packs_applied=False (branding.py prepare, before packs.py apply): the NEEDS_PACKS settings are left out.
     -> whether the file changed. A mold that takes no app profile: nothing (and an app profile is a problem)."""
     mold_id = app.get("mold_id"); prof = app.get("profile")
     errs = problems(prof, mold_id, root, packs=app.get("packs") if isinstance(app.get("packs"), list) else None)
@@ -396,6 +401,7 @@ def write(build_dir, app, root):
             if k not in (prof or {}): eff.pop(k, None)
     for k in s["app_settable"]:
         mine = _get(eff, k)
+        if not packs_applied and k in NEEDS_PACKS: mine = _NONE
         _put(doc, k, mine if mine is not _NONE else _get(base, k))
     if json.dumps(doc, sort_keys=True) == before: return False
     if os.path.lexists(p): os.remove(p)                 # never write through a hard link into the mold
