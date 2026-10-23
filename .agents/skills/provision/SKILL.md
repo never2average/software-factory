@@ -184,6 +184,15 @@ reads the mold's health path (`/healthz`) through the console on the domain and 
 instead of `WEB_ORIGIN` (sign-in codes, invitations, emailed links and Clerk's accepted sign-in origins are built on
 it), moves `production_url`, and says a redeploy is needed for the API to read it.
 
+**Platform administrators (mold_v0).** The shell lets in only a company account's members and its platform
+administrators. `application.json` `platform_admins` (addresses or `*@domain`, asked by intake) is written as a plain
+setting at every deploy wherever `molds/mold_v0/mold.json` puts `{platform_admins}`: `APP_PLATFORM_ADMINS` on the
+`-api` project (and `OCTILLION_PLATFORM_ADMINS` too, with the same value, when the project already holds that old
+spelling: `env_names`, as for `APP_CONSOLE_URL`), or in the server's env file. With none recorded, the check reads the
+API project's variable NAMES (never values): if it already holds either spelling,
+it is kept and the check says so; if not, the check and the deploy stop with exit 3, needs_human, asking for the
+address before anything is created. Nothing ever removes an administrator variable a project holds.
+
 ## A server of its own (`target: vm_remote`)
 
 ```

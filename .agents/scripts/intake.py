@@ -84,6 +84,12 @@ def parse_brief(text):
     # ...or the label's pre-rename spelling, where this machine names one (lib/legacy.py), so older briefs keep stamping.
     m = re.search(r"\b(?:" + "|".join(map(re.escape, ("owner",) + legacy.spellings("operator"))) + r"):\s*(" + EMAIL + ")", t)
     if m: h["operator_email"] = m.group(1)
+    # Who may open a mold_v0 app's admin console (application.json platform_admins): a line of its own,
+    # "Admins: you@example.com, *@example.com". Only addresses and *@domain entries are taken.
+    m = re.search(r"^\s*(?:platform )?admin(?:istrator)?s?:\s*([^\n]+)$", t, re.M)
+    if m:
+        got = single_service.admin_entries([x for x in re.split(r"[,\s]+", m.group(1)) if "@" in x])[0]
+        if got: h["platform_admins"] = got
     m = re.search(r"\b(?:members?|team):\s*((?:" + EMAIL + r"[,\s]*)+)", t)
     if m: h["members"] = re.findall(EMAIL, m.group(1))
     m = re.search(r"(?:accounts?|customers?) are called ([a-z]+)|call (?:accounts|customers) ([a-z]+)", t)
@@ -581,7 +587,9 @@ def self_test_single(n, fails):
         shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
         os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application")
-        def go(app, brief, answers=None, env=None):
+        def go(app, brief, answers=None, env=None, admins=True):
+            # every brief here names its platform administrator (mold_v0's admin console) unless the case is about that
+            if admins and "admins:" not in brief.lower(): brief += "Admins: ops@example.com\n"
             b = os.path.join(T, "briefs", app + ".md"); open(b, "w").write(brief)
             if answers is not None: save(os.path.join(T, "ans.json"), answers)
             return subprocess.run([sys.executable, I, b, "--app", app, *(["--answers", os.path.join(T, "ans.json")] if answers is not None else [])],
@@ -684,6 +692,33 @@ def self_test_single(n, fails):
         r = go("zz_nopack", "Mold: mold_v0\nIt runs on its own server.\nPacks: not_there\n"); n += 1
         if r.returncode == 0 or "not_there" not in (r.stdout + r.stderr) or os.path.exists(os.path.join(A, "zz_nopack", "application.json")):
             fails.append(f"a mold_v0 brief naming a pack that does not exist must be refused, nothing written: rc={r.returncode}")
+        # the platform administrators: from the brief's Admins line, asked when it has none, refused when not an address
+        n += 1
+        if parse_brief("Mold: mold_v0\nAdmins: Ops@Example.com, *@example.org and nobody\n").get("platform_admins") != ["ops@example.com", "*@example.org"]:
+            fails.append(f"a brief's Admins line must give its addresses and *@domain entries: {parse_brief('Admins: Ops@Example.com, *@example.org').get('platform_admins')}")
+        if docs("zz_one")["application"].get("platform_admins") != ["ops@example.com"]:
+            fails.append(f"the brief's administrator must reach application.platform_admins: {docs('zz_one')['application'].get('platform_admins')}")
+        loc2 = os.path.join(T, "local-op.json"); save(loc2, {"defaults": {"operator_email": "op@example.com"}})
+        r = go("zz_adm", "Mold: mold_v0\nIt runs on its own server.\nDomain: adm.example.org\n", admins=False, env=dict(os.environ, FACTORY_LOCAL=loc2)); n += 1
+        q = load(os.path.join(A, "zz_adm", "questions.json")) if os.path.exists(os.path.join(A, "zz_adm", "questions.json")) else {}
+        if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["platform_admins"] or q["pending"][0].get("suggested") != "op@example.com" \
+                or os.path.exists(os.path.join(A, "zz_adm", "application.json")):
+            fails.append(f"a mold_v0 brief naming no administrator must ask exactly that (the operator's address suggested), nothing written: rc={r.returncode} {q.get('pending')}")
+        r = go("zz_adm", "Mold: mold_v0\nIt runs on its own server.\nDomain: adm.example.org\n", {"platform_admins": "Boss@Example.com, *@example.org"}, admins=False); n += 1
+        if r.returncode or docs("zz_adm")["application"].get("platform_admins") != ["boss@example.com", "*@example.org"] \
+                or load(os.path.join(A, "zz_adm", "answers.json")).get("platform_admins") != ["boss@example.com", "*@example.org"] or "platform administrators: boss@example.com" not in r.stdout:
+            fails.append(f"an answered administrator list must reach state and answers.json, and be said: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_admbad", "Mold: mold_v0\nIt runs on its own server.\n", {"platform_admins": "boss@example.com, not-an-address"}, admins=False); n += 1
+        if r.returncode == 0 or "not-an-address" not in r.stdout + r.stderr or os.path.exists(os.path.join(A, "zz_admbad", "application.json")):
+            fails.append(f"an administrator that is not an address must be refused, nothing written: rc={r.returncode} {(r.stdout + r.stderr).strip()[-200:]}")
+        shutil.rmtree(os.path.join(A, "zz_admbad"), ignore_errors=True)
+        # an app deployed before the question existed: not asked again here (provision.py's check reads its target by name)
+        d_ = docs("zz_brand"); d_["application"].pop("platform_admins", None); d_["infrastructure"]["deployed_at"] = "2026-10-20T00:00:00+00:00"
+        for k, v in d_.items(): save(os.path.join(A, "zz_brand", k + ".json"), v)
+        ans_ = load(os.path.join(A, "zz_brand", "answers.json")); ans_.pop("platform_admins", None); save(os.path.join(A, "zz_brand", "answers.json"), ans_)
+        r = go("zz_brand", "Mold: mold_v0\nIt runs on its own server.\nDomain: brand.example.org\nBrand: Acme Ops\nBrand colour: #1F6F5C\n", admins=False); n += 1
+        if r.returncode or "platform_admins" in docs("zz_brand")["application"] or "platform_admins" in load(os.path.join(A, "zz_brand", "answers.json")):
+            fails.append(f"a deployed app with no administrator recorded is not stopped by intake, and nothing is invented: {(r.stdout + r.stderr).strip()[-300:]}")
         r = go("zz_two", "Mold: mold_v0\nA product for a team.\n"); n += 1
         q = load(os.path.join(A, "zz_two", "questions.json")) if os.path.exists(os.path.join(A, "zz_two", "questions.json")) else {}
         if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["deploy_target"]:
@@ -832,6 +867,12 @@ SINGLE_QUESTIONS = [
   "provision.py <app> --set-remote domain=<name>).", None, lambda d, h, c: h.get("custom_domain") or c.get("existing_domain") or ""),
  ("vercel_project", "infrastructure.vercel.project", "Vercel project name for this app (target vercel only): its two projects are <name>-api (the API) and <name> (the web console).", None,
   lambda d, h, c: c.get("existing_project") or slug(c["app_id"])),
+ # Who may open the admin console besides a company account's members. Without one nobody can reach /admin (the app
+ # answers "invite-only"). An app deployed before this question existed and lacking it is not asked again here:
+ # provision.py's check reads whether its target already holds the variable (by name) and asks only if not.
+ ("platform_admins", "application.platform_admins", "Which email address(es) may run this app's admin console? An address such as "
+  "you@example.com, or *@example.com for everyone at that company; separate several with commas. (Not a secret: it is kept in the app's state.)", None,
+  lambda d, h, c: h.get("platform_admins") or c.get("existing_admins") or ([] if c.get("deployed") else None)),
 ]
 
 def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
@@ -1041,16 +1082,27 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     ex_inf = existing.get("infrastructure", {})
     ctx = {"app_id": app_id, "existing_target": ex_inf.get("target") if ex_inf.get("target") in single_service.TARGETS else None,
            "existing_domain": (ex_inf.get("compose_remote") or {}).get("domain") or (ex_inf.get("vercel") or {}).get("custom_domain"),
-           "existing_project": (ex_inf.get("vercel") or {}).get("project")}
+           "existing_project": (ex_inf.get("vercel") or {}).get("project"),
+           "existing_admins": single_service.admin_entries((existing.get("application") or {}).get("platform_admins") or [])[0],
+           "deployed": bool(ex_inf.get("deployed_at"))}
     answers = load(answers_path) if answers_path else {}
     qfile = os.path.join(outdir, "questions.json")
     if os.path.exists(qfile) and not answers: answers.update(load(qfile).get("answers", {}))
     resolved, pending = {}, []
+    man = single_service.manifest(mold_id, ROOT) or {}
+    asks_admins = bool(single_service.admin_env_names(man) or single_service.admin_env_names(man, "compose_remote"))
+    if "platform_admins" in answers:   # an address or *@domain each; a wrong one is refused, never dropped quietly
+        got, bad = single_service.admin_entries(answers["platform_admins"])
+        if bad: sys.exit(f"{app_id}: platform_admins: {', '.join(bad)} is not an email address or *@domain. Nothing was written.")
+        if got: answers["platform_admins"] = got
+        else: answers.pop("platform_admins")
     for qid, path, prompt, options, resolve in SINGLE_QUESTIONS:
+        if qid == "platform_admins" and not asks_admins: continue
         if qid in answers: resolved[qid] = coerce(answers[qid]); continue
         v = resolve(d, hints, ctx)
         if v is not None: resolved[qid] = v; continue
-        q = {"id": qid, "path": path, "question": prompt, "options": options, "suggested": "compose_remote" if qid == "deploy_target" else None}
+        q = {"id": qid, "path": path, "question": prompt, "options": options,
+             "suggested": "compose_remote" if qid == "deploy_target" else (str(d.get("operator_email") or "").strip().lower() or None) if qid == "platform_admins" else None}
         if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both a server of its own and Vercel"
         pending.append(q)
     # The brief's pack sections (mold_v0-062): their open points join the same questions; the brand is asked with them.
@@ -1078,6 +1130,9 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
             except EOFError: sys.exit("no answer (the input closed); nothing was written.")
             if v in (None, ""): sys.exit(f"{q['id']} needs an answer; nothing was written.")
             if q["options"] and v not in q["options"]: sys.exit(f"{v!r} is not one of {', '.join(q['options'])}; nothing was written.")
+            if q["id"] == "platform_admins":
+                v, bad = single_service.admin_entries(v)
+                if bad or not v: sys.exit(f"{', '.join(bad) or 'nothing'} is not an email address or *@domain; nothing was written.")
             if q["id"].startswith("pack.") or q["id"] == "brand_name": answers[q["id"]] = v
             else: resolved[q["id"]] = v
     rounds = 0
@@ -1123,6 +1178,7 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     for name, obj in (("application", app), ("infrastructure", infra), ("datastores", ds), ("datainfra", di)):
         save(os.path.join(outdir, f"{name}.json"), obj)
     if os.path.exists(qfile): os.remove(qfile)
+    if not resolved.get("platform_admins"): resolved.pop("platform_admins", None)   # none recorded: asked again, never answered "nobody"
     save(os.path.join(outdir, "answers.json"), {**resolved, **extra})
     raw = load(os.path.join(ST, "factory.json"))     # the repository's file, never the merged view (see main)
     if app_id not in raw.setdefault("applications", []): raw["applications"].append(app_id); save(os.path.join(ST, "factory.json"), raw)
@@ -1136,7 +1192,8 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     t = infra["target"]; where = infra.get(t) or {}
     print(f"state written: state/application/{app_id}/  (mold={mold_id}, target={t}, " +
           (f"compose project={where['compose']['project']}, domain={where.get('domain') or 'not named yet'}" if t == "compose_remote" else f"projects={', '.join((where.get('projects') or {}).values()) or where.get('project')}") +
-          f", values you set: {', '.join(infra['secrets_user']) or 'none'}, minted at the deploy: {len(infra['secrets_derived'])})")
+          f", values you set: {', '.join(infra['secrets_user']) or 'none'}, minted at the deploy: {len(infra['secrets_derived'])}" +
+          (f", platform administrators: {', '.join(app.get('platform_admins') or []) or 'none recorded (provision.py checks the target)'}" if asks_admins else "") + ")")
 
 def main(a):
     if a and a[0] == "--self-test": return self_test(*a[1:2])
