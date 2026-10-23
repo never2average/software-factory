@@ -168,8 +168,13 @@ put on a command line. A public package never carries credentials or operator ma
 
 ## The application's own web address
 
-`python3 .claude/scripts/domain.py <app_id> status | attach <domain> | verify | switch`. `attach` adds the domain to
-the Vercel project and prints the one DNS record its owner must create; nothing users see changes. `switch` runs only
+`python3 .claude/scripts/domain.py <app_id> status | attach <domain> | verify | switch` (`--json` for one result).
+`attach` adds the domain to the Vercel project through Vercel's project API and records it only when Vercel holds it
+there (a refusal records nothing, exit 1), then prints the one DNS record its owner must create; nothing users see
+changes. When Vercel first wants proof the team owns the domain (common for a name under an apex another Vercel
+account uses), `attach` exits 3, needs_human, naming the TXT record (host `_vercel` at the registrar, and its value):
+pass that ask to the operator as written, wait, then run `verify`, which asks Vercel to check again. `verify` and
+`status` say whether the domain is on the project and verified; the certificate follows within a minute of it. `switch` runs only
 once the domain serves the app: it moves `production_url` and `WEB_ORIGIN` (emailed links, the MCP origin check) and
 lists what follows — a redeploy, the Google sign-in origin, and a new version of the app's agent package, which has
 the address baked in. A deploy keeps a switched domain as the front door. The `*.vercel.app` address keeps working.
