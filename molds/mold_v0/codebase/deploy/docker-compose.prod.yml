@@ -1,14 +1,14 @@
-# Octillion production stack, self-hosted: Postgres + ClickHouse + server + web console + Caddy (TLS).
+# Production stack, self-hosted: Postgres + ClickHouse + server + web console + Caddy (TLS).
 #   cd deploy && ./bootstrap.sh            # generates .env with strong secrets (once)
 #   (add CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to .env: the console's sign-in needs both)
 #   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 # Only Caddy publishes ports (80/443). It sends the API's own paths (MCP, /api, the gateway, ...) straight to the
-# `octillion` service and every other request to the `console` service (Caddyfile), which reaches the API for
+# `api` service and every other request to the `console` service (Caddyfile), which reaches the API for
 # anything that is not one of its pages through its fallback rewrite. Postgres (and the optional local ClickHouse) are reachable inside the
 # compose network only. Transcripts go to ClickHouse Cloud when CLICKHOUSE_URL is set; for a local ClickHouse
 # instead, leave it unset and add --profile local-clickhouse.
 
-name: octillion
+name: app
 
 # Container logs are capped (20 MB x 5 files each) so they cannot fill the disk (deploy/cleanup.sh covers the rest).
 x-logging: &logging
@@ -23,9 +23,9 @@ services:
     image: docker.io/postgres:17
     restart: unless-stopped
     environment:
-      POSTGRES_USER: octillion
+      POSTGRES_USER: app
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run bootstrap.sh}
-      POSTGRES_DB: octillion
+      POSTGRES_DB: app
       TZ: UTC
     command: >
       postgres -c shared_buffers=512MB -c max_connections=200 -c wal_compression=on
@@ -33,12 +33,12 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U octillion -d octillion"]
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
       interval: 5s
       timeout: 3s
       retries: 20
 
-  # Nightly logical backups (custom format), 7 days kept. Restore: pg_restore -d octillion <file>.
+  # Nightly logical backups (custom format), 7 days kept. Restore: pg_restore -d app <file>.
   pg-backup:
     logging: *logging
     image: docker.io/postgres:17
@@ -46,24 +46,24 @@ services:
     depends_on: { postgres: { condition: service_healthy } }
     environment:
       PGHOST: postgres
-      PGUSER: octillion
+      PGUSER: app
       PGPASSWORD: ${POSTGRES_PASSWORD}
-      PGDATABASE: octillion
+      PGDATABASE: app
       BACKUP_KEEP: ${BACKUP_KEEP:-10}   # newest dumps kept on the volume
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         while true; do
-          f=/backups/octillion-$$(date -u +%Y%m%dT%H%M%SZ).dump
+          f=/backups/app-$$(date -u +%Y%m%dT%H%M%SZ).dump
           pg_dump -Fc -f "$$f" && echo "backup ok: $$f" || echo "backup FAILED"
-          ls -1 /backups/octillion-*.dump 2>/dev/null | sort -r | tail -n +$$(( $${BACKUP_KEEP} + 1 )) | xargs -r rm -f
+          ls -1 /backups/app-*.dump 2>/dev/null | sort -r | tail -n +$$(( $${BACKUP_KEEP} + 1 )) | xargs -r rm -f
           sleep 86400
         done
     volumes:
       - pg_backups:/backups
 
   # Off-machine copy of those dumps to an S3-compatible bucket (Cloudflare R2), hourly; the newest OFFSITE_KEEP (10) are kept there.
-  # Idle unless R2_BUCKET is set. Restore: rclone copy r2:<bucket>/postgres/<file> . && pg_restore -d octillion <file>.
+  # Idle unless R2_BUCKET is set. Restore: rclone copy r2:<bucket>/postgres/<file> . && pg_restore -d app <file>.
   pg-backup-offsite:
     logging: *logging
     image: docker.io/rclone/rclone:1
@@ -83,12 +83,12 @@ services:
       - |
         if [ -z "$$R2_BUCKET" ]; then echo "offsite backup not configured (R2_BUCKET unset)"; while true; do sleep 3600; done; fi
         while true; do
-          if rclone copy /backups "r2:$$R2_BUCKET/postgres" --include 'octillion-*.dump'; then
+          if rclone copy /backups "r2:$$R2_BUCKET/postgres" --include 'app-*.dump'; then
             echo "offsite ok: $$(rclone lsf "r2:$$R2_BUCKET/postgres" | wc -l) dumps in the bucket"
           else echo "offsite FAILED"; fi
           # Keep the newest OFFSITE_KEEP dumps (names sort by time). Never `rclone sync`: a wiped local volume would
           # then delete the off-site copies too.
-          rclone lsf "r2:$$R2_BUCKET/postgres" --include 'octillion-*.dump' | sort -r | tail -n +$$(( $${OFFSITE_KEEP} + 1 )) |
+          rclone lsf "r2:$$R2_BUCKET/postgres" --include 'app-*.dump' | sort -r | tail -n +$$(( $${OFFSITE_KEEP} + 1 )) |
             while read -r f; do rclone deletefile "r2:$$R2_BUCKET/postgres/$$f" && echo "offsite pruned $$f"; done
           sleep 3600
         done
@@ -104,8 +104,8 @@ services:
     restart: unless-stopped
     user: "101:101"
     environment:
-      CLICKHOUSE_DB: octillion
-      CLICKHOUSE_USER: octillion
+      CLICKHOUSE_DB: app
+      CLICKHOUSE_USER: app
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?run bootstrap.sh}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
     volumes:
@@ -119,11 +119,11 @@ services:
       timeout: 5s
       retries: 20
 
-  octillion:
+  api:
     logging: *logging
     build: { context: .., dockerfile: Dockerfile }
     init: true   # tini as PID 1 forwards SIGTERM to node for a graceful stop
-    # On SIGTERM the server drains: in-flight requests (agents' model streams) get OCTILLION_DRAIN_SECONDS to finish.
+    # On SIGTERM the server drains: in-flight requests (agents' model streams) get APP_DRAIN_SECONDS to finish.
     # Deploy with deploy/rolling-deploy.sh so a new replica is serving before the old one drains.
     stop_grace_period: 330s
     restart: unless-stopped
@@ -134,70 +134,70 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3333
-      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://octillion.example.com}
-      DATABASE_URL: postgres://octillion:${POSTGRES_PASSWORD}@postgres:5432/octillion
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://app.example.com}
+      DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/app
       CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://clickhouse:8123}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-octillion}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-app}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_APP_PASSWORD:-${CLICKHOUSE_PASSWORD}}
-      CLICKHOUSE_DATABASE: octillion
-      OCTILLION_VAULT_KEY: ${OCTILLION_VAULT_KEY:?run bootstrap.sh}
-      OCTILLION_WORKER_TOKEN: ${OCTILLION_WORKER_TOKEN:?run bootstrap.sh}
+      CLICKHOUSE_DATABASE: app
+      APP_VAULT_KEY: ${APP_VAULT_KEY:?run bootstrap.sh}
+      APP_WORKER_TOKEN: ${APP_WORKER_TOKEN:?run bootstrap.sh}
       # The orchestrators' brain (Pi), handed out by the credential broker; switch here, not per orchestrator.
       ORCHESTRATOR_PROVIDER: ${ORCHESTRATOR_PROVIDER:-openai}
       ORCHESTRATOR_MODEL: ${ORCHESTRATOR_MODEL:-gpt-6.1-sol}
       ACCESS_REQUEST_WEBHOOK_URL: ${ACCESS_REQUEST_WEBHOOK_URL:-}
       VAULT_URL: ${VAULT_URL:-}
       VAULT_TOKEN: ${VAULT_TOKEN:-}
-      # On-demand orchestrators (src/autoscaler.ts). OCTILLION_AUTOSCALE=off is the kill switch.
-      OCTILLION_AUTOSCALE: ${OCTILLION_AUTOSCALE:-on}
+      # On-demand orchestrators (src/autoscaler.ts). APP_AUTOSCALE=off is the kill switch.
+      APP_AUTOSCALE: ${APP_AUTOSCALE:-on}
       # Connector API keys in the URL (/mcp/oct_...): allow (deprecated, logged) or off (src/auth.ts urlKeysAllowed).
-      OCTILLION_URL_KEYS: ${OCTILLION_URL_KEYS:-allow}
+      APP_URL_KEYS: ${APP_URL_KEYS:-allow}
       # Object storage (src/storage.ts, docs/storage.md): the same R2 bucket as the off-site database backups holds the
       # trace and research archive (src/archive.ts) and run reports. Unset R2_BUCKET = archive off.
       R2_BUCKET: ${R2_BUCKET:-}
       R2_ENDPOINT: ${R2_ENDPOINT:-}
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
-      OCTILLION_ARCHIVE: ${OCTILLION_ARCHIVE:-on}
-      OCTILLION_MAX_ORCHESTRATORS: ${OCTILLION_MAX_ORCHESTRATORS:-4}
-      OCTILLION_POD_CAPACITY: ${OCTILLION_POD_CAPACITY:-20}
-      OCTILLION_ORCH_IDLE_MINUTES: ${OCTILLION_ORCH_IDLE_MINUTES:-10}
-      OCTILLION_ORCH_SNAPSHOT: ${OCTILLION_ORCH_SNAPSHOT:-off}
-      OCTILLION_AUTOSCALE_TICK_SECONDS: ${OCTILLION_AUTOSCALE_TICK_SECONDS:-15}
+      APP_ARCHIVE: ${APP_ARCHIVE:-on}
+      APP_MAX_ORCHESTRATORS: ${APP_MAX_ORCHESTRATORS:-4}
+      APP_POD_CAPACITY: ${APP_POD_CAPACITY:-20}
+      APP_ORCH_IDLE_MINUTES: ${APP_ORCH_IDLE_MINUTES:-10}
+      APP_ORCH_SNAPSHOT: ${APP_ORCH_SNAPSHOT:-off}
+      APP_AUTOSCALE_TICK_SECONDS: ${APP_AUTOSCALE_TICK_SECONDS:-15}
       # One orchestrator per job (each onboarding research, each simulation), with up to JOB_POD_CAPACITY worker
       # sandboxes for a simulation. off: the shared fleet above (MAX_ORCHESTRATORS x POD_CAPACITY).
-      OCTILLION_ORCH_PER_JOB: ${OCTILLION_ORCH_PER_JOB:-on}
-      OCTILLION_JOB_POD_CAPACITY: ${OCTILLION_JOB_POD_CAPACITY:-40}
-      OCTILLION_MAX_JOB_ORCHESTRATORS: ${OCTILLION_MAX_JOB_ORCHESTRATORS:-12}
+      APP_ORCH_PER_JOB: ${APP_ORCH_PER_JOB:-on}
+      APP_JOB_POD_CAPACITY: ${APP_JOB_POD_CAPACITY:-40}
+      APP_MAX_JOB_ORCHESTRATORS: ${APP_MAX_JOB_ORCHESTRATORS:-12}
       # Per-persona developer environments (CLI tools, language servers, skills) installed into the harness; Zed
       # personas over ACP once verified live (orchestrator/README.md, Developer environments).
-      OCTILLION_DEV_ENV: ${OCTILLION_DEV_ENV:-on}
-      OCTILLION_ZED_ACP: ${OCTILLION_ZED_ACP:-off}
+      APP_DEV_ENV: ${APP_DEV_ENV:-on}
+      APP_ZED_ACP: ${APP_ZED_ACP:-off}
       # Run sizing and spend guards. Runs are adaptive: every scenario starts with DEFAULT_SAMPLES sessions per developer
       # profile and is sampled further until its result is stable or it has had MAX_SAMPLES sessions.
-      OCTILLION_DEFAULT_SAMPLES: ${OCTILLION_DEFAULT_SAMPLES:-3}
-      OCTILLION_MAX_SAMPLES: ${OCTILLION_MAX_SAMPLES:-20}
-      OCTILLION_MAX_SESSIONS_PER_RUN: ${OCTILLION_MAX_SESSIONS_PER_RUN:-120}
-      OCTILLION_ORG_MONTHLY_BUDGET_USD: ${OCTILLION_ORG_MONTHLY_BUDGET_USD:-1000}
+      APP_DEFAULT_SAMPLES: ${APP_DEFAULT_SAMPLES:-3}
+      APP_MAX_SAMPLES: ${APP_MAX_SAMPLES:-20}
+      APP_MAX_SESSIONS_PER_RUN: ${APP_MAX_SESSIONS_PER_RUN:-120}
+      APP_ORG_MONTHLY_BUDGET_USD: ${APP_ORG_MONTHLY_BUDGET_USD:-1000}
       # Reliability: retries of infrastructure-failed sessions, and how long a stopping server lets requests finish.
-      OCTILLION_SESSION_INFRA_RETRIES: ${OCTILLION_SESSION_INFRA_RETRIES:-1}
-      OCTILLION_DRAIN_SECONDS: ${OCTILLION_DRAIN_SECONDS:-300}
+      APP_SESSION_INFRA_RETRIES: ${APP_SESSION_INFRA_RETRIES:-1}
+      APP_DRAIN_SECONDS: ${APP_DRAIN_SECONDS:-300}
       # Sign-in (mold_v0-004, src/auth-provider.ts): builtin (an emailed code, and Google when its client is set) unless
       # AUTH_PROVIDER says clerk, or it is empty and CLERK_SECRET_KEY is set (an app already on Clerk keeps Clerk).
       AUTH_PROVIDER: ${AUTH_PROVIDER:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      OCTILLION_SESSION_DAYS: ${OCTILLION_SESSION_DAYS:-}
+      APP_SESSION_DAYS: ${APP_SESSION_DAYS:-}
       # Where people open the console, for every link in an email (mold_v0-084, src/console-url.ts): empty, PUBLIC_URL
       # (the stack serves both on one address); the factory sets it to https://<domain>.
-      OCTILLION_CONSOLE_URL: ${OCTILLION_CONSOLE_URL:-}
+      APP_CONSOLE_URL: ${APP_CONSOLE_URL:-}
       # The proxies in front of the API (src/proxy-trust.ts): one, the stack's Caddy, so per-IP limits read the address
       # Caddy saw, never one a client wrote into X-Forwarded-For.
-      OCTILLION_PROXY_HOPS: ${OCTILLION_PROXY_HOPS:-1}
+      APP_PROXY_HOPS: ${APP_PROXY_HOPS:-1}
       # The email adapter (mold_v0-083, src/email.ts): its transport (resend, none) and a narrower list of the
       # notifications the profile turns on (none, or a comma-separated subset); empty, the profile's.
-      OCTILLION_EMAIL_PROVIDER: ${OCTILLION_EMAIL_PROVIDER:-}
-      OCTILLION_EMAIL_NOTIFICATIONS: ${OCTILLION_EMAIL_NOTIFICATIONS:-}
+      APP_EMAIL_PROVIDER: ${APP_EMAIL_PROVIDER:-}
+      APP_EMAIL_NOTIFICATIONS: ${APP_EMAIL_NOTIFICATIONS:-}
       # Accounts (docs/accounts.md): people in Clerk (when it is the sign-in), billing in Stripe, analytics in PostHog,
       # traces in New Relic. Each is off while its key is empty; per-org API keys keep working either way.
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
@@ -205,19 +205,19 @@ services:
       CLERK_JWT_KEY: ${CLERK_JWT_KEY:-}
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
       CLERK_MCP_AUDIENCE: ${CLERK_MCP_AUDIENCE:-}
-      OCTILLION_OAUTH_AUDIENCE: ${OCTILLION_OAUTH_AUDIENCE:-auto}
+      APP_OAUTH_AUDIENCE: ${APP_OAUTH_AUDIENCE:-auto}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SPEND_METER: ${STRIPE_SPEND_METER:-}
-      OCTILLION_REQUIRE_SUBSCRIPTION: ${OCTILLION_REQUIRE_SUBSCRIPTION:-}
+      APP_REQUIRE_SUBSCRIPTION: ${APP_REQUIRE_SUBSCRIPTION:-}
       POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
       POSTHOG_HOST: ${POSTHOG_HOST:-https://us.i.posthog.com}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
-      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-octillion}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-app}
       OTEL_DEPLOYMENT_ENV: ${OTEL_DEPLOYMENT_ENV:-production}
-      OCTILLION_PLATFORM_ADMINS: ${OCTILLION_PLATFORM_ADMINS:-}
-      OCTILLION_JOURNEY_SECRET: ${OCTILLION_JOURNEY_SECRET:-}
-      OCTILLION_NUDGE_INTERVAL_HOURS: ${OCTILLION_NUDGE_INTERVAL_HOURS:-20}
+      APP_PLATFORM_ADMINS: ${APP_PLATFORM_ADMINS:-}
+      APP_JOURNEY_SECRET: ${APP_JOURNEY_SECRET:-}
+      APP_NUDGE_INTERVAL_HOURS: ${APP_NUDGE_INTERVAL_HOURS:-20}
       POSTHOG_PROJECT_URL: ${POSTHOG_PROJECT_URL:-}
       NEW_RELIC_DASHBOARD_URL: ${NEW_RELIC_DASHBOARD_URL:-}
     expose: ["3333"]
@@ -228,29 +228,29 @@ services:
   # Run sandboxes on this server (mold_v0-055, src/run-fleet.ts): a container per queued run, from the image above, on
   # the runs network, torn down when its run's attempt ends. The only service with the Docker socket; it serves nothing
   # and publishes no port. When the sandbox provider's key is in the vault it uses that provider instead
-  # (OCTILLION_RUN_SANDBOX=auto); off disables run sandboxes, and runs then wait (never run unsandboxed).
+  # (APP_RUN_SANDBOX=auto); off disables run sandboxes, and runs then wait (never run unsandboxed).
   runner:
     logging: *logging
-    image: ${COMPOSE_PROJECT_NAME:-octillion}-octillion
+    image: ${COMPOSE_PROJECT_NAME:-app}-api
     pull_policy: never
     init: true
     user: "0"
     restart: unless-stopped
     depends_on:
-      octillion: { condition: service_healthy }
+      api: { condition: service_healthy }
     command: ["node", "--import", "tsx", "src/run-fleet.ts"]
     environment:
       NODE_ENV: production
-      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://octillion.example.com}
-      DATABASE_URL: postgres://octillion:${POSTGRES_PASSWORD}@postgres:5432/octillion
-      OCTILLION_VAULT_KEY: ${OCTILLION_VAULT_KEY:?run bootstrap.sh}
-      OCTILLION_MIGRATE_ON_BOOT: "off"
-      OCTILLION_RUN_SANDBOX: ${OCTILLION_RUN_SANDBOX:-auto}
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://app.example.com}
+      DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/app
+      APP_VAULT_KEY: ${APP_VAULT_KEY:?run bootstrap.sh}
+      APP_MIGRATE_ON_BOOT: "off"
+      APP_RUN_SANDBOX: ${APP_RUN_SANDBOX:-auto}
       # The kill switch stops run launches and deletes here too.
-      OCTILLION_AUTOSCALE: ${OCTILLION_AUTOSCALE:-on}
-      OCTILLION_RUN_API_URL: http://octillion:3333
-      OCTILLION_MAX_RUN_SANDBOXES: ${OCTILLION_MAX_RUN_SANDBOXES:-4}
-      OCTILLION_AUTOSCALE_TICK_SECONDS: ${OCTILLION_AUTOSCALE_TICK_SECONDS:-15}
+      APP_AUTOSCALE: ${APP_AUTOSCALE:-on}
+      APP_RUN_API_URL: http://api:3333
+      APP_MAX_RUN_SANDBOXES: ${APP_MAX_RUN_SANDBOXES:-4}
+      APP_AUTOSCALE_TICK_SECONDS: ${APP_AUTOSCALE_TICK_SECONDS:-15}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [default, runs]
@@ -264,18 +264,18 @@ services:
       context: ..
       dockerfile: web/Dockerfile
       args:
-        OCTILLION_API_URL: http://octillion:3333
+        APP_API_URL: http://api:3333
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
         AUTH_PROVIDER: ${AUTH_PROVIDER:-}
-        NEXT_PUBLIC_APP_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://octillion.example.com}
+        NEXT_PUBLIC_APP_URL: ${PUBLIC_URL:?set PUBLIC_URL, e.g. https://app.example.com}
     init: true
     restart: unless-stopped
     stop_grace_period: 30s
     depends_on:
-      octillion: { condition: service_healthy }
+      api: { condition: service_healthy }
     environment:
       NODE_ENV: production
-      OCTILLION_API_URL: http://octillion:3333
+      APP_API_URL: http://api:3333
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
     security_opt: ["no-new-privileges:true"]
@@ -288,10 +288,10 @@ services:
     logging: *logging
     image: docker.io/caddy:2
     restart: unless-stopped
-    depends_on: [octillion, console]
+    depends_on: [api, console]
     environment:
       DOMAIN: ${DOMAIN:-localhost}
-    # Caddyfile: every replica of `octillion` (the API's paths) and of `console` (everything else) is an upstream,
+    # Caddyfile: every replica of `api` (the API's paths) and of `console` (everything else) is an upstream,
     # re-resolved each second, with retries on refused connections, so a rolling deploy never drops a request.
     command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:

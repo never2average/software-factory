@@ -6,11 +6,13 @@ import path from 'node:path';
  * The web app: the admin panel (/admin), the customer portal (/app), sign-in (/auth) and the public pages. Everything
  * else (/mcp, /api, /.well-known, the gateway, /healthz, /install) is the API server, reached through a fallback
  * rewrite so the browser sees one origin: Clerk's session cookie goes along with /api calls.
- *   OCTILLION_API_URL  the API server's origin (default http://127.0.0.1:3333)
+ *   APP_API_URL  the API server's origin (default http://127.0.0.1:3333); its name before mold_v0-045 is read as a
+ *                fallback (legacyEnv), so a console deployed before then builds unchanged
  * A host pack's pages keep their own URLs (mold_v0-039): src/config/pack-routes.generated.json (scripts/gen-packs.mjs,
  * from the pack's routes.json) rewrites each to the shell's host page routes, and carries the pack's redirects.
  */
-const API = (process.env.OCTILLION_API_URL ?? 'http://127.0.0.1:3333').replace(/\/$/, '');
+const legacyEnv = (name: string) => process.env[`OCTILLION_${name.replace(/^APP_/, '')}`];
+const API = (process.env.APP_API_URL ?? legacyEnv('APP_API_URL') ?? 'http://127.0.0.1:3333').replace(/\/$/, '');
 
 interface PackRoutes {
   rewrites: { source: string; destination: string }[];

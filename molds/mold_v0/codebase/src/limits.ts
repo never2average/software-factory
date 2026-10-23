@@ -5,7 +5,7 @@
  * more. Spend is live: a session that is still running counts what the gateway has metered so far.
  *
  * The plan's budget comes from Stripe (src/billing.ts) and people from Clerk; this module only stores the policy
- * (Octillion is the one enforcing spend on its own gateway, so the policy has to live here). Limits apply to people
+ * (the app is the one enforcing spend on its own gateway, so the policy has to live here). Limits apply to people
  * signed in with Clerk; connector keys draw from the account's pool.
  *
  * Per calendar month (UTC), in every mode: the buffer (reserve_usd) and each team's budget are set aside; everyone
@@ -18,10 +18,11 @@
 import type { Org } from "./auth.js";
 import { orgBudget } from "./billing.js";
 import { getDb, type Queryable } from "./db.js";
-import { settingNumber } from "./settings.js";
+import { ENGINE_SETTINGS, settingNumber } from "./settings.js";
 import { accountRefusal, canAccount, type AccountRole } from "./account-roles.js";
 import { monthRunSpendByPerson, RUN_USD } from "./run-spend.js";
 import { sessionEngine } from "./host-tables.js";
+import { PROFILE } from "./profile.js";
 
 /** Why a launch was refused, for /app to show beside the message; validation errors carry no code. */
 export type LimitCode = "viewer_role" | "no_allowance" | "account_cap" | "budget_error" | "launch_access" | "person_limit" | "team_budget" | "rest_pot" | "buffer" |
@@ -98,7 +99,7 @@ async function usageByPerson(orgId: number) {
 
 /** The most agent sessions one run may have: the server's limit, or the account's own if it is lower. */
 export async function sessionsLimit(orgId: number): Promise<number> {
-  const server = settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN");
+  const server = settingNumber(ENGINE_SETTINGS.maxSessionsPerRun);
   const [p] = await (await getDb()).query<{ n: number | null }>("SELECT max_sessions_per_run AS n FROM usage_policies WHERE org_id = $1", [orgId]);
   return p?.n == null ? server : Math.min(server, Number(p.n));
 }
@@ -347,9 +348,9 @@ async function versionOf(q: Queryable, orgId: number) {
   return String(r?.v ?? 0);
 }
 
-/** The figures beside a picture of the rules (GET /limits and the preview both send them): the reset, Octillion's session maximum, the banner. */
+/** The figures beside a picture of the rules (GET /limits and the preview both send them): the reset, the server's session maximum, the banner. */
 function tiles(o: ReturnType<typeof shape>, { figures, budget_error }: PageLive) {
-  return { period_end: pace(0).period_end, server_max_sessions: settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN"),
+  return { period_end: pace(0).period_end, server_max_sessions: settingNumber(ENGINE_SETTINGS.maxSessionsPerRun),
     alert: budget_error ? null : usageAlert(o.account.spent_usd, o.budget_usd, new Date(), figures.recent) };
 }
 
@@ -370,7 +371,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function explain(a: Pick<Allocation, "account" | "buffer_usd" | "rest" | "teams" | "members">, userId: string | null,
   run: { max_sessions: number; max_run_usd: number | null }, now = new Date()): string[] {
   const cap = a.account.cap_usd;
-  if (cap <= 0) return ["Your account has no prepaid allowance this month, so nobody can launch simulations. Contact Octillion to add one."];
+  if (cap <= 0) return [`Your account has no prepaid allowance this month, so nobody can launch simulations. Contact ${PROFILE.name} to add one.`];
   const out: string[] = [];
   const me = a.members.find((m) => m.user_id === userId);
   if (me) {
@@ -400,7 +401,7 @@ export async function memberPage(org: { orgId: number; slug: string }, userId: s
   const o = await overview(org);
   const me = o.members.find((m) => m.user_id === userId) ?? null;
   const p = o.policy;
-  const max_sessions = Math.min(settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN"), p.max_sessions_per_run ?? Infinity);
+  const max_sessions = Math.min(settingNumber(ENGINE_SETTINGS.maxSessionsPerRun), p.max_sessions_per_run ?? Infinity);
   const team = me ? o.teams.find((t) => t.id === me.team_id) ?? null : null;
   const budgeted = o.teams.some((t) => t.budget_usd != null);
   const pot = !me ? null : me.pot != null && team
@@ -446,10 +447,10 @@ function refusal(o: Awaited<ReturnType<typeof overview>>, code: LimitCode, me?: 
   const acc = o.account, t = o.teams.find((x) => x.id === me?.pot);
   switch (code) {
     case "no_allowance":
-      return new LimitError("Your account has no prepaid allowance this month, so simulations can't run. Contact Octillion.", 403, info("account", 0));
+      return new LimitError(`Your account has no prepaid allowance this month, so simulations can't run. Contact ${PROFILE.name}.`, 403, info("account", 0));
     case "account_cap":
       return new LimitError(`Your account has used its ${$(acc.cap_usd)} for ${month} (${$(acc.spent_usd)} spent). ` +
-        `Results so far stay available; reply to your Octillion contact to raise the allowance, or wait until ${reset}.`, 403, info("account", acc.cap_usd, acc.spent_usd));
+        `Results so far stay available; reply to your ${PROFILE.name} contact to raise the allowance, or wait until ${reset}.`, 403, info("account", acc.cap_usd, acc.spent_usd));
     case "launch_access":
       return new LimitError(`You haven't been allowed to launch simulations yet. Reports and transcripts stay available. ${askAdmins(o.admins, false)}`, 403,
         info(me?.own_can_run != null ? "you" : "account"));
@@ -555,7 +556,7 @@ const diff = <T>(label: string, a: T, b: T, word: (v: T) => string) => (a === b 
 
 /**
  * Append one history entry in the same transaction as the change. Nothing is written when nothing changed (a save
- * that sends the same values). A null actor is Octillion itself (a migration), shown as "System".
+ * that sends the same values). A null actor is the app itself (a migration), shown as "System".
  */
 async function logChange(q: Queryable, orgId: number, actor: Actor | null, parts: string[], before: unknown, after: unknown) {
   if (!parts.length) return;
@@ -600,7 +601,7 @@ export interface RuleChange { by_name: string; at: Date }
 /**
  * Who last changed each rule, from the history's before and after: "policy.<field>" for the account's rules,
  * "team:<id>" for a team's budget or runs at once, "member:<user id>" for a person's own settings. The newest entry
- * that changed a rule wins; a rule no entry changed is missing (Octillion's default, or set before history existed).
+ * that changed a rule wins; a rule no entry changed is missing (the app's default, or set before history existed).
  */
 export async function ruleChanges(org: { orgId: number; slug: string }): Promise<Record<string, RuleChange>> {
   const rows = await (await getDb()).query<{ at: Date; actor: string | null; actor_user: string | null; before: any; after: any }>(
@@ -643,7 +644,7 @@ const count = (v: unknown, field: string, max = 10000) => {
   return n;
 };
 const RUNS = "Runs at once";
-const sessions = (v: unknown) => count(v, "Agent sessions per run", settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN"));
+const sessions = (v: unknown) => count(v, "Agent sessions per run", settingNumber(ENGINE_SETTINGS.maxSessionsPerRun));
 
 type PolicyFields = Omit<Policy, "updated_at" | "updated_by">;
 const $cap = (v: number) => `$${v.toFixed(2)}`;

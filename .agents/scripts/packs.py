@@ -587,7 +587,7 @@ def rules_self_test():
                                "a pack the app no longer names is pruned from the build copy and the registry")
             # mold_v0-050: the deploy facts (names, places, providers) and the operator's source offer, in the deploy copy only
             sd = os.path.join(t, "state", "application", "zz")
-            json.dump({"target": "vercel", "secret_store": "vercel_env", "secrets": ["OCTILLION_VAULT_KEY", "DATABASE_URL"], "secrets_optional": ["R2_ACCESS_KEY_ID", "DATABASE_URL", "not a name"],
+            json.dump({"target": "vercel", "secret_store": "vercel_env", "secrets": ["APP_VAULT_KEY", "DATABASE_URL"], "secrets_optional": ["R2_ACCESS_KEY_ID", "DATABASE_URL", "not a name"],
                        "vercel": {"team": "acme", "project": "zz", "projects": {"api": "zz-api", "web": "zz"}, "production_url": "https://zz.vercel.app", "api_url": "https://zz-api.vercel.app/x?y=1"},
                        "datastores": {"neon_resource": "zz"}}, open(os.path.join(sd, "infrastructure.json"), "w"))
             json.dump({"postgres": {"provider": "neon", "exposure": "managed_provider", "url_ref": "DATABASE_URL", "admin_url_ref": "DATABASE_URL_UNPOOLED"}, "blob": {"provider": "none"}}, open(os.path.join(sd, "datastores.json"), "w"))
@@ -596,7 +596,7 @@ def rules_self_test():
             f = load(os.path.join(b, "deploy-facts.json"))
             ok(f["target"] == "vercel" and f["vercel"] == {"team": "acme", "api_project": "zz-api", "web_project": "zz", "production_url": "https://zz.vercel.app"}
                and f["database"] == {"provider": "neon", "exposure": "managed_provider", "resource": "zz"} and f["object_store"] == {"provider": "none"}
-               and f["secrets"] == {"required": ["DATABASE_URL", "OCTILLION_VAULT_KEY"], "optional": ["R2_ACCESS_KEY_ID"]} and f["secret_store"] == "vercel_env",
+               and f["secrets"] == {"required": ["APP_VAULT_KEY", "DATABASE_URL"], "optional": ["R2_ACCESS_KEY_ID"]} and f["secret_store"] == "vercel_env",
                f"the deploy facts from state: names, places and providers (an address with a path or query left out, a non-name dropped): {f}")
             ok(load(os.path.join(b, "profile.json")).get("source_offer") == {"app": "licensor_exception"}, "the operator's source offer (factory defaults) in the copy's profile.json")
             json.dump({}, open(os.path.join(t, "state", "factory.json"), "w"))

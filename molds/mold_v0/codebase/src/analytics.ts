@@ -7,6 +7,7 @@ import type { Org } from "./auth.js";
 import { getDb } from "./db.js";
 import { hosts } from "./host.js";
 import { capture, identifyOrg, identifyPerson, posthogEnabled } from "./telemetry.js";
+import { ENV } from "./env-names.js";
 
 export interface McpEvent {
   method: string; name?: string | null; client?: string | null; ok?: boolean; error?: string | null; ms?: number | null;
@@ -57,7 +58,7 @@ const PRODUCT_EVENTS: Record<string, string> = { initialize: "mcp_connected", "t
  * their log; the admin access log names the person). Without the secret a guessed email cannot be checked, and the
  * same person reads differently in two workspaces.
  */
-const STAFF_KEY = createHash("sha256").update(`staff-pseudonym:${process.env.OCTILLION_VAULT_KEY ?? process.env.OCTILLION_WORKER_TOKEN ?? randomBytes(32).toString("hex")}`).digest();
+const STAFF_KEY = createHash("sha256").update(`staff-pseudonym:${ENV.APP_VAULT_KEY ?? ENV.APP_WORKER_TOKEN ?? randomBytes(32).toString("hex")}`).digest();
 export const staffId = (actor: string, orgId: number) => `staff:${createHmac("sha256", STAFF_KEY).update(`${orgId}:${actor}`).digest("hex").slice(0, 12)}`;
 
 export function recordMcpEvent(org: Org, e: McpEvent): void {

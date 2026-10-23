@@ -14,10 +14,10 @@
  *
  * Which of them go out (mold_v0-019: nothing beyond sign-in and invitations unless the profile turns it on): the app's
  * profile.json `email.notifications` lists the groups that are on (access_requests, library, usage, due_dates, billing;
- * src/profile.ts ProfileEmail); absent, none. OCTILLION_EMAIL_NOTIFICATIONS may only narrow that list on a server
+ * src/profile.ts ProfileEmail); absent, none. APP_EMAIL_NOTIFICATIONS may only narrow that list on a server
  * ("none", or a comma-separated subset), never widen it. A message of a group that is off is logged as skipped, with why.
  *
- * Where they go (the transport): OCTILLION_EMAIL_PROVIDER, else the profile's `email.provider`, else resend.
+ * Where they go (the transport): APP_EMAIL_PROVIDER, else the profile's `email.provider`, else resend.
  *   resend   Resend's API (https://resend.com/docs/api-reference/emails/send-email); the key is the Key vault provider
  *            "resend" (orchestrator/server-only: never handed to an agent). Sender, reply-to, operator recipients and
  *            the on/off switch are Agent configuration settings (Email)
@@ -53,6 +53,8 @@ import { people } from "./people.js";
 import { accountRoleOf, type AccountRole } from "./account-roles.js";
 import { PROFILE, type ProfileEmail } from "./profile.js";
 import { consoleUrl } from "./console-url.js";
+import { ENV } from "./env-names.js";
+import { NS } from "./namespace.js";
 
 export const EMAIL_PROVIDER = "resend";
 export const EMAIL_KINDS = ["request_received", "request_alert", "request_declined", "request_approved", "submission_alert", "submission_accepted",
@@ -110,11 +112,11 @@ let testEmailProfile: ProfileEmail | null | undefined;
 export function setEmailProfileForTest(p: ProfileEmail | null | undefined) { testEmailProfile = p; }
 const profileEmail = (): ProfileEmail => (testEmailProfile !== undefined ? testEmailProfile : (PROFILE as { email?: ProfileEmail }).email) ?? {};
 
-/** The notification groups that are on: the profile's, narrowed by OCTILLION_EMAIL_NOTIFICATIONS (never widened). */
+/** The notification groups that are on: the profile's, narrowed by APP_EMAIL_NOTIFICATIONS (never widened). */
 export function notificationsOn(): Set<NotificationGroup> {
   const known = Object.keys(NOTIFICATION_GROUPS) as NotificationGroup[];
   const fromProfile = new Set((profileEmail().notifications ?? []).filter((g): g is NotificationGroup => known.includes(g as NotificationGroup)));
-  const raw = (process.env.OCTILLION_EMAIL_NOTIFICATIONS ?? "").trim().toLowerCase();
+  const raw = (ENV.APP_EMAIL_NOTIFICATIONS ?? "").trim().toLowerCase();
   if (!raw) return fromProfile;
   if (raw === "none" || raw === "off") return new Set();
   const narrowed = new Set(raw.split(",").map((x) => x.trim()));
@@ -139,9 +141,9 @@ interface Transport {
   deliver(m: OutgoingEmail): Promise<{ ok: true; provider_id: string | null } | { ok: false; skipped?: boolean; error: string }>;
 }
 
-/** The transport in force: OCTILLION_EMAIL_PROVIDER, else the profile's email.provider, else resend. */
+/** The transport in force: APP_EMAIL_PROVIDER, else the profile's email.provider, else resend. */
 export function transportId(): TransportId {
-  const v = (process.env.OCTILLION_EMAIL_PROVIDER || profileEmail().provider || "resend").trim().toLowerCase();
+  const v = (ENV.APP_EMAIL_PROVIDER || profileEmail().provider || "resend").trim().toLowerCase();
   return v === "test" || v === "none" ? v : "resend";
 }
 
@@ -161,7 +163,7 @@ const resend: Transport = {
     try {
       const r = await fetch(`${resendUrl()}/emails`, {
         method: "POST", signal: AbortSignal.timeout(15_000), body: JSON.stringify(body),
-        headers: { authorization: `Bearer ${cred.secret}`, "content-type": "application/json", "idempotency-key": m.idempotencyKey, "user-agent": "Octillion/1.0" },
+        headers: { authorization: `Bearer ${cred.secret}`, "content-type": "application/json", "idempotency-key": m.idempotencyKey, "user-agent": `${PROFILE.name.replace(/[^A-Za-z0-9.-]+/g, "-") || "app"}/1.0` },
       });
       const j = await r.json().catch(() => ({})) as { id?: string; message?: string; name?: string };
       if (!r.ok) return { ok: false, error: `Resend answered ${r.status}${j.name ? ` ${j.name}` : ""}: ${String(j.message ?? "").replaceAll(cred.secret, "…").slice(0, 300)}` };
@@ -179,7 +181,7 @@ export const testOutbox = (): readonly (OutgoingEmail & { at: string })[] => OUT
 export const clearTestOutbox = () => void OUTBOX.splice(0);
 const test: Transport = {
   id: "test",
-  async notReady() { return process.env.NODE_ENV === "production" ? "The test transport is not used in production (OCTILLION_EMAIL_PROVIDER=test)" : null; },
+  async notReady() { return process.env.NODE_ENV === "production" ? "The test transport is not used in production (APP_EMAIL_PROVIDER=test)" : null; },
   async deliver(m) {
     const why = await this.notReady();
     if (why) return { ok: false, skipped: true, error: why };
@@ -265,7 +267,7 @@ async function attempt(m: Email): Promise<EmailResult> {
     const error = extra.error ? extra.error.replaceAll(to || "\u0000", "*@" + (domainOf(to) || "?")).slice(0, 500) : null;
     await db.query("UPDATE email_log SET status = $2, provider_id = $3, error = $4 WHERE id = $1", [id, status, extra.provider_id ?? null, error]);
     console.error(`email ${m.kind} ${status} via ${t.id} to=*@${domainOf(to) || "?"} key=${key}${error ? ` (${error})` : ""}`);
-    telemetry.capture({ distinctId: "octillion:email" }, `email_${status}`, { kind: m.kind, transport: t.id, to_domain: domainOf(to) || null, ...(error ? { error } : {}) });
+    telemetry.capture({ distinctId: `${NS}:email` }, `email_${status}`, { kind: m.kind, transport: t.id, to_domain: domainOf(to) || null, ...(error ? { error } : {}) });
     return { status, id, provider_id: extra.provider_id ?? null, error };
   };
 
@@ -307,7 +309,7 @@ const money = (usd: number) => `$${usd.toFixed(usd % 1 ? 2 : 0)}`;
 
 // ---------- who gets what ----------
 
-/** Operator alerts: EMAIL_ADMIN_TO, else the platform owners (OCTILLION_PLATFORM_ADMINS addresses and Clerk owners). */
+/** Operator alerts: EMAIL_ADMIN_TO, else the platform owners (APP_PLATFORM_ADMINS addresses and Clerk owners). */
 export async function adminRecipients(): Promise<string[]> {
   await freshSettings();
   const set = settingText("EMAIL_ADMIN_TO").split(",").map((x) => x.trim().toLowerCase()).filter(isEmail);
@@ -358,14 +360,14 @@ export function requestReceived(r: RequestFacts) {
   const meta = { request_id: r.id };
   return Promise.all([
     sendLater({ kind: "request_received", to: r.email, idempotencyKey: `request:${r.id}:received`, meta,
-      subject: "We got your request for Octillion",
+      subject: `We got your request for ${PROFILE.name}`,
       text: lines(hello(r.name),
-        `Thanks for asking for access to Octillion for ${r.company}. We read every request ourselves and will get back to you by email, usually within a few working days.`,
+        `Thanks for asking for access to ${PROFILE.name} for ${r.company}. We read every request ourselves and will get back to you by email, usually within a few working days.`,
         "If you want to add anything in the meantime, just reply to this email.",
         SIGN) }),
     adminRecipients().then((to) => each(to, (t) => ({ kind: "request_alert", to: t, idempotencyKey: keyFor(`request:${r.id}:alert`, t), meta,
       subject: `New access request: ${r.company}`.slice(0, 200),
-      text: lines(`${r.name?.trim() || "Someone"} from ${r.company} asked for access to Octillion.`,
+      text: lines(`${r.name?.trim() || "Someone"} from ${r.company} asked for access to ${PROFILE.name}.`,
         [`Email: ${r.email}`, r.product_url ? `Product: ${r.product_url}` : null].filter(Boolean).join("\n"),
         r.message ? `What they said:\n${r.message.slice(0, 1500)}` : null,
         `Review it: ${siteUrl()}/admin/requests`,
@@ -376,9 +378,9 @@ export function requestReceived(r: RequestFacts) {
 /** A request declined: a plain, kind note, with the reason when the reviewer gave one. */
 export function requestDeclined(r: RequestFacts, reason?: string | null) {
   return sendLater({ kind: "request_declined", to: r.email, idempotencyKey: `request:${r.id}:declined`, meta: { request_id: r.id, with_reason: Boolean(reason) },
-    subject: "About your Octillion request",
+    subject: `About your ${PROFILE.name} request`,
     text: lines(hello(r.name),
-      `Thank you for your interest in Octillion. We can't offer ${r.company} access right now.`,
+      `Thank you for your interest in ${PROFILE.name}. We can't offer ${r.company} access right now.`,
       reason?.trim() ? `The reason: ${reason.trim()}` : null,
       "This isn't necessarily final. If things change on your side, or you think we've misread something, reply to this email and we'll take another look.",
       SIGN) });
@@ -387,12 +389,12 @@ export function requestDeclined(r: RequestFacts, reason?: string | null) {
 /** A request approved: a short welcome that goes with Clerk's invitation (which Clerk sends; this never resends it). */
 export function requestApproved(r: RequestFacts, o: { account: string; invited: boolean }) {
   return sendLater({ kind: "request_approved", to: r.email, idempotencyKey: `request:${r.id}:approved`, meta: { request_id: r.id, invited: o.invited },
-    subject: "Welcome to Octillion",
+    subject: `Welcome to ${PROFILE.name}`,
     text: lines(hello(r.name),
-      `Your request is approved: ${o.account} now has an Octillion account.`,
-      "Octillion shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why.",
+      `Your request is approved: ${o.account} now has ${/^[aeiou]/i.test(PROFILE.name) ? "an" : "a"} ${PROFILE.name} account.`,
+      `${PROFILE.name} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why.`,
       o.invited
-        ? `You'll get a separate invitation email to join ${o.account}. Accept it to create your sign-in, then open ${siteUrl()}/app to connect Octillion to your AI assistant and run your first simulation.`
+        ? `You'll get a separate invitation email to join ${o.account}. Accept it to create your sign-in, then open ${siteUrl()}/app to connect ${PROFILE.name} to your AI assistant and run your first simulation.`
         : `We'll send you your connection details separately. Once you have them, ${siteUrl()}/app walks you through setup.`,
       "Questions? Reply to this email.",
       SIGN) });
@@ -408,7 +410,7 @@ export function submissionReceived(s: SubmissionFacts) {
   return adminRecipients().then((to) => each(to, (t) => ({ kind: "submission_alert", to: t, idempotencyKey: keyFor(`submission:${s.id}:alert`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug },
     subject: `Library submission from ${s.org_name}: ${s.title}`.slice(0, 200),
-    text: lines(`${s.org_name} submitted a ${noun(s.kind)} to Octillion's library: "${s.title}".`,
+    text: lines(`${s.org_name} submitted a ${noun(s.kind)} to ${PROFILE.name}'s library: "${s.title}".`,
       `Review it: ${siteUrl()}/admin/${s.kind === "persona" ? "personas" : "tasks"}?view=submissions`,
       SIGN) })));
 }
@@ -428,9 +430,9 @@ export async function submissionAccepted(s: SubmissionFacts, credit: { usd: numb
       : `As thanks, you've earned a ${money(credit.usd)} credit. It is still being added to your account; once it is, it comes off your next invoice automatically. You can see it on ${siteUrl()}/app/billing.`;
   return each(await submitterOf(s), (t) => ({ kind: "submission_accepted", to: t, idempotencyKey: keyFor(`submission:${s.id}:accepted`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug, credit_usd: credit.usd, credit_status: credit.status },
-    subject: `Your ${noun(s.kind)} is in Octillion's library`,
+    subject: `Your ${noun(s.kind)} is in ${PROFILE.name}'s library`,
     text: lines("Hi,",
-      `Thanks for sharing "${s.title}". We reviewed it and added it to Octillion's library, where it now helps simulations for everyone.`,
+      `Thanks for sharing "${s.title}". We reviewed it and added it to ${PROFILE.name}'s library, where it now helps simulations for everyone.`,
       creditLine,
       "Your own copy stays yours and unchanged.",
       SIGN) }));
@@ -440,9 +442,9 @@ export async function submissionAccepted(s: SubmissionFacts, credit: { usd: numb
 export async function submissionDeclined(s: SubmissionFacts, reason: string) {
   return each(await submitterOf(s), (t) => ({ kind: "submission_declined", to: t, idempotencyKey: keyFor(`submission:${s.id}:declined`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug },
-    subject: `About your ${noun(s.kind)} for Octillion's library`,
+    subject: `About your ${noun(s.kind)} for ${PROFILE.name}'s library`,
     text: lines("Hi,",
-      `Thanks for sharing "${s.title}". We've decided not to add it to Octillion's library this time.`,
+      `Thanks for sharing "${s.title}". We've decided not to add it to ${PROFILE.name}'s library this time.`,
       `The reason: ${reason.trim()}`,
       "Your own copy stays yours and keeps working as before. If you change it, you're welcome to submit it again.",
       SIGN) }));
@@ -482,7 +484,7 @@ export async function checkBudget(orgId: number, now = new Date()): Promise<{ th
     const over = threshold >= 100;
     const results = await each(to, (t) => ({ kind: over ? "budget_100" : "budget_80", to: t, idempotencyKey: keyFor(purpose, t),
       meta: { account: o?.slug ?? null, month: monthKey(now), threshold, spent_usd: Math.round(spent * 100) / 100, budget_usd: budget },
-      subject: over ? `${o?.name ?? "Your account"} has used its Octillion allowance for ${month}` : `${o?.name ?? "Your account"} has used ${threshold}% of its Octillion allowance`,
+      subject: over ? `${o?.name ?? "Your account"} has used its ${PROFILE.name} allowance for ${month}` : `${o?.name ?? "Your account"} has used ${threshold}% of its ${PROFILE.name} allowance`,
       text: lines("Hi,",
         `${o?.name ?? "Your account"} has spent ${money(spent)} of its ${money(budget)} monthly allowance for model usage in ${month} (${Math.floor(pct)}%).`,
         over ? `New simulations can't start until the allowance resets on ${reset}, or until it is raised.`
@@ -585,8 +587,8 @@ export async function billingNotice(n: { charge_id: string; run_id: string; kind
 export async function sendTest(actor: string, toIn: unknown) {
   const to = String(toIn ?? "").trim().toLowerCase();
   const r = await send({ kind: "test", to, idempotencyKey: `test:${randomUUID()}`, meta: { by_admin: hashAddress(actor).slice(0, 16) },
-    subject: "Octillion test email",
-    text: lines("Hi,", `This is a test email from Octillion, sent from ${siteUrl()}/admin/emails. If you can read it, email is working.`, SIGN) });
+    subject: `${PROFILE.name} test email`,
+    text: lines("Hi,", `This is a test email from ${PROFILE.name}, sent from ${siteUrl()}/admin/emails. If you can read it, email is working.`, SIGN) });
   return r;
 }
 

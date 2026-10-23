@@ -1,16 +1,17 @@
 /**
  * The compose project's runner service (mold_v0-055; deploy/docker-compose.prod.yml `runner`): on a server of its own,
  * the run sandboxes are local containers, launched and torn down by this loop, the one process that holds the Docker
- * socket (the app does not). It ticks src/run-sandboxes.ts's RunScaler every OCTILLION_AUTOSCALE_TICK_SECONDS (15)
+ * socket (the app does not). It ticks src/run-sandboxes.ts's RunScaler every APP_AUTOSCALE_TICK_SECONDS (15)
  * under the "runs" lease; when the sandbox provider's key is in the vault, it uses that provider instead, as the app's
- * autoscaler would (OCTILLION_RUN_SANDBOX=auto). It serves nothing and publishes no port.
+ * autoscaler would (APP_RUN_SANDBOX=auto). It serves nothing and publishes no port.
  *
  *   npm run runner:fleet
  */
 import { getDb } from "./db.js";
 import { RunScaler } from "./run-sandboxes.js";
+import { ENV } from "./env-names.js";
 
-const tickMs = () => Math.max(1, Number(process.env.OCTILLION_AUTOSCALE_TICK_SECONDS ?? 15) || 15) * 1000;
+const tickMs = () => Math.max(1, Number(ENV.APP_AUTOSCALE_TICK_SECONDS ?? 15) || 15) * 1000;
 const scaler = new RunScaler({ tickMs, log: (m) => console.error(`runner: ${m}`) });
 await getDb();
 let timer: NodeJS.Timeout | null = null, stopping = false, last = "";

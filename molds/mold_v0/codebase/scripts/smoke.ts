@@ -15,14 +15,17 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { hostPackDirs, hostScript } from "./lib/host-packs.js";
+import { ENV } from "../src/env-names.js";
 
 /** The environment as this run started: a host pack's smoke test gets it, not what this run set for itself. */
 const ENV0 = { ...process.env };
-process.env.OCTILLION_WORKER_TOKEN ??= "smoke-worker-token";
-process.env.OCTILLION_VAULT_KEY ??= (await import("node:crypto")).randomBytes(32).toString("base64");
+process.env.APP_WORKER_TOKEN ??= "smoke-worker-token";
+process.env.APP_VAULT_KEY ??= (await import("node:crypto")).randomBytes(32).toString("base64");
 process.env.CRON_SECRET ??= "smoke-cron-secret";
-process.env.OCTILLION_REGISTRY = "scripts/fixtures/registry.json";
+process.env.APP_REGISTRY = "scripts/fixtures/registry.json";
 const ROOT = path.resolve(import.meta.dirname, "..");
+/** The product words the shell never says on its own (scripts/vocabulary.json, mold_v0-045). */
+const PRODUCT_WORDS = (JSON.parse(readFileSync(path.join(ROOT, "scripts", "vocabulary.json"), "utf8")).words as string[]).map((w) => w.toLowerCase());
 
 let passed = 0;
 const ok = (what: string) => { passed++; console.log(`✓ ${what}`); };
@@ -32,6 +35,9 @@ const ok = (what: string) => { passed++; console.log(`✓ ${what}`); };
   try { execFileSync(process.execPath, ["scripts/gen-packs.mjs", "--check"], { cwd: ROOT, stdio: "pipe" }); }
   catch (e) { assert.fail(`the pack registry or profile is stale: run npm run gen:packs\n${String((e as { stderr?: unknown }).stderr ?? e)}`); }
   ok("the pack registry, the host list and the profile are current (gen-packs --check)");
+  const vocab = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), ["scripts/check-vocabulary.ts"], { cwd: ROOT, encoding: "utf8" });
+  assert.equal(vocab.status, 0, `a product word in the shell (npm run check:vocabulary):\n${vocab.stderr}`);
+  ok("no product word in the shell outside its allow list (check:vocabulary)");
   const { mcpCatalog } = await import("./export-mcp-tools.js");
   const committed = JSON.parse(readFileSync(path.join(ROOT, "web/src/content/mcp-tools.generated.json"), "utf8"));
   assert.deepEqual(committed, await mcpCatalog(), "web/src/content/mcp-tools.generated.json is stale: run npx tsx scripts/export-mcp-tools.ts");
@@ -110,7 +116,8 @@ try {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
     assert.equal(none.status, 401, "no key: 401");
     assert.ok(none.headers.get("www-authenticate"), "with a WWW-Authenticate header");
-    assert.ok(!(await none.text()).includes("Octillion") || PROFILE.name === "Octillion", "the refusal names the profile, never a product of its own");
+    const refusal = (await none.text()).toLowerCase();
+    assert.ok(PRODUCT_WORDS.every((w) => !refusal.includes(w) || PROFILE.name.toLowerCase().includes(w)), "the refusal names the profile, never a product of its own");
     const wrong = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer oct_not_a_key" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
     assert.equal(wrong.status, 401, "an unknown key: 401");
@@ -162,7 +169,7 @@ try {
   // ---------- the worker API and the cron need their secrets ----------
   {
     assert.equal((await fetch(`${base}/api/worker/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
-    const claim = await fetch(`${base}/api/worker/claim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OCTILLION_WORKER_TOKEN}` },
+    const claim = await fetch(`${base}/api/worker/claim`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${ENV.APP_WORKER_TOKEN}` },
       body: JSON.stringify({ worker_id: `shell-smoke-${stamp}`, limit: 1, simulation_id: "sim_none" }) });
     assert.equal(claim.status, 200);
     assert.deepEqual((await claim.json()).jobs, []);

@@ -118,7 +118,7 @@ gateway; `cloudflare workers ai` the default.
 ## mold_v0: platform administrators (`platform_admins`)
 
 Who may open a mold_v0 app's admin console besides a company account's members (the shell's
-`OCTILLION_PLATFORM_ADMINS`; `APP_PLATFORM_ADMINS` once the neutral names land). Without one nobody can reach `/admin`
+`APP_PLATFORM_ADMINS`; the old `OCTILLION_PLATFORM_ADMINS` is still read). Without one nobody can reach `/admin`
 and the operator is told the app is invite-only. Resolved from a brief line `Admins: you@example.com, *@example.com`,
 else the app's own state, else asked (the operator's address, `defaults.operator_email`, is suggested). Each entry is
 an address or `*@domain`, lowercased; anything else is refused. An app deployed before this question existed is not

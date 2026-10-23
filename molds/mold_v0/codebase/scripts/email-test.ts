@@ -7,21 +7,21 @@
 // 2. Transports: test (kept in the process, refused in production), none, resend without a key; each says in
 //    emailStatus why it does or does not send, and with no transport only sign-in codes and invitations are on.
 // 3. The profile turns notifications on: with none listed only sign-in codes, invitations and the test email go out;
-//    a listed group goes out; OCTILLION_EMAIL_NOTIFICATIONS narrows the profile's list, never widens it.
+//    a listed group goes out; APP_EMAIL_NOTIFICATIONS narrows the profile's list, never widens it.
 // 4. The log: a row per message, with a hash and the domain of the address, never the address, a code or a secret;
 //    the same key never sends twice.
 // 5. Recipients and headers: one valid address per message; line breaks in a subject, a sender or a recipient never
 //    reach the transport; a bad sender stops the message.
-// 6. Links: every link is on the console's address from the environment (OCTILLION_CONSOLE_URL, else PUBLIC_URL); an
+// 6. Links: every link is on the console's address from the environment (APP_CONSOLE_URL, else PUBLIC_URL); an
 //    address that is not plain http(s) is ignored; a request's Host never matters.
 // 7. Billing notices: off unless the profile lists billing; to the operator only; Stripe ids and addresses kept out.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-process.env.OCTILLION_EMAIL_PROVIDER = "test";
+process.env.APP_EMAIL_PROVIDER = "test";
 process.env.PUBLIC_URL = "https://api.example.test";
-process.env.OCTILLION_CONSOLE_URL = "https://console.example.test";
+process.env.APP_CONSOLE_URL = "https://console.example.test";
 const { cleanup, STAMP } = await import("./lib/test-world.js");
 
 let n = 0;
@@ -67,19 +67,19 @@ try {
     assert.deepEqual(s.notifications, []);
     assert.deepEqual([...s.on].sort(), ["invitation", "sign_in_code", "test"], "the build's profile turns on no notification");
     assert.match(s.summary, /sign-in codes and invitations only/);
-    process.env.OCTILLION_EMAIL_PROVIDER = "none";
+    process.env.APP_EMAIL_PROVIDER = "none";
     s = await mail.emailStatus();
     assert.equal(s.connected, false);
     assert.match(s.summary, /^Not sending email \(No email transport.*Sign-in codes and invitations are the only kinds on/);
     const r0 = await mail.send({ kind: "sign_in_code", to: "nobody@example.org", idempotencyKey: `t:${STAMP}:none`, subject: "x", text: "x" });
     assert.equal(r0.status, "skipped");
     assert.match((await logOf(`t:${STAMP}:none`))!.error!, /No email transport/);
-    process.env.OCTILLION_EMAIL_PROVIDER = "resend";
+    process.env.APP_EMAIL_PROVIDER = "resend";
     s = await mail.emailStatus();
     assert.equal(s.provider, "resend");
     assert.equal(s.connected, false);
     assert.match(s.summary, /No Resend key|Resend provider is off/);
-    process.env.OCTILLION_EMAIL_PROVIDER = "test";
+    process.env.APP_EMAIL_PROVIDER = "test";
     process.env.NODE_ENV = "production";
     const before = outbox().length;
     const r1 = await mail.send({ kind: "sign_in_code", to: "nobody@example.org", idempotencyKey: `t:${STAMP}:prod`, subject: "x", text: "x" });
@@ -116,12 +116,12 @@ try {
     assert.equal(last().kind, "due_soon");
     assert.equal((await due(`t:${STAMP}:due1`)).status, "duplicate", "sent once: the same key never sends twice");
     assert.equal(mail.kindOn("budget_80").on, false, "only the groups listed");
-    process.env.OCTILLION_EMAIL_NOTIFICATIONS = "usage,due_dates,billing";
+    process.env.APP_EMAIL_NOTIFICATIONS = "usage,due_dates,billing";
     assert.deepEqual([...mail.notificationsOn()], ["due_dates"], "the environment narrows, never widens");
-    process.env.OCTILLION_EMAIL_NOTIFICATIONS = "none";
+    process.env.APP_EMAIL_NOTIFICATIONS = "none";
     assert.equal((await due(`t:${STAMP}:due2`)).status, "skipped", "none: off whatever the profile says");
     assert.equal(mail.kindOn("sign_in_code").on, true, "sign-in stays on");
-    delete process.env.OCTILLION_EMAIL_NOTIFICATIONS;
+    delete process.env.APP_EMAIL_NOTIFICATIONS;
     mail.setEmailProfileForTest({ notifications: ["due_dates", "not_a_group"] });
     assert.deepEqual([...mail.notificationsOn()], ["due_dates"], "an unknown group turns nothing on");
     mail.setEmailProfileForTest(undefined);
@@ -191,14 +191,14 @@ try {
     await mail.invitation({ id: `inv2_${STAMP}`, to: "new2@example.org", account: "Verify at https://evil.example/login now", accountSlug: "acme", role: "Member", google: false, days: 7 });
     assert.ok(last().text.includes("https://evil.example/login") && !last().html.includes('href="https://evil.example'), "a URL typed into a name stays plain text, never a link");
     for (const bad of ["javascript:alert(1)", "https://user:pw@console.example.test", "https://console.example.test/?next=//evil.example", "https://console.example.test/#x", "ftp://console.example.test", "//evil.example"]) {
-      process.env.OCTILLION_CONSOLE_URL = bad;
+      process.env.APP_CONSOLE_URL = bad;
       assert.equal(mail.siteUrl(), "https://api.example.test", `${bad}: ignored, PUBLIC_URL instead`);
     }
-    process.env.OCTILLION_CONSOLE_URL = "https://console.example.test/";
+    process.env.APP_CONSOLE_URL = "https://console.example.test/";
     assert.equal(mail.siteUrl(), "https://console.example.test");
-    delete process.env.OCTILLION_CONSOLE_URL;
+    delete process.env.APP_CONSOLE_URL;
     assert.equal(mail.siteUrl(), "https://api.example.test", "no console address: PUBLIC_URL (one address serves both)");
-    process.env.OCTILLION_CONSOLE_URL = "https://console.example.test";
+    process.env.APP_CONSOLE_URL = "https://console.example.test";
     ok("links: the console's address from the environment only; anything but a plain http(s) address is ignored");
   }
 

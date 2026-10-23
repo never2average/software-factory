@@ -5,7 +5,7 @@
  *   - the nudge loop (core/session.ts driveToDone) stops at done, at the agent-turn cap, or when the agent gives up
  *   - finish_session is refused while the agent is resumable and not done
  *   - completed_reason + agent_turns reach /complete
- * The coding agent is test/fixtures/fake-codex.mjs on the local runner; the Octillion worker API is a tiny mock.
+ * The coding agent is test/fixtures/fake-codex.mjs on the local runner; the worker API is a tiny mock.
  *
  *   npx tsx orchestrator/test/run-until-done.ts
  */
@@ -40,7 +40,7 @@ await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
 const port = (server.address() as any).port;
 
 Object.assign(process.env, {
-  OCTILLION_URL: `http://127.0.0.1:${port}`, OCTILLION_WORKER_TOKEN: "wt_test", RUNNER: "local", OCTILLION_DEV_ALLOW_LOCAL: "1",
+  APP_URL: `http://127.0.0.1:${port}`, APP_WORKER_TOKEN: "wt_test", RUNNER: "local", APP_DEV_ALLOW_LOCAL: "1",
   CREDENTIALS_MODE: "env", OPENAI_API_KEY: "sk-fake-test", TRANSCRIPT_SINK: "api", FLUSH_INTERVAL_MS: "200",
   CODEX_BIN: path.join(HERE, "fixtures", "fake-codex.mjs"), MAX_AGENT_TURNS: "50", GIVE_UP_RUNS: "3", MAX_SESSION_MINUTES: "5",
 });

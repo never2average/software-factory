@@ -1,11 +1,13 @@
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
+import { ENV } from "./env-names.js";
+import { PROFILE } from "./profile.js";
 
 /**
  * Per-model inference usage and cost. The gateway calls recordModelUsage() once per request with the model the
  * provider reported and the tokens it metered; we price it from model_prices (long-context tier per request), add it
  * to the day's row for (provider, model, consumer), and fire a once-a-day webhook alert when a model's daily cost
- * crosses its budget (OCTILLION_MODEL_DAILY_BUDGETS='{"gpt-6.1-sol": 25}', OCTILLION_ALERT_WEBHOOK_URL).
+ * crosses its budget (APP_MODEL_DAILY_BUDGETS='{"gpt-6.1-sol": 25}', APP_ALERT_WEBHOOK_URL).
  */
 
 interface Price {
@@ -60,9 +62,9 @@ export async function recordModelUsage(provider: string, model: string, consumer
 }
 
 async function maybeAlert(model: string) {
-  const budgets = JSON.parse(process.env.OCTILLION_MODEL_DAILY_BUDGETS ?? "{}") as Record<string, number>;
+  const budgets = JSON.parse(ENV.APP_MODEL_DAILY_BUDGETS ?? "{}") as Record<string, number>;
   const budget = budgets[model];
-  const hook = process.env.OCTILLION_ALERT_WEBHOOK_URL;
+  const hook = ENV.APP_ALERT_WEBHOOK_URL;
   if (!budget || !hook) return;
   const db = await getDb();
   const [{ cost }] = await db.query<{ cost: number }>("SELECT coalesce(sum(cost_usd), 0) AS cost FROM gateway_model_usage WHERE day = current_date AND model = $1", [model]);
@@ -70,7 +72,7 @@ async function maybeAlert(model: string) {
   const [fresh] = await db.query("INSERT INTO usage_alerts (day, model) VALUES (current_date, $1) ON CONFLICT DO NOTHING RETURNING model", [model]);
   if (!fresh) return; // already alerted today
   await fetch(hook, { method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(5000),
-    body: JSON.stringify({ text: `Octillion: ${model} spend today is $${Number(cost).toFixed(2)} (daily budget $${budget}).` }) });
+    body: JSON.stringify({ text: `${PROFILE.name}: ${model} spend today is $${Number(cost).toFixed(2)} (daily budget $${budget}).` }) });
 }
 
 /** Daily rows and totals per model for the last `days` days (optionally one model). */

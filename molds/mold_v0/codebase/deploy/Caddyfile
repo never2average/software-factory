@@ -1,5 +1,5 @@
-# TLS + reverse proxy for the Octillion server and its web console (mold_v0-020).
-# The API's own paths go straight to the `octillion` service: the MCP endpoints, /api, the inference gateway (/gw, model
+# TLS + reverse proxy for the API server and its web console (mold_v0-020).
+# The API's own paths go straight to the `api` service: the MCP endpoints, /api, the inference gateway (/gw, model
 # streams), the OAuth metadata, the install pages and the tool previews. Everything else (the console's pages, its
 # assets, sign-in, the public pages, /healthz) goes to the `console` service, whose fallback rewrite reaches the API
 # for anything that is not one of its own pages, so /healthz answered through here proves the console reaches the API.
@@ -12,7 +12,7 @@
 	handle @api {
 		reverse_proxy {
 			dynamic a {
-				name octillion
+				name api
 				port 3333
 				refresh 1s
 			}

@@ -2,6 +2,7 @@ import { getDb } from "./db.js";
 import { hostTable, researchJobs, sessionEngine } from "./host-tables.js";
 import { spendRange, SHARED, SHARED_NAME } from "./spend.js";
 import { transcripts } from "./transcripts.js";
+import { NS } from "./namespace.js";
 
 /**
  * The admin Spend page's Compute hours and Data & storage tabs (GET /spend/compute, GET /spend/storage). Both are
@@ -11,7 +12,7 @@ import { transcripts } from "./transcripts.js";
  * Compute hours
  *   - Orchestrator sandboxes (orchestrator_sandboxes): created_at to deleted_at (a deleted row with no deleted_at ends
  *     at its last_seen; a live one at now()). The account is the orchestrator's job (job_id: a simulation or a research
- *     job); no job, or a job that matches neither (shared orchestrators, prospect research), is Octillion (shared).
+ *     job); no job, or a job that matches neither (shared orchestrators, prospect research), is the shared row.
  *   - Agent (worker) sandboxes (agent_sessions): started_at to ended_at (running: now(); ended without ended_at: its last
  *     heartbeat). Attributed to the session's account, agent and job; the sandbox provider is the runner the worker
  *     reported (metadata.runner, boat by default as orchestrator/core/config.ts has it). "pool" sessions run in an
@@ -358,7 +359,7 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
     const t = tab.get(r.t)!, k = n(r.n), i = r.day ? at.get(r.day) : undefined, last = iso(r.last);
     t.rows += k; t.last = later(t.last, last);
     if (i != null) { t.new_rows += k; t.daily[i] += k; }
-    // Account rows: tables with an org_id. Rows with none (and platform tables) are Octillion's own, the shared row.
+    // Account rows: tables with an org_id. Rows with none (and platform tables) are the app's own, the shared row.
     const a = A(defOf.get(r.t)!.org ? idx.key(r.org_id) : SHARED);
     a.rows += k; a.last = later(a.last, last);
     const x = a.tables.get(r.t) ?? { rows: 0, new_rows: 0 }; a.tables.set(r.t, x); x.rows += k;
@@ -382,7 +383,7 @@ export async function storageReport(q: { from?: unknown; to?: unknown } = {}, no
     ?? { bytes: null, rows: 0, new_rows: 0, daily_new: zeros(), last_write: null };
   const transcriptStore = {
     key: "transcripts", kind: "transcripts" as const, name: pgTranscripts ? "Transcripts (Postgres)" : "Transcripts (ClickHouse)",
-    detail: pgTranscripts ? "transcript_events" : "octillion.transcript_events",
+    detail: pgTranscripts ? "transcript_events" : `${process.env.CLICKHOUSE_DATABASE ?? NS}.transcript_events`,
     bytes: pgTranscripts ? te.bytes : storeStats?.bytes ?? null,
     rows: pgTranscripts ? te.rows : storeStats?.rows ?? null,
     // Postgres: events by their own timestamp. ClickHouse: the sessions' event counters by queued day (no scan of the store).

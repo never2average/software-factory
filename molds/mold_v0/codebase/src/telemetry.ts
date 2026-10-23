@@ -1,6 +1,6 @@
 /**
  * Product analytics: server-side events to PostHog, grouped by organization (PostHog group analytics), for funnels,
- * retention and feature adoption across accounts. PostHog is the system of record for analytics; Octillion keeps only
+ * retention and feature adoption across accounts. PostHog is the system of record for analytics; the app keeps only
  * the operational connector log it already needed (mcp_events) for the console and the customer usage page.
  * Events carry names, ids, outcomes and timings, never tool arguments, results, transcripts or keys.
  * Off unless POSTHOG_API_KEY is set. Batched; a failed flush is dropped, never retried into memory forever.
@@ -11,6 +11,7 @@
  * console actions, the email for landing-page requests.
  */
 import { trace, SpanStatusCode, type Span } from "@opentelemetry/api";
+import { NS } from "./namespace.js";
 
 export const posthogEnabled = () => Boolean(process.env.POSTHOG_API_KEY);
 const host = () => (process.env.POSTHOG_HOST ?? "https://us.i.posthog.com").replace(/\/$/, "");
@@ -26,7 +27,7 @@ export function capture(actor: Actor, event: string, properties: Record<string, 
   if (!posthogEnabled()) return;
   queue.push({
     event, distinct_id: actor.distinctId, timestamp: new Date().toISOString(),
-    properties: { ...properties, ...(actor.orgSlug ? { $groups: { organization: actor.orgSlug } } : {}), $lib: "octillion-server" },
+    properties: { ...properties, ...(actor.orgSlug ? { $groups: { organization: actor.orgSlug } } : {}), $lib: `${NS}-server` },
   });
   // Serverless (Vercel): the function can be frozen as soon as the response is sent, so send now and keep it alive.
   if (process.env.VERCEL) { keepAlive(flush()); return; }
@@ -76,7 +77,7 @@ export async function flush(): Promise<void> {
 
 // ---------- OpenTelemetry spans (no-ops unless src/otel.ts started the SDK) ----------
 
-const tracer = trace.getTracer("octillion");
+const tracer = trace.getTracer(NS);
 
 /** Run fn in a span named `name`; records the error and marks the span failed when fn throws. */
 export function span<T>(name: string, attributes: Record<string, string | number | boolean>, fn: (s: Span) => Promise<T>): Promise<T> {

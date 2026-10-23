@@ -17,6 +17,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { cleanup, STAMP, startHttp } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 // Record every route and mount while the app is built (express 5 keeps no mount paths): the same walk as the console's
@@ -102,7 +103,7 @@ try {
     const failures: string[] = [];
     for (const p of sweep) {
       const url = fill(p);
-      const auth: Record<string, string> = p.startsWith("/api/admin") ? { authorization: `Bearer ${admin}`, "x-octillion-admin": "1" } : { authorization: `Bearer ${owner}` };
+      const auth: Record<string, string> = p.startsWith("/api/admin") ? { authorization: `Bearer ${admin}`, "x-app-admin": "1" } : { authorization: `Bearer ${owner}` };
       const before = logged.length;
       const r = await http.req("GET", url, auth);
       const body = await r.text();
@@ -113,7 +114,7 @@ try {
     console.log(`✓ zero packs: ${sweep.length} admin and portal GET routes answer for an owner with no server error and no missing table`);
 
     // The worker API (the fleet token) and the engine's background work: nothing to claim, no session, nothing fails.
-    const fleet = { authorization: `Bearer ${process.env.OCTILLION_WORKER_TOKEN}` };
+    const fleet = { authorization: `Bearer ${ENV.APP_WORKER_TOKEN}` };
     const worker: [string, string, unknown?][] = [["POST", "/api/worker/claim", { worker_id: "w-zero", limit: 5 }], ["GET", "/api/worker/fleet"],
       ["POST", "/api/worker/fleet", { orchestrator_id: "orch-zero", capacity: 2 }], ["POST", "/api/worker/sessions/ses_none/events", { events: [] }],
       ["POST", "/api/worker/sessions/ses_none/heartbeat", {}], ["POST", "/api/worker/sessions/ses_none/complete", { status: "completed" }],

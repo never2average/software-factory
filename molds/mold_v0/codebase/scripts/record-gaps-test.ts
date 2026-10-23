@@ -17,6 +17,7 @@
 //    (the workspaces are counted as skipped); a metric over the sealed area's due dates computes in code.
 import assert from "node:assert/strict";
 import { cleanup, STAMP, startHttp, TMP } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
 
 const NOW = new Date("2026-10-21T12:00:00Z");
 const finding = (o: Record<string, unknown>) => JSON.stringify({ kind: "finding", ...o });
@@ -195,10 +196,10 @@ try {
     const emails = () => (http.mock.state.emails as any[]).filter((e) => e.tags?.some((t: any) => t.value === "due_soon"));
 
     // The key vault locked: nothing sealed is opened, the workspaces are counted, nothing is posted.
-    const key = process.env.OCTILLION_VAULT_KEY;
-    delete process.env.OCTILLION_VAULT_KEY;
+    const key = ENV.APP_VAULT_KEY;
+    delete process.env.APP_VAULT_KEY;
     const locked = await sch.dueCheck(new Date("2026-10-21T06:00:00Z"));
-    process.env.OCTILLION_VAULT_KEY = key;
+    process.env.APP_VAULT_KEY = key;
     assert.deepEqual([locked.ran, locked.found, locked.posted, locked.sealed_skipped], [true, 0, 0, 2], "locked: A and B skipped, nothing posted");
     assert.equal((await db.query("SELECT 1 FROM scheduler_marks WHERE name = 'due_check'")).length, 0, "the day is not marked done: the next tick checks again");
     // A damaged sealed row of A (its ciphertext does not open) is left out alone; A's other rows are still checked.

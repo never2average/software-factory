@@ -1,6 +1,6 @@
-# Octillion orchestrator
+# The orchestrator
 
-The orchestrator claims queued simulation sessions from the Octillion server. Each session runs a coding-agent CLI
+The orchestrator claims queued simulation sessions from the server. Each session runs a coding-agent CLI
 (the "sub-agent": Claude Code, Codex, ...) headless in a throwaway sandbox, and streams its native JSONL to the transcript store.
 When the sub-agent stops to ask the developer something, an orchestrator agent built on **[Pi](https://pi.dev)**
 answers in character as that developer, and the same sub-agent conversation resumes.
@@ -15,7 +15,7 @@ Two entry points share the same deterministic core:
 ```
 orchestrator/
   main.ts         runs a host pack's orchestrator (packs/<id>/main.ts) or the deterministic worker
-  packs/octillion/ (the octillion host pack's, mold_v0-039) Pi extension package: index.ts (tools), prompt.ts (system prompts), main.ts (host), research*.ts, skills/
+  packs/<id>/ (a host pack's, mold_v0-039) Pi extension package: index.ts (tools), prompt.ts (system prompts), main.ts (host), research*.ts, skills/
   core/           config, sessions, runners (boat; docker/local/pool for tests), host guard, fleet client, sink, boat client
   harnesses/      adapters.ts + credentials.ts: per-harness argv, resume, digest, credential mapping
   fleet/          plan.ts (standalone per-agent plan), status.ts (pods per group)
@@ -30,18 +30,18 @@ orchestrator/
 
 | where | what runs there |
 |---|---|
-| **Main VM** | Only the server stack: Postgres, ClickHouse, the Octillion server and Caddy. It may run the launcher (`npm run boat-orchestrators -- …`), which only calls APIs. **No orchestrator, Pi, harness or pod.** |
-| **Orchestrator sandboxes** (boat, `small`, 30-day TTL, `octi-orch-*`) | One orchestrator each (Pi brain + claim loop + research loop) under systemd (`Restart=on-failure`; a clean idle exit is final). The env file (0600) holds only `OCTILLION_URL`, `OCTILLION_WORKER_TOKEN`, `ORCHESTRATOR_ID`, `RUNNER=boat`, `POD_CAPACITY`, `OCTILLION_HOST_ROLE` and boat's own `BOAT_ID`. The boat key and the GPT brain come from the broker at runtime. |
+| **Main VM** | Only the server stack: Postgres, ClickHouse, the server and Caddy. It may run the launcher (`npm run boat-orchestrators -- …`), which only calls APIs. **No orchestrator, Pi, harness or pod.** |
+| **Orchestrator sandboxes** (boat, `small`, 30-day TTL, `octi-orch-*`) | One orchestrator each (Pi brain + claim loop + research loop) under systemd (`Restart=on-failure`; a clean idle exit is final). The env file (0600) holds only `APP_URL`, `APP_WORKER_TOKEN`, `ORCHESTRATOR_ID`, `RUNNER=boat`, `POD_CAPACITY`, `APP_HOST_ROLE` and boat's own `BOAT_ID`. The boat key and the GPT brain come from the broker at runtime. |
 | **Worker sandboxes** (boat, `default`, ephemeral, `octi-w-<orchestrator>-<agent>`) | One fresh VM per agent session, created **from inside** the orchestrator sandbox and deleted when the session ends. Resume and simulated-developer turns stay in it. It holds only per-session gateway tokens, **never the worker token**. |
 
 - **Host guard** (`core/host-guard.ts`). The orchestrator refuses to start unless all of the following hold:
-  - `OCTILLION_HOST_ROLE=boat-orchestrator`;
+  - `APP_HOST_ROLE=boat-orchestrator`;
   - the launcher's root-owned marker `/etc/octillion/host-role` is present;
   - boat's own indicators are present (`BOAT_ID`/`BOX_ID` and `/etc/ascii` + `/home/user/.ascii`, seen on live boat VMs);
   - `BOAT_ID` equals the marker's sandbox id;
   - `RUNNER=boat`.
   
-  `pool`, `docker` and `local` need `OCTILLION_DEV_ALLOW_LOCAL=1`. That flag is for tests only and prints a loud banner. The check runs before any credential is fetched, in the claim loop, in research-only mode and in the Pi CLI extension.
+  `pool`, `docker` and `local` need `APP_DEV_ALLOW_LOCAL=1`. That flag is for tests only and prints a loud banner. The check runs before any credential is fetched, in the claim loop, in research-only mode and in the Pi CLI extension.
 - **Fleet semantics on boat.** The server's per-agent assignment (`pods`, for example 8/5/3/1/1/1/1 of 20) is the **maximum number of concurrent worker sandboxes per agent group**.
   - Each group claims with `{agent_ids:[id]}`, limited by its free slots.
   - SIGTERM kills the running sessions (deleting their worker sandboxes) and leaves the fleet (`DELETE /api/worker/fleet/:id`).
@@ -54,12 +54,12 @@ orchestrator/
 
 ### Launcher (`npm run boat-orchestrators -- <cmd>`, from `orchestrator/`)
 
-It needs only `OCTILLION_URL` (the **public** server URL) and `OCTILLION_WORKER_TOKEN`. The boat key comes from the broker.
+It needs only `APP_URL` (the **public** server URL) and `APP_WORKER_TOKEN`. The boat key comes from the broker.
 
 | command | what it does |
 |---|---|
 | `budget [n]` | plan limits vs `n` orchestrators |
-| `up <n> [--skip-preflight]` | Prints the budget and refuses if it's exceeded. Then it creates the missing orchestrator sandboxes (small, 30-day TTL, the maximum), uploads the code as a tarball through the files API (130 KB, chunked under 5 MiB, no node_modules), runs `npm ci`, writes the env file, marker and systemd unit, and runs the **preflight** (from inside the sandbox: `GET $OCTILLION_URL/healthz` over public HTTPS; it fails clearly otherwise). Then it starts the service |
+| `up <n> [--skip-preflight]` | Prints the budget and refuses if it's exceeded. Then it creates the missing orchestrator sandboxes (small, 30-day TTL, the maximum), uploads the code as a tarball through the files API (130 KB, chunked under 5 MiB, no node_modules), runs `npm ci`, writes the env file, marker and systemd unit, and runs the **preflight** (from inside the sandbox: `GET $APP_URL/healthz` over public HTTPS; it fails clearly otherwise). Then it starts the service |
 | `status` | per orchestrator: sandbox, service state, uptime, TTL left, fleet check-in and assignment, live worker sandboxes |
 | `logs <id> [n]` | orchestrator journal, secrets redacted |
 | `renew` | resets every orchestrator's TTL to 30 days |
@@ -77,18 +77,18 @@ It needs only `OCTILLION_URL` (the **public** server URL) and `OCTILLION_WORKER_
 
 In production nobody runs `up`. The server starts orchestrators when there is work and they go away when idle. The launcher shares its code with the autoscaler through `deploy/boat-lib.ts`.
 
-**One orchestrator per job (`OCTILLION_ORCH_PER_JOB=on`, the default).**
+**One orchestrator per job (`APP_ORCH_PER_JOB=on`, the default).**
 
 - Every onboarding research and every simulation with claimable queued sessions gets its own orchestrator, launched with `ORCHESTRATOR_JOB=<rsh_… | sim_…>` (row: `orchestrator_sandboxes.job_id`, `pods`).
-- A research orchestrator runs that one research (one sandbox, no workers). A run orchestrator runs only that simulation's sessions on up to `OCTILLION_JOB_POD_CAPACITY` (40) worker sandboxes: `min(40, its unfinished sessions, what the boat plan has free)`.
+- A research orchestrator runs that one research (one sandbox, no workers). A run orchestrator runs only that simulation's sessions on up to `APP_JOB_POD_CAPACITY` (40) worker sandboxes: `min(40, its unfinished sessions, what the boat plan has free)`.
 - Isolation is server-side: claims carry `simulation_id` / `research_id`, and a bound orchestrator's fleet check-in returns pod groups built from its own run's queued and running sessions (per agent, never above demand). Bound orchestrators are left out of the shared fleet plan.
 - Exit: the check-in returns `job.done` once the run completes or is cancelled, or the research completes or fails. The orchestrator then takes the graceful path (leave → `draining` → deleted next tick). Backstop: a bound orchestrator whose job ended over 3 minutes ago and runs nothing is deleted. The idle exit still applies.
-- Launch order: research first (a customer is waiting), then runs, oldest first. Each launch reserves 1 + its pods on the boat plan; a run that does not fit waits for the next tick. At most `OCTILLION_MAX_JOB_ORCHESTRATORS` (12), 2 launches per tick. A run whose orchestrator idled out with sessions still queued is not relaunched for `OCTILLION_ORCH_IDLE_MINUTES` unless new sessions are queued (adaptive batches are).
+- Launch order: research first (a customer is waiting), then runs, oldest first. Each launch reserves 1 + its pods on the boat plan; a run that does not fit waits for the next tick. At most `APP_MAX_JOB_ORCHESTRATORS` (12), 2 launches per tick. A run whose orchestrator idled out with sessions still queued is not relaunched for `APP_ORCH_IDLE_MINUTES` unless new sessions are queued (adaptive batches are).
 - Recycle on deploy works per job: an old-code orchestrator gets no pods, a fresh one is launched for its job, and the old one is deleted once idle.
 - Context between the two kinds goes only through the database, never directly: research writes the product profile, the personas (each with a developer environment, see below) and the problems, each also phrased in every persona's own words; `simulations.research_id` records which research a run came from.
 - Tests: `npx tsx orchestrator/test/per-job.ts` (PGlite + mock boat).
 
-`OCTILLION_ORCH_PER_JOB=off` restores the shared fleet described below.
+`APP_ORCH_PER_JOB=off` restores the shared fleet described below.
 
 ### Developer environments (per persona, `core/environment.ts`, `core/env-install.ts`)
 
@@ -109,14 +109,14 @@ No GUI toolchains are installed.
 - **Resolution at claim** (`src/worker.ts`): the editor's servers for the task's language, the base CLIs, and the persona's tools, skills and rules.
   - Anything that names the product or a competitor is withheld and listed in `dropped`.
   - Without a persona environment: VS Code defaults.
-  - `OCTILLION_DEV_ENV=off` disables environments.
+  - `APP_DEV_ENV=off` disables environments.
 - **Install** (boat worker sandbox, before the first run): only what the session needs. A tool already on the sandbox is kept (`present`), so nothing is reinstalled. Pinned and system-wide; a tool that fails is reported and the session runs without it.
 - **Wiring:**
   - Claude Code: official LSP plugins (`claude-plugins-official`), or a local `.lsp.json` plugin.
   - OpenCode and Kilo: the `lsp` user config.
   - Codex, Cline, Pi and Antigravity: Serena (LSP over MCP).
   - Config goes only under the agent's HOME; `.serena/` is excluded from the scored diff.
-- **Zed personas run over ACP**, as Zed's agent panel does (`harnesses/acp-client.mjs`). It is enabled in production with `OCTILLION_ZED_ACP=on` (the code default is off). Live smoke runs on 2026-10-14 passed with real models over our gateway for Claude Code, Codex, OpenCode, Pi and Cline, each with a developer reply over `session/load`, for about $0.75 in total. Kilo's `kilo acp` never answered the prompt, so Kilo runs as a CLI.
+- **Zed personas run over ACP**, as Zed's agent panel does (`harnesses/acp-client.mjs`). It is enabled in production with `APP_ZED_ACP=on` (the code default is off). Live smoke runs on 2026-10-14 passed with real models over our gateway for Claude Code, Codex, OpenCode, Pi and Cline, each with a developer reply over `session/load`, for about $0.75 in total. Kilo's `kilo acp` never answered the prompt, so Kilo runs as a CLI.
   - The client advertises Zed's capabilities and `clientInfo`, sends the prompt as plain text, forwards no MCP servers, and allows permission requests.
   - It serves `fs/*` and `terminal/*` on the workspace, and reloads the session for developer replies.
   - Routes: `claude-agent-acp` (runs the pinned `claude`), `codex-acp` (runs the pinned `codex`, authenticated with the `api-key` method), `opencode acp`, `cline --acp` (`CLINE_PROVIDER`/`CLINE_MODEL`) and `pi-acp`. Kilo and Antigravity run as a CLI.
@@ -126,26 +126,26 @@ No GUI toolchains are installed.
 - **Tests:** `orchestrator/test/per-job.ts` (resolution, blindness, wiring, skills, variants) and `orchestrator/test/acp-client.ts` (the client against a mock ACP agent built with the official SDK).
 
 - **Leader.** One server instance acts at a time, via a lease row in `autoscaler_lease` (renewed every tick, expires after 3 ticks). An advisory lock wouldn't work: session locks are per connection, and xact locks can't span a launch.
-- **Demand, every `OCTILLION_AUTOSCALE_TICK_SECONDS` (15).** Counts queued and running `agent_sessions` (only agents the fleet schedules) plus queued and running `product_research`.
-  - With no demand, desired = 0. Otherwise desired = `ceil(sessions / OCTILLION_POD_CAPACITY)`, and at least 1 if there is research.
-  - Desired is clamped to `OCTILLION_MAX_ORCHESTRATORS` (4) and to the live boat budget (`(1 + capacity) × n ≤ plan concurrency`), with at most 2 launches per tick.
+- **Demand, every `APP_AUTOSCALE_TICK_SECONDS` (15).** Counts queued and running `agent_sessions` (only agents the fleet schedules) plus queued and running `product_research`.
+  - With no demand, desired = 0. Otherwise desired = `ceil(sessions / APP_POD_CAPACITY)`, and at least 1 if there is research.
+  - Desired is clamped to `APP_MAX_ORCHESTRATORS` (4) and to the live boat budget (`(1 + capacity) × n ≤ plan concurrency`), with at most 2 launches per tick.
 - **Launch.** Uses the vault boat key (`useCredential("boat")`). A `booting` row is written in `orchestrator_sandboxes` first, so a crash can't double-launch. The launch path is the same as `up`: code tarball, `npm ci`, env file, marker, unit and preflight. The worker token goes only into that sandbox's 0600 env file.
-- **Scale down.** An orchestrator with no claimable work for `OCTILLION_ORCH_IDLE_MINUTES` (10) SIGTERMs itself. It leaves the fleet (the row becomes `draining`) and exits 0, so systemd doesn't restart it. The next tick deletes the sandbox.
+- **Scale down.** An orchestrator with no claimable work for `APP_ORCH_IDLE_MINUTES` (10) SIGTERMs itself. It leaves the fleet (the row becomes `draining`) and exits 0, so systemd doesn't restart it. The next tick deletes the sandbox.
 - **Reaping, each tick, against boat's listing by the `octi-orch-` prefix:**
   - sandbox gone or draining → delete;
-  - no fleet check-in for `OCTILLION_ORCH_STALE_MINUTES` (5) → delete;
-  - stuck booting for more than `OCTILLION_ORCH_BOOT_MINUTES` (10) → delete;
+  - no fleet check-in for `APP_ORCH_STALE_MINUTES` (5) → delete;
+  - stuck booting for more than `APP_ORCH_BOOT_MINUTES` (10) → delete;
   - TTL nearly expired → delete;
   - `octi-orch-*` sandboxes with no row (orphans) → delete;
   - leftover `octi-w-<orch>-*` workers of reaped orchestrators → delete.
 - **Cold start (measured live 2026-10-10).**
   - Code upload + `npm ci`: service active in **~8s** (create 0.5s, ready 0.7s, code 3.7s).
-  - From a named snapshot (`OCTILLION_ORCH_SNAPSHOT=on`): **~22s**, because restoring the image is slower than this small install, plus ~170s per build.
+  - From a named snapshot (`APP_ORCH_SNAPSHOT=on`): **~22s**, because restoring the image is slower than this small install, plus ~170s per build.
   - Snapshots are therefore opt-in. The first session additionally waits for its worker sandbox.
 - **Visibility.**
   - `get_simulation` / `get_onboarding` return `capacity` (e.g. "starting orchestrator…") while work is queued.
   - `GET /api/admin/autoscaler` and `npm run fleet:status` show the knobs, demand, the last tick and the sandbox table.
-- **Kill switch.** `OCTILLION_AUTOSCALE=off` stops all launches and deletes. Running orchestrators still idle out. The autoscaler also stays off unless `PUBLIC_URL` is https and `OCTILLION_WORKER_TOKEN` is set.
+- **Kill switch.** `APP_AUTOSCALE=off` stops all launches and deletes. Running orchestrators still idle out. The autoscaler also stays off unless `PUBLIC_URL` is https and `APP_WORKER_TOKEN` is set.
 - **Tests.** `npx tsx orchestrator/test/autoscaler.ts` (PGlite + mock boat, 15 checks) covers:
   - launch on queue;
   - no double launch with two instances;
@@ -161,7 +161,7 @@ No GUI toolchains are installed.
 
 ```mermaid
 flowchart LR
-  S[(Octillion server)] -- "POST /claim (per harness, limit = idle pods)" --> L[claim loop]
+  S[(server)] -- "POST /claim (per harness, limit = idle pods)" --> L[claim loop]
   L -- job --> P["Pi session (1 per job)<br/>profile + task only"]
   P -- start_worker --> W[WorkerSession]
   W -- create/lease --> V["sandbox: boat VM / pool pod / container<br/>harness CLI, env -i, own key only"]
@@ -198,7 +198,7 @@ Pi ([earendil-works/pi](https://github.com/earendil-works/pi), MIT) is used thro
   so profiles can't bleed between jobs. Context stays small: about 2-6k tokens per turn, with no compaction. Failures
   are isolated per job, and the fallback is per job. Concurrency is plain `Promise` parallelism in one Node process,
   with no LLM attention split across workers.
-- **What Pi can do.** It gets only the octillion pack's Pi tools: `start_worker`, `wait_for_turn`, `reply_as_developer`,
+- **What Pi can do.** It gets only the host pack's Pi tools: `start_worker`, `wait_for_turn`, `reply_as_developer`,
   `finish_session`. `claim_jobs` is added in manual CLI mode. Pi's built-in read/bash/edit/write tools are off, and so is
   the discovery of extensions, skills, context files and `~/.pi` settings. The model runtime uses its own temp `auth.json` and `models.json`.
 - **Guards in the tools, not the prompt.** The tools enforce `max_user_turns`, "reply only when the run ended
@@ -210,12 +210,12 @@ Pi ([earendil-works/pi](https://github.com/earendil-works/pi), MIT) is used thro
   `pi+fallback` or `fallback`), `orchestrator_error`, `orchestrator_cost_usd`, `orchestrator_tokens_*` and
   `orchestrator_llm_calls`.
 
-Manual and debug use from the Pi CLI: `pi -e ./orchestrator/packs/octillion --no-builtin-tools --no-context-files`. This is
-manager mode, with `claim_jobs` and the `octillion-orchestrator` skill.
+Manual and debug use from the Pi CLI: `pi -e ./orchestrator/packs/<id> --no-builtin-tools --no-context-files`. This is
+manager mode, with `claim_jobs` and the host pack's orchestrator skill.
 
 ### The simulated developer: blindness
 
-`packs/octillion/prompt.ts` exports `SIMULATED_DEVELOPER_SYSTEM_PROMPT` (the founder can tune it),
+The host pack's `prompt.ts` exports `SIMULATED_DEVELOPER_SYSTEM_PROMPT` (the founder can tune it),
 `ORCHESTRATOR_SYSTEM_PROMPT` (the tool protocol plus those rules) and `jobPrompt()`. Pi answers as `job.profile`: role,
 experience, company size, stack, constraints, tone and instructions. With no profile, it answers as a neutral
 "experienced developer who wants the task done; answers briefly". The prompt requires the following:
@@ -288,7 +288,7 @@ Usage: Claude's `result` events are **summed across runs**, because each resume 
 | `local` | host CLI in a temp dir | dev only, no isolation |
 
 Every runner exposes the same `Sandbox` interface: `runTurn(argv, stdin)`, `diff()`, `kill()` and `cleanup()`.
-Resumes run in the same sandbox. Docker and pool runs use `docker exec -u agent ... env -i <image env without OCTILLION_*> <KEY>="$KEY"`.
+Resumes run in the same sandbox. Docker and pool runs use `docker exec -u agent ... env -i <image env without APP_*> <KEY>="$KEY"`.
 Key values travel as `docker exec -e NAME`, so they never appear in argv or the container env.
 
 ### boat.dev runner
@@ -327,9 +327,9 @@ Claude `result` usage or cost. We run the stock preinstalled CLI as an isolated 
 - The trial allows 2 concurrent VMs, and its TTL is at most 2h.
 - VMs run in the EU.
 
-Use a `ci`-preset key: `boat api-key create octillion-worker --preset ci --ttl 90d`.
+Use a `ci`-preset key: `boat api-key create app-worker --preset ci --ttl 90d`.
 
-**Live findings (2026-10-10, one smoke).** The orchestrator's boat key (`/root/octillion-live/secrets/boat.env`) authenticates.
+**Live findings (2026-10-10, one smoke).** The orchestrator's boat key (`the operator's boat key file`) authenticates.
 - `GET /me` returns `{ok, type:"user.info", user:{id, login, email, ...}}`.
 - `GET /limits` returns `{currentLimits:{activeSandboxes, creationRatePerMinute/PerHour/PerDay}, sandboxPlanKey, creditBalanceHours, startLimits, starts:{minute,hour,day}, ...}`.
   The account is on the **$20 plan (`box_20`)**. It has paid history, so it is not on the trial with its 2h TTL cap. Limits: **100 active sandboxes**, **12/60/200 starts per minute/hour/day**, 555.6 credit hours.
@@ -341,7 +341,7 @@ Use a `ci`-preset key: `boat api-key create octillion-worker --preset ci --ttl 9
 
 ## Credentials (key vault, broker, gateway)
 
-The contract is in `docs/credentials.md`. The orchestrator host holds **only `OCTILLION_URL` and `OCTILLION_WORKER_TOKEN`** (`CREDENTIALS_MODE=broker`, the default).
+The contract is in `docs/credentials.md`. The orchestrator host holds **only `APP_URL` and `APP_WORKER_TOKEN`** (`CREDENTIALS_MODE=broker`, the default).
 
 ```
 startup / 401 / near expiry ── POST /api/worker/orchestrator/credentials {orchestrator_id} ─▶ boat key + Pi's LLM {provider, base_url (gateway), ogw_ token}
@@ -366,7 +366,7 @@ runner injects env only at exec time: docker/pool `docker exec -e NAME … env -
 | harness | provider | mode | how the base URL is overridden (env / config) | verified |
 |---|---|---|---|---|
 | claude-code 2.1.296 | anthropic | gateway | `ANTHROPIC_BASE_URL=<gw>/anthropic` + `ANTHROPIC_API_KEY=ogw_…` (sent as `x-api-key`) | ✅ gateway |
-| codex 0.162.1 | openai | gateway | `$CODEX_HOME/config.toml` `openai_base_url = "<gw>/openai/v1"` + `CODEX_API_KEY` (sent as Bearer). **The `OPENAI_BASE_URL` env is ignored**: codex called api.openai.com with the token. The built-in `openai` provider hard-codes `supports_websockets = true` and can't be overridden, so the setup also selects `model_provider = "octillion_gateway"`, a copy of it (`name = "OpenAI"`, `requires_openai_auth = true`) with `supports_websockets = false`: plain HTTP, no `426` WebSocket attempt | ✅ gateway (functional run on gpt-5; gpt-6.1-sol routes but declares tools in an `additional_tools` input item, which the fixture mock can't parse) |
+| codex 0.162.1 | openai | gateway | `$CODEX_HOME/config.toml` `openai_base_url = "<gw>/openai/v1"` + `CODEX_API_KEY` (sent as Bearer). **The `OPENAI_BASE_URL` env is ignored**: codex called api.openai.com with the token. The built-in `openai` provider hard-codes `supports_websockets = true` and can't be overridden, so the setup also selects `model_provider = "app_gateway"`, a copy of it (`name = "OpenAI"`, `requires_openai_auth = true`) with `supports_websockets = false`: plain HTTP, no `426` WebSocket attempt | ✅ gateway (functional run on gpt-5; gpt-6.1-sol routes but declares tools in an `additional_tools` input item, which the fixture mock can't parse) |
 | opencode 1.18.35 | anthropic | gateway | `OPENCODE_CONFIG_CONTENT={"provider":{"anthropic":{"options":{"baseURL":"<gw>/anthropic/v1"}}}}` + `ANTHROPIC_API_KEY` | ✅ gateway |
 | kilo 7.8.8 | anthropic | gateway | `KILO_CONFIG_CONTENT` (same shape) + `ANTHROPIC_API_KEY` | ✅ gateway |
 | pi 1.1.0 | anthropic | gateway | `~/.pi/agent/models.json` `{"providers":{"anthropic":{"baseUrl":"<gw>/anthropic"}}}` + `ANTHROPIC_API_KEY` | ✅ gateway |
@@ -389,7 +389,7 @@ Pods are grouped per **registry agent** (harness + model), for example `claude-c
 - **Fleet assignment.** `POST /api/worker/fleet` returns `[{agent_id, harness, model, pods, image, version}]`. Standalone mode uses `fleet/plan.ts` `planFleet(size)` with the same per-agent rule: largest remainder, plus one pod per agent when the fleet has room.
 - **Claim.** Each group claims with `{agent_ids:[agent_id]}`, with limit equal to its idle pods, so an Opus pod only gets Opus sessions.
 - **Model check.** The pod asserts `job.model` equals the group's model (`ModelMismatchError`).
-- **Labels.** `octillion.agent`, `octillion.harness`, `octillion.model`, `octillion.pool.owner`. `fleet/status.ts` reports per group.
+- **Labels.** `app.agent`, `app.harness`, `app.model`, `app.pool.owner`. `fleet/status.ts` reports per group.
 
 ## Warm pod pool (`RUNNER=pool`)
 
@@ -406,14 +406,14 @@ Each orchestrator runs up to `POD_CAPACITY` (≤ 20) warm Docker pods. N orchest
 - **Server unreachable.** The pool keeps its current pods and retries every 10s. With `FLEET_MODE=standalone`, it uses `planFleet(POD_CAPACITY)`.
 - **SIGTERM.** `DELETE /api/worker/fleet/:id`, then drain and remove every pod this orchestrator owns.
 - **Status.** `npx tsx orchestrator/fleet/status.ts [--owner ID] [--json]` shows idle and busy pods per group, against the server's global plan
-  (with `OCTILLION_URL` and the token set) or the standalone plan.
+  (with `APP_URL` and the token set) or the standalone plan.
 - **Boat parity (next).** The same semantics on boat would mean N warm VMs per group, forked from per-harness named snapshots (the registry's `image.boat_snapshot`).
 
 ## Run until done (starter workspaces, done check, 100-turn cap)
 
 **Why** (live, 2026-10-10, ses_LgbgZJQTay6N): a scenario without `repo_url` ran in an empty `/home/agent/work`.
 - Codex said "The workspace at `/home/agent/work` is empty, so I can't inspect or modify the service yet."
-- Pi answered with a path from its own host ("The project location I have is `/tmp/octillion-pi-…/cwd`").
+- Pi answered with a path from its own host ("The project location I have is `/tmp/<pack>-pi-…/cwd`").
 - The session ended after 22-41s with an empty diff and verdict `none`.
 
 **Starter workspaces** (`workspaces/<template>/`, `core/workspaces.ts`):
@@ -464,15 +464,15 @@ Heartbeats and `/complete` always go to the API. The server recounts events from
 
 | var | default | notes |
 |---|---|---|
-| `OCTILLION_URL`, `OCTILLION_WORKER_TOKEN` | `http://localhost:3000`, - | **The only secrets on the host.** The token never enters a sandbox or pod |
+| `APP_URL`, `APP_WORKER_TOKEN` | `http://localhost:3000`, - | **The only secrets on the host.** The token never enters a sandbox or pod |
 | `CREDENTIALS_MODE` | `broker` | `broker` (vault + gateway through the server) or `env` (dev: provider keys from this env, see Credentials) |
-| `RUNNER` | `boat` | **Production: `boat` only.** `pool`, `docker` and `local` need `OCTILLION_DEV_ALLOW_LOCAL=1` (tests only; loud banner) |
-| `OCTILLION_HOST_ROLE` | - | `boat-orchestrator`. Written by the launcher; the host guard requires it together with the root-owned marker and boat's indicators |
-| `OCTILLION_DEV_ALLOW_LOCAL` | - | `1` bypasses the host guard. **Tests and local development only** |
+| `RUNNER` | `boat` | **Production: `boat` only.** `pool`, `docker` and `local` need `APP_DEV_ALLOW_LOCAL=1` (tests only; loud banner) |
+| `APP_HOST_ROLE` | - | `boat-orchestrator`. Written by the launcher; the host guard requires it together with the root-owned marker and boat's indicators |
+| `APP_DEV_ALLOW_LOCAL` | - | `1` bypasses the host guard. **Tests and local development only** |
 | `ORCHESTRATOR_MODE` | - | `research`: a research-only worker that never claims coding-agent sessions |
 | `FLEET_MODE` | `server` | `server` or `standalone`. For `RUNNER=boat`, `off` means plain `WORKER_CONCURRENCY` with no per-group caps |
 | `BOAT_STARTS_PER_MINUTE` / `BOAT_STARTS_PER_HOUR` | `10` / `50` | client-side start gate per orchestrator (plan: 12/60/200 per minute/hour/day). 429s back off |
-| launcher tuning | | The launcher forwards only these non-secret knobs from its own env into orchestrator env files: `MAX_SESSION_MINUTES`, `MAX_BUDGET_USD`, `MAX_USER_TURNS`, `MAX_AGENT_TURNS`, `GIVE_UP_RUNS`, `ORCHESTRATOR_THINKING`, `BOAT_SANDBOX_SIZE`, `RESEARCH_MAX_COST_USD`, `OCTILLION_ORCH_IDLE_MINUTES` (the autoscaler forwards the server's values) |
+| launcher tuning | | The launcher forwards only these non-secret knobs from its own env into orchestrator env files: `MAX_SESSION_MINUTES`, `MAX_BUDGET_USD`, `MAX_USER_TURNS`, `MAX_AGENT_TURNS`, `GIVE_UP_RUNS`, `ORCHESTRATOR_THINKING`, `BOAT_SANDBOX_SIZE`, `RESEARCH_MAX_COST_USD`, `APP_ORCH_IDLE_MINUTES` (the autoscaler forwards the server's values) |
 | `WORKER_CONCURRENCY` | `2` | parallel sessions for boat, docker and local. For the pool, capacity is the pod count |
 | `MAX_SESSION_MINUTES` (45), `MAX_USER_TURNS` (5) | | hard kill, then `timeout`; default reply cap |
 | `MAX_AGENT_TURNS` (100), `GIVE_UP_RUNS` (3) | | agent-turn cap per session (summed over resumes; Claude gets `--max-turns`); nudged runs without any workspace change before `agent_gave_up` |
@@ -484,9 +484,9 @@ Heartbeats and `/complete` always go to the API. The server recounts events from
 | `ORCHESTRATOR_THINKING` (`low`), `ORCHESTRATOR_MAX_RETRIES` (3) | | |
 | `ORCHESTRATOR_PROVIDER`, `ORCHESTRATOR_API_KEY`, `ORCHESTRATOR_API_URL` | | `CREDENTIALS_MODE=env` only |
 | **transcripts** | | |
-| `TRANSCRIPT_SINK` (`api`), `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE` (`octillion`) | | |
+| `TRANSCRIPT_SINK` (`api`), `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DATABASE` | | |
 | **pool** | | |
-| `FLEET_MODE` (`server`), `POD_CAPACITY` (20, ≤ 20; `FLEET_SIZE` is a legacy alias), `OCTILLION_REGISTRY`, `POOL_IMAGE_OVERRIDE` (dev/test) | | |
+| `FLEET_MODE` (`server`), `POD_CAPACITY` (20, ≤ 20; `FLEET_SIZE` is a legacy alias), `APP_REGISTRY`, `POOL_IMAGE_OVERRIDE` (dev/test) | | |
 | **boat** | | |
 | `BOAT_API_URL`, `BOAT_SANDBOX_SIZE` (`default`), `BOAT_TTL_MARGIN_MINUTES` (15), `BOAT_READY_TIMEOUT_SECONDS` (300), `BOAT_ORG`, `BOAT_AGENT_USER` (`agent`), `BOAT_ON_FINISH` (`delete`), `BOAT_DIFF_MAX_BYTES` | | the key comes from the broker (`BOAT_API_KEY` in env mode only) |
 | **docker / local** | | |
@@ -497,7 +497,7 @@ Heartbeats and `/complete` always go to the API. The server recounts events from
 
 ```bash
 cd orchestrator && npm install && cd ..       # Pi SDK (orchestrator/package.json)
-export OCTILLION_URL=https://octillion.example.com OCTILLION_WORKER_TOKEN=...   # nothing else secret
+export APP_URL=https://app.example.com APP_WORKER_TOKEN=...   # nothing else secret
 
 npx tsx orchestrator/main.ts                                         # boat.dev (key from the broker)
 RUNNER=pool ORCHESTRATOR_ID=orch-eu-1 npx tsx orchestrator/main.ts   # warm pod pool, server-planned
@@ -515,7 +515,7 @@ signal within 3s is ignored, because npx and tsx both forward it. A 404 or 409 f
 
 - **Blindness.** A sandbox receives the prompt and replies on stdin, the optional repo, and this session's harness credentials
   (gateway `ogw_` tokens; real keys only for direct-mode vendor-hosted harnesses), plus neutral env.
-  - It never receives Octillion ids, the worker token, the orchestrator's token, customer names, or `OCTILLION_*` image env.
+  - It never receives the app ids, the worker token, the orchestrator's token, customer names, or `APP_*` image env.
   - Boat runs as a separate `agent` user under `env -i`, with none of Boat's tokens, skills or MCP.
   - Docker and pool runs use `env -i` with the image's neutral env.
 - **Credential lifetime in a sandbox.** Docker and pool: env at exec time only, nothing on disk.
@@ -527,7 +527,7 @@ signal within 3s is ignored, because npx and tsx both forward it. A 404 or 409 f
 - **Gateway tokens are not real keys.** Codex sent the `ogw_` token to api.openai.com when only `OPENAI_BASE_URL` was set, which is why the mapping
   uses `openai_base_url`. A misconfigured harness leaks at most a gateway token, never a vault key.
 
-## Product onboarding research (`packs/octillion/research.ts`, docs/onboarding.md)
+## Product onboarding research (`the host pack's research.ts`, docs/onboarding.md)
 
 The orchestrator also claims research jobs: `POST /api/worker/research/claim`, polled next to the agent-session claims.
 `ORCHESTRATOR_MODE=research` runs a research-only worker that never claims coding-agent sessions.
@@ -541,7 +541,7 @@ Each job gets a dedicated Pi session on the same broker brain (`openai/gpt-6.1-s
 | `validate(result_json)` | `POST /research/:id/validate` → `{ok, issues}` |
 | `submit(result_json)` | `POST /research/:id/complete`. A 422 returns its issues to the model to fix. After 4 attempts (`RESEARCH_MAX_SUBMITS`) the job completes `failed` with the issues |
 
-- **Prompt.** `packs/octillion/research-prompt.ts` (`RESEARCH_SYSTEM_PROMPT`, exported for tuning) tells the model to:
+- **Prompt.** `the host pack's research-prompt.ts` (`RESEARCH_SYSTEM_PROMPT`, exported for tuning) tells the model to:
   - read the docs for real install commands, packages, import paths and domains;
   - pick 2-5 real competitors;
   - write 2-4 blind personas;
@@ -555,7 +555,7 @@ Each job gets a dedicated Pi session on the same broker brain (`openai/gpt-6.1-s
 
 ## Boat topology tests
 
-- **Hermetic** (`npx tsx orchestrator/test/boat-fleet.ts`, about 30s, 18 assertions). The real worker (`RUNNER=boat`) runs against a mock boat API and a mock Octillion server. It checks:
+- **Hermetic** (`npx tsx orchestrator/test/boat-fleet.ts`, about 30s, 18 assertions). The real worker (`RUNNER=boat`) runs against a mock boat API and a mock server. It checks:
   - **Guard:** non-boat host, `RUNNER=local` without the flag, the dev flag banner, a marker/`BOAT_ID` mismatch, and that the real entry point refuses on this machine.
   - **Fleet caps:** per-group concurrent worker sandboxes are capped by the fleet assignment (opus 2, sonnet 1), and the caps are actually reached.
   - **Claims and lifecycle:** claims carry `{agent_ids:[group]}` with limit ≤ free slots; one fresh worker sandbox per session, all deleted.
@@ -565,17 +565,17 @@ Each job gets a dedicated Pi session on the same broker brain (`openai/gpt-6.1-s
 - **Live** (`npm run boat-orchestrators -- selftest`, 2026-10-10). This ran with the server not public. The orchestrator's env file held a placeholder token for the selftest.
   - **Guard:** orchestrator sandbox `bx_cq4wz87k` passed the guard under production rules, with `BOAT_ID` matching the marker. `RUNNER=local` was refused.
   - **Preflight** failed clearly: `cannot reach https://localhost:8443/healthz from this boat sandbox (ECONNREFUSED)`.
-  - **Nested worker:** `bx_pemydpw9` was created **from inside** `bx_cq4wz87k`. It ran `echo ok` and Claude Code 2.1.296, had 0 `OCTILLION_*` env vars, and was deleted.
+  - **Nested worker:** `bx_pemydpw9` was created **from inside** `bx_cq4wz87k`. It ran `echo ok` and Claude Code 2.1.296, had 0 `APP_*` env vars, and was deleted.
   - **Teardown:** both were deleted, and the final `GET /sandboxes` showed no sandbox of ours (0 active).
   - **Harness check** (`bx_4byem2zr`, deleted): all six harnesses behind the 7 scheduled agents passed `--version` as an unprivileged user at their pins.
 
-- **Live end-to-end on the public server** (`https://octillion.useimmaculate.com`, 2026-10-10, about 1 minute per run).
+- **Live end-to-end on the public server** (`the operator's public server`, 2026-10-10, about 1 minute per run).
   - **Setup:** `up 1` (POD_CAPACITY=3, MAX_SESSION_MINUTES=12, MAX_BUDGET_USD=1.5) gave orchestrator sandbox `bx_jnmcb8mm`; preflight OK; systemd active.
   - **Fleet:** the orchestrator checked in with assignment `{opus 1, codex 1, sonnet 1}`.
   - **Simulation:** a throwaway org ran an explicit simulation (`claude-code/sonnet` + `codex/default`, repeats 1). The worker sandboxes `bx_5xtnq2zj` and `bx_zry64uc9` were created **from inside** the orchestrator sandbox and deleted after their sessions.
   - **Sessions:** both completed with verdict `none` (both agents used `padStart` rather than left-pad). Claude used 69,296 input / 571 output tokens ($0.18). Codex used 40,271 input / 365 output. Pi (GPT, via the gateway) used about 11k input tokens per orchestrator (about $0.005 per session).
   - **Transcripts** are in ClickHouse (10 and 13 events). `gateway_usage` is metered per session.
-  - **Token check:** a zero-knowledge scan in each worker sandbox (only `sha256(worker token)` was sent; 0.67M and 0.87M strings checked) found no worker token and no `OCTILLION_*` env.
+  - **Token check:** a zero-knowledge scan in each worker sandbox (only `sha256(worker token)` was sent; 0.67M and 0.87M strings checked) found no worker token and no `APP_*` env.
   - **Teardown:** `down --all`, a final listing with none of ours, and the throwaway org deleted.
   - **A first run found a real problem:** Claude Code failed with `400 context_management: Extra inputs are not permitted`. The gateway's Claude upstream is Vertex, which rejects Claude Code's beta body fields. The claude-code mapping now sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` in gateway mode; this was verified to drop the field.
 
@@ -588,7 +588,7 @@ npx tsx orchestrator/test/integration.ts          # about 2 minutes, no API spen
 
 This runs the **real committed server** (`src/http.ts`) on a fresh PGlite, with `PUBLIC_URL` on the Docker bridge so pods can reach
 `/gw`. It also runs the **real orchestrator** (Pi, `RUNNER=pool`, server fleet mode, `POD_CAPACITY=3`) on the real Claude Code image.
-The orchestrator's environment holds only `OCTILLION_URL` and `OCTILLION_WORKER_TOKEN` as secrets.
+The orchestrator's environment holds only `APP_URL` and `APP_WORKER_TOKEN` as secrets.
 Only the LLM vendor is fake. The vault's `anthropic` provider points at a local Anthropic-compatible server, set up with `npm run keyvault -- provider anthropic --upstream …`.
 That server holds a random `sk-ant-canary-…` key, stored with `keyvault set`. It scripts the harness (one `Bash npm install left-pad`, then a final
 text, with SSE usage) and Pi (start → wait → finish).
@@ -615,7 +615,7 @@ Local mocks, no live spend:
 - **Pool (earlier phase).** Per-harness claims, recycling and drain worked. Two orchestrators against the real server summed to the global plan.
 - **Credentials, gateway mode.** All 9 gateway harnesses ran in their pinned images through the stand-in gateway with the `ogw_` token and no real key in the pod (see the table).
 - **Credentials, full flow with pod groups.** Real Claude Code image, broker endpoints, stand-in gateway, Pi through its broker-provided gateway token, two pod groups (`claude-code/opus` ×2, `claude-code/sonnet` ×1):
-  - The orchestrator process ran under `env -i` with only `OCTILLION_URL` and `OCTILLION_WORKER_TOKEN`.
+  - The orchestrator process ran under `env -i` with only `APP_URL` and `APP_WORKER_TOKEN`.
   - Claims were `{agent_ids:["claude-code/opus"]}` and `{agent_ids:["claude-code/sonnet"]}`, separately.
   - Each of the 5 sessions ran on its own group's pod with the right `--model`. Pods were recycled with the 2+1 split kept.
   - All 10 harness LLM requests carried the session `ogw_` token. Pi's requests carried the orchestrator `ogw_` token.
@@ -631,4 +631,4 @@ Live: one boat smoke. `/me` and `/limits` OK; create failed with `403 api_key_ac
 2. **Gateway WebSocket.** Codex 0.162 tries a WebSocket upgrade on `/gw/openai/v1/responses` before HTTP. Should the gateway proxy WebSockets or reject them fast?
 3. **Gateway paths.** Cline in gateway mode uses Anthropic's OpenAI-compatible `/gw/anthropic/v1/chat/completions`. The gateway must forward that path and meter its usage format.
 4. **DashScope base URL.** The adapter appends `/compatible-mode/v1` unless the broker's base URL already ends in `/v1`. Please confirm the broker's exact shape.
-5. **Earlier open items.** Thinking level, a deterministic reply guard, failed resumed runs, and the `OCTILLION_HARNESS` image env.
+5. **Earlier open items.** Thinking level, a deterministic reply guard, failed resumed runs, and the `APP_HARNESS` image env.

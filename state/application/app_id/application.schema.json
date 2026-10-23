@@ -36,7 +36,7 @@
     },
     "platform_admins": {
       "type": "array",
-      "description": "Who may open the app's admin console besides a company account's members: email addresses, or *@domain for everyone at that domain (lowercase). Not a secret. Intake asks when the brief does not say (answers.json platform_admins; a brief line `Admins: ...`); provision.py writes it at every deploy wherever the mold's mold.json puts {platform_admins} (mold_v0: OCTILLION_PLATFORM_ADMINS on the API project or in the server's env file). Absent: nothing is written, a variable the target already holds is kept, and a target holding none stops the check and the deploy for the operator.",
+      "description": "Who may open the app's admin console besides a company account's members: email addresses, or *@domain for everyone at that domain (lowercase). Not a secret. Intake asks when the brief does not say (answers.json platform_admins; a brief line `Admins: ...`); provision.py writes it at every deploy wherever the mold's mold.json puts {platform_admins} (mold_v0: APP_PLATFORM_ADMINS on the API project, plus the old OCTILLION_PLATFORM_ADMINS when the project already holds it, or in the server's env file). Absent: nothing is written, a variable the target already holds is kept, and a target holding none stops the check and the deploy for the operator.",
       "items": {
         "type": "string",
         "pattern": "^(\\*|[a-z0-9._%+-]+)@[a-z0-9-]+(\\.[a-z0-9-]+)+$"

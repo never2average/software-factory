@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
 import { cn } from '@/lib/utils';
-import { relative, usd } from '@/lib/octillion-format';
+import { relative, usd } from '@/lib/display-format';
 
 /** Load on mount and whenever the active organization (or `deps`) changes; `reload` re-runs, keeping the old data meanwhile. */
 export function useOrgLoad<T>(fn: () => Promise<T>, deps: unknown[] = []) {
