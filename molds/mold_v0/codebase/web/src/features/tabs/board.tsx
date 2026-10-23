@@ -4,6 +4,7 @@
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
+import { useScrollsSideways } from '@/hooks/use-scrolls-sideways';
 
 export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string };
 export type Page = { records: RecordRow[]; next: string | null };
@@ -55,10 +56,15 @@ export function BoardColumns({ area, by, detail, data, onMove, role = null }: {
   const extra = [...new Set(data.records.map(stateOf).filter((s) => !states.includes(s)))];
   const columns = [...states, ...extra];
   const cols = area.list_columns.filter((c) => c !== by).slice(0, 3);
+  const name = `${area.label} by ${fieldLabel(area, by)}`;
+  const scroller = useScrollsSideways<HTMLDivElement>();
   return (
     <div className='flex flex-col gap-2'>
       {data.next && <p className='text-muted-foreground text-xs'>The first 200 records; the table has them all.</p>}
-      <div className='flex gap-3 overflow-x-auto pb-2' role='list' aria-label={`${area.label} by ${fieldLabel(area, by)}`}>
+      {/* The columns scroll sideways on a narrow window: then the scroller is a named tab stop (mold_v0-114). */}
+      <div ref={scroller.ref} {...scroller.scrollRegion(name)} data-slot='board-scroller'
+        className='focus-visible:ring-ring/50 overflow-x-auto rounded-sm pb-2 outline-none focus-visible:ring-[3px]'>
+      <div className='flex w-max gap-3' role='list' aria-label={name}>
         {columns.map((s) => {
           const rows = data.records.filter((r) => stateOf(r) === s);
           return (
@@ -92,6 +98,7 @@ export function BoardColumns({ area, by, detail, data, onMove, role = null }: {
             </section>
           );
         })}
+      </div>
       </div>
     </div>
   );

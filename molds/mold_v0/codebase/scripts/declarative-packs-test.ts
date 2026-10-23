@@ -5,7 +5,8 @@
 //    and refuses a malformed one: the file is a real contract for editors and intake, not a description.
 // 2. gen-packs builds the fixture pack (scripts/fixtures/packs/fixture_tracker: a pack.json, no code): its areas,
 //    credential and steps reach the console's registry, and packs.generated.ts carries the compiled declarations and no
-//    import; and refuses malformed pack.json files with the path and the reason.
+//    import; and refuses malformed pack.json files with the path and the reason. A tab's empty state (mold_v0-107):
+//    malformed `empty` blocks refused, the defaults and the pack's own resolved into the console's registry.
 // 3. A code entry extends a declarative pack (its tool and area join the declared ones); one that redeclares a declared
 //    name is refused.
 // 4. In the database (two workspaces): typed fields (validation errors on bad values), required fields, references that
@@ -118,6 +119,56 @@ try {
     refused("server code in a pack with no entry", tryPack(fixtureJson(), { "tools.ts": "export const x = 1;\n" }), /tools\.ts is server code but the pack has no entry/);
     refused("the same field twice", tryPack(variant((j) => { j.record_areas[1].fields.push({ name: "url", label: "Again" }); })), /record_areas\[1\]\.fields: a field is declared twice/);
     console.log(`✓ gen-packs refuses ${n} malformed pack.json files, each with its path and reason`);
+  }
+
+  // ---------- 2b. a tab's empty state (mold_v0-107) ----------
+  {
+    const tabs = (empty: unknown, kind = "area", extra: Record<string, unknown> = {}) => variant((j) => { j.tabs = [{ id: "apps", kind, ...(kind === "area" ? { area: "tracker_apps" } : {}), ...extra, empty }]; });
+    let m = 0;
+    const no = (what: string, json: unknown, re: RegExp) => { refused(`empty: ${what}`, tryPack(json), re); m++; };
+    no("on an overview tab", variant((j) => { j.charts = [{ name: "c", title: "C", type: "bar", metrics: [j.metrics[0].name] }]; j.tabs = [{ id: "o", kind: "overview", charts: ["c"], empty: { text: "Nothing" } }]; }), /tabs\[0\]\.empty: empty is for an area, runs or reports tab/);
+    no("an unknown key", tabs({ title: "None" }), /tabs\[0\]\.empty: Unrecognized key: "title"/);
+    no("a script address", tabs({ cta: { label: "Go", href: "javascript:alert(1)" } }), /tabs\[0\]\.empty\.cta\.href: a path of this site/);
+    no("a protocol-relative address", tabs({ cta: { label: "Go", href: "//evil.example/x" } }), /empty\.cta\.href: a path of this site has no \/\//);
+    no("an href and an action", tabs({ cta: { label: "Go", href: "/app", action: "setup" } }), /empty\.cta: a call to action has either an href or an action/);
+    no("neither href nor action", tabs({ cta: { label: "Go" } }), /empty\.cta: a call to action has either an href or an action/);
+    no("a link with no label", tabs({ cta: { href: "/app/credentials" } }), /empty\.cta\.label: a link names its label/);
+    no("an unknown action", tabs({ cta: { action: "delete:everything" } }), /empty\.cta\.action: setup, onboarding:/);
+    no("a line break", tabs({ text: "One\nTwo" }), /empty\.text: plain text on one line/);
+    no("a bidirectional override", tabs({ text: "Add ‮one" }), /empty\.text: plain text on one line/);
+    no("a placeholder", tabs({ text: "No {runs} yet" }), /empty\.text: no braces/);
+    no("text over 300 characters", tabs({ text: "x".repeat(301) }), /empty\.text: at most 300 characters/);
+    no("a label over 40 characters", tabs({ cta: { label: "x".repeat(41), action: "setup" } }), /empty\.cta\.label: at most 40 characters/);
+    no("an onboarding step the pack lacks", tabs({ cta: { action: "onboarding:nope" } }), /tab apps: empty\.cta\.action names onboarding step nope, which this pack does not declare/);
+    no("a job kind the pack lacks", tabs({ cta: { action: "run:nope" } }, "runs"), /tab apps: empty\.cta\.action names job kind nope, which this pack does not declare/);
+
+    // Accepted: the build writes each tab's resolved empty state into the console's registry.
+    const ok = tryPack(variant((j) => {
+      j.tabs = [
+        { id: "apps", kind: "area", area: "tracker_apps" },
+        { id: "findings", kind: "area", area: "tracker_findings" },
+        { id: "policies", kind: "area", area: "tracker_policies" },
+        { id: "own", kind: "area", area: "tracker_findings", label: "Own findings", empty: { text: "Findings arrive from scans.", cta: { label: "Read the guide", href: "https://example.org/guide" } } },
+        { id: "scans", kind: "runs", label: "Scans", empty: { cta: { action: "run:tracker_scan" } } },
+        { id: "first", kind: "area", area: "tracker_apps", label: "First apps", empty: { cta: { action: "onboarding:first_app", label: "Add an application" } } },
+        { id: "reports", kind: "reports" },
+        { id: "billing", kind: "billing" },
+      ];
+    }));
+    assert.equal(ok.r.status, 0, `tabs with empty states build: ${ok.r.stderr}`);
+    const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    const got = Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(nav)![1]!) as { id: string; empty?: unknown }[]).map((t) => [t.id, t.empty ?? null]));
+    const SETUP = { label: "Open setup", href: "/app" };
+    assert.deepEqual(got.apps, { title: "No applications yet.", text: "Next step on the Setup page: Add a first application.", cta: { label: "Open setup", href: "/app#onboarding-fixture_tracker-first_app" } },
+      "an area an onboarding step waits on: the step, and a link to it");
+    assert.deepEqual(got.findings, { title: "No findings yet.", text: "Ask your AI client to add one. Not connected yet? The Setup page shows how.", cta: SETUP }, "an area the AI client can add to");
+    assert.deepEqual(got.policies, { title: "No policies yet.", text: "Every workspace shares these. They appear here once they are added for everyone.", cta: null }, "a shared area, in the build's words");
+    assert.deepEqual(got.own, { title: "No findings yet.", text: "Findings arrive from scans.", cta: { label: "Read the guide", href: "https://example.org/guide" } }, "the pack's own text and link");
+    assert.deepEqual(got.scans, { title: "No scans yet.", text: "Ask your AI client to start “Scan an application”. Not connected yet? The Setup page shows how.", cta: SETUP }, "a runs tab pointing at a job kind: its label");
+    assert.deepEqual(got.first, { title: "No applications yet.", text: "Next step on the Setup page: Add a first application.", cta: { label: "Add an application", href: "/app#onboarding-fixture_tracker-first_app" } }, "an onboarding action, its own label");
+    assert.deepEqual(got.reports, { title: "No reports yet.", text: "Ask your AI client to start one: it shows here with its results once it finishes.", cta: SETUP }, "a reports tab: named as its page is");
+    assert.equal(got.billing, null, "a shell page's tab has no empty state of its own");
+    console.log(`✓ a tab's empty state: ${m} malformed ones refused (kind, keys, unsafe links, href and action, markup-free one-line text, braces, lengths, unknown steps and kinds); defaults from the onboarding, the area's scope and tools, the pack's own text and links`);
   }
 
   // ---------- 3. code extends a declarative pack ----------

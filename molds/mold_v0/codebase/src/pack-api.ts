@@ -60,6 +60,7 @@
  */
 import { z } from "zod";
 import type { AccountPermission, AccountRole } from "./account-roles.js";
+import { hrefProblem, NOT_PLAIN } from "./landing.js";
 import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.js";
 import { parseCron } from "./cron.js";
 import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
@@ -938,6 +939,35 @@ export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "g
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
   "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments"] as const;
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
+/**
+ * What an area, runs or reports tab says while it has nothing to show (mold_v0-107): `text`, and a call to action `cta`
+ * with a `label` and either an `href` (a path of this site, an https:// or a mailto: address: the landing block's rules,
+ * src/landing.ts) or an `action`:
+ *   setup               the Setup page (/app), where the person connects an AI client and follows the onboarding steps
+ *   onboarding:<step>   one of this pack's onboarding steps, on the Setup page
+ *   run:<kind>          one of this pack's job kinds: started from an AI client, so the action leads to the Setup page
+ * Plain text, shown as text, on one line; no braces (the build's word placeholders are the shell's: a pack writes its own
+ * words). Anything left out gets the shell's default, made from the area's label, the build's words and its onboarding
+ * (src/metric-spec.ts tabEmpty).
+ */
+export const TAB_EMPTY_ACTION = /^(setup|onboarding:[a-z][a-z0-9_]{1,62}|run:[a-z][a-z0-9_]{1,62})$/;
+const emptyText = (max: number) => z.string().min(1, "text is required").max(max, `at most ${max} characters`)
+  .refine((s) => s.trim().length > 0, "text is required")
+  .refine((s) => !NOT_PLAIN.test(s), "plain text on one line: no line breaks, control or invisible characters")
+  .refine((s) => !/[{}]/.test(s), "no braces: placeholders are the shell's own words; write the pack's words as they are");
+export const TabEmptySchema = z.object({
+  text: emptyText(300).optional(),
+  cta: z.object({
+    label: emptyText(40).optional(),
+    href: z.string().min(1).max(500).superRefine((h, ctx) => { const p = hrefProblem(h); if (p) ctx.addIssue({ code: "custom", message: p }); }).optional(),
+    action: z.string().regex(TAB_EMPTY_ACTION, "setup, onboarding:<one of the pack's onboarding steps> or run:<one of the pack's job kinds>").optional(),
+  }).strict().superRefine((c, ctx) => {
+    if ((c.href === undefined) === (c.action === undefined)) ctx.addIssue({ code: "custom", message: "a call to action has either an href or an action" });
+    if (c.href !== undefined && c.label === undefined) ctx.addIssue({ code: "custom", message: "a link names its label", path: ["label"] });
+  }).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type TabEmpty = z.output<typeof TabEmptySchema>;
 export const TabSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
   kind: z.enum(TAB_KINDS),
@@ -952,6 +982,7 @@ export const TabSchema = z.object({
   charts: z.array(name).max(12).optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
+  empty: TabEmptySchema.optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
@@ -961,6 +992,7 @@ export const TabSchema = z.object({
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
+  if (t.empty && t.kind !== "area" && t.kind !== "runs" && t.kind !== "reports") bad("empty is for an area, runs or reports tab", "empty");
   if (t.views && new Set(t.views).size !== t.views.length) bad("a view is listed twice", "views");
   if (t.board_by && !(t.views ?? []).includes("board")) bad("board_by is for a tab with the board view", "board_by");
   if (t.timeline_by && !(t.views ?? []).includes("timeline")) bad("timeline_by is for a tab with the timeline view", "timeline_by");
