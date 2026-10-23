@@ -30,7 +30,16 @@
       "console_description": "Your workspace: connect an MCP client, run agents and read their results.",
       "short_description": "Connect an MCP client, run agents and read their results."
     },
-    "refuse": "[<>\"\\r\\n]"
+    "refuse": "[<>\"\\r\\n]",
+    "app_settable": ["limits"],
+    "app_limits_max": {
+      "$comment": "The highest value an app's own profile may give each limit named here (also inside a plan): a ceiling on what a brief or a state edit can raise. Raising one is a reviewed change to this file. The shell's defaults: runs.budget_usd_max 25, runs.kind_month_budget_usd 200, runs.concurrency_per_workspace 4, runs.live_per_workspace 20.",
+      "runs.budget_usd_max": 200,
+      "runs.kind_month_budget_usd": 2000,
+      "runs.concurrency_per_workspace": 32,
+      "runs.live_per_workspace": 200
+    },
+    "$app_settable": "The profile fields an app may set from its own state (application.json `profile`, mold_v0-090; .claude/scripts/lib/app_profile.py checks each and writes it into the build copy's profile.json over this mold's own). Never a brand word (the brand writes those), host_packs, source_offer, billing or entitlements."
   },
   "favicon": {
     "app": "web/src/app",

@@ -332,12 +332,21 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
     build = build or os.path.join(ROOT, "build", app_id + ((".lane-default" if default_profile else ".lane") if lane else ""))
     if lane and os.path.isdir(build): shutil.rmtree(build)
     if not packs:
+        if not lane: _app_profile(None, app_id, app)   # refused before a copy is made
+        if not lane and app.get("profile") and not os.path.isdir(build):
+            # an app whose only own thing is its profile settings (mold_v0-090) still deploys from a copy of its own
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import branding
+            branding.build_copy(os.path.basename(build), mold_dir, root=os.path.dirname(os.path.dirname(build)))
+            print(f"build copy created: {os.path.relpath(build, ROOT)}/ (from {app['mold_id']}, for the app's profile settings)")
         gone = _prune(build, mold_dir, rules, []) if not lane and os.path.isdir(build) else []
         if not lane and os.path.isdir(build) and _host_packs(build, rules, []): gone.append("profile.json host_packs")
         facts = not lane and _deploy_facts(build, app_id, rules)
-        if gone or facts: _generate(build, rules)
+        prof = not lane and os.path.isdir(build) and _app_profile(build, app_id, app)
+        if gone or facts or prof: _generate(build, rules)
         print(f"{app_id}: no packs; nothing to apply" + (f"; {', '.join(gone)} (no longer named) taken out of its build copy and the registry regenerated" if gone else "")
-              + ("; the deploy facts and source offer written into its build copy and the generators run" if facts else "")); return 0
+              + ("; the deploy facts and source offer written into its build copy and the generators run" if facts else "")
+              + (f"; the app's profile settings ({_profile_said(app)}) written into its build copy and the generators run" if prof else "")); return 0
     errs = [e for p in packs for e in check_pack(p, rules=rules)]
     if not supports_packs(mold_dir, rules):
         errs.append(f"{app['mold_id']} does not discover packs ({rules['supports']['file']} with {rules['supports']['contains']!r} is not in its codebase), "
@@ -349,6 +358,9 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
             seen.setdefault(f, p)
         for f in conflicts([x for x, o in seen.items() if o == p], mold_dir):
             errs.append(f"{p}: {f} already exists in {app['mold_id']}; a pack only adds files, it never replaces one")
+    if not lane:
+        try: _app_profile(None, app_id, app)
+        except SystemExit as e: errs.append(str(e.code))
     if errs:
         for e in errs: print(e, file=sys.stderr)
         sys.exit(f"{len(errs)} problem(s); nothing was copied")
@@ -375,12 +387,32 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
         if os.path.lexists(dest): os.remove(dest)          # never write through a hard link
         shutil.copyfile(os.path.join(PACKS, p, "files", f), dest)
     _host_packs(build, rules, packs)
-    if not lane: _deploy_facts(build, app_id, rules)
+    if not lane: _deploy_facts(build, app_id, rules); _app_profile(build, app_id, app)
     _generate(build, rules)
     print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)"
           + (f"; {', '.join(gone)} no longer named, taken out" if gone else "")
+          + (f"; the app's profile settings: {_profile_said(app)}" if app.get("profile") and not lane else "")
           + f"); {', '.join(' '.join(c) for c in rules['generators'])} regenerated the registry")
     return 0
+
+def _app_profile(build, app_id, app):
+    """mold_v0-090: the app's own profile settings (application.json `profile`; lib/app_profile.py) written into a DEPLOY
+    copy's profile.json over the mold's own, before its generators run (which check them again). build None: only check.
+    A lane copy keeps the mold's defaults, as it keeps no deploy facts. -> whether the file changed."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+    import app_profile
+    try:
+        if build is None:
+            errs = app_profile.problems(app.get("profile"), app.get("mold_id"), ROOT)
+            if errs: raise ValueError("; ".join(errs))
+            return False
+        return app_profile.write(build, app, ROOT)
+    except ValueError as e: sys.exit(f"{app_id}: the app's profile settings were refused; nothing was written: {e}")
+
+def _profile_said(app):
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+    import app_profile
+    return app_profile.describe(app.get("profile"))
 
 # A host pack's console and orchestrator folders (mold_v0-039), pruned like rules['prune'] when the mold has one.
 HOST_DIRS = ("web/src/packs", "orchestrator/packs")
@@ -439,8 +471,11 @@ def verify(app_id):
     build = os.path.join(ROOT, "build", app_id)
     if not os.path.isdir(build): sys.exit(f"no build copy at build/{app_id}; run: python3 .claude/scripts/packs.py apply {app_id}")
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1"); bad = 0
-    rules = rules_for(app_docs(app_id).get("mold_id"))
+    app = app_docs(app_id); rules = rules_for(app.get("mold_id"))
     if rules is not None:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+        import app_profile
+        for e in app_profile.check(build, app, ROOT): print("FAIL profile: " + e); bad += 1   # mold_v0-090
         for cmd in rules.get("verify") or []:
             r = subprocess.run(cmd, cwd=build, env=env); bad += 1 if r.returncode else 0
         return 1 if bad else 0
@@ -525,7 +560,9 @@ def rules_self_test():
             open(os.path.join(cb, "scripts", "gen-packs.mjs"), "w").write(
                 "// stand-in: writes src/packs.generated.ts from the pack directories\nimport { readdirSync, mkdirSync, writeFileSync } from 'node:fs';\n"
                 "mkdirSync('src', { recursive: true });\nconst ids = readdirSync('packs', { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();\n"
-                "if (process.argv.includes('--check')) process.exit(0);\nwriteFileSync('src/packs.generated.ts', JSON.stringify(ids) + '\\n');\n")
+                "if (process.argv.includes('--check')) process.exit(0);\nwriteFileSync('src/packs.generated.ts', JSON.stringify(ids) + '\\n');\n"
+                "const LIMIT_KEYS = {\n  runs: [\"budget_usd_max\", \"kind_month_budget_usd\"],\n};\n")
+            os.makedirs(os.path.join(mold, "branding")); json.dump({"profile": {"file": "profile.json", "app_settable": ["limits"]}}, open(os.path.join(mold, "branding", "rules.json"), "w"))
             man = load(os.path.join(keep[0], "molds", "mold_v0", "mold.json"))
             # mold_v0's rules with its registry generator only (the stand-in codebase has no tsx for the others)
             json.dump({"mold_id": "mold_t", "packs": dict(man["packs"], generators=man["packs"]["generators"][:1], verify=man["packs"]["verify"][:1]), "build_copy": man["build_copy"]}, open(os.path.join(mold, "mold.json"), "w"))
@@ -565,6 +602,26 @@ def rules_self_test():
             json.dump({}, open(os.path.join(t, "state", "factory.json"), "w"))
             ok(quiet(apply, "zz") == 0 and "source_offer" not in load(os.path.join(b, "profile.json")), "no default: no source_offer in the copy")
             ok(quiet(lane_copies, "zz") == 0 and not any(os.path.exists(os.path.join(t, "build", x, "deploy-facts.json")) for x in ("zz.lane", "zz.lane-default")), "never in a lane copy")
+            # mold_v0-090: the app's own profile settings (application.json `profile`) in the deploy copy's profile.json
+            ad = os.path.join(t, "state", "application", "zz", "application.json"); lim = {"runs": {"budget_usd_max": 40, "kind_month_budget_usd": 500}}
+            def prof_app(profile, packs=("notes",)):
+                d_ = load(ad); d_["packs"] = list(packs); d_.pop("profile", None)
+                if profile is not None: d_["profile"] = profile
+                json.dump(d_, open(ad, "w"))
+            pj = lambda d=b: load(os.path.join(d, "profile.json")) if os.path.isfile(os.path.join(d, "profile.json")) else {}
+            prof_app({"limits": lim}); ok(quiet(apply, "zz") == 0 and pj().get("limits") == lim, f"the app's limits in the deploy copy's profile.json: {pj()}")
+            ok(quiet(lane_copies, "zz") == 0 and not any("limits" in pj(os.path.join(t, "build", x)) for x in ("zz.lane", "zz.lane-default")), "never in a lane copy (the mold's defaults are graded there)")
+            prof_app(None); ok(quiet(apply, "zz") == 0 and "limits" not in pj(), "a setting taken out of state is taken out of the copy (back to the mold's own)")
+            for bad, why in (({"host_packs": ["notes"]}, "host_packs"), ({"source_offer": {"app": "licensor_exception"}}, "source_offer"), ({"limits": {"runs": {"budget_usd_max": "40"}}}, "positive number"),
+                             ({"limits": {"runs": {"live_per_workspace": 3}}}, "is not a limit"), ({"limits": {"runs": {"budget_usd_max": True}}}, "positive number"), ({"email_from_address": "a@b.c"}, "not settable")):
+                prof_app(bad); open(os.path.join(b, "packs", "notes", "marker"), "w").write("x")
+                ok(quiet(apply, "zz") not in (0, None) and os.path.exists(os.path.join(b, "packs", "notes", "marker")) and "limits" not in pj(),
+                   f"refused before anything is copied (the pack's folder not rewritten, no limits written): a profile with {why}")
+                os.remove(os.path.join(b, "packs", "notes", "marker"))
+            shutil.rmtree(b); prof_app({"limits": lim}, packs=())
+            ok(quiet(apply, "zz") == 0 and pj().get("limits") == lim and os.path.isfile(os.path.join(b, "src", "packs.generated.ts")),
+               "an app with profile settings and no packs still gets a deploy copy carrying them, its generator run")
+            prof_app(None)
             infra = load(os.path.join(sd, "infrastructure.json")); infra["target"] = "vm"; json.dump(infra, open(os.path.join(sd, "infrastructure.json"), "w"))
             ok(quiet(apply, "zz") == 0 and not os.path.exists(os.path.join(b, "deploy-facts.json")), "a target the mold does not deploy to: no facts (a stale file removed)")
             for x in ("zz.lane", "zz.lane-default"): shutil.rmtree(os.path.join(t, "build", x))

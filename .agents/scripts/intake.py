@@ -135,6 +135,13 @@ def parse_brief(text):
     if m: h["asr_language"] = None if m.group(1) in ("auto", "detect") else m.group(1)
     if re.search(r"\bno (?:dictation|microphone|speech[- ]to[- ]text)\b|\bwithout (?:dictation|a microphone|the microphone)\b|^\s*(?:dictation|microphone):\s*(?:off|none|no)\b", t, re.M):
         h["asr_enabled"] = False
+    # The app's own profile settings (mold_v0-090; lib/app_profile.py): `limits.<section>.<name> = <number>` lines in a
+    # `## Profile` or `## Budgets` section. Problems are refused in build_single, never guessed around.
+    import app_profile
+    prof, perrs, pnotes = app_profile.from_brief(text)
+    if prof: h["profile"] = prof
+    if perrs: h["profile_problems"] = perrs
+    if pnotes: h["profile_notes"] = pnotes
     return h
 
 def slug(s): return re.sub(r"[^a-z0-9-]+", "-", s.lower()).strip("-")
@@ -363,6 +370,10 @@ def keep_measured(app, infra, ds, existing):
 
 def build_state(app_id, mold_id, ans, hints, factory, brief_path, existing):
     d = factory.get("defaults", {}); mold = next(m for m in factory["molds"] if m["mold_id"]==mold_id)
+    if hints.get("profile") or hints.get("profile_problems"):   # mold_v0-090: a mold that takes no profile settings says so
+        import app_profile
+        perrs = list(hints.get("profile_problems") or []) + app_profile.problems(hints.get("profile"), mold_id, ROOT)
+        if perrs: sys.exit(f"{app_id}: the brief's profile settings were refused, so nothing was written:\n  " + "\n  ".join(perrs))
     prod = pick_product(mold_id, hints, existing)
     org_id = slug(ans["workspace_name"]); owner = ans["operator_email"]
     # Secrets the app needs, by name. "user" = only the user can supply; "derived" = provision.py creates/sets them.
@@ -641,6 +652,31 @@ def self_test_single(n, fails):
         b_ = (docs("zz_brand")["application"].get("surface") or {}).get("branding") or {} if not r.returncode else {}
         if r.returncode or b_.get("product_name") != "Acme Ops" or b_.get("brand_color") != "#1F6F5C" or not b_.get("icon_svg"):
             fails.append(f"a mold_v0 brief's brand lines must reach surface.branding: {(r.stdout + r.stderr).strip()[-300:]} {b_}")
+        # mold_v0-090: the brief's profile settings (## Budgets / ## Profile) reach application.profile, exactly
+        base = "Mold: mold_v0\nIt runs on its own server.\nDomain: lim.example.org\n"
+        bud = base + "\n## Budgets (operator, 2026-10-22)\nPer run US$40. The profile raises the ceilings: limits.runs.budget_usd_max = 40, limits.runs.kind_month_budget_usd = 500 (defaults $25 and $200).\n\n## Data\nOther prose.\n"
+        r = go("zz_lim", bud); n += 1
+        p_ = docs("zz_lim")["application"].get("profile") if not r.returncode else None
+        if r.returncode or p_ != {"limits": {"runs": {"budget_usd_max": 40, "kind_month_budget_usd": 500}}} or "limits.runs.budget_usd_max 40" not in r.stdout:
+            fails.append(f"a mold_v0 brief's ## Budgets limits must reach application.profile and be said: {(r.stdout + r.stderr).strip()[-300:]} {p_}")
+        r = go("zz_lim", base + "\nThe old ceiling was limits.runs.budget_usd_max = 90, in prose.\n"); n += 1
+        if r.returncode or "profile" in docs("zz_lim")["application"] or "outside a ## Profile or ## Budgets section: ignored" not in r.stdout:
+            fails.append(f"a setting taken out of the brief is taken out of state (never carried forward), and one outside the sections is ignored and said: {(r.stdout + r.stderr).strip()[-300:]}")
+        for bad, why in (("## Profile\nhost_packs: maxwell\n", "host_packs cannot be set"), ("## Profile\nlimits.runs.budget_usd_max = 1,000\n", "no value I can read"),
+                         ("## Budgets\nlimits.runs.budget_usd = 40\n", "is not a limit"), ("## Profile\nlimits.runs.budget_usd_max = 40\nlimits.runs.budget_usd_max = 400\n", "set twice"),
+                         ("## Profile\nbilling.enabled: true\n", "cannot be set by the app"), ("## Budgets\nWe weighed limits.runs.budget_usd_max = 400 but chose 40.\n", "no value I can read"),
+                         ("## Budgets\nlimits.runs.budget_usd_max = 40k\n", "no value I can read"), ("## Budgets\nlimits.runs.budget_usd_max = 4000\n", "ceiling")):
+            r = go("zz_limbad", base + bad); n += 1
+            if r.returncode == 0 or why not in r.stdout + r.stderr or os.path.exists(os.path.join(A, "zz_limbad", "application.json")):
+                fails.append(f"a brief profile setting with {why!r} must be refused, nothing written: rc={r.returncode} {(r.stdout + r.stderr).strip()[-300:]}")
+            shutil.rmtree(os.path.join(A, "zz_limbad"), ignore_errors=True)
+        r = go("zz_lim", base + "\n## Budgets\n<!-- limits.runs.budget_usd_max = 150 -->\n~~limits.runs.kind_month_budget_usd = 900~~\n```\nlimits.runs.live_per_workspace = 90\n```\n"); n += 1
+        if r.returncode or "profile" in docs("zz_lim")["application"]:
+            fails.append(f"settings a reader of the brief cannot see (an HTML comment, struck through, a code block) are never applied: {(r.stdout + r.stderr).strip()[-200:]}")
+        r = go("zz_lim", bud); d_ = docs("zz_lim")["application"]; d_["profile"]["limits"]["runs"]["budget_usd_max"] = 4000
+        save(os.path.join(A, "zz_lim", "application.json"), d_); r = go("zz_lim", bud); n += 1
+        if r.returncode or docs("zz_lim")["application"]["profile"]["limits"]["runs"]["budget_usd_max"] != 40:
+            fails.append("a hand-raised limit in state must be put back to the brief's on the next intake run")
         os.makedirs(os.path.join(T, "packs", "notes_pack")); save(os.path.join(T, "packs", "notes_pack", "pack.json"), {"pack_id": "notes_pack", "mold_id": "mold_v0", "name": "N", "description": "d"})
         r = go("zz_packed", "Mold: mold_v0\nIt runs on its own server.\nDomain: packed.example.org\nPacks: notes_pack\n"); n += 1
         if r.returncode or docs("zz_packed")["application"].get("packs") != ["notes_pack"]:
@@ -820,12 +856,21 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
         app["surface"] = {"branding": normalize(brand, hints.get("brand_name"), hints.get("brand_color"), hints.get("brand_logo"), hints.get("brand_tagline"))}
         why = name_problem(app["surface"]["branding"]["product_name"], mold_id)
         if why: sys.exit(f"{app_id}: {why}. Nothing was written.")
+    # The app's own profile settings (mold_v0-090): the brief's `## Profile` / `## Budgets` settings, exactly. The brief is
+    # where they are set, so a setting taken out of the brief is taken out of state too (never carried forward).
+    import app_profile
+    for note in hints.get("profile_notes") or []: print("note: " + note)
+    perrs = list(hints.get("profile_problems") or []) + app_profile.problems(hints.get("profile"), mold_id, ROOT)
+    if perrs: sys.exit(f"{app_id}: the brief's profile settings were refused, so nothing was written:\n  " + "\n  ".join(perrs))
+    if hints.get("profile"):
+        app["profile"] = hints["profile"]
+        print(f"profile settings from the brief: {app_profile.describe(app['profile'])} (over {mold_id}'s defaults; in effect from the next deploy)")
     ex_app, ex_inf, ex_ds, ex_di = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores", "datainfra"))
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
     if ex_app.get("mold_commit") and ex_app.get("status") not in (None, "planned"): app["mold_commit"] = ex_app["mold_commit"]
     other = {"vercel", "vm", "vm_remote", "compose_remote"} - {infra["target"]}
-    carry_forward(app, ex_app, {"customer_id", "packs", "surface", "workspace", "model", "asr", "capabilities"})
+    carry_forward(app, ex_app, {"customer_id", "packs", "surface", "workspace", "model", "asr", "capabilities", "profile"})
     carry_forward(infra, ex_inf, other | {"inference", "runtime_env"})
     t = infra["target"]
     if isinstance(ex_inf.get(t), dict): carry_forward(infra[t], ex_inf[t], set())
