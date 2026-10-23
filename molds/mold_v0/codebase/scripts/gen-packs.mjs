@@ -62,9 +62,12 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+// The words engine (mold_v0-100): plain TypeScript node runs as it is (types stripped), shared with the server and the console.
+const WORDS_ENGINE = path.join(HERE, "..", "src", "words.ts");
+const { BASE_WORDS, WORD_KEYS, resolveWords, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -76,7 +79,11 @@ const CHECK = argv.includes("--check");
 const PACK_API = path.join(ROOT, "src", "pack-api.ts");
 const PACK_HOST = path.join(ROOT, "src", "pack-host.ts");
 
-/** The neutral profile: what a build with no profile.json shows. No product's words. */
+/**
+ * The neutral profile: what a build with no profile.json shows. No product's words. Its `words` (mold_v0-100) are the
+ * neutral BASE of src/words.ts ({run} is "run", {member} "member"...), never written into the profile modules: they go to
+ * src/vocabulary.generated.ts and the console's web/src/config/vocabulary.generated.ts, under the packs' and the profile's.
+ */
 export const DEFAULT_PROFILE = {
   name: "Workspace",
   mcp_server_name: "workspace",
@@ -854,6 +861,8 @@ function entitlementsProblem(v, limits) {
 }
 
 let profile = { ...DEFAULT_PROFILE };
+/** The profile's own `words` (mold_v0-100): profile.json `words` (the app's) and a host pack's `host.profile.words` (its engine's). */
+const appWords = {}, hostWords = {};
 /** profile.json `landing` (mold_v0-091): the app's own landing block, over a pack's; checked and written below, never part of the profile modules. */
 let profileLanding;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
@@ -871,6 +880,20 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   {
     for (const [k, v] of Object.entries(pf)) {
       if (k === "$comment") continue;
+      // The app's words (mold_v0-100, src/words.ts): the shell's word keys (and their plurals) -> the app's word.
+      if (k === "words") {
+        const known = new Set([...WORD_KEYS, ...WORD_KEYS.map((w) => `${w}s`)]);
+        for (const [where, layer, into] of [[`packs/${hostProfiles[0]?.id}: host.profile`, hostProfiles[0]?.host.profile?.words, hostWords], [rel(PROFILE_FILE), filePf?.words, appWords]]) {
+          if (layer === undefined) continue;
+          if (!layer || typeof layer !== "object" || Array.isArray(layer)) { fail(where, "words: an object of shell word -> the app's word"); continue; }
+          for (const [w, x] of Object.entries(layer)) {
+            if (!known.has(w)) fail(where, `words.${w}: not a shell word (known: ${[...known].join(", ")})`);
+            else if (wordProblem(x)) fail(where, `words.${w}: ${wordProblem(x)}`);
+            else into[w] = x.trim();
+          }
+        }
+        continue;
+      }
       // Which packs may be host packs (read above, before the packs): a list of pack ids, never shown.
       if (k === "host_packs") { if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !ID.test(x))) fail(rel(PROFILE_FILE), "host_packs: a list of pack ids"); continue; }
       if (k === "limits") { const bad = limitsProblem(v); if (bad) fail(rel(PROFILE_FILE), `limits: ${bad}`); else profile.limits = v; continue; }
@@ -901,7 +924,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1217,6 +1240,19 @@ if (existsSync(path.join(OUT, "orchestrator")))
 files.set(path.join(OUT, "src", "deploy-facts.generated.ts"), HEADER +
   "/** The deploy facts the factory wrote into this build copy (deploy-facts.json, mold_v0-050), read by src/data-map.ts; null without them. */\n" +
   `export const DEPLOY_FACTS: unknown = ${deployFacts ? json(deployFacts) : "null"};\n`);
+// The build's words (mold_v0-100): the profile's own layer for the server (which lays it over the packs it loads,
+// src/vocabulary.ts), the resolved words for the console, and the engine's own source for the console to run.
+const buildWords = resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]);
+files.set(path.join(OUT, "src", "vocabulary.generated.ts"), HEADER +
+  "/** The app's own words (profile.json `words`), laid over the host pack's and the packs' by src/vocabulary.ts. */\n" +
+  `export const PROFILE_WORDS: Readonly<Record<string, string>> = ${json(appWords)};\n` +
+  "/** A host pack's words for its own engine (host.profile.words): the shared copy's, never the generic run engine's pages'. */\n" +
+  `export const HOST_WORDS: Readonly<Record<string, string>> = ${json(hostWords)};\n`);
+files.set(path.join(OUT, "web", "src", "config", "vocabulary.generated.ts"), HEADER +
+  "/** The build's words (src/words.ts: the neutral BASE, under the packs' pack.json words, under the profile's), for the console. */\n" +
+  `export const WORDS = ${json(buildWords)} as const;\n`);
+files.set(path.join(OUT, "web", "src", "lib", "words.generated.ts"),
+  HEADER.replace("from packs/*/pack.json and profile.json", "from src/words.ts (a copy, so the console runs the server's words engine)") + readFileSync(WORDS_ENGINE, "utf8"));
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
   `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);

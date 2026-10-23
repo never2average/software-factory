@@ -18,7 +18,7 @@ import * as billing from "./billing.js";
 import * as experiments from "./experiments.js";
 import { getDb } from "./db.js";
 import { HIT, orgMonthSpendUsd, SCENARIO_ROWS } from "./session-engine.js";
-import { sessionEngine } from "./host-tables.js";
+import { hostTable, sessionEngine } from "./host-tables.js";
 import { RUN_USD } from "./run-spend.js";
 import { workspaceRunUsage } from "./usage-report.js";
 import { endpointLimit } from "./rate-limits.js";
@@ -449,7 +449,7 @@ export function appRouter() {
     const ms = res.locals.memberships as clerk.ClerkMembership[];
     res.json({ email: s.email, user_id: s.user, role: s.role, org_role: `org:${s.role}`, account: { name: f.name, slug: f.slug, clerk_org_id: s.clerkOrgId },
                account_role: s.accountRole, role_label: roles.ACCOUNT_ROLE_LABELS[s.accountRole], permissions: perms(res), needs: roles.ACCOUNT_PERMISSIONS,
-               roles: [...roles.ACCOUNT_ROLES].reverse().map((r) => ({ id: r, label: roles.ACCOUNT_ROLE_LABELS[r], help: roles.ACCOUNT_ROLE_HELP[r] })),
+               roles: [...roles.ACCOUNT_ROLES].reverse().map((r) => ({ id: r, label: roles.ACCOUNT_ROLE_LABELS[r], help: roles.accountRoleHelp(r) })),
                via: people().provider, organizations: ms.map((m) => ({ clerk_org_id: m.organization!.id, name: m.organization!.name, role: clerk.roleOf(m.role),
                  account_role: roles.accountRoleOf(m), suspended: clerk.isSuspended(m) })),
                integrations: { clerk: people().provider === "clerk", stripe: billing.stripeEnabled() } });
@@ -568,7 +568,9 @@ export function appRouter() {
   });
   api.get("/billing", async (_req, res) => {
     const extras = await Promise.all(hosts().map((h) => h.routes?.billingExtras?.(S(res).org) ?? {}));
-    res.json({ ...(await billingView(S(res))), can_manage: can(res, "billing"), permissions: perms(res), ...Object.assign({}, ...extras) });
+    res.json({ ...(await billingView(S(res))), can_manage: can(res, "billing"), permissions: perms(res),
+      // Whether the build's host pack onboards products (mold_v0-100: the page's copy names it only then).
+      onboards_products: hostTable("products"), ...Object.assign({}, ...extras) });
   });
   api.get("/billing/usage", async (_req, res) => void res.json(await billingUsage(S(res))));
   api.post("/billing/portal", async (_req, res) => { need(res, "billing"); res.json(await admin.portalLink(actor(res), S(res).slug, `${publicUrl()}/app#billing`)); });

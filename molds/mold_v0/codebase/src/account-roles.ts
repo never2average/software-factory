@@ -13,21 +13,26 @@
  */
 import type * as clerk from "./clerk.js";
 import { NS_KEYS, nsGet } from "./namespace.js";
+import { hostTable } from "./host-tables.js";
+import { fill } from "./vocabulary.js";
 
 export const ACCOUNT_ROLES = ["viewer", "member", "billing", "owner"] as const;
 export type AccountRole = (typeof ACCOUNT_ROLES)[number];
 export const ACCOUNT_ROLE_LABELS: Record<AccountRole, string> = { viewer: "Viewer", member: "Member", billing: "Billing manager", owner: "Owner" };
-export const ACCOUNT_ROLE_HELP: Record<AccountRole, string> = {
-  owner: "Everything, including the team: invite people, remove them and change roles.",
-  billing: "A member who also manages billing, the plan and Budget rules. Can't manage the team.",
-  member: "Runs simulations within Budget rules and keeps their own context and memory.",
-  viewer: "Reads usage, adoption, reports and context. Can't run simulations or change anything.",
-};
+/** What each role may do, in the app's run noun (src/vocabulary.ts: "Runs audits within Budget rules ..."). */
+export function accountRoleHelp(r: AccountRole): string {
+  return {
+    owner: "Everything, including the team: invite people, remove them and change roles.",
+    billing: "A member who also manages billing, the plan and Budget rules. Can't manage the team.",
+    member: fill("Runs {runs} within Budget rules and keeps their own context and memory."),
+    viewer: fill("Reads usage, adoption, reports and context. Can't run {runs} or change anything."),
+  }[r];
+}
 
 /** Each permission and the least role that has it (roles are ordered viewer < member < billing < owner). */
 export const ACCOUNT_PERMISSIONS = {
   read: "viewer",    // Usage, Adoption, reports, transcripts, context
-  launch: "member",  // run simulations and onboard products (checkRun)
+  launch: "member",  // start runs (and onboard products, where a host pack has them) (checkRun)
   edit: "member",    // their own context and memory, use cases, help requests, product saves through the connector
   billing: "billing", // Manage billing, choose a plan, everyone's spend on Billing
   budget: "billing", // Budget rules: the plan, teams, people's limits, history
@@ -53,10 +58,13 @@ export function accountRoleOf(m: { role: string; public_metadata?: Record<string
 /** What Clerk stores for a role: its organization role and the metadata refinement. */
 export const clerkRoleFor = (r: AccountRole) => ({ role: r === "owner" ? ("admin" as const) : ("member" as const), metadata: { [NS_KEYS.role]: r } });
 
-/** A refusal in plain words, with a code the UI and the connector can act on. */
-export function accountRefusal(p: AccountPermission): { message: string; code: string; needs: AccountRole } {
+/**
+ * A refusal in plain words, with a code the UI and the connector can act on. A launch refusal names the app's runs
+ * (src/vocabulary.ts), and onboarding products only in a build whose host pack has products (`products`, from the build).
+ */
+export function accountRefusal(p: AccountPermission, products = hostTable("products")): { message: string; code: string; needs: AccountRole } {
   const needs = ACCOUNT_PERMISSIONS[p];
-  if (p === "launch") return { message: "Viewers can read reports, usage and transcripts but can't run simulations or onboard products. Ask an account owner to change your role on the Team page.", code: "viewer_role", needs };
+  if (p === "launch") return { message: `${fill("Viewers can read reports, usage and transcripts but can't run {runs}")}${products ? " or onboard products" : ""}. Ask an account owner to change your role on the Team page.`, code: "viewer_role", needs };
   if (p === "edit") return { message: "Viewers can read but can't change context, products, memory or use cases. Ask an account owner to change your role on the Team page.", code: "viewer_role", needs };
   return { message: `This needs the ${ACCOUNT_ROLE_LABELS[needs]} role. Ask an account owner to change your role on the Team page.`, code: "forbidden", needs };
 }

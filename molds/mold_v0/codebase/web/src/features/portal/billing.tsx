@@ -26,12 +26,13 @@ import { ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { ACCOUNT_ROLE_LABEL, Allowed, useAccountRole, type AccountRole, type AccountRoleInfo } from './role';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { profile } from '@/config/profile.generated';
+import { fill } from '@/lib/vocabulary';
 
 interface Sub { status: string; plan: string | null; renews_at: string | null; cancel_at_period_end: boolean; trial_end: string | null }
 interface Plan { price_id: string; name: string; amount: number | null; currency: string; interval: string | null; monthly_budget_usd: number | null; trial_days?: number | null; description?: string | null;
   /** Usage pricing, one line per metric (model spend, agent sessions, simulations, sandbox hours), in words. */
   usage?: { metric: string; summary: string }[] }
-interface Billing { enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
+interface Billing { onboards_products?: boolean; enabled: boolean; customer: boolean; subscription: Sub | null; budget_usd: number; budget_source?: 'override' | 'plan' | 'default'; prepaid_allowed?: boolean; plans: Plan[]; can_manage: boolean
   contributions?: Contributions; run_charges?: RunCharges }
 /** Price per run (mold_v0-019): this month's run charges and credits per currency, and the latest rows. Only when the app bills runs. */
 interface RunCharges { enabled: boolean; currency: string;
@@ -135,7 +136,7 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
   return (
     <Block title='' action={b.enabled && b.can_manage && b.customer
       ? <Button variant='outline' size='sm' disabled={busy !== null} onClick={() => go('/billing/portal')}>{busy ? <Icons.spinner className='animate-spin' /> : <Icons.creditCard />} Manage billing</Button> : undefined}>
-      {s && ['past_due', 'unpaid'].includes(s.status) && <Alert variant='destructive'><Icons.warning /><AlertDescription>The last payment failed. Update the card to keep running simulations.</AlertDescription></Alert>}
+      {s && ['past_due', 'unpaid'].includes(s.status) && <Alert variant='destructive'><Icons.warning /><AlertDescription>The last payment failed. {fill('Update the card to keep running {runs}.')}</AlertDescription></Alert>}
       {l?.can_manage && l.alert && <UsageBanner a={l.alert} />}
       {mine && l?.you && <YourBudget m={mine} l={l} you={l.you} />}
       <div className='flex flex-wrap items-baseline gap-x-6 gap-y-2 leading-none'>
@@ -166,7 +167,7 @@ function ThisMonth({ b, u, l }: { b: Billing; u: Usage | undefined; l: Limits | 
       {/* No plan and no allowance: runs are off. Plans are invite-only while inference costs are high. */}
       {cap <= 0 && !(b.enabled && b.plans.length > 0) && (
         <Alert><Icons.lock /><AlertDescription>
-          Running simulations and onboarding needs a prepaid plan. Plans are invite-only for now: reply to your {profile.name} contact, or write to us, and we&apos;ll set one up for your team.
+          {fill(`Running {runs}${b.onboards_products ? ' and onboarding' : ''} needs a prepaid plan. Plans are invite-only for now: reply to your {product} contact, or write to us, and we'll set one up for your team.`)}
         </AlertDescription></Alert>
       )}
       {b.enabled && b.plans.length > 0 && !(live && b.customer) && (
@@ -281,7 +282,7 @@ function YourBudget({ m, l, you }: { m: LimitMember; l: Limits; you: You }) {
     <div className='flex flex-col gap-3'>
       <span className='text-muted-foreground text-xs leading-none'>Your budget</span>
       <div className='flex flex-wrap items-baseline gap-x-3 gap-y-2 leading-none'>
-        {!m.can_run ? <span className='text-2xl font-semibold'>You can&apos;t launch simulations yet</span>
+        {!m.can_run ? <span className='text-2xl font-semibold'>{fill("You can't launch {runs} yet")}</span>
           : m.limit_usd == null ? <><span className='text-4xl font-semibold tabular-nums'>{usd(you.pot?.left_usd ?? 0)}</span>
             <span className='text-muted-foreground text-sm'>No personal limit · {you.pot?.name ?? 'Everyone'} has this left</span></>
           : <><span className='text-4xl font-semibold tabular-nums'>{usd(m.left_usd ?? 0)}</span><span className='text-muted-foreground text-sm'>left of {usd(m.limit_usd)} this month</span></>}
@@ -550,7 +551,7 @@ function LimitsDialog({ m, lim, l, mode, onClose, onSaved }: { m: Pick<Member, '
               {l.teams.map((x) => <NativeSelectOption key={x.id} value={String(x.id)}>{x.name}</NativeSelectOption>)}
             </NativeSelect>
           </label>
-          <label className='grid gap-1.5 text-sm'>Can launch simulations
+          <label className='grid gap-1.5 text-sm'>{fill('Can launch {runs}')}
             <NativeSelect value={f.run} onChange={(e) => setF({ ...f, run: e.target.value })} className='w-full'>
               <NativeSelectOption value='default'>Use the account setting ({p.new_members_can_run ? 'everyone can launch' : 'only people allowed'})</NativeSelectOption>
               <NativeSelectOption value='yes'>Yes</NativeSelectOption>
@@ -600,10 +601,10 @@ function Rules({ l, b, reload }: { l: AdminLimits; b: Billing; reload: () => voi
     policyRow('new_members_can_run', 'New members can launch', p.new_members_can_run ? 'Yes' : 'No', 'Everyone', 'bool',
       "No stops everyone who hasn't been allowed individually, including people already here."),
     policyRow('max_concurrent_runs', 'Runs at once (per person)', p.max_concurrent_runs == null ? 'No limit' : String(p.max_concurrent_runs), 'Each person', 'count',
-      'Whole simulations running at once. Teams and people can set their own; the most specific one wins.'),
-    policyRow('max_sessions_per_run', 'Sessions per run', p.max_sessions_per_run == null ? `${profile.name}'s maximum${max ? ` (${max})` : ''}` : String(p.max_sessions_per_run), 'Each simulation', 'count',
-      `Agent sessions per simulation, adaptive runs included.${max ? ` ${profile.name}'s maximum is ${max}.` : ''}`),
-    policyRow('max_run_usd', 'Spend cap per run', p.max_run_usd == null ? 'No limit' : usd(p.max_run_usd), 'Each simulation', 'money',
+      fill('Whole {runs} running at once. Teams and people can set their own; the most specific one wins.')),
+    policyRow('max_sessions_per_run', 'Sessions per run', p.max_sessions_per_run == null ? `${profile.name}'s maximum${max ? ` (${max})` : ''}` : String(p.max_sessions_per_run), fill('Each {run}'), 'count',
+      `${fill('Agent sessions per {run}')}, adaptive runs included.${max ? ` ${profile.name}'s maximum is ${max}.` : ''}`),
+    policyRow('max_run_usd', 'Spend cap per run', p.max_run_usd == null ? 'No limit' : usd(p.max_run_usd), fill('Each {run}'), 'money',
       'Adaptive runs stop adding sessions once a run reaches this. Sessions already running finish.'),
     ...l.teams.filter((t) => t.budget_usd != null || t.max_concurrent_runs != null).map((t): RuleRow => {
       const c = who(`team:${t.id}`);
