@@ -528,7 +528,7 @@ def prepare(app_id, app, mold_dir, force=False):
     import library
     library.apply(build_dir, app, mold_dir)
     rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
-    app_profile.write(build_dir, app, ROOT)     # checked above; packs.py apply writes them again
+    app_profile.write(build_dir, app, ROOT, packs_applied=False)     # checked above; packs.py apply writes them again, with the pack-naming ones
     applied = apply_overlay(build_dir, b, rules)
     info = getattr(apply_overlay, "icon_info", None)
     if info:
@@ -778,6 +778,14 @@ def self_test_v0(ok):
             "mold_v0-101: write puts the defaults in the copy's profile.json, and check says the generated module does not carry them until the generator runs")
         ok_(any("email_from_address" in x for x in app_profile.check(mb, dict(mail_app, packs=[], app_id="other"), f)),
             "mold_v0-101: check finds a copy carrying another app's defaults")
+        up_app = dict(mail_app, packs=["pk"], profile={"source_offer": {"upstreams": {"pk": "licensor_owned"}}})
+        ub = os.path.join(t, "upcopy"); shutil.copytree(zb, ub, ignore=shutil.ignore_patterns("node_modules"), symlinks=True)
+        app_profile.write(ub, up_app, f, packs_applied=False)
+        ok_("upstreams" not in (load(os.path.join(ub, "profile.json")).get("source_offer") or {}),
+            "branding writes no setting that names a pack before packs.py apply puts the packs in the copy (gen-packs would refuse it)")
+        app_profile.write(ub, up_app, f)
+        ok_((load(os.path.join(ub, "profile.json")).get("source_offer") or {}).get("upstreams") == {"pk": "licensor_owned"},
+            "packs.py apply's write puts the pack-naming settings in")
         for prof, why in (({"email_from_address": "not an address"}, "one email address"), ({"email_from_address": "a@b.c\nBcc: x@y.z"}, "one email address"),
                           ({"email": {"notifications": ["access_requests", "spam"]}}, "is not a group"), ({"email": {"provider": "test"}}, "resend or none"),
                           ({"email": {"notifications": ["usage", "usage"]}}, "each once"), ({"email": {"to": "x"}}, "not an email setting")):

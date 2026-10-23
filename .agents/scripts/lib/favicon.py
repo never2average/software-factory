@@ -555,6 +555,9 @@ sharp(inp, opts).resize(512, 512, { fit: "inside", withoutEnlargement: Number(de
 def sharp_png(raw, ext, node_cwd):
     """A JPG, WebP or SVG -> (PNG bytes at most 512 px on its long side, None), by sharp from node_cwd's node_modules.
     (None, why) when it cannot be done: no node, no sharp there, or a file sharp will not read. Never raises."""
+    # a mold whose console is its own package (mold_v0: web/) has sharp there, not at the root
+    if node_cwd and not os.path.isdir(os.path.join(node_cwd, "node_modules", "sharp")) and os.path.isdir(os.path.join(node_cwd, "web", "node_modules", "sharp")):
+        node_cwd = os.path.join(node_cwd, "web")
     if not node_cwd or not os.path.isdir(os.path.join(node_cwd, "node_modules", "sharp")):
         return None, "the image library `sharp` is not installed in the mold's node_modules (run `npm ci` in the mold's codebase)"
     with tempfile.TemporaryDirectory() as t:
