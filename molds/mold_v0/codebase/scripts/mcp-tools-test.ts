@@ -153,7 +153,8 @@ try {
     assert.equal(again, json, "generating twice gives the same bytes");
     if (UPDATE) { mkdirSync(path.dirname(GOLDEN), { recursive: true }); writeFileSync(GOLDEN, json); console.log(`wrote ${path.relative(ROOT, GOLDEN)}`); }
     assert.equal(json, readFileSync(GOLDEN, "utf8"), "the generated surface matches scripts/fixtures/mcp/generated-surface.json (npm run test:mcp-tools -- --update after a deliberate change)");
-    assert.deepEqual(doc.api_key.tools.slice(0, 4).map((t: any) => t.name), ["list_records", "get_record", "fixture_tracker_list_tracker_policies", "fixture_tracker_get_tracker_policies"], "after the shell's: the record tools, then the generated ones");
+    // mold_v0-105: the pack's get_started (from its onboarding steps) is listed first.
+    assert.deepEqual(doc.api_key.tools.slice(0, 5).map((t: any) => t.name), ["fixture_tracker_get_started", "list_records", "get_record", "fixture_tracker_list_tracker_policies", "fixture_tracker_get_tracker_policies"], "after the shell's: the get_started tool, the record tools, then the other generated ones");
     console.log(`✓ the golden surface: ${doc.api_key.tools.length - 2} generated customer tools, ${doc.admin.length} admin tools, the instructions' paragraph; deterministic`);
   }
 
@@ -244,6 +245,13 @@ try {
       await probe(n, async () => err(cb, n, args, /no |not found|does not exist/i));
     for (const [n, args] of [["fixture_tracker_move_tracker_findings", { key: "find-a", to: "fixed" }], ["review_move_review_notes", { key: "note-a", to: "dropped" }]] as const)
       await probe(n, async () => err(cb, n, args, /no |not found/i));
+    // mold_v0-105: get_started reads the caller's own workspace's steps (A has an application, B none yet).
+    await probe("fixture_tracker_get_started", async () => {
+      const first = (x: any) => x.steps.find((s: any) => s.id === "first_app").done;
+      assert.equal(first(await ok(ca, "fixture_tracker_get_started")), true, "A's own application ticks A's step");
+      const b = await ok(cb, "fixture_tracker_get_started");
+      assert.equal(first(b), false, "never B's"); assert.equal(b.next.id, "first_app");
+    });
     // Creating under A's keys in B makes B's own records; a reference to A's record is refused.
     await probe("fixture_tracker_create_tracker_apps", async () => { await ok(cb, "fixture_tracker_create_tracker_apps", { key: "app-a", data: { url: "https://b-own.example" } }); });
     await probe("review_create_review_items", async () => { await ok(cb, "review_create_review_items", { key: "item-b", data: { url: "https://item-b.example" } }); });

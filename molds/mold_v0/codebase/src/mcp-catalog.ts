@@ -7,6 +7,8 @@
  * again at start against the shell's own tool names; src/mcp-tools.ts binds each entry to its handler.
  *
  * Per pack, in this order (names `<prefix>_<verb>_<thing>`, the prefix the pack's id unless `mcp.prefix` says otherwise):
+ *   get_started                         a pack with onboarding steps (mold_v0-105): the caller's workspace's progress
+ *                                       through them and its next step, listed first (clients list tools in order)
  *   list_<area>, get_<area>             every record area (reads; the area's `read` roles)
  *   create_<area>, update_<area>        a workspace area whose rows are not read from files or an API
  *   move_<area>                         such an area with a lifecycle
@@ -23,9 +25,9 @@
 import { z } from "zod";
 import type { AccountPermission } from "./account-roles.js";
 import type { Permission as AdminPermission } from "./admin-roles.js";
-import { AgentJobKindSchema, CredentialSchema, JobKindSchema, McpSettingsSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
+import { AgentJobKindSchema, CredentialSchema, JobKindSchema, McpSettingsSchema, OnboardingStepSchema, optionValues, READ_ONLY_KINDS, RECORD_KEY, RecordAreaSchema, RecordFieldSchema, RepositorySchema, type PackDefinition, type RecordAction } from "./pack-api.js";
 
-export type GeneratedOp = "list" | "get" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
+export type GeneratedOp = "get_started" | "list" | "get" | "create" | "update" | "move" | "metrics" | "start" | "run_status" | "list_runs" | "run_results" | "cancel_run" | "report"
   | "admin_list" | "admin_get" | "admin_create" | "admin_update" | "admin_delete" | "admin_sync";
 
 export interface GeneratedTool {
@@ -159,6 +161,17 @@ export function generateCatalog(packs: readonly CatalogPack[], reserved: Reserve
     const tools: GeneratedTool[] = [];
     const add = (t: Omit<GeneratedTool, "name" | "pack" | "admin_only">) => tools.push({ ...t, name: t.generated, pack: p.id, admin_only: false });
     const n = (verb: string, thing?: string) => `${prefix}_${verb}${thing ? `_${thing}` : ""}`;
+
+    // ---------- first-run guidance (mold_v0-105: src/mcp-tools.ts getStarted, from the pack's onboarding steps) ----------
+    const steps = (p.definition.onboarding ?? []).map((x) => OnboardingStepSchema.safeParse(x)).filter((r) => r.success).map((r) => r.data);
+    if (steps.length) {
+      const labels = steps.map((x) => plain(x.label, 60)).join("; ");
+      add({ generated: n("get", "started"), op: "get_started", door: "workspace", needs: "read", admin_needs: "read",
+        title: `${packName}: start here`,
+        description: `Start here. What ${packName} does and this ${ws}'s next setup step (${labels}): which are done, the next one, how to do it and the words the user can type. ` +
+          `Call it first in a new conversation, and whenever the user greets you, asks what ${packName} is or can do, asks how to begin, or asks something vague like "get me started" or "what now?". Then tell the user their next step.`,
+        input: {}, annotations: READ });
+    }
 
     // ---------- record areas ----------
     const areas = (p.definition.recordAreas ?? []).map((a) => RecordAreaSchema.safeParse(a)).filter((r) => r.success).map((r) => r.data as Area);

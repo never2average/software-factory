@@ -106,9 +106,12 @@ try {
     assert.deepEqual(tools.slice(0, own.length).sort(), [...own].sort(), "the host packs' own tools come first");
     if (!hostIds.length) assert.deepEqual(own, [], "with no host pack the shell has no tool of its own");
     const instructions = A.getInstructions() ?? "";
+    const { packInstructions } = await import("../src/mcp-tools.js");
     if (!PROFILE.mcp_instructions && !hosts().some((h) => h.mcp?.instructions)) {
       const { SHELL_INSTRUCTIONS } = await import("../src/server.js");
-      assert.ok(instructions.startsWith(SHELL_INSTRUCTIONS), "with no instructions of the profile's or a host pack's, the shell's own");
+      // mold_v0-105: a pack's pack.json mcp.instructions come before the shell's.
+      const lead = packInstructions() ?? SHELL_INSTRUCTIONS;
+      assert.ok(instructions.startsWith(lead), "with no instructions of the profile's or a host pack's, the packs' own, else the shell's");
     }
     await A.close();
     ok(`MCP over HTTP with a workspace key: ${tools.length} tool(s), server ${info?.name}`);

@@ -239,12 +239,15 @@ export async function runPackTool(org: Org, pack: string, t: PackTool, args: Rec
 }
 
 /**
- * Register every pack's tools on a customer MCP server bound to one workspace, after the shell's own; then, when any
+ * Register every pack's tools on a customer MCP server bound to one workspace, after the shell's own: first the
+ * get_started tools generated from the packs' onboarding steps (mold_v0-105), then the packs' own; then, when any
  * pack declares a record area, the shell's list_records and get_record (src/record-areas.ts); then the tools generated
  * from the packs' declarations that the caller may use (mold_v0-060, src/mcp-tools.ts). With no packs nothing is
  * added: the surface is exactly the shell's.
  */
 export function registerPackTools(server: McpServer, org: Org) {
+  // The generated get_started tools first (mold_v0-105): a new person's client lists them before anything else.
+  registerGeneratedTools(server, org, (t) => t.op === "get_started");
   for (const p of packs()) {
     for (const t of p.definition.tools ?? []) {
       server.registerTool(t.name, {
@@ -258,5 +261,5 @@ export function registerPackTools(server: McpServer, org: Org) {
     }
   }
   registerRecordTools(server, (t, args) => runPackTool(org, "records", t, args));
-  registerGeneratedTools(server, org);
+  registerGeneratedTools(server, org, (t) => t.op !== "get_started");
 }
