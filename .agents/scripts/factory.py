@@ -832,6 +832,27 @@ def _asr(app_id, docs):
     if here not in sys.path: sys.path.insert(0, here)
     import asr
     return asr.problems(app_id, a, os.path.join(ROOT, "molds", str(a.get("mold_id") or ""), "codebase"), ROOT)
+def _app_profile(app_id, docs, brief_root=None):
+    """The app's own profile settings (application.json `profile`, mold_v0-090; lib/app_profile.py): only fields its mold
+    lets an app set (molds/<mold>/branding/rules.json profile.app_settable), never a brand word, host_packs, source_offer,
+    billing or entitlements, and each value checked as the mold's own build checks it (limits: known names, positive
+    numbers)."""
+    a = docs.get("application") or {}
+    if not isinstance(a, dict): return []
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+    if here not in sys.path: sys.path.insert(0, here)
+    import app_profile
+    errs = [f"{app_id}/application.json: {e}" for e in app_profile.problems(a.get("profile"), a.get("mold_id"), ROOT)] if "profile" in a else []
+    if app_profile.spec(a.get("mold_id"), ROOT) is None: return errs   # a mold that takes none: nothing to compare with a brief
+    # The brief is where they are set (intake writes them from it): a value edited in state alone is a value the operator
+    # never wrote down, so it is refused until intake is re-run on the brief.
+    bp = os.path.join(brief_root or ROOT, a["brief"]) if isinstance(a.get("brief"), str) and not os.path.isabs(a["brief"]) and ".." not in a["brief"].split("/") else None
+    if not errs and bp and os.path.isfile(bp):
+        want, perrs, _ = app_profile.from_brief(open(bp, encoding="utf-8", errors="replace").read())
+        if not perrs and want != (a.get("profile") or None):
+            errs.append(f"{app_id}/application.json: profile ({app_profile.describe(a.get('profile'))}) is not what its brief {a['brief']} says "
+                        f"({app_profile.describe(want)}); the brief is where profile settings are set: re-run intake on it")
+    return errs
 def _single_service(app_id, docs):
     """A single-service mold (molds/<mold_id>/mold.json, today mold_v0) and the compose_remote target it alone may use
     (mold_v0-028): its targets, its fixed install path and compose project, its database on the compose network, and
@@ -851,7 +872,7 @@ def _app_errors(app, adir):
         else: errs.append(f"{app}: missing {name}.json")
     errs += (_vm_status(app, docs) + _vm_url(app, docs) + _target_objects(app, docs) + _vm_remote(app, docs) + _rls_claim(app, docs)
              + _agent_keys(app, docs) + _operator_identity(app, docs) + _repository(app, docs) + _library(app, docs) + _asr(app, docs)
-             + _single_service(app, docs))
+             + _single_service(app, docs) + _app_profile(app, docs))
     return errs, docs
 def cmd_validate(a):
     if "--app-dir" in a:
@@ -1061,6 +1082,27 @@ def self_test():
        "validate: a compose_remote app carrying a vercel object is refused (one object per target)")
     ok(_single_service("x", {"application": {"mold_id": "mold_v0"}, "infrastructure": dict(cr, target="vm_remote")}),
        "validate: mold_v0 on a target its mold.json does not name is refused")
+    # mold_v0-090: an app's own profile settings: only what its mold lets an app set, each checked as the mold's build checks it
+    pa = lambda prof, mold="mold_v0": _app_profile("x", {"application": {"mold_id": mold, "profile": prof}})
+    ok(pa({"limits": {"runs": {"budget_usd_max": 40, "kind_month_budget_usd": 500}, "plans": {"pro": {"mcp": {"per_key_per_minute": 600}}}}}) == [],
+       "validate: a mold_v0 app's limits (known names, positive numbers, a plan's own) validate")
+    for bad, why in (({"host_packs": ["x"]}, "host_packs"), ({"source_offer": {"app": "licensor_exception"}}, "source_offer"), ({"name": "X"}, "a brand word"),
+                     ({"billing": {"enabled": True}}, "billing"), ({"entitlements": {}}, "entitlements"), ({"vault_key": "s3cret"}, "an unknown field (a secret)"),
+                     ({"limits": {"runs": {"budget_usd_max": 0}}}, "a zero limit"), ({"limits": {"runs": {"budget_usd_max": "40"}}}, "a limit as text"),
+                     ({"limits": {"runs": {"budget_usd_max": True}}}, "a limit as true"), ({"limits": {"runs": {"budget": 40}}}, "an unknown limit"),
+                     ({"limits": {"cpu": {"x": 1}}}, "an unknown section"), ({"limits": {"plans": {"__proto__": {"runs": {"budget_usd_max": 9}}}}}, "a __proto__ plan"),
+                     ({}, "an empty profile"), ([], "a list")):
+        ok(pa(bad), f"validate: a profile with {why} is refused")
+    ok(pa({"limits": {"runs": {"budget_usd_max": 40}}}, "mold_v1") and "takes no profile settings" in pa({"limits": {}}, "mold_v1")[0], "validate: a mold with no app_settable rules (mold_v1) takes no app profile")
+    ok(_app_profile("x", {"application": {"mold_id": "mold_v0"}}) == [], "validate: no profile, nothing to say")
+    ok(pa({"limits": {"runs": {"budget_usd_max": 201}}}) and "ceiling" in pa({"limits": {"plans": {"pro": {"runs": {"kind_month_budget_usd": 1e6}}}}})[0],
+       "validate: a spending ceiling above the factory's (rules.json app_limits_max), a plan's own too, is refused")
+    ok(pa({"limits": {"runs": {"live_per_workspace": 2.5}}}), "validate: a limit that counts things is a whole number")
+    with tempfile.TemporaryDirectory() as bt:
+        os.makedirs(os.path.join(bt, "briefs")); open(os.path.join(bt, "briefs", "b.md"), "w").write("## Budgets\nlimits.runs.budget_usd_max = 40\n")
+        ab = lambda prof: _app_profile("x", {"application": {"mold_id": "mold_v0", "brief": "briefs/b.md", **({"profile": prof} if prof else {})}}, brief_root=bt)
+        ok(ab({"limits": {"runs": {"budget_usd_max": 40}}}) == [] and ab({"limits": {"runs": {"budget_usd_max": 90}}}) and ab(None),
+           "validate: state profile settings that are not what the brief says (a hand edit, or a brief changed without intake) are refused")
     # mold_v0-051: a single-service app's RLS claim is read against the product's own check, as lib/single_service.py records it
     ds = lambda ev: {"postgres": {"provider": "self_hosted", "rls": "fail_closed", **({"rls_verified": ev} if ev else {})}}
     good = {"at": "2026-10-21T10:00:00+00:00", "backend": "self_hosted", "mode": "fail_closed", "running_app": "enforced",
