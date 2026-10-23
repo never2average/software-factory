@@ -1171,15 +1171,29 @@ def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
 def vercel_projects(base): return {r: f"{base}{s}" for r, s in SUFFIX.items()} if base else {}
 def vercel_spec(man, role): return (((man or {}).get("vercel") or {}).get("projects") or {}).get(role) or {}
 
-def api_settings(man, console_url=None, admins=None):
+def own_domain_url(console_url, custom_domain):
+    """https://<custom_domain> when the console's address is the app's own domain (infrastructure.vercel.custom_domain,
+    recorded by domain.py attach and made the front door by domain.py switch), else None: a domain that is attached but
+    not switched to yet (DNS still pending) is never handed to AI clients."""
+    d = str(custom_domain or "").strip().lower().removeprefix("https://").rstrip("/")
+    if not d or not console_url or not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", d): return None
+    return f"https://{d}" if console_url.rstrip("/").lower() == f"https://{d}" else None
+
+def api_settings(man, console_url=None, admins=None, custom_domain=None):
     """The settings the mold has the factory write on the api project (mold.json vercel.projects.api.env, mold_v0-084),
-    never secrets: name -> value, with {console_url} the console project's production address and {platform_admins}
-    the app's platform administrators (application.json platform_admins, comma-separated). A value whose part is not
-    known (None, or no administrator recorded) is left out, so whatever the project holds under that name is kept.
+    never secrets: name -> value, with {console_url} the console project's production address, {own_domain} the app's
+    own domain as an address (own_domain_url: only once it is the console's address; mold_v0-118, where AI clients
+    connect) and {platform_admins} the app's platform administrators (application.json platform_admins,
+    comma-separated). A value whose part is not known (None, no domain, or no administrator recorded) is left out, so
+    whatever the project holds under that name is kept (an app without a domain gets nothing new).
     Only plain names and values on one line."""
     out = {}
+    own = own_domain_url(console_url, custom_domain)
     for n, v in (vercel_spec(man, "api").get("env") or {}).items():
         if n.startswith("$") or not re.fullmatch(r"[A-Z][A-Z0-9_]*", n) or not isinstance(v, str) or re.search(r"[\r\n]", v): continue
+        if "{own_domain}" in v:
+            if not own: continue
+            v = v.replace("{own_domain}", own)
         if "{console_url}" in v:
             if not console_url: continue
             v = v.replace("{console_url}", console_url.rstrip("/"))
@@ -1390,6 +1404,8 @@ def vercel_plan(app_id, F, infra, man, K=None, cb=None, app=None):
             *([f"{names.get('api')}: the mold's settings written before its deploy ({', '.join(f'{n}={v}' for n, v in (vercel_spec(man, 'api').get('env') or {}).items() if not n.startswith('$'))}); "
                "{console_url} is the console's address read back after its deploy (the last deploy's until then), and the API is deployed once more when it changed, "
                "so sign-in codes and invitations link to the console"
+               + (f"; {{own_domain}} is the app's own domain once it is the console's front door ({own_domain_url(v.get('production_url'), v.get('custom_domain')) or 'none yet: not written'}), "
+                  "where AI clients connect" if any("{own_domain}" in str(x) for x in (vercel_spec(man, 'api').get('env') or {}).values()) else "")
                + (f"; {ADMINS} is application.json platform_admins ({admins_of(app) or 'none recorded: a variable the project already holds is kept, else the deploy stops and asks'})"
                   if admin_env_names(man) else "")] if api_settings(man, "x") else []),
             f"{names.get('web')}: {K['api_env'] or '<the API-address variable>'} set to the API's address (nothing else of the API's: never DATABASE_URL, never a minted key; "
@@ -1621,7 +1637,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # (checked again after this run's console deploy), the proxy hops; written before the API's deploy reads them.
         adm = admins_of(app)
         have = P.pull_env(cb, api, required=False)
-        want = with_held_spellings(api_settings(man, v.get("production_url"), adm), set(have), F.get("aliases"))
+        want = with_held_spellings(api_settings(man, v.get("production_url"), adm, v.get("custom_domain")), set(have), F.get("aliases"))
         if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
             for n, val in want.items():
                 if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
@@ -1656,7 +1672,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # The console's address is known now: the API's emails must link to it (mold_v0-084). When it is not what the
         # API holds (a first deploy, or a new address), it is written and the API deployed once more to read it.
         have = P.pull_env(cb, api, required=False)
-        stale = {n: val for n, val in with_held_spellings(api_settings(man, front, adm), set(have), F.get("aliases")).items() if have.get(n) != val}
+        stale = {n: val for n, val in with_held_spellings(api_settings(man, front, adm, v.get("custom_domain")), set(have), F.get("aliases")).items() if have.get(n) != val}
         if stale and not have and P.vercel_env_names(cb, api):
             # The project holds names but none could be read back (a failed pull): never take that for "stale".
             say(f"  NOTE: {api}'s settings could not be read back; {', '.join(stale)} left as they are (the next deploy checks again)"); stale = {}
