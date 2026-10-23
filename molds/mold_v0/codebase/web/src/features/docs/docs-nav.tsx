@@ -40,7 +40,7 @@ function NavTree({ groups, onNavigate }: { groups: DocNavGroup[]; onNavigate?: (
                     <li key={page.href}>
                       <Link href={page.href} onClick={onNavigate} aria-current={active ? 'page' : undefined}
                         className={cn('flex gap-2 py-1 text-sm transition-colors', active ? 'text-primary font-medium' : 'text-muted-foreground hover:text-foreground')}>
-                        <span className='shrink-0 tabular-nums opacity-70'>{gi + 1}.{pi + 1}</span>
+                        <span className='shrink-0 tabular-nums'>{gi + 1}.{pi + 1}</span>
                         <span>{page.title}</span>
                       </Link>
                     </li>
