@@ -130,12 +130,25 @@ export function instructionsParagraph(o: SourceOffer): string {
 
 const escHtml = (t: string) => t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
+/**
+ * The footer's items, as data (mold_v0-091): each a sentence, with the commit it names and a link when it has one. The
+ * install pages' footer (offerFooterHtml) and the console's landing page footer (scripts/gen-packs.mjs writes these into
+ * web/src/config/landing.generated.ts) both say exactly these. [] when nothing is offered.
+ */
+export interface OfferFooterItem { text: string; commit?: string; link?: { href: string; label: string } }
+export function offerFooterItems(o: SourceOffer): OfferFooterItem[] {
+  if (!o.offered) return [];
+  const items: OfferFooterItem[] = o.upstreams.filter((u) => u.copyleft).map((u) =>
+    ({ text: `${u.pack_name} uses ${u.project}, licensed ${u.license ?? ""}, at commit`, commit: u.commit, link: { href: u.url, label: "its source at that commit" } }));
+  if (o.app.kind === "offered") items.push({ text: `This service, licensed ${o.app.license}`, link: { href: o.app.url, label: "its source" } });
+  else if (o.app.kind === "licensor_exception") items.push({ text: LICENSOR_EXCEPTION_TEXT });
+  return items;
+}
+
 /** The install pages' footer (HTML, every value escaped); "" when nothing is offered. */
 export function offerFooterHtml(o: SourceOffer): string {
-  if (!o.offered) return "";
-  const items = o.upstreams.filter((u) => u.copyleft).map((u) =>
-    `<li>${escHtml(u.pack_name)} uses ${escHtml(u.project)}, licensed ${escHtml(u.license ?? "")}, at commit <code>${escHtml(u.commit)}</code>: <a href="${escHtml(u.url)}">its source at that commit</a></li>`);
-  if (o.app.kind === "offered") items.push(`<li>This service, licensed ${escHtml(o.app.license)}: <a href="${escHtml(o.app.url)}">its source</a></li>`);
-  else if (o.app.kind === "licensor_exception") items.push(`<li>${escHtml(LICENSOR_EXCEPTION_TEXT)}</li>`);
+  const items = offerFooterItems(o).map((i) =>
+    `<li>${escHtml(i.text)}${i.commit ? ` <code>${escHtml(i.commit)}</code>` : ""}${i.link ? `: <a href="${escHtml(i.link.href)}">${escHtml(i.link.label)}</a>` : ""}</li>`);
+  if (!items.length) return "";
   return `<footer class="muted" id="source-code"><h2>Source code</h2><ul>${items.join("")}</ul></footer>`;
 }

@@ -30,6 +30,7 @@
     "test:mcp-followups": "tsx scripts/mcp-followups-test.ts",
     "test:install-docs": "tsx scripts/install-docs-test.ts",
     "test:source-offer": "tsx scripts/source-offer-test.ts",
+    "test:landing": "tsx scripts/landing-test.ts",
     "test:member-keys": "tsx scripts/member-keys-test.ts",
     "test:mcp-oauth": "tsx scripts/mcp-oauth-test.ts builtin && tsx scripts/mcp-oauth-test.ts clerk",
     "test:sign-in": "tsx scripts/sign-in-test.ts builtin && tsx scripts/sign-in-test.ts clerk",
