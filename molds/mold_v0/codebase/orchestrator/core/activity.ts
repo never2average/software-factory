@@ -1,6 +1,6 @@
 /**
  * Idle tracking for on-demand orchestrators: the claim and research loops call markBusy() whenever they hold or
- * claim work. After OCTILLION_ORCH_IDLE_MINUTES (default 10; 0 = never) without any, the orchestrator sends itself
+ * claim work. After APP_ORCH_IDLE_MINUTES (default 10; 0 = never) without any, the orchestrator sends itself
  * SIGTERM: the normal graceful path kills nothing (it is idle), leaves the fleet (the server then marks its sandbox
  * `draining` and the autoscaler deletes it) and exits 0, which systemd (Restart=on-failure) does not restart.
  */
@@ -13,7 +13,7 @@ let busySources = 0;
 export function markBusy() { lastBusy = Date.now(); }
 export function holdBusy() { busySources++; markBusy(); return () => { busySources = Math.max(0, busySources - 1); markBusy(); }; }
 export const idleMs = () => (busySources > 0 ? 0 : Date.now() - lastBusy);
-export const IDLE_MINUTES = num(env.OCTILLION_ORCH_IDLE_MINUTES, 10);
+export const IDLE_MINUTES = num(env.APP_ORCH_IDLE_MINUTES, 10);
 
 let watcher: NodeJS.Timeout | null = null;
 export function startIdleWatcher(minutes = IDLE_MINUTES, onIdle: () => void = () => process.kill(process.pid, "SIGTERM")) {

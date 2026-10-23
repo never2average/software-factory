@@ -1,10 +1,10 @@
 /**
- * Octillion deterministic worker (no orchestrator LLM).
+ * The deterministic worker (no orchestrator LLM).
  *
  * Claims jobs, runs the harness in a sandbox (boat.dev by default), streams its JSONL and, while the agent stops
  * before it is done (core/progress.ts), resumes it with neutral canned developer nudges (core/session.ts
  * driveToDone) up to MAX_AGENT_TURNS. Then finishes: git diff event, /complete, sandbox deleted. The Pi
- * orchestrator (a host pack's, e.g. packs/octillion/main.ts) adds the in-character simulated developer and falls back to this driver.
+ * orchestrator (a host pack's, orchestrator/packs/<id>/main.ts) adds the in-character simulated developer and falls back to this driver.
  *
  * Run: `npx tsx orchestrator/worker.ts`
  */
@@ -34,9 +34,9 @@ export async function runDeterministic(job: Job, runner: Runner, orchestrator: R
  * Other runners: claims up to WORKER_CONCURRENCY free slots.
  */
 export async function claimLoop(runJob: (job: Job, runner: Runner) => Promise<void>, label: string): Promise<void> {
-  // Production: only inside a boat orchestrator sandbox, only RUNNER=boat (OCTILLION_DEV_ALLOW_LOCAL=1: tests).
+  // Production: only inside a boat orchestrator sandbox, only RUNNER=boat (APP_DEV_ALLOW_LOCAL=1: tests).
   assertOrchestratorHost(CFG.runner);
-  if (!CFG.token) throw new Error("OCTILLION_WORKER_TOKEN is required");
+  if (!CFG.token) throw new Error("APP_WORKER_TOKEN is required");
   // Broker mode: the boat key and the orchestrator LLM token come from the server (docs/credentials.md).
   await orchestratorCredentials().catch((e) => {
     if (CREDENTIALS_MODE === "broker" && CFG.runner === "boat") throw new Error(`orchestrator credentials: ${redact(String(e))}`);

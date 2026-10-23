@@ -138,7 +138,7 @@ def rehearsal(ok):
         f = json.load(open(os.path.join(t, "state", "factory.json"))); f["molds"][0].update(status="wip"); f["applications"] = ["zz_shop", "zz_live"]
         json.dump(f, open(os.path.join(t, "state", "factory.json"), "w"))
         def mkapp(app_id, base):
-            docs = SS.shape_state(app_id, "mold_vx", "vercel", {"product_id": "zz_product"}, {"source": {"commit": "c" * 40}}, {"vercel_project": base}, {},
+            docs = SS.shape_state(app_id, "mold_vx", "vercel", {"product_id": "zz_product"}, {"source": {"commit": "c" * 40}}, {"vercel_project": base, "platform_admins": "ops@example.com"}, {},
                                   f"briefs/{app_id}.md", {"vercel_team": "t"}, root=t)
             d = os.path.join(t, "state", "application", app_id); os.makedirs(d)
             for nm, doc in zip(("application", "infrastructure", "datastores", "datainfra"), docs): json.dump(doc, open(os.path.join(d, nm + ".json"), "w"), indent=2)
@@ -203,9 +203,10 @@ def rehearsal(ok):
         adds = [" ".join(x["argv"]) for x in lines if x.get("tool") == "vercel" and x["argv"][:2] == ["project", "add"]]
         ok(dep.index("zz-shop") > 0 and set(dep[:dep.index("zz-shop")]) == {"zz-shop-api"} and dep[dep.index("zz-shop") + 1:] == ["zz-shop-api"] and adds == [],
            f"rehearsal: the API deploys first, then the console, into the project --set-secret made, then the API once more with the console's address: {dep} {adds}")
-        ok(w["projects"]["zz-shop-api"]["env"].get("OCTILLION_CONSOLE_URL") == web_u and w["projects"]["zz-shop-api"]["env"].get("OCTILLION_PROXY_HOPS") == "1"
-           and "OCTILLION_CONSOLE_URL" not in w["projects"]["zz-shop"]["env"],
-           f"rehearsal: the API holds the console's address (its emails link to the console) and its one proxy; the console holds neither (mold_v0-084): {sorted(w['projects']['zz-shop-api']['env'])}")
+        ok(w["projects"]["zz-shop-api"]["env"].get("APP_CONSOLE_URL") == web_u and w["projects"]["zz-shop-api"]["env"].get("APP_PROXY_HOPS") == "1"
+           and "APP_CONSOLE_URL" not in w["projects"]["zz-shop"]["env"] and w["projects"]["zz-shop-api"]["env"].get("APP_PLATFORM_ADMINS") == "ops@example.com"
+           and "APP_PLATFORM_ADMINS" not in w["projects"]["zz-shop"]["env"] and "OCTILLION_PLATFORM_ADMINS" not in w["projects"]["zz-shop-api"]["env"],
+           f"rehearsal: the API holds the console's address (its emails link to the console), its one proxy and the app's platform administrator (the new name only, on a new app); the console holds none (mold_v0-084): {sorted(w['projects']['zz-shop-api']['env'])}")
         r = subprocess.run([sys.executable, os.path.join(t, ".claude", "scripts", "lib", "single_service.py"), "lane-key-path", "zz_shop"], cwd=t, env=env, capture_output=True, text=True)
         ok(r.returncode == 1 and api_u in r.stderr and web_u not in r.stderr, f"rehearsal: the lanes' MCP check is for the API's address: {r.stderr.strip()[-200:]}")
         good = prod()
@@ -265,7 +266,7 @@ def run():
        "the console's image runs as node, never sees the sign-in secret at build, and the API's image no longer copies a static export that is never built")
     caddy = open(os.path.join(SS.codebase("mold_v0"), "deploy", "Caddyfile")).read()
     api_paths = (re.search(r"(?m)^\s*@api path (.+)$", caddy) or [None, ""])[1].split()
-    ok({"/mcp", "/mcp/*", "/api/*", "/gw/*", "/.well-known/*"} <= set(api_paths) and "/healthz" not in api_paths and "name console" in caddy and "name octillion" in caddy,
+    ok({"/mcp", "/mcp/*", "/api/*", "/gw/*", "/.well-known/*"} <= set(api_paths) and "/healthz" not in api_paths and "name console" in caddy and "name api" in caddy,
        f"Caddy sends the API's own paths (MCP, /api, the gateway's streams) to the API and everything else, /healthz included, through the console: {api_paths}")
     ok(not [x for x in real["required"] if x not in real["config"] and x not in real["minted"]], "every name mold_v0's compose file requires is written from state or minted by its bootstrap")
     ok(real["publishers"] == ["caddy"] or len(real["publishers"]) == 1, f"one service publishes ports in mold_v0's stack: {real['publishers']}")
@@ -294,7 +295,8 @@ def run():
         sys.path.insert(0, os.path.dirname(HERE)); import factory
         prod = {"product_id": "mcp_product_shell"}; mold = {"source": {"commit": "c" * 40}}
         for target in SS.TARGETS:
-            docs = SS.shape_state("zz_shape", "mold_v0", target, prod, mold, {"domain": "shape.example.org", "vercel_project": "zz-shape"}, {}, "briefs/zz_shape.md")
+            docs = SS.shape_state("zz_shape", "mold_v0", target, prod, mold, {"domain": "shape.example.org", "vercel_project": "zz-shape", "platform_admins": "Ops@example.com, *@example.org"}, {}, "briefs/zz_shape.md")
+            ok(docs[0].get("platform_admins") == ["ops@example.com", "*@example.org"], f"intake's answer reaches application.platform_admins ({target}): {docs[0].get('platform_admins')}")
             d = os.path.join(t, "apps", "zz_shape"); os.makedirs(d, exist_ok=True)
             for nm, doc in zip(("application", "infrastructure", "datastores", "datainfra"), docs): json.dump(doc, open(os.path.join(d, nm + ".json"), "w"))
             errs, _ = factory._app_errors("zz_shape", d)
@@ -351,9 +353,23 @@ def run():
         ok(ids == ["qualify", "bundle", "packages", "firewall", "names", "release-dir", "source", "up", "health", "keep"] or ids == ["qualify", "bundle", "packages", "firewall", "names", "release-dir", "source", "env", "up", "health", "keep"],
            f"the deploy's steps, in order: {ids}")
         env = next(c for c in R.calls if c[0] == "env")
-        ok(env[2] == "DOMAIN=shop.example.org\nPUBLIC_URL=https://shop.example.org\nOCTILLION_CONSOLE_URL=https://shop.example.org\nOCTILLION_PROXY_HOPS=1\n",
+        ok(env[2] == "DOMAIN=shop.example.org\nPUBLIC_URL=https://shop.example.org\nAPP_CONSOLE_URL=https://shop.example.org\nAPP_PROXY_HOPS=1\n",
            f"the env step gets state's settings on stdin, the console's address (one address serves both on a server: emails link to it) and the one proxy (the stack's Caddy) among them (mold_v0-084): {env[2]!r}")
         ok(all("-p sf-zz-shop" not in " ".join(c[1]) or "shop " not in " ".join(c[1]) for c in R.calls), "no step names the default project")
+        # platform administrators on a server of its own: written to the env file from state; while none is recorded the
+        # name is not sent (whatever the env file holds is kept); a first deploy with none at all stops for the operator
+        ok(SS.config_pairs(dict(S, admins="ops@example.com,*@example.org"), F).get("APP_PLATFORM_ADMINS") == "ops@example.com,*@example.org"
+           and "APP_PLATFORM_ADMINS" not in SS.config_pairs(S, F) and SS.settings("zz_shop", dict(app, platform_admins=["ops@example.com"]), infra, t)["admins"] == "ops@example.com",
+           "compose_remote: the administrators reach the env file only when recorded")
+        import agent_result as AR
+        for deployed in (False, True):
+            AR.reset(); said = []; i_c = dict(infra, **({"deployed_at": "2026-10-20T00:00:00+00:00"} if deployed else {}))
+            SS.check("zz_shop", app, i_c, os.path.join(t, "no-such-app"), say=said.append, root=t)
+            txt = "\n".join(said)
+            ok((SS.ADMIN_MARK in txt and [n_["name"] for n_ in AR.NOTES["needs"]] == ["platform administrator address"]) if not deployed
+               else (SS.ADMIN_MARK not in txt and not AR.NOTES["needs"] and "keeps whatever APP_PLATFORM_ADMINS holds" in txt),
+               f"compose_remote check with no administrator recorded: {'kept and said (deployed before)' if deployed else 'asked for (never deployed)'}: {[l for l in said if 'administrator' in l]}")
+        AR.reset()
         ok(reads == ["https://shop.example.org/healthz"] and res["health"]["public"] == "200" and res["release"] == "20261020T000000Z", f"the public health read: {reads}")
         # mold_v0-024: an app with packs or a brand sends build/<app_id>/ (made afresh just before contact), never the codebase
         src_step = next(st for st in SS.plan(S, F, SS.source_for("zz_shop", {"mold_id": "mold_vx", "packs": ["shop_notes"]}, t)) if st["id"] == "source")
@@ -500,6 +516,23 @@ def run():
         ok(oct(os.stat(ef).st_mode & 0o777) == "0o600" and "keep-me" not in " ".join(lines) and vals["APP_VAULT_KEY"] not in " ".join(lines), "the env file is mode 600 and no value is printed")
         again = []; SS.server_env(ef, os.path.join(cb, "deploy", "bootstrap.sh"), "", say=again.append)
         ok(VR.env_read(ef) == vals and "nothing" in again[-1], "a second run mints nothing and changes nothing")
+        # mold_v0-045: a server's env file from before then holds the old names: each value is carried to its new name once,
+        # before anything is minted, so the bootstrap mints nothing over a key the server holds (the new name would win).
+        NEWp, LEGp = F["aliases"]
+        ef2 = os.path.join(t, "etc2", "env"); os.makedirs(os.path.dirname(ef2)); VR.env_write(ef2, {"POSTGRES_PASSWORD": "keep-me", LEGp + "VAULT_KEY": "old-key-" + "k" * 36, LEGp + "AUTOSCALE": "off", NEWp + "PROXY_HOPS": "1", LEGp + "PROXY_HOPS": "2"})
+        l2 = []
+        rc2 = SS.server_env(ef2, os.path.join(cb, "deploy", "bootstrap.sh"), "DOMAIN=shop.example.org\n", say=l2.append, aliases=F["aliases"])
+        v2 = VR.env_read(ef2)
+        ok(rc2 == 0 and v2[NEWp + "VAULT_KEY"] == "old-key-" + "k" * 36 and v2[NEWp + "AUTOSCALE"] == "off" and v2[NEWp + "PROXY_HOPS"] == "1" and v2[LEGp + "VAULT_KEY"] == "old-key-" + "k" * 36
+           and "old-key" not in " ".join(l2) and any("carried" in x for x in l2),
+           f"server env with the old names: each value carried to its new name (the vault key kept, an operator's setting kept), a new name already set left alone, the old lines kept, no value printed: {l2}")
+        snap = VR.env_read(ef2); SS.server_env(ef2, os.path.join(cb, "deploy", "bootstrap.sh"), "", say=lambda s_: None, aliases=F["aliases"])
+        ok(VR.env_read(ef2) == snap, "a second run carries and mints nothing")
+        ef3 = os.path.join(t, "etc3", "env"); os.makedirs(os.path.dirname(ef3)); VR.env_write(ef3, {LEGp + "VAULT_KEY": "old-key-" + "k" * 36})
+        SS.server_env(ef3, os.path.join(cb, "deploy", "bootstrap.sh"), "", say=lambda s_: None)
+        ok(VR.env_read(ef3).get(NEWp + "VAULT_KEY") not in (None, "old-key-" + "k" * 36), "(without the aliases a new key would be minted beside the old one: why the deploy passes them)")
+        env_step = next(st for st in SS.plan(S, F, cb) if st["id"] == "env")
+        ok(f"--alias {LEGp}={NEWp}" in " ".join(env_step["argv"]), f"the deploy's env step passes the mold's aliases to the server: {env_step['argv'][-1][-160:]}")
         mv = SS.mint_values(cb, F, ["APP_VAULT_KEY", "CRON_SECRET"])
         ok(set(mv) == {"APP_VAULT_KEY", "CRON_SECRET"} and len(mv["CRON_SECRET"]) == 64, "Vercel's values: minted by the mold's own script, CRON_SECRET beside them")
         # --- 9. set-secret: declared names only, no $ sign, the value on stdin ----------------------------------------
@@ -509,6 +542,10 @@ def run():
         R3 = Runner({}); S3 = dict(S, secrets_optional=["PAY_SECRET_KEY"])
         SS.set_secret_remote("zz_shop", S3, "PAY_SECRET_KEY", P, runner=R3, value="sk-standin-abcdef", say=lambda s: None)
         ok(R3.calls[0][2] == "PAY_SECRET_KEY=sk-standin-abcdef\n" and "sk-standin-abcdef" not in " ".join(R3.calls[0][1]), "set-secret sends NAME=value on stdin, never in the command")
+        R4 = Runner({}); S4 = dict(S, secrets_optional=[F["aliases"][1] + "JOURNEY_SECRET"])
+        SS.set_secret_remote("zz_shop", S4, F["aliases"][1] + "JOURNEY_SECRET", P, runner=R4, value="js-standin-1234", say=lambda s: None)
+        ok(R4.calls[0][2] == f"{F['aliases'][1]}JOURNEY_SECRET=js-standin-1234\n{F['aliases'][0]}JOURNEY_SECRET=js-standin-1234\n",
+           f"set-secret on an old name writes its new spelling too (the deploy carried the old value there, and the app reads it first): {R4.calls[0][2]!r}")
         for name, val, what in (("NOT_DECLARED", "x1234", "an undeclared name"), ("PAY_SECRET_KEY", "a$b1234", "a $ sign")):
             try: SS.set_secret_remote("zz_shop", S3, name, P, runner=Runner({}), value=val, say=lambda s: None); ok(False, f"set-secret refuses {what}")
             except SS.Stop: ok(True, "")
@@ -562,7 +599,7 @@ def run():
             def stop_for_human(self, msg): raise SystemExit(3)
         pages = lambda codes: (lambda url: (next((c for k, c in codes.items() if url.endswith(k)), "307"), ""))
         try:
-            va = {"app_id": "zz_shop", "mold_id": "mold_vx", "status": "planned"}
+            va = {"app_id": "zz_shop", "mold_id": "mold_vx", "status": "planned", "platform_admins": ["ops@example.com", "*@example.org"]}
             vi = {"target": "vercel", "secret_store": "vercel_env", "secrets_user": [], "secrets_derived": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"],
                   "secrets_optional": ["PAY_SECRET_KEY", "CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"], "vercel": {"team": "team-x", "project": "zz-shop"}}
             vdir = os.path.join(t, "vapp"); os.makedirs(vdir)
@@ -686,41 +723,41 @@ def run():
             # deploy (read back from Vercel), BEFORE the API's last deploy, which is health-checked; the proxy hops before the first.
             ae = fp.projects["zz-shop-api"]["env"]
             at = [i for i, c in enumerate(fp.calls) if c[0] == "deploy"]     # where each deploy is in the call list
-            ok(ae.get("OCTILLION_CONSOLE_URL") == web_u and ae.get("OCTILLION_PROXY_HOPS") == "1"
-               and fp.calls.index(("set_env", "zz-shop-api", "OCTILLION_PROXY_HOPS")) < at[0]
-               and at[2] < fp.calls.index(("set_env", "zz-shop-api", "OCTILLION_CONSOLE_URL")) < at[3]
+            ok(ae.get("APP_CONSOLE_URL") == web_u and ae.get("APP_PROXY_HOPS") == "1"
+               and fp.calls.index(("set_env", "zz-shop-api", "APP_PROXY_HOPS")) < at[0]
+               and at[2] < fp.calls.index(("set_env", "zz-shop-api", "APP_CONSOLE_URL")) < at[3]
                and [c for c in fp.calls if c[0] == "health"][-1] == ("health", api_u + "/healthz"),
                f"a first deploy: the console's address set on the API after the console's deploy and before the API's last, which is health-checked; one proxy: {ae} {fp.calls[-6:]}")
-            ok(SS.api_settings(man) == {"OCTILLION_PROXY_HOPS": "1"} and SS.api_settings(man, "https://c.example/") == {"OCTILLION_CONSOLE_URL": "https://c.example", "OCTILLION_PROXY_HOPS": "1"}
+            ok(SS.api_settings(man) == {"APP_PROXY_HOPS": "1"} and SS.api_settings(man, "https://c.example/") == {"APP_CONSOLE_URL": "https://c.example", "APP_PROXY_HOPS": "1"}
                and SS.api_settings({"vercel": {"projects": {"api": {"env": {"bad name": "x", "X_Y": "a\nb", "Z": 3, "$comment": "c"}}}}}) == {},
                "the mold's api settings: {console_url} only once known, no line breaks, no odd names, no comments")
             # A later deploy: the API already holds the console's address (the one this deploy reads back): no extra deploy.
             fp2 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before={"zz-shop-api": "dpl_api_old", "zz-shop": "dpl_web_old"})
-            fp2.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "OCTILLION_CONSOLE_URL": web_u, "OCTILLION_PROXY_HOPS": "1"})
+            fp2.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "APP_CONSOLE_URL": web_u, "APP_PROXY_HOPS": "1"})
             _, i2, err2 = vdeploy(fp2, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url=web_u)))
             ok(not err2 and [c[1] for c in fp2.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"]
-               and not any(c[0] == "set_env" and c[1] == "zz-shop-api" and c[2] in ("OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS") for c in fp2.calls),
+               and not any(c[0] == "set_env" and c[1] == "zz-shop-api" and c[2] in ("APP_CONSOLE_URL", "APP_PROXY_HOPS") for c in fp2.calls),
                f"a later deploy with the console's address already on the API: one deploy each, nothing rewritten: {err2[:200]} {[c for c in fp2.calls if c[0] in ('deploy', 'set_env')]}")
             # The console's address moved (a new domain): written, and the API deployed once more.
             fp3 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"])
-            fp3.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "OCTILLION_CONSOLE_URL": "https://old-console.example", "OCTILLION_PROXY_HOPS": "1"})
+            fp3.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "APP_CONSOLE_URL": "https://old-console.example", "APP_PROXY_HOPS": "1"})
             _, i3, err3 = vdeploy(fp3, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url="https://old-console.example")))
-            ok(not err3 and [c[1] for c in fp3.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop", "zz-shop-api"] and fp3.projects["zz-shop-api"]["env"]["OCTILLION_CONSOLE_URL"] == web_u,
+            ok(not err3 and [c[1] for c in fp3.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop", "zz-shop-api"] and fp3.projects["zz-shop-api"]["env"]["APP_CONSOLE_URL"] == web_u,
                f"a console at a new address: the API is told and deployed once more: {err3[:200]} {[c[1] for c in fp3.calls if c[0] == 'deploy']}")
             # A console on its own domain (domain.py switch made it the front door): emails link to the domain, not *.vercel.app,
             # and the recorded production address stays the domain; no extra deploy when the API already holds it.
             fp5 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"])
-            fp5.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "OCTILLION_CONSOLE_URL": "https://shop.example.org", "OCTILLION_PROXY_HOPS": "1"})
+            fp5.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "APP_CONSOLE_URL": "https://shop.example.org", "APP_PROXY_HOPS": "1"})
             fp5._front_door = lambda infra, url, cb: "https://shop.example.org" if (infra.get("vercel") or {}).get("production_url") == "https://shop.example.org" else url
             _, i5, err5 = vdeploy(fp5, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], custom_domain="shop.example.org", production_url="https://shop.example.org")))
-            ok(not err5 and [c[1] for c in fp5.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"] and fp5.projects["zz-shop-api"]["env"]["OCTILLION_CONSOLE_URL"] == "https://shop.example.org"
+            ok(not err5 and [c[1] for c in fp5.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"] and fp5.projects["zz-shop-api"]["env"]["APP_CONSOLE_URL"] == "https://shop.example.org"
                and i5["vercel"]["production_url"] == "https://shop.example.org",
                f"a console on its own domain: emails keep linking to it, it stays the production address, no extra deploy: {err5[:200]} {[c[1] for c in fp5.calls if c[0] == 'deploy']} {i5['vercel'].get('production_url')}")
             # A failed read of the API's settings (names there, no values) is not taken for stale: nothing written, no extra deploy.
-            fp6 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "PUBLIC_URL", "OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS"]}, projects=["zz-shop"])
+            fp6 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "PUBLIC_URL", "APP_CONSOLE_URL", "APP_PROXY_HOPS"]}, projects=["zz-shop"])
             fp6.pull_env = lambda cb, proj, required=False, environment="production": {}
             _, i6, err6 = vdeploy(fp6, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url=web_u)))
-            ok(not any(c[0] == "set_env" and c[1] == "zz-shop-api" and c[2] in ("OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS") for c in fp6.calls)
+            ok(not any(c[0] == "set_env" and c[1] == "zz-shop-api" and c[2] in ("APP_CONSOLE_URL", "APP_PROXY_HOPS") for c in fp6.calls)
                and [c[1] for c in fp6.calls if c[0] == "deploy"].count("zz-shop-api") <= 2,
                f"a failed read of the API's settings writes nothing and adds no deploy: {err6[:200]} {[c for c in fp6.calls if c[0] in ('deploy', 'set_env')]}")
             # The API failing its health after it learns the console's address: both projects back on what served before.
@@ -744,6 +781,100 @@ def run():
             vd = {"app_id": "zz_shop", "mold_id": "mold_vx"}
             ok(SS.problems("zz_shop", {"application": vd, "infrastructure": i_, "datastores": {"postgres": {"provider": "neon"}}}) == [], "the recorded state passes validate's rules")
             ok(SS.mcp_address(i_) == api_u and SS.address(i_) == web_u, "the MCP check targets the API; people open the console")
+            # Platform administrators (application.json platform_admins): who may open the admin console. Recorded: written on
+            # the API before its first deploy. None recorded and none on the project: the check and the deploy stop for the
+            # operator (needs_human) before anything is made. None recorded but the project holds one (set by hand before the
+            # factory owned it): kept, never removed, and the check says so.
+            ok(ae.get("APP_PLATFORM_ADMINS") == "ops@example.com,*@example.org" and fp.calls.index(("set_env", "zz-shop-api", "APP_PLATFORM_ADMINS")) < at[0]
+               and "APP_PLATFORM_ADMINS" not in fp.projects["zz-shop"]["env"] and "OCTILLION_PLATFORM_ADMINS" not in ae,
+               f"recorded administrators are written on the API project (never the console), under the new name only on a new app, before its first deploy: {ae.get('APP_PLATFORM_ADMINS')}")
+            ok(SS.api_settings(man, None, "a@example.com") == {"APP_PROXY_HOPS": "1", "APP_PLATFORM_ADMINS": "a@example.com"} and SS.api_settings(man, None, "") == {"APP_PROXY_HOPS": "1"}
+               and SS.admin_entries("A@Example.com, *@Example.org,, a@example.com, nope") == (["a@example.com", "*@example.org"], ["nope"]) and SS.admins_of({}) == "",
+               "the administrators: written only when recorded, lowercased, once each, and anything that is not an address or *@domain refused")
+            import agent_result as AR
+            noadm = {k: v for k, v in va.items() if k != "platform_admins"}
+            AR.reset(); fpn = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": ["DATABASE_URL"]}); said = []
+            rc = SS.vercel_check("zz_shop", noadm, cp(vi), fpn, say=said.append, root=t)
+            ok(rc == 1 and any(SS.ADMIN_MARK in l for l in said) and [n_["name"] for n_ in AR.NOTES["needs"]] == ["platform administrator address"]
+               and AR.NOTES["needs"][0]["kind"] == "approval" and "answers.json" in AR.NOTES["needs"][0]["how"] and not any(c[0] == "set_env" for c in fpn.calls),
+               f"the check with no administrator anywhere: not ready, the address asked for in plain words (needs_human through provision.py): {said[-2:]} {AR.NOTES['needs']}")
+            AR.reset(); fpn = FakeP(projects=["zz-shop-api", "zz-shop"]); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(noadm), cp(vi), vdir, fpn, say=lambda s: None, root=t, read_page=pages({}))
+            except SS.NeedsHuman as e: err = str(e)
+            ok(SS.ADMIN_MARK in err and [n_["name"] for n_ in AR.NOTES["needs"]] == ["platform administrator address"]
+               and not any(c[0] in ("vrun", "set_env", "deploy", "neon", "choose") for c in fpn.calls),
+               f"the deploy with no administrator anywhere stops for the operator before anything is created or deployed: {err[:200]} {fpn.calls[:4]}")
+            AR.reset(); a_n = dict(noadm)
+            rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], a_n, cp(vi), {}, vdir, FakeP(projects=["zz-shop-api", "zz-shop"]), say=lambda s: None, root=t)
+            ok(rc == 1 and AR.NOTES["needs"] and a_n.get("status") == "planned" and "revert" not in a_n,
+               "provision.py --deploy without an administrator: exit 1 with a need noted (provision.py makes it exit 3, needs_human), never reverted")
+            for held in ("OCTILLION_PLATFORM_ADMINS", "APP_PLATFORM_ADMINS"):
+                AR.reset(); fpk = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", held]}); said = []
+                rc = SS.vercel_check("zz_shop", noadm, cp(vi), fpk, say=said.append, root=t)
+                ok(rc == 0 and not AR.NOTES["needs"] and any(f"already holds {held}" in l and "kept" in l for l in said),
+                   f"the check with no administrator in state but {held} on the API project: ready, and it says the variable is kept: {[l for l in said if 'administrator' in l]}")
+                a_k = dict(noadm); i_k = cp(vi); err = ""
+                try: SS.vercel_deploy("zz_shop", a_k, i_k, vdir, fpk, say=lambda s: None, root=t, read_page=pages({}))
+                except SS.Stop as e: err = str(e)
+                ok(not err and fpk.projects["zz-shop-api"]["env"].get(held) == "standin" and not any(c[0] == "set_env" and "PLATFORM_ADMINS" in str(c[2]) for c in fpk.calls)
+                   and not any(c[0] == "rm_env" for c in fpk.calls),
+                   f"the deploy keeps {held} the project already holds when state records none (never removed, never rewritten): {err[:200]}")
+            # an app whose API project holds the old spelling (set by hand before the factory owned it): both names, one value
+            fpb = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "OCTILLION_PLATFORM_ADMINS"]}); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(va), cp(vi), vdir, fpb, say=lambda s: None, root=t, read_page=pages({}))
+            except SS.Stop as e: err = str(e)
+            ok(not err and {n_: fpb.projects["zz-shop-api"]["env"].get(n_) for n_ in ("OCTILLION_PLATFORM_ADMINS", "APP_PLATFORM_ADMINS")}
+               == {"OCTILLION_PLATFORM_ADMINS": "ops@example.com,*@example.org", "APP_PLATFORM_ADMINS": "ops@example.com,*@example.org"},
+               f"recorded administrators on a project that holds the old spelling: both get state's list, so neither goes stale: {err[:200]}")
+            AR.reset()
+            # mold_v0-045: env names APP_*, the old prefix still read. An app deployed before then (its state and its projects
+            # hold the old names) deploys unchanged: nothing is minted under the new name beside an old one (it would win: a new
+            # vault key and nothing decrypts), a state name in the old spelling is minted from the bootstrap's new one.
+            NEW, LEG = man["env_names"]["prefix"], man["env_names"]["legacy_prefix"]
+            ok(F["aliases"] == (NEW, LEG) and SS.other_spelling(NEW + "VAULT_KEY", F["aliases"]) == LEG + "VAULT_KEY" and SS.other_spelling(LEG + "X", F["aliases"]) == NEW + "X"
+               and SS.other_spelling("CRON_SECRET", F["aliases"]) is None and SS.env_aliases({"env_names": {"prefix": "APP_", "legacy_prefix": "APP_"}}) is None
+               and SS.env_aliases({}) is None and SS.has_value(NEW + "K", {LEG + "K"}, F["aliases"]) and not SS.has_value(NEW + "K", {LEG + "K"}, None),
+               f"mold.json env_names: the prefix and the old one; a name and its other spelling: {F['aliases']}")
+            leg = dict(cp(vi), secrets_derived=["DATABASE_URL", LEG + "VAULT_KEY", "CRON_SECRET"])
+            fpl = FakeP(env={"zz-shop-api": ["DATABASE_URL", LEG + "VAULT_KEY", "CRON_SECRET", "PUBLIC_URL"]}, projects=["zz-shop"])
+            _, _, errl = vdeploy(fpl, inf=cp(leg))
+            ok(not errl and not any(c[0] == "set_env" and c[2] in (NEW + "VAULT_KEY", LEG + "VAULT_KEY") for c in fpl.calls),
+               f"an app deployed before mold_v0-045 (old names in its state and project): its vault key is never minted again, under either name: {errl[:200]} {[c for c in fpl.calls if c[0] == 'set_env']}")
+            fpn = FakeP(env={"zz-shop-api": ["DATABASE_URL", LEG + "VAULT_KEY", "CRON_SECRET", "PUBLIC_URL"]}, projects=["zz-shop"])
+            _, _, errn = vdeploy(fpn)    # this app's state names the NEW spelling, but its project holds the key under the old one
+            ok(not errn and not any(c[0] == "set_env" and c[2] == NEW + "VAULT_KEY" for c in fpn.calls),
+               f"state in the new spelling, the key held under the old one: not minted under the new name (it would shadow the old key): {[c for c in fpn.calls if c[0] == 'set_env']}")
+            fpm = FakeP(projects=["zz-shop-api", "zz-shop"])
+            _, _, errm = vdeploy(fpm, inf=cp(leg))
+            env_m = fpm.projects["zz-shop-api"]["env"]
+            ok(not errm and len(env_m.get(LEG + "VAULT_KEY", "")) >= 40 and NEW + "VAULT_KEY" not in env_m and len(env_m.get("CRON_SECRET", "")) == 64,
+               f"a first deploy of a state that names the old spelling (minted before mold_v0-045): the bootstrap's key, under the state's name only: {sorted(env_m)}")
+            fpc = FakeP(env={"zz-shop-api": ["DATABASE_URL", LEG + "VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"])
+            fpc.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, LEG + "CONSOLE_URL": "https://old-console.example", LEG + "PROXY_HOPS": "1"})
+            _, _, errc = vdeploy(fpc, inf=cp(leg))
+            ec = fpc.projects["zz-shop-api"]["env"]
+            ok(not errc and ec[NEW + "CONSOLE_URL"] == web_u and ec[LEG + "CONSOLE_URL"] == web_u and ec[NEW + "PROXY_HOPS"] == "1",
+               f"an app deployed before mold_v0-045: the console's address goes under the new name and the old one it holds (a rolled-back release reads that): {ec}")
+            ok(SS.with_held_spellings({NEW + "X": "1"}, {LEG + "X"}, F["aliases"]) == {NEW + "X": "1", LEG + "X": "1"} and SS.with_held_spellings({NEW + "X": "1"}, set(), F["aliases"]) == {NEW + "X": "1"},
+               "with_held_spellings: the other spelling only where it is held")
+            mvl = SS.mint_values(cb, F, [LEG + "VAULT_KEY"])
+            ok(list(mvl) == [LEG + "VAULT_KEY"] and len(mvl[LEG + "VAULT_KEY"]) >= 40, "mint_values: a state name in the old spelling gets the bootstrap's value for the new one")
+            ok(SS.project_for(F, K, LEG + "VAULT_KEY") == ["api"] and SS.project_for(F, K, NEW + "VAULT_KEY") == ["api"] and SS.project_for(F, K, "NOT_A_NAME") == [],
+               "--set-secret: the old spelling of an API name goes to the API project, like the new one")
+            fps = FakeP(env={"zz-shop-api": [LEG + "VAULT_KEY", NEW + "VAULT_KEY"]}, projects=["zz-shop"])
+            SS.set_secret_vercel("zz_shop", va, dict(cp(vi), secrets_derived=["DATABASE_URL", LEG + "VAULT_KEY", "CRON_SECRET"]), LEG + "VAULT_KEY", fps, root=t, value="k" * 44, say=lambda s_: None)
+            ok(fps.projects["zz-shop-api"]["env"][LEG + "VAULT_KEY"] == "k" * 44 and fps.projects["zz-shop-api"]["env"][NEW + "VAULT_KEY"] == "k" * 44,
+               f"--set-secret on an old name the project also holds under the new one: both get the value, so neither shadows it: {[c for c in fps.calls if c[0] == 'set_env']}")
+            fpo = FakeP(projects=["zz-shop-api", "zz-shop"])
+            SS.set_secret_vercel("zz_shop", va, cp(leg), NEW + "VAULT_KEY", fpo, root=t, value="k" * 44, say=lambda s_: None)
+            ok(fpo.projects["zz-shop-api"]["env"].get(NEW + "VAULT_KEY") == "k" * 44 and fpo.projects["zz-shop-api"]["env"].get(LEG + "VAULT_KEY") == "k" * 44,
+               "--set-secret with the new spelling (as the console now names it) on an app whose state names the old one: both get the value, neither shadows")
+            try: SS.set_secret_vercel("zz_shop", va, cp(leg), "NOT_A_NAME", FakeP(projects=["zz-shop-api", "zz-shop"]), root=t, value="k" * 44, say=lambda s_: None); ok(False, "an undeclared name is refused")
+            except SS.Stop as e_: ok("not a name this app reads" in str(e_), "--set-secret still refuses a name the app does not read")
+            nc = "const API = (process.env.APP_API_URL ?? legacyEnv('APP_API_URL') ?? 'http://127.0.0.1:3333');"
+            ok(SS.API_ENV.findall(nc) == ["APP_API_URL"] and SS.API_ENV.findall("process.env.X_URL ?? 'http://a'") == ["X_URL"]
+               and SS.console_facts(SS.codebase("mold_v0"), SS.manifest("mold_v0"))["api_env"] == NEW + "API_URL",
+               "the console's API-address variable with its old spelling as a fallback between: the new name (mold_v0's own next.config)")
             # the console fails its health: BOTH projects back on what served before
             before = {"zz-shop-api": "dpl_api_old", "zz-shop": "dpl_web_old"}
             fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before, health={web_u: "502"})

@@ -5,7 +5,7 @@
  * more. Spend is live: a session that is still running counts what the gateway has metered so far.
  *
  * The plan's budget comes from Stripe (src/billing.ts) and people from Clerk; this module only stores the policy
- * (Octillion is the one enforcing spend on its own gateway, so the policy has to live here). Limits apply to people
+ * (the app is the one enforcing spend on its own gateway, so the policy has to live here). Limits apply to people
  * signed in with Clerk; connector keys draw from the account's pool.
  *
  * Per calendar month (UTC), in every mode: the buffer (reserve_usd) and each team's budget are set aside; everyone
@@ -18,10 +18,11 @@
 import type { Org } from "./auth.js";
 import { orgBudget } from "./billing.js";
 import { getDb, type Queryable } from "./db.js";
-import { settingNumber } from "./settings.js";
+import { ENGINE_SETTINGS, settingNumber } from "./settings.js";
 import { accountRefusal, canAccount, type AccountRole } from "./account-roles.js";
 import { monthRunSpendByPerson, RUN_USD } from "./run-spend.js";
 import { sessionEngine } from "./host-tables.js";
+import { fill } from "./vocabulary.js";
 
 /** Why a launch was refused, for /app to show beside the message; validation errors carry no code. */
 export type LimitCode = "viewer_role" | "no_allowance" | "account_cap" | "budget_error" | "launch_access" | "person_limit" | "team_budget" | "rest_pot" | "buffer" |
@@ -98,7 +99,7 @@ async function usageByPerson(orgId: number) {
 
 /** The most agent sessions one run may have: the server's limit, or the account's own if it is lower. */
 export async function sessionsLimit(orgId: number): Promise<number> {
-  const server = settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN");
+  const server = settingNumber(ENGINE_SETTINGS.maxSessionsPerRun);
   const [p] = await (await getDb()).query<{ n: number | null }>("SELECT max_sessions_per_run AS n FROM usage_policies WHERE org_id = $1", [orgId]);
   return p?.n == null ? server : Math.min(server, Number(p.n));
 }
@@ -347,9 +348,9 @@ async function versionOf(q: Queryable, orgId: number) {
   return String(r?.v ?? 0);
 }
 
-/** The figures beside a picture of the rules (GET /limits and the preview both send them): the reset, Octillion's session maximum, the banner. */
+/** The figures beside a picture of the rules (GET /limits and the preview both send them): the reset, the server's session maximum, the banner. */
 function tiles(o: ReturnType<typeof shape>, { figures, budget_error }: PageLive) {
-  return { period_end: pace(0).period_end, server_max_sessions: settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN"),
+  return { period_end: pace(0).period_end, server_max_sessions: settingNumber(ENGINE_SETTINGS.maxSessionsPerRun),
     alert: budget_error ? null : usageAlert(o.account.spent_usd, o.budget_usd, new Date(), figures.recent) };
 }
 
@@ -370,7 +371,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function explain(a: Pick<Allocation, "account" | "buffer_usd" | "rest" | "teams" | "members">, userId: string | null,
   run: { max_sessions: number; max_run_usd: number | null }, now = new Date()): string[] {
   const cap = a.account.cap_usd;
-  if (cap <= 0) return ["Your account has no prepaid allowance this month, so nobody can launch simulations. Contact Octillion to add one."];
+  if (cap <= 0) return [fill("Your {account} has no prepaid allowance this month, so nobody can launch {runs}. Contact {product} to add one.")];
   const out: string[] = [];
   const me = a.members.find((m) => m.user_id === userId);
   if (me) {
@@ -379,15 +380,15 @@ export function explain(a: Pick<Allocation, "account" | "buffer_usd" | "rest" | 
       : a.teams.some((t) => t.budget_usd != null) ? `You're in Everyone else, which shares ${$usd(a.rest.budget_usd)}.`
       : `Everyone on the account shares ${$usd(a.rest.budget_usd)}.`);
     const adj = me.adjust_usd ? ` (with your ${me.adjust_usd > 0 ? "+" : "-"}${$usd(Math.abs(me.adjust_usd))} adjustment)` : "";
-    out.push(!me.can_run ? "You haven't been allowed to launch simulations yet. Reports and transcripts stay available."
+    out.push(!me.can_run ? fill("You haven't been allowed to launch {runs} yet. Reports and transcripts stay available.")
       : me.limit_source === "own" ? `You have your own limit of ${$usd(me.limit_usd ?? 0)} a month.`
       : me.limit_source === "pool" ? "People share it freely, so you have no personal limit. It stops when the budget runs out."
       : me.limit_source === "default" ? `Everyone can spend up to ${$usd(me.limit_usd ?? 0)} a month. The budget still stops at its total.`
       : `People get an equal share, so yours is ${$usd(me.limit_usd ?? 0)}${adj} and changes if people join.`);
-    if (me.effective_max_concurrent != null) out.push(`You can have ${plural(me.effective_max_concurrent, "simulation")} running at once.`);
+    if (me.effective_max_concurrent != null) out.push(fill(`You can have ${me.effective_max_concurrent} ${me.effective_max_concurrent === 1 ? "{run}" : "{runs}"} running at once.`));
   }
   if (a.buffer_usd > 0) out.push(`${$usd(a.buffer_usd)} of the account's ${$usd(cap)} is held back for runs that go over. Nobody can launch into it.`);
-  out.push(`Each simulation can use up to ${plural(run.max_sessions, "agent session")}${run.max_run_usd != null ? ` and spend up to ${$usd(run.max_run_usd)}` : ""}.`);
+  out.push(fill("Each {run} can use up to ") + `${plural(run.max_sessions, "agent session")}${run.max_run_usd != null ? ` and spend up to ${$usd(run.max_run_usd)}` : ""}.`);
   out.push(`Spend starts over on ${monthWords(now).reset}.`);
   return out;
 }
@@ -400,7 +401,7 @@ export async function memberPage(org: { orgId: number; slug: string }, userId: s
   const o = await overview(org);
   const me = o.members.find((m) => m.user_id === userId) ?? null;
   const p = o.policy;
-  const max_sessions = Math.min(settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN"), p.max_sessions_per_run ?? Infinity);
+  const max_sessions = Math.min(settingNumber(ENGINE_SETTINGS.maxSessionsPerRun), p.max_sessions_per_run ?? Infinity);
   const team = me ? o.teams.find((t) => t.id === me.team_id) ?? null : null;
   const budgeted = o.teams.some((t) => t.budget_usd != null);
   const pot = !me ? null : me.pot != null && team
@@ -437,8 +438,11 @@ export function askAdmins(admins: { name: string }[], untilReset: boolean) {
   return `Ask ${who} to change Budget rules on the Billing page${untilReset ? `, or wait until ${monthWords().reset}` : ""}.`;
 }
 
-/** The refusal for a money or access check that allocate() says fails, worded for the person launching. */
-function refusal(o: Awaited<ReturnType<typeof overview>>, code: LimitCode, me?: Awaited<ReturnType<typeof overview>>["members"][number]): LimitError {
+/**
+ * The refusal for a money or access check that allocate() says fails, worded for the person launching: the run noun is
+ * the build's (src/vocabulary.ts), the contact its profile's name. Exported for scripts/words-test.ts.
+ */
+export function refusal(o: Awaited<ReturnType<typeof overview>>, code: LimitCode, me?: Awaited<ReturnType<typeof overview>>["members"][number]): LimitError {
   const { month, reset } = monthWords();
   const info = (set_by: LimitInfo["set_by"], limit_usd: number | null = null, spent = 0) =>
     ({ code, set_by, admins: o.admins, limit_usd, left_usd: limit_usd == null ? null : leftOf(limit_usd, spent) });
@@ -446,12 +450,12 @@ function refusal(o: Awaited<ReturnType<typeof overview>>, code: LimitCode, me?: 
   const acc = o.account, t = o.teams.find((x) => x.id === me?.pot);
   switch (code) {
     case "no_allowance":
-      return new LimitError("Your account has no prepaid allowance this month, so simulations can't run. Contact Octillion.", 403, info("account", 0));
+      return new LimitError(fill("Your {account} has no prepaid allowance this month, so {runs} can't run. Contact {product}."), 403, info("account", 0));
     case "account_cap":
       return new LimitError(`Your account has used its ${$(acc.cap_usd)} for ${month} (${$(acc.spent_usd)} spent). ` +
-        `Results so far stay available; reply to your Octillion contact to raise the allowance, or wait until ${reset}.`, 403, info("account", acc.cap_usd, acc.spent_usd));
+        fill("Results so far stay available; reply to your {product} contact to raise the allowance, or wait until ") + `${reset}.`, 403, info("account", acc.cap_usd, acc.spent_usd));
     case "launch_access":
-      return new LimitError(`You haven't been allowed to launch simulations yet. Reports and transcripts stay available. ${askAdmins(o.admins, false)}`, 403,
+      return new LimitError(`${fill("You haven't been allowed to launch {runs} yet. Reports and transcripts stay available.")} ${askAdmins(o.admins, false)}`, 403,
         info(me?.own_can_run != null ? "you" : "account"));
     case "person_limit":
       return new LimitError(`You've used your ${$(me!.limit_usd!)} for ${month} (${$(me!.spent)} spent). ${askAdmins(o.admins, true)}`, 403,
@@ -481,9 +485,9 @@ export interface RunCheck {
   max_runs: number | null; runs_set_by: "you" | "team" | "account" | null;
 }
 
-/** "You have 2 simulations running; you can have 2 at once …": the refusal for runs at once. */
+/** "You have 2 runs running; you can have 2 at once …" (the app's run noun): the refusal for runs at once. */
 export function runsAtOnceError(running: number, maxRuns: number, setBy: "you" | "team" | "account" | null, admins: { name: string }[]) {
-  return new LimitError(`You have ${running} simulation${running === 1 ? "" : "s"} running; you can have ${maxRuns} at once ` +
+  return new LimitError(`You have ${running} ${fill(running === 1 ? "{run}" : "{runs}")} running; you can have ${maxRuns} at once ` +
     `(set for ${setBy === "you" ? "you" : setBy === "team" ? "your team" : "the account"}). Wait for one to finish. ${askAdmins(admins, false)}`, 429,
     { code: "runs_at_once", set_by: setBy ?? undefined, admins, limit_usd: null, left_usd: null });
 }
@@ -555,7 +559,7 @@ const diff = <T>(label: string, a: T, b: T, word: (v: T) => string) => (a === b 
 
 /**
  * Append one history entry in the same transaction as the change. Nothing is written when nothing changed (a save
- * that sends the same values). A null actor is Octillion itself (a migration), shown as "System".
+ * that sends the same values). A null actor is the app itself (a migration), shown as "System".
  */
 async function logChange(q: Queryable, orgId: number, actor: Actor | null, parts: string[], before: unknown, after: unknown) {
   if (!parts.length) return;
@@ -600,7 +604,7 @@ export interface RuleChange { by_name: string; at: Date }
 /**
  * Who last changed each rule, from the history's before and after: "policy.<field>" for the account's rules,
  * "team:<id>" for a team's budget or runs at once, "member:<user id>" for a person's own settings. The newest entry
- * that changed a rule wins; a rule no entry changed is missing (Octillion's default, or set before history existed).
+ * that changed a rule wins; a rule no entry changed is missing (the app's default, or set before history existed).
  */
 export async function ruleChanges(org: { orgId: number; slug: string }): Promise<Record<string, RuleChange>> {
   const rows = await (await getDb()).query<{ at: Date; actor: string | null; actor_user: string | null; before: any; after: any }>(
@@ -643,7 +647,7 @@ const count = (v: unknown, field: string, max = 10000) => {
   return n;
 };
 const RUNS = "Runs at once";
-const sessions = (v: unknown) => count(v, "Agent sessions per run", settingNumber("OCTILLION_MAX_SESSIONS_PER_RUN"));
+const sessions = (v: unknown) => count(v, "Agent sessions per run", settingNumber(ENGINE_SETTINGS.maxSessionsPerRun));
 
 type PolicyFields = Omit<Policy, "updated_at" | "updated_by">;
 const $cap = (v: number) => `$${v.toFixed(2)}`;
@@ -652,7 +656,7 @@ const $cap = (v: number) => `$${v.toFixed(2)}`;
  * The policy after a change: only the fields sent change, each checked. `cap` is the account's allowance, for the
  * checks against it (the buffer and the run dollar cap can't be more); null or 0 (unknown, or none yet) skips them.
  */
-function parsePolicy(cur: PolicyFields, p: Partial<Record<keyof Policy, unknown>>, cap: number | null): PolicyFields {
+export function parsePolicy(cur: PolicyFields, p: Partial<Record<keyof Policy, unknown>>, cap: number | null): PolicyFields {
   const mode = (p.mode === undefined ? cur.mode : String(p.mode)) as Mode;
   if (!["pool", "even", "custom"].includes(mode)) throw new LimitError("mode must be pool, even or custom");
   const next: PolicyFields = {
@@ -661,7 +665,7 @@ function parsePolicy(cur: PolicyFields, p: Partial<Record<keyof Policy, unknown>
     new_members_can_run: p.new_members_can_run === undefined ? cur.new_members_can_run : Boolean(p.new_members_can_run),
     max_concurrent_runs: p.max_concurrent_runs === undefined ? cur.max_concurrent_runs : count(p.max_concurrent_runs, RUNS),
     max_sessions_per_run: p.max_sessions_per_run === undefined ? cur.max_sessions_per_run : sessions(p.max_sessions_per_run),
-    max_run_usd: p.max_run_usd === undefined ? cur.max_run_usd : money(p.max_run_usd, "Most a simulation can spend"),
+    max_run_usd: p.max_run_usd === undefined ? cur.max_run_usd : money(p.max_run_usd, fill("Most a {run} can spend")),
   };
   // Own limits apply in every mode, so custom with no default would just be the shared pool under another name.
   if (next.mode === "custom" && next.default_cap_usd == null)
@@ -670,10 +674,10 @@ function parsePolicy(cur: PolicyFields, p: Partial<Record<keyof Policy, unknown>
   if (p.default_cap_usd !== undefined && next.default_cap_usd != null && next.default_cap_usd < 0.01)
     throw new LimitError("Each person's default cap must be at least $0.01.");
   // Empty is "no limit"; $0 would stop every adaptive run after its first batch, which "can launch" says better.
-  if (next.max_run_usd != null && next.max_run_usd < 0.01) throw new LimitError("Most a simulation can spend must be at least $0.01, or empty for no limit.");
+  if (next.max_run_usd != null && next.max_run_usd < 0.01) throw new LimitError(fill("Most a {run} can spend must be at least $0.01, or empty for no limit."));
   if (cap != null && cap > 0) {
     if (p.reserve_usd !== undefined && next.reserve_usd > cap) throw new LimitError(`Can't hold back more than your ${$cap(cap)} allowance.`);
-    if (p.max_run_usd !== undefined && next.max_run_usd != null && next.max_run_usd > cap) throw new LimitError(`A simulation can't spend more than your ${$cap(cap)} allowance.`);
+    if (p.max_run_usd !== undefined && next.max_run_usd != null && next.max_run_usd > cap) throw new LimitError(fill("A {run} can't spend more than your ") + `${$cap(cap)} allowance.`);
     if (p.default_cap_usd !== undefined && next.default_cap_usd != null && next.default_cap_usd > cap) throw new LimitError(`Each person's default cap can't be more than your ${$cap(cap)} allowance.`);
   }
   return next;

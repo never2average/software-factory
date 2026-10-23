@@ -1,6 +1,6 @@
 /**
  * Stripe is the system of record for money: customers, plans, recurring subscriptions, invoices and card details.
- * Octillion keeps only organizations.stripe_customer_id (also recorded in the Clerk organization's public_metadata, so
+ * The app keeps only organizations.stripe_customer_id (also recorded in the Clerk organization's public_metadata, so
  * Clerk and Stripe can be joined either way). Customers self-serve through Stripe Checkout and the Stripe customer
  * portal; nothing about a plan is stored here.
  * Plain REST over fetch. Unset STRIPE_SECRET_KEY = billing is off.
@@ -10,17 +10,20 @@
  * with neither a live plan nor an admin-set allowance (organizations.budget_override_usd) gets $0: it cannot start runs.
  *
  *   STRIPE_SECRET_KEY            sk_test_... / rk_... (customers, checkout, billing portal, subscriptions, prices, meter events)
- *   Plans                        active Stripe prices whose lookup_key starts with "octillion_". A price's (or its
+ *   Plans                        active Stripe prices whose lookup_key starts with KEY_PREFIX (src/namespace.ts: the build's namespace and _). A price's (or its
  *                                product's) metadata.monthly_budget_usd sets that plan's monthly model-spend cap.
  *   STRIPE_SPEND_METER           optional meter event name: each finished agent session reports its model cost in cents,
  *                                for usage-based prices (deduplicated by session id).
- *   OCTILLION_REQUIRE_SUBSCRIPTION=1  refuse new simulations for orgs without an active or trialing subscription.
+ *   APP_REQUIRE_SUBSCRIPTION=1  refuse new simulations for orgs without an active or trialing subscription.
  */
 import { createHash } from "node:crypto";
 import { getDb } from "./db.js";
 import { sessionEngine } from "./host-tables.js";
 import { componentJson, componentSummary, configJson, DEFAULT_TAX_CODE, METRIC_IDS, METRICS, meterFor, stripeTiers, usageFromTiers, usageLookup,
   type Metric, type PlanConfig, type UsageComponent } from "./plan-config.js";
+import { ENV } from "./env-names.js";
+import { isNsKey, isPlanKey, KEY_PREFIX, NS, NS_KEYS, nsGet } from "./namespace.js";
+import { PROFILE } from "./profile.js";
 
 export const stripeEnabled = () => Boolean(process.env.STRIPE_SECRET_KEY);
 const apiBase = () => (process.env.STRIPE_API_URL ?? "https://api.stripe.com").replace(/\/$/, "");
@@ -65,9 +68,9 @@ async function all<T extends { id: string }>(path: string): Promise<T[]> {
 }
 
 /**
- * A plan: a live Stripe price with an octillion_ lookup key. A pricing experiment is Stripe price metadata too:
- * octillion_experiment (its key; the plans sharing it are its variants) and octillion_weight (the variant's share of
- * accounts, relative to the others; default 1). octillion_trial_days gives checkout a free trial.
+ * A plan: a live Stripe price with a lookup key that starts with KEY_PREFIX. A pricing experiment is Stripe price metadata
+ * too: NS_KEYS.experiment (its key; the plans sharing it are its variants) and NS_KEYS.weight (the variant's share of
+ * accounts, relative to the others; default 1). NS_KEYS.trial_days gives checkout a free trial.
  */
 export interface Plan { price_id: string; lookup_key: string; name: string; amount: number | null; currency: string; interval: string | null; monthly_budget_usd: number | null;
   experiment: string | null; weight: number; trial_days: number | null; description: string | null; created: number | null;
@@ -109,7 +112,7 @@ let plansCache: { at: number; plans: Plan[] } | null = null;
 export async function listPlans(): Promise<Plan[]> {
   if (plansCache && Date.now() - plansCache.at < 5 * 60_000) return plansCache.plans;
   const [prices, meters] = await Promise.all([all<StripePrice>("/v1/prices?active=true&expand[]=data.product&expand[]=data.tiers"), listMeters().catch(() => [] as Meter[])]);
-  const ours = prices.filter((p) => p.lookup_key?.startsWith("octillion_"));
+  const ours = prices.filter((p) => isPlanKey(p.lookup_key));
   const byLookup = new Map(ours.map((p) => [p.lookup_key!, p]));
   const meterName = (id?: string | null) => meters.find((m) => m.id === id)?.event_name ?? id ?? "";
   const component = (up: StripePrice, metric: Metric): { u: UsageComponent; usage: PlanUsage } => {
@@ -118,16 +121,16 @@ export async function listPlans(): Promise<Plan[]> {
   };
   const plans = ours.filter((p) => !isUsageLookup(p.lookup_key!)).map((p) => {
     const metered = p.recurring?.usage_type === "metered";
-    // A usage-only plan's own price is its first component (octillion_metric says which); the rest are <plan>__<metric>.
-    const own = metered ? [component(p, (p.metadata?.octillion_metric as Metric) || "model_spend")] : [];
+    // A usage-only plan's own price is its first component (NS_KEYS.metric says which); the rest are <plan>__<metric>.
+    const own = metered ? [component(p, (nsGet(p.metadata, "metric") as Metric) || "model_spend")] : [];
     const rest = METRIC_IDS.filter((m) => !own.some((x) => x.u.metric === m)).flatMap((m) => { const up = byLookup.get(usageLookup(p.lookup_key!, m)); return up ? [component(up, m)] : []; });
     const comps = [...own, ...rest].sort((a, b) => METRIC_IDS.indexOf(a.u.metric) - METRIC_IDS.indexOf(b.u.metric));
-    const extra = Object.fromEntries(Object.entries(p.product?.metadata ?? {}).filter(([k]) => !k.startsWith("octillion") && k !== "monthly_budget_usd"));
+    const extra = Object.fromEntries(Object.entries(p.product?.metadata ?? {}).filter(([k]) => !isNsKey(k) && k !== "monthly_budget_usd"));
     const plan = {
       price_id: p.id, lookup_key: p.lookup_key!, name: p.nickname || p.product?.name || p.lookup_key!, amount: metered ? null : p.unit_amount, currency: p.currency,
       interval: p.recurring?.interval ?? null, monthly_budget_usd: budgetOf(p.metadata) ?? budgetOf(p.product?.metadata),
-      experiment: p.metadata?.octillion_experiment || null, weight: weightOf(p.metadata?.octillion_weight),
-      trial_days: Number(p.metadata?.octillion_trial_days) > 0 ? Number(p.metadata.octillion_trial_days) : null,
+      experiment: nsGet(p.metadata, "experiment") || null, weight: weightOf(nsGet(p.metadata, "weight")),
+      trial_days: Number(nsGet(p.metadata, "trial_days")) > 0 ? Number(nsGet(p.metadata, "trial_days")) : null,
       description: p.product?.description || null, created: p.created ?? null, usage: comps.map((x) => x.usage),
     };
     return { ...plan, config: configJson({ name: plan.name, description: plan.description, interval: (plan.interval === "year" ? "year" : "month"), lookup_key: plan.lookup_key,
@@ -141,12 +144,12 @@ export async function listPlans(): Promise<Plan[]> {
 
 export const invalidatePlans = () => { plansCache = null; };
 
-/** A plan's lookup key from its name: octillion_ plus the name in lower case, words joined by underscores. */
+/** A plan's lookup key from its name: KEY_PREFIX plus the name in lower case, words joined by underscores. */
 export const planLookupKey = (name: string) =>
-  `octillion_${name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "plan"}`;
+  `${KEY_PREFIX}${name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "plan"}`;
 
 /** The meter body for a metric: the sum of `value` per stripe_customer_id, as the report* functions send it. */
-const meterBody = (m: Metric, event: string) => ({ display_name: `Octillion ${METRICS[m].label.toLowerCase()} (${METRICS[m].unit}s)`, event_name: event,
+const meterBody = (m: Metric, event: string) => ({ display_name: `${PROFILE.name} ${METRICS[m].label.toLowerCase()} (${METRICS[m].unit}s)`, event_name: event,
   default_aggregation: { formula: "sum" }, customer_mapping: { type: "by_id", event_payload_key: "stripe_customer_id" }, value_settings: { event_payload_key: "value" } });
 
 /** One line per Stripe object a plan config makes: the dry run's preview. */
@@ -155,7 +158,7 @@ function describe(o: { create: string; body: Record<string, any> }, c: PlanConfi
   if (o.create === "billing.meter") return `Billing meter "${b.event_name}": the sum of each customer's reported ${METRICS[(Object.keys(METRICS) as Metric[]).find((m) => meterFor(m) === b.event_name) ?? "model_spend"].unit}s`;
   if (o.create === "product") return `Product "${b.name}"${b.description ? `: ${b.description}` : ""} (tax code ${b.tax_code})`;
   if (b.recurring?.usage_type === "metered") {
-    const comp = c.usage.find((u) => u.metric === b.metadata?.octillion_metric)!;
+    const comp = c.usage.find((u) => u.metric === nsGet(b.metadata, "metric"))!;
     return `Usage price ${b.lookup_key}, graduated, billed each ${b.recurring.interval}: ${componentSummary(comp)}`;
   }
   return `Base price ${b.lookup_key}: $${(b.unit_amount / 100).toLocaleString("en-US")} / ${b.recurring?.interval}`;
@@ -165,7 +168,7 @@ function describe(o: { create: string; body: Record<string, any> }, c: PlanConfi
  * A plan from a JSON config (src/plan-config.ts, already checked): a product, a licensed price for the base fee (if
  * any) and one graduated metered price per usage component, each on its metric's billing meter (made when the account
  * has none with that event name). The plan's own price (the base fee, else the first component) carries the lookup
- * key, allowance, experiment and trial; the other components are <lookup_key>__<metric> with octillion_plan. `dryRun`
+ * key, allowance, experiment and trial; the other components are <lookup_key>__<metric> with NS_KEYS.plan. `dryRun`
  * returns what would be made, a line per object, and sends nothing that writes.
  */
 export async function createPlanFromConfig(c: PlanConfig, dryRun = false) {
@@ -178,17 +181,17 @@ export async function createPlanFromConfig(c: PlanConfig, dryRun = false) {
     : `An archived plan still holds the lookup key ${taken.lookup_key}. Pick another name or lookup_key.`, 409);
   const meters = c.usage.length ? await listMeters(true) : [];
   const found = new Map(c.usage.map((u) => [u.meter, meters.find((m) => m.event_name === u.meter && m.status !== "inactive") ?? null]));
-  const planMeta: Record<string, string> = { monthly_budget_usd: String(c.monthly_budget_usd), ...(c.experiment ? { octillion_experiment: c.experiment, octillion_weight: String(c.weight) } : {}),
-    ...(c.trial_days ? { octillion_trial_days: String(c.trial_days) } : {}) };
+  const planMeta: Record<string, string> = { monthly_budget_usd: String(c.monthly_budget_usd), ...(c.experiment ? { [NS_KEYS.experiment]: c.experiment, [NS_KEYS.weight]: String(c.weight) } : {}),
+    ...(c.trial_days ? { [NS_KEYS.trial_days]: String(c.trial_days) } : {}) };
   const usagePrice = (u: UsageComponent, i: number, meterId: string, product: string) => {
     const primary = !hasBase && i === 0;
     return { product, currency: "usd", nickname: primary ? c.name : `${c.name} · ${METRICS[u.metric].label}`, lookup_key: lookupOf(u, i),
       recurring: { interval: c.interval, usage_type: "metered", meter: meterId }, billing_scheme: "tiered", tiers_mode: "graduated", tiers: stripeTiers(u),
-      metadata: primary ? { ...planMeta, octillion_role: "usage", octillion_metric: u.metric } : { octillion_role: "usage", octillion_metric: u.metric, octillion_plan: c.lookup_key } };
+      metadata: primary ? { ...planMeta, [NS_KEYS.role]: "usage", [NS_KEYS.metric]: u.metric } : { [NS_KEYS.role]: "usage", [NS_KEYS.metric]: u.metric, [NS_KEYS.plan]: c.lookup_key } };
   };
   const basePrice = (product: string) => ({ product, currency: "usd", unit_amount: Math.round(c.base_fee_usd * 100), recurring: { interval: c.interval },
     nickname: c.name, lookup_key: c.lookup_key, metadata: planMeta });
-  const productBody = { name: c.name, description: c.description ?? undefined, tax_code: c.tax_code, metadata: { ...c.metadata, monthly_budget_usd: String(c.monthly_budget_usd), octillion: "plan" } };
+  const productBody = { name: c.name, description: c.description ?? undefined, tax_code: c.tax_code, metadata: { ...c.metadata, monthly_budget_usd: String(c.monthly_budget_usd), [NS]: "plan" } };
   const newMeters = c.usage.filter((u, i, all) => !found.get(u.meter) && all.findIndex((x) => x.meter === u.meter) === i);
   const plan = [
     ...newMeters.map((u) => ({ create: "billing.meter", body: meterBody(u.metric, u.meter) })),
@@ -215,9 +218,9 @@ export async function createPlanFromConfig(c: PlanConfig, dryRun = false) {
 export async function setPlanExperiment(priceId: string, experiment: string | null, weight = 1): Promise<{ price_id: string; experiment: string | null; weight: number }> {
   if (!/^price_[A-Za-z0-9_]+$/.test(priceId)) throw new StripeError("Unknown plan", 404);
   const price = await call<{ id: string; lookup_key: string | null }>("GET", `/v1/prices/${priceId}`);
-  if (!price.lookup_key?.startsWith("octillion_")) throw new StripeError("That price is not an Octillion plan", 400);
+  if (!isPlanKey(price.lookup_key)) throw new StripeError(`That price is not one of ${PROFILE.name}'s plans`, 400);
   const key = experiment ? experimentKey(experiment) || null : null, w = weight > 0 ? weight : 1;
-  await call("POST", `/v1/prices/${priceId}`, { metadata: { octillion_experiment: key ?? "", octillion_weight: key ? String(w) : "" } });
+  await call("POST", `/v1/prices/${priceId}`, { metadata: { [NS_KEYS.experiment]: key ?? "", [NS_KEYS.weight]: key ? String(w) : "" } });
   invalidatePlans();
   return { price_id: priceId, experiment: key, weight: key ? w : 1 };
 }
@@ -226,7 +229,7 @@ export async function setPlanExperiment(priceId: string, experiment: string | nu
 export async function archivePlan(priceId: string): Promise<{ price_id: string; lookup_key: string | null }> {
   if (!/^price_[A-Za-z0-9_]+$/.test(priceId)) throw new StripeError("Unknown plan", 404);
   const price = await call<{ id: string; lookup_key: string | null; active: boolean }>("GET", `/v1/prices/${priceId}`);
-  if (!price.lookup_key?.startsWith("octillion_")) throw new StripeError("That price is not an Octillion plan", 400);
+  if (!isPlanKey(price.lookup_key)) throw new StripeError(`That price is not one of ${PROFILE.name}'s plans`, 400);
   if (price.active) await call("POST", `/v1/prices/${priceId}`, { active: false }, `plan-archive-${priceId}`);
   // Its usage prices go with it.
   const usage = await call<{ data: { id: string; active: boolean }[] }>("GET", `/v1/prices?${METRIC_IDS.map((m) => `lookup_keys[]=${encodeURIComponent(usageLookup(price.lookup_key!, m))}`).join("&")}&limit=10`);
@@ -237,7 +240,7 @@ export async function archivePlan(priceId: string): Promise<{ price_id: string; 
 
 export const createCustomer = (o: { name: string; email?: string | null; slug: string; clerkOrgId?: string | null }) =>
   call<{ id: string }>("POST", "/v1/customers", { name: o.name, email: o.email ?? undefined,
-    metadata: { octillion_slug: o.slug, clerk_organization_id: o.clerkOrgId ?? undefined } }, `customer-${o.slug}`);
+    metadata: { [NS_KEYS.slug]: o.slug, clerk_organization_id: o.clerkOrgId ?? undefined } }, `customer-${o.slug}`);
 
 /** The subscription that decides the org's plan: active/trialing/past_due first, then the most recent. */
 function current(subs: Subscription[]) {
@@ -304,7 +307,7 @@ export async function allInvoices(fresh = false): Promise<Invoice[]> {
 /**
  * A hosted checkout for one plan. `meta` (the account's slug, and the experiment and variant when the plan is in one)
  * goes on the session and on the subscription it makes, so Stripe itself records which variant converted. A plan
- * with octillion_trial_days starts with that free trial.
+ * with NS_KEYS.trial_days starts with that free trial.
  */
 export async function checkoutUrl(customer: string, priceId: string, returnUrl: string, meta: Record<string, string> = {}, trialDays?: number | null, usagePriceIds: string[] = []) {
   // A metered price takes no quantity; a usage-only plan's own price is its first usage price.
@@ -357,10 +360,10 @@ export type BudgetSource = "override" | "plan" | "default";
 
 /**
  * The org's monthly model-spend allowance (a hard cap): an admin-set allowance first (your own account, trials, comps),
- * else its live Stripe plan's monthly_budget_usd, else OCTILLION_ORG_MONTHLY_BUDGET_USD (default 0). 0 = no runs.
+ * else its live Stripe plan's monthly_budget_usd, else APP_ORG_MONTHLY_BUDGET_USD (default 0). 0 = no runs.
  */
 export async function orgBudget(orgId: number): Promise<{ budget: number; subscription: SubscriptionSummary | null; source: BudgetSource }> {
-  const fallback = Number(process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ?? 0);
+  const fallback = Number(ENV.APP_ORG_MONTHLY_BUDGET_USD ?? 0);
   const [o] = await (await getDb()).query<{ stripe_customer_id: string | null; budget_override_usd: string | number | null }>(
     "SELECT stripe_customer_id, budget_override_usd FROM organizations WHERE id = $1", [orgId]);
   if (o?.budget_override_usd != null) return { budget: Number(o.budget_override_usd), subscription: null, source: "override" };
@@ -371,17 +374,17 @@ export async function orgBudget(orgId: number): Promise<{ budget: number; subscr
     catch (err) { console.error("stripe subscription lookup failed:", (err as Error).message); return { budget: fallback, subscription: null, source: "default" }; }
   }
   const live = sub && ["active", "trialing"].includes(sub.status);
-  if (process.env.OCTILLION_REQUIRE_SUBSCRIPTION === "1" && !live)
-    throw new Error("This organization has no active Octillion plan. Ask your admin to subscribe, then try again; existing results stay available.");
+  if (ENV.APP_REQUIRE_SUBSCRIPTION === "1" && !live)
+    throw new Error(`This organization has no active ${PROFILE.name} plan. Ask your admin to subscribe, then try again; existing results stay available.`);
   return live && sub!.monthly_budget_usd != null ? { budget: sub!.monthly_budget_usd, subscription: sub, source: "plan" } : { budget: fallback, subscription: sub, source: "default" };
 }
 
 /**
  * orgBudget for many orgs at once (the admin Spend page): one query and one subscription listing, the same order of
- * rules. For display only: it never throws (a Stripe outage or OCTILLION_REQUIRE_SUBSCRIPTION gives the fallback).
+ * rules. For display only: it never throws (a Stripe outage or APP_REQUIRE_SUBSCRIPTION gives the fallback).
  */
 export async function orgBudgets(orgIds: number[]): Promise<Map<number, { budget: number; plan: string | null; source: BudgetSource }>> {
-  const fallback = Number(process.env.OCTILLION_ORG_MONTHLY_BUDGET_USD ?? 0);
+  const fallback = Number(ENV.APP_ORG_MONTHLY_BUDGET_USD ?? 0);
   const out = new Map<number, { budget: number; plan: string | null; source: BudgetSource }>();
   if (!orgIds.length) return out;
   const rows = await (await getDb()).query<{ id: number; stripe_customer_id: string | null; budget_override_usd: string | number | null }>(
@@ -456,7 +459,7 @@ export const sendRunChargeEvent = (o: { meter: string; identifier: string; custo
 /** A credit for a run's charge: a negative customer balance transaction, which Stripe takes off the next invoice. Once per key. */
 export const creditRunCharge = (customer: string, o: { minor: number; currency: string; description: string; runId: string; key: string }) =>
   call<BalanceTransaction>("POST", `/v1/customers/${encodeURIComponent(customer)}/balance_transactions`, {
-    amount: -Math.abs(Math.trunc(o.minor)), currency: o.currency, description: o.description, metadata: { octillion_run_id: o.runId, octillion_kind: "run_credit" },
+    amount: -Math.abs(Math.trunc(o.minor)), currency: o.currency, description: o.description, metadata: { [NS_KEYS.run_id]: o.runId, [NS_KEYS.kind]: "run_credit" },
   }, o.key);
 
 // ---------- credits for library contributions (src/contributions.ts) ----------
@@ -472,7 +475,7 @@ export const CONTRIBUTION_META = "library_submission_id";
 export const creditCustomerBalance = (customer: string, o: { cents: number; description: string; submissionId: string; kind: string }) =>
   call<BalanceTransaction>("POST", `/v1/customers/${encodeURIComponent(customer)}/balance_transactions`, {
     amount: -Math.abs(Math.round(o.cents)), currency: "usd", description: o.description,
-    metadata: { [CONTRIBUTION_META]: o.submissionId, octillion_kind: o.kind },
+    metadata: { [CONTRIBUTION_META]: o.submissionId, [NS_KEYS.kind]: o.kind },
   }, `library-credit-${o.submissionId}`);
 
 /** A customer's balance transactions that are library-contribution credits (newest first, at most 500). */

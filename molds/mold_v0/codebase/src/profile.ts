@@ -28,6 +28,13 @@
  *                      every feature. Only the app's own profile.json sets it, never a host pack's profile
  *   landing            optional (mold_v0-091, src/landing.ts): the app's landing page at /, over a pack's pack.json
  *                      `landing`; never part of this profile: gen-packs writes it to web/src/config/landing.generated.ts
+ *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
+ *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
+ *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json
+ *                      `words`, over the neutral BASE; a host pack's host.profile.words come under the app's (and
+ *                      name its own engine's work only, not the generic runs of the usage pages). Never
+ *                      part of the profile modules: gen-packs writes them to src/vocabulary.generated.ts (this layer)
+ *                      and web/src/config/vocabulary.generated.ts (the build's words, resolved)
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
@@ -56,7 +63,7 @@ export interface Profile {
 
 /**
  * The email adapter (mold_v0-083, src/email.ts). `provider`: resend (default), test (kept in the process; never in
- * production) or none; OCTILLION_EMAIL_PROVIDER overrides it on a server. `notifications`: the groups that are on
+ * production) or none; APP_EMAIL_PROVIDER overrides it on a server. `notifications`: the groups that are on
  * besides sign-in codes and invitations (always on): access_requests, library, usage, due_dates, billing; absent, none.
  */
 export interface ProfileEmail {
@@ -94,6 +101,16 @@ export interface ProfileBilling {
 }
 
 export const PROFILE: Readonly<Profile> = Object.freeze({ ...(GENERATED_PROFILE as Profile) });
+
+/**
+ * The build's namespace (mold_v0-045): its MCP server name in lower-case letters, digits and underscores ("workspace"
+ * for the neutral default). The prefix of the keys this build writes into systems it shares with nothing else of its
+ * own: Stripe lookup keys, price and customer metadata and meter event names (src/billing.ts, src/plan-config.ts,
+ * src/experiments.ts), Clerk's organization and membership metadata (src/auth.ts, src/account-roles.ts), and the
+ * default ClickHouse database. A build keeps the keys it wrote as long as its profile keeps its MCP server name.
+ */
+export const profileNamespace = (p: Profile = PROFILE): string =>
+  p.mcp_server_name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "app";
 
 /** The default sender, as Name <address> (an admin can change it on the Emails settings). */
 export const defaultSender = (p: Profile = PROFILE) => `${p.email_sender_name} <${p.email_from_address}>`;

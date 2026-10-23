@@ -1,0 +1,197 @@
+{
+  "$comment": "The shell's vocabulary check (mold_v0-045, scripts/check-vocabulary.ts, npm run check:vocabulary; the smoke test runs it too). `words`: the product words no file of the shell may carry, in any case, in its text or its path. Each `allow` entry lets one exact spelling stay, in the listed files only, and says what holds it: the old env prefix where the alias must name it, and names that outlive a release (a database's functions and roles, built images and boat templates, files on running orchestrator sandboxes), which only a migration of what holds them can rename. An entry that matches nothing fails the check too, so the list cannot outgrow what is there. `files`: whole files the check does not read, each with why. A pack's own files (packs/<id>/, web/src/packs/<id>/, orchestrator/packs/<id>/) and, in a build with packs, the generated files are the pack's and are not read.",
+  "words": [
+    "octillion"
+  ],
+  "files": {
+    "sql/migrations/*.sql": "applied migrations are checksummed (src/migrate.ts) and replayed on every new database: their text, comments included, stays as it was applied",
+    "scripts/fixtures/pre-049-migrations/*.sql": "byte copies of the migrations as they were before mold_v0-049, the fixture test:migrations upgrades from",
+    "web/src/lib/octillion-format.ts": "the module path host packs' console pages written before mold_v0-045 import; it only re-exports display-format.ts"
+  },
+  "allow": [
+    {
+      "id": "legacy-env-prefix",
+      "pattern": "\\bOCTILLION_(?=[\";'`$])|\\bLEGACY=OCTILLION_\\b|OCTILLION_\\$\\{",
+      "paths": [
+        "orchestrator/core/env-names.ts",
+        "web/src/lib/env-names.ts",
+        "web/next.config.ts",
+        "deploy/bootstrap.sh"
+      ],
+      "why": "the env names' prefix before mold_v0-045, spelled once per place that reads the old names as a fallback (src/env-names.ts; the console's own copy; the console's build config; bootstrap.sh, which carries a .env's old names to the new ones)"
+    },
+    {
+      "id": "legacy-env-fallback",
+      "pattern": "\\$\\{APP_([A-Z0-9_]+):-\\$\\{OCTILLION_\\1\\b",
+      "paths": [
+        "deploy/*.sh"
+      ],
+      "why": "a deploy script reading an env name, its old spelling as the fallback of the new one only"
+    },
+    {
+      "id": "database-identifiers",
+      "pattern": "\\boctillion_(?:tenant_role|tenant_org|session_org|run_charge(?:_refresh|_figures|_on_end)?|platform_of)\\b|\\boctillion_tenant_(?=<|\\[|\\$|\\{|[0-9a-f]{10}\\b)|\\boctillion\\\\?\\.org_id\\b",
+      "paths": [
+        "src/rls.ts",
+        "src/migrate.ts",
+        "src/tenant-scope.ts",
+        "src/run-charges.ts",
+        "scripts/gen-packs.mjs",
+        "scripts/migrations-test.ts",
+        "scripts/packs-test.ts",
+        "scripts/packs-fixture-check.ts",
+        "scripts/record-areas-test.ts",
+        "scripts/run-charges-test.ts",
+        "docs/migrations.md",
+        "docs/security.md",
+        "src/docs-corpus.generated.json",
+        "web/src/content/admin-docs.generated.ts"
+      ],
+      "why": "functions, the tenant role and its setting that sql/migrations created and that every row-level security policy on a live database names: renaming them is a migration of every policy (follow-up), not a rename"
+    },
+    {
+      "id": "agent-images",
+      "pattern": "\\boctillion/agent-|\\boctillion-sandbox\\b",
+      "paths": [
+        "harnesses/registry.json",
+        "harnesses/README.md",
+        "scripts/fixtures/registry.json",
+        "src/agents.ts",
+        "orchestrator/fleet/plan.ts",
+        "orchestrator/core/pool.ts",
+        "orchestrator/core/config.ts",
+        "orchestrator/images/build.sh",
+        "orchestrator/images/README.md",
+        "orchestrator/Dockerfile.sandbox",
+        "orchestrator/README.md",
+        "orchestrator/harnesses/fixtures/tools/e2e.mts",
+        "deploy/cleanup.sh",
+        "docs/storage.md",
+        "src/docs-corpus.generated.json",
+        "web/src/content/admin-docs.generated.ts"
+      ],
+      "why": "the tags of the coding agents' images and the sandbox image, already built on hosts and pinned in harnesses/registry.json (image.docker): a new tag needs every image rebuilt (follow-up)"
+    },
+    {
+      "id": "boat-templates",
+      "pattern": "\\boctillion-(?:<harness>|[a-z]+(?:-[a-z]+)*-[0-9][0-9a-z.-]*)",
+      "paths": [
+        "harnesses/registry.json",
+        "harnesses/README.md",
+        "scripts/fixtures/registry.json",
+        "orchestrator/images/README.md"
+      ],
+      "why": "the boat named snapshots (image.boat_snapshot) the harnesses' sandboxes start from, which exist under these names in the boat account"
+    },
+    {
+      "id": "orchestrator-hosts",
+      "pattern": "/etc/octillion\\b|/home/user/octillion\\b|\\boctillion-orchestrator\\b",
+      "paths": [
+        "orchestrator/deploy/boat-lib.ts",
+        "orchestrator/deploy/in-sandbox.ts",
+        "orchestrator/core/host-guard.ts",
+        "orchestrator/test/boat-fleet.ts",
+        "orchestrator/images/boat-setup/_common.sh",
+        "orchestrator/images/README.md",
+        "orchestrator/README.md"
+      ],
+      "why": "the orchestrator sandboxes' service unit, home and host marker, and the harness manifests in the boat templates: running sandboxes hold them, and the next release stops, restarts and checks those (boat-lib stopService, host-guard)"
+    }
+  ],
+  "concepts": {
+    "$comment": "The concept-word ratchet (mold_v0-100, scripts/lib/concepts.ts; npm run check:vocabulary runs it). `words`: the first product's concepts, taken from its host pack (packs/octillion: pack.json description \"Agentic Preference Optimization ... pick your developer tool\", its host.schema tables products/scenarios/simulations/developer_profiles/developer_populations/product_personas/journey_templates/visibility_reports, its pick-rate and hit-rate reports and playbooks). None may stand as PROSE in base text (string literals, template text and JSX text of the shell's sources): base text writes a placeholder the build's words fill ({run}, {Runs}, {member}, {product}: src/words.ts), or leaves the concept to the host pack. Identifiers, SQL and stored values are contracts and are never counted. Each file that still carries one has a ceiling, the exact count today, in a group that says why it remains and how it goes; more fails, fewer fails with the number to lower it to.",
+    "words": [
+      "simulation",
+      "scenario",
+      "visibility",
+      "APO",
+      "Agentic Preference Optimization",
+      "pick rate",
+      "hit rate",
+      "developer tool",
+      "developer profile",
+      "developer population",
+      "persona",
+      "journey",
+      "playbook",
+      "onboard product",
+      "product onboarding",
+      "competitor"
+    ],
+    "scan": [
+      "src/**/*.ts",
+      "web/src/**/*.ts",
+      "web/src/**/*.tsx"
+    ],
+    "skip": {
+      "**/*.generated.*": "generated from the packs and the profile (a host pack's own words land there in its build)",
+      "src/words.ts": "the words engine: its comments' examples name the words a pack may choose",
+      "web/src/packs/**": "a host pack's own console code (its files in a build), never the shell's"
+    },
+    "ceilings": {
+      "host_gated": {
+        "why": "Text shown only where the build's host pack has the feature or the tables (hostFeature('journeys'), hostTable('products'), the session engine's tables): a declarative app never reaches it.",
+        "migration": "Moves into the host pack when the hook it sits behind gets a pack field (HostWeb/HostDefinition copy hooks; audit rows 7, 8 and 17).",
+        "files": {
+          "web/src/features/portal/setup.tsx": 6,
+          "src/account-roles.ts": 1,
+          "src/admin-roles.ts": 1,
+          "web/src/hooks/use-breadcrumbs.tsx": 1
+        }
+      },
+      "host_tables": {
+        "why": "Labels and checks of the host pack's own tables (the storage page's table list, the row-level security probes), each guarded by hostTable(): stored names, read only in a build that has them.",
+        "migration": "Each table's label comes from the host pack's pack.json host.schema when it gets labels (follow-up of mold_v0-049).",
+        "files": {
+          "src/spend-usage.ts": 7,
+          "src/rls.ts": 5
+        }
+      },
+      "account_funnel": {
+        "why": "The admin funnel's stages after the first tool call (onboarded, simulated, reported) and their attention rules are the first product's (audit row 7).",
+        "migration": "Shell stages up to first_call, then stages from the pack's onboarding[].done_when (audit row 7 ticket).",
+        "files": {
+          "src/admin.ts": 6,
+          "src/insights.ts": 1,
+          "web/src/features/admin/lib.ts": 1
+        }
+      },
+      "admin_sections": {
+        "why": "Staff-only admin sections built for the session engine: account detail and peek lists, analytics per week, compute job kinds, the plan editor's examples and the simulations metric (audit row 8).",
+        "migration": "Hidden when sessionEngine() is false, and the pack's runs shown per job kind in its words (audit row 8 ticket).",
+        "files": {
+          "web/src/features/admin/account-peek.tsx": 8,
+          "web/src/features/admin/spend.tsx": 5,
+          "web/src/features/admin/account-detail.tsx": 3,
+          "web/src/features/admin/analytics.tsx": 3,
+          "src/plan-config.ts": 2,
+          "src/compute-jobs.ts": 1,
+          "src/compute.ts": 1,
+          "src/settings.ts": 1,
+          "web/src/features/admin/compute-jobs.tsx": 1
+        }
+      },
+      "access_requests": {
+        "why": "The review page's fields for the first product's request form (agents, competitors, goals; audit row 6).",
+        "migration": "Declared access_request.fields in pack.json or the profile (audit row 6 ticket).",
+        "files": {
+          "web/src/features/admin/requests.tsx": 5
+        }
+      },
+      "usage_page": {
+        "why": "/app/usage is the first product's usage page (simulations run, hit rate), reachable by URL only in a declarative app, whose tabs send usage to /app/activity (audit row 14).",
+        "migration": "Redirect /app/usage to /app/activity when sessionEngine() is false, the page moving to the host pack (audit row 14 ticket).",
+        "files": {
+          "web/src/features/portal/usage.tsx": 12
+        }
+      },
+      "email_copy": {
+        "why": "Email templates still pitch the first product (audit row 3).",
+        "migration": "mold_v0-101 (branch mold_v0-101-email) rewrites them with src/vocabulary.ts fill() and lowers this ceiling to 0.",
+        "files": {
+          "src/email.ts": 5
+        }
+      }
+    }
+  }
+}

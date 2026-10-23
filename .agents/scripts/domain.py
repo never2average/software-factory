@@ -25,7 +25,7 @@ The domain is the console's (its project, vercel.projects.web, is the one attach
 vercel.projects.web.proxied_health, else health_path, /healthz) and wants 200 with {"ok": true}: the API's own answer,
 come through the console. switch first asks Vercel that the domain is filed under the console project (the deploy keeps
 it as the front door only then), writes the API's settings made from the console's address (mold.json
-vercel.projects.api.env: OCTILLION_CONSOLE_URL, which sign-in codes, invitations, emailed links and Clerk's accepted
+vercel.projects.api.env: APP_CONSOLE_URL (and its old spelling OCTILLION_CONSOLE_URL where the project holds it, mold_v0-045), which sign-in codes, invitations, emailed links and Clerk's accepted
 sign-in origins are built on) on the API project, and moves production_url; a redeploy makes the API read it.
 """
 import json, os, re, socket, subprocess, sys, tempfile, urllib.request
@@ -275,9 +275,12 @@ def switch_single(app_id, infra, p, man):
     cwd = os.path.join(ROOT, "build", app_id) if os.path.isdir(os.path.join(ROOT, "build", app_id)) else ROOT
     ok, why = console_owns(infra, url, cwd)
     if not ok: sys.exit(f"{why}\nnothing was switched: a deploy keeps {d} as the front door only when Vercel files it under the console project {v['project']}")
-    want = console_settings(man, url)
-    for n, val in want.items(): set_env(n, val, cwd, api)
     held = env_names(cwd, api)
+    # mold_v0-045: an app deployed before then holds the old spelling (OCTILLION_CONSOLE_URL): it gets the same value, so a
+    # release that still reads it (or one rolled back to) links to the new front door too.
+    sys.path.insert(0, os.path.join(SCRIPTS, "lib")); import single_service as SS
+    want = SS.with_held_spellings(console_settings(man, url), held, SS.env_aliases(man))
+    for n, val in want.items(): set_env(n, val, cwd, api)
     old = v.get("production_url"); v["production_url"] = url; save(infra, p)
     secrets = set(infra.get("secrets_user") or []) | set(infra.get("secrets_derived") or [])
     clerk = any(x.startswith("CLERK_") for x in secrets)
@@ -460,7 +463,7 @@ def single_self_test():
         # the shape is read from the mold: mold_v0 is single-service, mold_v1 is not
         assert single("mv0") and single("mv0")["shape"] == "single_service" and single("mv1") is None and single("nope") is None; n += 1
         assert proxied_health(single("mv0")) == "/healthz"; n += 1
-        assert console_settings(single("mv0"), "https://mv0.example.com") == {"OCTILLION_CONSOLE_URL": "https://mv0.example.com"}; n += 1
+        assert console_settings(single("mv0"), "https://mv0.example.com") == {"APP_CONSOLE_URL": "https://mv0.example.com"}; n += 1
 
         # verify: the console's /healthz on the domain, the API's own {"ok": true} through it
         answers = {"https://mv0.example.com/healthz": (200, {"ok": True})}
@@ -493,9 +496,10 @@ def single_self_test():
         assert rc and "nothing was switched" in str(rc) and not wrote and load(ip)["vercel"]["production_url"] == "https://mv0.vercel.app"; n += 1
         owns["ok"] = True
 
-        # switch: OCTILLION_CONSOLE_URL on the API project only, production_url moved, the redeploy and Google named
+        # switch: APP_CONSOLE_URL on the API project only, and its old spelling too where the project holds it (an app
+        # deployed before mold_v0-045, as octillion and maxwell), production_url moved, the redeploy and Google named
         rc, out = run(switch, "mv0"); i = load(ip)
-        assert rc == 0 and wrote == [("mv0-api", "OCTILLION_CONSOLE_URL", "https://mv0.example.com")], wrote; n += 1
+        assert rc == 0 and sorted(wrote) == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com"), ("mv0-api", "OCTILLION_CONSOLE_URL", "https://mv0.example.com")], wrote; n += 1
         assert i["vercel"]["production_url"] == "https://mv0.example.com" and i["vercel"]["custom_domain"] == "mv0.example.com"; n += 1
         assert "WEB_ORIGIN" not in out and "provision.py mv0 --deploy" in out and "/api/auth/google/callback" in out and "CLERK_AUTHORIZED_PARTIES" not in out, out; n += 1
         assert out.index("redeploy") < out.index("Google"); n += 1
@@ -505,8 +509,9 @@ def single_self_test():
         rc, out = run(switch, "mv0"); assert rc == 0 and "CLERK_AUTHORIZED_PARTIES" in out and "GOOGLE_REDIRECT_URI" in out and "https://mv0.example.com" in out, out; n += 1
         # an app on Clerk is told the old address stops taking Clerk sign-ins after the redeploy, and the domain step
         i = load(ip); i["secrets_user"] = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]; i["vercel"]["production_url"] = "https://mv0.vercel.app"; save(i, ip)
-        g["env_names"] = lambda cwd, project: set()
+        g["env_names"] = lambda cwd, project: set(); wrote.clear()
         rc, out = run(switch, "mv0"); assert rc == 0 and "not the old one" in out and "satellite" in out, out; n += 1
+        assert wrote == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com")], f"a new app (no old name held): the new name only: {wrote}"; n += 1
 
         # ---- attach through the project API; nothing recorded unless Vercel holds it -------------------------------
         mp = os.path.join(tmp, "state", "application", "mv1", "infrastructure.json")

@@ -4,11 +4,11 @@
 // unpacks the uploaded code and starts the uploaded runner from it, and a fake Docker Engine API on a unix socket that
 // starts the runner from the image's code. Neither stand-in has a firewall (scripts/run-firewall-test.ts proves the
 // lockdown the runner applies in a real sandbox), so the stand-ins start the runner with the lockdown off, which the
-// runner refuses unless OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes says this is a test.
+// runner refuses unless APP_ALLOW_UNSANDBOXED_RUNS=yes says this is a test.
 //   npm run test:run-sandboxes
 //
 //  1. No provider and the unsandboxed flag off: nothing launches and nothing runs; the queued run says why it waits.
-//     OCTILLION_RUN_SANDBOX=process without the flag is refused the same way; the runner refuses lockdown "off" alone.
+//     APP_RUN_SANDBOX=process without the flag is refused the same way; the runner refuses lockdown "off" alone.
 //  2. The autoscaler's demand counts queued runs per kind; its tick launches one sandbox for the run (the provider's TTL
 //     bounded by the run's lifetime); the runner, from the uploaded files only, claims the run with a token bound to it
 //     and carries it out as the run's user; completing marks the sandbox for teardown and the next tick deletes it and
@@ -17,12 +17,12 @@
 //     run, or reach any other worker route; each run's results land in its own workspace.
 //  4. A crashed runner: its run's lease lapses, the run is swept and queued again, the dead sandbox is torn down and a
 //     new one carries out the next attempt.
-//  5. Cost: at most OCTILLION_MAX_RUN_SANDBOXES at once; a run whose sandbox cannot start is tried
-//     OCTILLION_RUN_LAUNCH_ATTEMPTS times and then fails (never launched forever); orphans of this deployment are
+//  5. Cost: at most APP_MAX_RUN_SANDBOXES at once; a run whose sandbox cannot start is tried
+//     APP_RUN_LAUNCH_ATTEMPTS times and then fails (never launched forever); orphans of this deployment are
 //     deleted and another deployment's are not.
 //  6. The server's own Docker (the compose runner service): a container per run with no socket, no mount, every
 //     capability dropped but the runner's, no new privileges, limits, on the runs network; removed after its run.
-//  7. OCTILLION_RUN_SANDBOX=process with the flag (tests only) carries a run out.
+//  7. APP_RUN_SANDBOX=process with the flag (tests only) carries a run out.
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -30,6 +30,8 @@ import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:
 import http from "node:http";
 import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
+import { NS } from "../src/namespace.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const RUNS_DIR = path.join(ROOT, "scripts", "fixtures", "runs");
@@ -38,23 +40,23 @@ const asRoot = process.getuid?.() === 0;
 const PUBLIC = "https://octi.example";
 const BOAT_KEY = `boat_mock_${randomBytes(6).toString("hex")}`;
 Object.assign(process.env, {
-  PUBLIC_URL: PUBLIC, OCTILLION_AUTOSCALE: "on", OCTILLION_ORCH_PER_JOB: "off", OCTILLION_RUN_SANDBOX: "auto",
-  OCTILLION_DOCKER_SOCKET: path.join(TMP, "no-docker.sock"), OCTILLION_RUN_LAUNCH_BACKOFF_SECONDS: "0", BOAT_STARTS_PER_MINUTE: "1000", BOAT_STARTS_PER_HOUR: "1000",
+  PUBLIC_URL: PUBLIC, APP_AUTOSCALE: "on", APP_ORCH_PER_JOB: "off", APP_RUN_SANDBOX: "auto",
+  APP_DOCKER_SOCKET: path.join(TMP, "no-docker.sock"), APP_RUN_LAUNCH_BACKOFF_SECONDS: "0", BOAT_STARTS_PER_MINUTE: "1000", BOAT_STARTS_PER_HOUR: "1000",
 });
-delete process.env.OCTILLION_ALLOW_UNSANDBOXED_RUNS;
+delete process.env.APP_ALLOW_UNSANDBOXED_RUNS;
 
 // ---------- the sandbox stand-ins ----------
 let base = ""; // the HTTP server, as a sandbox's network reaches the API's public address
 const kids = new Set<ChildProcess>();
-// Each stand-in's runner leases a run user of its own (mold_v0-078: a uid per run from OCTILLION_RUN_UIDS, as a real
+// Each stand-in's runner leases a run user of its own (mold_v0-078: a uid per run from APP_RUN_UIDS, as a real
 // sandbox's runner does; these stand-ins share this machine, so the leases keep their runs apart).
 /** Start the runner as a sandbox would, from `cwd`'s code, with `env` (as written for the sandbox), and no firewall. */
 function startRunner(cwd: string, bin: string[], env: Record<string, string>, tag: string): ChildProcess {
-  const { OCTILLION_RUN_USER: _u, ...rest } = env;
+  const { APP_RUN_USER: _u, ...rest } = env;
   const child = spawn(bin[0]!, [...bin.slice(1), "src/run-sandbox-runner.ts"], { cwd, detached: true, stdio: ["ignore", "ignore", "pipe"],
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...rest, OCTILLION_URL: rest.OCTILLION_URL === PUBLIC ? base : rest.OCTILLION_URL!,
-           OCTILLION_RUN_LOCKDOWN: "off", OCTILLION_ALLOW_UNSANDBOXED_RUNS: "yes",
-           ...(asRoot ? {} : { OCTILLION_RUN_SAME_USER: "yes" }) } });
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...rest, APP_URL: rest.APP_URL === PUBLIC ? base : rest.APP_URL!,
+           APP_RUN_LOCKDOWN: "off", APP_ALLOW_UNSANDBOXED_RUNS: "yes",
+           ...(asRoot ? {} : { APP_RUN_SAME_USER: "yes" }) } });
   let err = "";
   child.stderr!.on("data", (d) => { err += d; if (process.env.SBX_DEBUG) process.stderr.write(`[${tag}] ${d}`); });
   child.on("exit", () => kids.delete(child));
@@ -236,16 +238,16 @@ try {
     assert.match(w[0]!.data.reason, /sandbox provider's key is not in the vault/);
     await rs0.tick();
     assert.equal((await events(id)).filter((e) => e.type === "waiting").length, 1, "said once, not every tick");
-    process.env.OCTILLION_RUN_SANDBOX = "process";
+    process.env.APP_RUN_SANDBOX = "process";
     const t2 = await new sbx.RunScaler({ log: () => {} }).tick();
     assert.equal(t2.provider, null, "process provider refused without the flag");
-    assert.match((await events(id)).filter((e) => e.type === "waiting").at(-1)!.data.reason, /refused unless OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes/);
-    process.env.OCTILLION_RUN_SANDBOX = "auto";
+    assert.match((await events(id)).filter((e) => e.type === "waiting").at(-1)!.data.reason, /refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes/);
+    process.env.APP_RUN_SANDBOX = "auto";
     // The runner itself refuses a sandbox with no firewall unless the test flag says so (before claiming anything).
     const r = spawnSync(process.execPath, ["--import", "tsx", "src/run-sandbox-runner.ts"], { cwd: ROOT, encoding: "utf8", timeout: 60_000,
-      env: { PATH: process.env.PATH!, OCTILLION_URL: base, OCTILLION_WORKER_TOKEN: "owk_x", OCTILLION_RUN_LOCKDOWN: "off" } });
+      env: { PATH: process.env.PATH!, APP_URL: base, APP_WORKER_TOKEN: "owk_x", APP_RUN_LOCKDOWN: "off" } });
     assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /OCTILLION_RUN_LOCKDOWN=off is refused/);
+    assert.match(r.stderr, /APP_RUN_LOCKDOWN=off is refused/);
     assert.equal((await runRow(id)).status, "queued");
     console.log("✓ no provider: nothing launched, nothing run; the run waits with its reason (once); process mode and lockdown off refused without the test flag");
 
@@ -264,11 +266,11 @@ try {
     assert.ok(sb.name.startsWith(`octi-run-${row!.id}-`), sb.name);
     assert.ok(Number(sb.create.ttlSeconds) <= 10 * 60 + 2 * 3600 + 2 * 15 + 1800 && Number(sb.create.ttlSeconds) > 0, `TTL ${sb.create.ttlSeconds}`);
     const e = envFiles[sb.id]!;
-    assert.equal(e.OCTILLION_RUN_LOCKDOWN, "on", "the launcher always asks for the lockdown");
-    assert.equal(e.OCTILLION_RUN_UIDS, "61000-64999", "the range its runner leases the run's user from (mold_v0-078)");
-    assert.equal(e.OCTILLION_URL, PUBLIC);
-    assert.ok(e.OCTILLION_WORKER_TOKEN?.startsWith("owk_") && e.OCTILLION_WORKER_TOKEN !== process.env.OCTILLION_WORKER_TOKEN, "a run token, never the fleet token");
-    for (const k of Object.keys(e)) assert.ok(["OCTILLION_URL", "OCTILLION_WORKER_TOKEN", "OCTILLION_RUN_ID", "OCTILLION_RUN_UIDS", "OCTILLION_RUN_PACK_DIR", "OCTILLION_RUN_LOCKDOWN"].includes(k), `unexpected ${k} in the sandbox`);
+    assert.equal(e.APP_RUN_LOCKDOWN, "on", "the launcher always asks for the lockdown");
+    assert.equal(e.APP_RUN_UIDS, "61000-64999", "the range its runner leases the run's user from (mold_v0-078)");
+    assert.equal(e.APP_URL, PUBLIC);
+    assert.ok(e.APP_WORKER_TOKEN?.startsWith("owk_") && e.APP_WORKER_TOKEN !== ENV.APP_WORKER_TOKEN, "a run token, never the fleet token");
+    for (const k of Object.keys(e)) assert.ok(["APP_URL", "APP_WORKER_TOKEN", "APP_RUN_ID", "APP_RUN_UIDS", "APP_RUN_PACK_DIR", "APP_RUN_LOCKDOWN"].includes(k), `unexpected ${k} in the sandbox`);
     // The uploaded code is the runner's import graph, the pack and the orchestrator: no server code.
     const uploaded = spawnSync("tar", ["-tzf", path.join(sb.dir, "code.tgz")], { encoding: "utf8" }).stdout.split("\n");
     for (const f of ["src/run-sandbox-runner.ts", "src/run-harness.ts", "orchestrator/core/egress.ts", "scripts/fixtures/runs/ok.mjs"]) assert.ok(uploaded.includes(f), `${f} uploaded`);
@@ -283,12 +285,12 @@ try {
     const claimed = (await events(id)).find((x) => x.type === "claimed");
     assert.equal(claimed?.data.worker_id, `sbx-${row!.id}`, "claimed by its sandbox");
     assert.equal((await rows(id))[0]!.state, "draining", "completing marks the sandbox for teardown");
-    assert.ok(await resolveWorkerToken(e.OCTILLION_WORKER_TOKEN!), "token live until teardown");
+    assert.ok(await resolveWorkerToken(e.APP_WORKER_TOKEN!), "token live until teardown");
     const t3 = await as.tick();
     assert.ok(!sbs.has(sb.id), "the sandbox is deleted");
     assert.equal((await rows(id))[0]!.state, "deleted");
-    assert.equal(await resolveWorkerToken(e.OCTILLION_WORKER_TOKEN!), null, "its token is revoked");
-    assert.equal((await worker(e.OCTILLION_WORKER_TOKEN!, "POST", "/runs/claim", {})).status, 401);
+    assert.equal(await resolveWorkerToken(e.APP_WORKER_TOKEN!), null, "its token is revoked");
+    assert.equal((await worker(e.APP_WORKER_TOKEN!, "POST", "/runs/claim", {})).status, 401);
     assert.equal(t3.runs?.launched?.length ?? 0, 0, "nothing relaunched");
     const res = await db.query<{ org_id: number }>("SELECT org_id FROM run_results WHERE run_id = $1", [id]);
     assert.ok(res.length === 1 && res[0]!.org_id === A.orgId);
@@ -310,16 +312,16 @@ try {
     assert.equal((await runRow(b)).status, "succeeded");
     const [ra] = await rows(a), [rb] = await rows(b);
     assert.notEqual(ra!.sandbox_id, rb!.sandbox_id, "one sandbox per run");
-    const ta = envFiles[ra!.sandbox_id!]!.OCTILLION_WORKER_TOKEN!, tb = envFiles[rb!.sandbox_id!]!.OCTILLION_WORKER_TOKEN!;
+    const ta = envFiles[ra!.sandbox_id!]!.APP_WORKER_TOKEN!, tb = envFiles[rb!.sandbox_id!]!.APP_WORKER_TOKEN!;
     assert.notEqual(ta, tb);
-    assert.equal(envFiles[ra!.sandbox_id!]!.OCTILLION_RUN_ID, a);
+    assert.equal(envFiles[ra!.sandbox_id!]!.APP_RUN_ID, a);
     // A's token: its own run only, once; nothing else of the worker API.
     assert.equal((await worker(ta, "POST", "/runs/claim", {})).status, 409, "claims once");
     for (const [m, p] of [["POST", `/runs/${b}/heartbeat`], ["GET", `/runs/${b}/credentials`], ["GET", `/runs/${b}/workspace`], ["POST", `/runs/${b}/complete`]] as const)
       assert.equal((await worker(ta, m, p, m === "POST" ? {} : undefined, "orl_x")).status, 403, `${m} ${p} with A's token`);
     for (const [m, p] of [["POST", "/claim"], ["GET", "/fleet"], ["POST", "/research/claim"], ["POST", "/orchestrator/credentials"], ["POST", "/fleet"], ["GET", "/library/tasks"]] as const)
       assert.equal((await worker(ta, m, p, m === "POST" ? { worker_id: "x" } : undefined)).status, 403, `${m} ${p} refused to a run token`);
-    assert.equal((await worker(process.env.OCTILLION_WORKER_TOKEN!, "POST", "/runs/claim", { worker_id: "sbx-1" })).status, 400, "sbx- worker ids are the sandboxes' own");
+    assert.equal((await worker(ENV.APP_WORKER_TOKEN!, "POST", "/runs/claim", { worker_id: "sbx-1" })).status, 400, "sbx- worker ids are the sandboxes' own");
     const ea = (await events(a)).find((x) => x.type === "claimed"), eb = (await events(b)).find((x) => x.type === "claimed");
     assert.equal(ea?.data.worker_id, `sbx-${ra!.id}`); assert.equal(eb?.data.worker_id, `sbx-${rb!.id}`);
     const resA = await db.query<{ org_id: number; asset_key: string }>("SELECT org_id, asset_key FROM run_results WHERE run_id = $1", [a]);
@@ -362,7 +364,7 @@ try {
 
   // ---------- 5. caps, failed starts, orphans ----------
   {
-    process.env.OCTILLION_MAX_RUN_SANDBOXES = "1";
+    process.env.APP_MAX_RUN_SANDBOXES = "1";
     const a = await start(ca, "plain", { asset: "app-a" }), b = await start(cb, "plain", { asset: "app-b" });
     const t = await rs.tick(); await rs.settle();
     assert.equal(t.launched?.length, 1, "one launch under a cap of 1");
@@ -371,7 +373,7 @@ try {
     await rs.tick(); await rs.settle();
     await waitFor("both", async () => (await ended(a)()) && (await ended(b)()));
     await rs.tick();
-    process.env.OCTILLION_MAX_RUN_SANDBOXES = "10";
+    process.env.APP_MAX_RUN_SANDBOXES = "10";
     // A sandbox that cannot start: three tries, then the run fails; nothing more is created for it.
     failCreates = true;
     const c = await start(ca, "plain", { asset: "app-a" });
@@ -393,14 +395,14 @@ try {
     await rs.tick();
     assert.ok(!sbs.has(orphan) && sbs.has(other));
     sbs.delete(other);
-    console.log("✓ cost: at most OCTILLION_MAX_RUN_SANDBOXES; a sandbox that cannot start is tried 3 times, then the run fails; orphans of this deployment deleted, another's kept");
+    console.log("✓ cost: at most APP_MAX_RUN_SANDBOXES; a sandbox that cannot start is tried 3 times, then the run fails; orphans of this deployment deleted, another's kept");
   }
 
   // ---------- 6. the server's own Docker (the compose runner service) ----------
   {
     await new Promise<void>((r) => docker.listen(DOCKER_SOCK, () => r()));
-    Object.assign(process.env, { OCTILLION_RUN_SANDBOX: "docker", OCTILLION_DOCKER_SOCKET: DOCKER_SOCK, OCTILLION_RUN_IMAGE: "sha256:runimage",
-      OCTILLION_RUN_NETWORK: "sf-test_runs", OCTILLION_RUN_API_URL: base });
+    Object.assign(process.env, { APP_RUN_SANDBOX: "docker", APP_DOCKER_SOCKET: DOCKER_SOCK, APP_RUN_IMAGE: "sha256:runimage",
+      APP_RUN_NETWORK: "sf-test_runs", APP_RUN_API_URL: base });
     const id = await start(cb, "plain", { asset: "app-b" });
     const t = await rs.tick(); await rs.settle();
     assert.equal(t.provider, "docker");
@@ -409,7 +411,7 @@ try {
     const ct = cts.get(row!.sandbox_id!)!;
     const h = ct.body.HostConfig;
     assert.equal(ct.body.Image, "sha256:runimage");
-    assert.equal(ct.body.Labels["org.octillion.run-sandbox"], "octi.sf-test_runs", "labelled per project: another project's runner never lists it");
+    assert.equal(ct.body.Labels[`org.${NS}.run-sandbox`], "octi.sf-test_runs", "labelled per project: another project's runner never lists it");
     assert.deepEqual(ct.body.Cmd.slice(0, 3), ["timeout", "-s", "KILL"], "the container has its own deadline");
     assert.equal(ct.body.User, "0");
     assert.deepEqual(h.CapDrop, ["ALL"]);
@@ -419,9 +421,9 @@ try {
     assert.equal(h.NetworkMode, "sf-test_runs");
     assert.ok(h.Memory > 0 && h.NanoCpus > 0 && h.PidsLimit > 0);
     const env = Object.fromEntries((ct.body.Env as string[]).map((l) => l.split(/=(.*)/s).slice(0, 2)));
-    assert.equal(env.OCTILLION_RUN_LOCKDOWN, "on");
-    for (const k of ["DATABASE_URL", "OCTILLION_VAULT_KEY"]) assert.ok(!(k in env), `${k} not in a run container`);
-    assert.ok(!(ct.body.Env as string[]).some((l) => l.includes(process.env.OCTILLION_WORKER_TOKEN!)), "no fleet token");
+    assert.equal(env.APP_RUN_LOCKDOWN, "on");
+    for (const k of ["DATABASE_URL", "APP_VAULT_KEY"]) assert.ok(!(k in env), `${k} not in a run container`);
+    assert.ok(!(ct.body.Env as string[]).some((l) => l.includes(ENV.APP_WORKER_TOKEN!)), "no fleet token");
     await waitFor("the docker run", ended(id));
     assert.equal((await runRow(id)).status, "succeeded");
     await rs.tick();
@@ -441,15 +443,15 @@ try {
 
   // ---------- 7. process (tests only) ----------
   {
-    Object.assign(process.env, { OCTILLION_RUN_SANDBOX: "process", OCTILLION_ALLOW_UNSANDBOXED_RUNS: "yes" });
+    Object.assign(process.env, { APP_RUN_SANDBOX: "process", APP_ALLOW_UNSANDBOXED_RUNS: "yes" });
     const id = await start(ca, "plain", { asset: "app-a" });
     const t = await rs.tick(); await rs.settle();
     assert.equal(t.provider, "process");
     await waitFor("the process run", ended(id));
     assert.equal((await runRow(id)).status, "succeeded");
     await rs.tick();
-    delete process.env.OCTILLION_ALLOW_UNSANDBOXED_RUNS;
-    console.log("✓ process mode (OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes, tests only) carries a run out");
+    delete process.env.APP_ALLOW_UNSANDBOXED_RUNS;
+    console.log("✓ process mode (APP_ALLOW_UNSANDBOXED_RUNS=yes, tests only) carries a run out");
   }
   await ca.close(); await cb.close();
   await srv.close();

@@ -64,7 +64,7 @@ bake() {
     boat PUT "/sandboxes/$id/files" "$(node -e 'const fs=require("fs");process.stdout.write(JSON.stringify({path:"/tmp/octi-setup/"+process.argv[2],content:fs.readFileSync(process.argv[1],"utf8")}))' "$HERE/boat-setup/$f" "$f")" >/dev/null
   done
   res="$(boat POST "/sandboxes/$id/commands" "{\"command\":\"bash /tmp/octi-setup/$harness.sh '$version' && rm -rf /tmp/octi-setup\",\"timeoutSeconds\":590}" -m 700)"
-  echo "$res" | json '(j.stderr||"").split("\n").filter(l=>l.includes("[octillion-setup]")).join("\n")' | sed 's/^/    /'
+  echo "$res" | json '(j.stderr||"").split("\n").filter(l=>l.includes("[app-setup]")).join("\n")' | sed 's/^/    /'
   [ "$(echo "$res" | json 'String(j.exitCode)')" = "0" ] || { echo "setup failed: $(echo "$res" | json 'j.stderr?.slice(-2000)')" >&2; return 1; }
 
   boat POST /named-snapshots "{\"sandboxId\":\"$id\",\"name\":\"$name\"}" >/dev/null

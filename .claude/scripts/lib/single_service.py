@@ -214,6 +214,38 @@ def rls_vercel(P, cb, api, spec, health_doc, rls_run=None):
               f"the function's own probe (/healthz rls_probe, run by the product's cron at most hourly) said {probe or 'nothing'!r}.")
     return passed, said, running, detail
 
+def env_aliases(man):
+    """The prefix of the env names the mold reads and the one they had before (mold.json env_names, mold_v0-045), as
+    (prefix, legacy_prefix); None when the mold declares none. The mold reads an old name when its new one is unset."""
+    e = (man or {}).get("env_names") or {}
+    p, l = e.get("prefix"), e.get("legacy_prefix")
+    good = lambda x: isinstance(x, str) and re.fullmatch(r"[A-Z][A-Z0-9]*_", x) is not None
+    return (p, l) if good(p) and good(l) and p != l else None
+
+def other_spelling(name, aliases):
+    """The same env name under the other prefix (new <-> old), or None (no aliases, or not one of the mold's names)."""
+    if not aliases: return None
+    p, l = aliases
+    if name.startswith(p) and len(name) > len(p): return l + name[len(p):]
+    if name.startswith(l) and len(name) > len(l): return p + name[len(l):]
+    return None
+
+def with_held_spellings(settings, held, aliases):
+    """`settings` plus, for each, its other spelling where `held` has that one (mold_v0-045): an app deployed before then
+    holds OCTILLION_CONSOLE_URL; the new code reads APP_CONSOLE_URL first, but a release rolled back reads the old name,
+    so both get the same value and neither goes stale."""
+    out = dict(settings)
+    for n, v in settings.items():
+        o = other_spelling(n, aliases)
+        if o and o in held and o not in out: out[o] = v
+    return out
+
+def has_value(name, present, aliases):
+    """Whether a value for NAME is held under either spelling. An app deployed before mold_v0-045 holds its keys under
+    the old names: a key minted under the new name beside one would win over it (a new vault key: nothing decrypts)."""
+    o = other_spelling(name, aliases)
+    return name in present or (o is not None and o in present)
+
 REF = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}")
 def parse_compose(text):
     """What a compose file says, read without a YAML library: the default project name, each service (whether it is
@@ -311,7 +343,7 @@ def compose_facts(cb, man):
             "mint": c.get("mint", ""), "publishers": sorted(n for n, s in P["services"].items() if s["ports"] and not s["profiles"]),
             "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)),
             "dockerfile_sources": dockerfile_sources(dtext) + [x for x in (K["dockerfile_sources"] if K else []) if x not in dockerfile_sources(dtext)],
-            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "console": K}
+            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "console": K, "aliases": env_aliases(man)}
 
 def missing_build_inputs(cb, F):
     """Files the image build copies that the snapshot does not have: the build would stop on the server."""
@@ -387,6 +419,8 @@ def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defa
            "product_id": prod["product_id"], "service_surface": [],
            "testing": {l: {"status": "pending"} for l in ("load", "context", "functional", "accessibility", "responsiveness")}}
     if hints.get("customer_id"): app["customer_id"] = hints["customer_id"]
+    adm = admin_entries(ans.get("platform_admins") or [])[0]
+    if adm: app["platform_admins"] = adm      # who may open the admin console; written to the API at every deploy
     infra = {"$schema": "../app_id/infrastructure.schema.json", "target": target,
              "secret_store": "compose_remote_env_file" if target == "compose_remote" else "vercel_env",
              "sandbox": {"provider": "none", "prewarm": False},
@@ -473,7 +507,7 @@ def settings(app_id, app, infra, root=None):
     ufw_rules, fail2ban_jail, remote_key) take it as they take their own."""
     cr = infra.get("compose_remote") or {}; man = manifest(app.get("mold_id"), root) or {}
     inst = install_path(app_id)
-    S = {"app_id": app_id, "mold_id": app.get("mold_id"), "slug": slug(app_id), "host": cr.get("host") or "", "domain": cr.get("domain") or "",
+    S = {"app_id": app_id, "mold_id": app.get("mold_id"), "aliases": env_aliases(man), "slug": slug(app_id), "host": cr.get("host") or "", "domain": cr.get("domain") or "",
          "user": cr.get("ssh_user") or "root", "port": int(cr.get("ssh_port") or 22), "key_ref": cr.get("ssh_key_ref") or f"sf_{app_id}",
          "ssh_host": cr.get("ssh_host") or "", "ssh_allow_from": cr.get("ssh_allow_from") or "", "tunnel": {}, "tunnel_on": False,
          "install": inst, "releases": f"{inst}/releases", "current": f"{inst}/current", "factory_dir": f"{inst}/factory",
@@ -481,7 +515,7 @@ def settings(app_id, app, infra, root=None):
          "project": (cr.get("compose") or {}).get("project") or f"sf-{slug(app_id)}",
          "compose_file": (cr.get("compose") or {}).get("file") or (man.get("compose") or {}).get("file", ""),
          "health_path": man.get("health_path", "/"), "secrets_user": list(infra.get("secrets_user") or []),
-         "secrets_optional": list(infra.get("secrets_optional") or []), "email": ""}
+         "secrets_optional": list(infra.get("secrets_optional") or []), "email": "", "admins": admins_of(app)}
     S["host_shown"] = S["ssh_host"] or S["host"] or VR.NO_HOST; S["domain_shown"] = S["domain"] or VR.NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"; S["sudo"] = "" if S["user"] == "root" else "sudo "
     S["tool"] = f"{S['factory_dir']}/.claude/scripts/lib/single_service.py"
@@ -489,8 +523,16 @@ def settings(app_id, app, infra, root=None):
     return S
 
 def config_pairs(S, F):
-    """The settings state decides, by name, for the env file (never a secret)."""
-    return {k: v.replace("{domain}", S["domain"]) for k, v in F["config"].items()}
+    """The settings state decides, by name, for the env file (never a secret). {platform_admins} is the app's platform
+    administrators (application.json platform_admins); while state records none the name is left out, so whatever
+    the server's env file holds under it is kept."""
+    out = {}
+    for k, v in F["config"].items():
+        if ADMINS in v:
+            if not S.get("admins"): continue
+            v = v.replace(ADMINS, S["admins"])
+        out[k] = v.replace("{domain}", S["domain"])
+    return out
 
 # ---------------------------------------------------------------------------------------------------------
 # generated files (run on the server, as root, only with the deploy's marker)
@@ -693,7 +735,8 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
     ssh = lambda cmd: VR.ssh_argv(S, cmd, shown=shown)
     g = lambda cmd: VR.guarded(S, cmd)
     excludes = list(F["excludes"])
-    env_cmd = g(f"python3 {S['tool']} env --file {S['env_file']} --bootstrap {R}/{F['mint']}" if F["mint"] else f"python3 {S['vr_tool']} env-merge --file {S['env_file']}")
+    alias = f" --alias {F['aliases'][1]}={F['aliases'][0]}" if F.get("aliases") else ""
+    env_cmd = g(f"python3 {S['tool']} env --file {S['env_file']} --bootstrap {R}/{F['mint']}{alias}" if F["mint"] else f"python3 {S['vr_tool']} env-merge --file {S['env_file']}")
     return [
         {"id": "qualify", "title": "qualify the server (read-only probe, judged for a compose stack)", "argv": ssh("sh -s"), "stdin": "qualify.sh", "timeout": 60},
         {"id": "bundle", "title": f"send the generated scripts and the factory's tooling to {S['factory_dir']}",
@@ -838,6 +881,14 @@ def check(app_id, app, infra, adir, say=print, root=None):
     if S["secrets_optional"]:
         say(f"optional, off while empty; set one any time with --set-secret NAME (it applies at the next deploy): {', '.join(S['secrets_optional'])}")
     todo = []
+    an = admin_env_names(man, "compose_remote")
+    if an and S["admins"]:
+        say(f"platform administrators (application.json platform_admins): {S['admins']}; written to the server's env file as {', '.join(an)} at each deploy")
+    elif an and infra.get("deployed_at"):
+        say(f"platform administrators: none recorded in state; the server's env file keeps whatever {', '.join(an)} holds there (never removed). "
+            f"Record them as application.json platform_admins so each deploy writes them")
+    elif an:
+        need_admins(app_id, app); todo.append(admin_todo(app_id))
     if not S["host"] or not S["domain"]:
         todo.append(f"supply the server and the domain: python3 .claude/scripts/provision.py {app_id} --set-remote host=<address> domain=<name>")
     if not os.path.isfile(VR.key_path(S)):
@@ -902,7 +953,7 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
         say("[dns] the domain points at the server")
         for sid in ("bundle", "packages", "firewall"): run(sid)
         have = set((run("names").stdout or "").split())
-        missing = [n for n in S["secrets_user"] if n not in have]
+        missing = [n for n in S["secrets_user"] if not has_value(n, have, F.get("aliases"))]
         vals = (secrets_for or (lambda m: VR.collect_secrets(S["app_id"], m)))(missing) if missing else {}
         for k, v in vals.items():
             if "$" in v: raise Stop(f"{k} contains a $ sign, which the compose env file would read as a variable; nothing was sent. Check the value.")
@@ -1005,7 +1056,10 @@ def set_secret_remote(app_id, S, name, P, runner=None, value=None, say=print):
     why = VR.env_check(name, v) or ("it contains a $ sign, which the compose env file would read as a variable" if "$" in v else None)
     if why: raise Stop(f"{why}. Nothing was stored.")
     st = {"id": "set-secret", "argv": VR.ssh_argv(S, VR.guarded(S, f"python3 {S['vr_tool']} env-merge --file {S['env_file']}")), "timeout": 60}
-    r = (runner or VR.real_runner)(st, f"{name}={v}\n")
+    # The same key under its other spelling too (mold_v0-045): a deploy carries an old name's value to the new name, which
+    # the app reads first, so the value is written under both and neither can shadow the other.
+    o = other_spelling(name, S.get("aliases"))
+    r = (runner or VR.real_runner)(st, f"{name}={v}\n" + (f"{o}={v}\n" if o else ""))
     if r.returncode: raise Stop(f"{name} was not stored: " + VR.redact((r.stderr or r.stdout or "").strip())[-200:] +
                                 f". If the app was never deployed there, deploy it first: python3 .claude/scripts/provision.py {app_id} --deploy-remote")
     say(f"{name} is stored on the server (its env file, root only; the value was never shown or kept here). It applies at the next deploy: "
@@ -1117,21 +1171,90 @@ def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
 def vercel_projects(base): return {r: f"{base}{s}" for r, s in SUFFIX.items()} if base else {}
 def vercel_spec(man, role): return (((man or {}).get("vercel") or {}).get("projects") or {}).get(role) or {}
 
-def api_settings(man, console_url=None):
+def api_settings(man, console_url=None, admins=None):
     """The settings the mold has the factory write on the api project (mold.json vercel.projects.api.env, mold_v0-084),
-    never secrets: name -> value, with {console_url} the console project's production address. A value that needs the
-    console's address is left out while it is not known (None). Only plain names and values on one line."""
+    never secrets: name -> value, with {console_url} the console project's production address and {platform_admins}
+    the app's platform administrators (application.json platform_admins, comma-separated). A value whose part is not
+    known (None, or no administrator recorded) is left out, so whatever the project holds under that name is kept.
+    Only plain names and values on one line."""
     out = {}
     for n, v in (vercel_spec(man, "api").get("env") or {}).items():
         if n.startswith("$") or not re.fullmatch(r"[A-Z][A-Z0-9_]*", n) or not isinstance(v, str) or re.search(r"[\r\n]", v): continue
         if "{console_url}" in v:
             if not console_url: continue
             v = v.replace("{console_url}", console_url.rstrip("/"))
+        if ADMINS in v:
+            if not admins or re.search(r"[\r\n]", admins): continue
+            v = v.replace(ADMINS, admins)
         out[n] = v
     return out
 
+# ---------------------------------------------------------------------------------------------------------
+# platform administrators: who may open the app's admin console (application.json platform_admins)
+# ---------------------------------------------------------------------------------------------------------
+# A mold_v0 app lets in only members of a company account and its platform administrators. An app minted with none
+# recorded told its own operator "<App> is invite-only" and nobody could reach /admin. The mold declares where the list
+# goes ({platform_admins} in mold.json vercel.projects.api.env and compose.config); a name held under either spelling
+# (mold.json env_names, mold_v0-045) counts, and a project holding the old one gets the same value under both
+# (with_held_spellings). The factory writes it from state at every deploy. An address is not a secret, so it lives in
+# state and in the project's plain settings.
+ADMINS = "{platform_admins}"
+ADMIN_ENTRY = re.compile(r"(?:\*|[a-z0-9._%+-]+)@[a-z0-9-]+(?:\.[a-z0-9-]+)+")
+ADMIN_MARK = "no platform administrator is recorded"
+
+def admin_entries(value):
+    """A list, or comma-separated text, of platform administrators -> (entries, refused): each an address or *@domain,
+    lowercased, in order, once."""
+    items = value if isinstance(value, list) else str(value or "").split(",")
+    good, bad = [], []
+    for x in items:
+        x = str(x).strip().lower()
+        if x: (good if ADMIN_ENTRY.fullmatch(x) else bad).append(x)
+    return list(dict.fromkeys(good)), bad
+
+def admins_of(app):
+    """The app's platform administrators as the env value (comma-separated), or "" when state records none."""
+    return ",".join(admin_entries((app or {}).get("platform_admins") or [])[0])
+
+def admin_env_names(man, where="vercel"):
+    """The env names the mold has the factory write the administrators to: the api project's (vercel) or the server
+    env file's (compose_remote). [] when the mold declares no {platform_admins} setting."""
+    src = vercel_spec(man, "api").get("env") if where == "vercel" else ((man or {}).get("compose") or {}).get("config")
+    return [n for n, v in (src or {}).items() if not n.startswith("$") and isinstance(v, str) and ADMINS in v]
+
+def admin_held(man, present):
+    """Which of the administrators' names a project already holds, under either spelling (mold.json env_names). Names
+    only: a value is never read for this."""
+    al = env_aliases(man); names = set(admin_env_names(man))
+    names |= {o for o in (other_spelling(n, al) for n in list(names)) if o}
+    return sorted(n for n in names if n in (present or ()))
+
+def admin_gap(man, app, present, where="vercel"):
+    """True when the mold needs administrators, state records none, and the target holds none either (an app minted
+    before state recorded them may hold the variable already: it is kept, never removed)."""
+    return bool(admin_env_names(man, where)) and not admins_of(app) and not admin_held(man, present)
+
+def admin_ask(app_id, app=None):
+    """The plain request for the administrators' addresses (an address is not a secret: it is said in the chat)."""
+    brief = (app or {}).get("brief") or f"briefs/{app_id}.md"
+    return (f"{app_id} only lets in members of a company account and its platform administrators, and {ADMIN_MARK}, so nobody could open "
+            f"its admin console. Ask the operator which email address should run {app_id} (an address such as you@example.com, or "
+            f"*@example.com for everyone at that company; several are separated by commas). Write it as \"platform_admins\": [\"you@example.com\"] "
+            f"in state/application/{app_id}/answers.json and run: python3 .claude/scripts/intake.py {brief} --app {app_id} "
+            f"--answers state/application/{app_id}/answers.json")
+
+def admin_todo(app_id):
+    """The one line a check's to-do list carries (mint.py's keys station reads ADMIN_MARK in it)."""
+    return (f"{ADMIN_MARK} for {app_id}, so nobody could open its admin console: say which email address(es) should run it "
+            f"(platform_admins in state/application/{app_id}/answers.json, then intake again)")
+
+def need_admins(app_id, app=None):
+    import agent_result as AR
+    AR.need("approval", "platform administrator address", admin_ask(app_id, app))
+
 NEXT_CONFIGS = ("next.config.ts", "next.config.mjs", "next.config.js")
-API_ENV = re.compile(r"""process\.env\.([A-Z][A-Z0-9_]*)\s*\?\?\s*['"`]https?://""")
+# `process.env.NAME ?? 'http://...'`, or with one fallback between them (`?? legacyEnv('NAME') ??`, mold_v0-045): NAME.
+API_ENV = re.compile(r"""process\.env\.([A-Z][A-Z0-9_]*)\s*\?\?\s*(?:[A-Za-z_][\w.]*\(\s*['"`][A-Z][A-Z0-9_]*['"`]\s*\)\s*\?\?\s*)?['"`]https?://""")
 def console_facts(cb, man):
     """What the console project needs, READ from the snapshot each time: its directory, its Next.js config, the ONE
     variable that config reads for the API's address (`process.env.NAME ?? 'http://...'`), whether its lockfile is
@@ -1166,7 +1289,9 @@ def api_names(F):
 
 def project_for(F, K, name):
     """Which of the two projects take NAME: the API when it reads it, the console when it is one of its sign-in names."""
-    return [r for r, hit in (("api", name in api_names(F)), ("web", name in set(K["required"]) | set(K["optional"]))) if hit]
+    o = other_spelling(name, F.get("aliases"))   # an app's state may name a key in the spelling before mold_v0-045
+    api, web = api_names(F), set(K["required"]) | set(K["optional"])
+    return [r for r, hit in (("api", name in api or o in api), ("web", name in web or o in web)) if hit]
 
 def taken_by_others(app_id, root=None):
     """{project name: app id} for every Vercel project another (not retired) app deploys to: its base, -api and
@@ -1264,7 +1389,9 @@ def vercel_plan(app_id, F, infra, man, K=None, cb=None, app=None):
             f"health: <api>{man['health_path']} answers 200 ok",
             *([f"{names.get('api')}: the mold's settings written before its deploy ({', '.join(f'{n}={v}' for n, v in (vercel_spec(man, 'api').get('env') or {}).items() if not n.startswith('$'))}); "
                "{console_url} is the console's address read back after its deploy (the last deploy's until then), and the API is deployed once more when it changed, "
-               "so sign-in codes and invitations link to the console"] if api_settings(man, "x") else []),
+               "so sign-in codes and invitations link to the console"
+               + (f"; {ADMINS} is application.json platform_admins ({admins_of(app) or 'none recorded: a variable the project already holds is kept, else the deploy stops and asks'})"
+                  if admin_env_names(man) else "")] if api_settings(man, "x") else []),
             f"{names.get('web')}: {K['api_env'] or '<the API-address variable>'} set to the API's address (nothing else of the API's: never DATABASE_URL, never a minted key; "
             f"sign-in names the operator sets for it: {signin})",
             f"vercel deploy --prod --yes --project {names.get('web')}{sc} from build/{app_id}/{K['dir']}/; its address read back from Vercel",
@@ -1282,7 +1409,9 @@ def mint_values(cb, F, names, run=subprocess.run):
         r = run(["bash", os.path.join(t, "bootstrap.sh")], cwd=t, capture_output=True, text=True, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": t})
         if r.returncode: raise Stop(f"the mold's own {F['mint']} could not mint (exit {r.returncode}); nothing was written")
         vals = VR.env_read(os.path.join(t, ".env"))
-        out = {n: vals[n] for n in names if vals.get(n)}
+        # A state name in the spelling before mold_v0-045 is minted from the bootstrap's value under the new name.
+        pick = lambda n: vals.get(n) or vals.get(other_spelling(n, F.get("aliases")) or "")
+        out = {n: pick(n) for n in names if pick(n)}
     finally: shutil.rmtree(t, ignore_errors=True)
     if "CRON_SECRET" in names and "CRON_SECRET" not in out: out["CRON_SECRET"] = pysecrets.token_hex(32)
     return out
@@ -1448,21 +1577,25 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     # holds no names, so every name it must hold is missing. Exit 3 (needs_human) through provision.py; not reverted.
     now_names = vercel_projects(vercel_project(infra))
     held = {r: (P.vercel_env_names(cb, n) if project_exists(P, n, cb) else set()) for r, n in now_names.items()}
-    missing = [n for n in infra.get("secrets_user") or [] if not all(n in held[r] for r in project_for(F, K, n))]
-    if missing:
-        P.ask_nicely_for(app_id, missing)
-        raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {now_names['api']} / {now_names['web']}; nothing was created or deployed.")
+    missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, held[r], F.get("aliases")) for r in project_for(F, K, n))]
+    gap = admin_gap(man, app, held["api"])     # names only: an administrator variable already on the api project is kept
+    if missing: P.ask_nicely_for(app_id, missing)
+    if gap: need_admins(app_id, app)
+    if missing or gap:
+        raise NeedsHuman(f"{app_id}: " + "; ".join(([f"{', '.join(missing)} not set yet on {now_names['api']} / {now_names['web']}"] if missing else [])
+                                                   + ([admin_todo(app_id)] if gap else [])) + "; nothing was created or deployed.")
     names = ensure_projects(app_id, infra, cb, K, P, adir=adir, say=say, root=root); api, web = names["api"], names["web"]
     present = {r: P.vercel_env_names(cb, n) for r, n in names.items()}
     stray = sorted((present["web"] & (api_names(F) | {"DATABASE_URL"})) - set(K["required"]) - set(K["optional"]))
     if stray:   # e.g. an app from the one-project shape, whose <base> was the API: its data would stay behind on the console
         raise Stop(f"{web} holds the API's own names ({', '.join(stray)}), so it is not a console project; nothing was deployed. "
                    "Move the app to new project names, or remove those names from it, first.")
-    missing = [n for n in infra.get("secrets_user") or [] if not all(n in present[r] for r in project_for(F, K, n))]
+    missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, present[r], F.get("aliases")) for r in project_for(F, K, n))]
     if missing:
         P.ask_nicely_for(app_id, missing); raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
     if ensure_database(app_id, infra, cb, api, present["api"], P, say=say): save(ipath, infra)
-    want = [n for n in infra.get("secrets_derived") or [] if n not in present["api"] and n != "DATABASE_URL"]
+    # A key held under either spelling is present: never minted again under the other, which would win over it.
+    want = [n for n in infra.get("secrets_derived") or [] if not has_value(n, present["api"], F.get("aliases")) and n != "DATABASE_URL"]
     for n, val in mint_values(cb, F, want).items():
         P._set_env(n, val, cb, project=api); say(f"  {api}: {n} minted and written (not shown)")
     build = os.path.join(root or ROOT, "build", app_id); os.makedirs(build, exist_ok=True)
@@ -1486,8 +1619,9 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         api_url = ""
         # The mold's settings for the api project (mold_v0-084): the console's address as the last deploy read it back
         # (checked again after this run's console deploy), the proxy hops; written before the API's deploy reads them.
-        want = api_settings(man, v.get("production_url"))
+        adm = admins_of(app)
         have = P.pull_env(cb, api, required=False)
+        want = with_held_spellings(api_settings(man, v.get("production_url"), adm), set(have), F.get("aliases"))
         if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
             for n, val in want.items():
                 if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
@@ -1522,7 +1656,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # The console's address is known now: the API's emails must link to it (mold_v0-084). When it is not what the
         # API holds (a first deploy, or a new address), it is written and the API deployed once more to read it.
         have = P.pull_env(cb, api, required=False)
-        stale = {n: val for n, val in api_settings(man, front).items() if have.get(n) != val}
+        stale = {n: val for n, val in with_held_spellings(api_settings(man, front, adm), set(have), F.get("aliases")).items() if have.get(n) != val}
         if stale and not have and P.vercel_env_names(cb, api):
             # The project holds names but none could be read back (a failed pull): never take that for "stale".
             say(f"  NOTE: {api}'s settings could not be read back; {', '.join(stale)} left as they are (the next deploy checks again)"); stale = {}
@@ -1562,20 +1696,30 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
         say(f"  Vercel project {names[r]} ({'the API and MCP function' if r == 'api' else 'the console, ' + K['dir'] + '/'}): "
             f"{'exists' if meta[r].get('id') else 'not created yet (a deploy creates it)'}")
     say(f"  database ({names['api']} only): {'DATABASE_URL is on the project (kept as it is: written once)' if 'DATABASE_URL' in present['api'] else 'the app gets its own Postgres at the first deploy (an empty free Neon database, proven empty before it is connected)'}")
-    say(f"  minted at the deploy if absent ({names['api']} only): {', '.join(n for n in infra.get('secrets_derived') or [] if n not in present['api'] and n != 'DATABASE_URL') or 'nothing (all present)'}")
+    say(f"  minted at the deploy if absent ({names['api']} only): {', '.join(n for n in infra.get('secrets_derived') or [] if not has_value(n, present['api'], F.get('aliases')) and n != 'DATABASE_URL') or 'nothing (all present)'}")
     say(f"  console: pointed at the API through {K['api_env'] or '(no single API-address variable found)'} ({K['config'] or 'no next.config'}); never DATABASE_URL or a minted key")
     for n in K["required"] + K["optional"]:
         say(f"  console sign-in name {n} ({'required' if n in K['required'] else 'optional'}): {'set' if n in present['web'] else 'not set'} on {names['web']}")
     if infra.get("secrets_optional"): say(f"  optional, off while empty (set one with --set-secret NAME): {', '.join(infra['secrets_optional'])}")
+    an, adm, held_a = admin_env_names(man), admins_of(app), admin_held(man, present["api"])
+    gap = admin_gap(man, app, present["api"])
+    if an and adm:
+        say(f"  platform administrators (application.json platform_admins): {adm}; written on {names['api']} as {', '.join(an + [n for n in held_a if n not in an])} at each deploy")
+    elif an and held_a:
+        say(f"  platform administrators: none recorded in state, but {names['api']} already holds {', '.join(held_a)}; kept as it is at every deploy "
+            f"(never removed; its value is not read here). Record them as platform_admins in state/application/{app_id}/answers.json so the factory keeps them")
+    elif gap:
+        say(f"  - {admin_todo(app_id)}"); need_admins(app_id, app)
     say("a deploy will:")
-    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K), 1): say(f"  {i}. {l}")
+    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
     pre = console_preflight(K)
     for p in pre: say("  not ready: " + p)
-    missing = [n for n in infra.get("secrets_user") or [] if not all(n in present[r] for r in project_for(F, K, n))]
+    missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, present[r], F.get("aliases")) for r in project_for(F, K, n))]
     if missing:
         for n in missing:
             say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
         say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
+    if gap: say(f"Not ready: {admin_ask(app_id, app)}"); return 1
     if pre: say("  - the mold's codebase cannot run as two projects as it is (see 'not ready' above). " + _codebase_fix(app["mold_id"], "see above")); return 1
     why = rls_tools_missing(cb, F.get("rls"))
     if why: say(f"  - {why}"); return 1
@@ -1591,7 +1735,8 @@ def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None, adir=N
     cb = codebase(app["mold_id"], root); man = manifest(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
     declared = set(infra.get("secrets_user") or []) | set(infra.get("secrets_optional") or []) | set(infra.get("secrets_derived") or []) | set(K["required"]) | set(K["optional"])
     roles = project_for(F, K, name)
-    if name not in declared or not roles: raise Stop(f"{name} is not a name this app reads (it reads: {', '.join(sorted(declared))}). Nothing was stored.")
+    o = other_spelling(name, F.get("aliases"))      # mold_v0-045: a state may name the key in the other spelling
+    if (name not in declared and o not in declared) or not roles: raise Stop(f"{name} is not a name this app reads (it reads: {', '.join(sorted(declared))}). Nothing was stored.")
     if name == "DATABASE_URL": raise Stop(f"{app_id}: DATABASE_URL is written by the database integration at the first deploy and never by hand. Nothing was stored.")
     refuse_project(app_id, infra, P, root)
     names = choose_names(app_id, infra, cb, P, adir=None, say=say, root=root); team = (infra.get("vercel") or {}).get("team", "")
@@ -1600,6 +1745,9 @@ def set_secret_vercel(app_id, app, infra, name, P, root=None, value=None, adir=N
     for r in roles:
         if ensure_project(names[r], team, cb, P): print(f"  (created {names[r]} empty to hold {name}: free, no deployment)")
         P._set_env(name, v, cb, project=names[r])
+        # The same key under its other spelling there too (mold_v0-045): the app reads the new name first, so a value
+        # left under one spelling would shadow, or be shadowed by, the one just set.
+        if o and (o in declared or o in P.vercel_env_names(cb, names[r])): P._set_env(o, v, cb, project=names[r]); print(f"  {names[r]}: {o} (the same key's other spelling) set to the same value")
     print(f"{name} set on {' and '.join(names[r] for r in roles)} (the value was never shown or stored here). It applies at the next deploy."); return 0
 
 # ---------------------------------------------------------------------------------------------------------
@@ -1692,6 +1840,9 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
             for p in preflight(cb, F, S): say("  NOT READY (a real deploy refuses here, before contact): " + p)
             if "--out" in a: out = a[a.index("--out") + 1]; write_bundle(S, F, out); say(f"bundle written to {out} for reading; nothing was sent anywhere")
             return 0
+        if admin_env_names(man, "compose_remote") and not S["admins"] and not infra.get("deployed_at"):
+            need_admins(app_id, app)   # a first deploy with nobody to run the admin console: asked for before contact, not reverted
+            raise NeedsHuman(f"{app_id}: {admin_todo(app_id)}. Nothing was contacted.")
         _ready_to_contact(S, app_id)
         src = build_source(app_id, app, root, say=say)     # the codebase, or build/<app_id>/ afresh (packs, brand); NotBuilt: not reverted
         try: res = deploy(S, F, src, say=say)
@@ -1762,13 +1913,24 @@ def station(name, app_id, a, i, root=None):
 # ---------------------------------------------------------------------------------------------------------
 # on the server (run from the bundle, as root)
 # ---------------------------------------------------------------------------------------------------------
-def server_env(env_file, bootstrap, stdin_text, run=subprocess.run, say=print):
+def server_env(env_file, bootstrap, stdin_text, run=subprocess.run, say=print, aliases=None):
     """Merge NAME=value lines from stdin into the env file, then mint every name still missing with the mold's own
-    bootstrap script, run in a private temp directory that is given the NAMES already present (never a value)."""
+    bootstrap script, run in a private temp directory that is given the NAMES already present (never a value).
+    With `aliases` (prefix, legacy_prefix; mold.json env_names, mold_v0-045), first each old name's value is copied to
+    its new name when that is not set (once: the old line stays, the app reads it only as a fallback), so nothing is
+    minted over a key the server already holds; a name the bootstrap mints is dropped when its old spelling is held."""
     pairs = VR.stdin_pairs(stdin_text or "")
     added, changed, refused = VR.env_merge(env_file, pairs) if pairs else ([], [], [])
     for why in refused: say("env: " + why)
     if refused: return 1
+    carried = []
+    if aliases:
+        held = VR.env_read(env_file)
+        copies = {other_spelling(k, aliases): v for k, v in held.items() if k.startswith(aliases[1]) and v != "" and other_spelling(k, aliases) not in held}
+        if copies:
+            carried, _, bad = VR.env_merge(env_file, copies)
+            for why in bad: say("env: " + why)
+            if bad: return 1
     minted = []
     if bootstrap:
         have = set(VR.env_names(env_file)); t = tempfile.mkdtemp(prefix="sf-mint-")
@@ -1778,11 +1940,12 @@ def server_env(env_file, bootstrap, stdin_text, run=subprocess.run, say=print):
             os.write(fd, "".join(f"{n}=present\n" for n in sorted(have)).encode()); os.close(fd)
             r = run(["bash", os.path.join(t, "bootstrap.sh")], cwd=t, capture_output=True, text=True, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": t})
             if r.returncode: say(f"env: the mold's own bootstrap script stopped (exit {r.returncode}); nothing was minted"); return 1
-            new = {k: v for k, v in VR.env_read(os.path.join(t, ".env")).items() if k not in have}
+            new = {k: v for k, v in VR.env_read(os.path.join(t, ".env")).items() if k not in have and not has_value(k, have, aliases)}
             minted, _, bad = VR.env_merge(env_file, new)
             for why in bad: say("env: " + why)
             if bad: return 1
         finally: shutil.rmtree(t, ignore_errors=True)
+    if carried: say(f"env: {len(carried)} value(s) carried to their names since mold_v0-045 ({', '.join(carried)}); the old lines stay as a fallback")
     say(f"env: {len(added)} added, {len(changed)} changed" + (f" ({', '.join(added + changed)})" if added or changed else "") +
         f"; minted on this server: {', '.join(minted) or 'nothing (every name was present and kept)'} (values not shown)")
     return 0
@@ -1790,7 +1953,9 @@ def server_env(env_file, bootstrap, stdin_text, run=subprocess.run, say=print):
 def cli(a):
     if not a or a[0] in ("-h", "--help"): print(__doc__); return 0
     opt = lambda k, d=None: a[a.index(k) + 1] if k in a and a.index(k) + 1 < len(a) else d
-    if a[0] == "env": return server_env(opt("--file"), opt("--bootstrap"), sys.stdin.read())
+    if a[0] == "env":
+        al = opt("--alias"); al = tuple(reversed(al.split("=", 1))) if al and "=" in al else None   # --alias OLD_=NEW_ -> (NEW_, OLD_)
+        return server_env(opt("--file"), opt("--bootstrap"), sys.stdin.read(), aliases=al)
     if a[0] == "lane-key-path":
         # For a lane's precondition: the private connector file for this app's address, or exit 1 with the reason.
         app_id = a[1] if len(a) > 1 else ""

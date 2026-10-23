@@ -7,7 +7,7 @@
 # under web/src/packs/<id>/ in the copy being built (the factory's build/<app_id>/).
 #
 # Build arguments are PUBLIC values only, never a secret: Next.js writes them into the build itself.
-#   OCTILLION_API_URL                  the API service inside the compose network; the console's fallback rewrite
+#   APP_API_URL                  the API service inside the compose network; the console's fallback rewrite
 #                                      (next.config.ts) is fixed at build time, so it is set here and again at run time
 #   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY  Clerk's publishable key (sent to every browser; the browser bundle needs it)
 #   NEXT_PUBLIC_APP_URL                the public address (absolute icon and share-image URLs)
@@ -20,12 +20,12 @@ RUN npm ci --no-audit --no-fund
 COPY web ./
 COPY docs /src/docs
 COPY packs /src/packs
-ARG OCTILLION_API_URL=http://octillion:3333
+ARG APP_API_URL=http://api:3333
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 ARG NEXT_PUBLIC_APP_URL=
 # The sign-in (mold_v0-004): builtin or clerk; empty: Clerk when the publishable key is given, else the built-in one.
 ARG AUTH_PROVIDER=
-RUN BUILD_STANDALONE=true OCTILLION_API_URL="$OCTILLION_API_URL" NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" AUTH_PROVIDER="$AUTH_PROVIDER" \
+RUN BUILD_STANDALONE=true APP_API_URL="$APP_API_URL" NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" AUTH_PROVIDER="$AUTH_PROVIDER" \
     NEXT_PUBLIC_APP_URL="$NEXT_PUBLIC_APP_URL" npm run build \
  && test -f .next/standalone/server.js
 

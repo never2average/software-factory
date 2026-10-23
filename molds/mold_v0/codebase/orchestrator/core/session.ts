@@ -1,5 +1,5 @@
 /**
- * WorkerSession: one claimed Octillion job running in one sandbox, possibly over several harness runs
+ * WorkerSession: one claimed job running in one sandbox, possibly over several harness runs
  * (launch, then resumes carrying the simulated developer's replies).
  *
  * This is the deterministic core. A host pack's orchestrator (orchestrator/packs/<id>/, e.g. the Pi one) drives it through tools; worker.ts drives
@@ -27,6 +27,7 @@ import { assessDiff, type Progress } from "./progress.js";
 import { newStepCounter } from "./turns.js";
 import { selectTemplate, type TemplateId } from "./workspaces.js";
 import { ACP_CLIENT_PATH, ACP_ROUTES, type SessionEnvironment } from "./environment.js";
+import { ENV } from "./env-names.js";
 
 export interface Profile {
   slug?: string;
@@ -70,7 +71,7 @@ export interface Job {
   exec_mode?: "plan" | "direct";
 }
 
-/** What the orchestrator sees after a harness run. Contains no Octillion ids. */
+/** What the orchestrator sees after a harness run. Contains none of the server's ids. */
 export interface TurnReport {
   session: string;
   run: number;
@@ -258,12 +259,12 @@ export class WorkerSession {
       harnessCredentials(adapter, s.creds.providers, job.model); // validate the mapping before paying for a sandbox
       // Private runs (customer-written tasks or personas): the agent may only reach the gateway, registries and the
       // task's git host (core/egress.ts). Opt-in until the transparent HTTPS path is verified on boat VMs:
-      // OCTILLION_EGRESS=private (private runs) or =all (every run); unset = no lockdown.
-      const lockdown = process.env.OCTILLION_EGRESS === "all" || (job.private && process.env.OCTILLION_EGRESS === "private");
+      // APP_EGRESS=private (private runs) or =all (every run); unset = no lockdown.
+      const lockdown = ENV.APP_EGRESS === "all" || (job.private && ENV.APP_EGRESS === "private");
       const egress = lockdown && runner.name === "boat"
         ? egressPolicy({ gatewayUrls: Object.values(s.creds.providers).map((p) => p.base_url).filter((u): u is string => !!u), repoUrl: job.repo_url })
         : null;
-      if (lockdown && runner.name !== "boat" && process.env.OCTILLION_DEV_ALLOW_LOCAL !== "1")
+      if (lockdown && runner.name !== "boat" && ENV.APP_DEV_ALLOW_LOCAL !== "1")
         throw new Error(`private runs need the boat runner for network lockdown (RUNNER=${runner.name})`);
       s.sandbox = await runner.open({ adapter, harness: job.harness, jobKey: job.session_id, agentId: job.agent_id ?? undefined, model: job.model, repoUrl: job.repo_url, template: s.template,
                                        environment: job.environment ?? null, egress });

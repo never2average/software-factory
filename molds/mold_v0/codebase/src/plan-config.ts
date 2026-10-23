@@ -7,7 +7,7 @@
  *     "name": "Growth",                     required, 2 to 60 characters; checkout shows it
  *     "description": "For teams shipping every week",  optional, shown at checkout
  *     "interval": "month",                  "month" (default) or "year"; the base fee and usage bill on it
- *     "lookup_key": "octillion_growth_v2",  optional; default octillion_<name>
+ *     "lookup_key": "growth_v2",            optional; default <name> (KEY_PREFIX, src/namespace.ts, is put in front)
  *     "base_fee_usd": 499,                  flat recurring fee (0 or omitted: usage only)
  *     "trial_days": 14,                     optional free trial
  *     "monthly_budget_usd": 3000,           the account's monthly cap on model spend (Budget rules); default the base fee
@@ -22,7 +22,7 @@
  *     "experiment": "growth-price-q4", "weight": 1,   optional A/B test (src/experiments.ts)
  *     "tax_code": "txcd_10103001",          the product's Stripe tax code (default: SaaS, business use); Stripe
  *                                           Tax / Managed Payments refuse checkout for a product without one
- *     "metadata": { "owner": "growth" }     optional extra Stripe metadata (string values; octillion_ keys are reserved)
+ *     "metadata": { "owner": "growth" }     optional extra Stripe metadata (string values; keys starting with the namespace are reserved)
  *   }
  *
  * Each metric's meter counts whole units the server reports as the work finishes (src/billing.ts reportSessionUsage,
@@ -33,16 +33,17 @@
  *   sandbox_hours   minutes of a session's sandbox time   priced per hour, bounds in hours
  */
 import { experimentKey, planLookupKey } from "./billing.js";
+import { KEY_PREFIX, NS } from "./namespace.js";
 
 export const METRICS = {
-  model_spend: { event: () => process.env.STRIPE_SPEND_METER || "octillion_model_spend", label: "Model spend", unit: "cent of model spend", suffix: "usage" },
-  agent_sessions: { event: () => "octillion_agent_sessions", label: "Agent sessions", unit: "agent session", suffix: "agent_sessions" },
-  simulations: { event: () => "octillion_simulations", label: "Simulations", unit: "simulation run", suffix: "simulations" },
-  sandbox_hours: { event: () => "octillion_sandbox_minutes", label: "Sandbox hours", unit: "sandbox minute", suffix: "sandbox_hours" },
+  model_spend: { event: () => process.env.STRIPE_SPEND_METER || `${KEY_PREFIX}model_spend`, label: "Model spend", unit: "cent of model spend", suffix: "usage" },
+  agent_sessions: { event: () => `${KEY_PREFIX}agent_sessions`, label: "Agent sessions", unit: "agent session", suffix: "agent_sessions" },
+  simulations: { event: () => `${KEY_PREFIX}simulations`, label: "Simulations", unit: "simulation run", suffix: "simulations" },
+  sandbox_hours: { event: () => `${KEY_PREFIX}sandbox_minutes`, label: "Sandbox hours", unit: "sandbox minute", suffix: "sandbox_hours" },
 } as const;
 export type Metric = keyof typeof METRICS;
 export const METRIC_IDS = Object.keys(METRICS) as Metric[];
-/** The meter event name for a metric (model_spend: STRIPE_SPEND_METER, else octillion_model_spend). */
+/** The meter event name for a metric (model_spend: STRIPE_SPEND_METER, else KEY_PREFIX + model_spend). */
 export const meterFor = (m: Metric) => METRICS[m].event();
 export const defaultMeter = () => meterFor("model_spend");
 /** A metric's usage price lookup key, next to the plan's own: <plan>__usage for model spend (as before), else <plan>__<metric>. */
@@ -55,7 +56,7 @@ export interface PlanConfig {
   monthly_budget_usd: number; usage: UsageComponent[];
   experiment: string | null; weight: number; metadata: Record<string, string>; tax_code: string;
 }
-/** Stripe's tax code for software as a service, business use: what Octillion sells. */
+/** Stripe's tax code for software as a service, business use: what the app sells. */
 export const DEFAULT_TAX_CODE = "txcd_10103001";
 
 export class PlanConfigError extends Error {
@@ -101,8 +102,8 @@ export function parsePlanConfig(input: unknown): PlanConfig {
   let lookup_key = planLookupKey(name || "plan");
   if (c.lookup_key != null) {
     const lk = String(c.lookup_key).trim();
-    lookup_key = lk.startsWith("octillion_") ? lk : `octillion_${lk}`;
-    if (!/^octillion_[a-z0-9_]{1,160}$/.test(lookup_key) || lookup_key.includes("__")) bad.push("lookup_key: lower-case letters, digits and single underscores");
+    lookup_key = lk.startsWith(KEY_PREFIX) ? lk : `${KEY_PREFIX}${lk}`;
+    if (!lookup_key.startsWith(KEY_PREFIX) || !/^[a-z0-9_]{1,160}$/.test(lookup_key.slice(KEY_PREFIX.length)) || lookup_key.includes("__")) bad.push("lookup_key: lower-case letters, digits and single underscores");
   }
   const base = c.base_fee_usd == null ? 0 : num("base_fee_usd", c.base_fee_usd, { min: 0, max: 100_000, money: true }) ?? 0;
   const trial = c.trial_days == null ? null : num("trial_days", c.trial_days, { min: 1, max: 730, int: true });
@@ -162,7 +163,7 @@ export function parsePlanConfig(input: unknown): PlanConfig {
   if (c.metadata != null) {
     if (typeof c.metadata !== "object" || Array.isArray(c.metadata)) bad.push("metadata: must be an object of strings");
     else for (const [k, v] of Object.entries(c.metadata as Record<string, unknown>)) {
-      if (k.startsWith("octillion") || k === "monthly_budget_usd") bad.push(`metadata.${k}: reserved`);
+      if (k.startsWith(NS) || k === "monthly_budget_usd") bad.push(`metadata.${k}: reserved`);
       else if (!/^[A-Za-z0-9_.-]{1,40}$/.test(k)) bad.push(`metadata.${k}: keys are letters, digits, _ . - (at most 40)`);
       else if (typeof v !== "string" || v.length > 500) bad.push(`metadata.${k}: a string of at most 500 characters`);
       else metadata[k] = v;

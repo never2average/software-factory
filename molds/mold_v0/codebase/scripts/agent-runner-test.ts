@@ -32,7 +32,7 @@ import path from "node:path";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 
 /** The fixture agent repository: commit 1 (the agent), commit 2 (a different program at the branch's tip). */
@@ -127,9 +127,9 @@ try {
     await assert.rejects(aw.fetchPinned(repo.url, "main", dest("name")), /full commit id/);
     await assert.rejects(aw.fetchPinned(`https://10.0.0.5/agent.git`, repo.c1, dest("ip")), /an address or a local name/, "never an address: the runner fetches outside the run's proxy");
     await assert.rejects(aw.fetchPinned(`https://git.internal/agent.git`, repo.c1, dest("local")), /an address or a local name/);
-    process.env.OCTILLION_AGENT_REPO_HOSTS = "github.com";
-    await assert.rejects(aw.fetchPinned(`https://example.com/agent.git`, repo.c1, dest("allow")), /not in OCTILLION_AGENT_REPO_HOSTS/);
-    delete process.env.OCTILLION_AGENT_REPO_HOSTS;
+    process.env.APP_AGENT_REPO_HOSTS = "github.com";
+    await assert.rejects(aw.fetchPinned(`https://example.com/agent.git`, repo.c1, dest("allow")), /not in APP_AGENT_REPO_HOSTS/);
+    delete process.env.APP_AGENT_REPO_HOSTS;
     // A redirect: the first server answers every request with a 302 to the second; the second is never reached.
     let followed = 0;
     const target = createServer((_q, r) => { followed++; r.writeHead(404).end(); });
@@ -366,10 +366,10 @@ try {
       assert.equal((await runNext("audit")).view?.status, "succeeded");
       assert.ok((await filesOf(A.orgId)).includes("data/a-co/forbidden.json"), "and restored as it is, so the next run keeps it");
       // Past the store's size limit: refused before it is read whole.
-      process.env.OCTILLION_WORKSPACE_MAX_BYTES = String(1024 * 1024);
+      process.env.APP_WORKSPACE_MAX_BYTES = String(1024 * 1024);
       await start(ca, "audit", "a-co", "big");
       const b = await runNext("audit");
-      delete process.env.OCTILLION_WORKSPACE_MAX_BYTES;
+      delete process.env.APP_WORKSPACE_MAX_BYTES;
       assert.equal(b.view?.status, "failed"); assert.match(b.view!.error!, /more than 1048576 bytes: it is not written back/);
       // An argument with a ".." part, even where its pattern would take it.
       await start(ca, "audit", "a-co", "x/../y");

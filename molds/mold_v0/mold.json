@@ -14,6 +14,11 @@
     }
   },
   "shape": "single_service",
+  "env_names": {
+    "$comment": "The shell's environment names (mold_v0-045; MOLD.md \"Neutral words and environment names\"): every name it reads starts with `prefix`; until mold_v0-045 they started with `legacy_prefix`, which it still reads as a fallback. The factory (lib/single_service.py env_aliases) takes a name held under either spelling as present (a value under the old name is never minted again under the new one, which would win over it), mints a state name in the old spelling from the bootstrap's new one, accepts --set-secret on an app's old names, and on a server copies each old name's value to its new name in the env file before anything is minted. New apps get the new names from the codebase as before.",
+    "prefix": "APP_",
+    "legacy_prefix": "OCTILLION_"
+  },
   "targets": [
     "compose_remote",
     "vercel"
@@ -31,8 +36,9 @@
     "config": {
       "DOMAIN": "{domain}",
       "PUBLIC_URL": "https://{domain}",
-      "OCTILLION_CONSOLE_URL": "https://{domain}",
-      "OCTILLION_PROXY_HOPS": "1"
+      "APP_CONSOLE_URL": "https://{domain}",
+      "APP_PROXY_HOPS": "1",
+      "APP_PLATFORM_ADMINS": "{platform_admins}"
     },
     "dockerfile": "Dockerfile",
     "console": {
@@ -70,9 +76,10 @@
         "database": true,
         "health": "/healthz",
         "env": {
-          "$comment": "Settings the factory writes on the api project at every deploy (mold_v0-084), never secrets: {console_url} is the console project's production address, read back from Vercel after its deploy (the API is deployed once more when it changed), so sign-in codes, invitations and every email link to the console; OCTILLION_PROXY_HOPS is the one proxy in front of the function (Vercel's edge), so per-IP limits read the address the edge saw.",
-          "OCTILLION_CONSOLE_URL": "{console_url}",
-          "OCTILLION_PROXY_HOPS": "1"
+          "$comment": "Settings the factory writes on the api project at every deploy (mold_v0-084), never secrets: {console_url} is the console project's production address, read back from Vercel after its deploy (the API is deployed once more when it changed), so sign-in codes, invitations and every email link to the console; APP_PROXY_HOPS is the one proxy in front of the function (Vercel's edge), so per-IP limits read the address the edge saw; {platform_admins} is the app's platform administrators (application.json platform_admins, comma-separated addresses or *@domain entries; src/clerk.ts), the only people besides a company account's members who may sign in and reach /admin. While state records none, the name is not written and whatever the project holds under either spelling (env_names) is kept (provision.py's check says so; with neither, the check and the deploy stop and ask). A project that holds the old spelling gets the same value under both.",
+          "APP_CONSOLE_URL": "{console_url}",
+          "APP_PROXY_HOPS": "1",
+          "APP_PLATFORM_ADMINS": "{platform_admins}"
         }
       },
       "web": {

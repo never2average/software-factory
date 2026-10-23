@@ -1,5 +1,5 @@
 /**
- * Platform admin roles: what each kind of Octillion staff may do on /admin. This file is the only place permissions
+ * Platform admin roles: what each kind of platform staff may do on /admin. This file is the only place permissions
  * are defined; http.ts puts need("<permission>") on every route that changes something, and GETs need any role.
  *
  *   viewer    reads every admin page (the key vault shows hints only)
@@ -8,23 +8,27 @@
  *   owner     + the key vault, test emails, admins and their roles, plans in Stripe, and anything destructive
  *
  * The role lives in Clerk (user public_metadata.platform_role), so there is no table. Owner also covers the old ways
- * in: public_metadata.platform_admin = true and an address OCTILLION_PLATFORM_ADMINS lists. Admin tokens (adm_…,
+ * in: public_metadata.platform_admin = true and an address APP_PLATFORM_ADMINS lists. Admin tokens (adm_…,
  * src/admin-tokens.ts) carry the role they were minted for. Owners manage everyone else's role on /admin/admins.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { NextFunction, Request, Response, Router } from "express";
 import * as clerk from "./clerk.js";
 import { people } from "./people.js";
+import { fill } from "./vocabulary.js";
 
 export const PLATFORM_ROLES = ["viewer", "support", "operator", "owner"] as const;
 export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 export const ROLE_LABELS: Record<PlatformRole, string> = { viewer: "Viewer", support: "Support", operator: "Operator", owner: "Owner" };
-export const ROLE_HELP: Record<PlatformRole, string> = {
-  viewer: "Reads every admin page. Changes nothing.",
-  support: "Viewer, plus access requests, new accounts, invitations and journey tips.",
-  operator: "Support, plus compute, harnesses, agent configuration, the library, account edits and simulations.",
-  owner: "Everything, including the key vault, admins and deleting things.",
-};
+/** What each platform role may do, the run noun in the build's words (src/vocabulary.ts). */
+export function roleHelp(r: PlatformRole): string {
+  return {
+    viewer: "Reads every admin page. Changes nothing.",
+    support: "Viewer, plus access requests, new accounts, invitations and journey tips.",
+    operator: fill("Support, plus compute, harnesses, agent configuration, the library, account edits and {runs}."),
+    owner: "Everything, including the key vault, admins and deleting things.",
+  }[r];
+}
 
 /** Each permission and the least role that has it. */
 export const PERMISSIONS = {
@@ -123,7 +127,7 @@ async function editable(id: string) {
   const row = all.find((a) => a.id === id);
   const u = row ? null : await people().users.get(id, true).catch(() => null);
   if (!row && !u) throw new AdminRoleError("No such person in Clerk", 404);
-  if (row?.source === "environment") throw new AdminRoleError("This admin is set in the server environment (OCTILLION_PLATFORM_ADMINS). Change it there.", 409);
+  if (row?.source === "environment") throw new AdminRoleError("This admin is set in the server environment (APP_PLATFORM_ADMINS). Change it there.", 409);
   return { all, row };
 }
 

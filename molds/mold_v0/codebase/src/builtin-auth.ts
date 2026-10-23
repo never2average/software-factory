@@ -9,14 +9,14 @@
  *                    GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set
  *
  * Who may sign in: a person this server already knows (a member, someone staff added as a platform admin, anyone who
- * signed in before), an address with a live invitation, or an address OCTILLION_PLATFORM_ADMINS names. The answer to
+ * signed in before), an address with a live invitation, or an address APP_PLATFORM_ADMINS names. The answer to
  * "send me a code" is the same words, the same status and the same work for every address, so it says nothing about
  * who is known (a code row is written for every request; only a known address is sent one, and only a sent code can
  * be used). Requests are limited per address (codes an hour, failed tries a day) and per IP (src/rate-limits.ts).
  *
  * A session is a random 256-bit value in an httpOnly, SameSite=Lax cookie (`__Host-oct_session`, Secure, on https;
  * `oct_session` on plain http for local work); only its sha256 is stored (auth_sessions). Sessions expire
- * (OCTILLION_SESSION_DAYS, default 14) and are checked against the database on every request, so signing out, signing
+ * (APP_SESSION_DAYS, default 14) and are checked against the database on every request, so signing out, signing
  * out everywhere, and an owner removing someone take effect on the next request. Every sign-in mints a new session
  * (the one the browser came with is revoked): no session id is ever taken from the request (fixation).
  *
@@ -38,6 +38,8 @@ import { PROFILE } from "./profile.js";
 import { hashed, hit, limitsFor } from "./rate-limits.js";
 import { asPlatform } from "./tenant-scope.js";
 import { consoleUrl, publicUrl } from "./console-url.js";
+import { ENV } from "./env-names.js";
+import { NS, NS_KEYS } from "./namespace.js";
 
 // ---------- settings ----------
 
@@ -48,11 +50,11 @@ export const CODES_PER_ADDRESS_AND_IP = 5;
 export const CODE_DIGITS = 8;
 export const INVITE_DAYS = 7;
 const sessionDays = () => {
-  const d = Number(process.env.OCTILLION_SESSION_DAYS ?? "");
+  const d = Number(ENV.APP_SESSION_DAYS ?? "");
   return Number.isInteger(d) && d >= 1 && d <= 90 ? d : 14;
 };
 /**
- * Where people open the console (src/console-url.ts): OCTILLION_CONSOLE_URL, else PUBLIC_URL. The factory sets it on
+ * Where people open the console (src/console-url.ts): APP_CONSOLE_URL, else PUBLIC_URL. The factory sets it on
  * every target (mold_v0-084): on Vercel, where the console is its own project in front of this API, to the console's
  * address, so invitation and sign-in emails link to the console's sign-in page.
  */
@@ -72,15 +74,15 @@ const P = <T>(fn: (db: Queryable & { transaction: <R>(f: (tx: Queryable) => Prom
   asPlatform(async () => fn(await getDb()));
 
 /**
- * The key codes are kept under: OCTILLION_AUTH_SECRET, else derived from the vault key or the worker token (both are
+ * The key codes are kept under: APP_AUTH_SECRET, else derived from the vault key or the worker token (both are
  * server secrets every deploy has). A database copy alone then cannot be turned back into codes.
  */
 let codeKey: Buffer | null = null;
 function authKey(): Buffer {
   if (codeKey) return codeKey;
-  const base = process.env.OCTILLION_AUTH_SECRET || process.env.OCTILLION_VAULT_KEY || process.env.OCTILLION_WORKER_TOKEN;
-  if (!base) console.error("builtin sign-in: no OCTILLION_AUTH_SECRET, OCTILLION_VAULT_KEY or OCTILLION_WORKER_TOKEN: codes are kept under a per-process key (a restart retires codes in flight)");
-  codeKey = createHash("sha256").update(`octillion-sign-in-codes:${base || randomBytes(32).toString("hex")}`).digest();
+  const base = ENV.APP_AUTH_SECRET || ENV.APP_VAULT_KEY || ENV.APP_WORKER_TOKEN;
+  if (!base) console.error("builtin sign-in: no APP_AUTH_SECRET, APP_VAULT_KEY or APP_WORKER_TOKEN: codes are kept under a per-process key (a restart retires codes in flight)");
+  codeKey = createHash("sha256").update(`${NS}-sign-in-codes:${base || randomBytes(32).toString("hex")}`).digest();
   return codeKey;
 }
 const codeHash = (email: string, code: string) => createHmac("sha256", authKey()).update(`${email}\n${code}`).digest("hex");
@@ -128,7 +130,7 @@ const clerkRole = (r: AccountRole) => (r === "owner" ? "org:admin" : "org:member
 const toOrg = (r: { dir_id: string; org_name: string; org_slug: string; org_created: Date }): ClerkOrg =>
   ({ id: r.dir_id, name: r.org_name, slug: r.org_slug, public_metadata: {}, created_at: ms(r.org_created) ?? 0 });
 const toMembership = (r: MemberRow): ClerkMembership => ({
-  id: `mem_${r.org_id}_${r.user_id}`, role: clerkRole(r.role), public_metadata: { octillion_role: r.role, ...(r.suspended ? { suspended: true } : {}) },
+  id: `mem_${r.org_id}_${r.user_id}`, role: clerkRole(r.role), public_metadata: { [NS_KEYS.role]: r.role, ...(r.suspended ? { suspended: true } : {}) },
   created_at: ms(r.created_at) ?? 0, public_user_data: { user_id: r.user_id, identifier: r.email, first_name: r.first_name, last_name: r.last_name },
   organization: toOrg(r),
 });
@@ -138,13 +140,13 @@ const INVITE_COLS = "id, org_id, email, role, status, created_at, updated_at, ex
 const toInvitation = (x: InviteRow): ClerkInvitation => ({
   id: x.id, email_address: x.email, role: clerkRole(x.role),
   status: x.status === "pending" && +new Date(x.expires_at) <= Date.now() ? "expired" : x.status,
-  created_at: ms(x.created_at) ?? 0, updated_at: ms(x.updated_at) ?? undefined, expires_at: ms(x.expires_at), public_metadata: { octillion_role: x.role },
+  created_at: ms(x.created_at) ?? 0, updated_at: ms(x.updated_at) ?? undefined, expires_at: ms(x.expires_at), public_metadata: { [NS_KEYS.role]: x.role },
 });
 
 /** An account role from Clerk's (role, metadata) pair, as src/account-roles.ts clerkRoleFor writes it. */
 function roleFrom(role: "admin" | "member", metadata?: Record<string, unknown>): AccountRole {
   if (role === "admin") return "owner";
-  const r = metadata?.octillion_role;
+  const r = metadata?.[NS_KEYS.role];
   return isAccountRole(r) && r !== "owner" ? r : "member";
 }
 
@@ -592,7 +594,7 @@ async function googleCallback(req: Request, res: Response) {
 export function sameSite(req: Request): boolean {
   const origin = req.get("origin");
   if (!origin) return true;
-  const allowed = new Set([new URL(publicUrl()).origin, new URL(consoleUrl()).origin, ...(process.env.OCTILLION_AUTH_ORIGINS ?? "").split(",").map((x) => x.trim().replace(/\/$/, "")).filter(Boolean)]);
+  const allowed = new Set([new URL(publicUrl()).origin, new URL(consoleUrl()).origin, ...(ENV.APP_AUTH_ORIGINS ?? "").split(",").map((x) => x.trim().replace(/\/$/, "")).filter(Boolean)]);
   const host = req.get("x-forwarded-host") ?? req.get("host");
   if (host) allowed.add(`${req.protocol}://${host}`);
   return allowed.has(origin.replace(/\/$/, ""));
@@ -616,7 +618,7 @@ export async function sessionView(s: BuiltinSession) {
     user: { id: u.id, email: u.email_addresses[0]?.email_address ?? null, first_name: u.first_name, last_name: u.last_name, google },
     active_organization: active ? { id: active.organization!.id, name: active.organization!.name, slug: active.organization!.slug } : null,
     memberships: ms.map((m) => ({ organization: { id: m.organization!.id, name: m.organization!.name, slug: m.organization!.slug },
-      role: m.role, account_role: m.public_metadata?.octillion_role ?? null, suspended: m.public_metadata?.suspended === true })),
+      role: m.role, account_role: m.public_metadata?.[NS_KEYS.role] ?? null, suspended: m.public_metadata?.suspended === true })),
     invitations: await pendingInvitations(s.userId),
   };
 }

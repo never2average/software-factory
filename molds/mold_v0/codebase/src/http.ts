@@ -71,6 +71,8 @@ import { pruneComputeHistory } from "./autoscaler-ticks.js";
 import { freshSettings, listSettings, settingGroups, SettingError } from "./settings.js";
 import { answerDocs, sseStart, streamDocsAnswer } from "./docs-answers.js";
 import { freshPlatformHarnesses } from "./harnesses.js";
+import { ENV } from "./env-names.js";
+import { NS } from "./namespace.js";
 
 const PORT = Number(process.env.PORT ?? 3333);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -269,7 +271,7 @@ export function createApp() {
 
   // ---------- MCP (Clerk OAuth sign-in, or a per-organization API key) ----------
   // Keys arrive in a header, `Authorization: Bearer oct_...` or `X-API-Key: oct_...`; hosts that only take a URL sign
-  // in with OAuth. The old connector URL with the key in it (/mcp/oct_...) is deprecated (OCTILLION_URL_KEYS). Stateless: a fresh server per request, bound to the caller's org.
+  // in with OAuth. The old connector URL with the key in it (/mcp/oct_...) is deprecated (APP_URL_KEYS). Stateless: a fresh server per request, bound to the caller's org.
   // One access-log line per connector request (also the ones analytics never sees: bad keys, GET/DELETE probes,
   // rejected Accept headers), so "connected but nothing happened" can be diagnosed. The key is never logged.
   app.use("/mcp", (req, res, next) => {
@@ -357,7 +359,7 @@ export function createApp() {
   };
   const wwwAuthenticate = (tokenSent = false) => mcpOAuth.oauthOn() ? mcpOAuth.wwwAuthenticate(tokenSent ? "invalid_token" : undefined) : oauthServer()
     ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name}", resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`
-    : 'Bearer realm="octillion"';
+    : `Bearer realm="${NS}"`;
   const unauthorized = (res: Response, tokenSent = false) =>
     res.status(401).set("WWW-Authenticate", wwwAuthenticate(tokenSent)).json({
       jsonrpc: "2.0", id: null,
@@ -389,12 +391,12 @@ export function createApp() {
     org ? await mcp(req, res, org) : unauthorized(res, Boolean(token));
   });
   // Deprecated: a key in the connector URL (see urlKeysAllowed in src/auth.ts). Logged by account and key prefix,
-  // never the key, so whoever still uses one can be moved to a header or to sign-in before OCTILLION_URL_KEYS=off.
+  // never the key, so whoever still uses one can be moved to a header or to sign-in before APP_URL_KEYS=off.
   app.post("/mcp/:key", express.json({ limit: "4mb" }), async (req, res) => {
     if (!(await ipGate(req, res))) return;
     const key = String(req.params.key);
     if (!urlKeysAllowed()) {
-      console.error("mcp url-key refused (OCTILLION_URL_KEYS=off)");
+      console.error("mcp url-key refused (APP_URL_KEYS=off)");
       // The same WWW-Authenticate as any 401, so a connector holding the old URL can fall into sign-in (OAuth).
       return void res.status(401).set("WWW-Authenticate", wwwAuthenticate()).json({
         jsonrpc: "2.0", id: null,
@@ -604,7 +606,7 @@ export function createApp() {
   ob.post("/orgs/:slug/allowance", need("accounts"), async (req, res) => void res.json(await onboarding.setAllowance(adminActor(req, res), slug(req), req.body?.usd ?? null)));
   ob.post("/orgs/:slug/billing/checkout", need("accounts"), async (req, res) => void res.json(await onboarding.checkoutLink(adminActor(req, res), slug(req), req.body?.price_id)));
   ob.post("/orgs/:slug/billing/portal", need("accounts"), async (req, res) => void res.json(await onboarding.portalLink(adminActor(req, res), slug(req))));
-  // Plans (src/billing.ts): Stripe prices with an octillion_ lookup key. Owners add one (a product and a price) or archive one.
+  // Plans (src/billing.ts): Stripe prices with a KEY_PREFIX lookup key (src/namespace.ts). Owners add one (a product and a price) or archive one.
   ob.get("/plans", async (_req, res) => void res.json(await onboarding.plans()));
   ob.post("/plans", need("plans"), async (req, res) => void res.status(201).json(await onboarding.createPlan(adminActor(req, res), req.body ?? {})));
   ob.post("/plans/:price_id/experiment", need("plans"), async (req, res) => void res.json(await onboarding.setPlanExperiment(adminActor(req, res), String(req.params.price_id), req.body ?? {})));
@@ -691,7 +693,7 @@ export function createApp() {
   const changer = (req: Request, res: Response): roles.Changer => ({ actor: adminActor(req, res), userId: (res.locals.adminUserId as string | undefined) ?? null });
   // The Connect page (/admin/connect): the admin MCP URL and which tools each role may call.
   ob.get("/mcp", (_req, res) => void res.json({ url: adminMcpResource(), tools: adminToolList(), skills: adminSkillList() }));
-  ob.get("/admins", async (_req, res) => void res.json({ admins: await roles.listAdmins(), roles: roles.PLATFORM_ROLES.map((r) => ({ id: r, label: roles.ROLE_LABELS[r], help: roles.ROLE_HELP[r] })),
+  ob.get("/admins", async (_req, res) => void res.json({ admins: await roles.listAdmins(), roles: roles.PLATFORM_ROLES.map((r) => ({ id: r, label: roles.ROLE_LABELS[r], help: roles.roleHelp(r) })),
     me: (res.locals.adminUserId as string | undefined) ?? null }));
   ob.post("/admins", need("admins"), signedIn, async (req, res) => {
     const r = await roles.addAdmin(changer(req, res), req.body?.email, req.body?.role);
@@ -738,7 +740,7 @@ export function createApp() {
 
   // ---------- local preview of the widget (development only) ----------
   const previewHost = hosts().find((h) => h.mcp?.runTool && h.mcp.widgetHtml);
-  if (process.env.OCTILLION_PREVIEW === "1" && previewHost) {
+  if (ENV.APP_PREVIEW === "1" && previewHost) {
     const runTool = previewHost.mcp!.runTool!, WIDGET_HTML = previewHost.mcp!.widgetHtml!;
     const isTool = (n: string) => hostToolNames().includes(n);
     const keyOf = (req: Request) => String(req.query.key ?? req.body?.key ?? "");
@@ -759,7 +761,8 @@ export function createApp() {
       const result = await runTool(org, name, args);
       const boot = JSON.stringify({ toolEndpoint: "/preview/api/tool", key: keyOf(req), data: result.structuredContent ?? null, error: result.isError ? result.content : null })
         .replace(/</g, "\\u003c");
-      res.type("html").send(WIDGET_HTML.replace("<script>", `<script>window.__OCTILLION_PREVIEW__ = ${boot};</script>\n<script>`));
+      // The widget reads its boot data from window.__<NAMESPACE>_PREVIEW__ (the build's namespace, src/namespace.ts).
+      res.type("html").send(WIDGET_HTML.replace("<script>", `<script>window.__${NS.toUpperCase()}_PREVIEW__ = ${boot};</script>\n<script>`));
     });
   }
 
@@ -780,21 +783,21 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(`${PROFILE.mcp_server_name} (${db.kind}, transcripts in ${transcripts().kind}) listening on http://${HOST}:${PORT}`);
     console.error(`  landing page  ${PUBLIC_URL}/`);
     console.error(`  MCP endpoint  ${PUBLIC_URL}/mcp   (sign in, or send Authorization: Bearer <api key>)`);
-    console.error(`  worker API    ${PUBLIC_URL}/api/worker/*${process.env.OCTILLION_WORKER_TOKEN ? "" : "   (disabled: set OCTILLION_WORKER_TOKEN)"}`);
+    console.error(`  worker API    ${PUBLIC_URL}/api/worker/*${ENV.APP_WORKER_TOKEN ? "" : "   (disabled: set APP_WORKER_TOKEN)"}`);
     // On-demand orchestrators (boat sandboxes launched/reaped by the server). Needs the public https URL the
-    // sandboxes reach us on, the worker token and a boat key in the vault. OCTILLION_AUTOSCALE=off disables it.
-    const autoscale = (process.env.OCTILLION_AUTOSCALE ?? "on").toLowerCase() !== "off";
-    if (autoscale && /^https:\/\//.test(PUBLIC_URL) && process.env.OCTILLION_WORKER_TOKEN) {
+    // sandboxes reach us on, the worker token and a boat key in the vault. APP_AUTOSCALE=off disables it.
+    const autoscale = (ENV.APP_AUTOSCALE ?? "on").toLowerCase() !== "off";
+    if (autoscale && /^https:\/\//.test(PUBLIC_URL) && ENV.APP_WORKER_TOKEN) {
       startAutoscaler();
-      console.error("  autoscaler    on (orchestrators on demand; OCTILLION_AUTOSCALE=off to disable)");
-    } else console.error(`  autoscaler    off (${autoscale ? "needs an https PUBLIC_URL and OCTILLION_WORKER_TOKEN" : "OCTILLION_AUTOSCALE=off"})`);
+      console.error("  autoscaler    on (orchestrators on demand; APP_AUTOSCALE=off to disable)");
+    } else console.error(`  autoscaler    off (${autoscale ? "needs an https PUBLIC_URL and APP_WORKER_TOKEN" : "APP_AUTOSCALE=off"})`);
     // Off-machine archive of traces and research to R2 (src/archive.ts): backfills, then keeps up every 5 minutes.
     startArchiver();
     console.error(`  archive       ${storageEnabled() ? "on (traces + research to R2)" : "off (R2_* not set)"}`);
-    // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; OCTILLION_SCHEDULER=off disables.
-    if (startScheduler()) console.error("  scheduler     on (every minute; OCTILLION_SCHEDULER=off to disable)");
+    // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; APP_SCHEDULER=off disables.
+    if (startScheduler()) console.error("  scheduler     on (every minute; APP_SCHEDULER=off to disable)");
     // Price per run (mold_v0-019): pending run charges to Stripe or the ledger, every minute, only when the app bills runs.
-    if (startChargeDelivery()) console.error("  run charges   on (every minute; the profile's billing, OCTILLION_RUN_BILLING=off to disable)");
+    if (startChargeDelivery()) console.error("  run charges   on (every minute; the profile's billing, APP_RUN_BILLING=off to disable)");
   });
   // Graceful drain (deploys, restarts): stop accepting connections, let in-flight requests finish (gateway streams
   // are sandboxed agents' model calls; cutting them fails the sessions), then exit. A rolling deploy starts the new
@@ -802,7 +805,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const shutdown = (signal: string) => {
     if (draining) return;
     draining = true;
-    const limit = Math.max(0, Number(process.env.OCTILLION_DRAIN_SECONDS ?? 300));
+    const limit = Math.max(0, Number(ENV.APP_DRAIN_SECONDS ?? 300));
     console.error(`${signal}: draining, in-flight requests get up to ${limit}s`);
     void stopAutoscaler();
     stopArchiver();

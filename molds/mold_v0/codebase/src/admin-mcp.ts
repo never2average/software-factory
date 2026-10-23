@@ -7,7 +7,7 @@
  *
  * Auth is the customer /mcp's: Clerk is the OAuth server (the 401 points at this resource's protected-resource
  * metadata), the access token names a Clerk user, and that user's platform role (Clerk public_metadata.platform_role,
- * or OCTILLION_PLATFORM_ADMINS) is checked on every request. An admin token (src/admin-tokens.ts) acts with the role it
+ * or APP_PLATFORM_ADMINS) is checked on every request. An admin token (src/admin-tokens.ts) acts with the role it
  * was minted for, as on /api/admin. Session tokens and account API keys are refused.
  *
  * Audit: every call is a row in admin_access_log (method MCP, path /admin/mcp/<tool>), like every /api/admin request;
@@ -36,9 +36,16 @@ import * as spend from "./spend.js";
 import { computeSummary } from "./compute.js";
 import { platformAnalytics } from "./insights.js";
 import { listSettings, settingGroups } from "./settings.js";
+import { KEY_PREFIX, NS } from "./namespace.js";
+import { persistedKey } from "./env-names.js";
+import { sessionEngine } from "./host-tables.js";
 import { adminGeneratedTools, generatedAdminInstructions } from "./mcp-tools.js";
 import { reserveAdminTools } from "./packs.js";
 import type { AdminShellToolName, SameNames } from "./shell-tools.js";
+
+/** update_setting's example key: a shell setting, or in a build with the session engine (a host pack's tables) the
+ * session engine's own spelling, as its admins have always seen it (the stored key prefix, src/settings.ts). */
+const SETTING_EXAMPLE = sessionEngine() ? persistedKey("MAX_RUN_SESSIONS") : "DOCS_ANSWERS_DAILY_MAX";
 
 /** Who is calling: the name changes are logged under (their email, or the token's X-Admin-Actor label) and their role. */
 export interface AdminCaller { actor: string; role: PlatformRole; userId: string | null; ip?: string }
@@ -130,7 +137,7 @@ export const ADMIN_TOOLS = {
   },
   finops_plans: {
     title: "Plans", needs: "read",
-    description: "Prepaid plans in Stripe (prices with an octillion_ lookup key): price, interval, allowance, usage pricing, experiment and weight, trial, and each plan's JSON config (what create_plan takes).",
+    description: `Prepaid plans in Stripe (prices with ${/^[aeiou]/.test(KEY_PREFIX) ? "an" : "a"} ${KEY_PREFIX} lookup key): price, interval, allowance, usage pricing, experiment and weight, trial, and each plan's JSON config (what create_plan takes).`,
     input: {},
     run: () => onboarding.plans(),
     summary: (d) => (d.configured ? `${d.plans.length} plan(s).` : "Stripe is not configured on this server."),
@@ -180,7 +187,7 @@ export const ADMIN_TOOLS = {
       return { unlocked: k.unlocked, providers: k.providers,
         credentials: k.credentials.map((c: any) => pick(c, ["id", "provider", "label", "hint", "priority", "enabled", "uses", "last_used_at", "created_at", "rotated_at", "project_id", "client_email"])) };
     },
-    summary: (d) => `${d.unlocked ? "Unlocked" : "LOCKED (OCTILLION_VAULT_KEY unset)"}; ${d.providers.length} provider(s), ${d.credentials.length} key(s), ${d.providers.filter((p: any) => p.enabled && !p.enabled_keys).length} enabled provider(s) without a key.`,
+    summary: (d) => `${d.unlocked ? "Unlocked" : "LOCKED (APP_VAULT_KEY unset)"}; ${d.providers.length} provider(s), ${d.credentials.length} key(s), ${d.providers.filter((p: any) => p.enabled && !p.enabled_keys).length} enabled provider(s) without a key.`,
   },
 
   // ---------- changes ----------
@@ -253,7 +260,7 @@ export const ADMIN_TOOLS = {
   update_setting: {
     title: "Change a platform setting", needs: "compute",
     description: "Change one global setting (list_settings shows the keys, limits and current values). value null resets it to the environment or default. Every server picks it up within 30 seconds.",
-    input: { key: z.string().describe("Setting key, e.g. OCTILLION_MAX_RUN_SESSIONS"), value: z.union([z.string(), z.number(), z.null()]).describe("New value, or null to reset") },
+    input: { key: z.string().describe(`Setting key, e.g. ${SETTING_EXAMPLE}`), value: z.union([z.string(), z.number(), z.null()]).describe("New value, or null to reset") },
     run: async (a, c) => {
       await saveSettingValues(c.actor, { [String(a.key)]: a.value });
       const s = (await listSettings()).find((x) => x.key === a.key)!;
@@ -515,7 +522,7 @@ export function mountAdminMcp(app: Express, publicUrl: string) {
   const refuse = (res: Response, p: string, status: 401 | 403, message: string) => {
     if (status === 401) res.set("WWW-Authenticate", oauthServer()
       ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name} as a platform admin", resource_metadata="${publicUrl}/.well-known/oauth-protected-resource${p}"`
-      : 'Bearer realm="octillion-admin"');
+      : `Bearer realm="${NS}-admin"`);
     res.status(status).json({ jsonrpc: "2.0", id: null, error: { code: -32001, message } });
   };
   for (const p of ADMIN_MCP_PATHS) {

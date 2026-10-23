@@ -36,6 +36,7 @@ import { copyText, ErrorBox, FormRow, Mono, StatusBadge, When, type Tone } from 
 import { AMBER, Chip, cents, PeekSection, UrlTabs } from './compute-common';
 import { MiniTable } from './compute-sessions';
 import { profile } from '@/config/profile.generated';
+import { KEY_PREFIX } from '@/lib/namespace';
 
 // ---------------------------------------------------------------- API shapes
 
@@ -128,7 +129,7 @@ interface RevenuePlan {
   unit_amount_usd: number | null; currency: string | null; active_subscriptions: number; trialing: number; subscriptions: number; mrr_usd: number; collected_usd: number;
   daily_mrr: number[]; daily_collected: number[]; daily_active: number[];
   accounts: { key: string; slug: string | null; name: string; status: SubStatus; mrr_usd: number }[];
-  /** A live Octillion plan (active price, octillion_ lookup key): it can be archived. */
+  /** A live plan of the app (active price, KEY_PREFIX lookup key): it can be archived. */
   live?: boolean; monthly_budget_usd?: number | null; experiment?: string | null; weight?: number; trial_days?: number | null;
   usage?: PlanUsage[] | null; config?: Record<string, unknown> | null;
 }
@@ -506,7 +507,7 @@ function RevenueTab({ data, loading, bar, group }: TabProps<Revenue>) {
 
 // ---------------------------------------------------------------- Model spend
 
-/** New plan (owner): a product and a recurring price in Stripe, with an octillion_ lookup key so checkout links can offer it. */
+/** New plan (owner): a product and a recurring price in Stripe, with a KEY_PREFIX lookup key so checkout links can offer it. */
 interface Variant {
   experiment: string; price_id: string; name: string; amount_usd: number | null; interval: string | null; weight: number; live: boolean; control: boolean;
   exposed: number; new_in_range: number; checkouts: number; completed: number; converted: number; conversion_pct: number | null; ci: [number, number] | null;
@@ -599,7 +600,7 @@ interface PlanUsage { price_id: string; metric: string; meter: string; summary: 
 /** A plan's config as the start of another variant of the same experiment (a new name and lookup key). */
 function variantJson(p: RevenuePlan) {
   const { lookup_key: _lk, ...c } = (p.config ?? {}) as Record<string, unknown>;
-  const experiment = p.experiment ?? `${String(p.lookup_key ?? p.name).replace(/^octillion_/, '').replace(/_/g, '-')}-test`;
+  const experiment = p.experiment ?? `${String(p.lookup_key ?? p.name).replace(new RegExp(`^${KEY_PREFIX}`), '').replace(/_/g, '-')}-test`;
   return { json: JSON.stringify({ ...c, name: `${p.name} B`.slice(0, 60), experiment, weight: p.weight ?? 1 }, null, 2),
     // A plan in no experiment yet joins the new one as its control when the variant is made.
     control: p.experiment || !p.price_id ? undefined : { price_id: p.price_id, experiment, weight: 1 } };
@@ -798,7 +799,7 @@ function NewPlanDialog({ onClose, experiments, initialJson, control }: { onClose
       {mode === 'json' ? <PlanJsonBody onClose={onClose} initial={initialJson ?? JSON.stringify(PLAN_TEMPLATE, null, 2)} control={control} /> : (
         <form onSubmit={submit} className='flex min-h-0 flex-1 flex-col'>
           <div className='grid min-h-0 content-start gap-4 overflow-y-auto px-4 pb-4 sm:grid-cols-2'>
-            <FormRow id='np-name' label='Plan name' hint={name.trim() ? `Lookup key: octillion_${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}` : 'Customers see this name at checkout.'}>
+            <FormRow id='np-name' label='Plan name' hint={name.trim() ? `Lookup key: ${KEY_PREFIX}${name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}` : 'Customers see this name at checkout.'}>
               <Input id='np-name' required autoFocus minLength={2} maxLength={60} value={name} onChange={(e) => setName(e.target.value)} placeholder='Growth' />
             </FormRow>
             <FormRow id='np-desc' label='Description' hint='Optional. Shown at checkout.'>

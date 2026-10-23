@@ -18,19 +18,19 @@
 //    sign-out of other devices, sign-out everywhere.
 // 9. Google: shown only when configured; state bound to the browser, PKCE, nonce, issuer, audience, verified address;
 //    an address without an invitation is refused; open redirects are refused.
-// 10. Platform admins: an OCTILLION_PLATFORM_ADMINS address signs in and reaches /admin; cookie writes need the CSRF header.
+// 10. Platform admins: an APP_PLATFORM_ADMINS address signs in and reaches /admin; cookie writes need the CSRF header.
 // Clerk only: the built-in routes answer 404 (only /api/auth/config, which names the provider).
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 const PROVIDER = process.argv[2] === "clerk" ? "clerk" : "builtin";
 process.env.AUTH_PROVIDER = PROVIDER;
-process.env.OCTILLION_PLATFORM_ADMINS = "boss@platform.example";
+process.env.APP_PLATFORM_ADMINS = "boss@platform.example";
 // Every test signs people in many times: the per-address code limit is checked on its own below.
-process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS = "1000";
+process.env.APP_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS = "1000";
 // The test stands in for the one proxy in front of the server (src/proxy-trust.ts, mold_v0-084): each request's
 // X-Forwarded-For is the address that proxy saw.
-process.env.OCTILLION_PROXY_HOPS = "1";
+process.env.APP_PROXY_HOPS = "1";
 const { cleanup, startHttp, STAMP } = await import("./lib/test-world.js");
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -303,7 +303,7 @@ try {
       const [ttl] = await db.query<{ m: number }>("SELECT extract(epoch FROM expires_at - created_at)::int / 60 AS m FROM auth_codes WHERE email = $1 ORDER BY id DESC LIMIT 1", [ownerAEmail]);
       assert.equal(Number(ttl!.m), 10, "codes live ten minutes");
       // Per address and IP: five codes an hour; per address: ten an hour (the default), from any IP.
-      delete process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS;
+      delete process.env.APP_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS;
       const busy = `busy-${STAMP}@a.example`, oneIp = freshIp();
       for (let i = 0; i < 5; i++) assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": oneIp }, { email: busy })).status, 200);
       assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": oneIp }, { email: busy })).status, 429, "the sixth code in an hour for one address from one IP");
@@ -313,19 +313,19 @@ try {
       await db.query("UPDATE auth_codes SET created_at = now() - interval '2 hours' WHERE email = $1", [busy]);
       await db.query("INSERT INTO auth_codes (email, code_hash, deliverable, attempts, expires_at, created_at) VALUES ($1, 'x', false, 100, now(), now() - interval '3 hours')", [busy]);
       assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": freshIp() }, { email: busy })).status, 200, "a hundred wrong tries by someone else do not lock the address");
-      process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS = "1000";
+      process.env.APP_LIMIT_ENDPOINTS_SIGNIN_CODES_PER_HOUR_PER_ADDRESS = "1000";
       await db.query("DELETE FROM auth_codes WHERE email = $1", [viewerEmail]);
       // Per IP.
-      process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP = "3";
+      process.env.APP_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP = "3";
       const ip = freshIp();
       for (let i = 0; i < 3; i++) assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": ip }, { email: `ip${i}-${STAMP}@a.example` })).status, 200);
       assert.equal((await call("POST", "/api/auth/email/request", { "x-forwarded-for": ip }, { email: `ip9-${STAMP}@a.example` })).status, 429, "per IP");
-      delete process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP;
-      process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP = "2";
+      delete process.env.APP_LIMIT_ENDPOINTS_SIGNIN_PER_HOUR_PER_IP;
+      process.env.APP_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP = "2";
       const ip2 = freshIp();
       for (let i = 0; i < 2; i++) await call("POST", "/api/auth/email/verify", { "x-forwarded-for": ip2 }, { email: busy, code: "12345678" });
       assert.equal((await call("POST", "/api/auth/email/verify", { "x-forwarded-for": ip2 }, { email: busy, code: "12345678" })).status, 429, "code checks per IP");
-      delete process.env.OCTILLION_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP;
+      delete process.env.APP_LIMIT_ENDPOINTS_SIGNIN_CHECKS_PER_HOUR_PER_IP;
       // JSON from this site only.
       const form = await fetch(`${http.base}/api/auth/email/request`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `email=${encodeURIComponent(viewerEmail)}` });
       assert.equal(form.status, 415, "a form post (what a cross-site page can send) is refused");
@@ -482,7 +482,7 @@ try {
       assert.equal((await call("POST", "/api/admin/onboarding/orgs", { cookie: boss }, { name: `x ${STAMP}` })).status, 403, "a cookie write without the CSRF header is refused");
       assert.equal((await call("GET", "/api/admin/onboarding/orgs", ownerA.h)).status, 403, "a workspace owner is no platform admin");
       // A platform role given on /admin/admins (stored on the person) works too.
-      const add = await call("POST", "/api/admin/onboarding/admins", { cookie: boss, "x-octillion-admin": "1" }, { email: `support-${STAMP}@platform.example`, role: "support" });
+      const add = await call("POST", "/api/admin/onboarding/admins", { cookie: boss, "x-app-admin": "1" }, { email: `support-${STAMP}@platform.example`, role: "support" });
       assert.ok(add.status === 200 || add.status === 201, JSON.stringify(add.body));
       const sup = (await codeSignIn(`support-${STAMP}@platform.example`)).cookie;
       assert.equal((await call("GET", "/admin/session", { cookie: sup })).body.role, "support");
@@ -491,7 +491,7 @@ try {
       assert.equal(prm.status, 200); assert.deepEqual(prm.body.authorization_servers, [process.env.PUBLIC_URL ?? "http://127.0.0.1:3333"], "this server is the authorization server");
       const bare = await fetch(`${http.base}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
       assert.equal(bare.status, 401); assert.match(bare.headers.get("www-authenticate") ?? "", /resource_metadata="[^"]+\/\.well-known\/oauth-protected-resource\/mcp"/, "the 401 sends clients to sign in");
-      ok("platform admins: an OCTILLION_PLATFORM_ADMINS address and a person given a role on /admin/admins sign in with a code and reach /admin; cookie writes need the CSRF header");
+      ok("platform admins: an APP_PLATFORM_ADMINS address and a person given a role on /admin/admins sign in with a code and reach /admin; cookie writes need the CSRF header");
     }
   } else {
     // ---------- Clerk: the built-in routes stay out of the way ----------

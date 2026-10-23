@@ -27,6 +27,7 @@ import express from "express";
 import { cleanup, STAMP } from "./lib/test-world.js";
 import { PER_REQUEST_USD, spendWorld } from "./lib/spend-world.js";
 import { createMockApp } from "./lib/mock-providers.js";
+import { NS_KEYS } from "../src/namespace.js";
 
 // ---------- the Stripe stand-in, behind a recorder ----------
 const posted: { path: string; key: string | undefined; body: Record<string, any> }[] = [];
@@ -47,7 +48,7 @@ const stripeServer = front.listen(0, "127.0.0.1");
 await new Promise((r) => stripeServer.once("listening", r));
 stripeUrl = `http://127.0.0.1:${(stripeServer.address() as AddressInfo).port}`;
 // No grace period after a run ends (the late-usage refresh is tested directly below).
-Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_runcharges", STRIPE_API_URL: stripeUrl, CRON_SECRET: "cron-test-secret", OCTILLION_RUN_CHARGE_GRACE_SECONDS: "0" });
+Object.assign(process.env, { STRIPE_SECRET_KEY: "sk_test_runcharges", STRIPE_API_URL: stripeUrl, CRON_SECRET: "cron-test-secret", APP_RUN_CHARGE_GRACE_SECONDS: "0" });
 /** Stripe's side of metered billing, made in the stand-in: the meter, a metered price on it, a customer's subscription to it. */
 const stripePost = async (p: string, body: Record<string, string>) =>
   (await fetch(`${stripeUrl}${p}`, { method: "POST", headers: { authorization: "Bearer sk_test_runcharges", "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(body) })).json() as Promise<any>;
@@ -124,10 +125,10 @@ try {
       const cron = await (await w.http.req("GET", "/api/cron/autoscale", { authorization: "Bearer cron-test-secret" })).json() as Record<string, unknown>;
       assert.ok(!("run_charges" in cron), "off: the cron entry does no billing");
       assert.equal(rc.startChargeDelivery(), false, "off: the server starts no delivery loop");
-      process.env.OCTILLION_RUN_BILLING = "off";
+      process.env.APP_RUN_BILLING = "off";
       rc.setBillingForTest(RULES);
       assert.equal(rc.billingRules(), null, "the server's environment can turn billing off whatever the profile says");
-      delete process.env.OCTILLION_RUN_BILLING;
+      delete process.env.APP_RUN_BILLING;
     }
     console.log("✓ off by default: no price, no charge, nothing sent; the Billing page, Revenue report and cron answer are as before");
 
@@ -356,7 +357,7 @@ try {
     // ---------- 5. credits, and the admin pages ----------
     const viewer = await w.http.adminToken("viewer"), operator = await w.http.adminToken("operator");
     const credit = (tok: string, run: string, reason?: string) =>
-      w.http.req("POST", `/api/admin/onboarding/spend/run-charges/${run}/credit`, { authorization: `Bearer ${tok}`, "x-octillion-admin": "1" }, { reason });
+      w.http.req("POST", `/api/admin/onboarding/spend/run-charges/${run}/credit`, { authorization: `Bearer ${tok}`, "x-app-admin": "1" }, { reason });
     assert.equal((await credit(viewer, flat.run.id, "wrong result")).status, 403, "a viewer may not credit a run");
     assert.equal((await credit(operator, flat.run.id)).status, 400, "a credit needs a reason");
     const cd = await credit(operator, flat.run.id, "wrong result");
@@ -364,14 +365,14 @@ try {
     await drain();
     const cRows = await charges(flat.run.id);
     assert.deepEqual(cRows.map((r) => [r.kind, Number(r.amount_minor), r.org_id]), [["charge", 250, A.orgId], ["credit", -250, A.orgId]], "one credit of minus the charge, for A");
-    const txn = stripe.balanceTxns.filter((t: any) => t.metadata?.octillion_run_id === flat.run.id);
+    const txn = stripe.balanceTxns.filter((t: any) => t.metadata?.[NS_KEYS.run_id] === flat.run.id);
     assert.deepEqual(txn.map((t: any) => [t.customer, t.amount, t.currency]), [[cusA, -250, "usd"]], "to A's Stripe balance");
-    assert.equal(posted.find((p) => p.path.endsWith("/balance_transactions") && p.body.metadata?.octillion_run_id === flat.run.id)?.key, `run_credit:${flat.run.id}`, "keyed by the run");
+    assert.equal(posted.find((p) => p.path.endsWith("/balance_transactions") && p.body.metadata?.[NS_KEYS.run_id] === flat.run.id)?.key, `run_credit:${flat.run.id}`, "keyed by the run");
     assert.equal((await credit(operator, flat.run.id, "again")).status, 409, "a run is credited once");
     assert.equal((await credit(operator, m1.run.id, "kept in the ledger")).status, 201);
     await drain();
     assert.deepEqual((await charges(m1.run.id)).map((r) => [r.kind, r.delivery]), [["charge", "ledger"], ["credit", "ledger"]], "a ledger charge's credit stays in the ledger");
-    assert.ok(!stripe.balanceTxns.some((t: any) => t.metadata?.octillion_run_id === m1.run.id), "and is not sent to Stripe");
+    assert.ok(!stripe.balanceTxns.some((t: any) => t.metadata?.[NS_KEYS.run_id] === m1.run.id), "and is not sent to Stripe");
     assert.equal((await credit(operator, q.id, "free run")).status, 409, "a run that paid nothing has nothing to credit");
     assert.equal((await credit(operator, "run_nosuchrun", "x")).status, 404);
     const rev = await (await w.http.req("GET", "/api/admin/onboarding/spend/revenue", { authorization: `Bearer ${viewer}` })).json() as any;

@@ -1,15 +1,27 @@
 import { getDb } from "./db.js";
 import { defaultSender } from "./profile.js";
 import { hosts } from "./host.js";
+import { currentEnvName, persistedKey, readEnv } from "./env-names.js";
 
 /**
  * Global platform settings (/admin/compute): knobs that used to be environment variables only. Each setting is keyed
  * by the variable it overrides; the value in force is
- *   platform_settings row (set on /admin)  ->  process.env[key]  ->  the code default below.
+ *   platform_settings row (set on /admin)  ->  the environment  ->  the code default below.
+ * The session engine's four keys (ENGINE_SETTINGS) keep the spelling they were stored under before the shell's names
+ * became APP_ (mold_v0-045): rows on live databases and a host pack's reads use them. The environment is read under
+ * the new name first (APP_ and the rest), the stored spelling as a fallback (src/env-names.ts).
  * Readers stay synchronous: they read an in-process cache, loaded on the first request (and the first autoscaler
  * tick) and refreshed when older than 30s, so another replica's change (or a serverless instance's) lands within ~30s.
  * setSetting() updates this process's cache at once.
  */
+
+/** The session engine's setting keys (stored as written before mold_v0-045; see above). */
+export const ENGINE_SETTINGS = {
+  maxSessionsPerRun: persistedKey("MAX_SESSIONS_PER_RUN"),
+  maxOrchestrators: persistedKey("MAX_ORCHESTRATORS"),
+  maxJobOrchestrators: persistedKey("MAX_JOB_ORCHESTRATORS"),
+  jobPodCapacity: persistedKey("JOB_POD_CAPACITY"),
+} as const;
 
 /** The shell's groups (models, runs, capacity, docs, email) and any a host pack adds (src/host.ts settings, mold_v0-039). */
 export type SettingGroup = string;
@@ -38,13 +50,13 @@ export const SETTINGS: SettingDef[] = [
     help: "Cloudflare Workers AI model for the first, quick brief on an access request's company." },
   { key: "VERTEX_REGION", group: "models", label: "Vertex AI region", kind: "text", default: "us-east5",
     help: "Google Cloud region for Claude (and Gemini) on Vertex AI, e.g. us-east5, europe-west1, global. The project comes from the Vertex AI service-account key in Key vault." },
-  { key: "OCTILLION_MAX_SESSIONS_PER_RUN", group: "runs", label: "Most sessions per run", kind: "int", default: 100, min: 1, max: 100000,
+  { key: ENGINE_SETTINGS.maxSessionsPerRun, group: "runs", label: "Most sessions per run", kind: "int", default: 100, min: 1, max: 100000,
     help: "A run that would start more sessions than this is refused." },
-  { key: "OCTILLION_MAX_ORCHESTRATORS", group: "capacity", label: "Shared orchestrators", kind: "int", default: 4, min: 0, max: 1000,
+  { key: ENGINE_SETTINGS.maxOrchestrators, group: "capacity", label: "Shared orchestrators", kind: "int", default: 4, min: 0, max: 1000,
     help: "Most shared orchestrators the autoscaler keeps running at once." },
-  { key: "OCTILLION_MAX_JOB_ORCHESTRATORS", group: "capacity", label: "Per-job orchestrators", kind: "int", default: 12, min: 1, max: 1000,
+  { key: ENGINE_SETTINGS.maxJobOrchestrators, group: "capacity", label: "Per-job orchestrators", kind: "int", default: 12, min: 1, max: 1000,
     help: "Most one-job orchestrators (one per simulation or research job) running at once." },
-  { key: "OCTILLION_JOB_POD_CAPACITY", group: "capacity", label: "Worker sandboxes per job", kind: "int", default: 40, min: 1, max: 50,
+  { key: ENGINE_SETTINGS.jobPodCapacity, group: "capacity", label: "Worker sandboxes per job", kind: "int", default: 40, min: 1, max: 50,
     help: "Worker sandboxes one per-job orchestrator runs at once." },
   { key: "BOAT_SANDBOX_SIZE", group: "capacity", label: "Sandbox size", kind: "choice", default: "default", options: ["small", "default", "large", "xlarge"],
     help: "boat.dev machine size for orchestrators started after the change and their worker sandboxes." },
@@ -113,7 +125,12 @@ export const freshSettings = (): Promise<void> => (Date.now() - loadedAt < TTL_M
 /** The value set on /admin, if any (from the cache). */
 export const setting = (key: string): unknown => cache.get(key)?.value;
 
-const envOf = (key: string) => { const v = process.env[key]; return v !== undefined && v.trim() !== "" ? v.trim() : undefined; };
+/** A setting's environment value: a key stored under the old prefix is read as APP_ and the rest first (mold_v0-045). */
+const envOf = (key: string) => {
+  const name = currentEnvName(key);
+  const v = name ? readEnv(name) : process.env[key];
+  return v !== undefined && v.trim() !== "" ? v.trim() : undefined;
+};
 
 /** The value in force: set here, else the environment, else the default. Numbers stay numbers. */
 export function settingValue(key: string): string | number {

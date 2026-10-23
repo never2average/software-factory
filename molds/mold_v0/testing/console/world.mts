@@ -112,7 +112,7 @@ try {
   // 5. The console, killed with this process even if this process is killed outright.
   const pdeath = "import ctypes,os,signal,sys; ctypes.CDLL(None).prctl(1, signal.SIGTERM); os.execvp(sys.argv[1], sys.argv[1:])";
   const next: ChildProcess = spawn("python3", ["-c", pdeath, "node", "node_modules/next/dist/bin/next", "start", "-p", String(consolePort), "-H", "127.0.0.1"], {
-    cwd: consoleDir, env: { ...cleanEnv, NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1", OCTILLION_API_URL: `http://127.0.0.1:${apiPort}` },
+    cwd: consoleDir, env: { ...cleanEnv, NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1", APP_API_URL: `http://127.0.0.1:${apiPort}` },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let log = "";

@@ -1,5 +1,5 @@
 // The workspace store (mold_v0-033; src/workspace-store.ts, src/workspace-bundle.ts), offline: an embedded database, a
-// local object store (OCTILLION_STORAGE_DIR), fixture runs (scripts/fixtures/runs/notes.mjs).
+// local object store (APP_STORAGE_DIR), fixture runs (scripts/fixtures/runs/notes.mjs).
 //   npm run test:workspace-store
 //
 // 1. A run checks its workspace out before it runs and writes it back when its program and validation exit 0: version
@@ -18,9 +18,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFil
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { cleanup, connect, STAMP, startHttp, TMP } from "./lib/test-world.js";
+import { ENV } from "../src/env-names.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 try {
   const { getDb } = await import("../src/db.js");
@@ -71,7 +72,7 @@ try {
       assert.deepEqual(Object.keys(v1.manifest).sort(), ["evidence/" + r1.claim.run.id + ".txt", "notes.txt"].sort(), "the manifest names every file");
       assert.equal(v1.manifest["notes.txt"]!.sha256, createHash("sha256").update(`A1 ${STAMP}\n`).digest("hex"), "with its sha256");
       assert.equal(v1.manifest_sha256, bundle.manifestSha256(v1.manifest));
-      const raw = readFileSync(path.join(process.env.OCTILLION_STORAGE_DIR!, v1.object_key));
+      const raw = readFileSync(path.join(ENV.APP_STORAGE_DIR!, v1.object_key));
       assert.ok(v1.object_key.startsWith(`workspaces/org-${A.orgId}/fixture_store/`), "stored under the workspace's own prefix");
       assert.ok(raw.subarray(0, 4).toString() === "WSE1" && !raw.includes(Buffer.from(`A1 ${STAMP}`)), "sealed: no plain text at rest");
       const { openBytes } = await import("../src/orgcrypto.js");
@@ -154,10 +155,10 @@ try {
       const held = await start(ca, "notes", { text: "holder" });
       const ch = (await client.claim(["fixture_store/notes"]))!;
       assert.equal(ch.run.id, held.id);
-      process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE = "40";
+      process.env.APP_RUNS_MAX_LIVE_PER_WORKSPACE = "40";
       const waiting = [];
       for (let i = 0; i < 25; i++) waiting.push((await start(ca, "notes", { text: `w${i}` })).id);
-      delete process.env.OCTILLION_RUNS_MAX_LIVE_PER_WORKSPACE;
+      delete process.env.APP_RUNS_MAX_LIVE_PER_WORKSPACE;
       const other = await start(cb, "notes", { text: "B behind A's queue" });
       const cOther = (await client.claim())!;
       assert.equal(cOther?.run.id, other.id, "B's run is claimed past 25 of A's waiting runs");
@@ -184,7 +185,7 @@ try {
       await db.query("UPDATE workspace_snapshots SET object_key = $2 WHERE id = $1", [a.id, a.object_key]);
       assert.equal((await runNext()).view?.status, "succeeded", "with its own object back, A's run goes on");
       // Same manifest, B's object copied over A's: still refused (bound to B's org, row and key).
-      const objects = process.env.OCTILLION_STORAGE_DIR!;
+      const objects = ENV.APP_STORAGE_DIR!;
       const aBefore = readFileSync(path.join(objects, (await latest(A.orgId))!.object_key));
       writeFileSync(path.join(objects, (await latest(A.orgId))!.object_key), readFileSync(path.join(objects, b.object_key)));
       await start(ca, "notes", { text: "A7" });
@@ -239,7 +240,7 @@ try {
 
     // ---------- 6. over HTTP; deleting a workspace ----------
     {
-      const W = process.env.OCTILLION_WORKER_TOKEN!;
+      const W = ENV.APP_WORKER_TOKEN!;
       const viaHttp = harness.httpRunnerClient(http.base, W, "w-http");
       await start(ca, "notes", { text: "A-http" });
       const c = (await viaHttp.claim(["fixture_store/notes"]))!;
@@ -255,8 +256,8 @@ try {
       assert.ok(bKeys.length > 0);
       await deleteOrg(B.orgId);
       assert.equal((await db.query("SELECT 1 FROM workspace_snapshots WHERE org_id = $1", [B.orgId])).length, 0, "its snapshot rows are gone");
-      assert.ok(bKeys.every((k) => !existsSync(path.join(process.env.OCTILLION_STORAGE_DIR!, k))), "and its objects");
-      assert.ok(existsSync(path.join(process.env.OCTILLION_STORAGE_DIR!, lastA.object_key)), "A's are untouched");
+      assert.ok(bKeys.every((k) => !existsSync(path.join(ENV.APP_STORAGE_DIR!, k))), "and its objects");
+      assert.ok(existsSync(path.join(ENV.APP_STORAGE_DIR!, lastA.object_key)), "A's are untouched");
       console.log("✓ over HTTP with the lease token: checkout and write-back; deleting a workspace removes its snapshots and objects");
     }
   } finally {

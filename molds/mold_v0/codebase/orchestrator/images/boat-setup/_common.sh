@@ -8,7 +8,7 @@
 # Nothing here writes API keys, config files, rules files or MCP servers: the snapshot must stay neutral.
 set -euo pipefail
 
-log() { printf '[octillion-setup] %s\n' "$*" >&2; }
+log() { printf '[app-setup] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
 SUDO=""
