@@ -3,6 +3,7 @@
 // copy buttons, relative times, loading and error states.
 import { useAuth } from '@/lib/auth';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { NoAccountNotice } from './no-account';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -78,6 +79,8 @@ export function LoadingCards({ count = 3 }: { count?: number }) {
 }
 
 export function ErrorState({ error }: { error: Error }) {
+  // No account open here (the API's 403 no_account, src/app.ts): the way forward, never an error card (mold_v0-098).
+  if ((error as { body?: { code?: unknown } }).body?.code === 'no_account') return <NoAccountNotice />;
   return (
     <Alert variant='destructive'>
       <Icons.alertCircle />
