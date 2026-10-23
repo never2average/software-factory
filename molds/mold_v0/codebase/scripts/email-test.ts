@@ -51,7 +51,7 @@ try {
       if (f === "email.ts") continue;
       const t = readFileSync(path.join(SRC, f), "utf8");
       // A provider's API, a provider's key, or a message of a kind only the adapter sends, built anywhere else.
-      if (/api\.resend\.com|RESEND_API_URL|useCredential\(\s*["']resend|nodemailer|smtp\./i.test(t) && !/^keyvault/.test(f) && f !== "about-routes.ts") offenders.push(`${f}: talks to an email provider`);
+      if (/api\.resend\.com|RESEND_API_URL|useCredential\(\s*["']resend|nodemailer|smtp\./i.test(t) && !/^keyvault/.test(f)) offenders.push(`${f}: talks to an email provider`);
       for (const k of mail.EMAIL_KINDS) if (new RegExp(`kind:\\s*["']${k}["']`).test(t)) offenders.push(`${f}: builds a ${k} email`);
       if (/sendLater\(\s*\{|\bmail\.send\(/.test(t)) offenders.push(`${f}: sends a message it built itself`);
     }
