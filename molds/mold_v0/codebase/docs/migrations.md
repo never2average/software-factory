@@ -26,12 +26,25 @@ old way has no `schema_migrations` table; the first `db:migrate` (or boot) runs 
 nothing that is already there and adds whatever an older release had not created yet, then records it.
 Repairs and seed rows in the baseline (zero limits, persona copies, sandbox error splits, model prices) used to re-run
 on every boot; now they run once. A repair or seed that must happen again goes in a new migration (or in code).
-`npm run test:migrations` proves it: a database built by the old schema-on-boot path, with rows in it, is migrated,
-and its tables, columns, defaults, constraints and indexes come out identical to a database built from scratch by the
-migrations, with the rows intact; a second run applies nothing; an edited migration is refused. It also
-starts from `sql/schema.sql` as it was at older commits (by default eight spread over the file's history when git has
-it; `MIGRATIONS_FROM_REFS="<ref> ..."` to choose), each alone and all of them booted in order on one database, as a live
-database went through them. `MIGRATIONS_PG_URL` runs the same on a real Postgres (plus replicas racing to migrate).
+`npm run test:migrations` proves it: databases built by the old schema-on-boot path and by the migrations as they were
+before mold_v0-049 (recorded up to 0001, 0003, 0008, 0013 and 0016), each with rows in every table, are migrated, and every
+row comes out identical; their shell tables, columns, defaults, constraints, indexes, functions and policies equal a
+database built from scratch (with the host pack, every one of them does, the product's tables included); a second run
+applies nothing; an edited migration is refused. `MIGRATIONS_PG_URL` runs the same on a real Postgres (plus replicas
+racing to migrate).
+
+**The product's tables left the base schema (mold_v0-049).** `0001_baseline.sql` was the product's whole schema; its
+own tables (products, scenarios, simulations and their sessions, personas, tasks and the rest) moved to its host pack's
+migrations, under the names they had (MOLD.md "Host packs": `host.schema`), so a database built with no packs has none
+of them. Three merged files were rewritten once for it, the only time: `0001_baseline` (the shell's tables only),
+`0003_row_level_security` and `0009_usage_and_limits` (the gateway's session rule through `octillion_session_org()`, so
+it no longer names the sessions table). `src/migrate.ts` `SPLIT_MIGRATIONS` lists each file's earlier checksum: a
+database that applied the earlier version keeps it, and it is not reported as edited. That database already has the
+product's tables with their rows, so the host pack's migrations that took them over (`host.schema.adopts`) are recorded
+there without running; nothing in them touches its rows. `0017_gateway_session_policies` gives an older database the
+same gateway policies a new one gets. `scripts/fixtures/pre-049-migrations/` keeps the three earlier files: `npm run
+test:migrations` builds databases at the older versions from them (with rows in every table) and upgrades each.
+Any other edit of a merged file is still refused.
 
 **Writing a migration.**
 - Add the next number: `sql/migrations/0002_what_it_does.sql`. Never edit a merged file: `db:migrate` refuses when an

@@ -1,4 +1,5 @@
 import { getDb } from "./db.js";
+import { researchJobs, sessionEngine } from "./host-tables.js";
 import { settingNumber } from "./settings.js";
 import { apportion, findAgent, scheduledAgents, variantsOf } from "./agents.js";
 import { codeHash } from "../orchestrator/deploy/boat-lib.js";
@@ -157,9 +158,10 @@ export async function orchestratorBusy(orchestratorId: string): Promise<boolean>
   const db = await getDb();
   const [o] = await db.query<{ worker_id: string | null }>("SELECT meta->>'worker_id' AS worker_id FROM orchestrators WHERE id = $1", [orchestratorId]);
   if (!o?.worker_id) return true; // unknown: never delete on a guess
+  if (!sessionEngine()) return false; // no session engine tables in this build (mold_v0-049): nothing of its runs here
   const [n] = await db.query<{ n: number }>(
     `/* tenant: internal: autoscaler, by the orchestrator's worker id; returns a count only */ SELECT (SELECT count(*) FROM agent_sessions WHERE status = 'running' AND worker_id = $1)
-          + (SELECT count(*) FROM product_research WHERE status = 'running' AND worker_id = $1) AS n`, [o.worker_id]);
+          + ${researchJobs() ? "(SELECT count(*) FROM product_research WHERE status = 'running' AND worker_id = $1)" : "0"} AS n`, [o.worker_id]);
   return Number(n?.n ?? 0) > 0;
 }
 
@@ -175,7 +177,7 @@ export async function fleetStatus(orchestratorId?: string) {
   const total = live.reduce((s, o) => s + Number(o.capacity), 0);
   const plan = planPods(total, await agentShares());
   const dealt = assign(plan, live.map((o) => ({ id: o.id, capacity: Number(o.capacity) })));
-  const [queue] = await db.query<{ queued: number; running: number }>(
+  const [queue] = !sessionEngine() ? [{ queued: 0, running: 0 }] : await db.query<{ queued: number; running: number }>(
     "/* tenant: worker API: global queue counts for orchestrators, counts only */ SELECT count(*) FILTER (WHERE status = 'queued') AS queued, count(*) FILTER (WHERE status = 'running') AS running FROM agent_sessions",
   );
   const mine = orchestratorId ? dealt.get(orchestratorId) : undefined;
@@ -202,7 +204,8 @@ export async function fleetStatus(orchestratorId?: string) {
 export async function jobState(jobId: string): Promise<{ kind: "simulation" | "research"; status: string | null; done: boolean; finished_at: Date | null }> {
   const db = await getDb();
   const research = jobId.startsWith("rsh_");
-  const [r] = await db.query<{ status: string; finished_at: Date | null }>(
+  // No session engine tables in this build (mold_v0-049): no such job, so it is over.
+  const [r] = !(research ? researchJobs() : sessionEngine()) ? [] : await db.query<{ status: string; finished_at: Date | null }>(
     `SELECT status, finished_at FROM ${research ? "product_research" : "simulations"} WHERE id = $1`, [jobId]);
   return { kind: research ? "research" : "simulation", status: r?.status ?? null, done: !r || !["queued", "running"].includes(r.status),
            finished_at: r?.finished_at ? new Date(r.finished_at) : null };

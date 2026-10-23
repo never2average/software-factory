@@ -7,6 +7,7 @@ import { normalize, transcripts, type RawEvent, type SessionRef, type StoredEven
 import { findAgent } from "./agents.js";
 import { languageOf, resolveEnvironment, type PersonaEnvironment, type SessionEnvironment } from "../orchestrator/core/environment.js";
 import { SCENARIO_ROWS } from "./session-engine.js";
+import { sessionEngine } from "./host-tables.js";
 import { hosts } from "./host.js";
 import { revokeSessionTokens, sessionGatewayUsage } from "./gateway.js";
 
@@ -19,6 +20,8 @@ import { revokeSessionTokens, sessionGatewayUsage } from "./gateway.js";
  * A job carries the task and the developer profile the orchestrator role-plays when the sub-agent asks a question
  * (plus org/product ids so an orchestrator may write events straight to ClickHouse). Nothing in it names the
  * customer's product: the sub-agent and the simulated developer must both be blind.
+ * Its tables are a host pack's (mold_v0-049): in a build without them nothing is queued, so a claim finds nothing and
+ * a session id names no session.
  */
 
 const LEASE_MINUTES = () => Number(process.env.OCTILLION_LEASE_MINUTES ?? 30);
@@ -55,6 +58,7 @@ export interface Job {
 
 /** `simulation_id`: a per-job orchestrator claims only the run it was launched for. */
 export async function claimJobs(workerId: string, opts: { limit?: number; models?: string[]; harness?: string; agent_ids?: string[]; simulation_id?: string; includePrivate?: boolean } = {}): Promise<Job[]> {
+  if (!sessionEngine()) return [];
   await sweepStale();
   const db = await getDb();
   const params: unknown[] = [workerId, Math.min(Math.max(opts.limit ?? 1, 1), 50)];
@@ -143,6 +147,7 @@ export async function claimJobs(workerId: string, opts: { limit?: number; models
 }
 
 async function sessionRef(sessionId: string) {
+  if (!sessionEngine()) throw Object.assign(new Error(`No session ${sessionId}`), { status: 404 });
   const db = await getDb();
   const [s] = await db.query<SessionRef & { status: string; events: number }>(
     "SELECT id, org_id, product_id, simulation_id, model, status, events FROM agent_sessions WHERE id = $1",
@@ -165,6 +170,7 @@ export async function appendEvents(sessionId: string, raw: RawEvent[]) {
 }
 
 export async function heartbeat(sessionId: string) {
+  if (!sessionEngine()) throw Object.assign(new Error(`Session ${sessionId} is not running`), { status: 409 });
   const db = await getDb();
   const [row] = await db.query("/* tenant: session checked against the job token in http.ts (/sessions/:id) */ UPDATE agent_sessions SET heartbeat_at = now() WHERE id = $1 AND status = 'running' RETURNING id", [sessionId]);
   if (!row) throw Object.assign(new Error(`Session ${sessionId} is not running`), { status: 409 });
@@ -282,6 +288,7 @@ export async function finishSimulationIfDone(simulationId: string, opts: { exten
   // Adaptive runs (a host pack's, src/host.ts sessions.extend): when a batch is done, tasks whose result is not settled yet get more sessions; only a run that
   // queues nothing more is finished. `extend: false` (an admin cancelling a session) never queues more: stopping work
   // must not start new paid work.
+  if (!sessionEngine()) return;
   for (const h of opts.extend === false ? [] : hosts()) if (h.sessions?.extend && (await h.sessions.extend(simulationId))) return;
   const db = await getDb();
   const [done] = await db.query<{ org_id: number; status: string; first: boolean }>(
@@ -297,6 +304,7 @@ export async function finishSimulationIfDone(simulationId: string, opts: { exten
 
 /** Time out sessions whose worker went quiet for longer than the lease. */
 export async function sweepStale() {
+  if (!sessionEngine()) return 0;
   const db = await getDb();
   const stale = await db.query<{ id: string }>(
     `/* tenant: internal: stale-lease sweep across all orgs */ SELECT id FROM agent_sessions WHERE status = 'running' AND heartbeat_at < now() - make_interval(mins => $1)`,
