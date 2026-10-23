@@ -115,6 +115,17 @@ three `GATEWAY_*` names are optional and never asked for: set them on `<project>
 or the reasoning effort; absent, the mold defaults apply. Brief hints: `ai gateway` / `vercel's gateway` select the
 gateway; `cloudflare workers ai` the default.
 
+## mold_v0: platform administrators (`platform_admins`)
+
+Who may open a mold_v0 app's admin console besides a company account's members (the shell's
+`OCTILLION_PLATFORM_ADMINS`; `APP_PLATFORM_ADMINS` once the neutral names land). Without one nobody can reach `/admin`
+and the operator is told the app is invite-only. Resolved from a brief line `Admins: you@example.com, *@example.com`,
+else the app's own state, else asked (the operator's address, `defaults.operator_email`, is suggested). Each entry is
+an address or `*@domain`, lowercased; anything else is refused. An app deployed before this question existed is not
+asked here: `provision.py <app_id>` checks whether its target already holds the variable (by name) and asks only if
+not. Written to `application.json` `platform_admins`; `provision.py` writes it at every deploy (`molds/mold_v0/mold.json`
+`{platform_admins}`).
+
 ## mold_v0: the app's own profile settings (`## Profile`, `## Budgets`)
 
 A mold_v0 app may set some of its build's profile fields from its own state (mold_v0-090): today `limits`, the

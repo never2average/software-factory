@@ -63,6 +63,11 @@ web address, one paste per code block, what is hidden). What each station needs:
   is a live app's deploy and needs its own yes). Emailed codes work without any of it. Every deploy's result says
   where Google sign-in stands (directly, through the hub, or NOT working with the steps):
   `provision.py <app_id> --google-signin`.
+  A mold_v0 app also needs a **platform administrator** (who may open its admin console; without one everyone,
+  the operator included, is told the app is invite-only). When the keys station says "no platform administrator is
+  recorded", ask the operator which email address should run the app (or `*@their-company.com`); it is not a
+  secret, so it is said in the chat. Write it as `"platform_admins": ["you@example.com"]` in
+  `state/application/<app_id>/answers.json` and rerun intake with `--answers`; the deploy writes it on the API.
 - **tests** — the signed-in checks need a person who can sign in. Ask them to say "send the code"; then
   `mint.py <app_id> code-request <email>`, they paste the six digits, `mint.py <app_id> code <digits> <email>`,
   then `run`. The session lives in `~/.cache/software-factory/`, never in the repo or the chat.

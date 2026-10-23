@@ -138,7 +138,7 @@ def rehearsal(ok):
         f = json.load(open(os.path.join(t, "state", "factory.json"))); f["molds"][0].update(status="wip"); f["applications"] = ["zz_shop", "zz_live"]
         json.dump(f, open(os.path.join(t, "state", "factory.json"), "w"))
         def mkapp(app_id, base):
-            docs = SS.shape_state(app_id, "mold_vx", "vercel", {"product_id": "zz_product"}, {"source": {"commit": "c" * 40}}, {"vercel_project": base}, {},
+            docs = SS.shape_state(app_id, "mold_vx", "vercel", {"product_id": "zz_product"}, {"source": {"commit": "c" * 40}}, {"vercel_project": base, "platform_admins": "ops@example.com"}, {},
                                   f"briefs/{app_id}.md", {"vercel_team": "t"}, root=t)
             d = os.path.join(t, "state", "application", app_id); os.makedirs(d)
             for nm, doc in zip(("application", "infrastructure", "datastores", "datainfra"), docs): json.dump(doc, open(os.path.join(d, nm + ".json"), "w"), indent=2)
@@ -204,8 +204,9 @@ def rehearsal(ok):
         ok(dep.index("zz-shop") > 0 and set(dep[:dep.index("zz-shop")]) == {"zz-shop-api"} and dep[dep.index("zz-shop") + 1:] == ["zz-shop-api"] and adds == [],
            f"rehearsal: the API deploys first, then the console, into the project --set-secret made, then the API once more with the console's address: {dep} {adds}")
         ok(w["projects"]["zz-shop-api"]["env"].get("OCTILLION_CONSOLE_URL") == web_u and w["projects"]["zz-shop-api"]["env"].get("OCTILLION_PROXY_HOPS") == "1"
-           and "OCTILLION_CONSOLE_URL" not in w["projects"]["zz-shop"]["env"],
-           f"rehearsal: the API holds the console's address (its emails link to the console) and its one proxy; the console holds neither (mold_v0-084): {sorted(w['projects']['zz-shop-api']['env'])}")
+           and "OCTILLION_CONSOLE_URL" not in w["projects"]["zz-shop"]["env"] and w["projects"]["zz-shop-api"]["env"].get("OCTILLION_PLATFORM_ADMINS") == "ops@example.com"
+           and "OCTILLION_PLATFORM_ADMINS" not in w["projects"]["zz-shop"]["env"],
+           f"rehearsal: the API holds the console's address and the app's platform administrator (its emails link to the console) and its one proxy; the console holds neither (mold_v0-084): {sorted(w['projects']['zz-shop-api']['env'])}")
         r = subprocess.run([sys.executable, os.path.join(t, ".claude", "scripts", "lib", "single_service.py"), "lane-key-path", "zz_shop"], cwd=t, env=env, capture_output=True, text=True)
         ok(r.returncode == 1 and api_u in r.stderr and web_u not in r.stderr, f"rehearsal: the lanes' MCP check is for the API's address: {r.stderr.strip()[-200:]}")
         good = prod()
@@ -294,7 +295,8 @@ def run():
         sys.path.insert(0, os.path.dirname(HERE)); import factory
         prod = {"product_id": "mcp_product_shell"}; mold = {"source": {"commit": "c" * 40}}
         for target in SS.TARGETS:
-            docs = SS.shape_state("zz_shape", "mold_v0", target, prod, mold, {"domain": "shape.example.org", "vercel_project": "zz-shape"}, {}, "briefs/zz_shape.md")
+            docs = SS.shape_state("zz_shape", "mold_v0", target, prod, mold, {"domain": "shape.example.org", "vercel_project": "zz-shape", "platform_admins": "Ops@example.com, *@example.org"}, {}, "briefs/zz_shape.md")
+            ok(docs[0].get("platform_admins") == ["ops@example.com", "*@example.org"], f"intake's answer reaches application.platform_admins ({target}): {docs[0].get('platform_admins')}")
             d = os.path.join(t, "apps", "zz_shape"); os.makedirs(d, exist_ok=True)
             for nm, doc in zip(("application", "infrastructure", "datastores", "datainfra"), docs): json.dump(doc, open(os.path.join(d, nm + ".json"), "w"))
             errs, _ = factory._app_errors("zz_shape", d)
@@ -354,6 +356,20 @@ def run():
         ok(env[2] == "DOMAIN=shop.example.org\nPUBLIC_URL=https://shop.example.org\nOCTILLION_CONSOLE_URL=https://shop.example.org\nOCTILLION_PROXY_HOPS=1\n",
            f"the env step gets state's settings on stdin, the console's address (one address serves both on a server: emails link to it) and the one proxy (the stack's Caddy) among them (mold_v0-084): {env[2]!r}")
         ok(all("-p sf-zz-shop" not in " ".join(c[1]) or "shop " not in " ".join(c[1]) for c in R.calls), "no step names the default project")
+        # platform administrators on a server of its own: written to the env file from state; while none is recorded the
+        # name is not sent (whatever the env file holds is kept); a first deploy with none at all stops for the operator
+        ok(SS.config_pairs(dict(S, admins="ops@example.com,*@example.org"), F).get("OCTILLION_PLATFORM_ADMINS") == "ops@example.com,*@example.org"
+           and "OCTILLION_PLATFORM_ADMINS" not in SS.config_pairs(S, F) and SS.settings("zz_shop", dict(app, platform_admins=["ops@example.com"]), infra, t)["admins"] == "ops@example.com",
+           "compose_remote: the administrators reach the env file only when recorded")
+        import agent_result as AR
+        for deployed in (False, True):
+            AR.reset(); said = []; i_c = dict(infra, **({"deployed_at": "2026-10-20T00:00:00+00:00"} if deployed else {}))
+            SS.check("zz_shop", app, i_c, os.path.join(t, "no-such-app"), say=said.append, root=t)
+            txt = "\n".join(said)
+            ok((SS.ADMIN_MARK in txt and [n_["name"] for n_ in AR.NOTES["needs"]] == ["platform administrator address"]) if not deployed
+               else (SS.ADMIN_MARK not in txt and not AR.NOTES["needs"] and "keeps whatever OCTILLION_PLATFORM_ADMINS holds" in txt),
+               f"compose_remote check with no administrator recorded: {'kept and said (deployed before)' if deployed else 'asked for (never deployed)'}: {[l for l in said if 'administrator' in l]}")
+        AR.reset()
         ok(reads == ["https://shop.example.org/healthz"] and res["health"]["public"] == "200" and res["release"] == "20261020T000000Z", f"the public health read: {reads}")
         # mold_v0-024: an app with packs or a brand sends build/<app_id>/ (made afresh just before contact), never the codebase
         src_step = next(st for st in SS.plan(S, F, SS.source_for("zz_shop", {"mold_id": "mold_vx", "packs": ["shop_notes"]}, t)) if st["id"] == "source")
@@ -562,7 +578,7 @@ def run():
             def stop_for_human(self, msg): raise SystemExit(3)
         pages = lambda codes: (lambda url: (next((c for k, c in codes.items() if url.endswith(k)), "307"), ""))
         try:
-            va = {"app_id": "zz_shop", "mold_id": "mold_vx", "status": "planned"}
+            va = {"app_id": "zz_shop", "mold_id": "mold_vx", "status": "planned", "platform_admins": ["ops@example.com", "*@example.org"]}
             vi = {"target": "vercel", "secret_store": "vercel_env", "secrets_user": [], "secrets_derived": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"],
                   "secrets_optional": ["PAY_SECRET_KEY", "CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"], "vercel": {"team": "team-x", "project": "zz-shop"}}
             vdir = os.path.join(t, "vapp"); os.makedirs(vdir)
@@ -744,6 +760,51 @@ def run():
             vd = {"app_id": "zz_shop", "mold_id": "mold_vx"}
             ok(SS.problems("zz_shop", {"application": vd, "infrastructure": i_, "datastores": {"postgres": {"provider": "neon"}}}) == [], "the recorded state passes validate's rules")
             ok(SS.mcp_address(i_) == api_u and SS.address(i_) == web_u, "the MCP check targets the API; people open the console")
+            # Platform administrators (application.json platform_admins): who may open the admin console. Recorded: written on
+            # the API before its first deploy. None recorded and none on the project: the check and the deploy stop for the
+            # operator (needs_human) before anything is made. None recorded but the project holds one (set by hand before the
+            # factory owned it): kept, never removed, and the check says so.
+            ok(ae.get("OCTILLION_PLATFORM_ADMINS") == "ops@example.com,*@example.org" and fp.calls.index(("set_env", "zz-shop-api", "OCTILLION_PLATFORM_ADMINS")) < at[0]
+               and "OCTILLION_PLATFORM_ADMINS" not in fp.projects["zz-shop"]["env"],
+               f"recorded administrators are written on the API project (never the console) before its first deploy: {ae.get('OCTILLION_PLATFORM_ADMINS')}")
+            ok(SS.api_settings(man, None, "a@example.com") == {"OCTILLION_PROXY_HOPS": "1", "OCTILLION_PLATFORM_ADMINS": "a@example.com"} and SS.api_settings(man, None, "") == {"OCTILLION_PROXY_HOPS": "1"}
+               and SS.admin_entries("A@Example.com, *@Example.org,, a@example.com, nope") == (["a@example.com", "*@example.org"], ["nope"]) and SS.admins_of({}) == "",
+               "the administrators: written only when recorded, lowercased, once each, and anything that is not an address or *@domain refused")
+            import agent_result as AR
+            noadm = {k: v for k, v in va.items() if k != "platform_admins"}
+            AR.reset(); fpn = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": ["DATABASE_URL"]}); said = []
+            rc = SS.vercel_check("zz_shop", noadm, cp(vi), fpn, say=said.append, root=t)
+            ok(rc == 1 and any(SS.ADMIN_MARK in l for l in said) and [n_["name"] for n_ in AR.NOTES["needs"]] == ["platform administrator address"]
+               and AR.NOTES["needs"][0]["kind"] == "approval" and "answers.json" in AR.NOTES["needs"][0]["how"] and not any(c[0] == "set_env" for c in fpn.calls),
+               f"the check with no administrator anywhere: not ready, the address asked for in plain words (needs_human through provision.py): {said[-2:]} {AR.NOTES['needs']}")
+            AR.reset(); fpn = FakeP(projects=["zz-shop-api", "zz-shop"]); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(noadm), cp(vi), vdir, fpn, say=lambda s: None, root=t, read_page=pages({}))
+            except SS.NeedsHuman as e: err = str(e)
+            ok(SS.ADMIN_MARK in err and [n_["name"] for n_ in AR.NOTES["needs"]] == ["platform administrator address"]
+               and not any(c[0] in ("vrun", "set_env", "deploy", "neon", "choose") for c in fpn.calls),
+               f"the deploy with no administrator anywhere stops for the operator before anything is created or deployed: {err[:200]} {fpn.calls[:4]}")
+            AR.reset(); a_n = dict(noadm)
+            rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], a_n, cp(vi), {}, vdir, FakeP(projects=["zz-shop-api", "zz-shop"]), say=lambda s: None, root=t)
+            ok(rc == 1 and AR.NOTES["needs"] and a_n.get("status") == "planned" and "revert" not in a_n,
+               "provision.py --deploy without an administrator: exit 1 with a need noted (provision.py makes it exit 3, needs_human), never reverted")
+            for held in ("OCTILLION_PLATFORM_ADMINS", "APP_PLATFORM_ADMINS"):
+                AR.reset(); fpk = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", held]}); said = []
+                rc = SS.vercel_check("zz_shop", noadm, cp(vi), fpk, say=said.append, root=t)
+                ok(rc == 0 and not AR.NOTES["needs"] and any(f"already holds {held}" in l and "kept" in l for l in said),
+                   f"the check with no administrator in state but {held} on the API project: ready, and it says the variable is kept: {[l for l in said if 'administrator' in l]}")
+                a_k = dict(noadm); i_k = cp(vi); err = ""
+                try: SS.vercel_deploy("zz_shop", a_k, i_k, vdir, fpk, say=lambda s: None, root=t, read_page=pages({}))
+                except SS.Stop as e: err = str(e)
+                ok(not err and fpk.projects["zz-shop-api"]["env"].get(held) == "standin" and not any(c[0] == "set_env" and "PLATFORM_ADMINS" in str(c[2]) for c in fpk.calls)
+                   and not any(c[0] == "rm_env" for c in fpk.calls),
+                   f"the deploy keeps {held} the project already holds when state records none (never removed, never rewritten): {err[:200]}")
+            fpb = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "APP_PLATFORM_ADMINS"]}); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(va), cp(vi), vdir, fpb, say=lambda s: None, root=t, read_page=pages({}))
+            except SS.Stop as e: err = str(e)
+            ok(not err and {n_: fpb.projects["zz-shop-api"]["env"].get(n_) for n_ in ("OCTILLION_PLATFORM_ADMINS", "APP_PLATFORM_ADMINS")}
+               == {"OCTILLION_PLATFORM_ADMINS": "ops@example.com,*@example.org", "APP_PLATFORM_ADMINS": "ops@example.com,*@example.org"},
+               f"recorded administrators on a project that holds the other spelling: both get state's list, so neither shadows it: {err[:200]}")
+            AR.reset()
             # the console fails its health: BOTH projects back on what served before
             before = {"zz-shop-api": "dpl_api_old", "zz-shop": "dpl_web_old"}
             fp = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before=before, health={web_u: "502"})

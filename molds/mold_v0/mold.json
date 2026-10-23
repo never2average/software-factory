@@ -19,6 +19,12 @@
     "vercel"
   ],
   "health_path": "/healthz",
+  "platform_admins": {
+    "$comment": "Who may open the admin console besides a company account's members (mold_v0's src/clerk.ts, src/admin-auth.ts, src/admin-roles.ts). Recorded per app in application.json platform_admins (intake asks when the brief does not say; an address is not a secret) and written as a plain setting wherever {platform_admins} appears below (vercel.projects.api.env, compose.config). also_read: the other spelling the code reads the same list under (the neutral APP_ names, mold_v0-045; the newer name wins when both are set): a project that already holds it gets the same value, so neither shadows the other, and a project holding either counts as having administrators.",
+    "also_read": [
+      "APP_PLATFORM_ADMINS"
+    ]
+  },
   "rls": {
     "$comment": "The product's own row-level security proof (mold_v0-031; its scripts/check-rls.ts: the catalog, then a live probe in a rolled-back transaction). Applies only while the codebase's package.json has the script. Intake writes datastores.postgres.rls = mode; the deploy runs the script (compose_remote: in a one-off container of the new release, with the server's env file; vercel: on this machine against the api project's production database) and a failure is a failed health check; the lanes run it against an embedded throwaway database. A deploy counts only the product's PASS line for a real Postgres ('pass'), never one for its embedded fallback.",
     "script": "check:rls",
@@ -32,7 +38,8 @@
       "DOMAIN": "{domain}",
       "PUBLIC_URL": "https://{domain}",
       "OCTILLION_CONSOLE_URL": "https://{domain}",
-      "OCTILLION_PROXY_HOPS": "1"
+      "OCTILLION_PROXY_HOPS": "1",
+      "OCTILLION_PLATFORM_ADMINS": "{platform_admins}"
     },
     "dockerfile": "Dockerfile",
     "console": {
@@ -70,9 +77,10 @@
         "database": true,
         "health": "/healthz",
         "env": {
-          "$comment": "Settings the factory writes on the api project at every deploy (mold_v0-084), never secrets: {console_url} is the console project's production address, read back from Vercel after its deploy (the API is deployed once more when it changed), so sign-in codes, invitations and every email link to the console; OCTILLION_PROXY_HOPS is the one proxy in front of the function (Vercel's edge), so per-IP limits read the address the edge saw.",
+          "$comment": "Settings the factory writes on the api project at every deploy (mold_v0-084), never secrets: {console_url} is the console project's production address, read back from Vercel after its deploy (the API is deployed once more when it changed), so sign-in codes, invitations and every email link to the console; OCTILLION_PROXY_HOPS is the one proxy in front of the function (Vercel's edge), so per-IP limits read the address the edge saw; {platform_admins} is the app's platform administrators (application.json platform_admins, comma-separated addresses or *@domain entries; src/clerk.ts), the only people besides a company account's members who may sign in and reach /admin. While state records none, the name is not written and whatever the project holds under it is kept (provision.py's check says so; with neither, the check and the deploy stop and ask).",
           "OCTILLION_CONSOLE_URL": "{console_url}",
-          "OCTILLION_PROXY_HOPS": "1"
+          "OCTILLION_PROXY_HOPS": "1",
+          "OCTILLION_PLATFORM_ADMINS": "{platform_admins}"
         }
       },
       "web": {

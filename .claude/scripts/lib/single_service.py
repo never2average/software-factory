@@ -387,6 +387,8 @@ def shape_state(app_id, mold_id, target, prod, mold, ans, hints, brief_rel, defa
            "product_id": prod["product_id"], "service_surface": [],
            "testing": {l: {"status": "pending"} for l in ("load", "context", "functional", "accessibility", "responsiveness")}}
     if hints.get("customer_id"): app["customer_id"] = hints["customer_id"]
+    adm = admin_entries(ans.get("platform_admins") or [])[0]
+    if adm: app["platform_admins"] = adm      # who may open the admin console; written to the API at every deploy
     infra = {"$schema": "../app_id/infrastructure.schema.json", "target": target,
              "secret_store": "compose_remote_env_file" if target == "compose_remote" else "vercel_env",
              "sandbox": {"provider": "none", "prewarm": False},
@@ -481,7 +483,7 @@ def settings(app_id, app, infra, root=None):
          "project": (cr.get("compose") or {}).get("project") or f"sf-{slug(app_id)}",
          "compose_file": (cr.get("compose") or {}).get("file") or (man.get("compose") or {}).get("file", ""),
          "health_path": man.get("health_path", "/"), "secrets_user": list(infra.get("secrets_user") or []),
-         "secrets_optional": list(infra.get("secrets_optional") or []), "email": ""}
+         "secrets_optional": list(infra.get("secrets_optional") or []), "email": "", "admins": admins_of(app)}
     S["host_shown"] = S["ssh_host"] or S["host"] or VR.NO_HOST; S["domain_shown"] = S["domain"] or VR.NO_DOMAIN
     S["url"] = f"https://{S['domain_shown']}"; S["sudo"] = "" if S["user"] == "root" else "sudo "
     S["tool"] = f"{S['factory_dir']}/.claude/scripts/lib/single_service.py"
@@ -489,8 +491,16 @@ def settings(app_id, app, infra, root=None):
     return S
 
 def config_pairs(S, F):
-    """The settings state decides, by name, for the env file (never a secret)."""
-    return {k: v.replace("{domain}", S["domain"]) for k, v in F["config"].items()}
+    """The settings state decides, by name, for the env file (never a secret). {platform_admins} is the app's platform
+    administrators (application.json platform_admins); while state records none the name is left out, so whatever
+    the server's env file holds under it is kept."""
+    out = {}
+    for k, v in F["config"].items():
+        if ADMINS in v:
+            if not S.get("admins"): continue
+            v = v.replace(ADMINS, S["admins"])
+        out[k] = v.replace("{domain}", S["domain"])
+    return out
 
 # ---------------------------------------------------------------------------------------------------------
 # generated files (run on the server, as root, only with the deploy's marker)
@@ -838,6 +848,14 @@ def check(app_id, app, infra, adir, say=print, root=None):
     if S["secrets_optional"]:
         say(f"optional, off while empty; set one any time with --set-secret NAME (it applies at the next deploy): {', '.join(S['secrets_optional'])}")
     todo = []
+    an = admin_env_names(man, "compose_remote")
+    if an and S["admins"]:
+        say(f"platform administrators (application.json platform_admins): {S['admins']}; written to the server's env file as {', '.join(an)} at each deploy")
+    elif an and infra.get("deployed_at"):
+        say(f"platform administrators: none recorded in state; the server's env file keeps whatever {', '.join(an)} holds there (never removed). "
+            f"Record them as application.json platform_admins so each deploy writes them")
+    elif an:
+        need_admins(app_id, app); todo.append(admin_todo(app_id))
     if not S["host"] or not S["domain"]:
         todo.append(f"supply the server and the domain: python3 .claude/scripts/provision.py {app_id} --set-remote host=<address> domain=<name>")
     if not os.path.isfile(VR.key_path(S)):
@@ -1117,18 +1135,91 @@ def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
 def vercel_projects(base): return {r: f"{base}{s}" for r, s in SUFFIX.items()} if base else {}
 def vercel_spec(man, role): return (((man or {}).get("vercel") or {}).get("projects") or {}).get(role) or {}
 
-def api_settings(man, console_url=None):
+def api_settings(man, console_url=None, admins=None):
     """The settings the mold has the factory write on the api project (mold.json vercel.projects.api.env, mold_v0-084),
-    never secrets: name -> value, with {console_url} the console project's production address. A value that needs the
-    console's address is left out while it is not known (None). Only plain names and values on one line."""
+    never secrets: name -> value, with {console_url} the console project's production address and {platform_admins}
+    the app's platform administrators (application.json platform_admins, comma-separated). A value whose part is not
+    known (None, or no administrator recorded) is left out, so whatever the project holds under that name is kept.
+    Only plain names and values on one line."""
     out = {}
     for n, v in (vercel_spec(man, "api").get("env") or {}).items():
         if n.startswith("$") or not re.fullmatch(r"[A-Z][A-Z0-9_]*", n) or not isinstance(v, str) or re.search(r"[\r\n]", v): continue
         if "{console_url}" in v:
             if not console_url: continue
             v = v.replace("{console_url}", console_url.rstrip("/"))
+        if ADMINS in v:
+            if not admins or re.search(r"[\r\n]", admins): continue
+            v = v.replace(ADMINS, admins)
         out[n] = v
     return out
+
+# ---------------------------------------------------------------------------------------------------------
+# platform administrators: who may open the app's admin console (application.json platform_admins)
+# ---------------------------------------------------------------------------------------------------------
+# A mold_v0 app lets in only members of a company account and its platform administrators. An app minted with none
+# recorded told its own operator "<App> is invite-only" and nobody could reach /admin. The mold declares where the list
+# goes ({platform_admins} in mold.json vercel.projects.api.env and compose.config) and which other spellings the code
+# also reads (mold.json platform_admins.also_read); the factory writes it from state at every deploy. An address is
+# not a secret, so it lives in state and in the project's plain settings.
+ADMINS = "{platform_admins}"
+ADMIN_ENTRY = re.compile(r"(?:\*|[a-z0-9._%+-]+)@[a-z0-9-]+(?:\.[a-z0-9-]+)+")
+ADMIN_MARK = "no platform administrator is recorded"
+
+def admin_entries(value):
+    """A list, or comma-separated text, of platform administrators -> (entries, refused): each an address or *@domain,
+    lowercased, in order, once."""
+    items = value if isinstance(value, list) else str(value or "").split(",")
+    good, bad = [], []
+    for x in items:
+        x = str(x).strip().lower()
+        if x: (good if ADMIN_ENTRY.fullmatch(x) else bad).append(x)
+    return list(dict.fromkeys(good)), bad
+
+def admins_of(app):
+    """The app's platform administrators as the env value (comma-separated), or "" when state records none."""
+    return ",".join(admin_entries((app or {}).get("platform_admins") or [])[0])
+
+def admin_env_names(man, where="vercel"):
+    """The env names the mold has the factory write the administrators to: the api project's (vercel) or the server
+    env file's (compose_remote). [] when the mold declares no {platform_admins} setting."""
+    src = vercel_spec(man, "api").get("env") if where == "vercel" else ((man or {}).get("compose") or {}).get("config")
+    return [n for n, v in (src or {}).items() if not n.startswith("$") and isinstance(v, str) and ADMINS in v]
+
+def admin_also_read(man):
+    """Other spellings the mold's code reads the administrators under (mold.json platform_admins.also_read)."""
+    return [n for n in (((man or {}).get("platform_admins") or {}).get("also_read") or []) if isinstance(n, str) and re.fullmatch(r"[A-Z][A-Z0-9_]*", n)]
+
+def admin_held(man, present):
+    """Which of the administrators' names a project already holds (names only: a value is never read for this)."""
+    return sorted(n for n in set(admin_env_names(man)) | set(admin_also_read(man)) if n in (present or ()))
+
+def admin_extra(man, admins, present):
+    """{name: value} for every other spelling the project already holds: written with the same value, so an older or
+    newer spelling (the newer one wins in the code) never shadows what state records."""
+    return {n: admins for n in admin_also_read(man) if admins and n in (present or ()) and n not in admin_env_names(man)}
+
+def admin_gap(man, app, present, where="vercel"):
+    """True when the mold needs administrators, state records none, and the target holds none either (an app minted
+    before state recorded them may hold the variable already: it is kept, never removed)."""
+    return bool(admin_env_names(man, where)) and not admins_of(app) and not admin_held(man, present)
+
+def admin_ask(app_id, app=None):
+    """The plain request for the administrators' addresses (an address is not a secret: it is said in the chat)."""
+    brief = (app or {}).get("brief") or f"briefs/{app_id}.md"
+    return (f"{app_id} only lets in members of a company account and its platform administrators, and {ADMIN_MARK}, so nobody could open "
+            f"its admin console. Ask the operator which email address should run {app_id} (an address such as you@example.com, or "
+            f"*@example.com for everyone at that company; several are separated by commas). Write it as \"platform_admins\": [\"you@example.com\"] "
+            f"in state/application/{app_id}/answers.json and run: python3 .claude/scripts/intake.py {brief} --app {app_id} "
+            f"--answers state/application/{app_id}/answers.json")
+
+def admin_todo(app_id):
+    """The one line a check's to-do list carries (mint.py's keys station reads ADMIN_MARK in it)."""
+    return (f"{ADMIN_MARK} for {app_id}, so nobody could open its admin console: say which email address(es) should run it "
+            f"(platform_admins in state/application/{app_id}/answers.json, then intake again)")
+
+def need_admins(app_id, app=None):
+    import agent_result as AR
+    AR.need("approval", "platform administrator address", admin_ask(app_id, app))
 
 NEXT_CONFIGS = ("next.config.ts", "next.config.mjs", "next.config.js")
 API_ENV = re.compile(r"""process\.env\.([A-Z][A-Z0-9_]*)\s*\?\?\s*['"`]https?://""")
@@ -1264,7 +1355,9 @@ def vercel_plan(app_id, F, infra, man, K=None, cb=None, app=None):
             f"health: <api>{man['health_path']} answers 200 ok",
             *([f"{names.get('api')}: the mold's settings written before its deploy ({', '.join(f'{n}={v}' for n, v in (vercel_spec(man, 'api').get('env') or {}).items() if not n.startswith('$'))}); "
                "{console_url} is the console's address read back after its deploy (the last deploy's until then), and the API is deployed once more when it changed, "
-               "so sign-in codes and invitations link to the console"] if api_settings(man, "x") else []),
+               "so sign-in codes and invitations link to the console"
+               + (f"; {ADMINS} is application.json platform_admins ({admins_of(app) or 'none recorded: a variable the project already holds is kept, else the deploy stops and asks'})"
+                  if admin_env_names(man) else "")] if api_settings(man, "x") else []),
             f"{names.get('web')}: {K['api_env'] or '<the API-address variable>'} set to the API's address (nothing else of the API's: never DATABASE_URL, never a minted key; "
             f"sign-in names the operator sets for it: {signin})",
             f"vercel deploy --prod --yes --project {names.get('web')}{sc} from build/{app_id}/{K['dir']}/; its address read back from Vercel",
@@ -1449,9 +1542,12 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     now_names = vercel_projects(vercel_project(infra))
     held = {r: (P.vercel_env_names(cb, n) if project_exists(P, n, cb) else set()) for r, n in now_names.items()}
     missing = [n for n in infra.get("secrets_user") or [] if not all(n in held[r] for r in project_for(F, K, n))]
-    if missing:
-        P.ask_nicely_for(app_id, missing)
-        raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {now_names['api']} / {now_names['web']}; nothing was created or deployed.")
+    gap = admin_gap(man, app, held["api"])     # names only: an administrator variable already on the api project is kept
+    if missing: P.ask_nicely_for(app_id, missing)
+    if gap: need_admins(app_id, app)
+    if missing or gap:
+        raise NeedsHuman(f"{app_id}: " + "; ".join(([f"{', '.join(missing)} not set yet on {now_names['api']} / {now_names['web']}"] if missing else [])
+                                                   + ([admin_todo(app_id)] if gap else [])) + "; nothing was created or deployed.")
     names = ensure_projects(app_id, infra, cb, K, P, adir=adir, say=say, root=root); api, web = names["api"], names["web"]
     present = {r: P.vercel_env_names(cb, n) for r, n in names.items()}
     stray = sorted((present["web"] & (api_names(F) | {"DATABASE_URL"})) - set(K["required"]) - set(K["optional"]))
@@ -1486,7 +1582,8 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         api_url = ""
         # The mold's settings for the api project (mold_v0-084): the console's address as the last deploy read it back
         # (checked again after this run's console deploy), the proxy hops; written before the API's deploy reads them.
-        want = api_settings(man, v.get("production_url"))
+        adm = admins_of(app)
+        want = dict(api_settings(man, v.get("production_url"), adm), **admin_extra(man, adm, present["api"]))
         have = P.pull_env(cb, api, required=False)
         if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
             for n, val in want.items():
@@ -1522,7 +1619,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # The console's address is known now: the API's emails must link to it (mold_v0-084). When it is not what the
         # API holds (a first deploy, or a new address), it is written and the API deployed once more to read it.
         have = P.pull_env(cb, api, required=False)
-        stale = {n: val for n, val in api_settings(man, front).items() if have.get(n) != val}
+        stale = {n: val for n, val in dict(api_settings(man, front, adm), **admin_extra(man, adm, present["api"])).items() if have.get(n) != val}
         if stale and not have and P.vercel_env_names(cb, api):
             # The project holds names but none could be read back (a failed pull): never take that for "stale".
             say(f"  NOTE: {api}'s settings could not be read back; {', '.join(stale)} left as they are (the next deploy checks again)"); stale = {}
@@ -1567,8 +1664,17 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
     for n in K["required"] + K["optional"]:
         say(f"  console sign-in name {n} ({'required' if n in K['required'] else 'optional'}): {'set' if n in present['web'] else 'not set'} on {names['web']}")
     if infra.get("secrets_optional"): say(f"  optional, off while empty (set one with --set-secret NAME): {', '.join(infra['secrets_optional'])}")
+    an, adm, held_a = admin_env_names(man), admins_of(app), admin_held(man, present["api"])
+    gap = admin_gap(man, app, present["api"])
+    if an and adm:
+        say(f"  platform administrators (application.json platform_admins): {adm}; written on {names['api']} as {', '.join(an + [n for n in held_a if n not in an])} at each deploy")
+    elif an and held_a:
+        say(f"  platform administrators: none recorded in state, but {names['api']} already holds {', '.join(held_a)}; kept as it is at every deploy "
+            f"(never removed; its value is not read here). Record them as platform_admins in state/application/{app_id}/answers.json so the factory keeps them")
+    elif gap:
+        say(f"  - {admin_todo(app_id)}"); need_admins(app_id, app)
     say("a deploy will:")
-    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K), 1): say(f"  {i}. {l}")
+    for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
     pre = console_preflight(K)
     for p in pre: say("  not ready: " + p)
     missing = [n for n in infra.get("secrets_user") or [] if not all(n in present[r] for r in project_for(F, K, n))]
@@ -1576,6 +1682,7 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
         for n in missing:
             say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
         say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
+    if gap: say(f"Not ready: {admin_ask(app_id, app)}"); return 1
     if pre: say("  - the mold's codebase cannot run as two projects as it is (see 'not ready' above). " + _codebase_fix(app["mold_id"], "see above")); return 1
     why = rls_tools_missing(cb, F.get("rls"))
     if why: say(f"  - {why}"); return 1
@@ -1692,6 +1799,9 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
             for p in preflight(cb, F, S): say("  NOT READY (a real deploy refuses here, before contact): " + p)
             if "--out" in a: out = a[a.index("--out") + 1]; write_bundle(S, F, out); say(f"bundle written to {out} for reading; nothing was sent anywhere")
             return 0
+        if admin_env_names(man, "compose_remote") and not S["admins"] and not infra.get("deployed_at"):
+            need_admins(app_id, app)   # a first deploy with nobody to run the admin console: asked for before contact, not reverted
+            raise NeedsHuman(f"{app_id}: {admin_todo(app_id)}. Nothing was contacted.")
         _ready_to_contact(S, app_id)
         src = build_source(app_id, app, root, say=say)     # the codebase, or build/<app_id>/ afresh (packs, brand); NotBuilt: not reverted
         try: res = deploy(S, F, src, say=say)
