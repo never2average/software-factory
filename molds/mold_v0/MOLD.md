@@ -1284,6 +1284,23 @@ get started, install) and a footer that carries the source offer whenever the in
 neutral page in the profile's words: a hero, what every build does and how to start. A host pack's own landing page
 (code, mold_v0-039) stays its own.
 
+**Customer guide (mold_v0-106).** `/app/docs` and the docs answers' corpus (Ask AI, `src/docs-answers.ts`;
+`scripts/sync-docs-corpus.ts` writes `src/docs-corpus.generated.json` from the same pages) come from the packs when no
+host pack brings guide code. A declarative pack's `pack.json` `guide` holds its own pages: `markdown` (inline, one page
+per `## ` heading) or `dir` (a directory of the pack with one `.md` file per page, `# Title` first, in file-name order),
+`groups` (the navigation's groups, in order) and `generated` (false leaves out the pages written from the declarations).
+Every page is markdown only, checked by `gen-packs.mjs` with `src/pack-guide.ts`: no raw HTML, scripts or images, no
+control or invisible characters, and every link a path of this site, an #anchor, an https:// or a mailto: address
+(never javascript:, data:, http: or //host); a page may not take a generated page's title. After a pack's own pages the
+console writes pages from what the packs declare (`web/src/content/pack-guide.ts`, from the facts gen-packs writes into
+`web/src/config/pack-guides.generated.ts` `PACK_GUIDE`): what the app does, getting started (connecting a client, the
+onboarding steps with the prompt to type and the generated `get_started` tool), the console's tabs, the record areas
+(fields, lifecycle, due dates, tools), the job kinds with their credentials and schedules, the MCP tools grouped by what
+they reach, and the account; whatever a pack's `mcp` settings withhold is left out. So a pack with no guide of its own
+still gets a real one. Base text writes the build's words (`{run}`, `{workspace}`, `{product}`). With zero packs the
+guide is the shell's, byte for byte (`PACK_GUIDE` null); a host pack's guide code (mold_v0-039) replaces both, as
+before, and a host pack may not declare `guide`. `npm run test:pack-guide`.
+
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
 `packs.py apply <app>` copies them into `build/<app_id>/`, then runs the mold's generators there; deploys and lanes

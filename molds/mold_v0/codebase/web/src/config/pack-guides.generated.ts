@@ -2,3 +2,9 @@
 
 /** The host packs' customer guides (mold_v0-039): the first replaces the shell's (src/content/customer-guide.ts). */
 export const HOST_GUIDES: readonly unknown[] = [];
+
+/**
+ * The packs' customer guide (mold_v0-106; src/pack-guide.ts, web/src/content/customer-guide.ts PackGuideData): their own
+ * pages from pack.json `guide` and what the pages generated from their declarations say; null: no pack, or a host pack's guide.
+ */
+export const PACK_GUIDE: unknown = null;
