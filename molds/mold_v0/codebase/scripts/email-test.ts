@@ -15,6 +15,10 @@
 // 6. Links: every link is on the console's address from the environment (APP_CONSOLE_URL, else PUBLIC_URL); an
 //    address that is not plain http(s) is ignored; a request's Host never matters.
 // 7. Billing notices: off unless the profile lists billing; to the operator only; Stripe ids and addresses kept out.
+// 8. The words (mold_v0-101): no product word in the text: its placeholders take the build's vocabulary (src/vocabulary.ts)
+//    and name, its pitch is the profile's email.pitch, else the landing block's, else the short description, its signature
+//    the sender's name. A build with no packs, a declarative pack's build, and a host pack whose profile gives its words
+//    and pitch (the text the first product always sent, byte for byte); a value someone typed is never filled.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -222,6 +226,111 @@ try {
     assert.equal((await mail.billingNotice(notice))[0]!.status, "duplicate", "once per charge");
     mail.setEmailProfileForTest(undefined);
     ok("billing notices: off unless the profile lists billing; to the operator only, once per charge, without Stripe ids or addresses");
+  }
+  // ---------- 8. the words: the build's own, never another product's ----------
+  {
+    mail.setEmailProfileForTest({ notifications: ["access_requests", "library"] });
+    const base = Date.now() % 1_000_000_000;
+    let seq = 0;
+    /** Every message a build's words give, by its idempotency key: the request emails, and a library decision. */
+    const render = async (words: Parameters<typeof mail.setEmailWordsForTest>[0]) => {
+      mail.setEmailWordsForTest(words);
+      const id = base + ++seq * 10;
+      const r = { id, email: "ana@customer.example", company: "Acme Corp", name: "Ana Diaz", product_url: null, message: null };
+      await mail.requestReceived(r);
+      await mail.requestDeclined({ ...r, id: id + 1 }, "Not this quarter");
+      await mail.requestApproved({ ...r, id: id + 2 }, { account: "Acme Corp", invited: true });
+      await mail.requestApproved({ ...r, id: id + 3 }, { account: "Acme Corp", invited: false });
+      const sub = { id: `s${id}`, kind: "task" as const, title: "Fix a bug", org_id: 1, org_name: "Acme Corp", org_slug: "acme", created_by: "customer:ana@customer.example" };
+      await mail.submissionAccepted(sub, { usd: 0, status: "none" });
+      await mail.submissionDeclined({ ...sub, id: `t${id}` }, "A duplicate");
+      await wait(20);
+      const by = (k: string) => outbox().find((m) => m.idempotencyKey === k || m.idempotencyKey.startsWith(`${k}:`));
+      const got = { received: by(`request:${id}:received`), declined: by(`request:${id + 1}:declined`), approved: by(`request:${id + 2}:approved`),
+        approved_uninvited: by(`request:${id + 3}:approved`), alert: by(`request:${id}:alert`), accepted: by(`submission:s${id}:accepted`), sub_declined: by(`submission:t${id}:declined`) };
+      for (const [k, m] of Object.entries(got)) assert.ok(m, `${k} went out`);
+      mail.setEmailWordsForTest(undefined);
+      return got as { [K in keyof typeof got]: NonNullable<(typeof got)[K]> };
+    };
+    const ENGINE = /simulation|developer product|coding agents|Claude Code|programming task/i;
+    const { BASE_WORDS, resolveWords } = await import("../src/words.js");
+
+    // A build with no packs: the neutral words (passed in, so the test reads the same in a build copy with packs).
+    const { PROFILE } = await import("../src/profile.js");
+    const { vocabulary } = await import("../src/vocabulary.js");
+    assert.equal(mail.emailWords().product, PROFILE.name, "this build's name is its profile's");
+    assert.equal(mail.emailWords().fill("{runs}"), vocabulary().runs, "this build's words are its vocabulary's");
+    const neutral = { name: "Workspace", sender_name: "Workspace", short_description: "Connect an MCP client, run agents and read their results.", pitch: null, words: BASE_WORDS };
+    const zero = await render(neutral);
+    assert.equal(zero.approved.subject, "Welcome to Workspace");
+    assert.ok(zero.approved.text.includes("now has a Workspace account."), zero.approved.text);
+    assert.ok(zero.approved.text.includes("Workspace: Connect an MCP client, run agents and read their results."), "the pitch is the short description");
+    assert.ok(zero.approved.text.includes("/app to connect Workspace to your AI assistant and run your first run."), zero.approved.text);
+    for (const [k, m] of Object.entries(zero)) if (k !== "accepted" && k !== "sub_declined")
+      assert.doesNotMatch(`${m.subject}\n${m.text}`, ENGINE, `${k}: no product words the build does not give`);
+    assert.ok(zero.received.text.endsWith("— Workspace") && zero.received.subject === "We got your request for Workspace");
+
+    // A declarative pack's build: its run word, its landing pitch, its name (and its article).
+    const decl = { name: "Atlas", sender_name: "Atlas", short_description: "Audits for your applications", pitch: "Atlas runs {runs} of your applications and tracks each finding to a fix-by date",
+      words: resolveWords([null, { workspace: "company", run: "audit" }]) };
+    const d = await render(decl);
+    assert.equal(d.approved.subject, "Welcome to Atlas");
+    assert.equal(d.approved.text, [
+      "Hi Ana,",
+      "Your request is approved: Acme Corp now has an Atlas account.",
+      "Atlas runs audits of your applications and tracks each finding to a fix-by date.",
+      "You'll get a separate invitation email to join Acme Corp. Accept it to create your sign-in, then open https://console.example.test/app to connect Atlas to your AI assistant and run your first audit.",
+      "Questions? Reply to this email.",
+      "— Atlas"].join("\n\n"));
+    assert.ok(d.accepted.text.includes("where it now helps audits for everyone"), d.accepted.text);
+    assert.equal(d.accepted.subject, "Your task is in Atlas's library", "no library_nouns: the item's kind as it is");
+    for (const [k, m] of Object.entries(d)) assert.doesNotMatch(`${m.subject}\n${m.text}`, /simulation|developer product|coding agents|Claude Code|Workspace/i, `${k}: only the pack's words`);
+    assert.equal(mail.wordsFor({ ...decl, pitch: null }).pitch, "Atlas: Audits for your applications.", "no landing block: the short description");
+    assert.equal(mail.wordsFor({ ...decl, name: "Ledger" }).t`Now a {product} {account}`, "Now a Ledger account");
+    assert.equal(mail.wordsFor({ ...decl, pitch: "Line one\nand <b>two</b>" }).pitch, "Line one and <b>two</b>.", "one line (the HTML escapes the rest)");
+    assert.equal(mail.wordsFor(decl).t`${"{runs} by {product}"} for {runs}`, "{runs} by {product} for audits", "a value (a company, a title) is never filled, only the text's own parts");
+    {
+      const id = base + 999_000;
+      mail.setEmailWordsForTest(decl);
+      await mail.requestReceived({ id, email: "ana@customer.example", company: "{Product} {runs} Ltd", name: "Ana", product_url: null, message: null });
+      await wait(20);
+      mail.setEmailWordsForTest(undefined);
+      const m = outbox().find((x) => x.idempotencyKey === `request:${id}:received`)!;
+      assert.ok(m.text.includes("access to Atlas for {Product} {runs} Ltd."), `a company's name is shown as typed: ${m.text}`);
+    }
+
+    // A host pack whose profile gives its words and its pitch (the first product: words.run = simulation, email.pitch): the
+    // text it always sent, byte for byte.
+    const host = await render({ name: "Hostapp", sender_name: "Hostapp", short_description: "Some tagline", words: resolveWords([{ run: "simulation" }]),
+      library_nouns: { persona: "developer persona", task: "programming task" },
+      pitch: "{product} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why." });
+    const was = (name: string) => ({
+      received: ["We got your request for " + name, ["Hi Ana,", `Thanks for asking for access to ${name} for Acme Corp. We read every request ourselves and will get back to you by email, usually within a few working days.`,
+        "If you want to add anything in the meantime, just reply to this email.", `— ${name}`]],
+      declined: [`About your ${name} request`, ["Hi Ana,", `Thank you for your interest in ${name}. We can't offer Acme Corp access right now.`, "The reason: Not this quarter",
+        "This isn't necessarily final. If things change on your side, or you think we've misread something, reply to this email and we'll take another look.", `— ${name}`]],
+      approved: [`Welcome to ${name}`, ["Hi Ana,", `Your request is approved: Acme Corp now has a ${name} account.`,
+        `${name} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why.`,
+        `You'll get a separate invitation email to join Acme Corp. Accept it to create your sign-in, then open https://console.example.test/app to connect ${name} to your AI assistant and run your first simulation.`,
+        "Questions? Reply to this email.", `— ${name}`]],
+      approved_uninvited: [`Welcome to ${name}`, ["Hi Ana,", `Your request is approved: Acme Corp now has a ${name} account.`,
+        `${name} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why.`,
+        "We'll send you your connection details separately. Once you have them, https://console.example.test/app walks you through setup.",
+        "Questions? Reply to this email.", `— ${name}`]],
+      accepted: [`Your programming task is in ${name}'s library`, ["Hi,", `Thanks for sharing "Fix a bug". We reviewed it and added it to ${name}'s library, where it now helps simulations for everyone.`,
+        "Your own copy stays yours and unchanged.", `— ${name}`]],
+      sub_declined: [`About your programming task for ${name}'s library`, ["Hi,", `Thanks for sharing "Fix a bug". We've decided not to add it to ${name}'s library this time.`,
+        "The reason: A duplicate", "Your own copy stays yours and keeps working as before. If you change it, you're welcome to submit it again.", `— ${name}`]],
+    }) as Record<string, [string, string[]]>;
+    for (const [k, [subject, text]] of Object.entries(was("Hostapp"))) {
+      const m = host[k as keyof typeof host];
+      assert.equal(m.subject, subject, `${k}: the subject it always had`);
+      assert.equal(m.text, text.join("\n\n"), `${k}: the text it always had`);
+    }
+    assert.equal(mail.wordsFor({ name: "H", sender_name: "H", short_description: "", pitch: null, words: resolveWords([{ run: "simulation" }]) }).t`New {runs} can't start`, "New simulations can't start",
+      "the usage alert's run word from the host pack's words");
+    mail.setEmailProfileForTest(undefined);
+    ok("words: placeholders filled from the build's vocabulary and name, never in a typed value; the pitch from the profile, the landing block or the short description; a host pack with its words keeps its text byte for byte");
   }
   await wait(50);
   console.log(`EMAIL ADAPTER TEST PASS (${n} groups)`);

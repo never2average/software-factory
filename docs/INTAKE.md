@@ -159,6 +159,30 @@ limits.plans.pro.mcp.per_key_per_minute: 600
   taken out of state, and a value raised by hand in state goes back to the brief's at the next intake run
   (until then `factory.py validate` refuses state that is not what the brief says). A
   `limits.` setting outside those sections is ignored, and intake says so.
+
+**The emails' sender and notifications** (mold_v0-101) are profile settings too, in the same sections:
+
+```
+## Profile
+email_from_address = hello@yourcompany.com
+email.notifications = access_requests, due_dates
+email.pitch = {product} audits your applications against your regulators' controls.
+```
+
+- `email_from_address`: one address, on a domain the email provider (Resend) has verified. `email.notifications`: the
+  groups the shell sends besides sign-in codes and invitations (`access_requests`, `library`, `usage`, `due_dates`,
+  `billing`), or `none`. `email.provider = resend | none` is accepted too. `email.pitch`: the welcome email's sentence
+  about the product (one line, up to 400 characters, `{product}` and the other words allowed); absent, the landing
+  block's hero subheadline, else the tagline.
+- Most briefs need neither line. An app that sets neither, and whose host pack's own profile sets neither, gets the
+  factory's defaults in its build (`molds/mold_v0/branding/rules.json` `profile.email_defaults`): the sender
+  `<app_id>@<notify_domain>` (this machine's `defaults.notify_domain` in `state/factory.local.json`) and
+  `access_requests`, plus `due_dates` when one of its packs declares a record area with due dates. `packs.py apply`
+  names them.
+- On a machine with no `notify_domain`, a brief with no `email_from_address` gets one question, `email_from_address`
+  (answer an address, or `later` to leave it unset: the app then sends from the shell's placeholder, which the provider
+  refuses). The answer is kept in `application.json` `profile` and in `answers.json`, which `factory.py validate` reads
+  beside the brief.
 - Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
   setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
   `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer`

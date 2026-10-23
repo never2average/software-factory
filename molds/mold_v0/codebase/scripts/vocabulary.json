@@ -184,13 +184,6 @@
         "files": {
           "web/src/features/portal/usage.tsx": 12
         }
-      },
-      "email_copy": {
-        "why": "Email templates still pitch the first product (audit row 3).",
-        "migration": "mold_v0-101 (branch mold_v0-101-email) rewrites them with src/vocabulary.ts fill() and lowers this ceiling to 0.",
-        "files": {
-          "src/email.ts": 5
-        }
       }
     }
   }

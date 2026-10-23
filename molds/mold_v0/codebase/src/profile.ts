@@ -65,10 +65,22 @@ export interface Profile {
  * The email adapter (mold_v0-083, src/email.ts). `provider`: resend (default), test (kept in the process; never in
  * production) or none; APP_EMAIL_PROVIDER overrides it on a server. `notifications`: the groups that are on
  * besides sign-in codes and invitations (always on): access_requests, library, usage, due_dates, billing; absent, none.
+ * `pitch` (mold_v0-101): the welcome email's sentence about the product.
  */
 export interface ProfileEmail {
   provider?: "resend" | "test" | "none";
   notifications?: string[];
+  /**
+   * The welcome email's sentence about what the product does (mold_v0-101, src/email.ts), plain text on one line, up to
+   * 400 characters, placeholders allowed ({product}, {runs}); absent, the landing block's hero subheadline, else the
+   * short_description. A host pack's profile may set it, for its product.
+   */
+  pitch?: string;
+  /**
+   * What a library item of each kind is called in the library emails (mold_v0-101), {"<kind>": "<words>"}: a host pack's
+   * profile names its own (its library is its own); absent, the kind as it is.
+   */
+  library_nouns?: Record<string, string>;
 }
 
 /**
