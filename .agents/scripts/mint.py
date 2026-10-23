@@ -131,7 +131,13 @@ def st_state(app, a, i):
     if os.path.exists(q) and load(q): return OPERATOR, f"{len(load(q).get('pending') or []) if isinstance(load(q), dict) else len(load(q))} question(s) the brief does not answer are in state/application/{app}/questions.json (the intake subagent asks them)"
     if not a or not i: return TODO, "turn the brief into the four state files"
     r = quiet(os.path.join(S, "factory.py"), "validate")
-    return (DONE, "four state files, valid") if r.returncode == 0 else (FAILED, clean(r.stdout + r.stderr).strip().splitlines()[-1][:200])
+    return (DONE, "four state files, valid" + profile_said(a)) if r.returncode == 0 else (FAILED, clean(r.stdout + r.stderr).strip().splitlines()[-1][:200])
+
+def profile_said(a):
+    """mold_v0-090: the app's own profile settings (application.json `profile`), said where the state station reports."""
+    if not isinstance(a, dict) or not a.get("profile"): return ""
+    import app_profile
+    return f"; its own profile settings: {app_profile.describe(a['profile'])} (from the next deploy)"
 
 def st_packs(app, a, i):
     packs = a.get("packs") or []
@@ -810,6 +816,10 @@ def single_self_test():
             except SystemExit as e: ok("Nothing was sent" in str(e) or "its own" in str(e), f"{fn.__name__} refuses a single-service app: {e}")
         ran.clear(); st_packs("zz", {"mold_id": "mold_v0", "packs": ["notes"]}, {}); st_packs("zz", {"mold_id": "mold_v1", "packs": ["other-pack"]}, {})
         ok(ran[0][1:] == ("check", "notes", "--mold", "mold_v0") and ran[1][1:] == ("check", "other-pack", "--mold", "mold_v1"), f"the packs station checks a pack by its app's mold's rules, whatever its pack.json says: {ran}")
+        globals()["quiet"] = lambda *x, **k: subprocess.CompletedProcess(x, 0, "ok\n", "")
+        st_ = st_state("zz", dict(a, profile={"limits": {"runs": {"budget_usd_max": 40, "kind_month_budget_usd": 500}}}), i)
+        ok(st_[0] == DONE and "limits.runs.budget_usd_max 40, limits.runs.kind_month_budget_usd 500" in st_[1] and st_state("zz", a, i)[1] == "four state files, valid",
+           f"mold_v0-090: the state station says the app's own profile settings, and nothing when it has none: {st_}")
         ran.clear(); globals()["docs"] = lambda app: ({"mold_id": "mold_v0"}, {}); finish_new("zz", "Product name: Shop\n")
         ok(ran == [], "finish_new neither brands nor names an agent package for a single-service app")
         import tempfile
@@ -823,7 +833,7 @@ def single_self_test():
             ok(ran[0][-2:] == ("--mold", "mold_v0"), "  ...and passes --mold when given")
         finally: shutil.rmtree(bd, ignore_errors=True)
     finally:
-        globals().update({k: saved[k] for k in ("docs", "py", "show", "finish_new", "adir")}); STATIONS[:] = saved_st
+        globals().update({k: saved[k] for k in ("docs", "py", "show", "finish_new", "adir", "quiet")}); STATIONS[:] = saved_st
     return n
 
 def workspace_self_test():

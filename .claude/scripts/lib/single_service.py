@@ -230,6 +230,16 @@ def other_spelling(name, aliases):
     if name.startswith(l) and len(name) > len(l): return p + name[len(l):]
     return None
 
+def with_held_spellings(settings, held, aliases):
+    """`settings` plus, for each, its other spelling where `held` has that one (mold_v0-045): an app deployed before then
+    holds OCTILLION_CONSOLE_URL; the new code reads APP_CONSOLE_URL first, but a release rolled back reads the old name,
+    so both get the same value and neither goes stale."""
+    out = dict(settings)
+    for n, v in settings.items():
+        o = other_spelling(n, aliases)
+        if o and o in held and o not in out: out[o] = v
+    return out
+
 def has_value(name, present, aliases):
     """Whether a value for NAME is held under either spelling. An app deployed before mold_v0-045 holds its keys under
     the old names: a key minted under the new name beside one would win over it (a new vault key: nothing decrypts)."""
@@ -808,9 +818,10 @@ def health_verdict(F, kv, public, pages=None):
 # compose_remote: check, deploy, set-secret, rollback
 # ---------------------------------------------------------------------------------------------------------
 def uses_build(app):
-    """An app with packs or a brand is built from a copy of its own, build/<app_id>/ (mold_v0-024), as mold_v1's apps are;
-    one with neither is deployed from the codebase as it is, exactly as before."""
-    return bool(isinstance(app, dict) and (app.get("packs") or (app.get("surface") or {}).get("branding")))
+    """An app with packs, a brand or profile settings of its own (application.json `profile`, mold_v0-090) is built from a
+    copy of its own, build/<app_id>/ (mold_v0-024), as mold_v1's apps are; one with none is deployed from the codebase as
+    it is, exactly as before."""
+    return bool(isinstance(app, dict) and (app.get("packs") or (app.get("surface") or {}).get("branding") or app.get("profile")))
 
 def source_for(app_id, app, root=None):
     return os.path.join(root or ROOT, "build", app_id) if uses_build(app) else codebase(app["mold_id"], root)
@@ -829,8 +840,8 @@ def build_source(app_id, app, root=None, say=print, run=subprocess.run):
     elif os.path.lexists(build): os.remove(build)
     steps = []
     if (app.get("surface") or {}).get("branding"): steps.append(("the brand", [sys.executable, os.path.join(SCRIPTS, "branding.py"), app_id, "prepare"]))
-    if app.get("packs"):
-        steps += [("the packs", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "apply", app_id]),
+    if app.get("packs") or app.get("profile"):   # packs.py apply also writes the app's profile settings (mold_v0-090)
+        steps += [("the packs and the app's profile settings" if app.get("profile") else "the packs", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "apply", app_id]),
                   ("the packs' checks", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "verify", app_id])]
     for what, cmd in steps:
         r = run(cmd, capture_output=True, text=True, cwd=root or ROOT)
@@ -1517,8 +1528,8 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         api_url = ""
         # The mold's settings for the api project (mold_v0-084): the console's address as the last deploy read it back
         # (checked again after this run's console deploy), the proxy hops; written before the API's deploy reads them.
-        want = api_settings(man, v.get("production_url"))
         have = P.pull_env(cb, api, required=False)
+        want = with_held_spellings(api_settings(man, v.get("production_url")), set(have), F.get("aliases"))
         if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
             for n, val in want.items():
                 if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
@@ -1553,7 +1564,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # The console's address is known now: the API's emails must link to it (mold_v0-084). When it is not what the
         # API holds (a first deploy, or a new address), it is written and the API deployed once more to read it.
         have = P.pull_env(cb, api, required=False)
-        stale = {n: val for n, val in api_settings(man, front).items() if have.get(n) != val}
+        stale = {n: val for n, val in with_held_spellings(api_settings(man, front), set(have), F.get("aliases")).items() if have.get(n) != val}
         if stale and not have and P.vercel_env_names(cb, api):
             # The project holds names but none could be read back (a failed pull): never take that for "stale".
             say(f"  NOTE: {api}'s settings could not be read back; {', '.join(stale)} left as they are (the next deploy checks again)"); stale = {}

@@ -94,7 +94,9 @@ const DATA_PATH = /^\/[a-z0-9_\-/]*$/i;
 const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner", "host",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
-  "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts"]);
+  "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
+  // the app's landing page (mold_v0-091, src/landing.ts)
+  "landing"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -840,6 +842,8 @@ function entitlementsProblem(v, limits) {
 }
 
 let profile = { ...DEFAULT_PROFILE };
+/** profile.json `landing` (mold_v0-091): the app's own landing block, over a pack's; checked and written below, never part of the profile modules. */
+let profileLanding;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
 const hostProfiles = packs.filter((p) => p.host?.profile);
@@ -849,6 +853,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   const pf = { ...(hostProfiles[0]?.host.profile ?? {}), ...(filePf && typeof filePf === "object" && !Array.isArray(filePf) ? filePf : {}) };
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
+  if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
   {
     for (const [k, v] of Object.entries(pf)) {
@@ -870,6 +875,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       // Where the build's own source is offered (mold_v0-050, src/source-offer.ts), optional: {app: {url, license}} or
       // {app: "licensor_exception"} (the licensor's additional permission applies to this deployment, and it says so).
       if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
+      // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
+      if (k === "landing") { profileLanding = v; continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
       if (k === "install_clients") {
         const known = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)"/g)].map((m) => m[1]).filter((id) => id !== "header");
@@ -879,7 +886,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, landing)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1057,6 +1064,53 @@ const workspaceItems = [
 }
 refuse();
 
+// ---------- the landing page (mold_v0-091) ----------
+
+/**
+ * The landing block the console's / shows (src/landing.ts): a pack's pack.json `landing` with the app's profile.json
+ * `landing` over it section by section, and the source offer's footer items (src/source-offer.ts offerFooterItems: the
+ * same sentences the install pages' footer says). Both are read through tsx, as the packs' definitions are, and only when
+ * there is something to read: with no block, no upstream and no source_offer the page is the neutral one and its footer
+ * offers nothing. A pack's own block was checked with its pack.json (src/pack-manifest.ts); the profile's is checked here.
+ */
+function readLanding() {
+  const declaring = packs.filter((p) => p.json && p.json.landing !== undefined);
+  if (declaring.length > 1) fail("packs", `packs ${declaring.map((p) => p.id).join(" and ")} both declare a landing block: at most one pack of a build declares one (the app's profile.json landing changes it)`);
+  const fromPack = declaring.length === 1 ? declaring[0].json.landing : null;
+  const offerPacks = packs.filter((p) => p.manifest.upstream).map((p) => ({ id: p.id, manifest: { name: p.manifest.name, upstream: p.manifest.upstream }, definition: {} }));
+  if (fromPack === null && profileLanding === undefined && !offerPacks.length && profile.source_offer === undefined) return { landing: null, offer: [] };
+  const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
+  if (!existsSync(tsx)) { fail("landing", `reading the landing block and the source offer needs tsx (${rel(tsx)}): run npm ci`); return { landing: null, offer: [] }; }
+  const dir = mkdtempSync(path.join(tmpdir(), "gen-packs-landing-"));
+  try {
+    const script = path.join(dir, "landing.mts");
+    writeFileSync(script, `import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
+const [landingApi, offerApi, input] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const { landingProblems, mergeLanding } = await import(pathToFileURL(landingApi).href);
+const { sourceOffer, offerFooterItems } = await import(pathToFileURL(offerApi).href);
+const packBad = input.pack !== null && landingProblems(input.pack).length > 0;
+const profileProblems = input.profile === null ? [] : landingProblems(input.profile);
+const landing = packBad || profileProblems.length ? null : mergeLanding(input.pack, input.profile);
+const offer = offerFooterItems(sourceOffer(input.packs, input.setting ?? undefined));
+process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profileProblems, landing, offer }) + "\\n");
+`);
+    const inputFile = path.join(dir, "input.json"), mark = `LANDING_${randomBytes(12).toString("hex")}`;
+    writeFileSync(inputFile, JSON.stringify([path.join(ROOT, "src", "landing.ts"), path.join(ROOT, "src", "source-offer.ts"),
+      { pack: fromPack, profile: profileLanding === undefined ? null : profileLanding, packs: offerPacks, setting: profile.source_offer ?? null }]));
+    const r = spawnSync(tsx, [script, inputFile, mark], { cwd: ROOT, encoding: "utf8", timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
+    const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
+    if (r.status !== 0 || !line) { fail("landing", `reading the landing block failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return { landing: null, offer: [] }; }
+    const got = JSON.parse(line.slice(mark.length + 1));
+    for (const pr of got.profileProblems) fail(rel(PROFILE_FILE), pr);
+    return { landing: got.landing, offer: got.offer };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const landingPage = readLanding();
+refuse();
+
 // ---------- output ----------
 
 const HEADER = "// Generated by scripts/gen-packs.mjs from packs/*/pack.json and profile.json. Do not edit: run `npm run gen:packs`.\n";
@@ -1197,6 +1251,12 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   viewsModule());
 // The share image's alternative text (Next.js's opengraph-image.alt.txt beside the image): the console's description.
 files.set(path.join(OUT, "web", "src", "app", "opengraph-image.alt.txt"), `${profile.console_description}\n`);
+files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER +
+  "import type { LandingBlock, OfferFooterItem } from '@/features/site/landing-types';\n\n" +
+  "/** The landing block (mold_v0-091, src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it; null: the neutral page. */\n" +
+  `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
+  "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
+  `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);

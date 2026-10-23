@@ -787,6 +787,14 @@ def run():
             env_m = fpm.projects["zz-shop-api"]["env"]
             ok(not errm and len(env_m.get(LEG + "VAULT_KEY", "")) >= 40 and NEW + "VAULT_KEY" not in env_m and len(env_m.get("CRON_SECRET", "")) == 64,
                f"a first deploy of a state that names the old spelling (minted before mold_v0-045): the bootstrap's key, under the state's name only: {sorted(env_m)}")
+            fpc = FakeP(env={"zz-shop-api": ["DATABASE_URL", LEG + "VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"])
+            fpc.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, LEG + "CONSOLE_URL": "https://old-console.example", LEG + "PROXY_HOPS": "1"})
+            _, _, errc = vdeploy(fpc, inf=cp(leg))
+            ec = fpc.projects["zz-shop-api"]["env"]
+            ok(not errc and ec[NEW + "CONSOLE_URL"] == web_u and ec[LEG + "CONSOLE_URL"] == web_u and ec[NEW + "PROXY_HOPS"] == "1",
+               f"an app deployed before mold_v0-045: the console's address goes under the new name and the old one it holds (a rolled-back release reads that): {ec}")
+            ok(SS.with_held_spellings({NEW + "X": "1"}, {LEG + "X"}, F["aliases"]) == {NEW + "X": "1", LEG + "X": "1"} and SS.with_held_spellings({NEW + "X": "1"}, set(), F["aliases"]) == {NEW + "X": "1"},
+               "with_held_spellings: the other spelling only where it is held")
             mvl = SS.mint_values(cb, F, [LEG + "VAULT_KEY"])
             ok(list(mvl) == [LEG + "VAULT_KEY"] and len(mvl[LEG + "VAULT_KEY"]) >= 40, "mint_values: a state name in the old spelling gets the bootstrap's value for the new one")
             ok(SS.project_for(F, K, LEG + "VAULT_KEY") == ["api"] and SS.project_for(F, K, NEW + "VAULT_KEY") == ["api"] and SS.project_for(F, K, "NOT_A_NAME") == [],
@@ -857,6 +865,11 @@ def run():
             try: rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], dict(va, packs=["shop_notes"]), cp(vi), {}, vd2, FakeP(projects=["zz-shop-api", "zz-shop"]), say=lambda s: None, root=t)
             finally: SS.build_source = real_bs
             ok(rc == 1 and json.load(open(os.path.join(vd2, "application.json"))).get("status") == "planned", "provision.py: a build copy that cannot be made exits 1 and leaves the app as it was (not reverted)")
+            # mold_v0-090: an app whose only own thing is its profile settings is built too (packs.py apply writes them, then verify)
+            built.clear(); prof_app = dict(va, profile={"limits": {"runs": {"budget_usd_max": 40}}})
+            ok(SS.uses_build(prof_app) and SS.source_for("zz_shop", prof_app, t) == bdir and SS.build_source("zz_shop", prof_app, t, say=lambda s: None, run=brun) == bdir
+               and built == [["packs.py", "apply", "zz_shop"], ["packs.py", "verify", "zz_shop"]],
+               f"profile settings and nothing else: build/<app_id>/ from packs.py apply and verify (never the bare codebase, which would drop them): {built}")
             ran_none = []
             ok(SS.build_source("zz_shop", dict(va), t, run=lambda *x, **k: ran_none.append(x)) == SS.codebase("mold_vx", t) and not ran_none,
                "an app with neither packs nor a brand: the codebase itself, nothing run")
