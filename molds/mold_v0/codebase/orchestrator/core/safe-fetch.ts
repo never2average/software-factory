@@ -138,7 +138,7 @@ function getOnce(u: URL, policy: FetchPolicy): Promise<{ status: number; headers
     const mod = u.protocol === "https:" ? https : http;
     const req = mod.request(u, {
       method: "GET", lookup: policy.lookup, timeout: 20_000,
-      headers: { "user-agent": "OctillionResearch/1.0 (+product research)", accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.5", "accept-encoding": "identity" },
+      headers: { "user-agent": "research-fetch/1.0 (+product research)", accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.5", "accept-encoding": "identity" },
     }, (res) => {
       const chunks: Buffer[] = [];
       let size = 0;

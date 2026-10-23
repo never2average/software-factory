@@ -3,7 +3,7 @@
  * "claude-code/opus" and "claude-code/sonnet" each sized by its own usage share. Groups of one harness share its image.
  *
  * Sizing (FLEET_MODE):
- *  - server (default): the Octillion server plans the GLOBAL fleet across all orchestrators. Each orchestrator
+ *  - server (default): the server plans the GLOBAL fleet across all orchestrators. Each orchestrator
  *    checks in (POST /api/worker/fleet {orchestrator_id, capacity}) at start and every next_checkin_seconds and
  *    reconciles to its `assignment` ([{agent_id, harness, model, pods, image, version}]). Server unreachable ->
  *    keep the current pool and retry. SIGTERM -> DELETE /api/worker/fleet/:id.
@@ -12,12 +12,12 @@
  * Reconcile: start missing pods; remove surplus IDLE pods; busy pods over target retire when their session ends.
  *
  * Pods: `orchestrator/images/Dockerfile.<harness>` images idling on `sleep infinity` (user agent, workdir
- * /home/agent/work), docker-runner limits, labels octillion.pool=1, octillion.agent=<agent_id>,
- * octillion.harness=<h>, octillion.pool.owner=<ORCHESTRATOR_ID>. Busy pods are renamed octi-busy-*.
+ * /home/agent/work), docker-runner limits, labels app.pool=1, app.agent=<agent_id>,
+ * app.harness=<h>, app.pool.owner=<ORCHESTRATOR_ID>. Busy pods are renamed octi-busy-*.
  *
  * Jobs: each group claims with {agent_ids:[agent_id]} and limit = its idle pods, so an Opus pod only gets Opus
  * sessions; the job's model must equal the group's model (asserted). Every run is `docker exec -u agent` +
- * `env -i` with the image's non-OCTILLION env and this session's brokered credentials (values via `-e NAME`).
+ * `env -i` with the image's env without the shell's own names and this session's brokered credentials (values via `-e NAME`).
  * Resumes run in the same pod. After the session the pod is destroyed and re-created while under target.
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -45,7 +45,7 @@ interface Pod {
   model: string;
   image: string;
   state: "starting" | "idle" | "reserved" | "busy";
-  /** Non-secret image env (HOME, PATH, NPM_CONFIG_PREFIX...), OCTILLION_* removed. */
+  /** Non-secret image env (HOME, PATH, NPM_CONFIG_PREFIX...), APP_* removed. */
   baseEnv: string[];
 }
 
@@ -148,8 +148,8 @@ export class PodPool {
     try {
       if (!this.envCache.has(t.image)) this.envCache.set(t.image, await imageEnv(t.image));
       pod.baseEnv = this.envCache.get(t.image)!;
-      const labels = ["--label", "octillion.pool=1", "--label", `octillion.agent=${t.agent_id}`, "--label", `octillion.harness=${t.harness}`,
-        "--label", `octillion.model=${t.model}`, "--label", `octillion.pool.owner=${this.orchestratorId}`];
+      const labels = ["--label", "app.pool=1", "--label", `app.agent=${t.agent_id}`, "--label", `app.harness=${t.harness}`,
+        "--label", `app.model=${t.model}`, "--label", `app.pool.owner=${this.orchestratorId}`];
       const r = await sh("docker", ["run", "-d", "--init", "--name", pod.name, ...labels, ...limits(), "-w", AGENT_WORKDIR, t.image, "sleep", "infinity"]);
       if (r.code !== 0) throw new Error(r.out.slice(-300));
       if (this.draining || !this.pods.has(id)) { await sh("docker", ["rm", "-f", pod.name]); return; }
@@ -210,7 +210,7 @@ export class PodPool {
   }
 
   private async removeOwned(): Promise<void> {
-    const r = await sh("docker", ["ps", "-aq", "--filter", "label=octillion.pool=1", "--filter", `label=octillion.pool.owner=${this.orchestratorId}`]);
+    const r = await sh("docker", ["ps", "-aq", "--filter", "label=app.pool=1", "--filter", `label=app.pool.owner=${this.orchestratorId}`]);
     const ids = r.out.split(/\s+/).filter(Boolean);
     if (ids.length) await sh("docker", ["rm", "-f", ...ids]);
   }

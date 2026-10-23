@@ -20,13 +20,13 @@ import path from "node:path";
 import { openDb, type Db } from "../src/db.js";
 import { ensureMigrated, loadMigrations, loadPackMigrations, MIGRATIONS_DIR, MigrationError, migrationStatus, runMigrations, SPLIT_MIGRATIONS } from "../src/migrate.js";
 
-const tmp = mkdtempSync(path.join(tmpdir(), "octillion-migrations-"));
+const tmp = mkdtempSync(path.join(tmpdir(), "app-migrations-"));
 const pgUrl = process.env.MIGRATIONS_PG_URL;
 let n = 0;
 
 /** A new, empty database: a PGlite directory, or a fresh database on the real Postgres. */
 async function fresh(kind: "pglite" | "postgres"): Promise<Db & { drop: () => Promise<void> }> {
-  const id = `octillion_mig_${process.pid}_${++n}`;
+  const id = `app_mig_${process.pid}_${++n}`;
   if (kind === "pglite") {
     delete process.env.DATABASE_URL;
     process.env.PGLITE_DIR = path.join(tmp, id);
@@ -382,17 +382,17 @@ async function suite(kind: "pglite" | "postgres") {
     await db.drop();
   }
 
-  // Boot: current databases are left alone; with OCTILLION_MIGRATE_ON_BOOT=off a database that is behind refuses to start.
+  // Boot: current databases are left alone; with APP_MIGRATE_ON_BOOT=off a database that is behind refuses to start.
   {
     const db = await fresh(kind);
-    process.env.OCTILLION_MIGRATE_ON_BOOT = "off";
+    process.env.APP_MIGRATE_ON_BOOT = "off";
     await assert.rejects(ensureMigrated(db), /migration\(s\) behind.*npm run db:migrate/, "off: pending migrations stop the boot");
-    delete process.env.OCTILLION_MIGRATE_ON_BOOT;
+    delete process.env.APP_MIGRATE_ON_BOOT;
     await ensureMigrated(db);
     assert.equal((await migrationStatus(db)).pending.length, 0, "on (the default): boot migrates");
-    process.env.OCTILLION_MIGRATE_ON_BOOT = "off";
+    process.env.APP_MIGRATE_ON_BOOT = "off";
     await ensureMigrated(db);
-    delete process.env.OCTILLION_MIGRATE_ON_BOOT;
+    delete process.env.APP_MIGRATE_ON_BOOT;
     await db.drop();
   }
 

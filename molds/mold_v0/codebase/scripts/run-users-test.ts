@@ -2,7 +2,7 @@
 // HTTP API, and two runners on this one host (this process, and a second process over HTTP).
 //   npm run test:run-users
 //
-//  1. The range: OCTILLION_RUN_UIDS is checked (never root, nobody or 65535).
+//  1. The range: APP_RUN_UIDS is checked (never root, nobody or 65535).
 //  2. Leases: two runs get two uids; a uid another live run holds is never handed out; a released uid comes back only
 //     after the others (round robin); a lease whose runner died is taken over only after its processes are killed and
 //     its files swept; a uid with processes this runner never leased is skipped, its processes left alone; a fixed uid
@@ -10,7 +10,7 @@
 //  3. The bug (seen: a concurrent test run killed another's steps, exit 128): two runs at once on this host, one in each
 //     runner; one ends early and its end-of-run sweep runs (every process of its user killed, its /tmp files removed)
 //     while the other keeps running: the other's processes and files are untouched and it finishes. What the early one
-//     left behind is gone. Both with the harness's defaults (no runAs), with OCTILLION_RUN_UID set as a runner before 078
+//     left behind is gone. Both with the harness's defaults (no runAs), with APP_RUN_UID set as a runner before 078
 //     was configured (one uid for every run): it is no longer read.
 //  4. The same with a fixed uid (runAs) for both: the second run is refused (an infrastructure failure, retried), never
 //     run beside the first as the same user.
@@ -24,7 +24,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const FIX = path.join(ROOT, "scripts", "fixtures", "run-users");
 if (process.getuid?.() !== 0) { console.log("SKIP: a run user per run needs root (run this test as root)"); process.exit(0); }
 // One uid for every run, as runners before mold_v0-078 were configured: the harness no longer reads it.
-process.env.OCTILLION_RUN_UID = "64321"; process.env.OCTILLION_RUN_GID = "64321";
+process.env.APP_RUN_UID = "64321"; process.env.APP_RUN_GID = "64321";
 const alive = (pid: number) => { try { process.kill(pid, 0); return !/^State:\s+Z/m.test(readFileSync(`/proc/${pid}/status`, "utf8")); } catch { return false; } };
 const asUser = (uid: number, cmd: string, args: string[]) => {
   const c = spawn(cmd, args, { uid, gid: uid, detached: true, stdio: "ignore", cwd: "/" });
@@ -164,7 +164,7 @@ try {
       assert.equal((await events(short.id, "run_user")).length, 1, "(review) a program's line posing as the harness's event is a log line");
       assert.deepEqual([ls.home_mode, ls.out_mode], ["700", "700"], "(review) a run's directories are its user's alone (0700)");
       const range = ru.runUidRange();
-      for (const u of [ua, ub]) assert.ok(u >= range.first && u <= range.last && u !== 64321, `a uid of the reserved range (${u}), not OCTILLION_RUN_UID`);
+      for (const u of [ua, ub]) assert.ok(u >= range.first && u <= range.last && u !== 64321, `a uid of the reserved range (${u}), not APP_RUN_UID`);
       assert.ok(!alive(ls.child), "and once it ended, its own leftovers went too");
       console.log(`✓ two runs at once on one host (two runner processes): the one that ended early swept only its own user (${ua}); the other (${ub}) kept its processes and files and finished`);
     }

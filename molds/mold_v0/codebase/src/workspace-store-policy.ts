@@ -5,8 +5,8 @@
  *
  *   workspace_store.retention     keep_last (the newest N versions) and/or keep_days (versions committed within D
  *                                 days): a version is kept when either declared rule keeps it, and only within the
- *                                 platform's ceiling (the newest OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS, default 100,
- *                                 committed within OCTILLION_WORKSPACE_RETENTION_MAX_DAYS, default 365), a hard bound; a
+ *                                 platform's ceiling (the newest APP_WORKSPACE_RETENTION_MAX_VERSIONS, default 100,
+ *                                 committed within APP_WORKSPACE_RETENTION_MAX_DAYS, default 365), a hard bound; a
  *                                 pack that declares nothing gets the ceiling itself. Whatever the rules say, the latest
  *                                 version and every version a run result or a report references are kept
  *   workspace_store.secret_paths  globs (* one segment, ** any depth, ? a character) of files the viewer never shows,
@@ -16,6 +16,7 @@
  */
 import { z } from "zod";
 import { globRegex } from "./agent-workspace-paths.js";
+import { ENV } from "./env-names.js";
 
 const segment = (s: string) => s !== "" && s !== "." && s !== "..";
 /** A glob over a workspace's relative paths (as an agent kind's `strip`): no leading /, no .., no [ ] { }. */
@@ -41,8 +42,8 @@ export type WorkspaceStoreSettings = z.output<typeof WorkspaceStoreSchema>;
 const num = (v: string | undefined, def: number) => { const n = Number(v); return Number.isInteger(n) && n >= 1 ? n : def; };
 /** The platform's ceiling: whatever a pack declares, no version is kept past the newest keep_last nor past keep_days. */
 export const retentionCeiling = () => ({
-  keep_last: num(process.env.OCTILLION_WORKSPACE_RETENTION_MAX_VERSIONS, 100),
-  keep_days: num(process.env.OCTILLION_WORKSPACE_RETENTION_MAX_DAYS, 365),
+  keep_last: num(ENV.APP_WORKSPACE_RETENTION_MAX_VERSIONS, 100),
+  keep_days: num(ENV.APP_WORKSPACE_RETENTION_MAX_DAYS, 365),
 });
 
 /**

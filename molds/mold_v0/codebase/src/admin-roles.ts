@@ -1,5 +1,5 @@
 /**
- * Platform admin roles: what each kind of Octillion staff may do on /admin. This file is the only place permissions
+ * Platform admin roles: what each kind of platform staff may do on /admin. This file is the only place permissions
  * are defined; http.ts puts need("<permission>") on every route that changes something, and GETs need any role.
  *
  *   viewer    reads every admin page (the key vault shows hints only)
@@ -8,7 +8,7 @@
  *   owner     + the key vault, test emails, admins and their roles, plans in Stripe, and anything destructive
  *
  * The role lives in Clerk (user public_metadata.platform_role), so there is no table. Owner also covers the old ways
- * in: public_metadata.platform_admin = true and an address OCTILLION_PLATFORM_ADMINS lists. Admin tokens (adm_…,
+ * in: public_metadata.platform_admin = true and an address APP_PLATFORM_ADMINS lists. Admin tokens (adm_…,
  * src/admin-tokens.ts) carry the role they were minted for. Owners manage everyone else's role on /admin/admins.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -123,7 +123,7 @@ async function editable(id: string) {
   const row = all.find((a) => a.id === id);
   const u = row ? null : await people().users.get(id, true).catch(() => null);
   if (!row && !u) throw new AdminRoleError("No such person in Clerk", 404);
-  if (row?.source === "environment") throw new AdminRoleError("This admin is set in the server environment (OCTILLION_PLATFORM_ADMINS). Change it there.", 409);
+  if (row?.source === "environment") throw new AdminRoleError("This admin is set in the server environment (APP_PLATFORM_ADMINS). Change it there.", 409);
   return { all, row };
 }
 

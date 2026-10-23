@@ -1,14 +1,15 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { getDb } from "./db.js";
 import { asPlatform } from "./tenant-scope.js";
+import { ENV } from "./env-names.js";
 
 /**
  * Key vault: provider credentials (Anthropic, OpenAI, boat.dev, ...) encrypted at rest with AES-256-GCM.
  *
- * The master key comes from OCTILLION_VAULT_KEY (32 bytes, base64 or hex; generate with
+ * The master key comes from APP_VAULT_KEY (32 bytes, base64 or hex; generate with
  * `openssl rand -base64 32`). Only ciphertext, IV, auth tag, the master key's id and a display hint are stored.
  * Plaintext leaves this module only to the gateway (injected upstream) or the broker (direct-mode vendors).
- * Rotate the master key by setting OCTILLION_VAULT_KEY_PREVIOUS to the old key and running `npm run keyvault -- rekey`.
+ * Rotate the master key by setting APP_VAULT_KEY_PREVIOUS to the old key and running `npm run keyvault -- rekey`.
  */
 
 export interface ProviderRow {
@@ -21,21 +22,21 @@ export interface ProviderRow {
 function parseKey(v: string | undefined): Buffer | null {
   if (!v) return null;
   const buf = /^[0-9a-f]{64}$/i.test(v) ? Buffer.from(v, "hex") : Buffer.from(v, "base64");
-  if (buf.length !== 32) throw new Error("OCTILLION_VAULT_KEY must be 32 bytes (base64 or hex); generate with `openssl rand -base64 32`");
+  if (buf.length !== 32) throw new Error("APP_VAULT_KEY must be 32 bytes (base64 or hex); generate with `openssl rand -base64 32`");
   return buf;
 }
 const keyId = (k: Buffer) => createHash("sha256").update(k).digest("hex").slice(0, 12);
 
 function masterKeys() {
-  const current = parseKey(process.env.OCTILLION_VAULT_KEY);
-  if (!current) throw new Error("The key vault is locked: set OCTILLION_VAULT_KEY (openssl rand -base64 32)");
-  const previous = parseKey(process.env.OCTILLION_VAULT_KEY_PREVIOUS);
+  const current = parseKey(ENV.APP_VAULT_KEY);
+  if (!current) throw new Error("The key vault is locked: set APP_VAULT_KEY (openssl rand -base64 32)");
+  const previous = parseKey(ENV.APP_VAULT_KEY_PREVIOUS);
   const byId = new Map([[keyId(current), current]]);
   if (previous) byId.set(keyId(previous), previous);
   return { current, currentId: keyId(current), byId };
 }
 
-export const vaultUnlocked = () => Boolean(process.env.OCTILLION_VAULT_KEY);
+export const vaultUnlocked = () => Boolean(ENV.APP_VAULT_KEY);
 
 export function encrypt(plaintext: string) {
   const { current, currentId } = masterKeys();
@@ -47,7 +48,7 @@ export function encrypt(plaintext: string) {
 
 export function decrypt(row: { ciphertext: string; iv: string; tag: string; key_id: string }): string {
   const key = masterKeys().byId.get(row.key_id);
-  if (!key) throw new Error(`Credential was encrypted with master key ${row.key_id}, which is not loaded (set OCTILLION_VAULT_KEY_PREVIOUS?)`);
+  if (!key) throw new Error(`Credential was encrypted with master key ${row.key_id}, which is not loaded (set APP_VAULT_KEY_PREVIOUS?)`);
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(row.iv, "base64"));
   decipher.setAuthTag(Buffer.from(row.tag, "base64"));
   return Buffer.concat([decipher.update(Buffer.from(row.ciphertext, "base64")), decipher.final()]).toString("utf8");
@@ -161,9 +162,9 @@ async function storeCredential(provider: string, secret: string, opts: { label?:
   if (!p) throw new Error(`Unknown provider ${provider}; add it first (keyvault provider ...)`);
   // A direct-mode key is handed to agent sessions as is; refuse to store one unless that is explicitly allowed.
   // Orchestrator-only keys (boat, vertex; search providers with no env_vars) never reach a session, so they are always fine.
-  if (p.mode === "direct" && provider !== "boat" && p.env_vars.length && process.env.OCTILLION_DIRECT_KEYS !== "allow")
+  if (p.mode === "direct" && provider !== "boat" && p.env_vars.length && ENV.APP_DIRECT_KEYS !== "allow")
     throw new Error(`${provider} is a direct-mode provider: its real key would be handed to agent sessions. ` +
-                    "Set OCTILLION_DIRECT_KEYS=allow only once those sessions run without customer-written tasks (docs/security.md)");
+                    "Set APP_DIRECT_KEYS=allow only once those sessions run without customer-written tasks (docs/security.md)");
   const s = secret.trim();
   if (s.length < 8) throw new Error("That does not look like a credential");
   const label = opts.label ?? (provider === VERTEX_PROVIDER ? VERTEX_LABEL : "default");
@@ -251,7 +252,7 @@ export async function useVertexCredential(slug: string, credentialProvider?: str
 });
 }
 
-/** Re-encrypt every credential with the current master key (after rotating OCTILLION_VAULT_KEY). */
+/** Re-encrypt every credential with the current master key (after rotating APP_VAULT_KEY). */
 export async function rekey() {
   const db = await getDb();
   const { currentId } = masterKeys();

@@ -7,7 +7,7 @@ import { appendFileSync } from "node:fs";
 const PORT = Number(process.env.PORT ?? 18080);
 const CMD = process.env.MOCK_CMD ?? "npm install left-pad --no-audit --no-fund";
 const FINAL_TEXT = process.env.MOCK_FINAL ?? "Installed left-pad with npm. Done.";
-const LOG = process.env.MOCK_LOG ?? "/tmp/octillion-mock-llm.log";
+const LOG = process.env.MOCK_LOG ?? "/tmp/app-mock-llm.log";
 
 const SHELL_NAMES = ["bash", "shell", "run_shell_command", "execute_command", "execute", "run_command", "exec_command",
   "run_terminal_cmd", "terminal", "command", "exec", "run_in_terminal", "powershell"];

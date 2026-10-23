@@ -1,9 +1,9 @@
 # Accounts: onboarding, people, billing, analytics
 
-Everything between "someone asked for access" and "their team uses Octillion every week". Octillion is the system of
+Everything between "someone asked for access" and "their team uses the app every week". The app is the system of
 record for none of it, except the product data it already had:
 
-| Module | System of record | Octillion code | Octillion stores |
+| Module | System of record | Code here | Stored here |
 |---|---|---|---|
 | People: organizations, users, invitations, roles, sign-in on `/app` and `/admin` (and `/mcp` under Clerk) | the **built-in sign-in** (an emailed code and Google; the default) or **Clerk** (Organizations, OAuth server, sessions), one per server: see "Sign-in: built-in or Clerk" | `src/people.ts`, `src/builtin-auth.ts`, `src/clerk.ts`, `src/session.ts` | built-in: `auth_*` tables; both: `organizations.clerk_org_id` |
 | Money: plans, subscriptions, invoices, cards, usage metering | **Stripe** (Billing, Checkout, customer portal, Meters) | `src/billing.ts` | `organizations.stripe_customer_id` |
@@ -12,11 +12,11 @@ record for none of it, except the product data it already had:
 | Admin console (`/admin`) | none: reads the rows above | `src/admin.ts`, `web/` | a landing-page request's `status`, `org_id`, `decided_at` |
 | Customer page (`/app`): setup check, training, usage, team, billing | none | `src/app.ts`, `web/` | nothing (Clerk holds the session) |
 | Journeys: onboarding and re-engagement flows, email, Slack | **PostHog Workflows** | `src/journeys.ts` (in-chat and /app delivery) | a queue of pending tips |
-| Platform admins (who may use `/admin`) | `OCTILLION_PLATFORM_ADMINS` (Clerk-verified addresses or domains) or Clerk `public_metadata.platform_admin` | `src/admin-auth.ts` | nothing |
-| Usage limits inside an account: budget split across teams and people, rollout, throughput | the plan's budget from Stripe; the policy in Postgres (Octillion enforces it) | `src/limits.ts`, `/app` Limits | policy, teams, per-person settings |
+| Platform admins (who may use `/admin`) | `APP_PLATFORM_ADMINS` (Clerk-verified addresses or domains) or Clerk `public_metadata.platform_admin` | `src/admin-auth.ts` | nothing |
+| Usage limits inside an account: budget split across teams and people, rollout, throughput | the plan's budget from Stripe; the policy in Postgres (the app enforces it) | `src/limits.ts`, `/app` Limits | policy, teams, per-person settings |
 | Context: company, person, product | Postgres (it is the product's own data) | `src/context.ts`, `/app` Context | company and personal context; product profiles as before |
 
-The connector log Octillion already kept (`mcp_events`: method, tool name, client, outcome, timing, never arguments)
+The connector log the app already kept (`mcp_events`: method, tool name, client, outcome, timing, never arguments)
 now also records the signed-in Clerk user. It drives the setup check and the usage page; PostHog gets the same
 events for cross-account analysis.
 
@@ -58,7 +58,7 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
 ### The built-in sign-in
 
 - **Who may sign in:** a person the server already knows, an address with a live invitation, or an
-  `OCTILLION_PLATFORM_ADMINS` address. Accounts stay invite-only. A first sign-in with the invited address accepts its
+  `APP_PLATFORM_ADMINS` address. Accounts stay invite-only. A first sign-in with the invited address accepts its
   invitations (the email carries no secret, so a forwarded invitation lets nobody else in); someone already in a
   workspace accepts each new invitation themselves (profile page, or the account chooser), and their session stays in
   the workspace they had.
@@ -71,18 +71,18 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
   redirect URI (or set `GOOGLE_REDIRECT_URI`). A Google account is linked to the person on first use; another Google
   account with the same address is refused.
 - **Limits:** codes per address an hour (10, and 5 from one IP), code requests and Google starts per IP an hour (30),
-  code checks per IP an hour (60); `limits.endpoints` in the profile or `OCTILLION_LIMIT_ENDPOINTS_*`. There is no
+  code checks per IP an hour (60); `limits.endpoints` in the profile or `APP_LIMIT_ENDPOINTS_*`. There is no
   lock-out on wrong tries (anyone who knows an address could use it to keep its person out); the guess rate is bounded
   instead: at most 10 codes x 5 tries an hour against 10^8 codes. Per-IP counts use the address the nearest proxy saw
-  (`OCTILLION_PROXY_HOPS`, the number of proxies in front: 1 behind the stack's Caddy or Vercel's edge, which the
+  (`APP_PROXY_HOPS`, the number of proxies in front: 1 behind the stack's Caddy or Vercel's edge, which the
   factory sets; unset, 0, or 1 on Vercel), never an entry a client writes into `X-Forwarded-For`; the per-address
   counts are the guard.
 - **Sessions:** a random 256-bit value in an httpOnly, SameSite=Lax cookie (`__Host-oct_session`, Secure, on https),
-  stored as a hash (on https only the `__Host-` cookie is read), 14 days (`OCTILLION_SESSION_DAYS`, 1 to 90), checked on every request. The profile page signs out
+  stored as a hash (on https only the `__Host-` cookie is read), 14 days (`APP_SESSION_DAYS`, 1 to 90), checked on every request. The profile page signs out
   other devices or everywhere; removing someone from a workspace ends their sessions there and revokes their member
   keys for it.
 - **Two addresses on Vercel:** the console is its own project in front of the API, so the factory sets
-  `OCTILLION_CONSOLE_URL` on the API project to the console's address after the console's deploy (and deploys the API
+  `APP_CONSOLE_URL` on the API project to the console's address after the console's deploy (and deploys the API
   once more when it changed): sign-in codes, invitations and every other email link to its pages. On a server of its
   own it is the domain.
 - **Email:** every message goes through the email adapter (`src/email.ts`); sign-in codes and invitations are always
@@ -112,8 +112,8 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
     in and back). It names the app (a metadata-document client by its verified address; a registered one as "not
     verified"), where it sends the person back, and the workspace the app will act in (the person picks one of theirs).
     The page cannot be framed; allowing is a same-site JSON request with the console's `X-Pack-Request` header.
-  - **Tokens:** opaque, random, stored as sha256 only. Access tokens last 30 minutes (`OCTILLION_OAUTH_ACCESS_MINUTES`,
-    5 to 60); refresh tokens 30 days (`OCTILLION_OAUTH_REFRESH_DAYS`, 1 to 90) and rotate on every use (a replayed one
+  - **Tokens:** opaque, random, stored as sha256 only. Access tokens last 30 minutes (`APP_OAUTH_ACCESS_MINUTES`,
+    5 to 60); refresh tokens 30 days (`APP_OAUTH_REFRESH_DAYS`, 1 to 90) and rotate on every use (a replayed one
     revokes the grant). A token acts as its person with their current role in the one workspace they chose, read live on
     every call: removing or suspending them, or a role change, holds on the next request. Scope `mcp` (the default); a
     token without it gets a 403 `insufficient_scope`. Revocation: `/oauth/revoke` (RFC 7009) for the client;
@@ -121,7 +121,7 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
     connected app out too.
   - **Clerk on:** none of this answers; Clerk stays the authorization server, exactly as below.
 - **Platform admins:** the same roles as under Clerk, kept on the person (`auth_users.public_metadata`); an
-  `OCTILLION_PLATFORM_ADMINS` address is an owner once its person signs in with it.
+  `APP_PLATFORM_ADMINS` address is an owner once its person signs in with it.
 
 ## Setting it up
 
@@ -129,7 +129,7 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
 
 1. Create a Clerk application (a development instance first). Set `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY`
    (the web app uses `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`; the server reads either). Optionally set `CLERK_JWT_KEY`
-   (Dashboard → API keys → PEM public key) so session tokens are verified without a call to Clerk; otherwise Octillion
+   (Dashboard → API keys → PEM public key) so session tokens are verified without a call to Clerk; otherwise the app
    fetches the instance's JWKS once an hour.
 2. **Organizations:** turn them on, with the roles `org:admin` and `org:member` (creator role `org:admin`) and slugs
    enabled. Whoever asked for a new account is invited as admin; admins invite colleagues and manage billing on
@@ -140,22 +140,22 @@ The console reads the same choice at build time (`web/next.config.ts`: `AUTH_PRO
    and current MCP clients) and, for older clients, Dynamic Client Registration; set default scopes `profile email`.
    Clerk is then the authorization server for `/mcp`.
 5. **Domains / allowed origins:** the web app's origin (`$PUBLIC_URL`). Set `CLERK_AUTHORIZED_PARTIES` if the app is
-   served from more than one origin (by default only `PUBLIC_URL`'s origin may mint session tokens Octillion accepts).
-6. No webhooks are needed: Octillion reads Clerk when it needs to (with a 30 to 60 second cache).
+   served from more than one origin (by default only `PUBLIC_URL`'s origin may mint session tokens the app accepts).
+6. No webhooks are needed: the app reads Clerk when it needs to (with a 30 to 60 second cache).
 
-How Octillion uses it:
+How the app uses it:
 - **Portal (`/api/app`):** the UI sends Clerk's session, the `__session` cookie on the same origin or a Bearer session
   token; the account is the session's active organization (else the person's oldest membership). Signed out is a 401
   `{error, sign_in_url: "/sign-in"}`; signed in without an account is a 403 `{code: "no_account"}`.
 - **Connectors (`/mcp`):** the plain URL `$PUBLIC_URL/mcp`. The client finds Clerk from the 401 (`resource_metadata` in
   `WWW-Authenticate`, `/.well-known/oauth-protected-resource`, CORS-open), signs the person in and sends a Clerk OAuth
-  access token (opaque `oat_…` or a JWT); Octillion verifies it and uses the person's oldest membership that is not
+  access token (opaque `oat_…` or a JWT); the app verifies it and uses the person's oldest membership that is not
   suspended. Existing `oct_` keys work in a header (`Authorization: Bearer`, or
   `X-API-Key`). Keys in the URL (`/mcp/<key>`) are deprecated: served with a `Deprecation` header and logged by key prefix
-  while `OCTILLION_URL_KEYS` is `allow` (the default), refused with `OCTILLION_URL_KEYS=off`; new keys are never
+  while `APP_URL_KEYS` is `allow` (the default), refused with `APP_URL_KEYS=off`; new keys are never
   issued as URLs.
 - **Origin:** browsers send an `Origin` header; on every MCP endpoint a request whose Origin is not `PUBLIC_URL`'s (or
-  a `CLERK_MCP_AUDIENCE` origin, or one listed in `OCTILLION_MCP_ALLOWED_ORIGINS`, comma-separated) is refused with a
+  a `CLERK_MCP_AUDIENCE` origin, or one listed in `APP_MCP_ALLOWED_ORIGINS`, comma-separated) is refused with a
   403 and logged (`mcp origin refused … origin="…"`, once a minute per origin); the `/mcp` access line shows any Origin a
   served request carried. Claude Code, Cursor and the SDKs send none; Claude's and ChatGPT's connectors call from their
   servers and are expected to send none (check the access lines after deploying). Allowing an origin passes this check
@@ -164,36 +164,36 @@ How Octillion uses it:
 - **OAuth token audience:** a JWT access token must come from the Clerk instance (`iss` is its Frontend API), always.
   Its audience (a JWT's `aud`; for an opaque token, an audience field in Clerk's verify response) must name this
   server's `/mcp` (`$PUBLIC_URL/mcp`, or one of the URIs `CLERK_MCP_AUDIENCE` lists, comma-separated); the admin MCP
-  takes only tokens naming `/admin/mcp` or `/api/admin/mcp`. `OCTILLION_OAUTH_AUDIENCE`: `auto` (default) refuses a
+  takes only tokens naming `/admin/mcp` or `/api/admin/mcp`. `APP_OAUTH_AUDIENCE`: `auto` (default) refuses a
   token that names another audience and accepts one that names none, logging it (`oauth audience missing …`, once per
   client per 10 minutes, claims only), because Clerk does not document putting the resource in its tokens; `enforce`
   also refuses tokens with no audience (turn it on once the logs show Clerk's tokens carry it); `report` refuses
   nothing and logs mismatches. An `aud` that is not an http(s) address, or that is the client id or the issuer, names no
   resource and counts as none. Behind a Clerk proxy URL, set `CLERK_FRONTEND_API_URL` to it (the tokens' issuer).
 - **Suspending someone:** Clerk memberships have no deactivated state, so suspension is the membership's
-  `public_metadata.suspended = true`; Octillion refuses suspended members on `/mcp` and `/api/app` (at once for changes
-  made through Octillion, within 30 seconds for changes made in the Clerk dashboard). Removing a member deletes the
+  `public_metadata.suspended = true`; the app refuses suspended members on `/mcp` and `/api/app` (at once for changes
+  made through the app, within 30 seconds for changes made in the Clerk dashboard). Removing a member deletes the
   membership in Clerk.
 - **Inviting someone who already has a pending invitation** replaces it (Clerk revokes the old one).
-- An organization created in the Clerk dashboard gets its Octillion row on first use (and `public_metadata.octillion_slug`
+- An organization created in the Clerk dashboard gets its the app row on first use (and `public_metadata.<namespace>_slug`
   written back). A legacy account moves to Clerk from `/admin` (Move to Clerk), and its keys keep working.
 
 ### Stripe (billing)
 
 1. Set `STRIPE_SECRET_KEY` (a restricted key with Customers, Checkout Sessions, Customer portal, Subscriptions,
    Prices, Invoices read and Meter events write is enough).
-2. Create the plans as recurring prices with a `lookup_key` starting with `octillion_` (e.g. `octillion_starter`) and
+2. Create the plans as recurring prices with a `lookup_key` starting with `<namespace>_` (src/namespace.ts KEY_PREFIX, e.g. `workspace_starter`) and
    `metadata.monthly_budget_usd` (the plan's model-spend cap; the product's metadata works too).
-3. Configure the customer portal (plan switching between the Octillion prices, card updates, invoices, cancellation).
+3. Configure the customer portal (plan switching between the the app prices, card updates, invoices, cancellation).
 4. Optional usage-based pricing: create a meter (sum, value in cents, customer mapping `stripe_customer_id`), set
    `STRIPE_SPEND_METER` to its event name. Each finished agent session reports its model cost once (deduplicated by
    session id).
-5. Octillion records the Stripe customer on the Clerk organization (`public_metadata.stripe_customer_id`) and the
+5. The app records the Stripe customer on the Clerk organization (`public_metadata.stripe_customer_id`) and the
    Clerk organization on the Stripe customer (`metadata.clerk_organization_id`). Billing stays on Stripe directly,
    not Clerk Billing (which has no usage-based pricing and is not synced with Stripe Billing).
 
-During the beta, leave `OCTILLION_REQUIRE_SUBSCRIPTION` unset: accounts without a plan get
-`OCTILLION_ORG_MONTHLY_BUDGET_USD`. With it set to `1`, new simulations need an active or trialing subscription.
+During the beta, leave `APP_REQUIRE_SUBSCRIPTION` unset: accounts without a plan get
+`APP_ORG_MONTHLY_BUDGET_USD`. With it set to `1`, new simulations need an active or trialing subscription.
 
 ### PostHog (product analytics)
 
@@ -221,7 +221,7 @@ Set `OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net` (EU: `https://otlp.eu
 You get:
 - HTTP spans for every route (`/mcp`, the gateway, the worker API), with `/mcp/oct_…` rewritten to `/mcp/:key`;
 - Postgres query spans (statement only, never values) and outbound `fetch` spans (Clerk, Stripe, model providers);
-- an `mcp.tool <name>` span per tool call with `octillion.org`, `mcp.tool.name`, `octillion.auth` and an error flag.
+- an `mcp.tool <name>` span per tool call with `org`, `mcp.tool.name`, `auth` and an error flag.
 
 Useful alerts: `/mcp` p95 latency, the error rate on `mcp.tool *` spans, 5xx on `/api/worker/*`, and outbound errors to
 `api.clerk.com` or `api.stripe.com`. The orchestrators are not instrumented yet.
@@ -230,27 +230,27 @@ Useful alerts: `/mcp` p95 latency, the error rate on `mcp.tool *` spans, 5xx on 
 
 | | Admin panel `/admin` | Customer portal `/app` |
 |---|---|---|
-| For | Octillion staff (platform admins), across every account | each account's people; account admins get management controls |
+| For | platform staff (platform admins), across every account | each account's people; account admins get management controls |
 | Sections | Overview, Requests, Accounts, Journeys, Analytics | Setup, Usage, Context, Team, Limits, Billing |
 | Sign-in | Clerk (platform admins only); admin token for scripts | Clerk; the account is the active Clerk organization |
 | Analytics | every account: adoption, retention, accounts at risk, health (replicated from the event log; PostHog and New Relic hold the full record) | their own team's usage only |
 
 Both are the Next.js app in `web/`, which calls this server's JSON API on the same origin (so Clerk's `__session`
-cookie reaches it); admin writes authenticated by that cookie carry `X-Octillion-Admin: 1`.
+cookie reaches it); admin writes authenticated by that cookie carry `X-App-Admin: 1`.
 
 ## Sign-in
 
 Clerk signs people in everywhere: the portal, the admin panel and the AI client's OAuth on `/mcp`. Which methods are
-offered (password, Google, Microsoft, GitHub, enterprise SSO) is set in the Clerk dashboard, not in Octillion.
+offered (password, Google, Microsoft, GitHub, enterprise SSO) is set in the Clerk dashboard, not in the app.
 
 ## Platform admins
 
-`/admin` is for Octillion staff, across every account; an account's own admins manage their team on `/app`. A Clerk user
-is a platform admin when their **verified** primary email matches `OCTILLION_PLATFORM_ADMINS` (comma-separated
+`/admin` is for platform staff, across every account; an account's own admins manage their team on `/app`. A Clerk user
+is a platform admin when their **verified** primary email matches `APP_PLATFORM_ADMINS` (comma-separated
 addresses or `*@company.com` domains), or their Clerk `public_metadata.platform_admin` is `true`. Removing an entry
 ends that admin's access on their next request. `GET /admin/session` tells the UI who is signed in and whether they
 are a platform admin. Scripts use admin tokens (`npm run admin:token`, src/admin-tokens.ts): one per purpose,
-with a role and an expiry, revocable; the old static `OCTILLION_ADMIN_TOKEN` is no longer accepted. A token acts with its role but can never mint tokens or add, promote
+with a role and an expiry, revocable; the old static `APP_ADMIN_TOKEN` is no longer accepted. A token acts with its role but can never mint tokens or add, promote
 or remove admins (those need a signed-in owner). On a VM, mint inside the app container; on Vercel, run
 `npm run admin:token` from a checkout with the production `DATABASE_URL` in the environment (it never prints the
 URL), or, signed in as an owner, `POST /api/admin/tokens {label, role, days}`.
@@ -260,7 +260,7 @@ URL), or, signed in as an owner, `POST /api/admin/tokens {label, role, days}`.
 PostHog is the system of record for product analytics and New Relic for traces. `/admin` → Analytics replicates what
 staff check daily (active accounts and people with change vs the previous period, daily activity, weekly retention
 by account cohort, tool adoption, client mix, accounts at risk, and health: error rate, tool latency, simulation and
-session outcomes, onboarding failures, gateway errors, model cost) from the event log Octillion already keeps, so it
+session outcomes, onboarding failures, gateway errors, model cost) from the event log the app already keeps, so it
 matches the account pages and works before PostHog is connected. `POSTHOG_PROJECT_URL` and `NEW_RELIC_DASHBOARD_URL`
 add links to the full record. Customers see only their own team's usage (`/app` → Usage).
 
@@ -292,7 +292,7 @@ client tailors answers without being told again. Company context also goes to on
 
 ## Journeys
 
-See **docs/journeys.md** (the octillion host pack's docs): build journeys in PostHog Workflows; Octillion delivers their in-chat and
+See **docs/journeys.md** (the host pack's docs): build journeys in PostHog Workflows; the app delivers their in-chat and
 `/app` tips.
 
 ## Day to day

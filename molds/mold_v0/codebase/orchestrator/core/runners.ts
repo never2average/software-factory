@@ -7,7 +7,7 @@
  *  - local:  host CLI in a temp dir. DEV ONLY, no isolation.
  *
  * BLINDNESS: a sandbox receives only the harness input on stdin, the optional repo and the harness env
- * (its own API key + quiet flags). Never session ids, Octillion URLs/tokens, customer names or the orchestrator key.
+ * (its own API key + quiet flags). Never session ids, the server's URLs/tokens, customer names or the orchestrator key.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
@@ -26,6 +26,7 @@ import { BOAT, BOAT_PRICE_PER_HOUR, CFG } from "./config.js";
 import { HttpError, log, sh, shq, sleep, withRetry } from "./util.js";
 import { EGRESS_DIR, proxyEnv, proxySource, probeSource, diagnosticsScript as egressDiagnostics, setupScript as egressSetupScript, type EgressPolicy } from "./egress.js";
 import { boatApi, boatCommandRetry, boatCreate, boatExec, boatExecStream, boatSandboxPath, BoatError } from "./boat.js";
+import { ENV, isShellEnvName } from "./env-names.js";
 
 export interface RunExit { code: number | null; signal: string | null; error?: string }
 
@@ -85,7 +86,7 @@ export interface OpenSpec {
   template?: TemplateId | null;
   /** Raw job harness id (pool runner picks a pod by it). */
   harness?: string;
-  /** Host-side job key (Octillion session id) for pool reservations. Never passed into a sandbox. */
+  /** Host-side job key (the server's session id) for pool reservations. Never passed into a sandbox. */
   jobKey?: string;
   /** Registry agent id (pool group) and the job's model; the pool asserts the group's model matches. */
   agentId?: string;
@@ -160,12 +161,12 @@ export function capDiff(d: string): string {
   return d.length > BOAT.diffMaxBytes ? d.slice(0, BOAT.diffMaxBytes) + "\n[diff truncated by worker]\n" : d;
 }
 
-/** Image env minus anything OCTILLION_* (blindness), for `env -i` at exec time. */
+/** Image env minus the shell's own names, APP_* and their old spelling (blindness), for `env -i` at exec time. */
 export async function imageEnv(image: string): Promise<string[]> {
   const r = await sh("docker", ["image", "inspect", "-f", "{{json .Config.Env}}", image]);
   if (r.code !== 0) throw new Error(`image ${image} not found: ${r.out.slice(-200)}`);
   const list: string[] = JSON.parse(r.out.trim() || "[]") ?? [];
-  return list.filter((kv) => !/^OCTILLION_/i.test(kv));
+  return list.filter((kv) => !isShellEnvName((kv.includes("=") ? kv.slice(0, kv.indexOf("=")) : kv).toUpperCase()));
 }
 
 /**
@@ -196,7 +197,7 @@ export const dockerRunner: Runner = {
     const args = [
       "run", "-d", "--init",
       "--name", name,
-      "--label", "octillion.sandbox=1",
+      "--label", "app.sandbox=1",
       "--cpus", CFG.dockerCpus,
       "--memory", CFG.dockerMemory,
       "--pids-limit", "1024",
@@ -431,7 +432,7 @@ ${boatRunAs()} env -i HOME=${AGENT_HOME} PATH="$(cat ${BOAT_DIR}/path)" WORK=${A
 
 /** Worker sandbox name: lets `boat-orchestrators status` attribute worker sandboxes to their orchestrator. */
 export function workerSandboxName(agentId: string): string {
-  return `${(process.env.OCTILLION_BOAT_NAMESPACE || "octi").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi"}-w-${CFG.orchestratorId}-${agentId}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 60);
+  return `${(ENV.APP_BOAT_NAMESPACE || "octi").toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi"}-w-${CFG.orchestratorId}-${agentId}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 60);
 }
 
 /** Pinned harness version from the registry (by agent id, else the first agent of that harness). */
@@ -714,7 +715,7 @@ export const RUNNERS: Record<string, Runner> = { boat: boatRunner, docker: docke
 /** Startup checks for the selected runner. */
 export async function checkRunner(runner: Runner): Promise<void> {
   if (runner.name === "boat") {
-    if (!BOAT.apiKey) throw new Error("BOAT_API_KEY is required for RUNNER=boat (create one with `boat api-key create octillion-worker --preset ci --ttl 90d`)");
+    if (!BOAT.apiKey) throw new Error("BOAT_API_KEY is required for RUNNER=boat (create one with `boat api-key create app-worker --preset ci --ttl 90d`)");
     const me = await boatApi("/me").catch((e) => { throw new Error(`boat.dev auth check failed: ${String(e)}`); });
     log(`boat.dev OK as ${me?.user?.login ?? me?.login ?? "?"}; size=${BOAT.size} ttl=${BOAT.ttlSeconds}s agentUser=${BOAT.agentUser} onFinish=${BOAT.onFinish}`);
   }

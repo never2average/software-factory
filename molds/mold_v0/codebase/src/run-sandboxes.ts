@@ -6,21 +6,21 @@
  *              the platform's ceiling, one writer per workspace store), reported per kind
  *   launch     a row in run_sandboxes, a worker token bound to that run and that sandbox (src/workerauth.ts), and a
  *              sandbox from the provider with the runner (src/run-sandbox-runner.ts) and only that token. At most
- *              OCTILLION_MAX_RUN_SANDBOXES at once, OCTILLION_RUN_LAUNCHES_PER_TICK a tick, within the provider plan's
+ *              APP_MAX_RUN_SANDBOXES at once, APP_RUN_LAUNCHES_PER_TICK a tick, within the provider plan's
  *              free sandboxes; a sandbox lives at most the run's token lifetime and a margin (the provider's TTL)
  *   claim      the runner claims its run, once (claimForSandbox): the run's worker is "sbx-<row>"
  *   run        the runner locks the run's user down to the run's egress (firewall + proxy) and carries the run out
  *   teardown   the sandbox goes when its attempt ends: at once when the runner completes (sandboxDone), else at the next
  *              tick (the run ended, was taken elsewhere, its attempt lapsed and was queued again, the sandbox died, it
- *              never claimed within OCTILLION_RUN_BOOT_MINUTES, or it is past the run's deadline). Orphans (ours by
+ *              never claimed within APP_RUN_BOOT_MINUTES, or it is past the run's deadline). Orphans (ours by
  *              name or label, with no row) are deleted. The token is revoked with it.
  *   failures   a run whose sandbox fails to start is tried again after a back-off, and fails (infrastructure) after
- *              OCTILLION_RUN_LAUNCH_ATTEMPTS failed starts: nothing launches forever
+ *              APP_RUN_LAUNCH_ATTEMPTS failed starts: nothing launches forever
  *
  * Providers: "boat" (the sandbox provider the product already uses for its orchestrators, with its key in the vault),
  * "docker" (a container per run on the server's own Docker, from the runner service only: it holds the Docker socket,
- * the app does not), and "process" (no sandbox at all: refused unless OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes, for tests).
- * OCTILLION_RUN_SANDBOX picks one (auto: boat when its key is in the vault, else docker when this process has the
+ * the app does not), and "process" (no sandbox at all: refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes, for tests).
+ * APP_RUN_SANDBOX picks one (auto: boat when its key is in the vault, else docker when this process has the
  * socket, else none); "off" launches nothing. With no provider no run is ever carried out unsandboxed: queued runs wait,
  * each with a `waiting` event that says why.
  */
@@ -38,23 +38,25 @@ import { mintRunWorkerToken, revokeRunSandboxTokens } from "./workerauth.js";
 import { recordComputeEvent } from "./compute-events.js";
 import { keepAlive } from "./telemetry.js";
 import { DEFAULT_RUN_UIDS } from "./run-users.js";
+import { ENV } from "./env-names.js";
+import { NS } from "./namespace.js";
 
-const env = process.env;
+const env = ENV;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const num = (v: string | undefined, d: number) => (v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
 /** The image's fixed run account (kept for an older runner); runs now lease a uid of their own per run (mold_v0-078). */
 export const RUN_USER = "octirun";
 /** The range a sandbox's runner leases its run's user from (mold_v0-078, src/run-users.ts). */
-const runUids = () => env.OCTILLION_RUN_UIDS || DEFAULT_RUN_UIDS;
+const runUids = () => env.APP_RUN_UIDS || DEFAULT_RUN_UIDS;
 
 export const RUN_SANDBOXES = {
-  mode: () => (env.OCTILLION_RUN_SANDBOX ?? "auto").toLowerCase(),
-  maxSandboxes: () => Math.max(0, num(env.OCTILLION_MAX_RUN_SANDBOXES, 10)),
-  launchesPerTick: () => Math.max(1, num(env.OCTILLION_RUN_LAUNCHES_PER_TICK, 4)),
-  bootMinutes: () => Math.max(1, num(env.OCTILLION_RUN_BOOT_MINUTES, 10)),
-  launchAttempts: () => Math.max(1, num(env.OCTILLION_RUN_LAUNCH_ATTEMPTS, 3)),
-  backoffSeconds: () => Math.max(0, num(env.OCTILLION_RUN_LAUNCH_BACKOFF_SECONDS, 30)),
-  unsandboxedAllowed: () => env.OCTILLION_ALLOW_UNSANDBOXED_RUNS === "yes",
+  mode: () => (env.APP_RUN_SANDBOX ?? "auto").toLowerCase(),
+  maxSandboxes: () => Math.max(0, num(env.APP_MAX_RUN_SANDBOXES, 10)),
+  launchesPerTick: () => Math.max(1, num(env.APP_RUN_LAUNCHES_PER_TICK, 4)),
+  bootMinutes: () => Math.max(1, num(env.APP_RUN_BOOT_MINUTES, 10)),
+  launchAttempts: () => Math.max(1, num(env.APP_RUN_LAUNCH_ATTEMPTS, 3)),
+  backoffSeconds: () => Math.max(0, num(env.APP_RUN_LAUNCH_BACKOFF_SECONDS, 30)),
+  unsandboxedAllowed: () => env.APP_ALLOW_UNSANDBOXED_RUNS === "yes",
 };
 export const sandboxWorkerId = (rowId: number) => `sbx-${rowId}`;
 /** What a boat run sandbox gets besides the runner's code (mold_v0-072): the run tools' installer and the build's list. */
@@ -122,8 +124,8 @@ export function boatProvider(apiUrl: string): RunSandboxProvider {
         if (/[\r]/.test(envBody) || Object.values(spec.env).some((v) => v.includes("\n"))) throw new Error("an environment value spans lines");
         await lib.put(id, `${lib.HOME}/runner.env.new`, envBody);
         const conf = await lib.run(id, `set -e; cd ${lib.HOME}
-sudo -n install -d -m 700 -o root -g root /etc/octillion
-sudo -n install -m 600 -o root -g root runner.env.new /etc/octillion/runner.env; rm -f runner.env.new
+sudo -n install -d -m 700 -o root -g root /etc/${NS}
+sudo -n install -m 600 -o root -g root runner.env.new /etc/${NS}/runner.env; rm -f runner.env.new
 # The run's user: no sudo, no login. The egress proxy's user is made by the runner's lockdown.
 id ${RUN_USER} >/dev/null 2>&1 || sudo -n useradd -r -M -s /usr/sbin/nologin ${RUN_USER}
 # The provider's node is a link into the default user's home (0750): the run's user could not execute it. A real,
@@ -146,7 +148,7 @@ sudo -n env PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_
         if (conf.code !== 0) throw new Error(`configure failed: ${conf.stderr.slice(-500)}`);
         step = "start";
         // As root (the runner switches to the run's user for the run itself), as a unit that outlives this command.
-        const st = await lib.run(id, `sudo -n systemd-run --quiet --unit=octi-runner --property=EnvironmentFile=/etc/octillion/runner.env --property=WorkingDirectory=${lib.HOME}/app \
+        const st = await lib.run(id, `sudo -n systemd-run --quiet --unit=octi-runner --property=EnvironmentFile=/etc/${NS}/runner.env --property=WorkingDirectory=${lib.HOME}/app \
 --property=Environment=PATH=/usr/local/bin:/usr/bin:/bin ${lib.HOME}/app/orchestrator/node_modules/.bin/tsx src/run-sandbox-runner.ts`, 60);
         if (st.code !== 0) throw new Error(`the runner did not start: ${st.stderr.slice(-300)}`);
         return { sandboxId: id };
@@ -180,8 +182,8 @@ function dockerApi(socketPath: string, method: string, p: string, body?: unknown
     req.end(data);
   });
 }
-const DOCKER_LABEL = "org.octillion.run-sandbox";
-const namespace = () => (env.OCTILLION_BOAT_NAMESPACE || (env.VERCEL ? "octv" : "octi")).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi";
+const DOCKER_LABEL = `org.${NS}.run-sandbox`;
+const namespace = () => (env.APP_BOAT_NAMESPACE || (env.VERCEL ? "octv" : "octi")).toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "octi";
 
 /**
  * docker: a container per run on this server's Docker, from the image the runner service itself runs (the app's image,
@@ -190,23 +192,23 @@ const namespace = () => (env.OCTILLION_BOAT_NAMESPACE || (env.VERCEL ? "octv" : 
  * set its own network namespace's firewall; no new privileges; memory, CPU and process limits.
  */
 export async function dockerProvider(apiUrl: string): Promise<RunSandboxProvider | string> {
-  const socketPath = env.OCTILLION_DOCKER_SOCKET || "/var/run/docker.sock";
+  const socketPath = env.APP_DOCKER_SOCKET || "/var/run/docker.sock";
   if (!existsSync(socketPath)) return `no Docker socket at ${socketPath}`;
-  let image = env.OCTILLION_RUN_IMAGE || "", network = env.OCTILLION_RUN_NETWORK || "";
+  let image = env.APP_RUN_IMAGE || "", network = env.APP_RUN_NETWORK || "";
   try {
     const ping = await dockerApi(socketPath, "GET", "/_ping");
     if (ping.status !== 200) return `Docker does not answer (${ping.status})`;
     if (!image || !network) {
       // This process's own container: its image, and its compose project's runs network.
       const self = await dockerApi(socketPath, "GET", `/containers/${encodeURIComponent(hostname())}/json`);
-      if (self.status !== 200) return "this process is not in a container Docker knows: set OCTILLION_RUN_IMAGE and OCTILLION_RUN_NETWORK";
+      if (self.status !== 200) return "this process is not in a container Docker knows: set APP_RUN_IMAGE and APP_RUN_NETWORK";
       image ||= String(self.json?.Image ?? "");
       const project = self.json?.Config?.Labels?.["com.docker.compose.project"];
       network ||= project ? `${project}_runs` : "";
     }
   } catch (e) { return `Docker is not reachable: ${(e as Error).message}`; }
   if (!image || !network) return "no image or network for run containers";
-  if (!apiUrl) return "OCTILLION_RUN_API_URL is not set (where run containers reach the API on the runs network)";
+  if (!apiUrl) return "APP_RUN_API_URL is not set (where run containers reach the API on the runs network)";
   // Per compose project (its runs network): two apps on one Docker host never list, or delete, each other's containers.
   const ns = `${namespace()}.${network}`;
   const call = (m: string, p: string, b?: unknown) => dockerApi(socketPath, m, p, b);
@@ -222,13 +224,13 @@ export async function dockerProvider(apiUrl: string): Promise<RunSandboxProvider
           // The container's own deadline (it has no provider TTL): killed past it, whatever the scaler does.
           Cmd: ["timeout", "-s", "KILL", String(Math.max(60, Math.round(spec.ttlSeconds))), "node", "--import", "tsx", "src/run-sandbox-runner.ts"],
           Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
-          Labels: { [DOCKER_LABEL]: ns, "org.octillion.run-id": spec.runId, "org.octillion.run-sandbox-row": String(spec.rowId) },
+          Labels: { [DOCKER_LABEL]: ns, [`org.${NS}.run-id`]: spec.runId, [`org.${NS}.run-sandbox-row`]: String(spec.rowId) },
           HostConfig: {
             NetworkMode: network, Init: true, AutoRemove: false, RestartPolicy: { Name: "no" },
             CapDrop: ["ALL"], CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL"],
             SecurityOpt: ["no-new-privileges"], Binds: [], Privileged: false,
-            Memory: Math.round(num(env.OCTILLION_RUN_MEMORY_MB, 2048) * 1024 * 1024), NanoCpus: Math.round(num(env.OCTILLION_RUN_CPUS, 1) * 1e9),
-            PidsLimit: num(env.OCTILLION_RUN_PIDS, 1024), LogConfig: { Type: "json-file", Config: { "max-size": "10m", "max-file": "2" } },
+            Memory: Math.round(num(env.APP_RUN_MEMORY_MB, 2048) * 1024 * 1024), NanoCpus: Math.round(num(env.APP_RUN_CPUS, 1) * 1e9),
+            PidsLimit: num(env.APP_RUN_PIDS, 1024), LogConfig: { Type: "json-file", Config: { "max-size": "10m", "max-file": "2" } },
           },
         });
         if (c.status !== 201) throw new Error(`docker create: ${c.status} ${c.json?.message ?? ""}`);
@@ -259,7 +261,7 @@ export async function dockerProvider(apiUrl: string): Promise<RunSandboxProvider
 
 /**
  * process: the runner as a child process of this one, with no sandbox and no firewall. Only with
- * OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes (offline tests); never chosen by "auto".
+ * APP_ALLOW_UNSANDBOXED_RUNS=yes (offline tests); never chosen by "auto".
  */
 export function processProvider(apiUrl: string): RunSandboxProvider {
   const kids = new Map<string, { child: ChildProcess; name: string }>();
@@ -272,11 +274,11 @@ export function processProvider(apiUrl: string): RunSandboxProvider {
       await onCreated(id);
       // As root, the runner leases its run's own user (mold_v0-078) as a sandbox's does; else it runs as this user (tests).
       const runAs: Record<string, string> = process.getuid?.() === 0
-        ? Object.fromEntries((["OCTILLION_RUN_UIDS", "OCTILLION_RUN_UID_DIR"] as const).flatMap((k) => (env[k] ? [[k, env[k]!]] : [])))
-        : { OCTILLION_RUN_SAME_USER: "yes" };
-      const { OCTILLION_RUN_USER: _u, ...rest } = spec.env;
+        ? Object.fromEntries((["APP_RUN_UIDS", "APP_RUN_UID_DIR"] as const).flatMap((k) => (env[k] ? [[k, env[k]!]] : [])))
+        : { APP_RUN_SAME_USER: "yes" };
+      const { APP_RUN_USER: _u, ...rest } = spec.env;
       const child = spawn(process.execPath, ["--import", "tsx", "src/run-sandbox-runner.ts"], { cwd: ROOT, detached: true, stdio: ["ignore", "ignore", "pipe"],
-        env: { PATH: env.PATH ?? "/usr/bin:/bin", ...rest, ...runAs, OCTILLION_RUN_LOCKDOWN: "off", OCTILLION_ALLOW_UNSANDBOXED_RUNS: "yes" } });
+        env: { PATH: env.PATH ?? "/usr/bin:/bin", ...rest, ...runAs, APP_RUN_LOCKDOWN: "off", APP_ALLOW_UNSANDBOXED_RUNS: "yes" } });
       child.stderr?.on("data", (d) => spec.log(`[${id}] ${String(d).trim()}`));
       kids.set(id, { child, name: spec.name });
       return { sandboxId: id };
@@ -290,8 +292,8 @@ export function processProvider(apiUrl: string): RunSandboxProvider {
   };
 }
 
-/** Where a sandbox's runner reaches the API: OCTILLION_RUN_API_URL, else the autoscaler's address for orchestrators. */
-const runApiUrl = () => (env.OCTILLION_RUN_API_URL || env.OCTILLION_INTERNAL_URL || env.PUBLIC_URL || "").replace(/\/$/, "");
+/** Where a sandbox's runner reaches the API: APP_RUN_API_URL, else the autoscaler's address for orchestrators. */
+const runApiUrl = () => (env.APP_RUN_API_URL || env.APP_INTERNAL_URL || env.PUBLIC_URL || "").replace(/\/$/, "");
 
 let boatKeyAt = 0;
 let processCache: RunSandboxProvider | null = null;
@@ -317,17 +319,17 @@ export async function resolveRunProvider(): Promise<{ provider: RunSandboxProvid
   const mode = RUN_SANDBOXES.mode(), url = runApiUrl();
   const boat = async () => {
     if (!(await boatConfigured())) return "the sandbox provider's key is not in the vault";
-    if (!/^https:\/\//.test(url)) return "the API's address for sandboxes is not HTTPS (PUBLIC_URL or OCTILLION_RUN_API_URL)";
+    if (!/^https:\/\//.test(url)) return "the API's address for sandboxes is not HTTPS (PUBLIC_URL or APP_RUN_API_URL)";
     return boatProvider(url);
   };
   const pick = (p: RunSandboxProvider | string) => (typeof p === "string" ? { provider: null, why: p } : { provider: p, why: "" });
   switch (mode) {
-    case "off": return { provider: null, why: "run sandboxes are off on this deployment (OCTILLION_RUN_SANDBOX=off)" };
+    case "off": return { provider: null, why: "run sandboxes are off on this deployment (APP_RUN_SANDBOX=off)" };
     case "boat": return pick(await boat());
     case "docker": return pick(await dockerProvider(url));
     case "process":
       return RUN_SANDBOXES.unsandboxedAllowed() ? { provider: (processCache ??= processProvider(url)), why: "" }
-        : { provider: null, why: "OCTILLION_RUN_SANDBOX=process runs runs with no sandbox, refused unless OCTILLION_ALLOW_UNSANDBOXED_RUNS=yes (tests only)" };
+        : { provider: null, why: "APP_RUN_SANDBOX=process runs runs with no sandbox, refused unless APP_ALLOW_UNSANDBOXED_RUNS=yes (tests only)" };
     case "auto": {
       const b = await boat();
       if (typeof b !== "string") return { provider: b, why: "" };
@@ -335,7 +337,7 @@ export async function resolveRunProvider(): Promise<{ provider: RunSandboxProvid
       if (typeof d !== "string") return { provider: d, why: "" };
       return { provider: null, why: `no sandbox provider is configured: ${b}, and ${d}` };
     }
-    default: return { provider: null, why: `OCTILLION_RUN_SANDBOX=${mode} is not one of auto, boat, docker, off` };
+    default: return { provider: null, why: `APP_RUN_SANDBOX=${mode} is not one of auto, boat, docker, off` };
   }
 }
 
@@ -401,7 +403,7 @@ export class RunScaler {
     const chosen = this.opts.provider !== undefined ? { provider: this.opts.provider, why: this.opts.provider ? "" : "no provider (test)" } : await resolveRunProvider();
     const st: RunTick = { provider: chosen.provider?.name ?? null, leader: false };
     // The autoscaler's kill switch stops run launches and deletes too, wherever this ticks (the runner service included).
-    if ((env.OCTILLION_AUTOSCALE ?? "on").toLowerCase() === "off") { st.note = "OCTILLION_AUTOSCALE=off"; return st; }
+    if ((env.APP_AUTOSCALE ?? "on").toLowerCase() === "off") { st.note = "APP_AUTOSCALE=off"; return st; }
     if (!chosen.provider) {
       // No sandbox here: nothing is launched and nothing runs unsandboxed. Unless another process (the runner service)
       // launches runs, each queued run says why it waits.
@@ -502,7 +504,7 @@ export class RunScaler {
         }
         if (fails && f?.last && now - new Date(f.last).getTime() < RUN_SANDBOXES.backoffSeconds() * 1000 * 2 ** (fails - 1)) { notes.push(`${run.id} waits before another start`); continue; }
         if (st.launched.length >= RUN_SANDBOXES.launchesPerTick()) { notes.push(`at ${RUN_SANDBOXES.launchesPerTick()} launches a tick`); break; }
-        if (n >= cap) { notes.push(`at ${cap} run sandboxes (OCTILLION_MAX_RUN_SANDBOXES ${RUN_SANDBOXES.maxSandboxes()}${free === null ? "" : `, ${free} free on the plan`})`); break; }
+        if (n >= cap) { notes.push(`at ${cap} run sandboxes (APP_MAX_RUN_SANDBOXES ${RUN_SANDBOXES.maxSandboxes()}${free === null ? "" : `, ${free} free on the plan`})`); break; }
         const launched = await this.launch(p, run);
         if (launched) st.launched.push({ row: launched, run: run.id });
         n++;
@@ -534,8 +536,8 @@ export class RunScaler {
     const token = await mintRunWorkerToken(run.id, run.org_id, id, life + 600);
     const spec: RunSandboxSpec = {
       rowId: id, runId: run.id, name: `${p.name === "boat" ? (await import("../orchestrator/deploy/boat-lib.js")).RUN_PREFIX : `${namespace()}-run-`}${id}-${randomBytes(3).toString("hex")}`,
-      env: { OCTILLION_URL: p.apiUrl(), OCTILLION_WORKER_TOKEN: token, OCTILLION_RUN_ID: run.id, OCTILLION_RUN_UIDS: runUids(),
-             OCTILLION_RUN_PACK_DIR: packRel, OCTILLION_RUN_LOCKDOWN: "on" },
+      env: { APP_URL: p.apiUrl(), APP_WORKER_TOKEN: token, APP_RUN_ID: run.id, APP_RUN_UIDS: runUids(),
+             APP_RUN_PACK_DIR: packRel, APP_RUN_LOCKDOWN: "on" },
       ttlSeconds: life + 1800, packDirs: packRel ? [packRel] : [], log: (m) => this.log(m),
     };
     let created = "";

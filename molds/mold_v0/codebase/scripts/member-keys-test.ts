@@ -19,9 +19,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, startHttp, STAMP, TMP } from "./lib/test-world.js";
+import { NS_KEYS } from "../src/namespace.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 for (const k of ["R2_BUCKET", "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) delete process.env[k];
 const fixture = (id: string) => JSON.parse(readFileSync(path.join(ROOT, "scripts", "fixtures", "packs", id, "pack.json"), "utf8"));
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -132,9 +133,9 @@ try {
     assert.ok(okCall(await tool(keyM, "review_create_review_items", { key: "item-a", data: { url: "https://a.example" } })), "a member's key writes");
     // A role change holds on the next call: the viewer becomes a member.
     const { sub: viewerUser, o } = claims(viewerA);
-    await clerk.memberships.setRole(o!.id, viewerUser, "member", { octillion_role: "member" });
+    await clerk.memberships.setRole(o!.id, viewerUser, "member", { [NS_KEYS.role]: "member" });
     assert.ok((await tools(v.body.key)).includes("review_create_review_items"), "after the role change the key may write");
-    await clerk.memberships.setRole(o!.id, viewerUser, "member", { octillion_role: "viewer" });
+    await clerk.memberships.setRole(o!.id, viewerUser, "member", { [NS_KEYS.role]: "viewer" });
     assert.ok(!(await tools(v.body.key)).includes("review_create_review_items"), "and back");
     // Suspended, then removed: the person's keys stop working.
     await clerk.memberships.setSuspended(o!.id, viewerUser, true);
@@ -215,15 +216,15 @@ try {
     // A fresh member (the counts are per minute), with two keys.
     const fresh = await http.signIn(A.org);
     const k1 = await make(fresh, { name: "one" }), k2 = await make(fresh, { name: "two" });
-    process.env.OCTILLION_LIMIT_MCP_PER_MEMBER_PER_MINUTE = "3";
+    process.env.APP_LIMIT_MCP_PER_MEMBER_PER_MINUTE = "3";
     try {
       const statuses: number[] = [];
       for (const k of [k1.body.key, k2.body.key, k1.body.key, k2.body.key]) statuses.push((await rpc(bearer(k), "tools/list")).status);
       assert.deepEqual(statuses, [200, 200, 200, 429], `the member's limit counts all their keys together: ${statuses}`);
       const other = await make(ownerA, { name: "owner's other" });
       assert.equal((await rpc(bearer(other.body.key), "tools/list")).status, 200, "another member is not limited by it");
-    } finally { delete process.env.OCTILLION_LIMIT_MCP_PER_MEMBER_PER_MINUTE; }
-    process.env.OCTILLION_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE = "1";
+    } finally { delete process.env.APP_LIMIT_MCP_PER_MEMBER_PER_MINUTE; }
+    process.env.APP_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE = "1";
     try {
       const someone = await http.signIn(B.org, "viewer");
       for (let i = 0; i < 3; i++) assert.equal((await make(someone, { name: " " })).status, 400, "a refused request does not count");
@@ -234,7 +235,7 @@ try {
       const staff = await http.adminToken("owner");
       const issued = await call("POST", `/api/admin/onboarding/orgs/${B.org.slug}/keys`, staff, { label: "emergency" });
       assert.equal(issued.status, 201, `staff still issue a key: ${issued.status} ${JSON.stringify(issued.body).slice(0, 200)}`);
-    } finally { delete process.env.OCTILLION_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE; }
+    } finally { delete process.env.APP_LIMIT_ENDPOINTS_KEYS_PER_HOUR_PER_WORKSPACE; }
     // Staff cannot rotate a member key into an unscoped one; they revoke it, and who did is kept.
     const staff = await http.adminToken("owner");
     const mk = await make(ownerB, { name: "leaked" });

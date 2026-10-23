@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Icons } from '@/components/icons';
 import { appApi } from '@/lib/api-client';
-import { money, num, usd } from '@/lib/octillion-format';
+import { money, num, usd } from '@/lib/display-format';
 import { cn } from '@/lib/utils';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from './shared';
 import { ACCOUNT_ROLE_LABEL, Allowed, useAccountRole, type AccountRole, type AccountRoleInfo } from './role';

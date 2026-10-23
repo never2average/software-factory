@@ -1,15 +1,16 @@
 /** Orchestrator configuration (env vars). Read once at import time. */
 import { hostname } from "node:os";
+import { ENV, LEGACY_ENV_PREFIX } from "./env-names.js";
 
-export const env = process.env;
+export const env = ENV; // process.env, the shell's names read with their old spelling as a fallback (env-names.ts)
 export const num = (v: string | undefined, d: number) => (v && Number.isFinite(Number(v)) ? Number(v) : d);
 
 export type RunnerName = "boat" | "docker" | "local" | "pool";
 export type SinkMode = "api" | "clickhouse" | "both";
 
 export const CFG = {
-  url: (env.OCTILLION_URL ?? "http://localhost:3000").replace(/\/+$/, ""),
-  token: env.OCTILLION_WORKER_TOKEN ?? "",
+  url: (env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, ""),
+  token: env.APP_WORKER_TOKEN ?? "",
   workerId: env.WORKER_ID ?? `${hostname()}-${process.pid}`,
   /** Stable orchestrator identity (fleet check-in, orchestrator credentials, pod owner label). */
   orchestratorId: env.ORCHESTRATOR_ID || hostname(),
@@ -45,7 +46,7 @@ export const SINK = {
   chUrl: (env.CLICKHOUSE_URL ?? "").replace(/\/+$/, ""),
   chUser: env.CLICKHOUSE_USER ?? "default",
   chPassword: env.CLICKHOUSE_PASSWORD ?? "",
-  chDatabase: env.CLICKHOUSE_DATABASE ?? "octillion",
+  chDatabase: env.CLICKHOUSE_DATABASE ?? LEGACY_ENV_PREFIX.replace(/_+$/, "").toLowerCase(), // the default it always had (the server's, in a build with the host pack)
 };
 
 /** boat.dev (https://docs.boat.dev/api/v1). Only used by RUNNER=boat. */

@@ -6,7 +6,7 @@
  *
  *   OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net        (EU accounts: https://otlp.eu01.nr-data.net)
  *   OTEL_EXPORTER_OTLP_HEADERS=api-key=<New Relic ingest license key>
- *   OTEL_SERVICE_NAME=octillion                                  (default), OTEL_DEPLOYMENT_ENV=production
+ *   OTEL_SERVICE_NAME=<namespace> (src/namespace.ts)             (default), OTEL_DEPLOYMENT_ENV=production
  * Never put API keys, tokens or tool arguments in span attributes: org slug, tool name, status and timings only.
  */
 import { NodeSDK } from "@opentelemetry/sdk-node";
@@ -19,6 +19,7 @@ import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
 import { ExpressInstrumentation } from "@opentelemetry/instrumentation-express";
 import { PgInstrumentation } from "@opentelemetry/instrumentation-pg";
 import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
+import { NS } from "./namespace.js";
 
 /** Export pending spans and metrics now (serverless: before the function is frozen). A no-op when OTel is off. */
 export let otelFlush: () => Promise<void> = async () => {};
@@ -28,7 +29,7 @@ if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT && process.env.OTEL_SDK_DISABLED !==
   const redact = (path: string) => path.replace(/\/mcp\/oct_[^/?]+/, "/mcp/:key").replace(/\/api\/journeys\/nudges\/[^/?]+/, "/api/journeys/nudges/:secret").replace(/\?.*$/, "");
   const sdk = new NodeSDK({
     resource: resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? "octillion",
+      [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? NS,
       [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? "2.0.0",
       "deployment.environment.name": process.env.OTEL_DEPLOYMENT_ENV ?? process.env.NODE_ENV ?? "development",
     }),

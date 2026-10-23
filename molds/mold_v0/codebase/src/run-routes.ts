@@ -22,6 +22,7 @@ import { appendRunEvents, claimRun, completeRun, heartbeatRun, leasedRun, runCre
 import { claimForSandbox, sandboxDone } from "./run-sandboxes.js";
 import { checkoutBundle, stageBundle } from "./workspace-store.js";
 import type { WorkerAuth } from "./workerauth.js";
+import { ENV } from "./env-names.js";
 
 const answer = (fn: (req: Request, res: Response) => unknown) => async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -71,7 +72,7 @@ export function runWorkerRouter(): Router {
     res.end(out.bundle);
   }));
   r.get("/:id/credentials", answer((req) => runCredentialsForLease(String(req.params.id), leaseOf(req))));
-  const maxBundle = Number(process.env.OCTILLION_WORKSPACE_MAX_BUNDLE_BYTES ?? 300 * 1024 * 1024);
+  const maxBundle = Number(ENV.APP_WORKSPACE_MAX_BUNDLE_BYTES ?? 300 * 1024 * 1024);
   r.put("/:id/workspace", express.raw({ type: "application/octet-stream", limit: maxBundle }), answer(async (req) => {
     if (!Buffer.isBuffer(req.body)) throw new PackError("send the workspace as application/octet-stream", 400);
     return stageBundle(await leasedRun(String(req.params.id), leaseOf(req)), req.body);

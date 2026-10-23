@@ -1,4 +1,4 @@
-# Octillion worker image: OpenAI Codex CLI.
+# Worker image: OpenAI Codex CLI.
 # Build: orchestrator/images/build.sh codex   (or see the docker build line in README.md)
 # Neutral base: node 22, python 3, git, build tools. No dev-tool SDKs, no CLAUDE.md/AGENTS.md, no MCP config.
 FROM node:22-bookworm
@@ -26,8 +26,8 @@ ENV HOME=/home/agent \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     CODEX_HOME=/home/agent/.codex
 # Metadata as labels, not env: env would be visible to the agent and leak context into its session.
-LABEL dev.octillion.harness="codex" \
-      dev.octillion.harness_version="${HARNESS_VERSION}"
+LABEL dev.app.harness="codex" \
+      dev.app.harness_version="${HARNESS_VERSION}"
 WORKDIR /home/agent/work
 # Healthcheck prints the harness version (docker inspect --format '{{json .State.Health}}' <c>).
 HEALTHCHECK --interval=5m --timeout=30s --start-period=30s --start-interval=5s --retries=2 CMD codex --version || exit 1
