@@ -73,7 +73,8 @@
     "mcp:check": "tsx scripts/mcp-check.ts",
     "web:build": "npm --prefix web ci && npm --prefix web run build",
     "web:dev": "npm --prefix web run dev",
-    "pack:run": "tsx --env-file-if-exists=.env scripts/pack-script.ts"
+    "pack:run": "tsx --env-file-if-exists=.env scripts/pack-script.ts",
+    "test:clerk-azp": "tsx scripts/clerk-azp-test.ts"
   },
   "description": "An agent-run shell with an MCP front door: workspaces, keys, a console, vaults, a run engine and an inference gateway; a product is its packs.",
   "dependencies": {
