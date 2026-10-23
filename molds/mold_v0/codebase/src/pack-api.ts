@@ -1056,9 +1056,14 @@ export const ScheduleSchema = z.object({
  * exists), "run:<kind>" (a run of this pack's job kind succeeded).
  */
 export const ONBOARDING_CONDITION = /^(workspace|connected|first_call|(tool|credential|record|run):[a-z][a-z0-9_]{0,63})$/;
-/** An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events. */
+/**
+ * An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events,
+ * and the pack's generated `<prefix>_get_started` MCP tool (mold_v0-105, src/mcp-tools.ts): the next step not done,
+ * how to do it, and `prompt`, the words the person can type in their AI client to do it (default: built from the label).
+ */
 export const OnboardingStepSchema = z.object({
   id: name, label: z.string().min(1).max(120), help: z.string().max(500).optional(),
+  prompt: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>`]*$/, "plain text: one line, no control or direction characters, no < > or `").optional(),
   done_when: z.string().regex(ONBOARDING_CONDITION, "done_when: workspace, connected, first_call, tool:<name>, credential:<name>, record:<area> or run:<kind>"),
 }).strict();
 
@@ -1074,6 +1079,11 @@ export const OnboardingStepSchema = z.object({
  *   describe    generated name -> the description clients see (plain text, one paragraph)
  *   admin_only  customer tools moved to the admin MCP (platform staff with "accounts", naming the workspace); never on
  *               the customer MCP (only the MCP tool moves: the data API and the console still serve the workspace)
+ *   instructions  (mold_v0-105) the customer MCP server's instructions: what the app is and how to work with it, plain
+ *               text, up to 4000 characters, used when the profile has no `mcp_instructions` and no host pack has its
+ *               own (several packs' are joined, in pack order); the shell adds the generated tools' paragraph after it
+ * A pack that declares onboarding steps also gets `<prefix>_get_started` (mold_v0-105): the caller's workspace's progress
+ * through them, the next step and the prompt to type; the instructions tell clients to call it first.
  */
 const mcpToolName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "a tool name: lowercase letters, digits and _, starting with a letter, at most 64");
 export const McpSettingsSchema = z.object({
@@ -1085,6 +1095,8 @@ export const McpSettingsSchema = z.object({
   describe: z.record(mcpToolName, z.string().trim().min(1).max(1000)
     .regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>]*$/, "plain text: no control or direction characters, no < or >")).optional(),
   admin_only: z.array(mcpToolName).max(500).optional(),
+  instructions: z.string().trim().min(1).max(4000)
+    .regex(/^[^\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text: no control or direction characters (line breaks are fine)").optional(),
 }).strict();
 export type McpSettings = z.output<typeof McpSettingsSchema>;
 
