@@ -55,6 +55,7 @@
     "test:run-charges-race": "tsx scripts/run-charges-race.ts",
     "test:usage": "tsx scripts/usage-test.ts",
     "test:limits": "tsx scripts/limits-test.ts",
+    "test:words": "tsx scripts/words-test.ts",
     "test:entitlements": "tsx scripts/entitlements-test.ts",
     "test:run-start-race": "tsx scripts/run-start-race.ts",
     "test:schedules": "tsx scripts/schedules-test.ts",

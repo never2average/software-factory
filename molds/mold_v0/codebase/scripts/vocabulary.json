@@ -97,5 +97,101 @@
       ],
       "why": "the orchestrator sandboxes' service unit, home and host marker, and the harness manifests in the boat templates: running sandboxes hold them, and the next release stops, restarts and checks those (boat-lib stopService, host-guard)"
     }
-  ]
+  ],
+  "concepts": {
+    "$comment": "The concept-word ratchet (mold_v0-100, scripts/lib/concepts.ts; npm run check:vocabulary runs it). `words`: the first product's concepts, taken from its host pack (packs/octillion: pack.json description \"Agentic Preference Optimization ... pick your developer tool\", its host.schema tables products/scenarios/simulations/developer_profiles/developer_populations/product_personas/journey_templates/visibility_reports, its pick-rate and hit-rate reports and playbooks). None may stand as PROSE in base text (string literals, template text and JSX text of the shell's sources): base text writes a placeholder the build's words fill ({run}, {Runs}, {member}, {product}: src/words.ts), or leaves the concept to the host pack. Identifiers, SQL and stored values are contracts and are never counted. Each file that still carries one has a ceiling, the exact count today, in a group that says why it remains and how it goes; more fails, fewer fails with the number to lower it to.",
+    "words": [
+      "simulation",
+      "scenario",
+      "visibility",
+      "APO",
+      "Agentic Preference Optimization",
+      "pick rate",
+      "hit rate",
+      "developer tool",
+      "developer profile",
+      "developer population",
+      "persona",
+      "journey",
+      "playbook",
+      "onboard product",
+      "product onboarding",
+      "competitor"
+    ],
+    "scan": [
+      "src/**/*.ts",
+      "web/src/**/*.ts",
+      "web/src/**/*.tsx"
+    ],
+    "skip": {
+      "**/*.generated.*": "generated from the packs and the profile (a host pack's own words land there in its build)",
+      "src/words.ts": "the words engine: its comments' examples name the words a pack may choose",
+      "web/src/packs/**": "a host pack's own console code (its files in a build), never the shell's"
+    },
+    "ceilings": {
+      "host_gated": {
+        "why": "Text shown only where the build's host pack has the feature or the tables (hostFeature('journeys'), hostTable('products'), the session engine's tables): a declarative app never reaches it.",
+        "migration": "Moves into the host pack when the hook it sits behind gets a pack field (HostWeb/HostDefinition copy hooks; audit rows 7, 8 and 17).",
+        "files": {
+          "web/src/features/portal/setup.tsx": 6,
+          "src/account-roles.ts": 1,
+          "src/admin-roles.ts": 1,
+          "web/src/hooks/use-breadcrumbs.tsx": 1
+        }
+      },
+      "host_tables": {
+        "why": "Labels and checks of the host pack's own tables (the storage page's table list, the row-level security probes), each guarded by hostTable(): stored names, read only in a build that has them.",
+        "migration": "Each table's label comes from the host pack's pack.json host.schema when it gets labels (follow-up of mold_v0-049).",
+        "files": {
+          "src/spend-usage.ts": 7,
+          "src/rls.ts": 5
+        }
+      },
+      "account_funnel": {
+        "why": "The admin funnel's stages after the first tool call (onboarded, simulated, reported) and their attention rules are the first product's (audit row 7).",
+        "migration": "Shell stages up to first_call, then stages from the pack's onboarding[].done_when (audit row 7 ticket).",
+        "files": {
+          "src/admin.ts": 6,
+          "src/insights.ts": 1,
+          "web/src/features/admin/lib.ts": 1
+        }
+      },
+      "admin_sections": {
+        "why": "Staff-only admin sections built for the session engine: account detail and peek lists, analytics per week, compute job kinds, the plan editor's examples and the simulations metric (audit row 8).",
+        "migration": "Hidden when sessionEngine() is false, and the pack's runs shown per job kind in its words (audit row 8 ticket).",
+        "files": {
+          "web/src/features/admin/account-peek.tsx": 8,
+          "web/src/features/admin/spend.tsx": 5,
+          "web/src/features/admin/account-detail.tsx": 3,
+          "web/src/features/admin/analytics.tsx": 3,
+          "src/plan-config.ts": 2,
+          "src/compute-jobs.ts": 1,
+          "src/compute.ts": 1,
+          "src/settings.ts": 1,
+          "web/src/features/admin/compute-jobs.tsx": 1
+        }
+      },
+      "access_requests": {
+        "why": "The review page's fields for the first product's request form (agents, competitors, goals; audit row 6).",
+        "migration": "Declared access_request.fields in pack.json or the profile (audit row 6 ticket).",
+        "files": {
+          "web/src/features/admin/requests.tsx": 5
+        }
+      },
+      "usage_page": {
+        "why": "/app/usage is the first product's usage page (simulations run, hit rate), reachable by URL only in a declarative app, whose tabs send usage to /app/activity (audit row 14).",
+        "migration": "Redirect /app/usage to /app/activity when sessionEngine() is false, the page moving to the host pack (audit row 14 ticket).",
+        "files": {
+          "web/src/features/portal/usage.tsx": 12
+        }
+      },
+      "email_copy": {
+        "why": "Email templates still pitch the first product (audit row 3).",
+        "migration": "mold_v0-101 (branch mold_v0-101-email) rewrites them with src/vocabulary.ts fill() and lowers this ceiling to 0.",
+        "files": {
+          "src/email.ts": 5
+        }
+      }
+    }
+  }
 }

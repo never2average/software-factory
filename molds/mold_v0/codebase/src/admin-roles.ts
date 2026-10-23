@@ -15,16 +15,20 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { NextFunction, Request, Response, Router } from "express";
 import * as clerk from "./clerk.js";
 import { people } from "./people.js";
+import { fill } from "./vocabulary.js";
 
 export const PLATFORM_ROLES = ["viewer", "support", "operator", "owner"] as const;
 export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 export const ROLE_LABELS: Record<PlatformRole, string> = { viewer: "Viewer", support: "Support", operator: "Operator", owner: "Owner" };
-export const ROLE_HELP: Record<PlatformRole, string> = {
-  viewer: "Reads every admin page. Changes nothing.",
-  support: "Viewer, plus access requests, new accounts, invitations and journey tips.",
-  operator: "Support, plus compute, harnesses, agent configuration, the library, account edits and simulations.",
-  owner: "Everything, including the key vault, admins and deleting things.",
-};
+/** What each platform role may do, the run noun in the build's words (src/vocabulary.ts). */
+export function roleHelp(r: PlatformRole): string {
+  return {
+    viewer: "Reads every admin page. Changes nothing.",
+    support: "Viewer, plus access requests, new accounts, invitations and journey tips.",
+    operator: fill("Support, plus compute, harnesses, agent configuration, the library, account edits and {runs}."),
+    owner: "Everything, including the key vault, admins and deleting things.",
+  }[r];
+}
 
 /** Each permission and the least role that has it. */
 export const PERMISSIONS = {

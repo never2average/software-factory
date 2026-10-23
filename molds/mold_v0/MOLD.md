@@ -523,6 +523,24 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   Spend per person is for billing roles (owners, billing managers); everyone else sees the workspace's figures and
   their own.
   `npm run test:usage`.
+- **The vocabulary** (mold_v0-100, built; `src/words.ts`, `src/vocabulary.ts`, `web/src/lib/vocabulary.ts`): the shell's
+  text never spells a concept of any product. It writes a placeholder the build's words fill: `{run}` `{runs}` `{Run}`
+  `{Runs}`, `{workspace}`, `{account}`, `{member}`, `{owner}`, `{tool_call}`, `{key}` (each with its plural and
+  capitalised forms) and `{product}` (profile.json `name`); "a {run}" takes the article of its word ("an audit"). The
+  words, last wins: the neutral BASE (the default profile's: run, workspace, account, member, owner, tool call, key),
+  the packs' pack.json `words` (the first pack that names one), a host pack's `host.profile.words` (its own engine's
+  work: the first product's host pack says `"run": "simulation"`, which keeps every one of its sentences as it was),
+  and the app's own profile.json `words` (`{"run": "audit", "runs": "audits"}`; gen-packs refuses an unknown key or a
+  word with markup). The server fills with `fill()`/`word()`, the console with its own `fill()`/`W` over
+  `web/src/config/vocabulary.generated.ts` and a gen-packs copy of the same engine (`web/src/lib/words.generated.ts`).
+  The usage pages count the generic runs, so they take the packs' and the app's words, never a host pack's. Billing,
+  Budget rules, the launch refusals (over MCP and the console), the policy checks and the account and platform roles'
+  help are written this way; contact lines name `{product}`. `npm run check:vocabulary` also runs the concept-word
+  ratchet (`scripts/lib/concepts.ts`): the first product's concepts (`scripts/vocabulary.json` `concepts.words`:
+  simulation, scenario, visibility, pick rate ...) may not stand as prose in base text; identifiers, SQL and stored
+  values are contracts and are not counted; each file that still carries one has a ceiling in a group that says why
+  and how it goes (host-gated text, the host's tables, the account funnel, admin sections, access-request fields,
+  /app/usage, email copy for mold_v0-101). `npm run test:words`.
 - **Limits** (mold_v0-018, built; `src/rate-limits.ts`, `src/run-limits.ts`): numbers from the shell's defaults, the
   profile's `limits` (`mcp`, `endpoints`, `runs`, and `plans.<plan name>`; `gen-packs` refuses an unknown or
   non-positive one), the workspace's plan, and the server's environment (`APP_LIMIT_<SECTION>_<NAME>`), last wins.

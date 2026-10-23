@@ -18,7 +18,7 @@
  * security (the caller is inside withTenant); the operator's are platform reads, for platform admins only.
  */
 import { getDb } from "./db.js";
-import { packs } from "./packs.js";
+import { genericVocabulary } from "./vocabulary.js";
 import { RUN_USD } from "./run-spend.js";
 
 const DAY = 86_400_000;
@@ -26,14 +26,11 @@ const r2 = (x: number) => Math.round(x * 100) / 100;
 const r6 = (x: number) => Math.round(x * 1e6) / 1e6;
 const n = (v: unknown) => Number(v ?? 0) || 0;
 
-/** The shell's words and the packs' (first pack to name a word wins), for the pages' labels. */
+/** The words the pages' labels use: the generic run engine's (src/vocabulary.ts genericVocabulary: the packs' over the neutral ones, the app's profile over both). */
 export const SHELL_WORDS = { workspace: "workspace", member: "member", run: "run", tool_call: "tool call", key: "key" } as const;
 export function usageWords(): Record<keyof typeof SHELL_WORDS, string> {
-  const out: Record<string, string> = { ...SHELL_WORDS };
-  const set = new Set<string>();
-  for (const p of packs()) for (const [k, v] of Object.entries(p.manifest.words ?? {}))
-    if (k in SHELL_WORDS && !set.has(k)) { out[k] = v; set.add(k); }
-  return out as Record<keyof typeof SHELL_WORDS, string>;
+  const v = genericVocabulary();
+  return Object.fromEntries(Object.keys(SHELL_WORDS).map((k) => [k, v[k as keyof typeof SHELL_WORDS]])) as Record<keyof typeof SHELL_WORDS, string>;
 }
 
 /** from/to (YYYY-MM-DD, UTC, both included); default the last 28 days. At most 366 days. */
