@@ -24,10 +24,9 @@ import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
 import { mountInstallPages } from "./install-pages.js";
-import { aboutAdminRouter, aboutAppRouter } from "./about-routes.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml } from "./source-offer.js";
-import { memberKeyAppRouter } from "./member-keys.js";
+import { keysOffMessage, memberKeyAppRouter } from "./member-keys.js";
 import { builtinAuthRouter } from "./builtin-auth.js";
 import * as mcpOAuth from "./mcp-oauth.js";
 import * as roles from "./admin-roles.js";
@@ -38,7 +37,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "./server.js";
 import { hosts, hostToolNames } from "./host.js";
-import { PROFILE } from "./profile.js";
+import { memberKeysOn, PROFILE } from "./profile.js";
 import { connectorEvents, recordMcpEvent } from "./analytics.js";
 import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
 import { bearer, cronSecretOk, headerCredential, isWorkerToken, resolveKey, resolveUserToken, urlKeysAllowed, type Org } from "./auth.js";
@@ -231,8 +230,6 @@ export function createApp() {
   // ---------- metrics and the runs the console's tabs read: /api/metrics, /api/runs (src/view-routes.ts); with no metric or job kind nothing is mounted ----------
   app.use("/api/metrics", metricAppRouter());
   app.use("/api/runs", runAppRouter());
-  // ---------- the About page's data (mold_v0-050, src/about-routes.ts): data flow and residency, the source offer ----------
-  app.use("/api/about", aboutAppRouter());
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
 
@@ -363,7 +360,14 @@ export function createApp() {
   const unauthorized = (res: Response, tokenSent = false) =>
     res.status(401).set("WWW-Authenticate", wwwAuthenticate(tokenSent)).json({
       jsonrpc: "2.0", id: null,
-      error: { code: -32001, message: `Sign in to ${PROFILE.name} (or send a valid API key). Request access at ${PUBLIC_URL}` },
+      // With member keys off (mold_v0-099) the answer names sign-in only.
+      error: { code: -32001, message: `Sign in to ${PROFILE.name}${memberKeysOn() ? " (or send a valid API key)" : ""}. Request access at ${PUBLIC_URL}` },
+    });
+  // A member key made while member keys were on (mold_v0-099): refused, and the client is told why and to sign in.
+  const keyRefused = (res: Response) =>
+    res.status(401).set("WWW-Authenticate", wwwAuthenticate(true)).json({
+      jsonrpc: "2.0", id: null,
+      error: { code: -32001, message: `${keysOffMessage(PUBLIC_URL)} This key no longer works.`, data: { reason: "member_keys_off" } },
     });
   // One log line per legacy URL key per process and hour: enough to know who to move, without a line per request.
   const urlKeySeen = new Map<string, number>();
@@ -387,8 +391,9 @@ export function createApp() {
         jsonrpc: "2.0", id: null, error: { code: -32001, message: `This sign-in does not allow ${PROFILE.name}'s tools: connect again and allow access` } });
       return t ? await mcp(req, res, t.org) : unauthorized(res, true);
     }
-    const org = token?.startsWith("oct_") ? await resolveKey(token) : token && viaBearer ? await resolveUserToken(token) : null;
-    org ? await mcp(req, res, org) : unauthorized(res, Boolean(token));
+    let refused: "member_keys_off" | undefined;
+    const org = token?.startsWith("oct_") ? await resolveKey(token, { onRefused: (why) => { refused = why; } }) : token && viaBearer ? await resolveUserToken(token) : null;
+    org ? await mcp(req, res, org) : refused ? keyRefused(res) : unauthorized(res, Boolean(token));
   });
   // Deprecated: a key in the connector URL (see urlKeysAllowed in src/auth.ts). Logged by account and key prefix,
   // never the key, so whoever still uses one can be moved to a header or to sign-in before APP_URL_KEYS=off.
@@ -735,7 +740,6 @@ export function createApp() {
   admin.use("/packs", packAdminRouter());
   admin.use("/records", recordAdminRouter());
   admin.use("/data", dataAdminRouter());
-  admin.use("/about", aboutAdminRouter());
   app.use("/api/admin", admin);
 
   // ---------- local preview of the widget (development only) ----------

@@ -4,17 +4,27 @@
  * Two kinds of code are offered:
  *
  *   upstreams  a pack's pinned upstream project (pack.json `upstream`: repository, full commit, licence). Every one is
- *              listed on the console's About page; one under a copyleft licence (AGPL, GPL, LGPL, MPL, EUPL, ...) is also
- *              offered in the install pages' footer and in a line the customer MCP server adds to its instructions, each
+ *              listed in the build's DATA-MAP.md; one under a copyleft licence (AGPL, GPL, LGPL, MPL, EUPL, ...) is
+ *              offered in the root, landing and install pages' footer, in /install.json and in a line the customer MCP server adds to its instructions, each
  *              naming the project, its licence and the exact commit's address. An agent repository a job kind runs from the
  *              same repository must be at that same commit (refused otherwise: src/packs.ts installPacks), so the commit
  *              offered is the commit that runs.
  *   the app    this build's own source, when the profile says where (profile.json `source_offer.app` = {url, license}).
  *              The shell is distributed under the AGPL-3.0; its licensor's additional permission (the factory's
  *              LICENSE-EXCEPTION.md) lets the licensor and its affiliates run it without offering its source. A deployment
- *              they run says so with `source_offer.app` = "licensor_exception": no link to the app's own source, and the
- *              About page (and, when an upstream is offered, the footer and the MCP line) says why. Absent: the build says
+ *              they run says so with `source_offer.app` = "licensor_exception": no link to the app's own source, and
+ *              DATA-MAP.md (and, when an upstream is offered, the footer and the MCP line) says why. Absent: the build says
  *              nothing about its own source; whoever else runs a modified copy sets `app` to where its source is.
+ *
+ * An upstream that is the licensor's own (mold_v0-099): profile.json `source_offer.upstreams` = {"<pack id>":
+ * "licensor_owned"} says that pack's pinned upstream project belongs to the app's licensor (its copyright holder, who need
+ * not offer its own code's source to anyone). That upstream is then left out of the offer entirely: no footer line,
+ * no /install.json sentence, no MCP instructions line, no DATA-MAP.md row; `licensor_owned` lists the packs it was left
+ * out for, and DATA-MAP.md drops its "Source code" section when no other upstream is left and the app's own source is
+ * not offered (hasSourceSection). A copyleft upstream not marked so is offered exactly as before. Only the app's own profile.json may say
+ * so (scripts/gen-packs.mjs refuses it in a host pack's profile, and a pack id the build lacks or that pins no upstream).
+ * `app` is unchanged by it: "licensor_exception" still says why the service's own code is not offered, wherever
+ * something else is.
  *
  * With zero packs and no `source_offer` nothing is offered: the instructions and the install pages are exactly the
  * shell's. Pure functions over the installed packs and the profile, so the server, the console's API and the tests share
@@ -30,7 +40,11 @@ export interface OfferPack {
   definition: { agentJobKinds?: readonly { name: string; agent: { repository: string; commit: string } }[] };
 }
 /** profile.json `source_offer` (checked by scripts/gen-packs.mjs). */
-export interface SourceOfferSetting { app?: { url: string; license: string } | "licensor_exception" }
+export interface SourceOfferSetting {
+  app?: { url: string; license: string } | "licensor_exception";
+  /** Packs whose pinned upstream is the licensor's own project (mold_v0-099): not offered. */
+  upstreams?: Record<string, "licensor_owned">;
+}
 
 export interface OfferedUpstream {
   pack: string;
@@ -54,6 +68,8 @@ export interface SourceOffer {
   app: AppOffer;
   /** Whether the build offers anything: a copyleft upstream, or the app's own source. */
   offered: boolean;
+  /** Packs whose upstream the profile says is the licensor's own (mold_v0-099), left out of `upstreams`; absent when none. */
+  licensor_owned?: string[];
 }
 
 /**
@@ -97,18 +113,30 @@ export function upstreamProblems(packs: readonly OfferPack[]): string[] {
 }
 
 export function sourceOffer(packs: readonly OfferPack[], setting: SourceOfferSetting | undefined): SourceOffer {
+  const owned = (id: string) => setting?.upstreams?.[id] === "licensor_owned";
+  const licensor_owned = packs.filter((p) => p.manifest.upstream && owned(p.id)).map((p) => p.id);
   const upstreams = packs.flatMap((p) => {
     const up = p.manifest.upstream;
-    if (!up) return [];
+    if (!up || owned(p.id)) return [];
     const license = up.license ?? null;
     return [{ pack: p.id, pack_name: p.manifest.name, project: projectOf(up.repo), repo: up.repo, commit: up.commit, url: commitUrl(up.repo, up.commit), license, copyleft: isCopyleft(license) }];
   });
   const a = setting?.app;
   const app: AppOffer = a === "licensor_exception" ? { kind: "licensor_exception" } : a && typeof a === "object" ? { kind: "offered", url: a.url, license: a.license } : { kind: "not_stated" };
-  return { upstreams, app, offered: upstreams.some((u) => u.copyleft) || app.kind === "offered" };
+  return { upstreams, app, offered: upstreams.some((u) => u.copyleft) || app.kind === "offered",
+    ...(licensor_owned.length ? { licensor_owned } : {}) };
 }
 
-/** What the licensor's exception means, in one sentence (the About page, the footer, the MCP line). */
+/**
+ * Whether DATA-MAP.md has a "Source code" section (src/data-map.ts offerSection): always, unless every upstream the
+ * build pins is the licensor's own and the app's own source is not offered either (mold_v0-099): everything the service
+ * runs is then the licensor's, nothing is offered anywhere, and the statement says nothing about source code (under
+ * "licensor_exception" too: its sentence explains a missing offer, and with no offer anywhere there is none to explain).
+ * Without an `upstreams` setting this is always true, so the statement is what it was.
+ */
+export const hasSourceSection = (o: SourceOffer) => !(o.licensor_owned?.length && !o.upstreams.length && o.app.kind !== "offered");
+
+/** What the licensor's exception means, in one sentence (DATA-MAP.md, the footer, the MCP line). */
 export const LICENSOR_EXCEPTION_TEXT =
   "This service's own code is run by its copyright holder or an affiliated entity under an additional permission to the AGPL-3.0 (granted under its section 7) that does not require offering that code's source, so it is not offered here.";
 

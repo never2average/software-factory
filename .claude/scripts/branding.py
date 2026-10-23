@@ -519,7 +519,7 @@ def prepare(app_id, app, mold_dir, force=False):
     # is made; written into its profile file before the overlay, whose generator run then compiles them with the brand.
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
     import app_profile
-    perrs = app_profile.problems(app.get("profile"), app.get("mold_id"), ROOT)
+    perrs = app_profile.problems(app.get("profile"), app.get("mold_id"), ROOT, packs=app.get("packs") if isinstance(app.get("packs"), list) else None)
     if perrs: sys.exit(f"{app_id}: the app's profile settings were refused, so nothing was built: " + "; ".join(perrs))
     build_dir = build_copy(app_id, mold_dir, force)
     # The starter library state asks for goes in BEFORE the overlay, which regenerates the deployment profile with

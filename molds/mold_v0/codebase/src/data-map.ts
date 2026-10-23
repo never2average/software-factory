@@ -1,6 +1,6 @@
 /**
  * The data-flow and residency statement (mold_v0-050): where this build's code runs, where its data is stored, which
- * credentials exist (names only), where model calls go and which hosts runs may reach, per pack. Three sources, kept
+ * credentials exist (names only), where model calls go and which hosts runs may reach, per pack. Two sources, kept
  * apart so a reader knows how each line is known:
  *
  *   declared  what the build's packs declare (job kinds, their egress, providers and credentials; credential fields;
@@ -10,19 +10,15 @@
  *             (deploy-facts.json at the codebase root, checked and copied by scripts/gen-packs.mjs into
  *             src/deploy-facts.generated.ts): the target, its projects or server, the database and object store
  *             providers, the secret store and the secret NAMES. A codebase not built by the factory has none, and says so
- *   measured  what the running server reads about itself when asked (measured()): the region it answers from, the
- *             database's provider and region read from its address's host name, the object store, where each model
- *             provider's calls are forwarded (the key vault's settings), the sandbox provider, the third-party services
- *             it is configured for. Never a value: hosts and names only, never a user, password, key or path
  *
- * `dataMap()` is declared + deploy: written as DATA-MAP.md into the build copy (scripts/data-map.ts, run by the factory's
- * generators), and served with `measured()` added by GET /api/about (src/about-routes.ts) to the console's About page.
+ * `dataMap()` is written as DATA-MAP.md into the build copy (scripts/data-map.ts, run by the factory's generators). The
+ * console has no page for it (operator decision, mold_v0-099: an About page is not part of the mold).
  * Nothing here returns or logs a secret value: credential fields, platform secrets and vault keys appear by name only.
  */
 import { DEPLOY_FACTS } from "./deploy-facts.generated.js";
 import { packs, type InstalledPack } from "./packs.js";
 import { PROFILE, type Profile } from "./profile.js";
-import { LICENSOR_EXCEPTION_TEXT, sourceOffer, type SourceOffer } from "./source-offer.js";
+import { hasSourceSection, LICENSOR_EXCEPTION_TEXT, sourceOffer, type SourceOffer, type SourceOfferSetting } from "./source-offer.js";
 
 /** deploy-facts.json, as scripts/gen-packs.mjs checks it (names, places and providers; never a value). */
 export interface DeployFacts {
@@ -43,7 +39,11 @@ export interface DataMapSection { id: string; title: string; intro?: string; row
 export interface DataMap { name: string; deploy: DeployFacts | null; sections: DataMapSection[] }
 
 /** The build's source offer: its packs' upstreams and the profile's own (src/source-offer.ts). */
-export const currentOffer = (list: readonly InstalledPack[] = packs(), profile: Profile = PROFILE): SourceOffer => sourceOffer(list, profile.source_offer);
+export const currentOffer = (list: readonly InstalledPack[] = packs(), profile: Profile = PROFILE): SourceOffer =>
+  sourceOffer(list, profile === PROFILE && testOffer !== undefined ? testOffer ?? undefined : profile.source_offer);
+let testOffer: SourceOfferSetting | null | undefined;
+/** Tests only: the build's profile `source_offer` as if profile.json said this (undefined: the profile's own). */
+export function setSourceOfferForTest(s: SourceOfferSetting | null | undefined) { testOffer = s; }
 
 /** Where each gateway provider forwards by default (sql/migrations/0001_baseline.sql vault_providers): the vault may change it. */
 const DEFAULT_UPSTREAM: Record<string, string> = {
@@ -71,12 +71,12 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
   // ---------- where the code runs ----------
   {
     const rows: DataMapRow[] = [];
-    if (!facts) rows.push({ item: "This copy", detail: "carries no deploy facts (no deploy-facts.json was written into it), so where it runs is not stated here. The console's About page shows what the running server measures." });
+    if (!facts) rows.push({ item: "This copy", detail: "carries no deploy facts (no deploy-facts.json was written into it), so where it runs is not stated here." });
     else if (facts.target === "vercel") {
       const v = facts.vercel ?? {};
       rows.push({ item: "API and MCP server", detail: `a Vercel serverless function (api/index.ts) in the Vercel project ${code(v.api_project ?? "?")}${v.team ? ` of the team ${code(v.team)}` : ""}${v.api_url ? `, at ${v.api_url}` : ""}` });
       rows.push({ item: "Console", detail: `a Next.js app in the Vercel project ${code(v.web_project ?? "?")}${v.production_url ? `, at ${v.production_url}` : ""}` });
-      rows.push({ item: "Region", detail: v.function_region ? `the functions' region: ${code(v.function_region)} (from the app's state)` : "not recorded in the factory's state; the console's About page shows the region the running API answers from (Vercel's VERCEL_REGION)" });
+      rows.push({ item: "Region", detail: v.function_region ? `the functions' region: ${code(v.function_region)} (from the app's state)` : "not recorded in the factory's state" });
     } else {
       const s = facts.server ?? {};
       rows.push({ item: "API, MCP server, console and database", detail: `one Docker Compose stack${s.compose_project ? ` (project ${code(s.compose_project)})` : ""} on a server of the app's own${s.provider ? ` rented from ${s.provider}` : ""}${s.host ? ` (${s.host})` : ""}${s.domain ? `, served at https://${s.domain}` : ""}` });
@@ -95,7 +95,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
   {
     const rows: DataMapRow[] = [];
     const db = facts?.database;
-    rows.push({ item: "Database", detail: db ? `${DB_WORDS[db.exposure === "compose_network" ? "compose" : db.provider] ?? db.provider}${db.resource ? ` (resource ${code(db.resource)})` : ""}${db.region ? `, region ${code(db.region)}` : ", region not recorded in the factory's state (the About page shows the region read from the running server's database address)"}` : "Postgres at the address the server is configured with (DATABASE_URL), else an embedded database on the server's disk" });
+    rows.push({ item: "Database", detail: db ? `${DB_WORDS[db.exposure === "compose_network" ? "compose" : db.provider] ?? db.provider}${db.resource ? ` (resource ${code(db.resource)})` : ""}${db.region ? `, region ${code(db.region)}` : ", region not recorded in the factory's state"}` : "Postgres at the address the server is configured with (DATABASE_URL), else an embedded database on the server's disk" });
     rows.push({ item: "In the database", detail: "workspaces, people, keys (hashed), runs and their results, usage, settings, and every record area's rows; each workspace's rows under row-level security. Workspace credentials and the key vault's provider keys are stored sealed (AES-256-GCM): credentials with the workspace's own data key, provider keys with the vault's master key (APP_VAULT_KEY), never in clear" });
     const areas = list_.flatMap((p) => (p.definition.recordAreas ?? []).map((a) => ({ p, a })));
     for (const p of list_) {
@@ -109,7 +109,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     }
     const store = facts?.object_store;
     const usesStore = list_.some((p) => (p.definition.agentJobKinds ?? []).length || (p.definition.jobKinds ?? []).some((k) => k.workspace));
-    rows.push({ item: "Object store", detail: `${store ? `${STORE_WORDS[store.provider] ?? store.provider}${store.bucket ? ` (bucket ${code(store.bucket)})` : ""}${store.region ? `, region ${code(store.region)}` : ""} in the factory's state; ` : ""}this server uses Cloudflare R2 when R2_BUCKET, R2_ENDPOINT and its two keys are set, else a directory named by APP_STORAGE_DIR (the About page shows which)${usesStore ? ". It holds each workspace's files between runs (the workspace store), sealed with the workspace's data key" : ""}` });
+    rows.push({ item: "Object store", detail: `${store ? `${STORE_WORDS[store.provider] ?? store.provider}${store.bucket ? ` (bucket ${code(store.bucket)})` : ""}${store.region ? `, region ${code(store.region)}` : ""} in the factory's state; ` : ""}this server uses Cloudflare R2 when R2_BUCKET, R2_ENDPOINT and its two keys are set, else a directory named by APP_STORAGE_DIR${usesStore ? ". It holds each workspace's files between runs (the workspace store), sealed with the workspace's data key" : ""}` });
     sections.push({ id: "data", title: "Where data is stored", rows });
   }
 
@@ -137,7 +137,7 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
     rows.push({ item: "Gateway", detail: "every model call a run makes goes to this service's inference gateway (/gw/<provider>), which checks the run's token, meters tokens and cost against the run's budget, and forwards the call with a key from the key vault" });
     for (const pr of providers) {
       const by = kinds.filter((k) => k.providers.includes(pr)).map((k) => code(k.name));
-      rows.push({ item: `Provider ${code(pr)}`, detail: `used by ${by.join(", ")}; forwarded ${DEFAULT_UPSTREAM[pr] ? `by default to ${DEFAULT_UPSTREAM[pr]}` : "where the key vault says"} (the key vault may send it elsewhere, e.g. Google Cloud Vertex AI in a region: the About page shows where it goes now)` });
+      rows.push({ item: `Provider ${code(pr)}`, detail: `used by ${by.join(", ")}; forwarded ${DEFAULT_UPSTREAM[pr] ? `by default to ${DEFAULT_UPSTREAM[pr]}` : "where the key vault says"} (the key vault may send it elsewhere, e.g. Google Cloud Vertex AI in a region)` });
     }
     if (!providers.length) rows.push({ item: "Providers", detail: "no job kind of this build names a model provider" });
     rows.push({ item: "The server's own model calls", detail: "the docs answers in the console, and a pack's code when it asks the shell for one (src/ask-model.ts): sent by this server with a key from the key vault to the first model that answers among GLM on Cloudflare Workers AI, Claude (Anthropic's API, or Claude on Google Cloud Vertex AI) and the orchestrator's OpenAI model; metered, and not through a run's gateway token" });
@@ -158,7 +158,9 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
   }
 
   // ---------- source code ----------
-  sections.push(offerSection(currentOffer(list_, profile)));
+  // The source offer's section, unless everything the build runs is the licensor's own (mold_v0-099, hasSourceSection).
+  const offer = currentOffer(list_, profile);
+  if (hasSourceSection(offer)) sections.push(offerSection(offer));
   return { name: profile.name, deploy: facts, sections };
 }
 
@@ -180,7 +182,7 @@ export function dataMapMarkdown(m: DataMap): string {
   const out = [
     `# ${m.name}: data flow and residency`,
     "",
-    "Generated by `scripts/data-map.ts` from this build's packs (their pack.json declarations) and the deploy facts the factory wrote from the app's state (deploy-facts.json). Do not edit: rebuild. Secrets appear by name only. What the running server measures about itself (its region, its database's region, where model calls are forwarded now) is on the console's About page.",
+    "Generated by `scripts/data-map.ts` from this build's packs (their pack.json declarations) and the deploy facts the factory wrote from the app's state (deploy-facts.json). Do not edit: rebuild. Secrets appear by name only.",
     "",
   ];
   if (m.deploy) out.push(`Deploy facts: app ${code(m.deploy.app_id)}, target ${TARGET_WORDS[m.deploy.target] ?? m.deploy.target}, read from ${m.deploy.source}.`, "");

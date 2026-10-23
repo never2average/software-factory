@@ -55,7 +55,7 @@ export const PackJsonSchema = z.object({
   /**
    * The upstream project the pack runs or reads, pinned by a full commit (mold_v0-050): its repository, the commit and its
    * licence (an SPDX id). A copyleft licence makes the build offer that project's source at that commit (src/source-offer.ts:
-   * the console's About page and footer, the install pages and the MCP server's instructions); an agent repository a job
+   * DATA-MAP.md, the root and landing footers, the install pages and the MCP server's instructions); an agent repository a job
    * kind runs from the same repository must be at the same commit, so the offer names what runs.
    */
   upstream: UpstreamSchema.optional(),

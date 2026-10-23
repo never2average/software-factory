@@ -28,6 +28,9 @@ import { useNav } from './nav-context';
 import { BrandMark } from '@/components/brand';
 import { profile } from '@/config/profile.generated';
 
+/** Member API keys (mold_v0-099, profile `member_keys`): false removes the API keys page and this link. */
+const memberKeysOn = (profile as Readonly<Record<string, unknown>>).member_keys !== false;
+
 /** Platform admins (platform staff) get a switch between the customer portal and /admin; nobody else sees it. */
 function usePlatformAdmin(area: string) {
   const [is, setIs] = React.useState(area === 'admin');
@@ -155,8 +158,9 @@ export default function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
-          {area === 'portal' && (
-            // A person's own MCP keys (mold_v0-007), in every build whatever the sidebar's groups are.
+          {area === 'portal' && memberKeysOn && (
+            // A person's own MCP keys (mold_v0-007), in every build whatever the sidebar's groups are, unless the profile
+            // turns member keys off (mold_v0-099).
             <SidebarMenuItem>
               <SidebarMenuButton size='sm' tooltip='API keys' isActive={pathname === '/app/keys'} render={<Link href='/app/keys' />}>
                 <Icons.lock />
@@ -164,13 +168,6 @@ export default function AppSidebar() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
-          {/* About (mold_v0-050): the source this service runs and where its code, data and model calls go, in every build. */}
-          <SidebarMenuItem>
-            <SidebarMenuButton size='sm' tooltip='About' isActive={pathname === `${base}/about`} render={<Link href={`${base}/about`} />}>
-              <Icons.info />
-              <span>About and source code</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           <SidebarMenuItem className='group/me'>
             <SidebarMenuButton tooltip='Profile' className='h-10' isActive={pathname === `${base}/profile`} render={<Link href={`${base}/profile`} aria-label='Your profile' />}>
               {user && <UserAvatarProfile className='size-7 rounded-lg' showInfo compact user={user} />}

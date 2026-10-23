@@ -16,7 +16,7 @@
 //   orchestrator/packs.generated.ts      the host packs' orchestrator entries (orchestrator/packs/<id>/main.ts)
 //   src/deploy-facts.generated.ts        the deploy facts the factory wrote into this build copy (deploy-facts.json at the
 //                                        codebase root, mold_v0-050): names, places and providers, never a value; null
-//                                        without the file. Read by src/data-map.ts (DATA-MAP.md and the About page)
+//                                        without the file. Read by src/data-map.ts (DATA-MAP.md)
 //
 // Host packs (mold_v0-039): a pack whose pack.json has `host` (an entry with defineHost, src/host.ts) is the product's
 // own surface: tools, routes and hooks at the shell's fixed points, console pages (web/src/packs/<id>/), an orchestrator
@@ -729,8 +729,20 @@ function limitsProblem(v, plans = true) {
 /** profile.json `source_offer` (mold_v0-050): null when it is well formed, else what is wrong. */
 const SPDX = /^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/;
 function sourceOfferProblem(v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app}";
-  for (const k of Object.keys(v)) if (k !== "app" && k !== "$comment") return `unknown field ${k} (known: app)`;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app, upstreams}";
+  for (const k of Object.keys(v)) if (k !== "app" && k !== "upstreams" && k !== "$comment") return `unknown field ${k} (known: app, upstreams)`;
+  // The packs whose pinned upstream is the licensor's own project (mold_v0-099): {"<pack id>": "licensor_owned"}, each a
+  // pack of this build that pins an upstream (an id that is not would hide nothing, or something later added by mistake).
+  if (v.upstreams !== undefined) {
+    const u = v.upstreams;
+    if (!u || typeof u !== "object" || Array.isArray(u) || !Object.keys(u).length) return 'upstreams must be an object {"<pack id>": "licensor_owned"}';
+    for (const [id, how] of Object.entries(u)) {
+      if (how !== "licensor_owned") return `upstreams.${String(id).slice(0, 40)} must be "licensor_owned"`;
+      const pk = packs.find((p) => p.id === id);
+      if (!pk) return `upstreams names ${String(id).slice(0, 40)}, which is not a pack of this build`;
+      if (!pk.manifest.upstream) return `upstreams names ${id}, whose pack.json pins no upstream`;
+    }
+  }
   const a = v.app;
   if (a === undefined || a === "licensor_exception") return null;
   if (!a || typeof a !== "object" || Array.isArray(a)) return 'app must be "licensor_exception" or {url, license}';
@@ -871,6 +883,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
   if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
+  if (hostProfiles[0]?.host.profile?.source_offer?.upstreams !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set source_offer.upstreams: only the app's own profile.json says an upstream is its licensor's own (mold_v0-099)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
   {
     for (const [k, v] of Object.entries(pf)) {
@@ -906,6 +919,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       // Where the build's own source is offered (mold_v0-050, src/source-offer.ts), optional: {app: {url, license}} or
       // {app: "licensor_exception"} (the licensor's additional permission applies to this deployment, and it says so).
       if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
+      // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
+      if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
       if (k === "landing") { profileLanding = v; continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
@@ -917,7 +932,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, landing, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
