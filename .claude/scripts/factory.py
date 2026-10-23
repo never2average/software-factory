@@ -832,7 +832,7 @@ def _asr(app_id, docs):
     if here not in sys.path: sys.path.insert(0, here)
     import asr
     return asr.problems(app_id, a, os.path.join(ROOT, "molds", str(a.get("mold_id") or ""), "codebase"), ROOT)
-def _app_profile(app_id, docs, brief_root=None):
+def _app_profile(app_id, docs, brief_root=None, answers=None):
     """The app's own profile settings (application.json `profile`, mold_v0-090; lib/app_profile.py): only fields its mold
     lets an app set (molds/<mold>/branding/rules.json profile.app_settable), never a brand word, host_packs, source_offer,
     billing or entitlements, and each value checked as the mold's own build checks it (limits: known names, positive
@@ -849,6 +849,15 @@ def _app_profile(app_id, docs, brief_root=None):
     bp = os.path.join(brief_root or ROOT, a["brief"]) if isinstance(a.get("brief"), str) and not os.path.isabs(a["brief"]) and ".." not in a["brief"].split("/") else None
     if not errs and bp and os.path.isfile(bp):
         want, perrs, _ = app_profile.from_brief(open(bp, encoding="utf-8", errors="replace").read())
+        # The sender may also be an intake answer (mold_v0-101: asked when the machine has no notify_domain and the brief
+        # names none), recorded in the app's answers.json beside its state.
+        if answers is None:
+            ap = os.path.join(ROOT, "state", "application", str(app_id), "answers.json")
+            try: answers = json.load(open(ap)) if os.path.isfile(ap) else {}
+            except (OSError, ValueError): answers = {}
+        said = str((answers or {}).get("email_from_address") or "").strip()
+        if not perrs and said and not (want or {}).get("email_from_address") and (a.get("profile") or {}).get("email_from_address") == said:
+            want = dict(want or {}, email_from_address=said)
         if not perrs and want != (a.get("profile") or None):
             errs.append(f"{app_id}/application.json: profile ({app_profile.describe(a.get('profile'))}) is not what its brief {a['brief']} says "
                         f"({app_profile.describe(want)}); the brief is where profile settings are set: re-run intake on it")
@@ -1103,6 +1112,13 @@ def self_test():
         ab = lambda prof: _app_profile("x", {"application": {"mold_id": "mold_v0", "brief": "briefs/b.md", **({"profile": prof} if prof else {})}}, brief_root=bt)
         ok(ab({"limits": {"runs": {"budget_usd_max": 40}}}) == [] and ab({"limits": {"runs": {"budget_usd_max": 90}}}) and ab(None),
            "validate: state profile settings that are not what the brief says (a hand edit, or a brief changed without intake) are refused")
+        # mold_v0-101: the sender and the notifications are profile settings too; the sender may come from an intake answer
+        sx = {"limits": {"runs": {"budget_usd_max": 40}}, "email_from_address": "hello@brand.example.test"}
+        aa = lambda prof, ans: _app_profile("x", {"application": {"mold_id": "mold_v0", "brief": "briefs/b.md", "profile": prof}}, brief_root=bt, answers=ans)
+        ok(aa(sx, {"email_from_address": "hello@brand.example.test"}) == [] and aa(sx, {}) and aa(sx, {"email_from_address": "other@brand.example.test"}),
+           "validate: a sender in state is accepted when intake recorded it as an answer, refused as a hand edit")
+        ok(pa({"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"]}}) == []
+           and pa({"email": {"notifications": ["nope"]}}) and pa({"email_from_address": "nope"}), "validate: email settings are checked (known groups, one address)")
     # mold_v0-051: a single-service app's RLS claim is read against the product's own check, as lib/single_service.py records it
     ds = lambda ev: {"postgres": {"provider": "self_hosted", "rls": "fail_closed", **({"rls_verified": ev} if ev else {})}}
     good = {"at": "2026-10-21T10:00:00+00:00", "backend": "self_hosted", "mode": "fail_closed", "running_app": "enforced",

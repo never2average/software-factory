@@ -1,5 +1,5 @@
 {
-  "$comment": "Branding overlay rules for mold_v0 (mold_v0-024), read by .claude/scripts/branding.py. The codebase is never edited for an app: branding.py copies it to build/<app_id>/ and applies these rules to the copy, and every rule must match or the build is refused. NAME and WORDS go through the profile, never through source: the brand's fields are written into the copy's profile.json (the file scripts/gen-packs.mjs merges over the neutral default) and that generator is re-run, so src/profile.generated.ts and web/src/config/profile.generated.ts carry them (the MCP server name, the console's title and descriptions, the email sender's name). The tagline and description are written only when the brand has a tagline of its own; otherwise they are set to the shell's neutral words (`neutral`, gen-packs' DEFAULT_PROFILE), never left as the codebase's product's. `refuse`: characters the generator refuses in a name, so `set` and intake refuse them up front. The sender ADDRESS (email_from_address) is a mail-domain setting, not part of a brand, and is kept. LOGO: the favicon set (lib/favicon.py) goes to the console's web/src/app (favicon.ico, icon.png, apple-icon.png, icon.svg for a vector mark only) and web/public (the manifest's 192, 512 and maskable PNGs), and manifest_icons points the web manifest at them. COLOUR: only the brand-carrying tokens (primary, its foreground, ring) of the console's one theme, light and dark; its neutrals stay the mold's. This overlay does not rewrite source code: since mold_v0-039 a product's landing page and pages are its host pack's, and the console's own text takes the profile's name.",
+  "$comment": "Branding overlay rules for mold_v0 (mold_v0-024), read by .claude/scripts/branding.py. The codebase is never edited for an app: branding.py copies it to build/<app_id>/ and applies these rules to the copy, and every rule must match or the build is refused. NAME and WORDS go through the profile, never through source: the brand's fields are written into the copy's profile.json (the file scripts/gen-packs.mjs merges over the neutral default) and that generator is re-run, so src/profile.generated.ts and web/src/config/profile.generated.ts carry them (the MCP server name, the console's title and descriptions, the email sender's name). The tagline and description are written only when the brand has a tagline of its own; otherwise they are set to the shell's neutral words (`neutral`, gen-packs' DEFAULT_PROFILE), never left as the codebase's product's. `refuse`: characters the generator refuses in a name, so `set` and intake refuse them up front. The sender ADDRESS (email_from_address) is a mail-domain setting, not part of a brand: the overlay keeps it, and the app's profile settings (profile.app_settable, profile.email_defaults) write it. LOGO: the favicon set (lib/favicon.py) goes to the console's web/src/app (favicon.ico, icon.png, apple-icon.png, icon.svg for a vector mark only) and web/public (the manifest's 192, 512 and maskable PNGs), and manifest_icons points the web manifest at them. COLOUR: only the brand-carrying tokens (primary, its foreground, ring) of the console's one theme, light and dark; its neutrals stay the mold's. This overlay does not rewrite source code: since mold_v0-039 a product's landing page and pages are its host pack's, and the console's own text takes the profile's name.",
   "mold_id": "mold_v0",
   "product_name_default": "Workspace",
   "files": {
@@ -31,7 +31,12 @@
       "short_description": "Connect an MCP client, run agents and read their results."
     },
     "refuse": "[<>\"\\r\\n]",
-    "app_settable": ["limits"],
+    "app_settable": ["limits", "email", "email_from_address"],
+    "email_defaults": {
+      "$comment": "mold_v0-101 (.claude/scripts/lib/app_profile.py email_defaults): what an app's build copy gets when the app's state sets neither email field and its host pack's profile does not either. from: the default sender's address, {notify_domain} being this machine's defaults.notify_domain (state/factory.local.json; none: no default, intake asks). notifications: the groups that are on (src/email.ts NOTIFICATION_GROUPS), plus due_dates when one of the app's packs declares a record area with due dates (pack.json record_areas[].due). The sender's name is the brand's.",
+      "from": "{app_id}@{notify_domain}",
+      "notifications": ["access_requests"]
+    },
     "app_limits_max": {
       "$comment": "The highest value an app's own profile may give each limit named here (also inside a plan): a ceiling on what a brief or a state edit can raise. Raising one is a reviewed change to this file. The shell's defaults: runs.budget_usd_max 25, runs.kind_month_budget_usd 200, runs.concurrency_per_workspace 4, runs.live_per_workspace 20.",
       "runs.budget_usd_max": 200,
@@ -39,7 +44,7 @@
       "runs.concurrency_per_workspace": 32,
       "runs.live_per_workspace": 200
     },
-    "$app_settable": "The profile fields an app may set from its own state (application.json `profile`, mold_v0-090; .claude/scripts/lib/app_profile.py checks each and writes it into the build copy's profile.json over this mold's own). Never a brand word (the brand writes those), host_packs, source_offer, billing or entitlements."
+    "$app_settable": "The profile fields an app may set from its own state (application.json `profile`, mold_v0-090; .claude/scripts/lib/app_profile.py checks each and writes it into the build copy's profile.json over this mold's own). email and email_from_address since mold_v0-101 (the brief's ## Profile: email_from_address = <address>, email.notifications = <groups>). Never a brand word (the brand writes those), host_packs, source_offer, billing or entitlements."
   },
   "favicon": {
     "app": "web/src/app",

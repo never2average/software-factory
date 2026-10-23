@@ -587,13 +587,16 @@ def self_test_single(n, fails):
         shutil.copytree(os.path.join(ST, "application", "app_id"), os.path.join(T, "state", "application", "app_id"))
         os.symlink(os.path.join(ROOT, "molds"), os.path.join(T, "molds"))
         I = os.path.join(T, ".claude", "scripts", "intake.py"); A = os.path.join(T, "state", "application")
+        # This machine's own values, the same on every machine: a verified sending domain (mold_v0-101: without one the
+        # emails' sender is asked).
+        mail_local = os.path.join(T, "mail-local.json"); save(mail_local, {"defaults": {"notify_domain": "mail.example.test"}})
         def go(app, brief, answers=None, env=None, admins=True):
             # every brief here names its platform administrator (mold_v0's admin console) unless the case is about that
             if admins and "admins:" not in brief.lower(): brief += "Admins: ops@example.com\n"
             b = os.path.join(T, "briefs", app + ".md"); open(b, "w").write(brief)
             if answers is not None: save(os.path.join(T, "ans.json"), answers)
             return subprocess.run([sys.executable, I, b, "--app", app, *(["--answers", os.path.join(T, "ans.json")] if answers is not None else [])],
-                                  cwd=T, capture_output=True, text=True, env=env)
+                                  cwd=T, capture_output=True, text=True, env=env or dict(os.environ, FACTORY_LOCAL=mail_local))
         def docs(app): return {k: load(os.path.join(A, app, k + ".json")) for k in ("application", "infrastructure", "datastores", "datainfra")}
         r = go("zz_one", "Mold: mold_v0\nIt runs on its own server.\nDomain: shop.example.org\n"); n += 1
         if r.returncode: fails.append(f"a mold_v0 brief for its own server did not stamp: {(r.stdout + r.stderr).strip()[-300:]}")
@@ -645,7 +648,7 @@ def self_test_single(n, fails):
             fails.append(f"a default base whose API project (<name>-api) another app holds must be suffixed, both names recorded: {got} {(r.stdout + r.stderr).strip()[-200:]}")
         shutil.rmtree(os.path.join(A, "zz_other"), ignore_errors=True)
         # mold_v0-037: provision.py's LIVE refusal reads <base>-workflow too, so a base whose -workflow name is LIVE is taken
-        loc = os.path.join(T, "local.json"); save(loc, {"live_projects": {"workflow": "zz-seven-workflow"}})
+        loc = os.path.join(T, "local.json"); save(loc, {"live_projects": {"workflow": "zz-seven-workflow"}, "defaults": {"notify_domain": "mail.example.test"}})
         lenv = dict(os.environ, FACTORY_LOCAL=loc)
         r = go("zz_seven", "Mold: mold_v0\n", {"deploy_target": "vercel"}, env=lenv); n += 1
         got = (load(os.path.join(A, "zz_seven", "infrastructure.json")).get("vercel") or {}) if r.returncode == 0 else {}
@@ -692,13 +695,36 @@ def self_test_single(n, fails):
         r = go("zz_nopack", "Mold: mold_v0\nIt runs on its own server.\nPacks: not_there\n"); n += 1
         if r.returncode == 0 or "not_there" not in (r.stdout + r.stderr) or os.path.exists(os.path.join(A, "zz_nopack", "application.json")):
             fails.append(f"a mold_v0 brief naming a pack that does not exist must be refused, nothing written: rc={r.returncode}")
+        # mold_v0-101: the emails' sender. With a notify_domain nothing is asked (the factory's default); without one it is
+        # asked, an answer reaches application.profile and answers.json (and factory.py validate accepts it), "later" leaves
+        # it unset, an answer that is not an address is asked again, and the brief's own ## Profile line needs no question.
+        nolocal = dict(os.environ, FACTORY_LOCAL=os.path.join(T, "none.json"))
+        srv = "Mold: mold_v0\nIt runs on its own server.\nDomain: mail.example.org\n"
+        r = go("zz_mail", srv, env=nolocal); n += 1
+        q = load(os.path.join(A, "zz_mail", "questions.json")) if os.path.exists(os.path.join(A, "zz_mail", "questions.json")) else {}
+        if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["email_from_address"]:
+            fails.append(f"with no notify_domain the emails' sender must be asked: rc={r.returncode} {q.get('pending')} {(r.stdout + r.stderr).strip()[-200:]}")
+        r = go("zz_mail", srv, {"email_from_address": "not an address"}, env=nolocal); n += 1
+        if r.returncode != 2 or "is not an address" not in r.stdout: fails.append(f"an answer that is not an address must be asked again: rc={r.returncode}")
+        r = go("zz_mail", srv, {"email_from_address": "hello@mail.example.org"}, env=nolocal); n += 1
+        if r.returncode or (docs("zz_mail")["application"].get("profile") or {}).get("email_from_address") != "hello@mail.example.org" \
+                or load(os.path.join(A, "zz_mail", "answers.json")).get("email_from_address") != "hello@mail.example.org":
+            fails.append(f"an answered sender must reach application.profile and answers.json: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_mail", srv, env=nolocal); n += 1
+        if r.returncode or (docs("zz_mail")["application"].get("profile") or {}).get("email_from_address") != "hello@mail.example.org":
+            fails.append(f"a re-run keeps the answered sender: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_mail2", srv, {"email_from_address": "later"}, env=nolocal); n += 1
+        if r.returncode or "profile" in docs("zz_mail2")["application"]: fails.append(f"later leaves the sender unset: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_mail3", srv + "\n## Profile\nemail_from_address = team@brand.example.org\nemail.notifications = access_requests, usage\n", env=nolocal); n += 1
+        if r.returncode or docs("zz_mail3")["application"].get("profile") != {"email_from_address": "team@brand.example.org", "email": {"notifications": ["access_requests", "usage"]}}:
+            fails.append(f"the brief's ## Profile sender and notifications reach state with no question: {(r.stdout + r.stderr).strip()[-300:]}")
         # the platform administrators: from the brief's Admins line, asked when it has none, refused when not an address
         n += 1
         if parse_brief("Mold: mold_v0\nAdmins: Ops@Example.com, *@example.org and nobody\n").get("platform_admins") != ["ops@example.com", "*@example.org"]:
             fails.append(f"a brief's Admins line must give its addresses and *@domain entries: {parse_brief('Admins: Ops@Example.com, *@example.org').get('platform_admins')}")
         if docs("zz_one")["application"].get("platform_admins") != ["ops@example.com"]:
             fails.append(f"the brief's administrator must reach application.platform_admins: {docs('zz_one')['application'].get('platform_admins')}")
-        loc2 = os.path.join(T, "local-op.json"); save(loc2, {"defaults": {"operator_email": "op@example.com"}})
+        loc2 = os.path.join(T, "local-op.json"); save(loc2, {"defaults": {"operator_email": "op@example.com", "notify_domain": "mail.example.test"}})
         r = go("zz_adm", "Mold: mold_v0\nIt runs on its own server.\nDomain: adm.example.org\n", admins=False, env=dict(os.environ, FACTORY_LOCAL=loc2)); n += 1
         q = load(os.path.join(A, "zz_adm", "questions.json")) if os.path.exists(os.path.join(A, "zz_adm", "questions.json")) else {}
         if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["platform_admins"] or q["pending"][0].get("suggested") != "op@example.com" \
@@ -875,6 +901,24 @@ SINGLE_QUESTIONS = [
   lambda d, h, c: h.get("platform_admins") or c.get("existing_admins") or ([] if c.get("deployed") else None)),
 ]
 
+LATER = ("later", "none", "skip", "")
+def sender_question(app_id, mold_id, hints, existing, answers):
+    """The sender question (mold_v0-101), or None when the sender is known: the brief's ## Profile, an answer (this run's,
+    or an earlier one in answers.json), or the factory's default on this machine's notify_domain."""
+    import app_profile
+    s = app_profile.spec(mold_id, ROOT)
+    if not s or not s.get("email_defaults") or "email_from_address" not in s.get("app_settable", []): return None
+    if (hints.get("profile") or {}).get("email_from_address"): return None
+    if app_profile.notify_domain(ROOT): return None
+    a = answers.get("email_from_address")
+    if a is not None and (str(a).strip().lower() in LATER or not app_profile.address_problem(str(a).strip())): return None
+    return {"id": "email_from_address", "path": "application.profile.email_from_address", "options": None, "suggested": "later",
+            "question": "Which email address should this app send from (sign-in codes, invitations, answers to access requests)? It must be on a "
+                        "domain your email provider (Resend) has verified, for example hello@yourcompany.com. Answer later to leave it for now: "
+                        "the app then sends nothing until it is set.",
+            "why": "this machine has no verified sending domain (defaults.notify_domain in state/factory.local.json) and the brief names no sender"
+                   + (f"; {a!r} is not an address" if a is not None else "")}
+
 def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     """The four documents of a single-service app, with what a deploy, a lane run or the operator recorded kept."""
     mold = next(m for m in factory["molds"] if m["mold_id"] == mold_id)
@@ -906,6 +950,13 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     if hints.get("profile"):
         app["profile"] = hints["profile"]
         print(f"profile settings from the brief: {app_profile.describe(app['profile'])} (over {mold_id}'s defaults; in effect from the next deploy)")
+    # The sender someone answered (mold_v0-101), when the brief names none: kept in the profile, and in answers.json, which
+    # factory.py validate reads beside the brief.
+    sender = str(ans.get("email_from_address") or "").strip()
+    if sender and sender.lower() not in LATER and not (hints.get("profile") or {}).get("email_from_address"):
+        if app_profile.address_problem(sender): sys.exit(f"{app_id}: {app_profile.address_problem(sender)}. Nothing was written.")
+        app.setdefault("profile", {})["email_from_address"] = sender
+        print(f"the emails' sender: {sender} (answered; in effect from the next deploy)")
     ex_app, ex_inf, ex_ds, ex_di = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores", "datainfra"))
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
@@ -1105,6 +1156,13 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
              "suggested": "compose_remote" if qid == "deploy_target" else (str(d.get("operator_email") or "").strip().lower() or None) if qid == "platform_admins" else None}
         if qid == "deploy_target" and hints.get("deploy_target_conflict"): q["why"] = "the brief names both a server of its own and Vercel"
         pending.append(q)
+    # The emails' sender (mold_v0-101; lib/app_profile.py email_defaults): the factory makes it <app_id>@<notify_domain>;
+    # on a machine with no notify_domain, and with none in the brief or the app's state, it is asked, never guessed.
+    prev = os.path.join(outdir, "answers.json")      # an earlier answer stays until the brief names a sender or it is answered again
+    if "email_from_address" not in answers and os.path.isfile(prev) and load(prev).get("email_from_address"): answers["email_from_address"] = load(prev)["email_from_address"]
+    q = sender_question(app_id, mold_id, hints, existing, answers)
+    if q: pending.append(q)
+    elif "email_from_address" in answers: resolved["email_from_address"] = str(answers["email_from_address"]).strip()
     # The brief's pack sections (mold_v0-062): their open points join the same questions; the brand is asked with them.
     pk, extra = None, {}
     with_pack = text is not None and __import__("brief_pack").has_sections(text)
