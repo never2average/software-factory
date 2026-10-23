@@ -7,6 +7,7 @@
 //   src/pack-migrations.generated.ts     the ordered list of pack migration directories (no pack code imported)
 //   src/run-tools.generated.json         the run tools the packs' agent kinds need (mold_v0-072), installed in the runner image
 //   src/profile.generated.ts             the profile: product name, MCP server name, console title, email sender
+//                                        (and the landing block's hero subheadline, the emails' pitch: mold_v0-101)
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
@@ -1203,7 +1204,9 @@ files.set(path.join(OUT, "src", "deploy-facts.generated.ts"), HEADER +
   `export const DEPLOY_FACTS: unknown = ${deployFacts ? json(deployFacts) : "null"};\n`);
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
-  `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);
+  `export const GENERATED_PROFILE = ${json(profile)} as const;\n` +
+  "/** The landing block's hero subheadline (mold_v0-101): the emails' pitch (src/email.ts emailWords); null without one. */\n" +
+  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingPage.landing?.hero?.subheadline ?? null)};\n`);
 
 const nav = (area) => {
   const groups = new Map();

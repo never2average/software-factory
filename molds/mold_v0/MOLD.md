@@ -561,7 +561,12 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   pack's profile may, for its product); `APP_EMAIL_NOTIFICATIONS` only narrows that list. An app built before
   this change sent every group whenever Resend was connected: before its next deploy its profile (or its host pack's)
   lists the groups it sends (the Octillion product: `access_requests`, `library`, `usage`; a pack with due dates such
-  as ComplianceOS: `due_dates`), or they are logged as skipped. With no transport that
+  as ComplianceOS: `due_dates`), or they are logged as skipped. The factory writes the sender and the groups for an app
+  whose host pack does not (mold_v0-101, `branding/rules.json` `profile.email_defaults`: `<app_id>@<notify_domain>`,
+  `access_requests`, and `due_dates` when a pack declares due dates). The words are the build's (mold_v0-101,
+  `emailWords`): the profile's name and sender, the packs' run word, and the landing block's hero subheadline as the
+  welcome email's pitch (gen-packs writes it to `src/profile.generated.ts` `GENERATED_EMAIL_PITCH`), else the short
+  description; a build with the session engine keeps that engine's words until its host pack brings its own. With no transport that
   can send, the About page and `/admin/emails` say so in one sentence. Every message is a row in `email_log` with a hash
   and the domain of its one address, never the address, a code or a key; subjects, senders and recipients lose line
   breaks; every link is on the console's address from the environment (`src/console-url.ts`: `APP_CONSOLE_URL`,

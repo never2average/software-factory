@@ -41,6 +41,10 @@
  *    a host a request named.
  *  - Plain text first; the HTML is the same words, with links, no images and no tracking. Signed with the profile's
  *    sender name.
+ *  - The words are the build's (mold_v0-101, emailWords): the profile's name, the packs' run word (pack.json `words.run`),
+ *    and the landing block's hero subheadline as the pitch (else the profile's short_description). No product's copy is
+ *    written here: a build with the session engine (a host pack's tables, src/host-tables.ts) keeps that engine's own
+ *    words (SESSION_ENGINE_WORDS) until its host pack brings its own.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { asPlatform } from "./tenant-scope.js";
@@ -55,6 +59,9 @@ import { PROFILE, type ProfileEmail } from "./profile.js";
 import { consoleUrl } from "./console-url.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
+import { GENERATED_EMAIL_PITCH } from "./profile.generated.js";
+import { PACKS } from "./packs.generated.js";
+import { sessionEngine } from "./host-tables.js";
 
 export const EMAIL_PROVIDER = "resend";
 export const EMAIL_KINDS = ["request_received", "request_alert", "request_declined", "request_approved", "submission_alert", "submission_accepted",
@@ -302,7 +309,68 @@ export function htmlOf(text: string): string {
 ${body}
 </div></body></html>`;
 }
-const SIGN = `— ${PROFILE.email_sender_name}`; // the profile's sender name (src/profile.ts)
+
+/** What the words are made from: the build's profile, its packs' words, its landing block and whether it has the session engine. */
+export interface EmailWordsInput {
+  name: string; sender_name: string; short_description: string;
+  /** The landing block's hero subheadline (src/landing.ts), when the build has one. */
+  pitch: string | null;
+  /** Each pack's `words` (pack.json), in pack order. */
+  pack_words: readonly Record<string, string>[];
+  /** Whether the build has the session engine (src/host-tables.ts sessionEngine). */
+  engine: boolean;
+}
+export interface EmailWords {
+  /** The product's name, and the signature's (the sender's name). */
+  product: string; sender: string;
+  /** "a" or "an", for "<a> <product> account". */
+  a_product: string;
+  /** What one run is called, and many. */
+  run: string; runs: string;
+  /** One or two sentences saying what the product does, for the welcome email; null: none to say. */
+  pitch: string | null;
+  /** What to do first, after "open <console>/app to ". */
+  first_step: string;
+}
+/**
+ * The session engine's words (src/session-engine.ts: coding agents run on programming tasks, in simulations): the first
+ * product's, which a build has only when its host pack brings the engine's tables. Kept here until a host pack can bring
+ * its emails' words itself; a build without the engine never uses them.
+ */
+const SESSION_ENGINE_WORDS = {
+  run: "simulation",
+  pitch: (name: string) => `${name} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why.`,
+  first_step: (name: string) => `connect ${name} to your AI assistant and run your first simulation`,
+};
+const pluralOf = (w: string) => (/(s|x|z|ch|sh)$/.test(w) ? `${w}es` : /[^aeiou]y$/.test(w) ? `${w.slice(0, -1)}ies` : `${w}s`);
+/** A word or sentence from a pack or the profile, on one line and of a bounded length. */
+const word = (v: unknown, max: number) => oneLine(v, max);
+const sentence = (v: string) => (/[.!?]$/.test(v) ? v : `${v}.`);
+
+/** The emails' words from what a build declares (pure: the tests pass other builds' inputs). */
+export function wordsFor(i: EmailWordsInput): EmailWords {
+  const product = word(i.name, 80) || "Workspace";
+  const fromPack = i.pack_words.find((w) => word(w?.run, 40));
+  const run = (fromPack && word(fromPack.run, 40)) || (i.engine ? SESSION_ENGINE_WORDS.run : "run");
+  const runs = (fromPack && word(fromPack.runs, 40)) || pluralOf(run);
+  const landing = word(i.pitch, 300);
+  const short = word(i.short_description, 300);
+  const pitch = landing ? sentence(landing) : i.engine ? SESSION_ENGINE_WORDS.pitch(product) : short ? `${product}: ${sentence(short)}` : null;
+  return {
+    product, sender: word(i.sender_name, 100) || product, a_product: /^[aeiou]/i.test(product) ? "an" : "a", run, runs, pitch,
+    first_step: i.engine && !fromPack ? SESSION_ENGINE_WORDS.first_step(product) : `connect ${product} to your AI assistant and start your first ${run}`,
+  };
+}
+let testWords: EmailWordsInput | undefined;
+/** Tests only: another build's inputs in place of this one's (undefined: this build's again). */
+export function setEmailWordsForTest(i: EmailWordsInput | undefined) { testWords = i; }
+/** This build's email words. */
+export const emailWords = (): EmailWords => wordsFor(testWords ?? {
+  name: PROFILE.name, sender_name: PROFILE.email_sender_name, short_description: PROFILE.short_description, pitch: GENERATED_EMAIL_PITCH,
+  pack_words: PACKS.map((p) => p.manifest.words ?? {}), engine: sessionEngine(),
+});
+/** The signature: the profile's sender name (src/profile.ts). */
+const sign = (w: EmailWords = emailWords()) => `— ${w.sender}`;
 const hello = (name?: string | null) => `Hi${name?.trim() ? ` ${name.trim().split(/\s+/)[0]}` : ""},`;
 const lines = (...parts: (string | null | false | undefined)[]) => parts.filter((p): p is string => typeof p === "string").join("\n\n");
 const money = (usd: number) => `$${usd.toFixed(usd % 1 ? 2 : 0)}`;
@@ -358,46 +426,49 @@ export interface RequestFacts { id: number; email: string; company: string; name
 /** A new access request: "we got it" to the requester, and an alert to the operator. */
 export function requestReceived(r: RequestFacts) {
   const meta = { request_id: r.id };
+  const w = emailWords();
   return Promise.all([
     sendLater({ kind: "request_received", to: r.email, idempotencyKey: `request:${r.id}:received`, meta,
-      subject: `We got your request for ${PROFILE.name}`,
+      subject: `We got your request for ${w.product}`,
       text: lines(hello(r.name),
-        `Thanks for asking for access to ${PROFILE.name} for ${r.company}. We read every request ourselves and will get back to you by email, usually within a few working days.`,
+        `Thanks for asking for access to ${w.product} for ${r.company}. We read every request ourselves and will get back to you by email, usually within a few working days.`,
         "If you want to add anything in the meantime, just reply to this email.",
-        SIGN) }),
+        sign(w)) }),
     adminRecipients().then((to) => each(to, (t) => ({ kind: "request_alert", to: t, idempotencyKey: keyFor(`request:${r.id}:alert`, t), meta,
       subject: `New access request: ${r.company}`.slice(0, 200),
-      text: lines(`${r.name?.trim() || "Someone"} from ${r.company} asked for access to ${PROFILE.name}.`,
+      text: lines(`${r.name?.trim() || "Someone"} from ${r.company} asked for access to ${w.product}.`,
         [`Email: ${r.email}`, r.product_url ? `Product: ${r.product_url}` : null].filter(Boolean).join("\n"),
         r.message ? `What they said:\n${r.message.slice(0, 1500)}` : null,
         `Review it: ${siteUrl()}/admin/requests`,
-        SIGN) }))),
+        sign(w)) }))),
   ]);
 }
 
 /** A request declined: a plain, kind note, with the reason when the reviewer gave one. */
 export function requestDeclined(r: RequestFacts, reason?: string | null) {
+  const w = emailWords();
   return sendLater({ kind: "request_declined", to: r.email, idempotencyKey: `request:${r.id}:declined`, meta: { request_id: r.id, with_reason: Boolean(reason) },
-    subject: `About your ${PROFILE.name} request`,
+    subject: `About your ${w.product} request`,
     text: lines(hello(r.name),
-      `Thank you for your interest in ${PROFILE.name}. We can't offer ${r.company} access right now.`,
+      `Thank you for your interest in ${w.product}. We can't offer ${r.company} access right now.`,
       reason?.trim() ? `The reason: ${reason.trim()}` : null,
       "This isn't necessarily final. If things change on your side, or you think we've misread something, reply to this email and we'll take another look.",
-      SIGN) });
+      sign(w)) });
 }
 
 /** A request approved: a short welcome that goes with Clerk's invitation (which Clerk sends; this never resends it). */
 export function requestApproved(r: RequestFacts, o: { account: string; invited: boolean }) {
+  const w = emailWords();
   return sendLater({ kind: "request_approved", to: r.email, idempotencyKey: `request:${r.id}:approved`, meta: { request_id: r.id, invited: o.invited },
-    subject: `Welcome to ${PROFILE.name}`,
+    subject: `Welcome to ${w.product}`,
     text: lines(hello(r.name),
-      `Your request is approved: ${o.account} now has ${/^[aeiou]/i.test(PROFILE.name) ? "an" : "a"} ${PROFILE.name} account.`,
-      `${PROFILE.name} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why.`,
+      `Your request is approved: ${o.account} now has ${w.a_product} ${w.product} account.`,
+      w.pitch,
       o.invited
-        ? `You'll get a separate invitation email to join ${o.account}. Accept it to create your sign-in, then open ${siteUrl()}/app to connect ${PROFILE.name} to your AI assistant and run your first simulation.`
+        ? `You'll get a separate invitation email to join ${o.account}. Accept it to create your sign-in, then open ${siteUrl()}/app to ${w.first_step}.`
         : `We'll send you your connection details separately. Once you have them, ${siteUrl()}/app walks you through setup.`,
       "Questions? Reply to this email.",
-      SIGN) });
+      sign(w)) });
 }
 
 // ---------- library submissions (src/contributions.ts) ----------
@@ -407,12 +478,13 @@ const noun = (k: "persona" | "task") => (k === "persona" ? "developer persona" :
 
 /** An account published an item to the library: an alert to the operator. */
 export function submissionReceived(s: SubmissionFacts) {
+  const w = emailWords();
   return adminRecipients().then((to) => each(to, (t) => ({ kind: "submission_alert", to: t, idempotencyKey: keyFor(`submission:${s.id}:alert`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug },
     subject: `Library submission from ${s.org_name}: ${s.title}`.slice(0, 200),
-    text: lines(`${s.org_name} submitted a ${noun(s.kind)} to ${PROFILE.name}'s library: "${s.title}".`,
+    text: lines(`${s.org_name} submitted a ${noun(s.kind)} to ${w.product}'s library: "${s.title}".`,
       `Review it: ${siteUrl()}/admin/${s.kind === "persona" ? "personas" : "tasks"}?view=submissions`,
-      SIGN) })));
+      sign(w)) })));
 }
 
 /** Who to tell about a decision: the person who submitted it, else the account's owners. */
@@ -423,6 +495,7 @@ async function submitterOf(s: SubmissionFacts): Promise<string[]> {
 
 /** Accepted: the credit, and that it comes off the next invoice (or that it is still being added). */
 export async function submissionAccepted(s: SubmissionFacts, credit: { usd: number; status: "none" | "pending" | "credited" | null }) {
+  const w = emailWords();
   const creditLine = !(credit.usd > 0) || credit.status === "none"
     ? null
     : credit.status === "credited"
@@ -430,24 +503,25 @@ export async function submissionAccepted(s: SubmissionFacts, credit: { usd: numb
       : `As thanks, you've earned a ${money(credit.usd)} credit. It is still being added to your account; once it is, it comes off your next invoice automatically. You can see it on ${siteUrl()}/app/billing.`;
   return each(await submitterOf(s), (t) => ({ kind: "submission_accepted", to: t, idempotencyKey: keyFor(`submission:${s.id}:accepted`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug, credit_usd: credit.usd, credit_status: credit.status },
-    subject: `Your ${noun(s.kind)} is in ${PROFILE.name}'s library`,
+    subject: `Your ${noun(s.kind)} is in ${w.product}'s library`,
     text: lines("Hi,",
-      `Thanks for sharing "${s.title}". We reviewed it and added it to ${PROFILE.name}'s library, where it now helps simulations for everyone.`,
+      `Thanks for sharing "${s.title}". We reviewed it and added it to ${w.product}'s library, where it now helps ${w.runs} for everyone.`,
       creditLine,
       "Your own copy stays yours and unchanged.",
-      SIGN) }));
+      sign(w)) }));
 }
 
 /** Declined: with the reason the reviewer gave (it is required). */
 export async function submissionDeclined(s: SubmissionFacts, reason: string) {
+  const w = emailWords();
   return each(await submitterOf(s), (t) => ({ kind: "submission_declined", to: t, idempotencyKey: keyFor(`submission:${s.id}:declined`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug },
-    subject: `About your ${noun(s.kind)} for ${PROFILE.name}'s library`,
+    subject: `About your ${noun(s.kind)} for ${w.product}'s library`,
     text: lines("Hi,",
-      `Thanks for sharing "${s.title}". We've decided not to add it to ${PROFILE.name}'s library this time.`,
+      `Thanks for sharing "${s.title}". We've decided not to add it to ${w.product}'s library this time.`,
       `The reason: ${reason.trim()}`,
       "Your own copy stays yours and keeps working as before. If you change it, you're welcome to submit it again.",
-      SIGN) }));
+      sign(w)) }));
 }
 
 // ---------- budget (after each finished session: src/worker.ts, src/compute-actions.ts) ----------
@@ -482,15 +556,16 @@ export async function checkBudget(orgId: number, now = new Date()): Promise<{ th
     const { monthWords } = await import("./limits.js");
     const { month, reset } = monthWords(now);
     const over = threshold >= 100;
+    const w = emailWords();
     const results = await each(to, (t) => ({ kind: over ? "budget_100" : "budget_80", to: t, idempotencyKey: keyFor(purpose, t),
       meta: { account: o?.slug ?? null, month: monthKey(now), threshold, spent_usd: Math.round(spent * 100) / 100, budget_usd: budget },
-      subject: over ? `${o?.name ?? "Your account"} has used its ${PROFILE.name} allowance for ${month}` : `${o?.name ?? "Your account"} has used ${threshold}% of its ${PROFILE.name} allowance`,
+      subject: over ? `${o?.name ?? "Your account"} has used its ${w.product} allowance for ${month}` : `${o?.name ?? "Your account"} has used ${threshold}% of its ${w.product} allowance`,
       text: lines("Hi,",
         `${o?.name ?? "Your account"} has spent ${money(spent)} of its ${money(budget)} monthly allowance for model usage in ${month} (${Math.floor(pct)}%).`,
-        over ? `New simulations can't start until the allowance resets on ${reset}, or until it is raised.`
-             : `When it reaches 100%, new simulations can't start until the allowance resets on ${reset}.`,
+        over ? `New ${w.runs} can't start until the allowance resets on ${reset}, or until it is raised.`
+             : `When it reaches 100%, new ${w.runs} can't start until the allowance resets on ${reset}.`,
         `Your plan and Budget rules are on ${siteUrl()}/app/billing. You're getting this because you're an owner or billing manager of the account.`,
-        SIGN) }));
+        sign(w)) }));
     return { threshold, sent: results.filter((r) => r.status === "sent").length };
   } catch (e) {
     console.error(`email budget check for ${orgId} failed:`, (e as Error).message);
@@ -529,7 +604,7 @@ export async function dueSoon(orgId: number, d: { area: string; label: string; w
         `${n === 1 ? "This is" : "These are"} due in ${o.name} within the next ${d.within_days} day${d.within_days === 1 ? "" : "s"}:`,
         list + (n > shown.length ? `\n…and ${n - shown.length} more` : ""),
         `See them on ${siteUrl()}/app/notices. You're getting this because of your role in ${o.name} (${d.roles.join(", ")}).`,
-        SIGN) })));
+        sign()) })));
     return { recipients: to.length, delivered: results.filter((r) => r.status === "sent" || r.status === "duplicate").length };
   } catch (e) {
     console.error(`email due_soon for ${orgId} failed:`, (e as Error).message);
@@ -544,7 +619,7 @@ export function signInCode(c: { id: number | string; to: string; code: string; m
   return sendLater({ kind: "sign_in_code", to: c.to, idempotencyKey: `sign-in-code:${c.id}`,
     subject: `Your ${PROFILE.name} sign-in code`,
     text: lines(`Your sign-in code is ${c.code}`, `It works once, for ${c.minutes} minutes.`,
-      `If you didn't ask to sign in to ${PROFILE.name}, ignore this email: nobody can sign in without the code.`, SIGN) });
+      `If you didn't ask to sign in to ${PROFILE.name}, ignore this email: nobody can sign in without the code.`, sign()) });
 }
 
 /**
@@ -557,7 +632,7 @@ export function invitation(i: { id: string; to: string; account: string; account
     text: lines(`Hi,`, `You're invited to join ${i.account} on ${PROFILE.name} as ${i.role}.`,
       `To accept, sign in with this address (${i.to}): ${siteUrl()}/auth/sign-in?redirect_url=%2Fapp`,
       `We'll email you a sign-in code${i.google ? ", or you can continue with Google if this address is your Google account" : ""}. If you already use ${PROFILE.name}, accept the invitation on your profile page once signed in. The invitation is good for ${i.days} days.`,
-      `If you weren't expecting it, ignore this email.`, SIGN) });
+      `If you weren't expecting it, ignore this email.`, sign()) });
 }
 
 // ---------- billing notices (mold_v0-083: src/run-charges.ts) ----------
@@ -578,7 +653,7 @@ export async function billingNotice(n: { charge_id: string; run_id: string; kind
       // Stripe's identifiers (cus_…, sub_…) and any address in the error stay out of the email.
       `The last error: ${oneLine(n.error.replace(/\b(cus|sub|si|pi|in|ch|card|pm|src|acct|ba|seti)_[A-Za-z0-9]+/g, "$1_…").replace(/[^\s@<>,;"]+@[^\s@<>,;"]+/g, "*@…"), 300)}`,
       `Credit it or send it again by hand on ${siteUrl()}/admin (FinOps, Run charges).`,
-      SIGN) }));
+      sign()) }));
 }
 
 // ---------- /admin/emails ----------
@@ -587,8 +662,8 @@ export async function billingNotice(n: { charge_id: string; run_id: string; kind
 export async function sendTest(actor: string, toIn: unknown) {
   const to = String(toIn ?? "").trim().toLowerCase();
   const r = await send({ kind: "test", to, idempotencyKey: `test:${randomUUID()}`, meta: { by_admin: hashAddress(actor).slice(0, 16) },
-    subject: `${PROFILE.name} test email`,
-    text: lines("Hi,", `This is a test email from ${PROFILE.name}, sent from ${siteUrl()}/admin/emails. If you can read it, email is working.`, SIGN) });
+    subject: `${emailWords().product} test email`,
+    text: lines("Hi,", `This is a test email from ${emailWords().product}, sent from ${siteUrl()}/admin/emails. If you can read it, email is working.`, sign()) });
   return r;
 }
 

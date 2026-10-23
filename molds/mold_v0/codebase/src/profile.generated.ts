@@ -9,3 +9,5 @@ export const GENERATED_PROFILE = {
   "email_sender_name": "Workspace",
   "email_from_address": "no-reply@example.com"
 } as const;
+/** The landing block's hero subheadline (mold_v0-101): the emails' pitch (src/email.ts emailWords); null without one. */
+export const GENERATED_EMAIL_PITCH: string | null = null;
