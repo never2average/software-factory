@@ -12,6 +12,8 @@
 // 6. Owners see every key of the workspace (older ones included) and revoke any; a member only their own.
 // 7. Existing keys keep working: the account's key (header, and the deprecated URL), an older person key.
 // 8. Limits: per member across all their keys, the key-creation limit per workspace; the CSRF header on cookie writes.
+// 9. Off (mold_v0-099, profile member_keys: false): /api/keys refuses everything with a sentence saying to sign in; a
+//    key made before is refused on /mcp, saying why; the account's own key still works; on again, the key works again.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -247,6 +249,35 @@ try {
     const withHeader = await http.req("POST", "/api/keys", { cookie: `__session=${memberA}`, "x-pack-request": "1" }, { name: "csrf ok" });
     assert.equal(withHeader.status, 201, "with it, the change goes through");
     console.log("✓ the member's rate limit counts all their keys; key creation is limited per person apart from staff's; staff revoke (never rotate) a member key; cookie writes need the CSRF header");
+  }
+  // ---------- 9. member keys off ----------
+  {
+    const { setMemberKeysForTest } = await import("../src/profile.js");
+    const someone = await http.signIn(A.org);
+    const made = await make(someone, { name: "before the switch" });
+    assert.equal(made.status, 201);
+    assert.equal((await rpc(bearer(made.body.key), "tools/list")).status, 200, "it works while keys are on");
+    setMemberKeysForTest(false);
+    try {
+      for (const [m, p, body] of [["GET", "/api/keys", undefined], ["POST", "/api/keys", { name: "after" }], ["POST", `/api/keys/${made.body.id}/revoke`, {}]] as const) {
+        const r = await call(m, p, someone, body);
+        assert.equal(r.status, 403, `${m} ${p} is refused: ${r.status}`);
+        assert.equal(r.body.code, "member_keys_off");
+        assert.match(r.body.error, /API keys are turned off .*sign in/, "it says how to connect instead");
+      }
+      assert.equal((await call("POST", "/api/keys", null, { name: "x" })).status, 401, "signed out: still a sign-in answer first");
+      const refused = await rpc(bearer(made.body.key), "tools/list");
+      assert.equal(refused.status, 401, `a key made before is refused: ${refused.status}`);
+      assert.equal(refused.body.error.data.reason, "member_keys_off");
+      assert.match(refused.body.error.message, /API keys are turned off .* This key no longer works\./, "the client is told why");
+      const unknown = await rpc(bearer("oct_" + "x".repeat(32)), "tools/list");
+      assert.equal(unknown.status, 401);
+      assert.ok(!/API key/.test(unknown.body.error.message), `the plain refusal names sign-in only: ${unknown.body.error.message}`);
+      assert.equal((await rpc(bearer(A.key), "tools/list")).status, 200, "the account's own key (staff issued) is not a member key and still works");
+      assert.equal((await db.query("SELECT 1 FROM api_keys WHERE label = 'after'")).length, 0, "nothing was made");
+    } finally { setMemberKeysForTest(null); }
+    assert.equal((await rpc(bearer(made.body.key), "tools/list")).status, 200, "on again: the key that was not revoked or expired works again");
+    console.log("✓ member keys off: /api/keys refuses (403, member_keys_off) with how to connect instead; a key made before is refused on /mcp saying why; the account's key works; on again, as before");
   }
   await http.close();
   console.log("member-keys: all checks passed");

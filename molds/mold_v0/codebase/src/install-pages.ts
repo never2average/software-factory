@@ -18,6 +18,12 @@
  * the app's own source, every page ends with a "Source code" footer naming each project, its licence and the exact
  * commit's address, and /install.json carries the same sentences as `source_code`. Without one, nothing changes.
  *
+ * Member keys off (mold_v0-099, profile `member_keys: false`): no page shows a key. Each client's page has its sign-in
+ * only (no "With an API key" card, nothing for a header), /install says every client signs in, and sign-in counts as
+ * available under the built-in sign-in too (src/mcp-oauth.ts is then /mcp's OAuth server), not only under Clerk. Every
+ * client in src/connect-catalog.ts connects by sign-in; the one entry that only sends a header ("Header-capable
+ * clients") is only ever listed with a key, so it is never offered here.
+ *
  * The profile's `install_clients` (optional) narrows the clients to those it names. A signed-in member's own setup,
  * with their new key in each client's header (never a URL), is memberSetup below (the console's API keys page,
  * src/member-keys.ts).
@@ -30,7 +36,8 @@ import { clientCatalog, type ClientEntry } from "./connect-catalog.js";
 import { plain } from "./mcp-catalog.js";
 import { generatedTools, permitted } from "./mcp-tools.js";
 import { packs } from "./packs.js";
-import { PROFILE, type Profile } from "./profile.js";
+import { builtinAuth } from "./auth-provider.js";
+import { memberKeysOn, PROFILE, type Profile } from "./profile.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml, offerSentences } from "./source-offer.js";
 
@@ -43,11 +50,20 @@ const GROUPS: Record<ClientEntry["group"], string> = { chat: "Chat apps", agent:
 /** The clients this build offers: the profile's install_clients, else every client (the "header" entry always). */
 const offered = (p: Pick<Profile, "install_clients">) => (c: { id: string }) => !p.install_clients || c.id === "header" || p.install_clients.includes(c.id);
 
+/**
+ * Whether /mcp takes sign-in (OAuth): Clerk with its frontend API. With member keys off (mold_v0-099) the built-in
+ * sign-in's own authorization server counts too: it is then the only way in, so the pages must say so. (With keys on the
+ * pages are exactly what they were.)
+ */
+const signInOn = (keys: boolean) => Boolean(clerkEnabled() && frontendApi()) || (!keys && builtinAuth());
+
 /** The install guide for one deployed address: every client, with sign-in and (where a client takes one) a header key. */
-export function installGuide(publicUrl: string, profile: Pick<Profile, "install_clients"> = PROFILE) {
+export function installGuide(publicUrl: string, profile: Pick<Profile, "install_clients" | "member_keys"> = PROFILE) {
   const url = `${publicUrl.replace(/\/$/, "")}/mcp`;
-  const signInAvailable = Boolean(clerkEnabled() && frontendApi());
-  const withKey = new Map(clientCatalog(url, KEY_PLACEHOLDER, { signInAvailable }).map((c) => [c.id, c]));
+  const keys = profile === PROFILE ? memberKeysOn() : memberKeysOn(profile);
+  const signInAvailable = signInOn(keys);
+  // No key variant at all when member keys are off (mold_v0-099).
+  const withKey = new Map(keys ? clientCatalog(url, KEY_PLACEHOLDER, { signInAvailable }).map((c) => [c.id, c]) : []);
   const clients = clientCatalog(url, undefined, { signInAvailable }).filter(offered(profile)).map((c) => {
     const k = withKey.get(c.id);
     // The key variant only where the client sends it as a header (its own command or config), never as a URL.
@@ -56,7 +72,7 @@ export function installGuide(publicUrl: string, profile: Pick<Profile, "install_
       sign_in: signInAvailable ? { steps: c.steps, command: c.command ?? null, file: c.file ?? null, snippet: c.snippet ?? null, install_url: c.install_url ?? null } : null,
       api_key: header };
   });
-  return { name: PROFILE.name, server: PROFILE.mcp_server_name, url, sign_in: signInAvailable, clients,
+  return { name: PROFILE.name, server: PROFILE.mcp_server_name, url, sign_in: signInAvailable, ...(keys ? {} : { api_keys: false }), clients,
     // Only when the packs add tools (mold_v0-010): absent, the guide is exactly what it was.
     ...(toolReference().packs.length ? { tool_reference: "/install/tools" } : {}),
     // The source offer (mold_v0-050), only when there is one: a copyleft upstream of a pack, or the app's own source.
@@ -167,7 +183,7 @@ export function mountInstallPages(app: Express, publicUrl: string) {
     }).join("");
     send(res, 200, page(`Connect ${g.name}`, `<h1>Connect ${esc(g.name)} to your AI client</h1>
 <p class="muted">${esc(g.name)} is an MCP server at</p><pre>${esc(g.url)}</pre>
-<p>${g.sign_in ? "Every client signs in with your account (OAuth). Clients that can send a header may use an API key instead, always in a header, never in the address." : "Connect with an API key from your account, sent in a header (never in the address)."}</p>${groups}${"tool_reference" in g ? `<h2>Tools</h2><p><a href="/install/tools">What ${esc(g.name)} can do, and who may</a></p>` : ""}`));
+<p>${"api_keys" in g ? (g.sign_in ? "Every client signs in with your account (OAuth)." : `Sign-in is not set up on this ${esc(g.name)} server yet: ask its admin.`) : g.sign_in ? "Every client signs in with your account (OAuth). Clients that can send a header may use an API key instead, always in a header, never in the address." : "Connect with an API key from your account, sent in a header (never in the address)."}</p>${groups}${"tool_reference" in g ? `<h2>Tools</h2><p><a href="/install/tools">What ${esc(g.name)} can do, and who may</a></p>` : ""}`));
   });
   app.get("/install/:client", (req: Request, res: Response) => {
     const g = installGuide(publicUrl);

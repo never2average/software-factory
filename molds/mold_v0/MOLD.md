@@ -766,7 +766,18 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the account's own keys (no person, no role limits; also in the deprecated URL until `OCTILLION_URL_KEYS=off`) and
   the older keys staff issued for a person (their person, no role, no expiry). To move a client: the person makes a
   member key on `/app/keys`, pastes the setup shown, and they (or an owner) revoke the old key on the same page.
-  `npm run test:member-keys`.
+  **Off** (mold_v0-099): `"member_keys": false` in the profile (`src/profile.ts`, checked by gen-packs: true or false)
+  removes member keys. The console has no API keys page (`/app/keys` is not found) and no sidebar link to it; the
+  customer guide names no key; every route of `/api/keys` answers 403 `{code: "member_keys_off"}` with how to connect
+  instead; the install pages and `/install.json` (`api_keys: false`) offer each client's sign-in only (no "With an API
+  key" card, no header-only entry), and sign-in counts as available under the built-in sign-in as well as Clerk, since
+  `/mcp`'s OAuth (`src/mcp-oauth.ts`, or Clerk's) is then the only way a client connects. Every client the catalog
+  lists connects by sign-in, so none is dropped; the only header-only entry ("Header-capable clients") is listed only
+  with a key. **Existing member keys stop working:** `/mcp` refuses one with a 401 whose message says API keys are
+  turned off and to sign in (`error.data.reason: "member_keys_off"`), and a client falls back to OAuth from its
+  `WWW-Authenticate`; the rows are kept, so turning keys on again brings back those not revoked or expired. The account
+  keys staff issue on `/admin` (no person, or an older person key) are not member keys and keep working; the
+  generic 401 then names sign-in only. `npm run test:member-keys`, `npm run test:install-docs`.
 - **Metrics and charts** (mold_v0-063, built; `src/metrics.ts`, `src/metric-spec.ts`, `src/view-routes.ts`): pack.json
   `metrics` are computed on the server for one workspace: over a record area (its shared rows, or the workspace's own),
   the workspace's `run_results` or its `runs`; `measure` count, sum or average of a number field, rate (the share of rows
@@ -1006,7 +1017,16 @@ licence and the exact commit's address (`src/source-offer.ts`); an agent kind th
 commit is refused, so the commit offered is the one that runs. The build's own source is the profile's `source_offer`:
 `{"app": {"url", "license"}}` offers it; `{"app": "licensor_exception"}` (the factory's LICENSE-EXCEPTION.md
 permission covers whoever runs this deployment; the factory writes it from `defaults.source_offer`) offers no link and
-says why; absent, the build says nothing about its own source. With zero packs and no setting nothing changes. The
+says why; absent, the build says nothing about its own source. An upstream that is the app licensor's own project
+(mold_v0-099) is named in the app's own `profile.json` as `"source_offer": {"upstreams": {"<pack id>": "licensor_owned"}}`
+(only there: gen-packs refuses it in a host pack's profile, and refuses a pack id the build lacks or whose pack pins no
+upstream): as its copyright holder the licensor need not offer that source, so the build leaves it out everywhere: no
+MCP instructions line, no footer on the root, install or landing pages, no `source_code` in `/install.json`, no About
+row. When no other upstream is left and the app's own source is not offered, the About page has no "Source code"
+section at all (under `"app": "licensor_exception"` too: its sentence explains a missing offer, and nothing is offered
+anywhere) and its sidebar link reads "About"; the rest of the About page (where code runs, data, credentials, models,
+egress, what the server measures) stays. `"app": "licensor_exception"` keeps its meaning wherever something else is
+still offered. Without `upstreams`, nothing changes. With zero packs and no setting nothing changes. The
 data-flow and residency statement (`src/data-map.ts`) maps, per pack, where the code runs, where data is stored, the
 credentials by name, where model calls go and which hosts runs may reach, from the packs' declarations and the deploy
 facts the factory writes into the build copy (`deploy-facts.json`, names and places only, checked by gen-packs); it is

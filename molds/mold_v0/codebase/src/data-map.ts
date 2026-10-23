@@ -22,7 +22,7 @@
 import { DEPLOY_FACTS } from "./deploy-facts.generated.js";
 import { packs, type InstalledPack } from "./packs.js";
 import { PROFILE, type Profile } from "./profile.js";
-import { LICENSOR_EXCEPTION_TEXT, sourceOffer, type SourceOffer } from "./source-offer.js";
+import { hasSourceSection, LICENSOR_EXCEPTION_TEXT, sourceOffer, type SourceOffer, type SourceOfferSetting } from "./source-offer.js";
 
 /** deploy-facts.json, as scripts/gen-packs.mjs checks it (names, places and providers; never a value). */
 export interface DeployFacts {
@@ -43,7 +43,11 @@ export interface DataMapSection { id: string; title: string; intro?: string; row
 export interface DataMap { name: string; deploy: DeployFacts | null; sections: DataMapSection[] }
 
 /** The build's source offer: its packs' upstreams and the profile's own (src/source-offer.ts). */
-export const currentOffer = (list: readonly InstalledPack[] = packs(), profile: Profile = PROFILE): SourceOffer => sourceOffer(list, profile.source_offer);
+export const currentOffer = (list: readonly InstalledPack[] = packs(), profile: Profile = PROFILE): SourceOffer =>
+  sourceOffer(list, profile === PROFILE && testOffer !== undefined ? testOffer ?? undefined : profile.source_offer);
+let testOffer: SourceOfferSetting | null | undefined;
+/** Tests only: the build's profile `source_offer` as if profile.json said this (undefined: the profile's own). */
+export function setSourceOfferForTest(s: SourceOfferSetting | null | undefined) { testOffer = s; }
 
 /** Where each gateway provider forwards by default (sql/migrations/0001_baseline.sql vault_providers): the vault may change it. */
 const DEFAULT_UPSTREAM: Record<string, string> = {
@@ -158,7 +162,9 @@ export function dataMap(list_: readonly InstalledPack[] = packs(), facts: Deploy
   }
 
   // ---------- source code ----------
-  sections.push(offerSection(currentOffer(list_, profile)));
+  // The source offer's section, unless everything the build runs is the licensor's own (mold_v0-099, hasSourceSection).
+  const offer = currentOffer(list_, profile);
+  if (hasSourceSection(offer)) sections.push(offerSection(offer));
   return { name: profile.name, deploy: facts, sections };
 }
 

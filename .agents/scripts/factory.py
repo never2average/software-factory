@@ -834,15 +834,16 @@ def _asr(app_id, docs):
     return asr.problems(app_id, a, os.path.join(ROOT, "molds", str(a.get("mold_id") or ""), "codebase"), ROOT)
 def _app_profile(app_id, docs, brief_root=None):
     """The app's own profile settings (application.json `profile`, mold_v0-090; lib/app_profile.py): only fields its mold
-    lets an app set (molds/<mold>/branding/rules.json profile.app_settable), never a brand word, host_packs, source_offer,
-    billing or entitlements, and each value checked as the mold's own build checks it (limits: known names, positive
-    numbers)."""
+    lets an app set (molds/<mold>/branding/rules.json profile.app_settable), never a brand word, host_packs,
+    source_offer.app, billing or entitlements, and each value checked as the mold's own build checks it (limits: known
+    names, positive numbers; member_keys: true or false; source_offer.upstreams: the app's own pack ids, licensor_owned)."""
     a = docs.get("application") or {}
     if not isinstance(a, dict): return []
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
     if here not in sys.path: sys.path.insert(0, here)
     import app_profile
-    errs = [f"{app_id}/application.json: {e}" for e in app_profile.problems(a.get("profile"), a.get("mold_id"), ROOT)] if "profile" in a else []
+    errs = [f"{app_id}/application.json: {e}" for e in app_profile.problems(a.get("profile"), a.get("mold_id"), ROOT,
+            packs=a.get("packs") if isinstance(a.get("packs"), list) else None)] if "profile" in a else []
     if app_profile.spec(a.get("mold_id"), ROOT) is None: return errs   # a mold that takes none: nothing to compare with a brief
     # The brief is where they are set (intake writes them from it): a value edited in state alone is a value the operator
     # never wrote down, so it is refused until intake is re-run on the brief.
@@ -1098,11 +1099,21 @@ def self_test():
     ok(pa({"limits": {"runs": {"budget_usd_max": 201}}}) and "ceiling" in pa({"limits": {"plans": {"pro": {"runs": {"kind_month_budget_usd": 1e6}}}}})[0],
        "validate: a spending ceiling above the factory's (rules.json app_limits_max), a plan's own too, is refused")
     ok(pa({"limits": {"runs": {"live_per_workspace": 2.5}}}), "validate: a limit that counts things is a whole number")
+    # mold_v0-099: member_keys and the app's part of source_offer (upstreams it owns), for its own packs only
+    pk = lambda prof, packs=("maxwell",): _app_profile("x", {"application": {"mold_id": "mold_v0", "packs": list(packs), "profile": prof}})
+    ok(pk({"member_keys": False, "source_offer": {"upstreams": {"maxwell": "licensor_owned"}}}) == [], "validate: member_keys false and an upstream the licensor owns validate")
+    for bad, why in (({"member_keys": "false"}, "member_keys as text"), ({"source_offer": {"upstreams": {"other": "licensor_owned"}}}, "a pack the app does not have"),
+                     ({"source_offer": {"upstreams": {"maxwell": True}}}, "a value other than licensor_owned"), ({"source_offer": {"upstreams": {}}}, "no upstream named"),
+                     ({"source_offer": {"app": "licensor_exception", "upstreams": {"maxwell": "licensor_owned"}}}, "source_offer.app beside it")):
+        ok(pk(bad), f"validate: a profile with {why} is refused")
     with tempfile.TemporaryDirectory() as bt:
         os.makedirs(os.path.join(bt, "briefs")); open(os.path.join(bt, "briefs", "b.md"), "w").write("## Budgets\nlimits.runs.budget_usd_max = 40\n")
         ab = lambda prof: _app_profile("x", {"application": {"mold_id": "mold_v0", "brief": "briefs/b.md", **({"profile": prof} if prof else {})}}, brief_root=bt)
         ok(ab({"limits": {"runs": {"budget_usd_max": 40}}}) == [] and ab({"limits": {"runs": {"budget_usd_max": 90}}}) and ab(None),
            "validate: state profile settings that are not what the brief says (a hand edit, or a brief changed without intake) are refused")
+        open(os.path.join(bt, "briefs", "b.md"), "w").write("## Profile\nmember_keys = false\nsource_offer.upstreams.maxwell = licensor_owned\n")
+        own = {"member_keys": False, "source_offer": {"upstreams": {"maxwell": "licensor_owned"}}}
+        ok(ab(own) == [] and ab({"member_keys": False}), "validate: member_keys and source_offer.upstreams are read from the brief and must match it")
     # mold_v0-051: a single-service app's RLS claim is read against the product's own check, as lib/single_service.py records it
     ds = lambda ev: {"postgres": {"provider": "self_hosted", "rls": "fail_closed", **({"rls_verified": ev} if ev else {})}}
     good = {"at": "2026-10-21T10:00:00+00:00", "backend": "self_hosted", "mode": "fail_closed", "running_app": "enforced",

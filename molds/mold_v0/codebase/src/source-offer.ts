@@ -16,6 +16,15 @@
  *              About page (and, when an upstream is offered, the footer and the MCP line) says why. Absent: the build says
  *              nothing about its own source; whoever else runs a modified copy sets `app` to where its source is.
  *
+ * An upstream that is the licensor's own (mold_v0-099): profile.json `source_offer.upstreams` = {"<pack id>":
+ * "licensor_owned"} says that pack's pinned upstream project belongs to the app's licensor (its copyright holder, who need
+ * not offer its own code's source to anyone). That upstream is then left out of the offer entirely: no About row, no
+ * footer line, no MCP instructions line; `licensor_owned` lists the packs it was left out for, and the About page drops
+ * its "Source code" section when no other upstream is left and the app's own source is not offered (hasSourceSection). Only the app's own profile.json may say
+ * so (scripts/gen-packs.mjs refuses it in a host pack's profile, and a pack id the build lacks or that pins no upstream).
+ * `app` is unchanged by it: "licensor_exception" still says why the service's own code is not offered, wherever
+ * something else is.
+ *
  * With zero packs and no `source_offer` nothing is offered: the instructions and the install pages are exactly the
  * shell's. Pure functions over the installed packs and the profile, so the server, the console's API and the tests share
  * them; nothing here reads a secret.
@@ -30,7 +39,11 @@ export interface OfferPack {
   definition: { agentJobKinds?: readonly { name: string; agent: { repository: string; commit: string } }[] };
 }
 /** profile.json `source_offer` (checked by scripts/gen-packs.mjs). */
-export interface SourceOfferSetting { app?: { url: string; license: string } | "licensor_exception" }
+export interface SourceOfferSetting {
+  app?: { url: string; license: string } | "licensor_exception";
+  /** Packs whose pinned upstream is the licensor's own project (mold_v0-099): not offered. */
+  upstreams?: Record<string, "licensor_owned">;
+}
 
 export interface OfferedUpstream {
   pack: string;
@@ -54,6 +67,8 @@ export interface SourceOffer {
   app: AppOffer;
   /** Whether the build offers anything: a copyleft upstream, or the app's own source. */
   offered: boolean;
+  /** Packs whose upstream the profile says is the licensor's own (mold_v0-099), left out of `upstreams`; absent when none. */
+  licensor_owned?: string[];
 }
 
 /**
@@ -97,16 +112,28 @@ export function upstreamProblems(packs: readonly OfferPack[]): string[] {
 }
 
 export function sourceOffer(packs: readonly OfferPack[], setting: SourceOfferSetting | undefined): SourceOffer {
+  const owned = (id: string) => setting?.upstreams?.[id] === "licensor_owned";
+  const licensor_owned = packs.filter((p) => p.manifest.upstream && owned(p.id)).map((p) => p.id);
   const upstreams = packs.flatMap((p) => {
     const up = p.manifest.upstream;
-    if (!up) return [];
+    if (!up || owned(p.id)) return [];
     const license = up.license ?? null;
     return [{ pack: p.id, pack_name: p.manifest.name, project: projectOf(up.repo), repo: up.repo, commit: up.commit, url: commitUrl(up.repo, up.commit), license, copyleft: isCopyleft(license) }];
   });
   const a = setting?.app;
   const app: AppOffer = a === "licensor_exception" ? { kind: "licensor_exception" } : a && typeof a === "object" ? { kind: "offered", url: a.url, license: a.license } : { kind: "not_stated" };
-  return { upstreams, app, offered: upstreams.some((u) => u.copyleft) || app.kind === "offered" };
+  return { upstreams, app, offered: upstreams.some((u) => u.copyleft) || app.kind === "offered",
+    ...(licensor_owned.length ? { licensor_owned } : {}) };
 }
+
+/**
+ * Whether the About page has a "Source code" section (src/data-map.ts offerSection): always, unless every upstream the
+ * build pins is the licensor's own and the app's own source is not offered either (mold_v0-099): everything the service
+ * runs is then the licensor's, nothing is offered anywhere, and the page says nothing about source code (under
+ * "licensor_exception" too: its sentence explains a missing offer, and with no offer anywhere there is none to explain).
+ * Without an `upstreams` setting this is always true, so the page is what it was.
+ */
+export const hasSourceSection = (o: SourceOffer) => !(o.licensor_owned?.length && !o.upstreams.length && o.app.kind !== "offered");
 
 /** What the licensor's exception means, in one sentence (the About page, the footer, the MCP line). */
 export const LICENSOR_EXCEPTION_TEXT =

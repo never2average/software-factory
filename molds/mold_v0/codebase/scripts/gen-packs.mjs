@@ -721,8 +721,20 @@ function limitsProblem(v, plans = true) {
 /** profile.json `source_offer` (mold_v0-050): null when it is well formed, else what is wrong. */
 const SPDX = /^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/;
 function sourceOfferProblem(v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app}";
-  for (const k of Object.keys(v)) if (k !== "app" && k !== "$comment") return `unknown field ${k} (known: app)`;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app, upstreams}";
+  for (const k of Object.keys(v)) if (k !== "app" && k !== "upstreams" && k !== "$comment") return `unknown field ${k} (known: app, upstreams)`;
+  // The packs whose pinned upstream is the licensor's own project (mold_v0-099): {"<pack id>": "licensor_owned"}, each a
+  // pack of this build that pins an upstream (an id that is not would hide nothing, or something later added by mistake).
+  if (v.upstreams !== undefined) {
+    const u = v.upstreams;
+    if (!u || typeof u !== "object" || Array.isArray(u) || !Object.keys(u).length) return 'upstreams must be an object {"<pack id>": "licensor_owned"}';
+    for (const [id, how] of Object.entries(u)) {
+      if (how !== "licensor_owned") return `upstreams.${String(id).slice(0, 40)} must be "licensor_owned"`;
+      const pk = packs.find((p) => p.id === id);
+      if (!pk) return `upstreams names ${String(id).slice(0, 40)}, which is not a pack of this build`;
+      if (!pk.manifest.upstream) return `upstreams names ${id}, whose pack.json pins no upstream`;
+    }
+  }
   const a = v.app;
   if (a === undefined || a === "licensor_exception") return null;
   if (!a || typeof a !== "object" || Array.isArray(a)) return 'app must be "licensor_exception" or {url, license}';
@@ -854,6 +866,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
   if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
+  if (hostProfiles[0]?.host.profile?.source_offer?.upstreams !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set source_offer.upstreams: only the app's own profile.json says an upstream is its licensor's own (mold_v0-099)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
   {
     for (const [k, v] of Object.entries(pf)) {
@@ -875,6 +888,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       // Where the build's own source is offered (mold_v0-050, src/source-offer.ts), optional: {app: {url, license}} or
       // {app: "licensor_exception"} (the licensor's additional permission applies to this deployment, and it says so).
       if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
+      // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
+      if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
       if (k === "landing") { profileLanding = v; continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
@@ -886,7 +901,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, landing)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1078,9 +1093,9 @@ function readLanding() {
   if (declaring.length > 1) fail("packs", `packs ${declaring.map((p) => p.id).join(" and ")} both declare a landing block: at most one pack of a build declares one (the app's profile.json landing changes it)`);
   const fromPack = declaring.length === 1 ? declaring[0].json.landing : null;
   const offerPacks = packs.filter((p) => p.manifest.upstream).map((p) => ({ id: p.id, manifest: { name: p.manifest.name, upstream: p.manifest.upstream }, definition: {} }));
-  if (fromPack === null && profileLanding === undefined && !offerPacks.length && profile.source_offer === undefined) return { landing: null, offer: [] };
+  if (fromPack === null && profileLanding === undefined && !offerPacks.length && profile.source_offer === undefined) return { landing: null, offer: [], sourceSection: true };
   const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
-  if (!existsSync(tsx)) { fail("landing", `reading the landing block and the source offer needs tsx (${rel(tsx)}): run npm ci`); return { landing: null, offer: [] }; }
+  if (!existsSync(tsx)) { fail("landing", `reading the landing block and the source offer needs tsx (${rel(tsx)}): run npm ci`); return { landing: null, offer: [], sourceSection: true }; }
   const dir = mkdtempSync(path.join(tmpdir(), "gen-packs-landing-"));
   try {
     const script = path.join(dir, "landing.mts");
@@ -1088,22 +1103,23 @@ function readLanding() {
 import { readFileSync } from "node:fs";
 const [landingApi, offerApi, input] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const { landingProblems, mergeLanding } = await import(pathToFileURL(landingApi).href);
-const { sourceOffer, offerFooterItems } = await import(pathToFileURL(offerApi).href);
+const { sourceOffer, offerFooterItems, hasSourceSection } = await import(pathToFileURL(offerApi).href);
 const packBad = input.pack !== null && landingProblems(input.pack).length > 0;
 const profileProblems = input.profile === null ? [] : landingProblems(input.profile);
 const landing = packBad || profileProblems.length ? null : mergeLanding(input.pack, input.profile);
-const offer = offerFooterItems(sourceOffer(input.packs, input.setting ?? undefined));
-process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profileProblems, landing, offer }) + "\\n");
+const o = sourceOffer(input.packs, input.setting ?? undefined);
+const offer = offerFooterItems(o), sourceSection = hasSourceSection(o);
+process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profileProblems, landing, offer, sourceSection }) + "\\n");
 `);
     const inputFile = path.join(dir, "input.json"), mark = `LANDING_${randomBytes(12).toString("hex")}`;
     writeFileSync(inputFile, JSON.stringify([path.join(ROOT, "src", "landing.ts"), path.join(ROOT, "src", "source-offer.ts"),
       { pack: fromPack, profile: profileLanding === undefined ? null : profileLanding, packs: offerPacks, setting: profile.source_offer ?? null }]));
     const r = spawnSync(tsx, [script, inputFile, mark], { cwd: ROOT, encoding: "utf8", timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
-    if (r.status !== 0 || !line) { fail("landing", `reading the landing block failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return { landing: null, offer: [] }; }
+    if (r.status !== 0 || !line) { fail("landing", `reading the landing block failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return { landing: null, offer: [], sourceSection: true }; }
     const got = JSON.parse(line.slice(mark.length + 1));
     for (const pr of got.profileProblems) fail(rel(PROFILE_FILE), pr);
-    return { landing: got.landing, offer: got.offer };
+    return { landing: got.landing, offer: got.offer, sourceSection: got.sourceSection !== false };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1252,7 +1268,9 @@ files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER
   "/** The landing block (mold_v0-091, src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it; null: the neutral page. */\n" +
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
-  `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
+  `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n\n` +
+  "/** Whether the About page has a Source code section (src/source-offer.ts hasSourceSection, mold_v0-099): false when every upstream is the licensor's own. */\n" +
+  `export const aboutSourceSection: boolean = ${landingPage.sourceSection !== false};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);

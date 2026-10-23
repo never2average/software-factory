@@ -19,7 +19,17 @@
  *                      {app: "licensor_exception"} when the shell's licensor (or an affiliate) runs it under the additional
  *                      permission that does not require the offer, which the build then says (src/source-offer.ts);
  *                      absent, the build says nothing about its own source (its packs' copyleft upstreams are offered
- *                      either way)
+ *                      either way). `upstreams` (mold_v0-099): {"<pack id>": "licensor_owned"} for a pack whose pinned
+ *                      upstream is the app licensor's own project: as its copyright holder it need not offer that
+ *                      source, so the build does not (no About row, no footer line, no MCP instructions line; the About
+ *                      page's whole "Source code" section goes when nothing else is in it). Only the app's own
+ *                      profile.json sets `upstreams`, never a host pack's profile; gen-packs refuses a pack id the build
+ *                      does not have or whose pack pins no upstream
+ *   member_keys        optional (mold_v0-099): false turns per-member API keys off (src/member-keys.ts): the console's
+ *                      API keys page and its sidebar link go, the install pages and the setup offer sign-in (OAuth) only,
+ *                      POST /api/keys and the rest of /api/keys are refused (403, "member_keys_off"), and a member key
+ *                      made before is refused on /mcp with a sentence saying so (src/auth.ts resolveKey). Absent or
+ *                      true: as before. The account keys staff issue on /admin are not member keys and keep working
  *   billing            optional (mold_v0-019): price per run, off unless `enabled` is true (src/run-charges.ts); only
  *                      the app's own profile.json sets it, never a host pack's profile
  *   email              optional (mold_v0-083): the email adapter's transport and which notifications are on
@@ -49,6 +59,7 @@ export interface Profile {
   mcp_instructions?: string;
   install_clients?: readonly string[];
   source_offer?: SourceOfferSetting;
+  member_keys?: boolean;
   billing?: ProfileBilling;
   email?: ProfileEmail;
   entitlements?: ProfileEntitlements;
@@ -97,3 +108,12 @@ export const PROFILE: Readonly<Profile> = Object.freeze({ ...(GENERATED_PROFILE 
 
 /** The default sender, as Name <address> (an admin can change it on the Emails settings). */
 export const defaultSender = (p: Profile = PROFILE) => `${p.email_sender_name} <${p.email_from_address}>`;
+
+/** Whether people may make their own API keys (mold_v0-099, profile `member_keys`): on unless the profile says false. */
+export function memberKeysOn(p?: Pick<Profile, "member_keys">): boolean {
+  if (p) return p.member_keys !== false;
+  return testMemberKeys ?? PROFILE.member_keys !== false;
+}
+let testMemberKeys: boolean | undefined;
+/** Tests only: turn member keys on or off as the profile would (null: the profile's own setting). */
+export function setMemberKeysForTest(on: boolean | null) { testMemberKeys = on ?? undefined; }

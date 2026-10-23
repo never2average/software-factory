@@ -117,8 +117,11 @@ gateway; `cloudflare workers ai` the default.
 
 ## mold_v0: the app's own profile settings (`## Profile`, `## Budgets`)
 
-A mold_v0 app may set some of its build's profile fields from its own state (mold_v0-090): today `limits`, the
-platform's ceilings (`src/rate-limits.ts`: `mcp`, `endpoints`, `runs`, and `plans.<plan>` for one plan's own). The
+A mold_v0 app may set some of its build's profile fields from its own state (mold_v0-090): `limits`, the
+platform's ceilings (`src/rate-limits.ts`: `mcp`, `endpoints`, `runs`, and `plans.<plan>` for one plan's own);
+`member_keys` (mold_v0-099: `false` turns per-member API keys off, so clients connect by sign-in only); and
+`source_offer.upstreams` (mold_v0-099: one of the app's packs whose pinned upstream is the app licensor's own project,
+which the build then does not offer as source; `source_offer.app` stays the factory's `defaults.source_offer`). The
 mold names what an app may set (`molds/mold_v0/branding/rules.json` `profile.app_settable`); the factory checks each
 value as the build checks it (`.claude/scripts/lib/app_profile.py`, against the names in the shell's
 `scripts/gen-packs.mjs` `LIMIT_KEYS`).
@@ -132,6 +135,16 @@ limits.runs.budget_usd_max = 40
 limits.runs.kind_month_budget_usd = 500
 limits.plans.pro.mcp.per_key_per_minute: 600
 ```
+
+and, in a `## Profile` section (mold_v0-099), one per line:
+
+```
+member_keys = false
+source_offer.upstreams.<pack id> = licensor_owned
+```
+
+`member_keys` is `true` or `false`; an upstream setting names one of the app's own packs (`Packs:`) and the word
+`licensor_owned`, nothing else; the shell's generator refuses a pack that pins no upstream.
 
 - The heading is exactly `## Profile` or `## Budgets` (a note in brackets after it is fine: `## Budgets (operator,
   2026-10-22)`); `## Budget history` or a `###` heading is not one.
@@ -150,9 +163,9 @@ limits.plans.pro.mcp.per_key_per_minute: 600
   `limits.` setting outside those sections is ignored, and intake says so.
 - Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
   setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
-  `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer`
+  `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer.app`
   (the factory's `defaults.source_offer`), `billing`, `entitlements`, or anything else. A profile setting is never a
-  secret: every value is a number.
+  secret: every value is a number, true or false, or the word `licensor_owned`.
 - A host pack that brings its own value for the same field (`host.profile.limits`) is refused at the build: the shell
   merges a host pack's profile at the top level, so the app's would replace it whole.
 - Where it takes effect: `branding.py prepare` and `packs.py apply` write it into `build/<app_id>/profile.json` over the

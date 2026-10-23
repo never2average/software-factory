@@ -154,6 +154,54 @@ try {
     await http.close();
     console.log(`✓ the tool reference lists exactly the tools each role is offered (${names.length} across 2 packs), with input schemas, in the packs' words; no admin_only, excluded or staff tool`);
   }
+  // ---------- 6. member keys off (mold_v0-099): sign-in only, under Clerk and under the built-in sign-in ----------
+  {
+    const { setMemberKeysForTest } = await import("../src/profile.js");
+    const off = installGuide("https://desk.example", { member_keys: false });
+    assert.equal(off.api_keys, false, "the guide says keys are off");
+    assert.ok(off.clients.every((c) => c.api_key === null), "no client is offered a key");
+    assert.ok(!off.clients.some((c) => c.id === "header"), "nor the header-only entry");
+    assert.equal(installGuide("https://desk.example", { member_keys: true }).api_keys, undefined, "on: the guide is as before");
+    const http = await startHttp();
+    const pages = async () => {
+      const g = await (await http.req("GET", "/install.json")).json();
+      const out: Record<string, string> = { "/install": await (await http.req("GET", "/install")).text() };
+      for (const c of g.clients) out[`/install/${c.id}`] = await (await http.req("GET", `/install/${c.id}`)).text();
+      return { g, out };
+    };
+    setMemberKeysForTest(false);
+    try {
+      for (const provider of ["clerk", "builtin"] as const) {
+        process.env.AUTH_PROVIDER = provider;
+        const { g, out } = await pages();
+        assert.equal(g.sign_in, true, `${provider}: sign-in is the way in`);
+        assert.equal(g.api_keys, false);
+        assert.equal(g.clients.length, installGuide("https://desk.example", {}).clients.length, `${provider}: every client the build offers is still offered (each signs in)`);
+        for (const [pth, html] of Object.entries(out)) {
+          assert.ok(!/API key|Bearer|X-API-Key|your API key/i.test(html), `${provider} ${pth}: no key anywhere`);
+          if (pth !== "/install" && pth !== "/install/pi") assert.ok(html.includes("Sign in (recommended)"), `${provider} ${pth}: its sign-in steps`);
+        }
+        assert.ok(out["/install"]!.includes("Every client signs in with your account (OAuth).</p>"), `${provider}: /install says so`);
+      }
+    } finally { setMemberKeysForTest(null); delete process.env.AUTH_PROVIDER; }
+    // On again (the default): the key card is back, exactly as section 2 checked.
+    assert.ok((await (await http.req("GET", "/install/claude-code")).text()).includes("With an API key"), "on: the key card is back");
+    await http.close();
+    // gen-packs: member_keys is true or false, and reaches the console's profile.
+    const out = path.join(TMP, "gen-keys"), prof = path.join(TMP, "profile-keys.json"), none = path.join(TMP, "no-packs-keys");
+    mkdirSync(none, { recursive: true });
+    const gen = () => spawnSync(process.execPath, [path.join(ROOT, "scripts", "gen-packs.mjs"), "--packs", none, "--out", out, "--profile", prof], { cwd: ROOT, encoding: "utf8" });
+    writeFileSync(prof, JSON.stringify({ name: "Acme Desk", member_keys: false }));
+    const g = gen();
+    assert.equal(g.status, 0, g.stderr);
+    assert.ok(readFileSync(path.join(out, "web", "src", "config", "profile.generated.ts"), "utf8").includes('"member_keys": false'), "the console reads it (no API keys page or link)");
+    assert.ok(readFileSync(path.join(out, "src", "profile.generated.ts"), "utf8").includes('"member_keys": false'), "the server reads it");
+    for (const bad of ["false", 0, null, {}]) {
+      writeFileSync(prof, JSON.stringify({ name: "Acme Desk", member_keys: bad }));
+      assert.match(gen().stderr, /member_keys: true or false/, `refused: ${JSON.stringify(bad)}`);
+    }
+    console.log("✓ member keys off: every install page and /install.json offer sign-in only (Clerk and the built-in sign-in), no key card or header entry; gen-packs takes true or false");
+  }
   console.log("install-docs: all checks passed");
   process.exit(0);
 } finally {

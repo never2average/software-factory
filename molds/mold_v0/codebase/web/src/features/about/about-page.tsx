@@ -9,6 +9,7 @@ import PageContainer from '@/components/layout/page-container';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards } from '@/features/portal/shared';
+import { aboutSourceSection } from '@/config/landing.generated';
 
 interface Row { item: string; detail: string }
 interface Section { id: string; title: string; intro?: string; rows: Row[] }
@@ -18,7 +19,7 @@ interface About {
   deploy: { app_id: string; target: string; source: string } | null;
   sections: Section[];
   measured: Section;
-  offer: { upstreams: Upstream[]; app: { kind: 'offered'; url: string; license: string } | { kind: 'licensor_exception' } | { kind: 'not_stated' }; offered: boolean };
+  offer: { upstreams: Upstream[]; app: { kind: 'offered'; url: string; license: string } | { kind: 'licensor_exception' } | { kind: 'not_stated' }; offered: boolean; licensor_owned?: string[] };
 }
 
 /** `code` spans and https:// addresses as elements; everything else as text (React escapes it). */
@@ -68,7 +69,9 @@ export function AboutPage({ endpoint }: { endpoint: '/api/about' | '/api/admin/a
   }, [endpoint]);
   const source = data?.sections.find((s) => s.id === 'source');
   return (
-    <PageContainer pageTitle='About' pageDescription='The source code this service runs, and where its code runs, its data is kept and its model calls go.'>
+    <PageContainer pageTitle='About' pageDescription={aboutSourceSection
+      ? 'The source code this service runs, and where its code runs, its data is kept and its model calls go.'
+      : 'Where this service runs, where its data is kept and where its model calls go.'}>
       {error ? <ErrorState error={error} /> : !data ? <LoadingCards count={2} /> : (
         <div className='flex flex-col gap-4'>
           {source && <SectionCard s={source} />}

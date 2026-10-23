@@ -18,6 +18,11 @@
 // 5. Deploy facts (deploy-facts.json): gen-packs copies good ones into src/deploy-facts.generated.ts and the statement
 //    names the target, projects, database and secret NAMES; anything that could carry a value is refused, and the
 //    refusal never echoes it.
+// 7. An upstream that is the licensor's own (profile source_offer.upstreams, mold_v0-099): not offered anywhere (no MCP
+//    line, no footer on the root or install pages, no source_code in /install.json, no About section when nothing else is
+//    left in it, the landing footer empty and the About link plain "About"); with another pack's upstream or the app's
+//    own source still offered, the section stays with those. gen-packs refuses an id the build lacks or that pins no
+//    upstream, any value but "licensor_owned", and the setting in a host pack's profile.
 // 6. Never a secret: what the running server measures (database, object store, ClickHouse, webhooks, telemetry) gives
 //    providers, regions and hosts, and no user, password, key, path or query of any configured address appears in the
 //    answer; nor any of the server's own secret values.
@@ -273,6 +278,78 @@ try {
       assert.equal(databaseWords(u), want, u);
     console.log("✓ measured: region, database provider and region, object store, telemetry and webhooks by host only; no user, password, key, path or query of any address");
   }
+  // ---------- 7. an upstream that is the licensor's own (mold_v0-099) ----------
+  {
+    const { setSourceOfferForTest } = await import("../src/data-map.js");
+    const { hasSourceSection } = await import("../src/source-offer.js");
+    setPacksForTest([entry("fixture_vulns", offerPack())]);
+    const tok = await http.signIn(A.org, "member");
+    const about = async () => (await http.req("GET", "/api/about", { authorization: `Bearer ${tok}` })).json();
+    const withOffer = await (async () => { const c = await connect(A.org); const i = c.client.getInstructions() ?? ""; await c.close(); return i; })();
+    assert.ok(withOffer.includes("\n\nSource code: ") && withOffer.includes(REPO), "without the setting the upstream is offered (section 2)");
+    for (const app of [undefined, "licensor_exception"] as const) {
+      setSourceOfferForTest({ ...(app ? { app } : {}), upstreams: { fixture_vulns: "licensor_owned" } });
+      try {
+        const o = currentOffer();
+        assert.equal(o.offered, false, `${app ?? "no app setting"}: nothing offered`);
+        assert.deepEqual(o.upstreams, [], "the upstream is left out");
+        assert.deepEqual(o.licensor_owned, ["fixture_vulns"], "and said to be the licensor's own");
+        assert.equal(hasSourceSection(o), false);
+        const c = await connect(A.org);
+        const ins = c.client.getInstructions() ?? "";
+        await c.close();
+        assert.equal(ins, withOffer.slice(0, withOffer.indexOf("\n\nSource code:")), "the instructions are the build's, with the source paragraph gone and nothing else changed");
+        assert.ok(!ins.includes("Source code:") && !ins.includes(REPO) && !ins.includes(LICENSOR_EXCEPTION_TEXT), `no MCP line: ${ins.slice(-300)}`);
+        for (const p of ["/", "/install", "/install/claude-code", "/install/tools"]) {
+          const html = await (await http.req("GET", p)).text();
+          assert.ok(!html.includes("source-code") && !html.includes(REPO) && !html.includes("additional permission"), `${p}: no footer`);
+        }
+        assert.ok(!("source_code" in (await (await http.req("GET", "/install.json")).json())), "/install.json: no source_code");
+        const a = await about();
+        assert.ok(!a.sections.some((x: any) => x.id === "source"), `About: no Source code section (${a.sections.map((x: any) => x.id)})`);
+        assert.ok(["code", "data", "credentials", "models", "egress"].every((id) => a.sections.some((x: any) => x.id === id)), "the rest of the About page stays");
+        assert.ok(!dataMapMarkdown(dataMap()).includes("## Source code"), "nor in DATA-MAP.md");
+      } finally { setSourceOfferForTest(undefined); }
+    }
+    // Another pack's upstream, or the app's own source, keeps the section (with those only).
+    const up = (repo: string) => ({ repo, commit: SHA, license: "AGPL-3.0-only" });
+    const two = [{ id: "mine", manifest: { name: "Mine", upstream: up("https://github.com/acme/mine") }, definition: {} }, { id: "theirs", manifest: { name: "Theirs", upstream: up("https://github.com/other/theirs") }, definition: {} }];
+    const mixed = sourceOffer(two, { app: "licensor_exception", upstreams: { mine: "licensor_owned" } });
+    assert.deepEqual(mixed.upstreams.map((u) => u.pack), ["theirs"], "only the other's upstream");
+    assert.ok(mixed.offered && hasSourceSection(mixed) && !instructionsParagraph(mixed).includes("acme/mine") && instructionsParagraph(mixed).includes("other/theirs") && instructionsParagraph(mixed).endsWith(LICENSOR_EXCEPTION_TEXT), "offered, with the exception's sentence as before");
+    const ownApp = sourceOffer(two.slice(0, 1), { app: { url: "https://git.example.org/acme/desk", license: "AGPL-3.0-only" }, upstreams: { mine: "licensor_owned" } });
+    assert.ok(ownApp.offered && hasSourceSection(ownApp) && !offerFooterHtml(ownApp).includes("acme/mine"), "the app's own source offered: the section stays, without the licensor's upstream");
+    assert.equal(sourceOffer(two, undefined).licensor_owned, undefined, "no setting: nothing marked (the answer is as before)");
+    assert.ok(hasSourceSection(sourceOffer([], undefined)) && hasSourceSection(sourceOffer([], { app: "licensor_exception" })), "no setting: the section is always there");
+    // gen-packs: the build's landing footer and About link, and what it refuses.
+    const dir = path.join(TMP, "packs-owned"), out = path.join(TMP, "out-owned"), prof = path.join(TMP, "profile-owned.json");
+    mkdirSync(path.join(dir, "fixture_vulns"), { recursive: true });
+    writeFileSync(path.join(dir, "fixture_vulns", "pack.json"), JSON.stringify(offerPack()));
+    const run = (p: unknown) => { writeFileSync(prof, JSON.stringify(p)); return gen(["--packs", dir, "--out", out, "--profile", prof]); };
+    const landing = () => readFileSync(path.join(out, "web", "src", "config", "landing.generated.ts"), "utf8");
+    let g = run({ name: "Acme" });
+    assert.equal(g.status, 0, g.stderr);
+    assert.ok(landing().includes(COMMIT_URL) && landing().includes("export const aboutSourceSection: boolean = true;"), "without it: the landing footer offers the upstream, About keeps its section");
+    for (const app of [undefined, "licensor_exception"]) {
+      g = run({ name: "Acme", source_offer: { ...(app ? { app } : {}), upstreams: { fixture_vulns: "licensor_owned" } } });
+      assert.equal(g.status, 0, g.stderr);
+      assert.ok(landing().includes("export const sourceOfferItems: readonly OfferFooterItem[] = [];") && landing().includes("export const aboutSourceSection: boolean = false;"), `${app ?? "no app"}: no landing footer, the About link is plain About`);
+    }
+    for (const [bad, why] of [[{ nope: "licensor_owned" }, /not a pack of this build/], [{ fixture_vulns: true }, /must be "licensor_owned"/], [{}, /upstreams must be an object/], [["fixture_vulns"], /upstreams must be an object/]] as const)
+      assert.match(run({ name: "Acme", source_offer: { upstreams: bad } }).stderr, why, `refused: ${JSON.stringify(bad)}`);
+    { const j = offerPack(); delete j.upstream; writeFileSync(path.join(dir, "fixture_vulns", "pack.json"), JSON.stringify(j));
+      assert.match(run({ name: "Acme", source_offer: { upstreams: { fixture_vulns: "licensor_owned" } } }).stderr, /pins no upstream/, "a pack with no upstream"); }
+    writeFileSync(path.join(dir, "fixture_vulns", "pack.json"), JSON.stringify(offerPack()));
+    // Only the app's own profile.json says so: never a host pack's profile.
+    const hp = path.join(dir, "host_owner");
+    mkdirSync(hp, { recursive: true });
+    writeFileSync(path.join(hp, "pack.json"), JSON.stringify({ id: "host_owner", name: "Host owner", version: "1", host: { entry: "host.ts", profile: { source_offer: { upstreams: { fixture_vulns: "licensor_owned" } } } } }));
+    writeFileSync(path.join(hp, "host.ts"), "export default {};\n");
+    g = run({ name: "Acme", host_packs: ["host_owner"] });
+    assert.ok(g.status !== 0 && /host\.profile may not set source_offer\.upstreams/.test(g.stderr), `a host pack's profile may not: ${g.stderr.slice(0, 300)}`);
+    console.log("✓ an upstream the licensor owns: no MCP line, no footer (root, install, landing), no source_code, no About section (with or without the licensor's exception); others still offered; gen-packs checks it and refuses it from a host pack");
+  }
+
   await http.close();
   console.log("SOURCE OFFER TEST PASS");
 } finally {

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getDb } from "./db.js";
+import { memberKeysOn } from "./profile.js";
 import { clerkEnabled, isSuspended, mcpAudiences, memberships, onMembershipChange, organizations, verifyOAuthToken } from "./clerk.js";
 import { people } from "./people.js";
 import { accountRoleOf, type AccountRole } from "./account-roles.js";
@@ -62,9 +63,10 @@ export async function createApiKey(orgId: number, label = "default", userId: str
  * 30-second membership cache (cleared on the instance that changes a membership: a removal, suspension or role change
  * made elsewhere, in Clerk or on another instance, holds within 30 seconds), and is
  * refused when it came in a URL (`inUrl`: the legacy /mcp/<key> path and the preview's ?key=): a member key is
- * header-only. Older keys (the account's own, and those staff issued for a person) resolve exactly as before.
+ * header-only. Older keys (the account's own, and those staff issued for a person) resolve exactly as before. With
+ * member keys off (mold_v0-099) a member key is refused (`onRefused` hears why); the older keys still resolve.
  */
-export async function resolveKey(key: string | undefined | null, opts: { inUrl?: boolean } = {}): Promise<Org | null> {
+export async function resolveKey(key: string | undefined | null, opts: { inUrl?: boolean; onRefused?: (why: "member_keys_off") => void } = {}): Promise<Org | null> {
   if (!key || !key.startsWith(KEY_PREFIX)) return null;
   const db = await getDb();
   const [row] = await db.query<{ id: number; org_id: number; slug: string; name: string; user_id: string | null; scoped: boolean; clerk_org_id: string | null }>(
@@ -77,6 +79,9 @@ export async function resolveKey(key: string | undefined | null, opts: { inUrl?:
   let role: AccountRole | undefined;
   if (row.scoped) {
     if (opts.inUrl || !row.user_id) return null;
+    // Member keys off (mold_v0-099, profile member_keys: false): a key made while they were on is refused, and the
+    // caller is told why (the /mcp answer says to sign in instead).
+    if (!memberKeysOn()) { opts.onRefused?.("member_keys_off"); return null; }
     const r = await memberRole(row.user_id, row.clerk_org_id);
     if (!r) return null;
     role = r;

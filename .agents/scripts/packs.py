@@ -145,8 +145,13 @@ def _deploy_facts(build, app_id, rules):
     offer = ((load_factory(os.path.join(ROOT, "state")) or {}).get("defaults") or {}).get("source_offer")
     pp = os.path.join(build, "profile.json")
     doc = load(pp) if os.path.isfile(pp) else {}
-    if (doc.get("source_offer") or None) != (offer or None):
-        if offer: doc["source_offer"] = offer
+    # The operator's offer is source_offer's every part but `upstreams`, which is the app's own (application.json profile,
+    # mold_v0-099; lib/app_profile.py writes it): kept as it is here, as app_profile keeps this part.
+    cur = doc.get("source_offer") if isinstance(doc.get("source_offer"), dict) else {}
+    want = {k: v for k, v in (offer or {}).items() if k != "upstreams"}
+    if "upstreams" in cur: want["upstreams"] = cur["upstreams"]
+    if (doc.get("source_offer") or None) != (want or None):
+        if want: doc["source_offer"] = want
         else: doc.pop("source_offer", None)
         changed |= _write_json(pp, doc)
     return changed
@@ -403,7 +408,7 @@ def _app_profile(build, app_id, app):
     import app_profile
     try:
         if build is None:
-            errs = app_profile.problems(app.get("profile"), app.get("mold_id"), ROOT)
+            errs = app_profile.problems(app.get("profile"), app.get("mold_id"), ROOT, packs=app.get("packs") if isinstance(app.get("packs"), list) else None)
             if errs: raise ValueError("; ".join(errs))
             return False
         return app_profile.write(build, app, ROOT)
@@ -562,7 +567,7 @@ def rules_self_test():
                 "mkdirSync('src', { recursive: true });\nconst ids = readdirSync('packs', { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();\n"
                 "if (process.argv.includes('--check')) process.exit(0);\nwriteFileSync('src/packs.generated.ts', JSON.stringify(ids) + '\\n');\n"
                 "const LIMIT_KEYS = {\n  runs: [\"budget_usd_max\", \"kind_month_budget_usd\"],\n};\n")
-            os.makedirs(os.path.join(mold, "branding")); json.dump({"profile": {"file": "profile.json", "app_settable": ["limits"]}}, open(os.path.join(mold, "branding", "rules.json"), "w"))
+            os.makedirs(os.path.join(mold, "branding")); json.dump({"profile": {"file": "profile.json", "app_settable": ["limits", "member_keys", "source_offer.upstreams"]}}, open(os.path.join(mold, "branding", "rules.json"), "w"))
             man = load(os.path.join(keep[0], "molds", "mold_v0", "mold.json"))
             # mold_v0's rules with its registry generator only (the stand-in codebase has no tsx for the others)
             json.dump({"mold_id": "mold_t", "packs": dict(man["packs"], generators=man["packs"]["generators"][:1], verify=man["packs"]["verify"][:1]), "build_copy": man["build_copy"]}, open(os.path.join(mold, "mold.json"), "w"))
@@ -612,8 +617,20 @@ def rules_self_test():
             prof_app({"limits": lim}); ok(quiet(apply, "zz") == 0 and pj().get("limits") == lim, f"the app's limits in the deploy copy's profile.json: {pj()}")
             ok(quiet(lane_copies, "zz") == 0 and not any("limits" in pj(os.path.join(t, "build", x)) for x in ("zz.lane", "zz.lane-default")), "never in a lane copy (the mold's defaults are graded there)")
             prof_app(None); ok(quiet(apply, "zz") == 0 and "limits" not in pj(), "a setting taken out of state is taken out of the copy (back to the mold's own)")
+            # mold_v0-099: member_keys, and source_offer.upstreams (the app's part) beside the operator's source_offer.app
+            json.dump({"defaults": {"source_offer": {"app": "licensor_exception"}}}, open(os.path.join(t, "state", "factory.json"), "w"))
+            own = {"member_keys": False, "source_offer": {"upstreams": {"notes": "licensor_owned"}}}
+            prof_app(own); ok(quiet(apply, "zz") == 0 and pj().get("member_keys") is False and pj().get("source_offer") == {"app": "licensor_exception", "upstreams": {"notes": "licensor_owned"}},
+                              f"the app's member_keys and source_offer.upstreams, with the operator's source_offer.app kept: {pj()}")
+            ok(quiet(apply, "zz") == 0 and pj().get("source_offer") == {"app": "licensor_exception", "upstreams": {"notes": "licensor_owned"}}, "applied again: the same (each writer keeps the other's part)")
+            prof_app(None); ok(quiet(apply, "zz") == 0 and "member_keys" not in pj() and pj().get("source_offer") == {"app": "licensor_exception"}, f"taken out of state: back to the operator's offer alone: {pj()}")
+            json.dump({}, open(os.path.join(t, "state", "factory.json"), "w"))
+            prof_app(own); ok(quiet(apply, "zz") == 0 and pj().get("source_offer") == {"upstreams": {"notes": "licensor_owned"}}, "no operator default: the app's part alone")
+            prof_app(None); ok(quiet(apply, "zz") == 0 and "source_offer" not in pj(), "and gone with it")
             for bad, why in (({"host_packs": ["notes"]}, "host_packs"), ({"source_offer": {"app": "licensor_exception"}}, "source_offer"), ({"limits": {"runs": {"budget_usd_max": "40"}}}, "positive number"),
-                             ({"limits": {"runs": {"live_per_workspace": 3}}}, "is not a limit"), ({"limits": {"runs": {"budget_usd_max": True}}}, "positive number"), ({"email_from_address": "a@b.c"}, "not settable")):
+                             ({"limits": {"runs": {"live_per_workspace": 3}}}, "is not a limit"), ({"limits": {"runs": {"budget_usd_max": True}}}, "positive number"), ({"email_from_address": "a@b.c"}, "not settable"),
+                             ({"member_keys": "false"}, "true or false"), ({"source_offer": {"upstreams": {"tasks": "licensor_owned"}}}, "a pack the app does not have"),
+                             ({"source_offer": {"upstreams": {"notes": "yes"}}}, "a value other than licensor_owned")):
                 prof_app(bad); open(os.path.join(b, "packs", "notes", "marker"), "w").write("x")
                 ok(quiet(apply, "zz") not in (0, None) and os.path.exists(os.path.join(b, "packs", "notes", "marker")) and "limits" not in pj(),
                    f"refused before anything is copied (the pack's folder not rewritten, no limits written): a profile with {why}")

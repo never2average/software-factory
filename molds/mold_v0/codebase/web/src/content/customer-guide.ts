@@ -6,6 +6,10 @@
 // (mcp-tools.generated.json) and the profile's name are passed in, so neither side needs a JSON import here.
 import { slugify } from './docs-text';
 import { HOST_GUIDES } from '../config/pack-guides.generated';
+import { profile } from '../config/profile.generated';
+
+/** Member API keys (mold_v0-099, profile `member_keys`): off, every client signs in and the guide names no key. */
+const keysOff = (profile as Readonly<Record<string, unknown>>).member_keys === false;
 
 /** scripts/export-mcp-tools.ts's output: the customer server's tools and slash commands. */
 export interface ToolCatalog {
@@ -26,8 +30,8 @@ const shellMarkdown = (catalog: ToolCatalog) => `
 ## Getting started
 
 Connect your AI client to this workspace's MCP server from the **Setup & training** page: pick your client, follow its
-one step, then press **Test my connection**. Clients that sign in (OAuth) need no key; the others send an API key in a
-header, never in a URL. The public install pages at \`/install\` show every client's setup.
+one step, then press **Test my connection**. ${keysOff ? 'Every client signs in with your account (OAuth): there is no key to copy.' : `Clients that sign in (OAuth) need no key; the others send an API key in a
+header, never in a URL.`} The public install pages at \`/install\` show every client's setup.
 
 ## MCP tools
 

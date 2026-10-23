@@ -3,19 +3,29 @@
 A mold whose build reads a profile FILE (molds/<mold>/branding/rules.json `profile`; mold_v0's profile.json, which
 scripts/gen-packs.mjs checks and compiles into src/profile.generated.ts) may let an app set some of that file's fields
 from its own state. Which ones the mold names in the same rules (`profile.app_settable`); this module knows how to check
-each one the factory can check. Today that is `limits` only (src/rate-limits.ts: the platform's ceilings, e.g.
-limits.runs.budget_usd_max). Everything else in the profile is someone else's:
+each one the factory can check. Today (mold_v0):
+
+  limits                     src/rate-limits.ts: the platform's ceilings, e.g. limits.runs.budget_usd_max
+  member_keys                true or false (mold_v0-099): false turns per-member API keys off; clients sign in
+  source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
+                             the app licensor's own project, which the build then does not offer. Only this part of
+                             source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
+                             each writer keeps the other's part
+
+An entry of app_settable may be a dotted path (`source_offer.upstreams`): the app then sets that part of the field only.
+Everything else in the profile is someone else's:
 
   name and the brand's words   the brand (surface.branding; branding.py set) writes them
   host_packs                   packs.py writes it from application.packs and mold.json packs.host_packs
-  source_offer                 the factory's defaults.source_offer (packs.py)
+  source_offer.app             the factory's defaults.source_offer (packs.py)
   billing, entitlements        money and plans: not settable from state (a ticket of their own)
   anything else                not settable from state; the shell's own default or a host pack's profile applies
 
-Never a secret: every value this module accepts is a positive number under a name the shell already knows.
+Never a secret: every value this module accepts is a positive number under a name the shell already knows, true or
+false, or the word licensor_owned under one of the app's own pack ids.
 
-Where a value comes from: the brief (intake reads `limits.<section>.<name> = <number>` lines in a `## Profile` or
-`## Budgets` section; docs/INTAKE.md), recorded in application.json `profile`, written by branding.py prepare and
+Where a value comes from: the brief (intake reads `limits.<section>.<name> = <number>`, `member_keys = false` and
+`source_offer.upstreams.<pack id> = licensor_owned` lines in a `## Profile` or `## Budgets` section; docs/INTAKE.md), recorded in application.json `profile`, written by branding.py prepare and
 packs.py apply into build/<app_id>/profile.json over the mold's own profile.json (the app wins over the mold default; a
 field the app does not set is put back to the mold's, so a setting taken out of the brief does not linger in a build),
 then the mold's generator checks it again and compiles it. A deploy rebuilds the copy, so a change takes effect at the
@@ -31,7 +41,7 @@ RESERVED = {
     "console_description": "the brand's description writes it (branding.py)", "slug": "the brand writes it (branding.py)",
     "tagline": "the brand writes it (branding.py)", "description": "the brand writes it (branding.py)",
     "host_packs": "packs.py writes it from application.packs and the mold's host_packs list; an app never names its own host packs",
-    "source_offer": "the factory's defaults.source_offer writes it (packs.py)",
+    "source_offer": "the factory's defaults.source_offer writes its app part (packs.py); an app sets only source_offer.upstreams",
     "billing": "money settings are not settable from an app's state",
     "entitlements": "what each plan unlocks is not settable from an app's state",
     "$comment": "the factory writes the file's comment",
@@ -85,17 +95,48 @@ def _limits_problems(v, keys, at="limits", plans=True, maxes=None):
                             f"profile.app_limits_max): raising that ceiling is a reviewed change to the factory, never a brief or state edit")
     return errs
 
-def problems(profile, mold_id, root):
-    """Sentences: what is wrong with an app's `profile` for its mold ([] when it is right, or absent)."""
+PACK = re.compile(r"[a-z][a-z0-9_-]{1,40}")                     # application.schema.json packs[] items
+OWNED = "licensor_owned"
+
+def _parts(settable):
+    """{field: [sub-fields] or None (the whole field)} from app_settable's entries ("limits", "source_offer.upstreams")."""
+    out = {}
+    for e in settable:
+        top, _, sub = str(e).partition(".")
+        if sub: out.setdefault(top, []); out[top] is not None and out[top].append(sub)
+        else: out[top] = None
+    return out
+
+def _upstreams_problems(v, packs):
+    if not isinstance(v, dict) or not v: return ['profile.source_offer.upstreams must be an object {"<pack id>": "licensor_owned"}']
+    errs = []
+    for pid, how in v.items():
+        if not isinstance(pid, str) or not PACK.fullmatch(pid): errs.append(f"profile.source_offer.upstreams: {str(pid)[:60]!r} is not a pack id"); continue
+        if how != OWNED: errs.append(f"profile.source_offer.upstreams.{pid} must be \"{OWNED}\" (got {json.dumps(how)[:40]})")
+        elif packs is not None and pid not in packs: errs.append(f"profile.source_offer.upstreams.{pid}: the app has no pack {pid} (application.json packs)")
+    return errs
+
+def problems(profile, mold_id, root, packs=None):
+    """Sentences: what is wrong with an app's `profile` for its mold ([] when it is right, or absent). `packs`: the app's
+    pack ids (application.json packs), when known, for source_offer.upstreams."""
     if profile is None: return []
     if not isinstance(profile, dict): return ["profile must be an object of profile fields"]
     if not profile: return ["profile is empty: leave it out instead"]
     s = spec(mold_id, root)
     if s is None: return [f"profile: {mold_id} takes no profile settings from an app's state (its branding rules name none)"]
     errs, settable = [], list(s["app_settable"])
+    parts = _parts(settable)
     for k, v in profile.items():
-        if k in RESERVED: errs.append(f"profile.{k} cannot be set by the app: {RESERVED[k]}")
+        if parts.get(k):      # only some parts of this field are the app's (source_offer.upstreams)
+            if not isinstance(v, dict) or not v: errs.append(f"profile.{k} must be an object of {', '.join(parts[k])}"); continue
+            for sub, sv in v.items():
+                if sub not in parts[k]: errs.append(f"profile.{k}.{sub} cannot be set by the app: {RESERVED.get(k, 'not settable from an app state')}")
+                elif f"{k}.{sub}" == "source_offer.upstreams": errs += _upstreams_problems(sv, packs)
+                else: errs.append(f"profile.{k}.{sub}: the factory has no check for this field yet, so it is refused")
+        elif k in RESERVED: errs.append(f"profile.{k} cannot be set by the app: {RESERVED[k]}")
         elif k not in settable: errs.append(f"profile.{k} is not settable from an app's state (settable: {', '.join(settable)})")
+        elif k == "member_keys":
+            if not isinstance(v, bool): errs.append(f"profile.member_keys must be true or false (got {json.dumps(v)[:40]})")
         elif k == "limits":
             keys = limit_keys(os.path.join(root, "molds", mold_id, "codebase"))
             if keys is None: errs.append(f"profile.limits: the limit names could not be read from molds/{mold_id}/codebase/scripts/gen-packs.mjs (LIMIT_KEYS)")
@@ -122,6 +163,10 @@ MENTION = re.compile(r"(?<![\w.])limits((?:\.[A-Za-z0-9_-]+)+)")
 # else after it ("4 0", "4e9", "40k", "40 million", "40%", "400 but chose 40") makes the setting unreadable: refused.
 ASSIGN = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*(?:US[ \t]?)?\$?[ \t]*([0-9]+(?:\.[0-9]+)?)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
+# The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
+# ends the clause as a number does above.
+WORDSET = re.compile(r"(?<![\w.])(member_keys|source_offer\.upstreams\.([A-Za-z0-9_-]+))(?![\w.-])")
+WORD = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*([A-Za-z_]+)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
 
 def _clean(text):
     """The brief as a reader sees it: HTML comments, fenced code and struck-through text blanked (same length, so offsets
@@ -141,7 +186,8 @@ def _sections(text):
 
 def from_brief(text):
     """-> (profile or None, problems, notes). Reads `limits.<section>.<name> = <number>` (or `:`) in a `## Profile` or
-    `## Budgets` section; `limits.plans.<plan>.<section>.<name> = <number>` for one plan. A setting written twice with two
+    `## Budgets` section; `limits.plans.<plan>.<section>.<name> = <number>` for one plan; `member_keys = false` (or true)
+    and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099). A setting written twice with two
     values, a value that is not a positive number, and (in `## Profile`) any other field is a problem; a `limits.` setting
     outside those sections is ignored and said."""
     prof, errs, notes, seen = {}, [], [], {}
@@ -161,20 +207,60 @@ def from_brief(text):
             d = prof.setdefault("limits", {})
             for part in path[:-1]: d = d.setdefault(part, {})
             d[path[-1]] = n
+        for m in WORDSET.finditer(body):
+            name, w = m.group(1), WORD.match(body, m.end())
+            if name == "member_keys":
+                val = {"true": True, "false": False}.get(w.group(1).lower()) if w else None
+                if val is None: errs.append(f"{head}: member_keys has no value I can read; write it as `member_keys = false` (or true)"); continue
+                path = ["member_keys"]
+            else:
+                if not w or w.group(1) != OWNED: errs.append(f"{head}: {name} has no value I can read; write it as `{name} = {OWNED}`"); continue
+                val, path = OWNED, ["source_offer", "upstreams", m.group(2)]
+            if name in seen and seen[name] != val: errs.append(f"{head}: {name} is set twice ({json.dumps(seen[name])} and {json.dumps(val)}); keep one"); continue
+            seen[name] = val
+            d = prof
+            for part in path[:-1]: d = d.setdefault(part, {})
+            d[path[-1]] = val
         for m in OTHER.finditer(body):      # a reserved field written as a setting: said, never silently dropped
+            if m.group(1) == "source_offer" and m.group(2).startswith(".upstreams."): continue   # the app's part, read above
             if m.group(1) in RESERVED: errs.append(f"{head}: {m.group(1)}{m.group(2)} cannot be set by the app: {RESERVED[m.group(1)]}")
     for m in MENTION.finditer(text):
         if not any(a <= m.start() < b for a, b in spans) and re.match(r"`?[ \t]*[=:]", text[m.end():]):
             notes.append(f"limits{m.group(1)} outside a ## Profile or ## Budgets section: ignored")
+    for m in WORDSET.finditer(text):
+        if not any(a <= m.start() < b for a, b in spans) and re.match(r"`?[ \t]*[=:]", text[m.end():]):
+            notes.append(f"{m.group(1)} outside a ## Profile or ## Budgets section: ignored")
     return (prof or None), errs, notes
 
 # ---- the build copy ------------------------------------------------------------------------------------------------
+_NONE = object()
+def _get(d, path):
+    """The value at a dotted path of app_settable ("limits", "source_offer.upstreams") in d, else _NONE."""
+    for part in path.split("."):
+        if not isinstance(d, dict) or part not in d: return _NONE
+        d = d[part]
+    return d
+
+def _put(doc, path, v):
+    """Set (or, with _NONE, remove) the value at a dotted path, keeping the rest of its field; an emptied field goes."""
+    *outer, last = path.split(".")
+    at, chain = doc, []
+    for part in outer:
+        if not isinstance(at.get(part), dict):
+            if v is _NONE: return
+            at[part] = {}
+        chain.append((at, part)); at = at[part]
+    if v is _NONE: at.pop(last, None)
+    else: at[last] = v
+    for parent, part in reversed(chain):
+        if parent[part] == {}: parent.pop(part)
+
 def write(build_dir, app, root):
     """Write the app's `profile` into build_dir's profile file over the mold's own (each settable field: the app's value,
     else the mold's, else absent). Raises ValueError with the problems when the profile is wrong (nothing written).
     -> whether the file changed. A mold that takes no app profile: nothing (and an app profile is a problem)."""
     mold_id = app.get("mold_id"); prof = app.get("profile")
-    errs = problems(prof, mold_id, root)
+    errs = problems(prof, mold_id, root, packs=app.get("packs") if isinstance(app.get("packs"), list) else None)
     if errs: raise ValueError("; ".join(errs))
     s = spec(mold_id, root)
     if s is None: return False
@@ -192,9 +278,8 @@ def write(build_dir, app, root):
         both = sorted(k for k in prof if k in hprof)
         if both: raise ValueError(f"host pack {hp} brings its own {', '.join(both)} in its profile, which the app's would replace whole; set them in one place")
     for k in s["app_settable"]:
-        if prof and k in prof: doc[k] = prof[k]
-        elif k in base: doc[k] = base[k]
-        else: doc.pop(k, None)
+        mine, theirs = _get(prof, k), _get(base, k)
+        _put(doc, k, mine if mine is not _NONE else theirs)
     if json.dumps(doc, sort_keys=True) == before: return False
     if os.path.lexists(p): os.remove(p)                 # never write through a hard link into the mold
     with open(p, "w") as fh: fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
@@ -210,13 +295,19 @@ def check(build_dir, app, root):
     bp = os.path.join(root, "molds", app["mold_id"], "codebase", s["file"])
     base = _load(bp) if os.path.isfile(bp) else {}
     for k in s["app_settable"]:
-        if k not in prof and have.get(k) != base.get(k): bad.append(f"{s['file']} carries a {k} the app does not set (left from an earlier build; rebuild the copy)")
+        if _get(prof, k) is _NONE and _get(have, k) != _get(base, k): bad.append(f"{s['file']} carries a {k} the app does not set (left from an earlier build; rebuild the copy)")
     if not prof: return bad
     gen = os.path.join(build_dir, "src", "profile.generated.ts")
     m = re.search(r"GENERATED_PROFILE = (\{.*?\n\}) as const;", open(gen).read(), re.S) if os.path.isfile(gen) else None
     try: compiled = json.loads(m.group(1)) if m else None
     except ValueError: compiled = None
-    for k, v in prof.items():
-        if have.get(k) != v: bad.append(f"{s['file']} does not carry the app's profile.{k} ({describe({k: v})})")
-        if compiled is None or compiled.get(k) != v: bad.append(f"src/profile.generated.ts does not carry the app's profile.{k} (the generator was not re-run)")
+    for k in s["app_settable"]:
+        v = _get(prof, k)
+        if v is _NONE: continue
+        if _get(have, k) != v: bad.append(f"{s['file']} does not carry the app's profile.{k} ({describe(_nest(k, v))})")
+        if compiled is None or _get(compiled, k) != v: bad.append(f"src/profile.generated.ts does not carry the app's profile.{k} (the generator was not re-run)")
     return bad
+
+def _nest(path, v):
+    for part in reversed(path.split(".")): v = {part: v}
+    return v
