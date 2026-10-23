@@ -785,9 +785,10 @@ def health_verdict(F, kv, public, pages=None):
 # compose_remote: check, deploy, set-secret, rollback
 # ---------------------------------------------------------------------------------------------------------
 def uses_build(app):
-    """An app with packs or a brand is built from a copy of its own, build/<app_id>/ (mold_v0-024), as mold_v1's apps are;
-    one with neither is deployed from the codebase as it is, exactly as before."""
-    return bool(isinstance(app, dict) and (app.get("packs") or (app.get("surface") or {}).get("branding")))
+    """An app with packs, a brand or profile settings of its own (application.json `profile`, mold_v0-090) is built from a
+    copy of its own, build/<app_id>/ (mold_v0-024), as mold_v1's apps are; one with none is deployed from the codebase as
+    it is, exactly as before."""
+    return bool(isinstance(app, dict) and (app.get("packs") or (app.get("surface") or {}).get("branding") or app.get("profile")))
 
 def source_for(app_id, app, root=None):
     return os.path.join(root or ROOT, "build", app_id) if uses_build(app) else codebase(app["mold_id"], root)
@@ -806,8 +807,8 @@ def build_source(app_id, app, root=None, say=print, run=subprocess.run):
     elif os.path.lexists(build): os.remove(build)
     steps = []
     if (app.get("surface") or {}).get("branding"): steps.append(("the brand", [sys.executable, os.path.join(SCRIPTS, "branding.py"), app_id, "prepare"]))
-    if app.get("packs"):
-        steps += [("the packs", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "apply", app_id]),
+    if app.get("packs") or app.get("profile"):   # packs.py apply also writes the app's profile settings (mold_v0-090)
+        steps += [("the packs and the app's profile settings" if app.get("profile") else "the packs", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "apply", app_id]),
                   ("the packs' checks", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "verify", app_id])]
     for what, cmd in steps:
         r = run(cmd, capture_output=True, text=True, cwd=root or ROOT)
@@ -1487,8 +1488,9 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # (checked again after this run's console deploy), the proxy hops; written before the API's deploy reads them.
         want = api_settings(man, v.get("production_url"))
         have = P.pull_env(cb, api, required=False)
-        for n, val in want.items():
-            if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
+        if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
+            for n, val in want.items():
+                if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
         for attempt in (1, 2):
             out = P.vercel_deploy(f"vercel deploy --prod --yes --project {api}{scope}", build, f"{api} deploy")
             if before["api"].get("id"): P.promote_new({"projects": {"api": before["api"]}}, cb, ["api"])   # after an earlier rollback Vercel holds production
@@ -1510,13 +1512,20 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
             P._set_env(K["api_env"], api_url, cb, project=web); say(f"  {web}: {K['api_env']} set to the API's address {api_url}")
         out = P.vercel_deploy(f"vercel deploy --prod --yes --project {web}{scope}", os.path.join(build, K["dir"]), f"{web} deploy")
         if before["web"].get("id"): P.promote_new({"projects": {"web": before["web"]}}, cb, ["web"])
-        url = P._deployed_address(web, out, cb, infra); v["production_url"] = url
+        url = P._deployed_address(web, out, cb, infra)
+        # The console's front door (mold_v0-084): its own domain once `domain.py switch` made it so and Vercel files it under
+        # this project, else the address just read back. Emails link to it, and it stays the recorded production address.
+        front = P._front_door(infra, url, cb) if hasattr(P, "_front_door") else url
+        v["production_url"] = front
         bad, h = console_verdict(P, url, K, read_page); v["health"].update(h)
         if bad: raise Stop(f"{web} deployed to {url}, but " + "; ".join(bad))
         # The console's address is known now: the API's emails must link to it (mold_v0-084). When it is not what the
         # API holds (a first deploy, or a new address), it is written and the API deployed once more to read it.
         have = P.pull_env(cb, api, required=False)
-        stale = {n: val for n, val in api_settings(man, url).items() if have.get(n) != val}
+        stale = {n: val for n, val in api_settings(man, front).items() if have.get(n) != val}
+        if stale and not have and P.vercel_env_names(cb, api):
+            # The project holds names but none could be read back (a failed pull): never take that for "stale".
+            say(f"  NOTE: {api}'s settings could not be read back; {', '.join(stale)} left as they are (the next deploy checks again)"); stale = {}
         if stale:
             for n, val in stale.items(): P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}; deploying the API once more so it reads it")
             P.vercel_deploy(f"vercel deploy --prod --yes --project {api}{scope}", build, f"{api} deploy")

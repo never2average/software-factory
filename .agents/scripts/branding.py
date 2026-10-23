@@ -515,6 +515,12 @@ def prepare(app_id, app, mold_dir, force=False):
     b = resolve(app)
     if not b:
         print("no branding on this app; building from the mold as-is"); return mold_dir
+    # The app's own profile settings (application.json `profile`, mold_v0-090; lib/app_profile.py), refused BEFORE the copy
+    # is made; written into its profile file before the overlay, whose generator run then compiles them with the brand.
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+    import app_profile
+    perrs = app_profile.problems(app.get("profile"), app.get("mold_id"), ROOT)
+    if perrs: sys.exit(f"{app_id}: the app's profile settings were refused, so nothing was built: " + "; ".join(perrs))
     build_dir = build_copy(app_id, mold_dir, force)
     # The starter library state asks for goes in BEFORE the overlay, which regenerates the deployment profile with
     # the brand: library.install "all" names the mold's account-delivery library in profiles/, "none" leaves it out.
@@ -522,6 +528,7 @@ def prepare(app_id, app, mold_dir, force=False):
     import library
     library.apply(build_dir, app, mold_dir)
     rules = load(os.path.join(os.path.dirname(mold_dir), "branding", "rules.json"))
+    app_profile.write(build_dir, app, ROOT)     # checked above; packs.py apply writes them again
     applied = apply_overlay(build_dir, b, rules)
     info = getattr(apply_overlay, "icon_info", None)
     if info:
@@ -720,12 +727,31 @@ def self_test_v0(ok):
         # the command line, for a throwaway app under a temp factory root (the scripts and the mold linked, read-only)
         f = os.path.join(t, "factory"); os.makedirs(os.path.join(f, ".claude")); os.makedirs(os.path.join(f, "molds")); os.makedirs(os.path.join(f, "state", "application", "zz_brand"))
         os.symlink(os.path.dirname(os.path.abspath(__file__)), os.path.join(f, ".claude", "scripts")); os.symlink(mold, os.path.join(f, "molds", "mold_v0"))
-        json.dump({"app_id": "zz_brand", "mold_id": "mold_v0", "status": "planned", "surface": {"branding": brand}}, open(os.path.join(f, "state", "application", "zz_brand", "application.json"), "w"))
+        lim = {"limits": {"runs": {"budget_usd_max": 40, "kind_month_budget_usd": 500}}}     # mold_v0-090: the app's own profile settings
+        json.dump({"app_id": "zz_brand", "mold_id": "mold_v0", "status": "planned", "surface": {"branding": brand}, "profile": lim}, open(os.path.join(f, "state", "application", "zz_brand", "application.json"), "w"))
         me = os.path.join(f, ".claude", "scripts", "branding.py")
         r1 = subprocess.run([sys.executable, me, "zz_brand", "prepare"], capture_output=True, text=True)
         r2 = subprocess.run([sys.executable, me, "zz_brand", "check"], capture_output=True, text=True)
         ok_(r1.returncode == 0 and "branded build copy: build/zz_brand" in r1.stdout and r2.returncode == 0 and "branding ok" in r2.stdout,
             f"mold_v0: branding.py <app> prepare, then check, for an app under a temp factory root: {(r1.stdout + r1.stderr)[-300:]} {(r2.stdout + r2.stderr)[-300:]}")
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")); import app_profile
+        zb = os.path.join(f, "build", "zz_brand"); zp = load(os.path.join(zb, "profile.json")) if os.path.isfile(os.path.join(zb, "profile.json")) else {}
+        ok_(zp.get("limits") == lim["limits"] and zp.get("name") == "Acme Ops" and app_profile.check(zb, {"mold_id": "mold_v0", "profile": lim}, f) == []
+            and "budget_usd_max" not in open(os.path.join(code, "src", "profile.generated.ts")).read(),
+            f"mold_v0-090: prepare writes the app's profile settings into the copy's profile.json with the brand, and the generator compiles them (the mold untouched): {zp.get('limits')}")
+        ok_(app_profile.check(zb, {"mold_id": "mold_v0"}, f) and app_profile.check(zb, {"mold_id": "mold_v0", "profile": {"limits": {"runs": {"budget_usd_max": 30}}}}, f),
+            "mold_v0-090: verify's check finds a copy carrying limits the app does not set, or other values than the app's")
+        hb = os.path.join(t, "hostcopy"); os.makedirs(os.path.join(hb, "packs", "hp"))
+        json.dump({"host_packs": ["hp"]}, open(os.path.join(hb, "profile.json"), "w")); json.dump({"host": {"profile": {"limits": {"mcp": {"per_key_per_minute": 5}}}}}, open(os.path.join(hb, "packs", "hp", "pack.json"), "w"))
+        try: app_profile.write(hb, {"mold_id": "mold_v0", "profile": lim}, f); ok_(False, "a host pack's own limits")
+        except ValueError as e: ok_("host pack hp brings its own limits" in str(e) and "limits" not in load(os.path.join(hb, "profile.json")),
+                                    "mold_v0-090: an app's limits never silently replace a host pack's own (the shell merges them at the top level): refused")
+        for bad, why in (({"host_packs": ["x"]}, "host_packs"), ({"limits": {"runs": {"budget_usd_max": -1}}}, "positive"), ({"name": "Other"}, "the brand writes it"),
+                         ({"limits": {"runs": {"budget_usd": 40}}}, "is not a limit"), ({"billing": {"enabled": True}}, "money")):
+            json.dump({"app_id": "zz_bad", "mold_id": "mold_v0", "status": "planned", "surface": {"branding": brand}, "profile": bad},
+                      open(os.path.join(f, "state", "application", "zz_brand", "application.json"), "w"))
+            r3 = subprocess.run([sys.executable, me, "zz_brand", "prepare"], capture_output=True, text=True)
+            ok_(r3.returncode != 0 and why in r3.stdout + r3.stderr and "refused" in r3.stdout + r3.stderr, f"mold_v0-090: prepare refuses a profile setting the app may not make ({why}): {(r3.stdout + r3.stderr)[-300:]}")
     ok_(tree(code) == before, "mold_v0: the mold's own files are untouched")
     return len(seen)
 
