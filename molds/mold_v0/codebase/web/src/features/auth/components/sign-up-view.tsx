@@ -1,6 +1,6 @@
 import { SignUp } from '@clerk/nextjs';
 import Link from 'next/link';
-import { profile } from '@/config/profile.generated';
+import { fill } from '@/lib/vocabulary';
 import { CLERK } from '@/lib/auth/provider';
 import { accountsMode } from '@/features/site/accounts-mode';
 import { AuthShell } from './auth-shell';
@@ -17,7 +17,7 @@ export default async function SignUpViewPage() {
       <div className='flex flex-col items-center gap-6'>
         {inviteOnly ? (
           <div className='bg-card text-card-foreground w-full max-w-sm rounded-xl border p-4 text-sm' data-testid='invite-only-note'>
-            <p className='font-medium'>{profile.name} is invite-only.</p>
+            <p className='font-medium'>{fill('{product} is invite-only.')}</p>
             <p className='text-muted-foreground mt-1'>
               Invited? Continue below with the address the invitation went to. No invitation yet?{' '}
               <Link href='/request-access' className='text-foreground inline-flex min-h-6 items-center font-medium underline underline-offset-4'>Request access</Link>

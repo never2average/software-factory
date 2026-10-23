@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Icons } from '@/components/icons';
-import { profile } from '@/config/profile.generated';
+import { fill } from '@/lib/vocabulary';
 
 export interface RequestAccessDefaults { email?: string; name?: string; company?: string }
 
@@ -57,7 +57,7 @@ export function RequestAccessForm({ defaults = {}, from, onSent }: { defaults?: 
       <div role='status' className='bg-card flex flex-col gap-2 rounded-xl border p-5' data-testid='request-access-sent'>
         <p className='flex items-center gap-2 font-semibold'><Icons.circleCheck aria-hidden='true' className='text-primary size-5 shrink-0' /> Request sent</p>
         <p className='text-muted-foreground text-sm break-words'>
-          Thank you. The {profile.name} team will look at it and, once it is approved, send an invitation to <span className='text-foreground font-medium break-all'>{sent}</span>. Nothing else is needed from you for now.
+          {fill('Thank you. The {product} team will look at it')} and, once it is approved, send an invitation to <span className='text-foreground font-medium break-all'>{sent}</span>. Nothing else is needed from you for now.
         </p>
       </div>
     );
@@ -81,7 +81,7 @@ export function RequestAccessForm({ defaults = {}, from, onSent }: { defaults?: 
         <Input id={`${id}-company`} name='company' autoComplete='organization' required maxLength={200} value={company} onChange={(e) => setCompany(e.target.value)} disabled={busy} className='h-10' />
       </div>
       <div className='grid gap-1.5'>
-        <Label htmlFor={`${id}-message`}>What would you like to use {profile.name} for? <span className='text-muted-foreground font-normal'>(optional)</span></Label>
+        <Label htmlFor={`${id}-message`}>{fill('What would you like to use {product} for?')} <span className='text-muted-foreground font-normal'>(optional)</span></Label>
         <Textarea id={`${id}-message`} name='message' maxLength={4000} rows={3} value={message} onChange={(e) => setMessage(e.target.value)} disabled={busy} />
       </div>
       <div>

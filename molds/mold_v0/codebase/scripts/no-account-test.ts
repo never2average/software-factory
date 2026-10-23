@@ -209,8 +209,8 @@ async function freePort() {
   });
 }
 
-/** Where the console finds the API (web/next.config.ts, src/lib/server-api.ts): the env name, under its old spelling too. */
-function apiUrlEnv(port: number) { return { APP_API_URL: `http://127.0.0.1:${port}`, OCTILLION_API_URL: `http://127.0.0.1:${port}` }; }
+/** Where the console finds the API (web/next.config.ts, src/lib/server-api.ts). */
+function apiUrlEnv(port: number) { return { APP_API_URL: `http://127.0.0.1:${port}` }; }
 
 /** The console built for this sign-in, against the API on `apiPort` (next build bakes the API's address in its rewrites). */
 function buildConsole(apiPort: number): string {

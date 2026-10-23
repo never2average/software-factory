@@ -16,10 +16,8 @@ import { BrandLogo } from '@/components/brand';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { Icons } from '@/components/icons';
-import { profile } from '@/config/profile.generated';
+import { fill } from '@/lib/vocabulary';
 import { RequestAccessForm } from '@/features/site/request-access-form';
-
-const an = (name: string) => `${/^[aeiou]/i.test(name) ? 'an' : 'a'} ${name}`;
 
 export interface NoAccountProps {
   /** `no_account`: nothing open (the API's 403); `choose`: signed in with no active account but in some (Clerk). */
@@ -72,7 +70,7 @@ export function NoAccount({ reason, accounts = [], email: serverEmail = null, pl
         <div className='mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10 sm:px-6 sm:py-14' data-testid='no-account'>
           <div className='flex flex-col gap-3'>
             <h1 className='text-2xl font-semibold tracking-tight text-balance break-words sm:text-3xl'>
-              {choosing ? `Choose your ${profile.name} account` : `You are not in ${an(profile.name)} account yet`}
+              {choosing ? fill('Choose your {product} {account}') : fill('You are not in a {product} {account} yet')}
             </h1>
             <p className='text-muted-foreground break-words'>
               Signed in as <span className='text-foreground font-medium break-all' data-testid='signed-in-as'>{email || 'an address with no email'}</span>.{' '}
@@ -82,7 +80,7 @@ export function NoAccount({ reason, accounts = [], email: serverEmail = null, pl
             </p>
             {!choosing && !platformAdmin ? (
               <p className='text-muted-foreground break-words'>
-                {profile.name} accounts are opened by invitation. If someone at your company already uses {profile.name}, ask them to invite{' '}
+                {fill('{product} {accounts} are opened by invitation. If someone you work with already uses {product}, ask them to invite')}{' '}
                 {email ? <span className='text-foreground break-all'>{email}</span> : 'you'}. Otherwise, ask for access below.
               </p>
             ) : null}
@@ -94,8 +92,7 @@ export function NoAccount({ reason, accounts = [], email: serverEmail = null, pl
             <section aria-labelledby='no-account-admin' className='bg-card flex flex-col gap-3 rounded-xl border p-5'>
               <h2 id='no-account-admin' className='flex items-center gap-2 text-lg font-semibold'><Icons.shield aria-hidden='true' className='text-primary size-5 shrink-0' /> You are platform staff</h2>
               <p className='text-muted-foreground text-sm break-words'>
-                The admin console works without an account. To use this portal yourself, create an account for your company there first
-                (Accounts, then New account) and invite your own address to it; then come back here.
+                {fill('The admin console works without {an account}. To use this portal yourself, create {an account} there first and invite your own address to it; then come back here.')}
               </p>
               <div>
                 <a href='/admin' className={cn(buttonVariants(), 'h-10 px-4')} data-testid='open-admin'>Open the admin console <Icons.arrowRight aria-hidden='true' /></a>
@@ -105,7 +102,7 @@ export function NoAccount({ reason, accounts = [], email: serverEmail = null, pl
 
           {choosing || invitations.length ? (
             <section aria-labelledby='no-account-yours' className='flex flex-col gap-3'>
-              <h2 id='no-account-yours' className='text-lg font-semibold'>{choosing ? 'Your accounts' : 'Invitations for you'}</h2>
+              <h2 id='no-account-yours' className='text-lg font-semibold'>{choosing ? fill('Your {accounts}') : 'Invitations for you'}</h2>
               {!isLoaded && !choosing ? <p role='status'><Icons.spinner aria-hidden='true' className='text-muted-foreground size-5 animate-spin' /><span className='sr-only'>Loading</span></p> : (
                 <ul className='flex flex-col gap-2'>
                   {mine.map((a) => (
@@ -129,13 +126,13 @@ export function NoAccount({ reason, accounts = [], email: serverEmail = null, pl
             </section>
           ) : null}
 
-          {pending ? <p role='status'><Icons.spinner aria-hidden='true' className='text-muted-foreground size-5 animate-spin' /><span className='sr-only'>Loading your accounts</span></p> : null}
+          {pending ? <p role='status'><Icons.spinner aria-hidden='true' className='text-muted-foreground size-5 animate-spin' /><span className='sr-only'>{fill('Loading your {accounts}')}</span></p> : null}
 
           {!choosing && !pending && !platformAdmin ? (
             <section aria-labelledby='no-account-request' className='flex flex-col gap-4'>
               <div className='flex flex-col gap-1'>
                 <h2 id='no-account-request' className='text-lg font-semibold'>Ask for access</h2>
-                <p className='text-muted-foreground text-sm break-words'>The {profile.name} team reads every request. When yours is approved, an invitation comes to your email.</p>
+                <p className='text-muted-foreground text-sm break-words'>{fill('The {product} team reads every request. When yours is approved, an invitation comes to your email.')}</p>
               </div>
               <RequestAccessForm from='/app' defaults={{ email, name }} key={email} />
             </section>
@@ -153,8 +150,8 @@ export function NoAccount({ reason, accounts = [], email: serverEmail = null, pl
 export function NoAccountNotice() {
   return (
     <div role='status' className='bg-card flex flex-col gap-3 rounded-xl border p-5' data-testid='no-account-notice'>
-      <p className='font-semibold'>You are not in {an(profile.name)} account here</p>
-      <p className='text-muted-foreground text-sm'>Open one of your accounts, accept an invitation, or ask for access.</p>
+      <p className='font-semibold'>{fill('You are not in a {product} {account} here')}</p>
+      <p className='text-muted-foreground text-sm'>{fill('Open one of your {accounts}, accept an invitation, or ask for access.')}</p>
       <div><a href='/app' className={cn(buttonVariants(), 'h-10 px-4')}>See your options <Icons.arrowRight aria-hidden='true' /></a></div>
     </div>
   );
