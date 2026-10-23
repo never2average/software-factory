@@ -6,8 +6,8 @@ from its own state. Which ones the mold names in the same rules (`profile.app_se
 each one the factory can check:
 
   limits               src/rate-limits.ts: the platform's ceilings, e.g. limits.runs.budget_usd_max
-  email                src/email.ts (mold_v0-101): {"notifications": [groups], "provider": resend|none}, the groups the
-                       shell knows (its NOTIFICATION_GROUPS)
+  email                src/email.ts (mold_v0-101): {"notifications": [groups], "provider": resend|none, "pitch": text},
+                       the groups the shell knows (its NOTIFICATION_GROUPS); pitch: the welcome email's sentence
   email_from_address   the default sender's address (src/profile.ts; the sender's NAME is the brand's)
 
 Email defaults (mold_v0-101; rules `profile.email_defaults`): an app that sets neither email field, and whose host pack's
@@ -102,7 +102,7 @@ def _limits_problems(v, keys, at="limits", plans=True, maxes=None):
 
 # ---- email (mold_v0-101) -------------------------------------------------------------------------------------------
 ADDRESS = re.compile(r'[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+')   # the shell's (src/email.ts ADDRESS)
-EMAIL_KEYS = ("provider", "notifications")
+EMAIL_KEYS = ("provider", "notifications", "pitch")
 PROVIDERS = ("resend", "none")      # the shell's test transport is never a deploy's
 
 def email_groups(codebase):
@@ -124,6 +124,8 @@ def _email_problems(v, groups, at="email"):
     for k in v:
         if k not in EMAIL_KEYS: errs.append(f"{at}.{k} is not an email setting (known: {', '.join(EMAIL_KEYS)})")
     if "provider" in v and v["provider"] not in PROVIDERS: errs.append(f"{at}.provider must be {' or '.join(PROVIDERS)} (got {json.dumps(v['provider'])[:40]})")
+    if "pitch" in v and (not isinstance(v["pitch"], str) or not v["pitch"].strip() or len(v["pitch"]) > 400 or re.search(r"[\x00-\x1f\x7f<>]", v["pitch"])):
+        errs.append(f"{at}.pitch: plain text on one line, up to 400 characters, no < or >")
     if "notifications" in v:
         n = v["notifications"]
         if not isinstance(n, list) or len(set(map(str, n))) != len(n) or not all(isinstance(g, str) for g in n):
@@ -223,7 +225,7 @@ MENTION = re.compile(r"(?<![\w.])limits((?:\.[A-Za-z0-9_-]+)+)")
 # The number ends the clause: end of line, `,` `;` or `.` before a space or the end, or a bracket after a space. Anything
 # else after it ("4 0", "4e9", "40k", "40 million", "40%", "400 but chose 40") makes the setting unreadable: refused.
 ASSIGN = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*(?:US[ \t]?)?\$?[ \t]*([0-9]+(?:\.[0-9]+)?)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
-EMAIL_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?(email_from_address|email\.notifications|email\.provider)`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M | re.I)
+EMAIL_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?(email_from_address|email\.notifications|email\.provider|email\.pitch)`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M | re.I)
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
 
 def _clean(text):
@@ -276,6 +278,7 @@ def from_brief(text):
             if key == "email_from_address": prof["email_from_address"] = raw
             elif key == "email.notifications":
                 prof.setdefault("email", {})["notifications"] = [] if raw.lower() in ("none", "off", "") else [g.strip().strip("`") for g in raw.split(",") if g.strip()]
+            elif key == "email.pitch": prof.setdefault("email", {})["pitch"] = raw
             else: prof.setdefault("email", {})["provider"] = raw.lower()
     for m in MENTION.finditer(text):
         if not any(a <= m.start() < b for a, b in spans) and re.match(r"`?[ \t]*[=:]", text[m.end():]):

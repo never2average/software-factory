@@ -155,11 +155,14 @@ limits.plans.pro.mcp.per_key_per_minute: 600
 ## Profile
 email_from_address = hello@yourcompany.com
 email.notifications = access_requests, due_dates
+email.pitch = {product} audits your applications against your regulators' controls.
 ```
 
 - `email_from_address`: one address, on a domain the email provider (Resend) has verified. `email.notifications`: the
   groups the shell sends besides sign-in codes and invitations (`access_requests`, `library`, `usage`, `due_dates`,
-  `billing`), or `none`. `email.provider = resend | none` is accepted too.
+  `billing`), or `none`. `email.provider = resend | none` is accepted too. `email.pitch`: the welcome email's sentence
+  about the product (one line, up to 400 characters, `{product}` and the other words allowed); absent, the landing
+  block's hero subheadline, else the tagline.
 - Most briefs need neither line. An app that sets neither, and whose host pack's own profile sets neither, gets the
   factory's defaults in its build (`molds/mold_v0/branding/rules.json` `profile.email_defaults`): the sender
   `<app_id>@<notify_domain>` (this machine's `defaults.notify_domain` in `state/factory.local.json`) and

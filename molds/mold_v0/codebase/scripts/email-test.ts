@@ -15,10 +15,10 @@
 // 6. Links: every link is on the console's address from the environment (APP_CONSOLE_URL, else PUBLIC_URL); an
 //    address that is not plain http(s) is ignored; a request's Host never matters.
 // 7. Billing notices: off unless the profile lists billing; to the operator only; Stripe ids and addresses kept out.
-// 8. The words (mold_v0-101): every email's copy is the build's: the profile's name and sender, the packs' run word,
-//    the landing block's pitch (else the short description). A build with no packs and a declarative pack's build
-//    never carry the session engine's words; a build with the session engine (a host pack's tables) keeps them, the
-//    same text as before byte for byte.
+// 8. The words (mold_v0-101): no product word in the text: its placeholders take the build's vocabulary (src/vocabulary.ts)
+//    and name, its pitch is the profile's email.pitch, else the landing block's, else the short description, its signature
+//    the sender's name. A build with no packs, a declarative pack's build, and a host pack whose profile gives its words
+//    and pitch (the text the first product always sent, byte for byte); a value someone typed is never filled.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -253,44 +253,55 @@ try {
       return got as { [K in keyof typeof got]: NonNullable<(typeof got)[K]> };
     };
     const ENGINE = /simulation|developer product|coding agents|Claude Code|programming task/i;
+    const { BASE_WORDS, resolveWords } = await import("../src/words.js");
 
-    // A build with no packs: the profile's neutral words (passed in, so the test reads the same in a build copy with packs).
+    // A build with no packs: the neutral words (passed in, so the test reads the same in a build copy with packs).
     const { PROFILE } = await import("../src/profile.js");
-    assert.equal(mail.emailWords().product, PROFILE.name, "this build's words are its profile's");
-    const neutral = { name: "Workspace", sender_name: "Workspace", short_description: "Connect an MCP client, run agents and read their results.", pitch: null, pack_words: [], engine: false };
+    const { vocabulary } = await import("../src/vocabulary.js");
+    assert.equal(mail.emailWords().product, PROFILE.name, "this build's name is its profile's");
+    assert.equal(mail.emailWords().fill("{runs}"), vocabulary().runs, "this build's words are its vocabulary's");
+    const neutral = { name: "Workspace", sender_name: "Workspace", short_description: "Connect an MCP client, run agents and read their results.", pitch: null, words: BASE_WORDS };
     const zero = await render(neutral);
-    const zw = mail.wordsFor(neutral);
-    assert.deepEqual({ product: zw.product, run: zw.run, runs: zw.runs }, { product: "Workspace", run: "run", runs: "runs" });
     assert.equal(zero.approved.subject, "Welcome to Workspace");
     assert.ok(zero.approved.text.includes("now has a Workspace account."), zero.approved.text);
     assert.ok(zero.approved.text.includes("Workspace: Connect an MCP client, run agents and read their results."), "the pitch is the short description");
-    assert.ok(zero.approved.text.includes("/app to connect Workspace to your AI assistant and start your first run."), zero.approved.text);
+    assert.ok(zero.approved.text.includes("/app to connect Workspace to your AI assistant and run your first run."), zero.approved.text);
     for (const [k, m] of Object.entries(zero)) if (k !== "accepted" && k !== "sub_declined")
-      assert.doesNotMatch(`${m.subject}\n${m.text}`, ENGINE, `${k}: no session-engine words in a build without it`);
+      assert.doesNotMatch(`${m.subject}\n${m.text}`, ENGINE, `${k}: no product words the build does not give`);
     assert.ok(zero.received.text.endsWith("— Workspace") && zero.received.subject === "We got your request for Workspace");
 
     // A declarative pack's build: its run word, its landing pitch, its name (and its article).
-    const decl = { name: "Atlas", sender_name: "Atlas", short_description: "Audits for your applications", pitch: "Atlas runs audits of your applications and tracks each finding to a fix-by date",
-      pack_words: [{ workspace: "company", run: "audit" }], engine: false };
+    const decl = { name: "Atlas", sender_name: "Atlas", short_description: "Audits for your applications", pitch: "Atlas runs {runs} of your applications and tracks each finding to a fix-by date",
+      words: resolveWords([null, { workspace: "company", run: "audit" }]) };
     const d = await render(decl);
     assert.equal(d.approved.subject, "Welcome to Atlas");
     assert.equal(d.approved.text, [
       "Hi Ana,",
       "Your request is approved: Acme Corp now has an Atlas account.",
       "Atlas runs audits of your applications and tracks each finding to a fix-by date.",
-      "You'll get a separate invitation email to join Acme Corp. Accept it to create your sign-in, then open https://console.example.test/app to connect Atlas to your AI assistant and start your first audit.",
+      "You'll get a separate invitation email to join Acme Corp. Accept it to create your sign-in, then open https://console.example.test/app to connect Atlas to your AI assistant and run your first audit.",
       "Questions? Reply to this email.",
       "— Atlas"].join("\n\n"));
     assert.ok(d.accepted.text.includes("where it now helps audits for everyone"), d.accepted.text);
     for (const [k, m] of Object.entries(d)) assert.doesNotMatch(`${m.subject}\n${m.text}`, /simulation|developer product|coding agents|Claude Code|Workspace/i, `${k}: only the pack's words`);
     assert.equal(mail.wordsFor({ ...decl, pitch: null }).pitch, "Atlas: Audits for your applications.", "no landing block: the short description");
-    assert.equal(mail.wordsFor({ ...decl, pack_words: [{ run: "review", runs: "reviews done" }] }).runs, "reviews done", "a pack's own plural");
-    assert.equal(mail.wordsFor({ ...decl, name: "Ledger" }).a_product, "a");
+    assert.equal(mail.wordsFor({ ...decl, name: "Ledger" }).t`Now a {product} {account}`, "Now a Ledger account");
     assert.equal(mail.wordsFor({ ...decl, pitch: "Line one\nand <b>two</b>" }).pitch, "Line one and <b>two</b>.", "one line (the HTML escapes the rest)");
-    assert.equal(mail.wordsFor({ ...decl, pack_words: [{ run: "x".repeat(80) }] }).run.length, 40, "a pack's word is bounded");
+    assert.equal(mail.wordsFor(decl).t`${"{runs} by {product}"} for {runs}`, "{runs} by {product} for audits", "a value (a company, a title) is never filled, only the text's own parts");
+    {
+      const id = base + 999_000;
+      mail.setEmailWordsForTest(decl);
+      await mail.requestReceived({ id, email: "ana@customer.example", company: "{Product} {runs} Ltd", name: "Ana", product_url: null, message: null });
+      await wait(20);
+      mail.setEmailWordsForTest(undefined);
+      const m = outbox().find((x) => x.idempotencyKey === `request:${id}:received`)!;
+      assert.ok(m.text.includes("access to Atlas for {Product} {runs} Ltd."), `a company's name is shown as typed: ${m.text}`);
+    }
 
-    // A build with the session engine (a host pack's tables) and no words of its own: the text it always had.
-    const host = await render({ name: "Hostapp", sender_name: "Hostapp", short_description: "Some tagline", pitch: null, pack_words: [], engine: true });
+    // A host pack whose profile gives its words and its pitch (the first product: words.run = simulation, email.pitch): the
+    // text it always sent, byte for byte.
+    const host = await render({ name: "Hostapp", sender_name: "Hostapp", short_description: "Some tagline", words: resolveWords([{ run: "simulation" }]),
+      pitch: "{product} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why." });
     const was = (name: string) => ({
       received: ["We got your request for " + name, ["Hi Ana,", `Thanks for asking for access to ${name} for Acme Corp. We read every request ourselves and will get back to you by email, usually within a few working days.`,
         "If you want to add anything in the meantime, just reply to this email.", `— ${name}`]],
@@ -314,10 +325,10 @@ try {
       assert.equal(m.subject, subject, `${k}: the subject it always had`);
       assert.equal(m.text, text.join("\n\n"), `${k}: the text it always had`);
     }
-    assert.deepEqual({ run: mail.wordsFor({ name: "H", sender_name: "H", short_description: "", pitch: null, pack_words: [], engine: true }).runs }, { run: "simulations" },
-      "the usage alert's run word with the session engine (new simulations can't start)");
+    assert.equal(mail.wordsFor({ name: "H", sender_name: "H", short_description: "", pitch: null, words: resolveWords([{ run: "simulation" }]) }).t`New {runs} can't start`, "New simulations can't start",
+      "the usage alert's run word from the host pack's words");
     mail.setEmailProfileForTest(undefined);
-    ok("words: the build's own name, sender, run word and pitch; no packs and a declarative pack carry no session-engine words; the engine's build keeps its text byte for byte");
+    ok("words: placeholders filled from the build's vocabulary and name, never in a typed value; the pitch from the profile, the landing block or the short description; a host pack with its words keeps its text byte for byte");
   }
   await wait(50);
   console.log(`EMAIL ADAPTER TEST PASS (${n} groups)`);

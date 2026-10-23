@@ -812,7 +812,9 @@ const blockKeys = (file, name) => {
  */
 function emailProblem(v) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
-  for (const k of Object.keys(v)) if (!["$comment", "provider", "notifications"].includes(k)) return `${k} is not an email setting (known: provider, notifications)`;
+  for (const k of Object.keys(v)) if (!["$comment", "provider", "notifications", "pitch"].includes(k)) return `${k} is not an email setting (known: provider, notifications, pitch)`;
+  // The welcome email's pitch (mold_v0-101, src/email.ts): plain text on one line; placeholders are filled from the words.
+  if (v.pitch !== undefined && (typeof v.pitch !== "string" || !v.pitch.trim() || v.pitch.length > 400 || /[\u0000-\u001f\u007f<>]/.test(v.pitch))) return "pitch: plain text on one line, up to 400 characters, no < or >";
   if (v.provider !== undefined && !["resend", "test", "none"].includes(v.provider)) return "provider must be resend, test or none";
   const groups = blockKeys("email.ts", "NOTIFICATION_GROUPS");
   if (v.notifications !== undefined) {

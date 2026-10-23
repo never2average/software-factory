@@ -41,10 +41,11 @@
  *    a host a request named.
  *  - Plain text first; the HTML is the same words, with links, no images and no tracking. Signed with the profile's
  *    sender name.
- *  - The words are the build's (mold_v0-101, emailWords): the profile's name, the packs' run word (pack.json `words.run`),
- *    and the landing block's hero subheadline as the pitch (else the profile's short_description). No product's copy is
- *    written here: a build with the session engine (a host pack's tables, src/host-tables.ts) keeps that engine's own
- *    words (SESSION_ENGINE_WORDS) until its host pack brings its own.
+ *  - No product's word is written here (mold_v0-101): the text writes placeholders ({product}, {run}, {runs}, "a {product}")
+ *    and the build's vocabulary fills them (src/vocabulary.ts: the neutral words, under the packs' pack.json `words`,
+ *    under the profile's `words`). Only the text's own literal parts are filled, never a value someone typed (a company,
+ *    a title). The welcome email's pitch is the profile's `email.pitch`, else the landing block's hero subheadline,
+ *    else the profile's short_description; the signature is the profile's sender name.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { asPlatform } from "./tenant-scope.js";
@@ -60,8 +61,8 @@ import { consoleUrl } from "./console-url.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
 import { GENERATED_EMAIL_PITCH } from "./profile.generated.js";
-import { PACKS } from "./packs.generated.js";
-import { sessionEngine } from "./host-tables.js";
+import { vocabulary } from "./vocabulary.js";
+import { fillWith, type Words } from "./words.js";
 
 export const EMAIL_PROVIDER = "resend";
 export const EMAIL_KINDS = ["request_received", "request_alert", "request_declined", "request_approved", "submission_alert", "submission_accepted",
@@ -310,55 +311,37 @@ ${body}
 </div></body></html>`;
 }
 
-/** What the words are made from: the build's profile, its packs' words, its landing block and whether it has the session engine. */
+/** What the words are made from: the build's profile, its vocabulary and its landing block. */
 export interface EmailWordsInput {
   name: string; sender_name: string; short_description: string;
-  /** The landing block's hero subheadline (src/landing.ts), when the build has one. */
+  /** The profile's `email.pitch`, else the landing block's hero subheadline (src/landing.ts); null: neither. */
   pitch: string | null;
-  /** Each pack's `words` (pack.json), in pack order. */
-  pack_words: readonly Record<string, string>[];
-  /** Whether the build has the session engine (src/host-tables.ts sessionEngine). */
-  engine: boolean;
+  /** The build's words (src/vocabulary.ts vocabulary()). */
+  words: Readonly<Words>;
 }
 export interface EmailWords {
-  /** The product's name, and the signature's (the sender's name). */
+  /** The product's name ({product}), and the signature's (the sender's name). */
   product: string; sender: string;
-  /** "a" or "an", for "<a> <product> account". */
-  a_product: string;
-  /** What one run is called, and many. */
-  run: string; runs: string;
   /** One or two sentences saying what the product does, for the welcome email; null: none to say. */
   pitch: string | null;
-  /** What to do first, after "open <console>/app to ". */
-  first_step: string;
+  /** A text with its placeholders filled ({product}, {run}, {Runs}, "a {product}"). */
+  fill(text: string): string;
+  /** A tagged template: its literal parts filled, its values (a company, a title) as they are. */
+  t(parts: TemplateStringsArray, ...values: unknown[]): string;
 }
-/**
- * The session engine's words (src/session-engine.ts: coding agents run on programming tasks, in simulations): the first
- * product's, which a build has only when its host pack brings the engine's tables. Kept here until a host pack can bring
- * its emails' words itself; a build without the engine never uses them.
- */
-const SESSION_ENGINE_WORDS = {
-  run: "simulation",
-  pitch: (name: string) => `${name} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why.`,
-  first_step: (name: string) => `connect ${name} to your AI assistant and run your first simulation`,
-};
-const pluralOf = (w: string) => (/(s|x|z|ch|sh)$/.test(w) ? `${w}es` : /[^aeiou]y$/.test(w) ? `${w.slice(0, -1)}ies` : `${w}s`);
-/** A word or sentence from a pack or the profile, on one line and of a bounded length. */
-const word = (v: unknown, max: number) => oneLine(v, max);
+/** A word or sentence from the profile, on one line and of a bounded length. */
+const plainLine = (v: unknown, max: number) => oneLine(v, max);
 const sentence = (v: string) => (/[.!?]$/.test(v) ? v : `${v}.`);
 
 /** The emails' words from what a build declares (pure: the tests pass other builds' inputs). */
 export function wordsFor(i: EmailWordsInput): EmailWords {
-  const product = word(i.name, 80) || "Workspace";
-  const fromPack = i.pack_words.find((w) => word(w?.run, 40));
-  const run = (fromPack && word(fromPack.run, 40)) || (i.engine ? SESSION_ENGINE_WORDS.run : "run");
-  const runs = (fromPack && word(fromPack.runs, 40)) || pluralOf(run);
-  const landing = word(i.pitch, 300);
-  const short = word(i.short_description, 300);
-  const pitch = landing ? sentence(landing) : i.engine ? SESSION_ENGINE_WORDS.pitch(product) : short ? `${product}: ${sentence(short)}` : null;
+  const product = plainLine(i.name, 80) || "Workspace";
+  const fill = (text: string) => fillWith(i.words, product, text);
+  const own = plainLine(i.pitch, 400), short = plainLine(i.short_description, 300);
   return {
-    product, sender: word(i.sender_name, 100) || product, a_product: /^[aeiou]/i.test(product) ? "an" : "a", run, runs, pitch,
-    first_step: i.engine && !fromPack ? SESSION_ENGINE_WORDS.first_step(product) : `connect ${product} to your AI assistant and start your first ${run}`,
+    product, sender: plainLine(i.sender_name, 100) || product,
+    pitch: own ? sentence(fill(own)) : short ? `${product}: ${sentence(short)}` : null,
+    fill, t: (parts, ...values) => parts.reduce((out, part, k) => out + fill(part) + (k < values.length ? String(values[k]) : ""), ""),
   };
 }
 let testWords: EmailWordsInput | undefined;
@@ -366,8 +349,9 @@ let testWords: EmailWordsInput | undefined;
 export function setEmailWordsForTest(i: EmailWordsInput | undefined) { testWords = i; }
 /** This build's email words. */
 export const emailWords = (): EmailWords => wordsFor(testWords ?? {
-  name: PROFILE.name, sender_name: PROFILE.email_sender_name, short_description: PROFILE.short_description, pitch: GENERATED_EMAIL_PITCH,
-  pack_words: PACKS.map((p) => p.manifest.words ?? {}), engine: sessionEngine(),
+  name: PROFILE.name, sender_name: PROFILE.email_sender_name, short_description: PROFILE.short_description,
+  // The build's own profile (not the tests' notification switch): its email.pitch, else the landing block's.
+  pitch: (PROFILE as { email?: ProfileEmail }).email?.pitch ?? GENERATED_EMAIL_PITCH, words: vocabulary(),
 });
 /** The signature: the profile's sender name (src/profile.ts). */
 const sign = (w: EmailWords = emailWords()) => `— ${w.sender}`;
@@ -429,14 +413,14 @@ export function requestReceived(r: RequestFacts) {
   const w = emailWords();
   return Promise.all([
     sendLater({ kind: "request_received", to: r.email, idempotencyKey: `request:${r.id}:received`, meta,
-      subject: `We got your request for ${w.product}`,
+      subject: w.t`We got your request for {product}`,
       text: lines(hello(r.name),
-        `Thanks for asking for access to ${w.product} for ${r.company}. We read every request ourselves and will get back to you by email, usually within a few working days.`,
+        w.t`Thanks for asking for access to {product} for ${r.company}. We read every request ourselves and will get back to you by email, usually within a few working days.`,
         "If you want to add anything in the meantime, just reply to this email.",
         sign(w)) }),
     adminRecipients().then((to) => each(to, (t) => ({ kind: "request_alert", to: t, idempotencyKey: keyFor(`request:${r.id}:alert`, t), meta,
       subject: `New access request: ${r.company}`.slice(0, 200),
-      text: lines(`${r.name?.trim() || "Someone"} from ${r.company} asked for access to ${w.product}.`,
+      text: lines(w.t`${r.name?.trim() || "Someone"} from ${r.company} asked for access to {product}.`,
         [`Email: ${r.email}`, r.product_url ? `Product: ${r.product_url}` : null].filter(Boolean).join("\n"),
         r.message ? `What they said:\n${r.message.slice(0, 1500)}` : null,
         `Review it: ${siteUrl()}/admin/requests`,
@@ -448,9 +432,9 @@ export function requestReceived(r: RequestFacts) {
 export function requestDeclined(r: RequestFacts, reason?: string | null) {
   const w = emailWords();
   return sendLater({ kind: "request_declined", to: r.email, idempotencyKey: `request:${r.id}:declined`, meta: { request_id: r.id, with_reason: Boolean(reason) },
-    subject: `About your ${w.product} request`,
+    subject: w.t`About your {product} request`,
     text: lines(hello(r.name),
-      `Thank you for your interest in ${w.product}. We can't offer ${r.company} access right now.`,
+      w.t`Thank you for your interest in {product}. We can't offer ${r.company} access right now.`,
       reason?.trim() ? `The reason: ${reason.trim()}` : null,
       "This isn't necessarily final. If things change on your side, or you think we've misread something, reply to this email and we'll take another look.",
       sign(w)) });
@@ -460,12 +444,12 @@ export function requestDeclined(r: RequestFacts, reason?: string | null) {
 export function requestApproved(r: RequestFacts, o: { account: string; invited: boolean }) {
   const w = emailWords();
   return sendLater({ kind: "request_approved", to: r.email, idempotencyKey: `request:${r.id}:approved`, meta: { request_id: r.id, invited: o.invited },
-    subject: `Welcome to ${w.product}`,
+    subject: w.t`Welcome to {product}`,
     text: lines(hello(r.name),
-      `Your request is approved: ${o.account} now has ${w.a_product} ${w.product} account.`,
+      w.t`Your request is approved: ${o.account} now has a {product} {account}.`,
       w.pitch,
       o.invited
-        ? `You'll get a separate invitation email to join ${o.account}. Accept it to create your sign-in, then open ${siteUrl()}/app to ${w.first_step}.`
+        ? w.t`You'll get a separate invitation email to join ${o.account}. Accept it to create your sign-in, then open ${siteUrl()}/app to connect {product} to your AI assistant and run your first {run}.`
         : `We'll send you your connection details separately. Once you have them, ${siteUrl()}/app walks you through setup.`,
       "Questions? Reply to this email.",
       sign(w)) });
@@ -482,7 +466,7 @@ export function submissionReceived(s: SubmissionFacts) {
   return adminRecipients().then((to) => each(to, (t) => ({ kind: "submission_alert", to: t, idempotencyKey: keyFor(`submission:${s.id}:alert`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug },
     subject: `Library submission from ${s.org_name}: ${s.title}`.slice(0, 200),
-    text: lines(`${s.org_name} submitted a ${noun(s.kind)} to ${w.product}'s library: "${s.title}".`,
+    text: lines(w.t`${s.org_name} submitted a ${noun(s.kind)} to {product}'s library: "${s.title}".`,
       `Review it: ${siteUrl()}/admin/${s.kind === "persona" ? "personas" : "tasks"}?view=submissions`,
       sign(w)) })));
 }
@@ -499,13 +483,13 @@ export async function submissionAccepted(s: SubmissionFacts, credit: { usd: numb
   const creditLine = !(credit.usd > 0) || credit.status === "none"
     ? null
     : credit.status === "credited"
-      ? `As thanks, we've added a ${money(credit.usd)} credit to your account. It comes off your next invoice automatically.`
-      : `As thanks, you've earned a ${money(credit.usd)} credit. It is still being added to your account; once it is, it comes off your next invoice automatically. You can see it on ${siteUrl()}/app/billing.`;
+      ? w.t`As thanks, we've added a ${money(credit.usd)} credit to your {account}. It comes off your next invoice automatically.`
+      : w.t`As thanks, you've earned a ${money(credit.usd)} credit. It is still being added to your {account}; once it is, it comes off your next invoice automatically. You can see it on ${siteUrl()}/app/billing.`;
   return each(await submitterOf(s), (t) => ({ kind: "submission_accepted", to: t, idempotencyKey: keyFor(`submission:${s.id}:accepted`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug, credit_usd: credit.usd, credit_status: credit.status },
-    subject: `Your ${noun(s.kind)} is in ${w.product}'s library`,
+    subject: w.t`Your ${noun(s.kind)} is in {product}'s library`,
     text: lines("Hi,",
-      `Thanks for sharing "${s.title}". We reviewed it and added it to ${w.product}'s library, where it now helps ${w.runs} for everyone.`,
+      w.t`Thanks for sharing "${s.title}". We reviewed it and added it to {product}'s library, where it now helps {runs} for everyone.`,
       creditLine,
       "Your own copy stays yours and unchanged.",
       sign(w)) }));
@@ -516,9 +500,9 @@ export async function submissionDeclined(s: SubmissionFacts, reason: string) {
   const w = emailWords();
   return each(await submitterOf(s), (t) => ({ kind: "submission_declined", to: t, idempotencyKey: keyFor(`submission:${s.id}:declined`, t),
     meta: { submission_id: s.id, kind: s.kind, account: s.org_slug },
-    subject: `About your ${noun(s.kind)} for ${w.product}'s library`,
+    subject: w.t`About your ${noun(s.kind)} for {product}'s library`,
     text: lines("Hi,",
-      `Thanks for sharing "${s.title}". We've decided not to add it to ${w.product}'s library this time.`,
+      w.t`Thanks for sharing "${s.title}". We've decided not to add it to {product}'s library this time.`,
       `The reason: ${reason.trim()}`,
       "Your own copy stays yours and keeps working as before. If you change it, you're welcome to submit it again.",
       sign(w)) }));
@@ -559,12 +543,12 @@ export async function checkBudget(orgId: number, now = new Date()): Promise<{ th
     const w = emailWords();
     const results = await each(to, (t) => ({ kind: over ? "budget_100" : "budget_80", to: t, idempotencyKey: keyFor(purpose, t),
       meta: { account: o?.slug ?? null, month: monthKey(now), threshold, spent_usd: Math.round(spent * 100) / 100, budget_usd: budget },
-      subject: over ? `${o?.name ?? "Your account"} has used its ${w.product} allowance for ${month}` : `${o?.name ?? "Your account"} has used ${threshold}% of its ${w.product} allowance`,
+      subject: over ? w.t`${o?.name ?? w.fill("Your {account}")} has used its {product} allowance for ${month}` : w.t`${o?.name ?? w.fill("Your {account}")} has used ${threshold}% of its {product} allowance`,
       text: lines("Hi,",
-        `${o?.name ?? "Your account"} has spent ${money(spent)} of its ${money(budget)} monthly allowance for model usage in ${month} (${Math.floor(pct)}%).`,
-        over ? `New ${w.runs} can't start until the allowance resets on ${reset}, or until it is raised.`
-             : `When it reaches 100%, new ${w.runs} can't start until the allowance resets on ${reset}.`,
-        `Your plan and Budget rules are on ${siteUrl()}/app/billing. You're getting this because you're an owner or billing manager of the account.`,
+        w.t`${o?.name ?? w.fill("Your {account}")} has spent ${money(spent)} of its ${money(budget)} monthly allowance for model usage in ${month} (${Math.floor(pct)}%).`,
+        over ? w.t`New {runs} can't start until the allowance resets on ${reset}, or until it is raised.`
+             : w.t`When it reaches 100%, new {runs} can't start until the allowance resets on ${reset}.`,
+        w.t`Your plan and Budget rules are on ${siteUrl()}/app/billing. You're getting this because you're an {owner} or billing manager of the {account}.`,
         sign(w)) }));
     return { threshold, sent: results.filter((r) => r.status === "sent").length };
   } catch (e) {
@@ -617,9 +601,9 @@ export async function dueSoon(orgId: number, d: { area: string; label: string; w
 /** A sign-in code: to the address that asked, only when it may sign in (the caller decides); the code is in the text, never the subject or the log. */
 export function signInCode(c: { id: number | string; to: string; code: string; minutes: number }) {
   return sendLater({ kind: "sign_in_code", to: c.to, idempotencyKey: `sign-in-code:${c.id}`,
-    subject: `Your ${PROFILE.name} sign-in code`,
+    subject: emailWords().t`Your {product} sign-in code`,
     text: lines(`Your sign-in code is ${c.code}`, `It works once, for ${c.minutes} minutes.`,
-      `If you didn't ask to sign in to ${PROFILE.name}, ignore this email: nobody can sign in without the code.`, sign()) });
+      emailWords().t`If you didn't ask to sign in to {product}, ignore this email: nobody can sign in without the code.`, sign()) });
 }
 
 /**
@@ -627,11 +611,12 @@ export function signInCode(c: { id: number | string; to: string; code: string; m
  * the server's environment; the place to go after it is a fixed path, never one a request named).
  */
 export function invitation(i: { id: string; to: string; account: string; accountSlug: string; role: string; google: boolean; days: number }) {
+  const w = emailWords();
   return sendLater({ kind: "invitation", to: i.to, idempotencyKey: `invitation:${i.id}`, meta: { invitation: i.id, account: i.accountSlug },
-    subject: `You're invited to ${oneLine(i.account, 80)} on ${PROFILE.name}`,
-    text: lines(`Hi,`, `You're invited to join ${i.account} on ${PROFILE.name} as ${i.role}.`,
+    subject: w.t`You're invited to ${oneLine(i.account, 80)} on {product}`,
+    text: lines(`Hi,`, w.t`You're invited to join ${i.account} on {product} as ${i.role}.`,
       `To accept, sign in with this address (${i.to}): ${siteUrl()}/auth/sign-in?redirect_url=%2Fapp`,
-      `We'll email you a sign-in code${i.google ? ", or you can continue with Google if this address is your Google account" : ""}. If you already use ${PROFILE.name}, accept the invitation on your profile page once signed in. The invitation is good for ${i.days} days.`,
+      `We'll email you a sign-in code${i.google ? ", or you can continue with Google if this address is your Google account" : ""}. If you already use ${w.product}, accept the invitation on your profile page once signed in. The invitation is good for ${i.days} days.`,
       `If you weren't expecting it, ignore this email.`, sign()) });
 }
 
@@ -647,6 +632,7 @@ export async function billingNotice(n: { charge_id: string; run_id: string; kind
   const to = await adminRecipients();
   return each(to, (t) => ({ kind: "billing_notice", to: t, idempotencyKey: keyFor(`billing:${n.kind}:${n.charge_id}:gave-up`, t),
     meta: { charge_id: n.charge_id, run_id: n.run_id, account: n.account, tries: n.tries },
+    // "run" here is the shell's own run charges (src/run-charges.ts; the console's FinOps, Run charges), not a pack's word.
     subject: `A run ${n.kind} could not be delivered (${n.run_id})`,
     text: lines("Hi,",
       `The ${n.kind} of ${n.amount} for run ${n.run_id}${n.account ? ` in ${n.account}` : ""} was not delivered after ${n.tries} tries, and is no longer retried by itself.`,
@@ -662,8 +648,8 @@ export async function billingNotice(n: { charge_id: string; run_id: string; kind
 export async function sendTest(actor: string, toIn: unknown) {
   const to = String(toIn ?? "").trim().toLowerCase();
   const r = await send({ kind: "test", to, idempotencyKey: `test:${randomUUID()}`, meta: { by_admin: hashAddress(actor).slice(0, 16) },
-    subject: `${emailWords().product} test email`,
-    text: lines("Hi,", `This is a test email from ${emailWords().product}, sent from ${siteUrl()}/admin/emails. If you can read it, email is working.`, sign()) });
+    subject: emailWords().t`{product} test email`,
+    text: lines("Hi,", emailWords().t`This is a test email from {product}, sent from ${siteUrl()}/admin/emails. If you can read it, email is working.`, sign()) });
   return r;
 }
 
