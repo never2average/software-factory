@@ -23,6 +23,7 @@ import { clientCatalog } from "./connect-catalog.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
 import * as clerk from "./clerk.js";
+import { mcpUrlSetting } from "./console-url.js";
 import { people as directory } from "./people.js";
 import * as mail from "./email.js";
 import { currentAdminRole } from "./admin-roles.js";
@@ -66,7 +67,7 @@ export function integrations() {
  * never goes in the URL: URLs end up in logs, browser history and screenshots.
  */
 export function connectInfo(key?: string) {
-  const base = publicUrl();
+  const base = mcpUrlSetting() ?? publicUrl(); // the app's own domain once it has one (APP_MCP_URL, mold_v0-118)
   const url = `${base}/mcp`;
   // Every client the app supports, with its exact way in (src/connect-catalog.ts).
   const signInAvailable = Boolean(clerk.clerkEnabled() && clerk.frontendApi());
