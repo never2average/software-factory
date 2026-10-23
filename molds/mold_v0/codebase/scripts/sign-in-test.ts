@@ -395,7 +395,7 @@ try {
     // ---------- 9. Google ----------
     {
       const cfg = await call("GET", "/api/auth/config");
-      assert.deepEqual(cfg.body, { provider: "builtin", email_code: true, google: true });
+      assert.deepEqual(cfg.body, { provider: "builtin", email_code: true, google: true, accounts: "invite_only" });
       const gEmail = `google-${STAMP}@a.example`;
       await call("POST", "/api/app/team/invitations", ownerA.h, { email: gEmail, role: "viewer" });
       const start = async (redirect = "/app/usage") => {
@@ -495,7 +495,7 @@ try {
     }
   } else {
     // ---------- Clerk: the built-in routes stay out of the way ----------
-    assert.deepEqual((await call("GET", "/api/auth/config")).body, { provider: "clerk" });
+    assert.deepEqual((await call("GET", "/api/auth/config")).body, { provider: "clerk", accounts: "invite_only" });
     for (const p of ["/api/auth/session", "/api/auth/google/start"]) assert.equal((await call("GET", p)).status, 404, p);
     assert.equal((await call("POST", "/api/auth/email/request", {}, { email: ownerAEmail })).status, 404);
     assert.equal(emailsTo(ownerAEmail, "sign_in_code").length, 0);

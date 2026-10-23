@@ -25,6 +25,7 @@ import { endpointLimit } from "./rate-limits.js";
 import { currentPopulation } from "./agent-mix.js";
 import { hosts } from "./host.js";
 import { PROFILE } from "./profile.js";
+import { fill } from "./vocabulary.js";
 import { dayKeys, daySeries, reportRange, sparkSpans } from "./insights.js";
 import { capture, identifyPerson } from "./telemetry.js";
 import * as limits from "./limits.js";
@@ -43,9 +44,6 @@ const publicUrl = () => (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.e
 export interface Session { org: number; slug: string; user: string | null; email: string | null; role: "admin" | "member"; accountRole: roles.AccountRole; clerkOrgId: string | null }
 
 const identified = new Set<string>();
-
-/** "a" or "an" before a name, as it is read (the profile's name in a sentence). */
-const an = (name: string) => `${/^[aeiou]/i.test(name) ? "an" : "a"} ${name}`;
 
 export class AppError extends Error { constructor(message: string, public status = 400, public info: Record<string, unknown> = {}) { super(message); } }
 
@@ -381,6 +379,23 @@ async function billingUsage(s: Session) {
 // ---------- routes ----------
 
 /**
+ * A signed-in person with no account open (code no_account, mold_v0-098): of their memberships, the ones that are
+ * accounts and not suspended, so the console's page can offer to open one (a directory organization that is not an
+ * account, which someone made for themselves under Clerk, is left out). Read by directory id only: no directory call.
+ */
+async function accountsAmong(ms: clerk.ClerkMembership[]): Promise<{ id: string; name: string }[]> {
+  const open = ms.filter((x) => x.organization && !clerk.isSuspended(x));
+  if (!open.length) return [];
+  const rows = await (await getDb()).query<{ clerk_org_id: string; name: string }>(
+    "/* tenant: platform: the signed-in person's own memberships, by directory id */ SELECT clerk_org_id, name FROM organizations WHERE clerk_org_id = ANY($1::text[])",
+    [open.map((x) => x.organization!.id)]).catch(() => []);
+  return open.flatMap((x) => {
+    const r = rows.find((y) => y.clerk_org_id === x.organization!.id);
+    return r ? [{ id: r.clerk_org_id, name: r.name }] : [];
+  });
+}
+
+/**
  * The portal's sign-in check, shared by /api/app and the packs' /api/packs/<id> (src/pack-routes.ts): a Clerk session of
  * a person in an account, which sets res.locals.session and runs the rest of the request under row-level security
  * for that account (withTenant).
@@ -394,10 +409,10 @@ export async function customerSession(req: Request, res: Response, next: NextFun
   const ms = (await dir.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
   // The session's active organization; without one, the person's oldest membership that is not suspended.
   const m = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : ms.find((x) => !clerk.isSuspended(x));
-  if (!m) return void res.status(403).json({ error: `You are not in ${an(PROFILE.name)} account yet. Ask your admin to invite you.`, code: "no_account" });
+  if (!m) return void res.status(403).json({ error: fill("You are not in a {product} {account} yet. Ask your admin to invite you."), code: "no_account", accounts: await accountsAmong(ms) });
   if (clerk.isSuspended(m)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
   const org = await orgForClerk(m.organization!.id);
-  if (!org) return void res.status(403).json({ error: `This organization is not ${an(PROFILE.name)} account. ${PROFILE.name} is invite-only for now: ask your ${PROFILE.name} contact for an invitation.`, code: "no_account" });
+  if (!org) return void res.status(403).json({ error: fill("This organization is not a {product} {account}. {product} is invite-only for now: ask your {product} contact for an invitation."), code: "no_account", accounts: await accountsAmong(ms) });
   const user = await dir.users.get(c.userId);
   const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
     accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };
@@ -441,6 +456,9 @@ export function appRouter() {
   const orgOf = async (res: Response): Promise<Org> => ({ orgId: S(res).org, slug: S(res).slug, name: (await admin.accountFacts(S(res).slug)).name, userId: S(res).user ?? undefined, role: S(res).accountRole });
   // A host pack's own portal routes (src/host.ts, mold_v0-039) come first: a path it serves replaces the shell's (its
   // Setup and Usage pages in place of the neutral ones below).
+  // The console's portal layout asks this before it draws a page (mold_v0-098): 200 when the person has an account open
+  // here, else customerSession's 403 (no_account: the console shows its own page for it). Ahead of the host packs' routes.
+  api.get("/access", (_req, res) => void res.json({ ok: true }));
   for (const h of hosts()) h.routes?.app?.(api, { S, need, can, actor, orgOf, AppError });
 
   api.get("/me", async (_req, res) => {

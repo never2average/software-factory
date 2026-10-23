@@ -14,7 +14,8 @@
 // 3. The page, rendered on the server (react-dom/server, the console's own components bundled with esbuild): the
 //    neutral page has a heading, calls to action, value points and steps; a block's text that looks like HTML or script
 //    is shown as text and never becomes markup; a link that got past gen-packs is shown as text, never as a link; the
-//    footer carries the source offer and its commit.
+//    footer carries the source offer and its commit; with invite-only accounts (mold_v0-098) every call to sign up leads to
+//    the request form (/request-access), a block's label kept.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -240,7 +241,25 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: renderToStaticMarkup(<La
     assert.ok(p.html.includes("additional permission to the AGPL-3.0"), "and says why the app's own source is not offered");
     assert.equal(p.meta.title.absolute, "Ship audits");
     assert.equal(p.meta.openGraph.description, "Search description.");
-    console.log("✓ the page: the neutral one is a real page; a block's text is text (never markup), a bad link is never a link; sections in order; the footer's source offer");
+    // Invite-only accounts (mold_v0-098): every call to sign up leads to the request form, a block's label kept.
+    writeFileSync(path.join(web, "render-entry.tsx"), `import { renderToStaticMarkup } from 'react-dom/server';
+import { LandingSections, SiteHeader, SiteFooter } from '@/features/site/landing';
+const page = (access?: 'invite_only' | 'self_serve') => renderToStaticMarkup(<><SiteHeader access={access} /><main><LandingSections access={access} /></main><SiteFooter access={access} /></>);
+process.stdout.write('\\u0001' + JSON.stringify({ invite: page('invite_only'), open: page('self_serve') }));
+`);
+    writeFileSync(path.join(web, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
+    try {
+      await build({ entryPoints: [path.join(web, "render-entry.tsx")], bundle: true, format: "cjs", platform: "node", outfile: path.join(TMP, "render-access.cjs"), absWorkingDir: web,
+        tsconfig: path.join(web, "tsconfig.json"), jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' }, alias: { "next/link": path.join(web, "render-link.tsx") }, logLevel: "error" });
+    } finally { for (const f of ["render-entry.tsx", "render-link.tsx"]) rmSync(path.join(web, f), { force: true }); }
+    const acc = spawnSync(process.execPath, [path.join(TMP, "render-access.cjs")], { encoding: "utf8" });
+    assert.equal(acc.status, 0, acc.stderr);
+    const both = JSON.parse(acc.stdout.slice(acc.stdout.indexOf("\u0001") + 1)) as { invite: string; open: string };
+    assert.ok(!both.invite.includes('href="/auth/sign-up"'), "invite-only: no call leads to sign-up");
+    assert.match(both.invite, /href="\/request-access"[^>]*>Start</, "the block's call keeps its label and leads to the request form");
+    assert.match(both.invite, /href="\/request-access"[^>]*>Request access</, "the shell's own call says Request access");
+    assert.match(both.open, /href="\/auth\/sign-up"[^>]*>Start</, "self-serve: the block's call is as declared");
+    console.log("✓ the page: the neutral one is a real page; a block's text is text (never markup), a bad link is never a link; sections in order; the footer's source offer; invite-only calls lead to the request form");
   }
   console.log("landing: all checks passed");
 } finally {
