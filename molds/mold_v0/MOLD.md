@@ -580,7 +580,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   this change sent every group whenever Resend was connected: before its next deploy its profile (or its host pack's)
   lists the groups it sends (the Octillion product: `access_requests`, `library`, `usage`; a pack with due dates such
   as ComplianceOS: `due_dates`), or they are logged as skipped. With no transport that
-  can send, the About page and `/admin/emails` say so in one sentence. Every message is a row in `email_log` with a hash
+  can send, `/admin/emails` says so in one sentence. Every message is a row in `email_log` with a hash
   and the domain of its one address, never the address, a code or a key; subjects, senders and recipients lose line
   breaks; every link is on the console's address from the environment (`src/console-url.ts`: `APP_CONSOLE_URL`,
   else `PUBLIC_URL`; anything but a plain http(s) address is ignored).
@@ -1235,19 +1235,19 @@ says why; absent, the build says nothing about its own source. An upstream that 
 (mold_v0-099) is named in the app's own `profile.json` as `"source_offer": {"upstreams": {"<pack id>": "licensor_owned"}}`
 (only there: gen-packs refuses it in a host pack's profile, and refuses a pack id the build lacks or whose pack pins no
 upstream): as its copyright holder the licensor need not offer that source, so the build leaves it out everywhere: no
-MCP instructions line, no footer on the root, install or landing pages, no `source_code` in `/install.json`, no About
-row. When no other upstream is left and the app's own source is not offered, the About page has no "Source code"
-section at all (under `"app": "licensor_exception"` too: its sentence explains a missing offer, and nothing is offered
-anywhere) and its sidebar link reads "About"; the rest of the About page (where code runs, data, credentials, models,
-egress, what the server measures) stays. `"app": "licensor_exception"` keeps its meaning wherever something else is
-still offered. Without `upstreams`, nothing changes. With zero packs and no setting nothing changes. The
+MCP instructions line, no footer on the root, install or landing pages, no `source_code` in `/install.json`, no
+`DATA-MAP.md` row. When no other upstream is left and the app's own source is not offered, `DATA-MAP.md` has no "Source
+code" section at all (under `"app": "licensor_exception"` too: its sentence explains a missing offer, and nothing is
+offered anywhere). A copyleft upstream not marked `licensor_owned` is offered exactly as before (the footers,
+`/install.json` and the MCP line), so whoever runs a modified copy can still comply. `"app": "licensor_exception"` keeps
+its meaning wherever something else is still offered. Without `upstreams`, nothing changes. With zero packs and no setting nothing changes. The
 data-flow and residency statement (`src/data-map.ts`) maps, per pack, where the code runs, where data is stored, the
 credentials by name, where model calls go and which hosts runs may reach, from the packs' declarations and the deploy
 facts the factory writes into the build copy (`deploy-facts.json`, names and places only, checked by gen-packs); it is
-`DATA-MAP.md` in the build copy (`scripts/data-map.ts`) and the console's About page (`/app/about`, `/admin/about`,
-linked from the sidebar's footer), which adds what the running server measures (its region, its database's provider and
-region, the object store, where each model provider's calls go now). Never a secret value: names, providers, regions and
-hosts only.
+`DATA-MAP.md` in the build copy (`scripts/data-map.ts`, checked by `check:data-map`). The console has no About page
+(operator decision, mold_v0-099: an About page is not part of the mold; `/app/about`, `/admin/about`, `/api/about` and
+`/api/admin/about` were removed with what only they showed, the running server's own measurements). Never a secret
+value: names, providers, regions and hosts only.
 
 **Landing page (mold_v0-091).** The console's `/` is the build's landing page, declared, not written: a declarative
 pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it, section by section (a section the

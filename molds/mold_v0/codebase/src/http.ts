@@ -24,7 +24,6 @@ import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
 import { mountInstallPages } from "./install-pages.js";
-import { aboutAdminRouter, aboutAppRouter } from "./about-routes.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml } from "./source-offer.js";
 import { keysOffMessage, memberKeyAppRouter } from "./member-keys.js";
@@ -231,8 +230,6 @@ export function createApp() {
   // ---------- metrics and the runs the console's tabs read: /api/metrics, /api/runs (src/view-routes.ts); with no metric or job kind nothing is mounted ----------
   app.use("/api/metrics", metricAppRouter());
   app.use("/api/runs", runAppRouter());
-  // ---------- the About page's data (mold_v0-050, src/about-routes.ts): data flow and residency, the source offer ----------
-  app.use("/api/about", aboutAppRouter());
   // ---------- the workspace store's file viewer: /api/workspace-files (src/workspace-files.ts, mold_v0-056); with no workspace store nothing is mounted ----------
   app.use("/api/workspace-files", workspaceFileAppRouter());
 
@@ -743,7 +740,6 @@ export function createApp() {
   admin.use("/packs", packAdminRouter());
   admin.use("/records", recordAdminRouter());
   admin.use("/data", dataAdminRouter());
-  admin.use("/about", aboutAdminRouter());
   app.use("/api/admin", admin);
 
   // ---------- local preview of the widget (development only) ----------

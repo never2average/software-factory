@@ -6,6 +6,3 @@ export const landing: LandingBlock | null = null;
 
 /** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */
 export const sourceOfferItems: readonly OfferFooterItem[] = [];
-
-/** Whether the About page has a Source code section (src/source-offer.ts hasSourceSection, mold_v0-099): false when every upstream is the licensor's own. */
-export const aboutSourceSection: boolean = true;

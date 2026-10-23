@@ -1,37 +1,33 @@
 // The source offer and the data-flow and residency statement (mold_v0-050; src/source-offer.ts, src/data-map.ts,
-// src/about-routes.ts, scripts/gen-packs.mjs deploy facts, scripts/data-map.ts), offline: an embedded database, a fake
+// scripts/gen-packs.mjs deploy facts, scripts/data-map.ts), offline: an embedded database, a fake
 // Clerk, a fixture pack.
 //   npm run test:source-offer
 //
 // 1. Zero packs and no source_offer in the profile: nothing is offered. The MCP server's instructions are exactly the
 //    build's own (the shell's in the mold; a host pack's in a build that has one, mold_v0-086), the root page (a host
 //    pack's landing page in its build) and the install pages carry no footer, /install.json no source_code; DATA-MAP.md
-//    is current; GET /api/about answers a signed-in person (401 without one) and staff, with no deploy facts in the mold
-//    and exactly the build copy's in a build.
+//    is current and carries no deploy facts in the mold and exactly the build copy's in a build; the console has no
+//    About page (mold_v0-099): /api/about and /api/admin/about are not served.
 // 2. A pack whose pinned upstream is AGPL-3.0, run by its agent kind at that commit: the instructions, the root page,
-//    every install page and /install.json name the project, its licence and the exact commit's address; the About data
+//    every install page and /install.json name the project, its licence and the exact commit's address; DATA-MAP.md
 //    lists it with the kind's egress hosts, its credential (by name), its model provider and where calls go.
-// 3. What is not offered: a permissive upstream is listed on the About page but not offered; an agent kind that runs the
+// 3. What is not offered: a permissive upstream is listed in DATA-MAP.md but not offered; an agent kind that runs the
 //    upstream at another commit is refused (installPacks and gen-packs), as the offer would name the wrong code.
 // 4. The app's own source (profile source_offer): offered with its address, or, under the licensor's exception, not
 //    offered and said so; gen-packs carries a good setting into the profile and refuses a bad one.
 // 5. Deploy facts (deploy-facts.json): gen-packs copies good ones into src/deploy-facts.generated.ts and the statement
 //    names the target, projects, database and secret NAMES; anything that could carry a value is refused, and the
 //    refusal never echoes it.
-// 7. An upstream that is the licensor's own (profile source_offer.upstreams, mold_v0-099): not offered anywhere (no MCP
-//    line, no footer on the root or install pages, no source_code in /install.json, no About section when nothing else is
-//    left in it, the landing footer empty and the About link plain "About"); with another pack's upstream or the app's
+// 6. An upstream that is the licensor's own (profile source_offer.upstreams, mold_v0-099): not offered anywhere (no MCP
+//    line, no footer on the root or install pages, no source_code in /install.json, no DATA-MAP.md section when nothing
+//    else is left in it, the landing footer empty); with another pack's upstream or the app's
 //    own source still offered, the section stays with those. gen-packs refuses an id the build lacks or that pins no
 //    upstream, any value but "licensor_owned", and the setting in a host pack's profile.
-// 6. Never a secret: what the running server measures (database, object store, ClickHouse, webhooks, telemetry) gives
-//    providers, regions and hosts, and no user, password, key, path or query of any configured address appears in the
-//    answer; nor any of the server's own secret values.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, startHttp, STAMP, TMP } from "./lib/test-world.js";
-import { ENV } from "../src/env-names.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
@@ -69,7 +65,6 @@ try {
   const { generatedInstructions } = await import("../src/mcp-tools.js");
   const { currentOffer, dataMap, dataMapMarkdown } = await import("../src/data-map.js");
   const { sourceOffer, instructionsParagraph, offerFooterHtml, commitUrl, isCopyleft, LICENSOR_EXCEPTION_TEXT } = await import("../src/source-offer.js");
-  const { measured, databaseWords } = await import("../src/about-routes.js");
   const entry = (id: string, j: any) => ({ manifest: { id, name: j.name, version: j.version, entry: null, migrations: null, words: j.words ?? {}, dir: path.join(ROOT, "scripts", "fixtures", "packs", "fixture_vulns"), ...(j.upstream ? { upstream: j.upstream } : {}) }, declared: compileDeclarations(j) });
 
   // ---------- 1. zero packs: nothing offered, nothing changed ----------
@@ -89,28 +84,18 @@ try {
     const md = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "data-map.ts"), "--check"], { cwd: ROOT, encoding: "utf8" });
     assert.equal(md.status, 0, `DATA-MAP.md is current: ${md.stdout}${md.stderr}`);
     assert.equal(readFileSync(path.join(ROOT, "DATA-MAP.md"), "utf8"), dataMapMarkdown(dataMap()), "DATA-MAP.md is the statement");
-    assert.equal((await http.req("GET", "/api/about")).status, 401, "/api/about needs a signed-in person");
-    const tok = await http.signIn(A.org, "viewer");
-    const r = await http.req("GET", "/api/about", { authorization: `Bearer ${tok}` });
-    assert.equal(r.status, 200, "a viewer reads it");
-    const a = await r.json();
-    assert.deepEqual(a.sections.map((s: any) => s.id), ["code", "data", "credentials", "models", "egress", "source"]);
     // The mold's codebase carries no deploy facts; an app's build copy carries the ones the factory wrote (packs.py apply).
+    const m0 = dataMap();
+    assert.deepEqual(m0.sections.map((x) => x.id), ["code", "data", "credentials", "models", "egress", "source"]);
     const { DEPLOY_FACTS } = await import("../src/deploy-facts.generated.js");
-    if (!DEPLOY_FACTS) {
-      assert.equal(a.deploy, null, "no deploy facts in the codebase itself");
-      assert.ok(a.sections[0].rows[0].detail.includes("carries no deploy facts"), "and it says so");
-    } else {
-      const { $comment: _c, ...facts } = DEPLOY_FACTS as Record<string, unknown>;
-      assert.deepEqual(a.deploy, facts, "a build copy's deploy facts, exactly (without the comment)");
-      assert.ok(!a.sections[0].rows.some((x: any) => x.detail.includes("carries no deploy facts")), "and no line saying there are none");
-    }
-    assert.equal(a.offer.offered, false);
-    assert.ok(a.measured.rows.some((x: any) => x.item === "Database" && x.detail.startsWith("an embedded Postgres")), "measured: the embedded database");
+    if (!DEPLOY_FACTS) assert.ok(m0.deploy === null && m0.sections[0]!.rows[0]!.detail.includes("carries no deploy facts"), "no deploy facts in the codebase itself, and it says so");
+    else assert.ok(!m0.sections[0]!.rows.some((x) => x.detail.includes("carries no deploy facts")), "a build copy's deploy facts, and no line saying there are none");
+    // No About page (mold_v0-099): its API is gone for people and staff alike.
+    const tok = await http.signIn(A.org, "viewer");
+    assert.equal((await http.req("GET", "/api/about", { authorization: `Bearer ${tok}` })).status, 404, "/api/about is not served");
     const staff = await http.adminToken("viewer");
-    assert.equal((await http.req("GET", "/api/admin/about", { authorization: `Bearer ${staff}` })).status, 200, "staff read it at /api/admin/about");
-    assert.equal((await http.req("GET", "/api/admin/about")).status, 401, "not without staff credentials");
-    console.log("✓ zero packs: instructions, root page, install pages and /install.json unchanged; DATA-MAP.md current; /api/about for people and staff only");
+    assert.equal((await http.req("GET", "/api/admin/about", { authorization: `Bearer ${staff}` })).status, 404, "nor /api/admin/about");
+    console.log("✓ zero packs: instructions, root page, install pages and /install.json unchanged; DATA-MAP.md current; no About API");
   }
 
   // ---------- 2. an AGPL upstream, run at its pin ----------
@@ -135,33 +120,16 @@ try {
     }
     const guide = await (await http.req("GET", "/install.json")).json();
     assert.ok(guide.source_code?.[0]?.includes(COMMIT_URL), "/install.json: source_code");
-    const tok = await http.signIn(A.org, "member");
-    const a = await (await http.req("GET", "/api/about", { authorization: `Bearer ${tok}` })).json();
-    const text = JSON.stringify(a);
-    const sec = (id: string) => a.sections.find((s: any) => s.id === id).rows.map((x: any) => `${x.item} ${x.detail}`).join("\n");
-    assert.ok(sec("source").includes(COMMIT_URL) && sec("source").includes("AGPL-3.0-only"), "About: the offer");
-    assert.ok(sec("code").includes(`runs ${REPO}.git at commit \`${SHA}\``), "About: the kind runs the pinned commit");
-    assert.ok(sec("egress").includes("github.com, registry.npmjs.org"), "About: the kind's egress hosts");
-    assert.ok(sec("credentials").includes("`audit_token`") && sec("credentials").includes("`AUDIT_TOKEN`"), "About: the credential, by name and how it is delivered");
-    assert.ok(sec("models").includes("Provider `anthropic`") && sec("models").includes("api.anthropic.com"), "About: the provider and its default upstream");
-    const mrow = (rows: any[], item: string) => rows.find((x: any) => x.item === item)?.detail ?? "";
-    assert.equal(mrow(a.measured.rows, "Model provider anthropic"), "api.anthropic.com, but the vault holds no key for it (runs that need it fail)", "measured: where anthropic's calls would go now");
-    for (const staffOnly of ["Run sandboxes", "Spend alerts", "Access-request alerts", "Traces and metrics"]) assert.equal(mrow(a.measured.rows, staffOnly), "", `${staffOnly}: for staff only`);
-    assert.ok(!("$comment" in (a.deploy ?? {})), "no comment in the answer");
-    const staffTok = await http.adminToken("viewer");
-    const st = await (await http.req("GET", "/api/admin/about", { authorization: `Bearer ${staffTok}` })).json();
-    assert.match(mrow(st.measured.rows, "Run sandboxes"), /^APP_RUN_SANDBOX is (auto|off|boat|docker|process) /, "staff: the sandbox setting (never probed from a request)");
-    assert.equal(mrow(st.measured.rows, "Model provider anthropic"), "api.anthropic.com, but the vault holds no key for it (runs that need it fail); 0 keys of its own and 0 Vertex AI keys enabled in the key vault");
-    const kv = await import("../src/keyvault.js");
-    await kv.setCredential("vertex", JSON.stringify({ type: "service_account", project_id: "p", client_email: "x@p.iam.gserviceaccount.com", private_key: "-----BEGIN PRIVATE KEY-----\nstand-in\n-----END PRIVATE KEY-----\n" }), { label: "default" });
-    const st2 = await (await http.req("GET", "/api/admin/about", { authorization: `Bearer ${staffTok}` })).json();
-    assert.ok(mrow(st2.measured.rows, "Model provider anthropic").startsWith("Google Cloud Vertex AI, location global (aiplatform.googleapis.com): the vault has no Anthropic key of its own but a Vertex AI key; 0 keys of its own and 1 Vertex AI key"), `the gateway's Vertex fallback: ${mrow(st2.measured.rows, "Model provider anthropic")}`);
-    assert.ok(!JSON.stringify(st2).includes("stand-in"), "never the key");
-    for (const v of [ENV.APP_VAULT_KEY!, ENV.APP_WORKER_TOKEN!, process.env.CLERK_SECRET_KEY!, process.env.CLERK_JWT_KEY!.split("\n")[1]!])
-      assert.ok(!text.includes(v), "no secret value of the server's in the answer");
+    const m = dataMap();
+    const sec = (id: string) => m.sections.find((x) => x.id === id)!.rows.map((x) => `${x.item} ${x.detail}`).join("\n");
+    assert.ok(sec("source").includes(COMMIT_URL) && sec("source").includes("AGPL-3.0-only"), "DATA-MAP: the offer");
+    assert.ok(sec("code").includes(`runs ${REPO}.git at commit \`${SHA}\``), "DATA-MAP: the kind runs the pinned commit");
+    assert.ok(sec("egress").includes("github.com, registry.npmjs.org"), "DATA-MAP: the kind's egress hosts");
+    assert.ok(sec("credentials").includes("`audit_token`") && sec("credentials").includes("`AUDIT_TOKEN`"), "DATA-MAP: the credential, by name and how it is delivered");
+    assert.ok(sec("models").includes("Provider `anthropic`") && sec("models").includes("api.anthropic.com"), "DATA-MAP: the provider and its default upstream");
     const md = dataMapMarkdown(dataMap());
     assert.ok(md.includes(COMMIT_URL) && md.includes("| Job kind `audit_scan` (Fixture vulnerabilities) | HTTPS (port 443) to github.com, registry.npmjs.org"), "the Markdown carries the same");
-    console.log("✓ an AGPL upstream: the MCP line, the root page, every install page and /install.json offer its exact commit; the About data maps the kind's code, egress, credential and provider");
+    console.log("✓ an AGPL upstream: the MCP line, the root page, every install page and /install.json offer its exact commit; DATA-MAP.md maps the kind's code, egress, credential and provider");
   }
 
   // ---------- 3. what is not offered, and what is refused ----------
@@ -172,7 +140,7 @@ try {
     assert.ok(!(c.client.getInstructions() ?? "").includes("Source code:"), "no MCP line for it");
     await c.close();
     assert.ok(!(await (await http.req("GET", "/install")).text()).includes("source-code"), "no footer for it");
-    assert.ok(dataMapMarkdown(dataMap()).includes(`licensed MIT; source at ${COMMIT_URL}`), "but the About statement lists it");
+    assert.ok(dataMapMarkdown(dataMap()).includes(`licensed MIT; source at ${COMMIT_URL}`), "but DATA-MAP.md lists it");
     setPacksForTest([entry("fixture_vulns", offerPack({ license: "" }))]);
     assert.ok(dataMapMarkdown(dataMap()).includes("under a licence its pack does not declare"), "an upstream with no licence is listed as such");
     assert.throws(() => installPacks([entry("fixture_vulns", offerPack({ kindCommit: "f".repeat(40) }))]), /audit_scan runs .* at ffffffffffff, but pack\.json upstream pins 0123456789ab: the source offer would name the wrong commit/);
@@ -208,7 +176,7 @@ try {
     assert.ok(instructionsParagraph(exc).endsWith(LICENSOR_EXCEPTION_TEXT) && offerFooterHtml(exc).includes("additional permission"), "the exception: no link, and it says why");
     assert.ok(!offerFooterHtml(exc).includes("acme"), "no link to the app's own source under it");
     assert.equal(sourceOffer([], { app: "licensor_exception" }).offered, false, "the exception alone offers nothing (the instructions stay the shell's)");
-    assert.ok(dataMapMarkdown(dataMap([], null, { ...(await import("../src/profile.js")).PROFILE, source_offer: { app: "licensor_exception" } })).includes(LICENSOR_EXCEPTION_TEXT), "the About statement says so");
+    assert.ok(dataMapMarkdown(dataMap([], null, { ...(await import("../src/profile.js")).PROFILE, source_offer: { app: "licensor_exception" } })).includes(LICENSOR_EXCEPTION_TEXT), "DATA-MAP.md says so");
     const none = path.join(TMP, "no-packs"), out = path.join(TMP, "out-prof"), prof = path.join(TMP, "profile.json");
     mkdirSync(none, { recursive: true });
     const withProfile = (p: unknown) => { writeFileSync(prof, JSON.stringify(p)); return gen(["--packs", none, "--out", out, "--profile", prof]); };
@@ -254,38 +222,11 @@ try {
     console.log("✓ deploy facts: copied into the build and named in the statement (Vercel and a server of its own); a value in any form is refused without being echoed");
   }
 
-  // ---------- 6. measured, never a secret ----------
-  {
-    setPacksForTest([entry("fixture_vulns", offerPack())]);
-    const SECRETS = ["hunter2pass", "AKIDSECRET1", "SECRETVALUE2", "phc_secret3", "T00/B00/SECRET4", "chSECRET5", "nrSECRET6", "dbuser", "sk_live_SECRET7"];
-    const env = { ...process.env, VERCEL: "1", VERCEL_REGION: "bom1", DATABASE_URL: "postgres://dbuser:hunter2pass@ep-cool-1.us-east-2.aws.neon.tech/neondb?sslmode=require",
-      R2_BUCKET: "maxwell-data", R2_ENDPOINT: "https://acct.eu.r2.cloudflarestorage.com", R2_ACCESS_KEY_ID: "AKIDSECRET1", R2_SECRET_ACCESS_KEY: "SECRETVALUE2",
-      POSTHOG_API_KEY: "phc_secret3", POSTHOG_HOST: "https://eu.i.posthog.com", ACCESS_REQUEST_WEBHOOK_URL: "https://hooks.slack.com/services/T00/B00/SECRET4",
-      CLICKHOUSE_URL: "https://default:chSECRET5@abc.us-east-1.aws.clickhouse.cloud:8443", OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp.eu01.nr-data.net", OTEL_EXPORTER_OTLP_HEADERS: "api-key=nrSECRET6",
-      STRIPE_SECRET_KEY: "sk_live_SECRET7" };
-    const m = await measured(env);
-    const text = JSON.stringify(m);
-    for (const s of SECRETS) assert.ok(!text.includes(s), `never ${s}`);
-    const row = (item: string) => m.rows.find((r) => r.item === item)?.detail ?? "";
-    assert.equal(row("Answering from"), "a Vercel function in the region bom1");
-    assert.equal(row("Database"), "Neon Postgres on AWS, region us-east-2");
-    assert.equal(row("Object store"), "Cloudflare R2, bucket maxwell-data, EU jurisdiction");
-    assert.equal(row("Product analytics"), "PostHog (eu.i.posthog.com): product events, and the signed-in person's email address and name");
-    assert.equal(row("Access-request alerts"), "a webhook at hooks.slack.com");
-    assert.equal(row("Traces and metrics"), "OpenTelemetry export to otlp.eu01.nr-data.net");
-    assert.equal(row("Billing"), "Stripe (api.stripe.com)");
-    for (const [u, want] of [["postgres://a:b@aws-0-ap-south-1.pooler.supabase.com:6543/postgres", "Supabase Postgres on AWS, region ap-south-1"], ["postgres://a:b@db:5432/x", "a Postgres server on this machine or its private network"],
-      ["postgres://a:b@mydb.c9x.eu-west-1.rds.amazonaws.com/x", "Amazon RDS Postgres, region eu-west-1"], ["postgres://a:b@pg.internal.example/x", "a Postgres server (its region cannot be read from its host name)"], ["not a url", "a Postgres server (its address could not be read)"]] as const)
-      assert.equal(databaseWords(u), want, u);
-    console.log("✓ measured: region, database provider and region, object store, telemetry and webhooks by host only; no user, password, key, path or query of any address");
-  }
-  // ---------- 7. an upstream that is the licensor's own (mold_v0-099) ----------
+  // ---------- 6. an upstream that is the licensor's own (mold_v0-099) ----------
   {
     const { setSourceOfferForTest } = await import("../src/data-map.js");
     const { hasSourceSection } = await import("../src/source-offer.js");
     setPacksForTest([entry("fixture_vulns", offerPack())]);
-    const tok = await http.signIn(A.org, "member");
-    const about = async () => (await http.req("GET", "/api/about", { authorization: `Bearer ${tok}` })).json();
     const withOffer = await (async () => { const c = await connect(A.org); const i = c.client.getInstructions() ?? ""; await c.close(); return i; })();
     assert.ok(withOffer.includes("\n\nSource code: ") && withOffer.includes(REPO), "without the setting the upstream is offered (section 2)");
     for (const app of [undefined, "licensor_exception"] as const) {
@@ -306,9 +247,8 @@ try {
           assert.ok(!html.includes("source-code") && !html.includes(REPO) && !html.includes("additional permission"), `${p}: no footer`);
         }
         assert.ok(!("source_code" in (await (await http.req("GET", "/install.json")).json())), "/install.json: no source_code");
-        const a = await about();
-        assert.ok(!a.sections.some((x: any) => x.id === "source"), `About: no Source code section (${a.sections.map((x: any) => x.id)})`);
-        assert.ok(["code", "data", "credentials", "models", "egress"].every((id) => a.sections.some((x: any) => x.id === id)), "the rest of the About page stays");
+        const ids = dataMap().sections.map((x) => x.id);
+        assert.ok(!ids.includes("source") && ["code", "data", "credentials", "models", "egress"].every((id) => ids.includes(id)), `DATA-MAP: no Source code section, the rest stays (${ids})`);
         assert.ok(!dataMapMarkdown(dataMap()).includes("## Source code"), "nor in DATA-MAP.md");
       } finally { setSourceOfferForTest(undefined); }
     }
@@ -322,7 +262,7 @@ try {
     assert.ok(ownApp.offered && hasSourceSection(ownApp) && !offerFooterHtml(ownApp).includes("acme/mine"), "the app's own source offered: the section stays, without the licensor's upstream");
     assert.equal(sourceOffer(two, undefined).licensor_owned, undefined, "no setting: nothing marked (the answer is as before)");
     assert.ok(hasSourceSection(sourceOffer([], undefined)) && hasSourceSection(sourceOffer([], { app: "licensor_exception" })), "no setting: the section is always there");
-    // gen-packs: the build's landing footer and About link, and what it refuses.
+    // gen-packs: the build's landing footer, and what it refuses.
     const dir = path.join(TMP, "packs-owned"), out = path.join(TMP, "out-owned"), prof = path.join(TMP, "profile-owned.json");
     mkdirSync(path.join(dir, "fixture_vulns"), { recursive: true });
     writeFileSync(path.join(dir, "fixture_vulns", "pack.json"), JSON.stringify(offerPack()));
@@ -330,11 +270,11 @@ try {
     const landing = () => readFileSync(path.join(out, "web", "src", "config", "landing.generated.ts"), "utf8");
     let g = run({ name: "Acme" });
     assert.equal(g.status, 0, g.stderr);
-    assert.ok(landing().includes(COMMIT_URL) && landing().includes("export const aboutSourceSection: boolean = true;"), "without it: the landing footer offers the upstream, About keeps its section");
+    assert.ok(landing().includes(COMMIT_URL), "without it: the landing footer offers the upstream");
     for (const app of [undefined, "licensor_exception"]) {
       g = run({ name: "Acme", source_offer: { ...(app ? { app } : {}), upstreams: { fixture_vulns: "licensor_owned" } } });
       assert.equal(g.status, 0, g.stderr);
-      assert.ok(landing().includes("export const sourceOfferItems: readonly OfferFooterItem[] = [];") && landing().includes("export const aboutSourceSection: boolean = false;"), `${app ?? "no app"}: no landing footer, the About link is plain About`);
+      assert.ok(landing().includes("export const sourceOfferItems: readonly OfferFooterItem[] = [];"), `${app ?? "no app"}: no landing footer`);
     }
     for (const [bad, why] of [[{ nope: "licensor_owned" }, /not a pack of this build/], [{ fixture_vulns: true }, /must be "licensor_owned"/], [{}, /upstreams must be an object/], [["fixture_vulns"], /upstreams must be an object/]] as const)
       assert.match(run({ name: "Acme", source_offer: { upstreams: bad } }).stderr, why, `refused: ${JSON.stringify(bad)}`);
@@ -348,7 +288,7 @@ try {
     writeFileSync(path.join(hp, "host.ts"), "export default {};\n");
     g = run({ name: "Acme", host_packs: ["host_owner"] });
     assert.ok(g.status !== 0 && /host\.profile may not set source_offer\.upstreams/.test(g.stderr), `a host pack's profile may not: ${g.stderr.slice(0, 300)}`);
-    console.log("✓ an upstream the licensor owns: no MCP line, no footer (root, install, landing), no source_code, no About section (with or without the licensor's exception); others still offered; gen-packs checks it and refuses it from a host pack");
+    console.log("✓ an upstream the licensor owns: no MCP line, no footer (root, install, landing), no source_code, no DATA-MAP section (with or without the licensor's exception); others still offered; gen-packs checks it and refuses it from a host pack");
   }
 
   await http.close();

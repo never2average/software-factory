@@ -21,8 +21,8 @@
  *                      absent, the build says nothing about its own source (its packs' copyleft upstreams are offered
  *                      either way). `upstreams` (mold_v0-099): {"<pack id>": "licensor_owned"} for a pack whose pinned
  *                      upstream is the app licensor's own project: as its copyright holder it need not offer that
- *                      source, so the build does not (no About row, no footer line, no MCP instructions line; the About
- *                      page's whole "Source code" section goes when nothing else is in it). Only the app's own
+ *                      source, so the build does not (no footer line, no /install.json sentence, no MCP instructions
+ *                      line, no DATA-MAP.md row; its "Source code" section goes when nothing else is in it). Only the app's own
  *                      profile.json sets `upstreams`, never a host pack's profile; gen-packs refuses a pack id the build
  *                      does not have or whose pack pins no upstream
  *   member_keys        optional (mold_v0-099): false turns per-member API keys off (src/member-keys.ts): the console's

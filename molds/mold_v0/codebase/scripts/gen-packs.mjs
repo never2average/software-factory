@@ -15,7 +15,7 @@
 //   orchestrator/packs.generated.ts      the host packs' orchestrator entries (orchestrator/packs/<id>/main.ts)
 //   src/deploy-facts.generated.ts        the deploy facts the factory wrote into this build copy (deploy-facts.json at the
 //                                        codebase root, mold_v0-050): names, places and providers, never a value; null
-//                                        without the file. Read by src/data-map.ts (DATA-MAP.md and the About page)
+//                                        without the file. Read by src/data-map.ts (DATA-MAP.md)
 //
 // Host packs (mold_v0-039): a pack whose pack.json has `host` (an entry with defineHost, src/host.ts) is the product's
 // own surface: tools, routes and hooks at the shell's fixed points, console pages (web/src/packs/<id>/), an orchestrator
@@ -1116,9 +1116,9 @@ function readLanding() {
   if (declaring.length > 1) fail("packs", `packs ${declaring.map((p) => p.id).join(" and ")} both declare a landing block: at most one pack of a build declares one (the app's profile.json landing changes it)`);
   const fromPack = declaring.length === 1 ? declaring[0].json.landing : null;
   const offerPacks = packs.filter((p) => p.manifest.upstream).map((p) => ({ id: p.id, manifest: { name: p.manifest.name, upstream: p.manifest.upstream }, definition: {} }));
-  if (fromPack === null && profileLanding === undefined && !offerPacks.length && profile.source_offer === undefined) return { landing: null, offer: [], sourceSection: true };
+  if (fromPack === null && profileLanding === undefined && !offerPacks.length && profile.source_offer === undefined) return { landing: null, offer: [] };
   const tsx = path.join(ROOT, "node_modules", ".bin", "tsx");
-  if (!existsSync(tsx)) { fail("landing", `reading the landing block and the source offer needs tsx (${rel(tsx)}): run npm ci`); return { landing: null, offer: [], sourceSection: true }; }
+  if (!existsSync(tsx)) { fail("landing", `reading the landing block and the source offer needs tsx (${rel(tsx)}): run npm ci`); return { landing: null, offer: [] }; }
   const dir = mkdtempSync(path.join(tmpdir(), "gen-packs-landing-"));
   try {
     const script = path.join(dir, "landing.mts");
@@ -1126,23 +1126,22 @@ function readLanding() {
 import { readFileSync } from "node:fs";
 const [landingApi, offerApi, input] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const { landingProblems, mergeLanding } = await import(pathToFileURL(landingApi).href);
-const { sourceOffer, offerFooterItems, hasSourceSection } = await import(pathToFileURL(offerApi).href);
+const { sourceOffer, offerFooterItems } = await import(pathToFileURL(offerApi).href);
 const packBad = input.pack !== null && landingProblems(input.pack).length > 0;
 const profileProblems = input.profile === null ? [] : landingProblems(input.profile);
 const landing = packBad || profileProblems.length ? null : mergeLanding(input.pack, input.profile);
-const o = sourceOffer(input.packs, input.setting ?? undefined);
-const offer = offerFooterItems(o), sourceSection = hasSourceSection(o);
-process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profileProblems, landing, offer, sourceSection }) + "\\n");
+const offer = offerFooterItems(sourceOffer(input.packs, input.setting ?? undefined));
+process.stdout.write("\\n" + process.argv[3] + " " + JSON.stringify({ profileProblems, landing, offer }) + "\\n");
 `);
     const inputFile = path.join(dir, "input.json"), mark = `LANDING_${randomBytes(12).toString("hex")}`;
     writeFileSync(inputFile, JSON.stringify([path.join(ROOT, "src", "landing.ts"), path.join(ROOT, "src", "source-offer.ts"),
       { pack: fromPack, profile: profileLanding === undefined ? null : profileLanding, packs: offerPacks, setting: profile.source_offer ?? null }]));
     const r = spawnSync(tsx, [script, inputFile, mark], { cwd: ROOT, encoding: "utf8", timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
-    if (r.status !== 0 || !line) { fail("landing", `reading the landing block failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return { landing: null, offer: [], sourceSection: true }; }
+    if (r.status !== 0 || !line) { fail("landing", `reading the landing block failed: ${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return { landing: null, offer: [] }; }
     const got = JSON.parse(line.slice(mark.length + 1));
     for (const pr of got.profileProblems) fail(rel(PROFILE_FILE), pr);
-    return { landing: got.landing, offer: got.offer, sourceSection: got.sourceSection !== false };
+    return { landing: got.landing, offer: got.offer };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1308,9 +1307,7 @@ files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER
   "/** The landing block (mold_v0-091, src/landing.ts): a pack's pack.json `landing` with profile.json `landing` over it; null: the neutral page. */\n" +
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
-  `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n\n` +
-  "/** Whether the About page has a Source code section (src/source-offer.ts hasSourceSection, mold_v0-099): false when every upstream is the licensor's own. */\n" +
-  `export const aboutSourceSection: boolean = ${landingPage.sourceSection !== false};\n`);
+  `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);

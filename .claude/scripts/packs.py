@@ -41,7 +41,7 @@ deploy-facts.json) gets, in the deploy copy build/<app_id>/ (never a lane copy) 
 factory knows from the app's state about where it is deployed: the target, the Vercel team and projects or the server
 (provider, address, domain, compose project), the database and object store providers, the secret store and every
 secret NAME (deploy_facts below). Never a value: the mold's generator refuses anything that is not a name, a place or a
-provider. The mold renders them into its data-flow and residency statement (DATA-MAP.md and the console's About page).
+provider. The mold renders them into its data-flow and residency statement (DATA-MAP.md).
 The same step writes the source offer the operator chose for this machine's deployments (state/factory.json
 defaults.source_offer, usually set in state/factory.local.json: {"app": "licensor_exception"} when the factory's
 LICENSE-EXCEPTION.md permission covers the operator, or {"app": {"url", "license"}}) into the copy's profile.json, where

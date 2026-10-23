@@ -1,7 +1,7 @@
 // The data-flow and residency statement as Markdown (mold_v0-050; src/data-map.ts): DATA-MAP.md at the codebase root,
 // from this build's packs and the deploy facts the factory wrote (deploy-facts.json, through scripts/gen-packs.mjs). The
 // factory's generators run it in the build copy after gen-packs (molds/mold_v0/mold.json packs.generators), and its
-// checks with --check; the console's About page serves the same statement with what the running server measures.
+// checks with --check.
 //   npx tsx scripts/data-map.ts           write DATA-MAP.md   (npm run gen:data-map)
 //   npx tsx scripts/data-map.ts --check   exit 1 when DATA-MAP.md differs from the build   (npm run check:data-map)
 //   --out <file>                          another file (tests)
