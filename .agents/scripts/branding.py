@@ -702,7 +702,8 @@ def self_test_v0(ok):
         changed = {k for k, v in tree(b).items() if before.get(k) != v}
         allowed = {"profile.json", *rules["profile"]["generated"], rules["files"]["manifest"], rules["files"]["globals"]} | {fav for fav in (
             "web/src/app/favicon.ico", "web/src/app/icon.png", "web/src/app/apple-icon.png", "web/src/app/icon.svg",
-            "web/public/icon-192.png", "web/public/icon-512.png", "web/public/icon-maskable-512.png")}
+            "web/public/icon-192.png", "web/public/icon-512.png", "web/public/icon-maskable-512.png",
+            "web/src/app/opengraph-image.alt.txt")}   # mold_v0-045: gen-packs writes the share image's alt text from the profile
         ok_(changed <= allowed and {"profile.json", "web/public/icon-192.png", "web/src/app/favicon.ico", rules["files"]["globals"]} <= changed,
             f"mold_v0: the overlay changes the profile, its generated modules, the manifest, the theme and the icons, and nothing else: {sorted(changed - allowed)}")
         css = open(os.path.join(b, rules["files"]["globals"])).read(); css0 = open(os.path.join(code, rules["files"]["globals"])).read()
@@ -746,6 +747,48 @@ def self_test_v0(ok):
         try: app_profile.write(hb, {"mold_id": "mold_v0", "profile": lim}, f); ok_(False, "a host pack's own limits")
         except ValueError as e: ok_("host pack hp brings its own limits" in str(e) and "limits" not in load(os.path.join(hb, "profile.json")),
                                     "mold_v0-090: an app's limits never silently replace a host pack's own (the shell merges them at the top level): refused")
+        # mold_v0-101: the email defaults: a sender on the machine's notify_domain and access_requests (+ due_dates when a pack
+        # declares due dates) for an app that sets neither, never over a host pack's own, never without a notify_domain.
+        ok_(app_profile.email_defaults({"app_id": "zz_mail", "mold_id": "mold_v0"}, f) == {"email": {"notifications": ["access_requests"]}},
+            "mold_v0-101: no notify_domain on the machine: no default sender (intake asks), notifications still on")
+        json.dump({"defaults": {"notify_domain": "mail.example.test"}}, open(os.path.join(f, "state", "factory.local.json"), "w"))
+        os.makedirs(os.path.join(f, "packs", "dp", "files", "packs", "dp"))
+        json.dump({"id": "dp", "record_areas": [{"name": "a", "due": {"field": "due_on"}}, {"name": "b"}]}, open(os.path.join(f, "packs", "dp", "files", "packs", "dp", "pack.json"), "w"))
+        mail_app = {"app_id": "zz_mail", "mold_id": "mold_v0", "packs": ["dp"]}
+        ok_(app_profile.email_defaults(mail_app, f) == {"email_from_address": "zz_mail@mail.example.test", "email": {"notifications": ["access_requests", "due_dates"]}},
+            f"mold_v0-101: the defaults: <app_id>@<notify_domain>, access_requests and due_dates (a pack's area declares due dates): {app_profile.email_defaults(mail_app, f)}")
+        own = dict(mail_app, profile={"email_from_address": "hello@brand.example.test", "email": {"notifications": []}})
+        ok_(app_profile.effective(own, f) == own["profile"], "mold_v0-101: the app's own email settings (the brief's) win, an empty list included")
+        hostp = {"email_from_address": "hello@host.example.test", "email": {"notifications": ["usage"]}}
+        mh = mold_host = (load(os.path.join(mold, "mold.json")).get("packs") or {}).get("host_packs") or []
+        if mh:
+            os.makedirs(os.path.join(f, "packs", mh[0], "files", "packs", mh[0]))
+            json.dump({"id": mh[0], "host": {"profile": hostp}}, open(os.path.join(f, "packs", mh[0], "files", "packs", mh[0], "pack.json"), "w"))
+            ok_(app_profile.email_defaults({"app_id": "zz_host", "mold_id": "mold_v0", "packs": [mh[0]]}, f) == {},
+                "mold_v0-101: a host pack that brings its own sender and notifications gets no default over them")
+        hm = os.path.join(t, "hostmail"); os.makedirs(os.path.join(hm, "packs", "hp"))
+        json.dump({"host_packs": ["hp"]}, open(os.path.join(hm, "profile.json"), "w")); json.dump({"host": {"profile": hostp}}, open(os.path.join(hm, "packs", "hp", "pack.json"), "w"))
+        app_profile.write(hm, {"app_id": "zz_host", "mold_id": "mold_v0", "packs": ["hp"]}, f)
+        hmp = load(os.path.join(hm, "profile.json"))
+        ok_("email" not in hmp and "email_from_address" not in hmp, f"mold_v0-101: a build copy whose host pack (by the copy's host_packs) brings them gets no default over them: {hmp}")
+        mb = os.path.join(t, "mailcopy"); shutil.copytree(zb, mb, ignore=shutil.ignore_patterns("node_modules"), symlinks=True)
+        app_profile.write(mb, mail_app, f); mbp = load(os.path.join(mb, "profile.json"))
+        ok_(mbp.get("email_from_address") == "zz_mail@mail.example.test" and mbp.get("email") == {"notifications": ["access_requests", "due_dates"]}
+            and app_profile.check(mb, mail_app, f) and any("email default" in x for x in app_profile.check(mb, mail_app, f)),
+            "mold_v0-101: write puts the defaults in the copy's profile.json, and check says the generated module does not carry them until the generator runs")
+        ok_(any("email_from_address" in x for x in app_profile.check(mb, dict(mail_app, packs=[], app_id="other"), f)),
+            "mold_v0-101: check finds a copy carrying another app's defaults")
+        for prof, why in (({"email_from_address": "not an address"}, "one email address"), ({"email_from_address": "a@b.c\nBcc: x@y.z"}, "one email address"),
+                          ({"email": {"notifications": ["access_requests", "spam"]}}, "is not a group"), ({"email": {"provider": "test"}}, "resend or none"),
+                          ({"email": {"notifications": ["usage", "usage"]}}, "each once"), ({"email": {"to": "x"}}, "not an email setting")):
+            ok_(any(why in e for e in app_profile.problems(prof, "mold_v0", f)), f"mold_v0-101: refused: {prof} ({why})")
+        ok_(app_profile.problems({"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"], "provider": "resend"}}, "mold_v0", f) == [],
+            "mold_v0-101: a sender and known groups validate")
+        bp, berrs, _ = app_profile.from_brief("## Profile\n- email_from_address = hello@brand.example.test\n- `email.notifications`: access_requests, due_dates\nlimits.runs.budget_usd_max = 40\n")
+        ok_(bp == {"email_from_address": "hello@brand.example.test", "email": {"notifications": ["access_requests", "due_dates"]}, "limits": {"runs": {"budget_usd_max": 40}}} and berrs == [],
+            f"mold_v0-101: the brief's ## Profile sets the sender and the notifications: {bp} {berrs}")
+        ok_(app_profile.from_brief("## Profile\nemail.notifications = none\n")[0] == {"email": {"notifications": []}}, "mold_v0-101: email.notifications = none turns every group off")
+        os.remove(os.path.join(f, "state", "factory.local.json"))
         for bad, why in (({"host_packs": ["x"]}, "host_packs"), ({"limits": {"runs": {"budget_usd_max": -1}}}, "positive"), ({"name": "Other"}, "the brand writes it"),
                          ({"limits": {"runs": {"budget_usd": 40}}}, "is not a limit"), ({"billing": {"enabled": True}}, "money")):
             json.dump({"app_id": "zz_bad", "mold_id": "mold_v0", "status": "planned", "surface": {"branding": brand}, "profile": bad},

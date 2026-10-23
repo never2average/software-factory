@@ -397,6 +397,7 @@ def _apply_by_rules(app_id, app, packs, mold_dir, rules, lane=False, default_pro
     print(f"packs applied to {os.path.relpath(build, ROOT)}/: {', '.join(packs)} ({len(seen)} file(s)"
           + (f"; {', '.join(gone)} no longer named, taken out" if gone else "")
           + (f"; the app's profile settings: {_profile_said(app)}" if app.get("profile") and not lane else "")
+          + (f"; the factory's email defaults: {_defaults_said(app, build)}" if not lane and _defaults_said(app, build) else "")
           + f"); {', '.join(' '.join(c) for c in rules['generators'])} regenerated the registry")
     return 0
 
@@ -413,6 +414,13 @@ def _app_profile(build, app_id, app):
             return False
         return app_profile.write(build, app, ROOT)
     except ValueError as e: sys.exit(f"{app_id}: the app's profile settings were refused; nothing was written: {e}")
+
+def _defaults_said(app, build):
+    """mold_v0-101: the email settings the factory wrote for the app (lib/app_profile.py email_defaults), in words; "" for none."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+    import app_profile
+    d = app_profile.email_defaults(app, ROOT, build)
+    return app_profile.describe(d) if d else ""
 
 def _profile_said(app):
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))

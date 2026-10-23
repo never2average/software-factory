@@ -7,6 +7,7 @@
 //   src/pack-migrations.generated.ts     the ordered list of pack migration directories (no pack code imported)
 //   src/run-tools.generated.json         the run tools the packs' agent kinds need (mold_v0-072), installed in the runner image
 //   src/profile.generated.ts             the profile: product name, MCP server name, console title, email sender
+//   src/email-pitch.generated.ts         the landing block's hero subheadline, the welcome email's pitch (mold_v0-101)
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
@@ -823,7 +824,14 @@ const blockKeys = (file, name) => {
  */
 function emailProblem(v) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
-  for (const k of Object.keys(v)) if (!["$comment", "provider", "notifications"].includes(k)) return `${k} is not an email setting (known: provider, notifications)`;
+  for (const k of Object.keys(v)) if (!["$comment", "provider", "notifications", "pitch", "library_nouns"].includes(k)) return `${k} is not an email setting (known: provider, notifications, pitch, library_nouns)`;
+  // What a library item of each kind is called (mold_v0-101): kind -> a word of the build's.
+  if (v.library_nouns !== undefined) {
+    if (!v.library_nouns || typeof v.library_nouns !== "object" || Array.isArray(v.library_nouns)) return "library_nouns: an object of kind -> words";
+    for (const [k, x] of Object.entries(v.library_nouns)) if (!/^[a-z][a-z_]{0,30}$/.test(k) || wordProblem(x)) return `library_nouns.${k.slice(0, 40)}: a kind (lowercase) -> ${wordProblem(x) ?? "words"}`;
+  }
+  // The welcome email's pitch (mold_v0-101, src/email.ts): plain text on one line; placeholders are filled from the words.
+  if (v.pitch !== undefined && (typeof v.pitch !== "string" || !v.pitch.trim() || v.pitch.length > 400 || /[\u0000-\u001f\u007f<>]/.test(v.pitch))) return "pitch: plain text on one line, up to 400 characters, no < or >";
   if (v.provider !== undefined && !["resend", "test", "none"].includes(v.provider)) return "provider must be resend, test or none";
   const groups = blockKeys("email.ts", "NOTIFICATION_GROUPS");
   if (v.notifications !== undefined) {
@@ -1255,6 +1263,11 @@ files.set(path.join(OUT, "web", "src", "lib", "words.generated.ts"),
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
   `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);
+// The emails' pitch (mold_v0-101): the landing block's hero subheadline, in a module of its own so the landing block
+// never reaches the profile modules (the MCP surface and the console's names).
+files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
+  "/** The landing block's hero subheadline (mold_v0-101): the welcome email's pitch when the profile has no email.pitch (src/email.ts); null without one. */\n" +
+  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingPage.landing?.hero?.subheadline ?? null)};\n`);
 
 const nav = (area) => {
   const groups = new Map();

@@ -579,7 +579,15 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   pack's profile may, for its product); `APP_EMAIL_NOTIFICATIONS` only narrows that list. An app built before
   this change sent every group whenever Resend was connected: before its next deploy its profile (or its host pack's)
   lists the groups it sends (the Octillion product: `access_requests`, `library`, `usage`; a pack with due dates such
-  as ComplianceOS: `due_dates`), or they are logged as skipped. With no transport that
+  as ComplianceOS: `due_dates`), or they are logged as skipped. The factory writes the sender and the groups for an app
+  whose host pack does not (mold_v0-101, `branding/rules.json` `profile.email_defaults`: `<app_id>@<notify_domain>`,
+  `access_requests`, and `due_dates` when a pack declares due dates). No product word is in the text (mold_v0-101,
+  `emailWords`): it writes placeholders (`{product}`, `{run}`, `{runs}`, `{account}`, `{owner}`, "a {product}") that the
+  build's vocabulary fills (mold_v0-100, `src/vocabulary.ts`), never inside a value someone typed. The welcome email's
+  pitch is the profile's `email.pitch` (a host pack's profile may set it), else the landing block's hero subheadline
+  (gen-packs writes it to `src/email-pitch.generated.ts`), else the short description. The first
+  product's emails are what they were when its host pack's profile gives `words.run` (simulation), `email.pitch` and
+  `email.library_nouns` (what a library item of each kind is called; absent, the kind as it is). With no transport that
   can send, `/admin/emails` says so in one sentence. Every message is a row in `email_log` with a hash
   and the domain of its one address, never the address, a code or a key; subjects, senders and recipients lose line
   breaks; every link is on the console's address from the environment (`src/console-url.ts`: `APP_CONSOLE_URL`,
