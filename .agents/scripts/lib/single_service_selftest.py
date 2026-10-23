@@ -707,6 +707,22 @@ def run():
             _, i3, err3 = vdeploy(fp3, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url="https://old-console.example")))
             ok(not err3 and [c[1] for c in fp3.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop", "zz-shop-api"] and fp3.projects["zz-shop-api"]["env"]["OCTILLION_CONSOLE_URL"] == web_u,
                f"a console at a new address: the API is told and deployed once more: {err3[:200]} {[c[1] for c in fp3.calls if c[0] == 'deploy']}")
+            # A console on its own domain (domain.py switch made it the front door): emails link to the domain, not *.vercel.app,
+            # and the recorded production address stays the domain; no extra deploy when the API already holds it.
+            fp5 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"])
+            fp5.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u, "OCTILLION_CONSOLE_URL": "https://shop.example.org", "OCTILLION_PROXY_HOPS": "1"})
+            fp5._front_door = lambda infra, url, cb: "https://shop.example.org" if (infra.get("vercel") or {}).get("production_url") == "https://shop.example.org" else url
+            _, i5, err5 = vdeploy(fp5, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], custom_domain="shop.example.org", production_url="https://shop.example.org")))
+            ok(not err5 and [c[1] for c in fp5.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"] and fp5.projects["zz-shop-api"]["env"]["OCTILLION_CONSOLE_URL"] == "https://shop.example.org"
+               and i5["vercel"]["production_url"] == "https://shop.example.org",
+               f"a console on its own domain: emails keep linking to it, it stays the production address, no extra deploy: {err5[:200]} {[c[1] for c in fp5.calls if c[0] == 'deploy']} {i5['vercel'].get('production_url')}")
+            # A failed read of the API's settings (names there, no values) is not taken for stale: nothing written, no extra deploy.
+            fp6 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "PUBLIC_URL", "OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS"]}, projects=["zz-shop"])
+            fp6.pull_env = lambda cb, proj, required=False, environment="production": {}
+            _, i6, err6 = vdeploy(fp6, inf=dict(cp(vi), vercel=dict(cp(vi)["vercel"], production_url=web_u)))
+            ok(not any(c[0] == "set_env" and c[1] == "zz-shop-api" and c[2] in ("OCTILLION_CONSOLE_URL", "OCTILLION_PROXY_HOPS") for c in fp6.calls)
+               and [c[1] for c in fp6.calls if c[0] == "deploy"].count("zz-shop-api") <= 2,
+               f"a failed read of the API's settings writes nothing and adds no deploy: {err6[:200]} {[c for c in fp6.calls if c[0] in ('deploy', 'set_env')]}")
             # The API failing its health after it learns the console's address: both projects back on what served before.
             fp4 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]}, projects=["zz-shop"], before={"zz-shop-api": "dpl_api_old", "zz-shop": "dpl_web_old"})
             fp4.projects["zz-shop-api"]["env"].update({"PUBLIC_URL": api_u})
@@ -780,6 +796,11 @@ def run():
             try: rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], dict(va, packs=["shop_notes"]), cp(vi), {}, vd2, FakeP(projects=["zz-shop-api", "zz-shop"]), say=lambda s: None, root=t)
             finally: SS.build_source = real_bs
             ok(rc == 1 and json.load(open(os.path.join(vd2, "application.json"))).get("status") == "planned", "provision.py: a build copy that cannot be made exits 1 and leaves the app as it was (not reverted)")
+            # mold_v0-090: an app whose only own thing is its profile settings is built too (packs.py apply writes them, then verify)
+            built.clear(); prof_app = dict(va, profile={"limits": {"runs": {"budget_usd_max": 40}}})
+            ok(SS.uses_build(prof_app) and SS.source_for("zz_shop", prof_app, t) == bdir and SS.build_source("zz_shop", prof_app, t, say=lambda s: None, run=brun) == bdir
+               and built == [["packs.py", "apply", "zz_shop"], ["packs.py", "verify", "zz_shop"]],
+               f"profile settings and nothing else: build/<app_id>/ from packs.py apply and verify (never the bare codebase, which would drop them): {built}")
             ran_none = []
             ok(SS.build_source("zz_shop", dict(va), t, run=lambda *x, **k: ran_none.append(x)) == SS.codebase("mold_vx", t) and not ran_none,
                "an app with neither packs nor a brand: the codebase itself, nothing run")
