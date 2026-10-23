@@ -34,6 +34,7 @@ import { packs } from "./packs.js";
 import { findArea, isSealedArea, may, recordAreas, type Actor, type RecordArea } from "./record-areas.js";
 import { findKind, jobKinds, startRun } from "./runs.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
+import { requireFeature, featureRefusal, workspaceEntitlements } from "./entitlements.js";
 import { retentionSweep, retentionWired, type RetentionReport } from "./workspace-retention.js";
 
 export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
@@ -229,6 +230,8 @@ export async function createSchedule(orgId: number, by: string, b: Record<string
   if (!NAME.test(name)) throw new PackError("name: 2-63 lowercase letters, digits and _, starting with a letter", 400);
   if (defaultSchedules().some((d) => d.pack === pack && d.name === name)) throw new PackError(`${name} is one of pack ${pack}'s default schedules: change that one instead`, 409);
   if (b.cron === undefined) throw new PackError("cron is required", 400);
+  // A schedule of the workspace's own only on a plan that includes schedules (src/entitlements.ts, mold_v0-083).
+  await requireFeature(orgId, "schedules");
   const f = await checkFields(orgId, pack, b);
   f.scope = defaultSchedules().find((d) => d.pack === pack && d.job_kind === kind)?.scope ?? {};
   const [{ n }] = await withTenant(orgId, async () => (await getDb()).query<{ n: number }>("SELECT count(*)::int AS n FROM workspace_schedules WHERE org_id = $1", [orgId]));
@@ -250,6 +253,8 @@ export async function updateSchedule(orgId: number, id: string, by: string, b: R
   const f = await checkFields(orgId, cur.pack, b);
   if (!Object.keys(f).length) throw new PackError("nothing to change: label, cron, assets, environment or enabled", 400);
   if (f.enabled === true && cur.is_default && !declared(cur.pack, cur.name)) throw new PackError("no pack declares this default any more: remove it instead", 409);
+  // Turning one on (or giving it a time) only on a plan that includes schedules (src/entitlements.ts, mold_v0-083).
+  if (f.enabled === true || (f.cron !== undefined && (f.enabled ?? cur.enabled))) await requireFeature(orgId, "schedules");
   const cron = f.cron ?? cur.cron;
   // A new time, or turning it back on: the next due time counts from now (what was missed while off is not run).
   const fresh = f.cron !== undefined || (f.enabled === true && !cur.enabled);
@@ -325,6 +330,9 @@ async function fire(s: Row): Promise<{ runs: string[]; error: string | null }> {
   const runs: string[] = [];
   try {
     if (!findKind(s.pack, s.job_kind)) return { runs, error: `job kind ${s.pack}/${s.job_kind} is not in this build` };
+    // A due schedule fires only on a plan that includes schedules (src/entitlements.ts, mold_v0-083): the row says why not.
+    const unplanned = featureRefusal(await workspaceEntitlements(s.org_id), "schedules");
+    if (unplanned) return { runs, error: `not started: ${unplanned}` };
     const standing = await accountStanding(s.org_id);
     if (standing) return { runs, error: standing };
     const { targets, note } = await targetsOf(s);

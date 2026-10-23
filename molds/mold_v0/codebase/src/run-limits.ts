@@ -19,6 +19,7 @@ import type { Queryable } from "./db.js";
 import { PackError } from "./pack-api.js";
 import { limitsFor, planOf, type ProfileLimits } from "./rate-limits.js";
 import { PROFILE } from "./profile.js";
+import { requireFeature } from "./entitlements.js";
 import { kindMonthSpendUsd, liveEarlierRunSpendUsd } from "./run-spend.js";
 import { asPlatform } from "./tenant-scope.js";
 
@@ -57,12 +58,15 @@ async function accountRefusal(orgId: number): Promise<string | null> {
 }
 
 /**
- * Before a run is queued (src/runs.ts startRun): the workspace's live runs, the kind's month budget and the account's
- * allowance. Returns the run's budget to freeze (the kind's, clamped) and the live cap, which startRun checks again
- * with its insert under a lock per workspace (concurrent starts cannot pass it). Throws a PackError (429 or 403).
+ * Before a run is queued (src/runs.ts startRun): the workspace's plan includes runs (src/entitlements.ts, mold_v0-083),
+ * its live runs, the kind's month budget and the account's allowance. Returns the run's budget to freeze (the kind's,
+ * clamped), the live cap, which startRun checks again with its insert under a lock per workspace (concurrent starts
+ * cannot pass it), and whether the plan's runs are charged. Throws a PackError (429 or 403).
  */
-export async function checkRunStart(orgId: number, pack: string, kind: string, k: KindLimits, live: number): Promise<{ budget_usd: number; live_per_workspace: number }> {
+export async function checkRunStart(orgId: number, pack: string, kind: string, k: KindLimits, live: number):
+  Promise<{ budget_usd: number; live_per_workspace: number; run_charges: "charged" | "included" }> {
   return asPlatform(async () => {
+    const ent = await requireFeature(orgId, "runs");
     const lim = effectiveKindLimits(k, await planOf(orgId));
     if (live >= lim.live_per_workspace)
       throw new PackError(`this workspace already has ${live} runs queued or running (at most ${lim.live_per_workspace}): wait for some to finish`, 429);
@@ -71,7 +75,7 @@ export async function checkRunStart(orgId: number, pack: string, kind: string, k
       throw new PackError(`runs of ${kind} have used this workspace's $${lim.month_budget_usd.toFixed(2)} for this month ($${spent.toFixed(2)} spent)`, 429);
     const account = await accountRefusal(orgId);
     if (account) throw new PackError(`no run can start: ${account}`, 403);
-    return { budget_usd: lim.budget_usd, live_per_workspace: lim.live_per_workspace };
+    return { budget_usd: lim.budget_usd, live_per_workspace: lim.live_per_workspace, run_charges: ent.run_charges };
   });
 }
 

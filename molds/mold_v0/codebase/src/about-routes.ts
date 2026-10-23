@@ -105,7 +105,8 @@ export async function measured(env: NodeJS.ProcessEnv = process.env, staff = tru
   for (const [item, on, what, shown] of third) if (shown) rows.push({ item, detail: on ? what : "not configured" });
   const { emailStatus } = await import("./email.js");
   const e = await emailStatus().catch(() => null);
-  rows.push({ item: "Email", detail: e ? (e.enabled && e.connected ? `Resend (${urlHost(env.RESEND_API_URL) ?? "api.resend.com"})` : "not sending (no Resend key in the key vault, or email turned off)") : "could not be read" });
+  // The email adapter's own sentence (src/email.ts emailStatus, mold_v0-083): the transport, and which kinds are on.
+  rows.push({ item: "Email", detail: e ? (e.enabled && e.connected && e.provider === "resend" ? `Resend (${urlHost(env.RESEND_API_URL) ?? "api.resend.com"}). ${e.summary}` : e.summary) : "could not be read" });
   return { id: "measured", title: "Measured by the running server", intro: "Read by this server when the page was opened: names, providers, regions and host names only.", rows };
 }
 
