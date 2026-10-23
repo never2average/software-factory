@@ -106,9 +106,12 @@ export async function stageStepsReached(orgIds?: number[]): Promise<Map<number, 
   return out;
 }
 
-/** The checklist for workspace `orgId`: every pack step, done or not, with when it was done. */
-export async function onboardingFor(orgId: number) {
-  const steps = await Promise.all(onboardingSteps().map(async (s) => {
+/**
+ * The checklist for workspace `orgId`: every pack step (or only pack `pack`'s: its get_started tool, mold_v0-105, in
+ * src/mcp-tools.ts), done or not, with when it was done.
+ */
+export async function onboardingFor(orgId: number, pack?: string) {
+  const steps = await Promise.all(onboardingSteps().filter((s) => pack === undefined || s.pack === pack).map(async (s) => {
     const at = await doneAt(orgId, s);
     return { pack: s.pack, id: s.id, label: s.label, help: s.help ?? null, done: at !== null, at };
   }));

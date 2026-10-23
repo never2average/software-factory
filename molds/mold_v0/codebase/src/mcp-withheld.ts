@@ -19,6 +19,7 @@
  *   start            POST /api/schedules for the kind (the pack's own default schedules still fire)
  *   admin_list/get/create/update/delete   the same on /api/admin/data and /api/admin/records
  *   admin_sync       POST /api/admin/data/_repositories/:pack/:name/sync
+ *   get_started      nothing beyond the tool (mold_v0-105: the console's Setup page still shows the checklist)
  *
  * With zero packs, or packs with no mcp settings, nothing is withheld and every route answers as before.
  */
