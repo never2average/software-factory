@@ -567,7 +567,7 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   `emailWords`): it writes placeholders (`{product}`, `{run}`, `{runs}`, `{account}`, `{owner}`, "a {product}") that the
   build's vocabulary fills (mold_v0-100, `src/vocabulary.ts`), never inside a value someone typed. The welcome email's
   pitch is the profile's `email.pitch` (a host pack's profile may set it), else the landing block's hero subheadline
-  (gen-packs writes it to `src/profile.generated.ts` `GENERATED_EMAIL_PITCH`), else the short description. The first
+  (gen-packs writes it to `src/email-pitch.generated.ts`), else the short description. The first
   product's emails are what they were when its host pack's profile gives `words.run` (simulation) and `email.pitch`. With no transport that
   can send, the About page and `/admin/emails` say so in one sentence. Every message is a row in `email_log` with a hash
   and the domain of its one address, never the address, a code or a key; subjects, senders and recipients lose line

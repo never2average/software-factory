@@ -60,7 +60,7 @@ import { PROFILE, type ProfileEmail } from "./profile.js";
 import { consoleUrl } from "./console-url.js";
 import { ENV } from "./env-names.js";
 import { NS } from "./namespace.js";
-import { GENERATED_EMAIL_PITCH } from "./profile.generated.js";
+import { GENERATED_EMAIL_PITCH } from "./email-pitch.generated.js";
 import { vocabulary } from "./vocabulary.js";
 import { fillWith, type Words } from "./words.js";
 

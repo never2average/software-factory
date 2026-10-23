@@ -7,7 +7,7 @@
 //   src/pack-migrations.generated.ts     the ordered list of pack migration directories (no pack code imported)
 //   src/run-tools.generated.json         the run tools the packs' agent kinds need (mold_v0-072), installed in the runner image
 //   src/profile.generated.ts             the profile: product name, MCP server name, console title, email sender
-//                                        (and the landing block's hero subheadline, the emails' pitch: mold_v0-101)
+//   src/email-pitch.generated.ts         the landing block's hero subheadline, the welcome email's pitch (mold_v0-101)
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
@@ -1238,8 +1238,11 @@ files.set(path.join(OUT, "web", "src", "lib", "words.generated.ts"),
   HEADER.replace("from packs/*/pack.json and profile.json", "from src/words.ts (a copy, so the console runs the server's words engine)") + readFileSync(WORDS_ENGINE, "utf8"));
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
-  `export const GENERATED_PROFILE = ${json(profile)} as const;\n` +
-  "/** The landing block's hero subheadline (mold_v0-101): the emails' pitch (src/email.ts emailWords); null without one. */\n" +
+  `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);
+// The emails' pitch (mold_v0-101): the landing block's hero subheadline, in a module of its own so the landing block
+// never reaches the profile modules (the MCP surface and the console's names).
+files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
+  "/** The landing block's hero subheadline (mold_v0-101): the welcome email's pitch when the profile has no email.pitch (src/email.ts); null without one. */\n" +
   `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingPage.landing?.hero?.subheadline ?? null)};\n`);
 
 const nav = (area) => {
