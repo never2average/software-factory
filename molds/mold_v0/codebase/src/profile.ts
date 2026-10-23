@@ -28,6 +28,12 @@
  *                      every feature. Only the app's own profile.json sets it, never a host pack's profile
  *   landing            optional (mold_v0-091, src/landing.ts): the app's landing page at /, over a pack's pack.json
  *                      `landing`; never part of this profile: gen-packs writes it to web/src/config/landing.generated.ts
+ *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
+ *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
+ *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json
+ *                      `words`, over the neutral BASE; a host pack's host.profile.words come under the app's. Never
+ *                      part of the profile modules: gen-packs writes them to src/vocabulary.generated.ts (this layer)
+ *                      and web/src/config/vocabulary.generated.ts (the build's words, resolved)
  *
  * Until mold_v0-039 moves the product's surface into its pack, profile.json carries the product's own names, so a
  * build is exactly what it was; with no profile.json the shell shows only the neutral default.
