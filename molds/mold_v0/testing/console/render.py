@@ -99,7 +99,11 @@ def prepare(app_id, codebase, say=print):
     port = free_port()
     # An allow-listed environment: nothing of the operator's shell (an app address, a key) is baked into the build.
     env = {k: v for k, v in os.environ.items() if k in KEEP_ENV}
-    env.update(NODE_ENV="production", NEXT_TELEMETRY_DISABLED="1", OCTILLION_API_URL=f"http://127.0.0.1:{port}")
+    # The console's sign-in is fixed at build time (mold_v0-004: web/next.config.ts, AUTH_PROVIDER). The lane world signs
+    # its person in with the shell's offline Clerk and this build carries the Clerk stand-in, so the console is built for
+    # Clerk; left to its default (built-in sign-in) it would ask the API for a built-in session the world never issues.
+    env.update(NODE_ENV="production", NEXT_TELEMETRY_DISABLED="1", OCTILLION_API_URL=f"http://127.0.0.1:{port}",
+               NEXT_PUBLIC_AUTH_PROVIDER="clerk")
     say(f"lane console: next build of build/{app_id}.lane-console/web (the API at 127.0.0.1:{port})")
     r = subprocess.run(["node", "node_modules/next/dist/bin/next", "build", "--webpack"], cwd=os.path.join(out, "web"), env=env,
                        capture_output=True, text=True, timeout=BUILD_S)

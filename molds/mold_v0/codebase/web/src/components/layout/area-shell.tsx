@@ -19,7 +19,9 @@ export async function AreaShell({ area, groups, docs, children }: { area: Area; 
     <NavProvider area={area} groups={groups}>
       <KBar docs={docs}>
         <SidebarProvider defaultOpen={defaultOpen}>
-          <a href='#main-content' className='bg-background ring-ring sr-only rounded-md px-3 py-2 text-sm font-medium shadow focus:not-sr-only focus:absolute focus:top-2 focus:start-2 focus:z-50 focus:ring-2'>
+          {/* Padded only while focused: hidden, it is a 1px box (padding on sr-only made it a 24x16 box in the corner,
+              beside the header's controls). */}
+          <a href='#main-content' className='bg-background ring-ring sr-only rounded-md text-sm font-medium shadow focus:not-sr-only focus:absolute focus:top-2 focus:start-2 focus:z-50 focus:px-3 focus:py-2 focus:ring-2'>
             Skip to content
           </a>
           <AppSidebar />
