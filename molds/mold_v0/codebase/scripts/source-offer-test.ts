@@ -4,8 +4,10 @@
 //   npm run test:source-offer
 //
 // 1. Zero packs and no source_offer in the profile: nothing is offered. The MCP server's instructions are exactly the
-//    shell's, the root page and the install pages carry no footer, /install.json no source_code; DATA-MAP.md in the
-//    codebase is current; GET /api/about answers a signed-in person (401 without one) and staff, with no deploy facts.
+//    build's own (the shell's in the mold; a host pack's in a build that has one, mold_v0-086), the root page (a host
+//    pack's landing page in its build) and the install pages carry no footer, /install.json no source_code; DATA-MAP.md
+//    is current; GET /api/about answers a signed-in person (401 without one) and staff, with no deploy facts in the mold
+//    and exactly the build copy's in a build.
 // 2. A pack whose pinned upstream is AGPL-3.0, run by its agent kind at that commit: the instructions, the root page,
 //    every install page and /install.json name the project, its licence and the exact commit's address; the About data
 //    lists it with the kind's egress hosts, its credential (by name), its model provider and where calls go.
@@ -21,7 +23,7 @@
 //    answer; nor any of the server's own secret values.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, connect, startHttp, STAMP, TMP } from "./lib/test-world.js";
 
@@ -50,6 +52,14 @@ try {
   const { compileDeclarations } = await import("../src/pack-manifest.js");
   const { createOrg } = await import("../src/auth.js");
   const { SHELL_INSTRUCTIONS } = await import("../src/server.js");
+  // The instructions the server starts from (src/server.ts createServer): the profile's own, else a host pack's, else the
+  // shell's. A zero-pack build has neither, so its are exactly the shell's; a build with a host pack (octillion) has the
+  // pack's. The source offer is a paragraph after them either way.
+  await import("../src/hosts.js"); // the build's host packs, registered as the server's entry module does (none with zero packs)
+  const OWN_INSTRUCTIONS = (await import("../src/profile.js")).PROFILE.mcp_instructions ?? (await import("../src/host.js")).hosts().find((h) => h.mcp?.instructions)?.mcp?.instructions;
+  const BASE_INSTRUCTIONS = OWN_INSTRUCTIONS ?? SHELL_INSTRUCTIONS;
+  // A host pack's landing page is the root page in its build; the offer goes into it, the page stays the pack's.
+  const HOST_INDEX = (await import("../src/host.js")).hosts().map((h) => h.publicDir && path.join(h.publicDir, "index.html")).find((f) => f && existsSync(f));
   const { generatedInstructions } = await import("../src/mcp-tools.js");
   const { currentOffer, dataMap, dataMapMarkdown } = await import("../src/data-map.js");
   const { sourceOffer, instructionsParagraph, offerFooterHtml, commitUrl, isCopyleft, LICENSOR_EXCEPTION_TEXT } = await import("../src/source-offer.js");
@@ -63,8 +73,11 @@ try {
   {
     assert.equal(currentOffer().offered, false, "nothing to offer");
     const c = await connect(A.org);
-    assert.equal(c.client.getInstructions(), SHELL_INSTRUCTIONS + generatedInstructions({}), "the instructions are exactly the shell's");
+    const ins = c.client.getInstructions() ?? "";
     await c.close();
+    assert.equal(ins, BASE_INSTRUCTIONS + generatedInstructions({}), "the instructions are exactly the build's own: nothing added");
+    assert.ok(!ins.includes("Source code:"), "no source-offer paragraph");
+    if (!OWN_INSTRUCTIONS) assert.equal(BASE_INSTRUCTIONS, SHELL_INSTRUCTIONS, "with no host pack and the default profile, the shell's own");
     for (const p of ["/", "/install", "/install/claude-code"]) assert.ok(!(await (await http.req("GET", p)).text()).includes("source-code"), `${p}: no source-code footer`);
     assert.ok(!("source_code" in (await (await http.req("GET", "/install.json")).json())), "/install.json: no source_code");
     const md = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsx"), [path.join(ROOT, "scripts", "data-map.ts"), "--check"], { cwd: ROOT, encoding: "utf8" });
@@ -76,8 +89,16 @@ try {
     assert.equal(r.status, 200, "a viewer reads it");
     const a = await r.json();
     assert.deepEqual(a.sections.map((s: any) => s.id), ["code", "data", "credentials", "models", "egress", "source"]);
-    assert.equal(a.deploy, null, "no deploy facts in the codebase itself");
-    assert.ok(a.sections[0].rows[0].detail.includes("carries no deploy facts"), "and it says so");
+    // The mold's codebase carries no deploy facts; an app's build copy carries the ones the factory wrote (packs.py apply).
+    const { DEPLOY_FACTS } = await import("../src/deploy-facts.generated.js");
+    if (!DEPLOY_FACTS) {
+      assert.equal(a.deploy, null, "no deploy facts in the codebase itself");
+      assert.ok(a.sections[0].rows[0].detail.includes("carries no deploy facts"), "and it says so");
+    } else {
+      const { $comment: _c, ...facts } = DEPLOY_FACTS as Record<string, unknown>;
+      assert.deepEqual(a.deploy, facts, "a build copy's deploy facts, exactly (without the comment)");
+      assert.ok(!a.sections[0].rows.some((x: any) => x.detail.includes("carries no deploy facts")), "and no line saying there are none");
+    }
     assert.equal(a.offer.offered, false);
     assert.ok(a.measured.rows.some((x: any) => x.item === "Database" && x.detail.startsWith("an embedded Postgres")), "measured: the embedded database");
     const staff = await http.adminToken("viewer");
@@ -95,11 +116,16 @@ try {
     const c = await connect(A.org);
     const ins = c.client.getInstructions() ?? "";
     await c.close();
-    assert.ok(ins.startsWith(SHELL_INSTRUCTIONS), "the shell's instructions first");
+    assert.ok(ins.startsWith(BASE_INSTRUCTIONS), "the build's own instructions first");
     assert.ok(ins.includes(`\n\nSource code: Fixture vulnerabilities uses fixture-agent (${REPO}), licensed AGPL-3.0-only, at commit ${SHA}; its complete source at that commit is at ${COMMIT_URL}.`), `the MCP line: ${ins}`);
     for (const p of ["/", "/install", "/install/claude-code", "/install/tools"]) {
       const html = await (await http.req("GET", p)).text();
       assert.ok(html.includes('id="source-code"') && html.includes(`<a href="${COMMIT_URL}">`) && html.includes("AGPL-3.0-only") && html.includes(`<code>${SHA}</code>`), `${p}: the footer links the exact commit`);
+      if (p === "/" && HOST_INDEX) {
+        const page = readFileSync(HOST_INDEX, "utf8"), at = page.lastIndexOf("</body>");
+        const [head, tail] = at < 0 ? [page, ""] : [page.slice(0, at), page.slice(at)];
+        assert.ok(html.length > page.length && html.startsWith(head) && html.endsWith(tail), "/: still the host pack's landing page, with the footer before </body>");
+      }
     }
     const guide = await (await http.req("GET", "/install.json")).json();
     assert.ok(guide.source_code?.[0]?.includes(COMMIT_URL), "/install.json: source_code");
