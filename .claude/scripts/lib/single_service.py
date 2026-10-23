@@ -785,9 +785,10 @@ def health_verdict(F, kv, public, pages=None):
 # compose_remote: check, deploy, set-secret, rollback
 # ---------------------------------------------------------------------------------------------------------
 def uses_build(app):
-    """An app with packs or a brand is built from a copy of its own, build/<app_id>/ (mold_v0-024), as mold_v1's apps are;
-    one with neither is deployed from the codebase as it is, exactly as before."""
-    return bool(isinstance(app, dict) and (app.get("packs") or (app.get("surface") or {}).get("branding")))
+    """An app with packs, a brand or profile settings of its own (application.json `profile`, mold_v0-090) is built from a
+    copy of its own, build/<app_id>/ (mold_v0-024), as mold_v1's apps are; one with none is deployed from the codebase as
+    it is, exactly as before."""
+    return bool(isinstance(app, dict) and (app.get("packs") or (app.get("surface") or {}).get("branding") or app.get("profile")))
 
 def source_for(app_id, app, root=None):
     return os.path.join(root or ROOT, "build", app_id) if uses_build(app) else codebase(app["mold_id"], root)
@@ -806,8 +807,8 @@ def build_source(app_id, app, root=None, say=print, run=subprocess.run):
     elif os.path.lexists(build): os.remove(build)
     steps = []
     if (app.get("surface") or {}).get("branding"): steps.append(("the brand", [sys.executable, os.path.join(SCRIPTS, "branding.py"), app_id, "prepare"]))
-    if app.get("packs"):
-        steps += [("the packs", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "apply", app_id]),
+    if app.get("packs") or app.get("profile"):   # packs.py apply also writes the app's profile settings (mold_v0-090)
+        steps += [("the packs and the app's profile settings" if app.get("profile") else "the packs", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "apply", app_id]),
                   ("the packs' checks", [sys.executable, os.path.join(SCRIPTS, "packs.py"), "verify", app_id])]
     for what, cmd in steps:
         r = run(cmd, capture_output=True, text=True, cwd=root or ROOT)
