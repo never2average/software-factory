@@ -283,6 +283,7 @@ try {
       "Questions? Reply to this email.",
       "— Atlas"].join("\n\n"));
     assert.ok(d.accepted.text.includes("where it now helps audits for everyone"), d.accepted.text);
+    assert.equal(d.accepted.subject, "Your task is in Atlas's library", "no library_nouns: the item's kind as it is");
     for (const [k, m] of Object.entries(d)) assert.doesNotMatch(`${m.subject}\n${m.text}`, /simulation|developer product|coding agents|Claude Code|Workspace/i, `${k}: only the pack's words`);
     assert.equal(mail.wordsFor({ ...decl, pitch: null }).pitch, "Atlas: Audits for your applications.", "no landing block: the short description");
     assert.equal(mail.wordsFor({ ...decl, name: "Ledger" }).t`Now a {product} {account}`, "Now a Ledger account");
@@ -301,6 +302,7 @@ try {
     // A host pack whose profile gives its words and its pitch (the first product: words.run = simulation, email.pitch): the
     // text it always sent, byte for byte.
     const host = await render({ name: "Hostapp", sender_name: "Hostapp", short_description: "Some tagline", words: resolveWords([{ run: "simulation" }]),
+      library_nouns: { persona: "developer persona", task: "programming task" },
       pitch: "{product} shows how AI coding agents treat your developer product: we run agents like Claude Code, Codex and Cursor on real programming tasks and report how often they choose your product, who they pick instead, and why." });
     const was = (name: string) => ({
       received: ["We got your request for " + name, ["Hi Ana,", `Thanks for asking for access to ${name} for Acme Corp. We read every request ourselves and will get back to you by email, usually within a few working days.`,

@@ -318,6 +318,8 @@ export interface EmailWordsInput {
   pitch: string | null;
   /** The build's words (src/vocabulary.ts vocabulary()). */
   words: Readonly<Words>;
+  /** What a library item of each kind is called (the profile's email.library_nouns); absent, the kind as it is. */
+  library_nouns?: Readonly<Record<string, string>>;
 }
 export interface EmailWords {
   /** The product's name ({product}), and the signature's (the sender's name). */
@@ -328,6 +330,8 @@ export interface EmailWords {
   fill(text: string): string;
   /** A tagged template: its literal parts filled, its values (a company, a title) as they are. */
   t(parts: TemplateStringsArray, ...values: unknown[]): string;
+  /** What a library item of this kind is called. */
+  noun(kind: string): string;
 }
 /** A word or sentence from the profile, on one line and of a bounded length. */
 const plainLine = (v: unknown, max: number) => oneLine(v, max);
@@ -341,6 +345,7 @@ export function wordsFor(i: EmailWordsInput): EmailWords {
   return {
     product, sender: plainLine(i.sender_name, 100) || product,
     pitch: own ? sentence(fill(own)) : short ? `${product}: ${sentence(short)}` : null,
+    noun: (kind) => plainLine(i.library_nouns?.[kind], 40) || kind,
     fill, t: (parts, ...values) => parts.reduce((out, part, k) => out + fill(part) + (k < values.length ? String(values[k]) : ""), ""),
   };
 }
@@ -352,6 +357,7 @@ export const emailWords = (): EmailWords => wordsFor(testWords ?? {
   name: PROFILE.name, sender_name: PROFILE.email_sender_name, short_description: PROFILE.short_description,
   // The build's own profile (not the tests' notification switch): its email.pitch, else the landing block's.
   pitch: (PROFILE as { email?: ProfileEmail }).email?.pitch ?? GENERATED_EMAIL_PITCH, words: vocabulary(),
+  library_nouns: (PROFILE as { email?: ProfileEmail }).email?.library_nouns,
 });
 /** The signature: the profile's sender name (src/profile.ts). */
 const sign = (w: EmailWords = emailWords()) => `— ${w.sender}`;
@@ -458,7 +464,8 @@ export function requestApproved(r: RequestFacts, o: { account: string; invited: 
 // ---------- library submissions (src/contributions.ts) ----------
 
 export interface SubmissionFacts { id: string; kind: "persona" | "task"; title: string; org_id: number; org_name: string; org_slug: string; created_by: string | null }
-const noun = (k: "persona" | "task") => (k === "persona" ? "developer persona" : "programming task");
+/** What a library item is called: the profile's email.library_nouns (a host pack's words), else its kind. */
+const noun = (k: "persona" | "task") => emailWords().noun(k);
 
 /** An account published an item to the library: an alert to the operator. */
 export function submissionReceived(s: SubmissionFacts) {

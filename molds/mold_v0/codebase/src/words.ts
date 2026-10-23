@@ -50,20 +50,17 @@ export const wordProblem = (v: unknown): string | null =>
 
 /**
  * The build's words: `layers` from the highest (the profile's) to the lowest (the last pack's), over BASE_WORDS. The
- * first layer that names a word gives it, with its plural when it names that too.
+ * first layer that names a word gives it; its plural comes from the first layer that names the word or its plural.
  */
 export function resolveWords(layers: readonly (Readonly<Record<string, string>> | null | undefined)[]): Words {
   const out = { ...BASE_WORDS } as Record<string, string>;
+  const has = (l: Readonly<Record<string, string>> | null | undefined, k: string) => typeof l?.[k] === "string" && l[k]!.trim() !== "";
   for (const k of WORD_KEYS) {
-    const from = layers.find((l) => typeof l?.[k] === "string" && l[k]!.trim());
-    if (from) {
-      const one = from[k]!.trim();
-      out[k] = one;
-      out[`${k}s`] = from[`${k}s`]?.trim() || pluralWord(one);
-    } else {
-      const many = layers.find((l) => typeof l?.[`${k}s`] === "string" && l[`${k}s`]!.trim());
-      if (many) out[`${k}s`] = many[`${k}s`]!.trim();
-    }
+    const one = layers.find((l) => has(l, k));
+    if (one) out[k] = one[k]!.trim();
+    // The plural: from the highest layer that names the word or its plural (its own plural, else made from its word).
+    const many = layers.find((l) => has(l, k) || has(l, `${k}s`));
+    if (many) out[`${k}s`] = has(many, `${k}s`) ? many[`${k}s`]!.trim() : pluralWord(many[k]!.trim());
   }
   return out as Words;
 }
