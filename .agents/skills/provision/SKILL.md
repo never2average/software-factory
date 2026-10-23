@@ -193,6 +193,24 @@ API project's variable NAMES (never values): if it already holds either spelling
 it is kept and the check says so; if not, the check and the deploy stop with exit 3, needs_human, asking for the
 address before anything is created. Nothing ever removes an administrator variable a project holds.
 
+**AI clients signing in on `/mcp` with Clerk (mold_v0-116; `lib/clerk_mcp.py`, `mold.json` `mcp_sign_in`).** When
+the `-api` project is on Clerk (`CLERK_SECRET_KEY` set, `AUTH_PROVIDER` not `builtin`):
+
+- The deploy copies the console's `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` onto the `-api` project as
+  `CLERK_PUBLISHABLE_KEY` before the API deploys, so the API finds Clerk's sign-in server (without it
+  `/.well-known/oauth-protected-resource` answers "OAuth is not configured"). The key is public by design and is
+  never printed. A `CLERK_FRONTEND_API_URL` the operator set (a Clerk proxy) is kept and wins.
+- The check reads Clerk's own `/.well-known/oauth-authorization-server`. With no `registration_endpoint` and no
+  `client_id_metadata_document_supported`, no AI client can register itself: the check prints the Clerk dashboard
+  steps (Configure, OAuth applications, Settings, turn on Dynamic client registration and Client ID Metadata
+  Documents). It stops with exit 3 (needs_human) only when member API keys are off (`profile.member_keys: false`),
+  since then nothing else lets a client connect. Otherwise it is a warning, and a deploy says it at the end. If Clerk
+  cannot be read, the check says so and goes on.
+- With member keys off and no publishable key anywhere, the check and the deploy ask for
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (`--set-secret`) before anything deploys. `factory.py validate` refuses
+  `member_keys: false` for a mold whose codebase has no sign-in for `/mcp` (`branding/rules.json`
+  `profile.member_keys_off`).
+
 ## A server of its own (`target: vm_remote`)
 
 ```

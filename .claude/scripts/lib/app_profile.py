@@ -10,6 +10,8 @@ each one the factory can check. Today (mold_v0):
                              the groups the shell knows (its NOTIFICATION_GROUPS); pitch: the welcome email's sentence
   email_from_address         the default sender's address (src/profile.ts; the sender's NAME is the brand's)
   member_keys                true or false (mold_v0-099): false turns per-member API keys off; clients sign in
+                             (refused when the mold's rules name its /mcp sign-ins and the codebase has none:
+                             profile.member_keys_off, mold_v0-116)
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -210,6 +212,17 @@ def _upstreams_problems(v, packs):
         elif packs is not None and pid not in packs: errs.append(f"profile.source_offer.upstreams.{pid}: the app has no pack {pid} (application.json packs)")
     return errs
 
+def member_keys_off_problems(s, mold_id, root):
+    """member_keys: false (mold_v0-116) leaves signing in as the only way an AI client reaches /mcp. Refused when the
+    mold's rules (profile.member_keys_off.mcp_sign_in_any) name the files of its /mcp sign-ins and the codebase has none
+    of them. A mold whose rules name none is not judged here. Whether the deployed sign-in works is provision.py's check."""
+    need = ((s or {}).get("member_keys_off") or {}).get("mcp_sign_in_any")
+    if not isinstance(need, list) or not need: return []
+    cb = os.path.join(root, "molds", str(mold_id), "codebase")
+    if any(isinstance(f, str) and os.path.isfile(os.path.join(cb, f)) for f in need): return []
+    return [f"profile.member_keys false would leave AI clients no way into /mcp: member API keys off, and molds/{mold_id}/codebase has no "
+            f"sign-in for /mcp ({' or '.join(str(f) for f in need)}). Leave member_keys out (keys on), or give the mold a sign-in for /mcp first"]
+
 def problems(profile, mold_id, root, packs=None):
     """Sentences: what is wrong with an app's `profile` for its mold ([] when it is right, or absent). `packs`: the app's
     pack ids (application.json packs), when known, for source_offer.upstreams."""
@@ -231,6 +244,7 @@ def problems(profile, mold_id, root, packs=None):
         elif k not in settable: errs.append(f"profile.{k} is not settable from an app's state (settable: {', '.join(settable)})")
         elif k == "member_keys":
             if not isinstance(v, bool): errs.append(f"profile.member_keys must be true or false (got {json.dumps(v)[:40]})")
+            elif v is False: errs += member_keys_off_problems(s, mold_id, root)
         elif k == "limits":
             keys = limit_keys(os.path.join(root, "molds", mold_id, "codebase"))
             if keys is None: errs.append(f"profile.limits: the limit names could not be read from molds/{mold_id}/codebase/scripts/gen-packs.mjs (LIMIT_KEYS)")

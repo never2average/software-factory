@@ -32,6 +32,10 @@
     },
     "refuse": "[<>\"\\r\\n]",
     "app_settable": ["limits", "email", "email_from_address", "member_keys", "source_offer.upstreams"],
+    "member_keys_off": {
+      "$comment": "mold_v0-116 (.claude/scripts/lib/app_profile.py): member_keys: false leaves signing in as the only way an AI client reaches /mcp, so it is refused at validation unless the codebase has one of these sign-ins for /mcp (the built-in OAuth server, or Clerk's). Whether the deployed app's sign-in actually works (Clerk's key on the API, Clerk letting clients register) is provision.py's check (mold.json mcp_sign_in).",
+      "mcp_sign_in_any": ["src/mcp-oauth.ts", "src/clerk.ts"]
+    },
     "email_defaults": {
       "$comment": "mold_v0-101 (.claude/scripts/lib/app_profile.py email_defaults): what an app's build copy gets when the app's state sets neither email field and its host pack's profile does not either. from: the default sender's address, {notify_domain} being this machine's defaults.notify_domain (state/factory.local.json; none: no default, intake asks). notifications: the groups that are on (src/email.ts NOTIFICATION_GROUPS), plus due_dates when one of the app's packs declares a record area with due dates (pack.json record_areas[].due). The sender's name is the brand's.",
       "from": "{app_id}@{notify_domain}",

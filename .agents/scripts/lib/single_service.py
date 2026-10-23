@@ -107,6 +107,7 @@ import datetime, getpass, json, os, re, secrets as pysecrets, shlex, shutil, sub
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import vm_remote as VR   # the host probe, SSH/rsync argv, DNS check, key pair, hidden prompt, env file, firewall rules
+import clerk_mcp         # Clerk as the sign-in AI clients use on /mcp (mold_v0-116)
 
 SCRIPTS = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
@@ -1576,7 +1577,7 @@ def _rollback_said(rec, names):
 
 def _stop_text(e): return str(e.code if isinstance(e, SystemExit) and e.code is not None else e)
 
-def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None, build_run=subprocess.run):
+def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None, build_run=subprocess.run, read_json=None):
     """The two-project deploy: the api project first, then the console pointed at its address; health on both; when
     anything after the first deploy fails, both projects go back to what served before. Raises Stop with the reason."""
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
@@ -1609,6 +1610,12 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, present[r], F.get("aliases")) for r in project_for(F, K, n))]
     if missing:
         P.ask_nicely_for(app_id, missing); raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
+    # /mcp's sign-in (mold_v0-116): with member keys off and the API on Clerk with no way to find it (no publishable key
+    # anywhere), nothing would let an AI client in: asked for before anything is deployed. Clerk's own registration
+    # setting is the check's to report (the deploy says it at the end), never a reason to stop a deploy here.
+    ck = clerk_reading(app_id, app, man, cb, names, {"api": True, "web": True}, P, root, read_json=lambda u: (None, None, "not read during a deploy"), api_held=present["api"])
+    if ck and ck["block"] and ck["block"][0] == "secret":
+        raise NeedsHuman(f"{app_id}: {clerk_block(app_id, P, ck)}; member API keys are off, so nothing else lets an AI client connect. Nothing was deployed.")
     if ensure_database(app_id, infra, cb, api, present["api"], P, say=say): save(ipath, infra)
     # A key held under either spelling is present: never minted again under the other, which would win over it.
     want = [n for n in infra.get("secrets_derived") or [] if not has_value(n, present["api"], F.get("aliases")) and n != "DATABASE_URL"]
@@ -1641,6 +1648,9 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
             for n, val in want.items():
                 if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
+            # The console's publishable key onto the API (mold_v0-116; lib/clerk_mcp.py): public by design, yet never said.
+            for n, val in ((ck or {}).get("copy") or {}).items():
+                if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set from {web}'s publishable key, so the API finds Clerk's sign-in server for /mcp (a public key; not shown)")
         for attempt in (1, 2):
             out = P.vercel_deploy(f"vercel deploy --prod --yes --project {api}{scope}", build, f"{api} deploy")
             if before["api"].get("id"): P.promote_new({"projects": {"api": before["api"]}}, cb, ["api"])   # after an earlier rollback Vercel holds production
@@ -1697,12 +1707,38 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     app["mold_commit"] = mold_commit(app["mold_id"], root) or app.get("mold_commit", "")
     save(ipath, infra); save(os.path.join(adir, "application.json"), app)
     if rls: record_rls(adir, F["rls"], True, rls[1], "by provision.py --deploy", rls[2], rls[3])
+    fr = ((ck or {}).get("facts") or {}).get("frontend")
+    if fr:    # Clerk's own setting (mold_v0-116): said after the deploy, never a reason to roll it back
+        reg = clerk_mcp.registration(fr, read_json)
+        if reg["state"] == "off":
+            say(f"  NOTE: Clerk ({clerk_mcp.host_of(fr)}) lets no AI client register itself ({reg['said']}), so AI clients cannot sign in on /mcp yet.")
+            for l in clerk_mcp.ask(app_id, fr, clerk_mcp.member_keys_off(dict(app, app_id=app_id), root or ROOT)).splitlines(): say("    " + l)
     say(f"{app_id}: deployed. The console {url} ({web}; {K['proxied_health']} reaches the API, {', '.join(f'{p} {c}' for p, c in h['pages'].items())}); "
         f"the API {api_url} ({api}; {man['health_path']} 200 ok)"); return 0
 
-def vercel_check(app_id, app, infra, P, say=print, root=None):
+def clerk_reading(app_id, app, man, cb, names, exists, P, root=None, read_json=None, api_held=None):
+    """The /mcp sign-in reading for a Vercel app (mold_v0-116; lib/clerk_mcp.py judge), from the two projects' values
+    (pulled, held in memory, never printed). None when the mold declares no Clerk sign-in. With api_held (the API's
+    names), an API that holds neither Clerk's secret nor the sign-in switch is read as built-in without pulling values."""
+    cs = clerk_mcp.clerk_spec(man)
+    if not cs: return None
+    if api_held is not None and not ({cs["secret"], cs.get("provider_env") or "AUTH_PROVIDER"} & set(api_held)): exists = {}
+    vals = {r: (P.pull_env(cb, n, required=False) if exists.get(r) else {}) for r, n in names.items()}
+    keys_off = clerk_mcp.member_keys_off(dict(app, app_id=app_id), root or ROOT)
+    return clerk_mcp.judge(app_id, man, vals.get("api") or {}, vals.get("web") or {}, keys_off, read_json)
+
+def clerk_block(app_id, P, reading):
+    """Note what the operator must do for a blocking reading (exit 3 through provision.py), and the sentence for it."""
+    import agent_result as AR
+    kind, name, how, msg = reading["block"]
+    if kind == "secret": AR.need("secret", name, AR.secret_how(app_id, name)); P.ask_nicely_for(app_id, [name])
+    else: AR.need(kind, name, how)
+    return msg
+
+def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     """Read-only. Exit 0 = ready for --deploy (nothing on Vercel is the operator's to type unless the console's sign-in
-    names are required; optional keys stay off)."""
+    names are required; optional keys stay off). For an app on Clerk it also reads Clerk's own sign-in metadata
+    (mold_v0-116), so AI clients can sign in on /mcp."""
     import agent_result as AR
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
     names = vercel_projects(vercel_project(infra))
@@ -1726,6 +1762,8 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
             f"(never removed; its value is not read here). Record them as platform_admins in state/application/{app_id}/answers.json so the factory keeps them")
     elif gap:
         say(f"  - {admin_todo(app_id)}"); need_admins(app_id, app)
+    ck = clerk_reading(app_id, app, man, cb, names, {r: bool(meta[r].get("id")) for r in names}, P, root, read_json, api_held=present["api"])
+    for l in (ck or {}).get("lines") or []: say(l)
     say("a deploy will:")
     for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
     pre = console_preflight(K)
@@ -1736,6 +1774,8 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
             say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
         say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
     if gap: say(f"Not ready: {admin_ask(app_id, app)}"); return 1
+    if ck and ck["block"]:
+        say(f"Not ready: {clerk_block(app_id, P, ck)}. Member API keys are off for {app_id} (profile member_keys: false), so nothing else lets an AI client connect."); return 1
     if pre: say("  - the mold's codebase cannot run as two projects as it is (see 'not ready' above). " + _codebase_fix(app["mold_id"], "see above")); return 1
     why = rls_tools_missing(cb, F.get("rls"))
     if why: say(f"  - {why}"); return 1
