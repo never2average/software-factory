@@ -24,7 +24,7 @@
  *   resource indicators (RFC 8707)          the resource parameter is required and must be this server's /mcp
  *                                           (mcpAudiences); the token is bound to it and /mcp checks it on every call
  *   tokens                                  opaque, random, only their sha256 stored: access tokens short-lived
- *                                           (OCTILLION_OAUTH_ACCESS_MINUTES, default 30), refresh tokens rotated on
+ *                                           (APP_OAUTH_ACCESS_MINUTES, default 30), refresh tokens rotated on
  *                                           every use (a replayed one revokes the grant), revocation (RFC 7009)
  *   consent                                 the console's /auth/consent page, under the built-in session: it names the
  *                                           client (and whether its name is verified), where it sends the person back,
@@ -48,6 +48,8 @@ import { getDb, type Queryable } from "./db.js";
 import { PROFILE } from "./profile.js";
 import { hashed, hit } from "./rate-limits.js";
 import { asPlatform } from "./tenant-scope.js";
+import { ENV } from "./env-names.js";
+import { nsGet } from "./namespace.js";
 
 // ---------- settings ----------
 
@@ -60,8 +62,8 @@ const between = (v: string | undefined, lo: number, hi: number, dflt: number) =>
   const n = Number(v ?? "");
   return Number.isInteger(n) && n >= lo && n <= hi ? n : dflt;
 };
-export const accessMinutes = () => between(process.env.OCTILLION_OAUTH_ACCESS_MINUTES, 5, 60, 30);
-export const refreshDays = () => between(process.env.OCTILLION_OAUTH_REFRESH_DAYS, 1, 90, 30);
+export const accessMinutes = () => between(ENV.APP_OAUTH_ACCESS_MINUTES, 5, 60, 30);
+export const refreshDays = () => between(ENV.APP_OAUTH_REFRESH_DAYS, 1, 90, 30);
 /** Registrations from one address an hour, and clients' requests to the token endpoint from one address an hour. */
 export const REGISTRATIONS_PER_HOUR_PER_IP = 20;
 export const TOKEN_CALLS_PER_HOUR_PER_IP = 600;
@@ -128,7 +130,7 @@ export function wwwAuthenticate(error?: "invalid_token" | "insufficient_scope") 
 const LOOPBACK = new Set(["127.0.0.1", "[::1]", "localhost"]);
 /** Schemes a redirect URI may never use (a private-use scheme of an app, such as cursor: or vscode:, is fine). */
 /** One-word schemes of known MCP clients (editors and desktop apps) a redirect URI may use. */
-const APP_SCHEMES = new Set(["cursor", "vscode", "vscode-insiders", "claude", "windsurf", "zed", "kiro", "positron"]);
+const CLIENT_APP_SCHEMES = new Set(["cursor", "vscode", "vscode-insiders", "claude", "windsurf", "zed", "kiro", "positron"]);
 const BROWSER_SCHEME = /(^|[.-])(safari|chrome|chromium|edge|firefox|opera|brave|intent|search|ms-|https?)([.-]|$)/;
 const BAD_SCHEMES = new Set(["javascript:", "data:", "file:", "vbscript:", "about:", "blob:", "filesystem:", "ftp:", "ws:", "wss:", "mailto:", "tel:", "chrome:", "view-source:"]);
 
@@ -145,7 +147,7 @@ export function redirectUriOk(v: unknown): v is string {
   // one-word schemes. Anything else (a browser's or the OS's handler: x-safari-https:, googlechromes:, microsoft-edge:,
   // intent:, search-ms:) could open any web page or program, so it is refused.
   const scheme = u.protocol.slice(0, -1).toLowerCase();
-  return APP_SCHEMES.has(scheme) || (/^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/.test(scheme) && !BROWSER_SCHEME.test(scheme));
+  return CLIENT_APP_SCHEMES.has(scheme) || (/^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$/.test(scheme) && !BROWSER_SCHEME.test(scheme));
 }
 
 /** Exact match, except that a loopback http URI may change its port (RFC 8252 7.3). */
@@ -392,7 +394,7 @@ const live = (r: RequestRow | undefined): r is RequestRow => Boolean(r && !r.use
 /** The workspaces a person may connect: their memberships that are not suspended. */
 async function workspacesOf(userId: string) {
   return (await memberships.forUser(userId)).filter((m) => m.public_metadata?.suspended !== true && m.organization)
-    .map((m) => ({ id: m.organization!.id, name: m.organization!.name, role: String(m.public_metadata?.octillion_role ?? "member") }));
+    .map((m) => ({ id: m.organization!.id, name: m.organization!.name, role: String(nsGet(m.public_metadata, "role") ?? "member") }));
 }
 
 /** What the consent page shows: the client, where it sends the person back, and the workspaces to choose from. */

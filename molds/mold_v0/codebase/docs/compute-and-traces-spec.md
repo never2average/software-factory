@@ -1,6 +1,6 @@
 # Final build spec: admin Compute page and Health traces
 
-Repo: `/root/octillion-live/octillion-admin`. This spec starts from the highest-scoring design (operator-first, 8.5 / 8.5 / 6). It takes the best parts of job-centric and cost-capacity and fixes every flaw the judges raised. I checked the code for these facts before writing:
+Repo: the product's repository (before the shell was generalised). This spec starts from the highest-scoring design (operator-first, 8.5 / 8.5 / 6). It takes the best parts of job-centric and cost-capacity and fixes every flaw the judges raised. I checked the code for these facts before writing:
 
 - **Admin routes that exist:** `/admin/{accounts, agents, analytics, compute, configuration, health, journeys, keys, personas, profile, requests, tasks}`.
   - Key vault is `/admin/keys`, not `/admin/key-vault`.
@@ -10,7 +10,7 @@ Repo: `/root/octillion-live/octillion-admin`. This spec starts from the highest-
   - `heartbeat()` (`src/worker.ts:153-156`) throws 409 once a session's status is no longer `running`.
   - The orchestrator turns 409 or 404 into `serverRejected` (`orchestrator/core/session.ts:228,264`), which kills the sandbox and skips `/complete` (`:476`).
   - So "Cancel" needs only a server-side status change.
-- **`kickAutoscaler`** (`src/autoscaler.ts:427-429`) returns `null` in two cases that look the same to the caller: the trigger is not configured (no HTTPS `PUBLIC_URL`, no `OCTILLION_WORKER_TOKEN`, or autoscale off), and the 10-second debounce.
+- **`kickAutoscaler`** (`src/autoscaler.ts:427-429`) returns `null` in two cases that look the same to the caller: the trigger is not configured (no HTTPS `PUBLIC_URL`, no `APP_WORKER_TOKEN`, or autoscale off), and the 10-second debounce.
 - **Global error handler** (`src/http.ts:488-492`): it already passes the message through for status < 500 and masks status ≥ 500 as "Internal error".
 - **`INFRA_FAILURE`** (`src/worker.ts:182`) matches `\b(502|503|504|529)\b` and `No heartbeat for \d+ minutes`.
 - **`ERROR_KINDS`** is at `src/insights.ts:256`.
@@ -31,7 +31,7 @@ Repo: `/root/octillion-live/octillion-admin`. This spec starts from the highest-
   9. Read-only environment knobs and the boat account.
 
   Every number links to the records behind it. Key vault, Harness mix and Agent configuration are linked to, never copied.
-- **Traces (Health).** Traces are built inside the app from Octillion's own tables. New Relic keeps the raw OTel spans and is reached by a deep link.
+- **Traces (Health).** Traces are built inside the app from the app's own tables. New Relic keeps the raw OTel spans and is reached by a deep link.
   - **Slice 1** is a read-only model over rows that already exist. It covers every past job across the full 30-day window, with no new storage and no orchestrator deploy.
   - **Slice 2** adds real correlation ids (`trace_id`/`span_id`), one span per model call, and `traceparent` propagation.
   - The same release also adds server spans so that New Relic traces become meaningful.
@@ -119,7 +119,7 @@ Repo: `/root/octillion-live/octillion-admin`. This spec starts from the highest-
 | 7 | amber | `queue_old` | oldest queued session > 15 min, or oldest queued research > 20 min | "The oldest queued session has waited {n} min." | Sessions: `status=queued`, `sort=queued_at` |
 | 8 | amber | `unclaimable` | `demand.unclaimable_sessions > 0` | "{n} sessions can never run: their agent is not in the scheduled population." | Sessions: `class=unclaimable` |
 | 9 | amber | `plan_capacity` | `last_tick.note` matches `waits for boat plan capacity` | "{job} waits for boat capacity: {free} free, other deployments use {others}." | §D |
-| 10 | amber | `at_cap` | job orchestrators live ≥ `OCTILLION_MAX_JOB_ORCHESTRATORS` and queued > 0 | "At the orchestrator limit ({n}). Raise it in Limits or wait." | §D |
+| 10 | amber | `at_cap` | job orchestrators live ≥ `APP_MAX_JOB_ORCHESTRATORS` and queued > 0 | "At the orchestrator limit ({n}). Raise it in Limits or wait." | §D |
 | 11 | amber | `not_checking_in` | a booting row is older than `boot_minutes`, or a running row has heartbeat age > 90 s | "{n} orchestrators are not checking in." | Orchestrators: `state=stale` |
 | 12 | amber | `launch_failures` | ≥ 2 rows with `launch_step IS NOT NULL` in the last hour | "{n} orchestrator launches failed in the last hour (latest: {step}: {msg})." | §G |
 | 13 | amber | `cooldown` | note starts with `cooldown:` | "Relaunch is paused (cooldown): {note}" | §H |
@@ -163,14 +163,14 @@ An outlined table, one row per limit. Columns:
 |---|---|---|---|---|
 | boat sandboxes at once | `activeNow`, stacked: our orchestrators · our workers · other deployments · free | `limits.activeSandboxes` | no ("Set by your boat plan") | `boatLimits()` and the classified `listSandboxes()` |
 | Our starts: minute / hour / day (3 rows) | §2.1 | `startsPerMinute / Hour / Day` | no | boat `/limits` and the DB |
-| Job orchestrators | live rows with `job_id IS NOT NULL` | `OCTILLION_MAX_JOB_ORCHESTRATORS` | yes | DB, settings |
-| Worker pods per job orchestrator | max `pods` on live job orchestrators (sub line: "avg running 23") | `OCTILLION_JOB_POD_CAPACITY` (max 50) | yes | DB, settings |
+| Job orchestrators | live rows with `job_id IS NOT NULL` | `APP_MAX_JOB_ORCHESTRATORS` | yes | DB, settings |
+| Worker pods per job orchestrator | max `pods` on live job orchestrators (sub line: "avg running 23") | `APP_JOB_POD_CAPACITY` (max 50) | yes | DB, settings |
 | Worker sandbox size | none | `BOAT_SANDBOX_SIZE`, with its $/h | yes (select) | settings, price table |
-| Shared orchestrators | live rows with `job_id IS NULL` | `OCTILLION_MAX_ORCHESTRATORS` | yes | Shown only when `OCTILLION_ORCH_PER_JOB` is off; otherwise collapsed into a muted line "Shared orchestrators: not used in per-job mode (limit 4)" |
+| Shared orchestrators | live rows with `job_id IS NULL` | `APP_MAX_ORCHESTRATORS` | yes | Shown only when `APP_ORCH_PER_JOB` is off; otherwise collapsed into a muted line "Shared orchestrators: not used in per-job mode (limit 4)" |
 
 - **Binding rule (server):**
   - Use the row named by `computeBudget(limits, n, pods, oursActive).reason`.
-  - Override it with the latest `last_tick.note` when the note matches `at OCTILLION_MAX_JOB_ORCHESTRATORS` (Job orchestrators row) or `waits for boat plan capacity` (boat sandboxes row).
+  - Override it with the latest `last_tick.note` when the note matches `at APP_MAX_JOB_ORCHESTRATORS` (Job orchestrators row) or `waits for boat plan capacity` (boat sandboxes row).
 - **Line under the table:** "Room for {available} more orchestrators of {1+pods} sandboxes; about {sessionsPerDayCeiling} sessions a day. Autoscaler says: "{note}"" (the note is quoted verbatim).
 - **When `others > 0`:** "Other deployments on this boat account ({prefixes}) use {others} sandboxes. They share the plan."
 - **Free capacity:** `free = plan − (activeNow − ours) − Σ(1 + pods)`. This is the same formula as `scaleJobs`. `scaleJobs` writes `free` into `TickState`, and the summary reads it from there rather than computing it again.
@@ -362,22 +362,22 @@ Two outlined lists side by side; they stack on mobile.
 #### I. Environment and boat account (muted, read-only)
 
 - **Knobs table** (name, value, source, meaning): `autoscalerStatus().knobs` plus:
-  - `OCTILLION_AUTOSCALE`
-  - `OCTILLION_ORCH_PER_JOB`
-  - `OCTILLION_ORCH_LAUNCHES_PER_TICK`
-  - `OCTILLION_FLEET_STALE_SECONDS`
-  - `OCTILLION_RESEARCH_STALE_MINUTES`
-  - `OCTILLION_SESSION_INFRA_RETRIES`
-  - `OCTILLION_LEASE_MINUTES`
+  - `APP_AUTOSCALE`
+  - `APP_ORCH_PER_JOB`
+  - `APP_ORCH_LAUNCHES_PER_TICK`
+  - `APP_FLEET_STALE_SECONDS`
+  - `APP_RESEARCH_STALE_MINUTES`
+  - `APP_SESSION_INFRA_RETRIES`
+  - `APP_LEASE_MINUTES`
   - `MAX_SESSION_MINUTES`
   - `BOAT_TTL_MARGIN_MINUTES`
   - `BOAT_READY_TIMEOUT_SECONDS`
-  - `OCTILLION_BOAT_NAMESPACE` (effective value)
+  - `APP_BOAT_NAMESPACE` (effective value)
   - Runtime (VM / Vercel)
   - Kick configured (yes/no)
 
   Footer: "Change these in the deployment environment."
-- **Related settings, read only with links:** `ORCHESTRATOR_MODEL`, `OCTILLION_MAX_SESSIONS_PER_RUN` and `RESEARCH_MAX_COST_USD`, each linking to its page.
+- **Related settings, read only with links:** `ORCHESTRATOR_MODEL`, `APP_MAX_SESSIONS_PER_RUN` and `RESEARCH_MAX_COST_USD`, each linking to its page.
 - **Boat account:** the existing `SandboxProvider` block, compacted: API, namespace, key hint, uses, last used, a "Test connection" button, and a link to Key vault. Plan and running counts move up to §D.
 
 ### 2.3 Shared server logic
@@ -553,13 +553,13 @@ Within that decision:
 |---|---|---|---|
 | MCP tool call (`src/server.ts:261`) | none (not linked) | `mcp_events.trace_id`, `span_id` | `runTool` passes `{trace_id, span_id}` into job creation |
 | Simulation / research (`src/queries.ts:437`, `src/research.ts`) | `sim_…` / `rsh_…` | `simulations.trace_id`, `origin_span_id`; same columns on `product_research` | research ↔ simulation through `product_research.simulation_id` / `simulations.research_id` |
-| Orchestrator launch (`src/autoscaler.ts:387`) | `orchestrator_sandboxes.job_id` | `orchestrator_sandboxes.trace_id` = the job's trace (a shared orchestrator gets its own) | `OCTILLION_TRACEPARENT` in the sandbox env (`boat-lib.ts launchOrchestrator`) |
+| Orchestrator launch (`src/autoscaler.ts:387`) | `orchestrator_sandboxes.job_id` | `orchestrator_sandboxes.trace_id` = the job's trace (a shared orchestrator gets its own) | `APP_TRACEPARENT` in the sandbox env (`boat-lib.ts launchOrchestrator`) |
 | Session claim (`src/worker.ts:46`) | `agent_sessions.simulation_id`, `worker_id`, `sandbox_id` | `agent_sessions.trace_id`, `span_id` (columns, so they can be indexed) | `traceparent` returned per job and session in the `/claim` and `/research/claim` responses; `orchestrator/core/util.ts:37 api()` sends it back as a header; worker routes parent their spans to it |
 | Gateway model call (`src/gateway.ts:199`) | `gateway_usage.session_id` / `orchestrator_id` (one aggregate span per session) | `trace_spans` row, layer `llm` | server-side: the `ogw_` token resolves to `gateway_tokens.session_id` / `orchestrator_id`, which gives the session span. The harness sends no header. |
 | Autoscaler tick | none | `autoscaler_ticks.trace_id`, `compute_events.trace_id` | its own short trace; the launch span is also linked from the job's orchestrator span |
 
 - When OTel is off, slice-2 ids are random W3C-format ids, so in-app traces still work. When OTel is on, they come from `span.spanContext()`.
-- **Attributes on every server span:** `octillion.job_id`, `session_id`, `orchestrator_id`, `sandbox_id`, `agent_id`, `harness`, `org`, `reason`, `step`. LLM spans also get `gen_ai.request.model` and `gen_ai.usage.input_tokens` / `output_tokens`. Prompts, arguments and transcripts are never attributes, which keeps the `src/otel.ts` redaction rule.
+- **Attributes on every server span:** `job_id`, `session_id`, `orchestrator_id`, `sandbox_id`, `agent_id`, `harness`, `org`, `reason`, `step`. LLM spans also get `gen_ai.request.model` and `gen_ai.usage.input_tokens` / `output_tokens`. Prompts, arguments and transcripts are never attributes, which keeps the `src/otel.ts` redaction rule.
 
 ### 3.3 Span model (slice 1, derived)
 
@@ -744,7 +744,7 @@ Synthetic span ids are deterministic: `job:<id>`, `orch:<row id>`, `step:<row id
 
 1. **Destructive actions in phase 2.** Should drain, delete orchestrator and delete leaked sandbox follow right after v1 (with server-side re-checks and audit), or wait until the read-only page has been used for a while?
 2. **OTel in production.** Is OTel export actually on in prod (`OTEL_EXPORTER_OTLP_ENDPOINT`)? And what is the New Relic distributed-tracing URL format for this account, to put in `NEW_RELIC_TRACE_URL`?
-3. **Namespaces.** Should each deployment get a unique `OCTILLION_BOAT_NAMESPACE` (for example per Vercel environment), so namespace collisions are prevented rather than only detected after orphan reaps?
+3. **Namespaces.** Should each deployment get a unique `APP_BOAT_NAMESPACE` (for example per Vercel environment), so namespace collisions are prevented rather than only detected after orphan reaps?
 4. **Vercel ticking.** Should a more frequent Vercel cron (for example every 5 min) replace "event-only plus 06:00 UTC", or is the freshness banner plus "Run a tick now" enough?
 5. **Link targets.** Confirm that Harness mix is `/admin/configuration` and Agent configuration is `/admin/agents`. Should those pages accept `?harness=` / `?agent=` deep links?
 
@@ -752,13 +752,13 @@ Synthetic span ids are deterministic: `job:<id>`, `orch:<row id>`, `step:<row id
 
 ## Main files
 
-- **Web, edited:** `/root/octillion-live/octillion-admin/web/src/features/admin/compute.tsx`, `/root/octillion-live/octillion-admin/web/src/features/admin/analytics.tsx`, `/root/octillion-live/octillion-admin/web/src/components/layout/record-view.tsx` (used as is).
+- **Web, edited:** `the product's repository: web/src/features/admin/compute.tsx`, `the product's repository: web/src/features/admin/analytics.tsx`, `the product's repository: web/src/components/layout/record-view.tsx` (used as is).
 - **Web, new:**
   - `web/src/features/admin/compute-{jobs,sessions,orchestrators,failures,decisions}.tsx`
   - `web/src/features/admin/traces.tsx`
   - `web/src/features/admin/trace.tsx`
   - `web/src/app/admin/health/traces/[traceId]/page.tsx`
   - `web/src/app/admin/health/sessions/[sessionId]/page.tsx`
-- **Server, edited:** `/root/octillion-live/octillion-admin/src/http.ts`, `src/autoscaler.ts`, `src/worker.ts`, `src/gateway.ts`, `src/insights.ts`, `src/telemetry.ts`, `src/server.ts`, `src/prospect.ts`, `src/library.ts`, `sql/schema.sql`.
+- **Server, edited:** `the product's repository: src/http.ts`, `src/autoscaler.ts`, `src/worker.ts`, `src/gateway.ts`, `src/insights.ts`, `src/telemetry.ts`, `src/server.ts`, `src/prospect.ts`, `src/library.ts`, `sql/schema.sql`.
 - **Server, new:** `src/compute.ts`, `src/error-classes.ts`, `src/harness-setup.ts`, `src/traces.ts`, `src/tracing.ts` (slice 2).
-- **Orchestrator:** `/root/octillion-live/octillion-admin/orchestrator/core/util.ts`, `orchestrator/deploy/boat-lib.ts` (slice 2b only).
+- **Orchestrator:** `the product's repository: orchestrator/core/util.ts`, `orchestrator/deploy/boat-lib.ts` (slice 2b only).

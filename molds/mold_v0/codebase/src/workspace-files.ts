@@ -10,12 +10,12 @@
  *   GET /:store/versions/:v/files                 a version's files (the tree: path and size), less those never shown
  *                                                 (`hidden` counts them)
  *   GET /:store/versions/:v/file?path=p           one text file: {text} (or {binary: true}), at most
- *                                                 OCTILLION_WORKSPACE_VIEW_MAX_BYTES (1 MiB): a larger one is refused (413)
+ *                                                 APP_WORKSPACE_VIEW_MAX_BYTES (1 MiB): a larger one is refused (413)
  *   GET /:store/versions/:v/download?path=p       one file's bytes, as an attachment (application/octet-stream, nosniff,
- *                                                 a sandboxing CSP), at most OCTILLION_WORKSPACE_DOWNLOAD_MAX_BYTES (25 MiB)
+ *                                                 a sandboxing CSP), at most APP_WORKSPACE_DOWNLOAD_MAX_BYTES (25 MiB)
  *   GET /:store/diff?from=a&to=b                  which files were added, removed and changed between two versions
  *   GET /:store/diff?from=a&to=b&path=p           one text file's line diff (hunks), each side at most
- *                                                 OCTILLION_WORKSPACE_DIFF_MAX_BYTES (256 KiB)
+ *                                                 APP_WORKSPACE_DIFF_MAX_BYTES (256 KiB)
  *
  * Who: the roles that may read every record area of the store's pack (src/record-areas.ts may; with no area, every role
  * that may read). What is never shown, listed or served (src/workspace-store-policy.ts pathRefusal): a path with a
@@ -41,11 +41,12 @@ import { BundleError, readBundle, safeRelPath, type Manifest } from "./workspace
 import { storePacks, storePolicy } from "./workspace-retention.js";
 import { openSnapshot, snapshotAt } from "./workspace-store.js";
 import { pathRefusal, pathRules, type PathRules } from "./workspace-store-policy.js";
+import { ENV } from "./env-names.js";
 
-const cap = (name: string, def: number) => { const n = Number(process.env[name]); return Number.isInteger(n) && n > 0 ? n : def; };
-export const VIEW_MAX = () => cap("OCTILLION_WORKSPACE_VIEW_MAX_BYTES", 1024 * 1024);
-export const DOWNLOAD_MAX = () => cap("OCTILLION_WORKSPACE_DOWNLOAD_MAX_BYTES", 25 * 1024 * 1024);
-export const DIFF_MAX = () => cap("OCTILLION_WORKSPACE_DIFF_MAX_BYTES", 256 * 1024);
+const cap = (name: string, def: number) => { const n = Number(ENV[name]); return Number.isInteger(n) && n > 0 ? n : def; };
+export const VIEW_MAX = () => cap("APP_WORKSPACE_VIEW_MAX_BYTES", 1024 * 1024);
+export const DOWNLOAD_MAX = () => cap("APP_WORKSPACE_DOWNLOAD_MAX_BYTES", 25 * 1024 * 1024);
+export const DIFF_MAX = () => cap("APP_WORKSPACE_DIFF_MAX_BYTES", 256 * 1024);
 const DIFF_MAX_LINES = 20_000;
 const DIFF_MAX_EDITS = 4_000;
 const CONTEXT = 3;
@@ -146,7 +147,7 @@ function checkedPath(store: string, p: unknown, secrets: Secret[] = []): string 
 let opening = 0;
 const waiting: (() => void)[] = [];
 async function withOpenSlot<T>(fn: () => Promise<T>): Promise<T> {
-  const most = cap("OCTILLION_WORKSPACE_VIEW_CONCURRENCY", 2);
+  const most = cap("APP_WORKSPACE_VIEW_CONCURRENCY", 2);
   if (opening >= most) await new Promise<void>((r) => waiting.push(r));
   opening++;
   try { return await fn(); } finally { opening--; waiting.shift()?.(); }

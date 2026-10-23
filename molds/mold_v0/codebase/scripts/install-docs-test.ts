@@ -22,7 +22,7 @@ import { cleanup, connect, startHttp, STAMP, TMP } from "./lib/test-world.js";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const UPDATE = process.argv.includes("--update");
 const GOLDEN = path.join(ROOT, "scripts", "fixtures", "install", "zero-packs.json");
-process.env.OCTILLION_STORAGE_DIR = path.join(TMP, "objects");
+process.env.APP_STORAGE_DIR = path.join(TMP, "objects");
 const fixture = (id: string) => JSON.parse(readFileSync(path.join(ROOT, "scripts", "fixtures", "packs", id, "pack.json"), "utf8"));
 
 try {

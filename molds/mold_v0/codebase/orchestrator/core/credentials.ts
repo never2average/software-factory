@@ -1,6 +1,6 @@
 /**
- * Credential broker client (docs/credentials.md). The orchestrator host holds only OCTILLION_URL and
- * OCTILLION_WORKER_TOKEN; everything else comes from the server:
+ * Credential broker client (docs/credentials.md). The orchestrator host holds only APP_URL and
+ * APP_WORKER_TOKEN; everything else comes from the server:
  *   POST /api/worker/orchestrator/credentials {orchestrator_id} -> boat key + the orchestrator LLM's gateway access
  *   POST /api/worker/sessions/:id/credentials                    -> per-session providers (gateway ogw_ tokens / direct keys)
  *

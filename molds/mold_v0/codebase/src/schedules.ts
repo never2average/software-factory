@@ -22,7 +22,7 @@
  *              build has a workspace store
  *
  * schedulerTick(now) runs them all: from the product's cron entry on Vercel (/api/cron/autoscale, CRON_SECRET) and from a
- * one-minute loop on a server (startScheduler, src/http.ts; OCTILLION_SCHEDULER=off turns it off). Every time here is
+ * one-minute loop on a server (startScheduler, src/http.ts; APP_SCHEDULER=off turns it off). Every time here is
  * the `now` handed in, so a test drives the clock. With no job kind and no due area nothing is read or written.
  */
 import { CronError, countBetween, latestAtOrBefore, nextAfter, parseCron } from "./cron.js";
@@ -36,6 +36,7 @@ import { findKind, jobKinds, startRun } from "./runs.js";
 import { asPlatform, withTenant } from "./tenant-scope.js";
 import { requireFeature, featureRefusal, workspaceEntitlements } from "./entitlements.js";
 import { retentionSweep, retentionWired, type RetentionReport } from "./workspace-retention.js";
+import { ENV } from "./env-names.js";
 
 export type DefaultSchedule = z.output<typeof ScheduleSchema> & { pack: string };
 
@@ -151,7 +152,7 @@ export async function listSchedules(orgId: number, now = clock()): Promise<Sched
 
 const KEY = RECORD_KEY;
 const NAME = /^[a-z][a-z0-9_]{1,62}$/;
-const ENV = /^[a-z][a-z0-9_-]{0,39}$/;
+const ENV_NAME = /^[a-z][a-z0-9_-]{0,39}$/;
 
 /** An asset area a schedule of `pack` may run over: one of that pack's own asset areas (as definePack requires of a default). */
 function assetArea(pack: string, area: unknown): RecordArea {
@@ -202,7 +203,7 @@ async function checkFields(orgId: number, pack: string, b: Record<string, unknow
     }
   }
   if (b.environment !== undefined) {
-    if (b.environment !== null && (typeof b.environment !== "string" || !ENV.test(b.environment))) throw new PackError("environment: lowercase letters, digits, _ and -", 400);
+    if (b.environment !== null && (typeof b.environment !== "string" || !ENV_NAME.test(b.environment))) throw new PackError("environment: lowercase letters, digits, _ and -", 400);
     out.environment = (b.environment as string | null) ?? null;
   }
   if (b.scope !== undefined) {
@@ -217,7 +218,7 @@ async function checkFields(orgId: number, pack: string, b: Record<string, unknow
   return out;
 }
 
-const MAX_PER_WORKSPACE = () => Number(process.env.OCTILLION_SCHEDULES_MAX_PER_WORKSPACE ?? 50);
+const MAX_PER_WORKSPACE = () => Number(ENV.APP_SCHEDULES_MAX_PER_WORKSPACE ?? 50);
 
 /** An owner's own schedule for one of the build's job kinds, in their workspace (the session's). */
 export async function createSchedule(orgId: number, by: string, b: Record<string, unknown>, now = clock()): Promise<ScheduleView> {
@@ -569,7 +570,7 @@ let timer: NodeJS.Timeout | null = null;
 let busy = false;
 /** The server's loop: a tick every minute (Vercel has no loop: its cron entry ticks). */
 export function startScheduler(everyMs = 60_000): boolean {
-  if (timer || (process.env.OCTILLION_SCHEDULER ?? "on").toLowerCase() === "off") return false;
+  if (timer || (ENV.APP_SCHEDULER ?? "on").toLowerCase() === "off") return false;
   if (!schedulesWired() && !dueAreas().length && !retentionWired()) return false;
   const run = () => {
     if (busy) return;

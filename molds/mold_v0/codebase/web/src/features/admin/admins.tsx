@@ -1,6 +1,6 @@
 'use client';
-// /admin/admins: Octillion staff and their roles (src/admin-roles.ts). Roles are Clerk user metadata; admins listed in
-// the server environment (OCTILLION_PLATFORM_ADMINS) are owners and are changed there. Owners add, change and remove
+// /admin/admins: the platform's staff and their roles (src/admin-roles.ts). Roles are Clerk user metadata; admins listed in
+// the server environment (APP_PLATFORM_ADMINS) are owners and are changed there. Owners add, change and remove
 // admins; everyone else reads. Adding an address nobody has used creates the Clerk user, who is an admin on first sign-in.
 import { useState } from 'react';
 import PageContainer from '@/components/layout/page-container';
@@ -43,12 +43,12 @@ export function AdminAdmins() {
         </NativeSelect>
       ) : <span className='leading-none' title={roles.find((r) => r.id === a.role)?.help}>{a.role_label}</span>;
       return a.source === 'environment' ? (
-        <span className='flex flex-col gap-1.5'>{role}<span className='text-muted-foreground text-xs leading-none' title='OCTILLION_PLATFORM_ADMINS on the server: change it there'>set in env</span></span>
+        <span className='flex flex-col gap-1.5'>{role}<span className='text-muted-foreground text-xs leading-none' title='APP_PLATFORM_ADMINS on the server: change it there'>set in env</span></span>
       ) : role;
     } },
     { key: 'source', label: 'Set in', className: 'w-32', hidden: true, type: 'select', value: (a) => (a.source === 'environment' ? 'Environment' : 'Clerk'),
       options: [{ value: 'Clerk' }, { value: 'Environment' }],
-      render: (a) => (a.source === 'environment' ? <StatusBadge tone='info' title='OCTILLION_PLATFORM_ADMINS on the server: change it there'>environment</StatusBadge> : <span className='text-muted-foreground text-sm'>Clerk</span>) },
+      render: (a) => (a.source === 'environment' ? <StatusBadge tone='info' title='APP_PLATFORM_ADMINS on the server: change it there'>environment</StatusBadge> : <span className='text-muted-foreground text-sm'>Clerk</span>) },
     { key: 'last_sign_in_at', label: 'Last sign-in', className: 'w-32', type: 'date', value: (a) => a.last_sign_in_at,
       render: (a) => (a.last_sign_in_at ? <When d={a.last_sign_in_at} className='text-muted-foreground text-xs' /> : <span className='text-muted-foreground text-xs'>never</span>) },
     { key: 'added_at', label: 'Added', className: 'w-36', type: 'date', value: (a) => a.added_at, render: (a) => (a.added_at || a.added_by ? (
@@ -76,7 +76,7 @@ export function AdminAdmins() {
         detail={(a) => (
           <div className='flex flex-col gap-3 text-sm'>
             <p><span className='font-medium'>{a.role_label}.</span> {roles.find((r) => r.id === a.role)?.help}</p>
-            {a.source === 'environment' && <p className='text-muted-foreground'>Listed in OCTILLION_PLATFORM_ADMINS on the server, so always an owner. Change it there.</p>}
+            {a.source === 'environment' && <p className='text-muted-foreground'>Listed in APP_PLATFORM_ADMINS on the server, so always an owner. Change it there.</p>}
           </div>
         )}
       />

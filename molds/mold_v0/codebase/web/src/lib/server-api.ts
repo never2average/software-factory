@@ -1,7 +1,8 @@
 import 'server-only';
 import { headers } from 'next/headers';
+import { readEnv } from './env-names';
 
-const API = (process.env.OCTILLION_API_URL ?? 'http://127.0.0.1:3333').replace(/\/$/, '');
+const API = (readEnv('APP_API_URL') ?? 'http://127.0.0.1:3333').replace(/\/$/, '');
 
 /** Call the API server from a server component, as the signed-in user (their Clerk session cookie goes along). */
 export async function serverApi<T>(path: string): Promise<{ status: number; body: T | null }> {

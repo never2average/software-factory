@@ -3,9 +3,10 @@ import { orgBudgets, type BudgetSource } from "./billing.js";
 import { team } from "./admin.js";
 import { RUN_USD } from "./run-spend.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
+import { PROFILE } from "./profile.js";
 
 /**
- * The admin FinOps page's Model spend tab (/admin/finops?section=spend, GET /api/admin/onboarding/spend): what Octillion spends on models across every
+ * The admin FinOps page's Model spend tab (/admin/finops?section=spend, GET /api/admin/onboarding/spend): what the app spends on models across every
  * account, from metered data only. The boat sandbox price-table estimate is never counted here.
  *
  * Where each dollar comes from, and the day it lands on (UTC):
@@ -18,7 +19,7 @@ import { researchJobs, sessionEngine } from "./host-tables.js";
  *     orchestrator's job (orchestrator_sandboxes.job_id) is a simulation or a research job, and so an account. Those
  *     rows are one running total per orchestrator token, so they land on the day of their last request (last_at).
  *     What is left of a day's orchestrator spend (shared orchestrators, prospect research, a day boundary) shows as
- *     "Octillion (shared)": max(0, the day's gateway_model_usage orchestrator cost minus the day's attributed spend).
+ *     "<name> (shared)" (the profile's name): max(0, the day's gateway_model_usage orchestrator cost minus the day's attributed spend).
  *     A day's orchestrator spend is therefore max(metered, attributed).
  *   - Provider and model detail: gateway_model_usage as it is. priced = false means some request's model had no price,
  *     so its cost is understated; the page flags those rows "Unpriced".
@@ -28,14 +29,14 @@ import { researchJobs, sessionEngine } from "./host-tables.js";
  *     account's spend and its month figure; with no runs every figure is what it was.
  *   - "This month vs allowance" is Billing's figure (session and run spend this UTC month) against orgBudget's allowance.
  *   - Providers: the model rows summed per provider; its top accounts come from gateway_usage (per-token running totals,
- *     by last request), a session's account or an orchestrator's through its job, the rest Octillion (shared).
+ *     by last request), a session's account or an orchestrator's through its job, the rest the shared row.
  *
  * Compute hours and Data & storage (the page's other two tabs) are in spend-usage.ts.
  */
 
 const DAY = 86_400_000;
 export const SHARED = "shared";
-export const SHARED_NAME = "Octillion (shared)";
+export const SHARED_NAME = `${PROFILE.name} (shared)`;
 const badRequest = (msg: string) => Object.assign(new Error(msg), { status: 400 });
 const notFound = (msg: string) => Object.assign(new Error(msg), { status: 404 });
 const r6 = (x: number) => Math.round(x * 1e6) / 1e6;

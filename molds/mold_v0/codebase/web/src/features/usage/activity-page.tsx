@@ -9,7 +9,7 @@ import { Box, RankBars, top } from '@/components/layout/chart-grid';
 import { DateRangePicker, last30, rangeQuery, type DateRange } from '@/components/layout/date-range-picker';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { adminApi, apiClient } from '@/lib/api-client';
-import { num, usd } from '@/lib/octillion-format';
+import { num, usd } from '@/lib/display-format';
 import { RunTable } from '@/features/portal/usage';
 
 type Words = { workspace: string; member: string; run: string; tool_call: string; key: string };

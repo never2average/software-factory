@@ -3,17 +3,17 @@ import * as billing from "./billing.js";
 import { SHARED, spendRange, spendReport } from "./spend.js";
 
 /**
- * FinOps › Revenue (/admin/finops, GET /api/admin/onboarding/spend/revenue): what accounts pay Octillion, from Stripe
- * (the system of record), against what Octillion spends on models for them (src/spend.ts, metered only). Read only.
+ * FinOps › Revenue (/admin/finops, GET /api/admin/onboarding/spend/revenue): what accounts pay the app, from Stripe
+ * (the system of record), against what the app spends on models for them (src/spend.ts, metered only). Read only.
  *
  * Stripe calls (all cached, so the tab and the rest of the console share them):
  *   - GET /v1/subscriptions?status=all and GET /v1/products (Stripe expands 4 levels at most), paged: billing.allSubscriptions(), the
  *     same 60 s cache as subscriptionsByCustomer (the Accounts and Overview pages, orgBudgets);
  *   - GET /v1/invoices, paged (at most 5,000): billing.allInvoices(), cached 60 s;
- *   - GET /v1/prices?active=true: billing.listPlans(), cached 5 min (plan names for prices that are Octillion plans).
+ *   - GET /v1/prices?active=true: billing.listPlans(), cached 5 min (plan names for prices that are the app's plans).
  * Stripe off (no STRIPE_SECRET_KEY) or failing: a 200 with stripe.configured / stripe.error and no rows, never a 500.
  *
- * Only Stripe customers linked to an Octillion account (organizations.stripe_customer_id) count; others are left out.
+ * Only Stripe customers linked to an account of the app (organizations.stripe_customer_id) count; others are left out.
  * Definitions (UTC days of the range, as the other FinOps tabs):
  *   - A subscription is paying at an instant t when start_date <= t, it has not ended (ended_at, or canceled_at for a
  *     canceled one with no ended_at, is after t), it is out of trial (no trial_end, or trial_end <= t), and it is not
@@ -105,14 +105,14 @@ async function stripeRevenue(q: { from?: unknown; to?: unknown } = {}, now = Dat
   const at = R.days.map((d) => Math.min(Date.parse(`${d}T00:00:00Z`) + DAY - 1, now));
   const last = len - 1;
   const orgOf = new Map(orgs.filter((o) => o.stripe_customer_id).map((o) => [o.stripe_customer_id!, o]));
-  // Octillion's customers only: a Stripe customer no account is linked to (a deleted test customer, whose paid invoices
+  // The app's own customers only: a Stripe customer no account is linked to (a deleted test customer, whose paid invoices
   // Stripe keeps; anything else in the Stripe account) is left out of every row and total.
   subs = subs.filter((s) => orgOf.has(s.customer));
   invoices = invoices.filter((i) => orgOf.has(i.customer));
   const spendOf = new Map(spend.accounts.map((a) => [a.key, a]));
   const subById = new Map(subs.map((s) => [s.id, s]));
 
-  // ---------- per account (an Octillion account, a Stripe customer not linked to one, or the shared spend) ----------
+  // ---------- per account (an account of the app, a Stripe customer not linked to one, or the shared spend) ----------
   interface Row {
     key: string; slug: string | null; name: string; shared: boolean; linked: boolean; customer: string | null;
     daily_mrr: number[]; daily_collected: number[]; daily_paying: number[]; daily_spend: number[];

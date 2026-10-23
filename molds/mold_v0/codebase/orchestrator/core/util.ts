@@ -33,7 +33,7 @@ export function sh(cmd: string, args: string[], opts: { cwd?: string; env?: Node
   });
 }
 
-/** Octillion worker API (`/api/worker/*`). */
+/** The server's worker API (`/api/worker/*`). */
 export async function api(path: string, init: { method?: string; json?: unknown; ndjson?: string } = {}): Promise<unknown> {
   const headers: Record<string, string> = { Authorization: `Bearer ${CFG.token}` };
   let body: string | undefined;

@@ -1126,7 +1126,7 @@ export interface PackDefinition {
    * (mold_v0-064; src/runs.ts complete), before its results are checked: the pack indexes the workspace it just wrote
    * (its records, through ctx.records), so the results may name what the index made. Called with every file of the
    * committed snapshot, also when the run changed nothing (an index can always catch up). Runs for the run's own
-   * workspace only, under row-level security, within OCTILLION_WORKSPACE_HOOK_SECONDS (120). If it throws or runs out
+   * workspace only, under row-level security, within APP_WORKSPACE_HOOK_SECONDS (120). If it throws or runs out
    * of time the run fails ("run") and its results are not written; the snapshot stays committed (it passed the run's
    * validation), and the next run's commit calls the hook again. Writes it made before failing are not undone.
    */
