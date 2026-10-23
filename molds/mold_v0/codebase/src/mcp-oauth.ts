@@ -9,8 +9,11 @@
  *                                           /.well-known/oauth-protected-resource; a 401 on /mcp names it
  *                                           (WWW-Authenticate resource_metadata=...)
  *   authorization server metadata           RFC 8414 /.well-known/oauth-authorization-server and OIDC discovery
- *                                           /.well-known/openid-configuration, issuer exactly PUBLIC_URL; the
- *                                           authorization response carries iss (RFC 9207)
+ *                                           /.well-known/openid-configuration, issuer exactly where AI clients
+ *                                           connect (APP_MCP_URL, the app's own domain, else PUBLIC_URL; mold_v0-118:
+ *                                           the console forwards /.well-known and /oauth to this API, so the whole
+ *                                           sign-in is on the one address); the authorization response carries iss
+ *                                           (RFC 9207)
  *   clients                                 a client ID metadata document (the client_id is an https URL, fetched with
  *                                           SSRF guards: https only, no IP literals, every resolved address public, no
  *                                           redirects, 5 KB, 5 s) or, as the deprecated fallback, dynamic client
@@ -44,6 +47,7 @@ import { builtinAuth } from "./auth-provider.js";
 import { memberRole, type Org } from "./auth.js";
 import { consoleUrl, memberships, sameSite, sessionFromRequest } from "./builtin-auth.js";
 import { canonicalResource, mcpAudience, mcpAudiences } from "./clerk.js";
+import { mcpUrlSetting } from "./console-url.js";
 import { getDb, type Queryable } from "./db.js";
 import { PROFILE } from "./profile.js";
 import { hashed, hit } from "./rate-limits.js";
@@ -81,8 +85,12 @@ const s256 = (v: string) => createHash("sha256").update(v).digest("base64url");
 const P = <T>(fn: (db: Queryable & { transaction: <R>(f: (tx: Queryable) => Promise<R>) => Promise<R> }) => Promise<T>): Promise<T> =>
   asPlatform(async () => fn(await getDb()));
 
-/** The issuer: this server's public address, exactly (no trailing slash). Never taken from the request's Host. */
-export const issuer = () => (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/+$/, "");
+/**
+ * The issuer: where AI clients connect, exactly (no trailing slash): APP_MCP_URL (the app's own domain) when it is set,
+ * else this server's public address. Never taken from the request's Host. A client that signed in through the old
+ * address keeps its grant: its refresh token is the server's own and /oauth/token answers on both addresses.
+ */
+export const issuer = () => mcpUrlSetting() ?? (process.env.PUBLIC_URL ?? `http://127.0.0.1:${process.env.PORT ?? 3333}`).replace(/\/+$/, "");
 /** Whether this server is its own authorization server for /mcp: built-in sign-in only. */
 export const oauthOn = () => builtinAuth();
 /** The protected resource metadata's address for /mcp (RFC 9728, path-inserted). */

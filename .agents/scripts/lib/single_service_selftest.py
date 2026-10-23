@@ -753,6 +753,19 @@ def run():
             ok(not err5 and [c[1] for c in fp5.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"] and fp5.projects["zz-shop-api"]["env"]["APP_CONSOLE_URL"] == "https://shop.example.org"
                and i5["vercel"]["production_url"] == "https://shop.example.org",
                f"a console on its own domain: emails keep linking to it, it stays the production address, no extra deploy: {err5[:200]} {[c[1] for c in fp5.calls if c[0] == 'deploy']} {i5['vercel'].get('production_url')}")
+            # mold_v0-118: on its own domain the API is told where AI clients connect (APP_MCP_URL), before its first deploy,
+            # with no extra deploy; an app without a domain (or one attached but not switched to) gets nothing new.
+            a5 = [i for i, c in enumerate(fp5.calls) if c[0] == "deploy"]
+            ok(fp5.projects["zz-shop-api"]["env"].get("APP_MCP_URL") == "https://shop.example.org" and fp5.calls.index(("set_env", "zz-shop-api", "APP_MCP_URL")) < a5[0]
+               and "APP_MCP_URL" not in fp5.projects["zz-shop"]["env"] and "APP_MCP_URL" not in ae and "APP_MCP_URL" not in fp3.projects["zz-shop-api"]["env"],
+               f"the app's own domain is the MCP address on the API project only, before its deploy; none without a domain: {fp5.projects['zz-shop-api']['env'].get('APP_MCP_URL')}")
+            ok(SS.own_domain_url("https://shop.example.org/", "Shop.Example.org") == "https://shop.example.org" and SS.own_domain_url("https://zz-shop.vercel.app", "shop.example.org") is None
+               and SS.own_domain_url("https://shop.example.org", None) is None and SS.own_domain_url(None, "shop.example.org") is None
+               and SS.own_domain_url("https://x.example\nY=1", "x.example\nY=1") is None
+               and SS.api_settings(man, "https://shop.example.org", None, "shop.example.org").get("APP_MCP_URL") == "https://shop.example.org"
+               and "APP_MCP_URL" not in SS.api_settings(man, "https://zz-shop.vercel.app", None, "shop.example.org") and "APP_MCP_URL" not in SS.api_settings(man, "https://c.example")
+               and SS.with_held_spellings(SS.api_settings(man, "https://shop.example.org", None, "shop.example.org"), {"OCTILLION_CONSOLE_URL"}, ("APP_", "OCTILLION_")).get("OCTILLION_MCP_URL") is None,
+               "{own_domain}: only the domain the console is on, lowercased; never an attached domain not switched to, a bad name, or an old spelling the project does not hold")
             # A failed read of the API's settings (names there, no values) is not taken for stale: nothing written, no extra deploy.
             fp6 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "PUBLIC_URL", "APP_CONSOLE_URL", "APP_PROXY_HOPS"]}, projects=["zz-shop"])
             fp6.pull_env = lambda cb, proj, required=False, environment="production": {}

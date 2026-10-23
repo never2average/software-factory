@@ -42,6 +42,7 @@ import { connectorEvents, recordMcpEvent } from "./analytics.js";
 import { endpointLimit, hashed, hit, limitsFor, planOf, refusalMessage, takeSlot, type Refusal } from "./rate-limits.js";
 import { bearer, cronSecretOk, headerCredential, isWorkerToken, resolveKey, resolveUserToken, urlKeysAllowed, type Org } from "./auth.js";
 import { clerkEnabled, ClerkError, frontendApi, mcpAudience } from "./clerk.js";
+import { mcpUrlSetting } from "./console-url.js";
 import { StripeError } from "./billing.js";
 import { getDb } from "./db.js";
 import { probeFromCron, rlsProbeState } from "./rls.js";
@@ -76,6 +77,8 @@ import { NS } from "./namespace.js";
 const PORT = Number(process.env.PORT ?? 3333);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://${HOST}:${PORT}`).replace(/\/$/, "");
+/** Where AI clients connect (src/console-url.ts mcpUrl, mold_v0-118): the app's own domain when APP_MCP_URL names it, else PUBLIC_URL. */
+const MCP_URL = () => mcpUrlSetting() ?? PUBLIC_URL;
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 /** The admin panel (/admin) and customer portal (/app): the Next.js app in web/, built to static files (npm run web:build). */
 const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "web", "out");
@@ -112,7 +115,7 @@ export function createApp() {
   });
 
   // How to connect each MCP client, from the profile and this address (mold_v0-060): public, no key in any of it.
-  mountInstallPages(app, PUBLIC_URL);
+  mountInstallPages(app, MCP_URL());
 
   // ---------- inference gateway: /gw/<provider>/... (ogw_ session tokens, real keys from the vault) ----------
   // Mounted before any body parser: requests and responses stream straight through.
@@ -223,7 +226,7 @@ export function createApp() {
   // ---------- usage in neutral words: /api/usage (src/usage-routes.ts, mold_v0-008): the workspace's own, read only ----------
   app.use("/api/usage", usageAppRouter());
   // ---------- a member's own MCP keys (mold_v0-007, src/member-keys.ts): header-only, named, expiring, revocable ----------
-  app.use("/api/keys", memberKeyAppRouter(PUBLIC_URL));
+  app.use("/api/keys", memberKeyAppRouter(MCP_URL()));
   // ---------- schedules per workspace and due-date notices: /api/schedules, /api/notices (src/schedule-routes.ts); with no job kind or due area nothing is mounted ----------
   app.use("/api/schedules", scheduleAppRouter());
   app.use("/api/notices", noticeAppRouter());
@@ -355,19 +358,19 @@ export function createApp() {
     await transport.handleRequest(req, res, req.body);
   };
   const wwwAuthenticate = (tokenSent = false) => mcpOAuth.oauthOn() ? mcpOAuth.wwwAuthenticate(tokenSent ? "invalid_token" : undefined) : oauthServer()
-    ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name}", resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`
+    ? `Bearer error="unauthorized", error_description="Sign in to ${PROFILE.name}", resource_metadata="${MCP_URL()}/.well-known/oauth-protected-resource"`
     : `Bearer realm="${NS}"`;
   const unauthorized = (res: Response, tokenSent = false) =>
     res.status(401).set("WWW-Authenticate", wwwAuthenticate(tokenSent)).json({
       jsonrpc: "2.0", id: null,
       // With member keys off (mold_v0-099) the answer names sign-in only.
-      error: { code: -32001, message: `Sign in to ${PROFILE.name}${memberKeysOn() ? " (or send a valid API key)" : ""}. Request access at ${PUBLIC_URL}` },
+      error: { code: -32001, message: `Sign in to ${PROFILE.name}${memberKeysOn() ? " (or send a valid API key)" : ""}. Request access at ${MCP_URL()}` },
     });
   // A member key made while member keys were on (mold_v0-099): refused, and the client is told why and to sign in.
   const keyRefused = (res: Response) =>
     res.status(401).set("WWW-Authenticate", wwwAuthenticate(true)).json({
       jsonrpc: "2.0", id: null,
-      error: { code: -32001, message: `${keysOffMessage(PUBLIC_URL)} This key no longer works.`, data: { reason: "member_keys_off" } },
+      error: { code: -32001, message: `${keysOffMessage(MCP_URL())} This key no longer works.`, data: { reason: "member_keys_off" } },
     });
   // One log line per legacy URL key per process and hour: enough to know who to move, without a line per request.
   const urlKeySeen = new Map<string, number>();
@@ -405,21 +408,21 @@ export function createApp() {
       // The same WWW-Authenticate as any 401, so a connector holding the old URL can fall into sign-in (OAuth).
       return void res.status(401).set("WWW-Authenticate", wwwAuthenticate()).json({
         jsonrpc: "2.0", id: null,
-        error: { code: -32001, message: `API keys in the connector URL are no longer accepted. Connect to ${PUBLIC_URL}/mcp and send the key in a header (Authorization: Bearer <key>), or sign in.` },
+        error: { code: -32001, message: `API keys in the connector URL are no longer accepted. Connect to ${MCP_URL()}/mcp and send the key in a header (Authorization: Bearer <key>), or sign in.` },
       });
     }
     // A member key (mold_v0-007) is never accepted here: it goes in a header only.
     const org = await resolveKey(key, { inUrl: true });
     if (!org) return unauthorized(res);
     // RFC 9745: deprecated since 2026-10-20 (a structured date); the successor is the plain /mcp with a header.
-    res.set({ Deprecation: "@1792454400", Link: `<${PUBLIC_URL}/mcp>; rel="successor-version"` });
+    res.set({ Deprecation: "@1792454400", Link: `<${MCP_URL()}/mcp>; rel="successor-version"` });
     noteUrlKey(org.slug, key.slice(0, 10));
     await mcp(req, res, org);
   });
   app.all(["/mcp", "/mcp/:key"], methodNotAllowed);
   // The admin panel as MCP (src/admin-mcp.ts): platform admins only, each tool with its route's permission. Before
   // /api/admin below, whose session guard would refuse OAuth access tokens.
-  mountAdminMcp(app, PUBLIC_URL);
+  mountAdminMcp(app, MCP_URL());
   adminTools(); // a host pack's admin tool that clashes with the shell's, or names no tool to follow, fails the start
 
   // ---------- orchestrator worker API: the fleet token, or a job token bound to one job (src/workerauth.ts) ----------
@@ -786,7 +789,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const server = createApp().listen(PORT, HOST, () => {
     console.error(`${PROFILE.mcp_server_name} (${db.kind}, transcripts in ${transcripts().kind}) listening on http://${HOST}:${PORT}`);
     console.error(`  landing page  ${PUBLIC_URL}/`);
-    console.error(`  MCP endpoint  ${PUBLIC_URL}/mcp   (sign in, or send Authorization: Bearer <api key>)`);
+    console.error(`  MCP endpoint  ${MCP_URL()}/mcp   (sign in, or send Authorization: Bearer <api key>)`);
     console.error(`  worker API    ${PUBLIC_URL}/api/worker/*${ENV.APP_WORKER_TOKEN ? "" : "   (disabled: set APP_WORKER_TOKEN)"}`);
     // On-demand orchestrators (boat sandboxes launched/reaped by the server). Needs the public https URL the
     // sandboxes reach us on, the worker token and a boat key in the vault. APP_AUTOSCALE=off disables it.

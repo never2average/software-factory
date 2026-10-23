@@ -26,7 +26,9 @@ vercel.projects.web.proxied_health, else health_path, /healthz) and wants 200 wi
 come through the console. switch first asks Vercel that the domain is filed under the console project (the deploy keeps
 it as the front door only then), writes the API's settings made from the console's address (mold.json
 vercel.projects.api.env: APP_CONSOLE_URL (and its old spelling OCTILLION_CONSOLE_URL where the project holds it, mold_v0-045), which sign-in codes, invitations, emailed links and Clerk's accepted
-sign-in origins are built on) on the API project, and moves production_url; a redeploy makes the API read it.
+sign-in origins are built on, and APP_MCP_URL, the domain AI clients connect to: the MCP address https://<domain>/mcp,
+the resource its sign-in is for and the install pages, mold_v0-118) on the API project, and moves production_url; a
+redeploy makes the API read them. Connections AI clients made to the API's own address keep working.
 """
 import json, os, re, socket, subprocess, sys, tempfile, urllib.request
 
@@ -253,13 +255,14 @@ def console_owns(infra, url, cwd):
 def set_env(name, value, cwd, project): _provision()._set_env(name, value, cwd, project=project)
 def env_names(cwd, project): return _provision().vercel_env_names(cwd, project)
 
-def console_settings(man, url):
+def console_settings(man, url, custom_domain=None):
     """The API project's settings that are made from the console's address (mold.json vercel.projects.api.env with
-    {console_url}), filled with `url`; the ones that do not depend on it are the deploy's to write."""
+    {console_url}, and {own_domain} when `url` is the app's own domain: APP_MCP_URL, where AI clients connect,
+    mold_v0-118), filled with `url`; the ones that do not depend on it are the deploy's to write."""
     sys.path.insert(0, os.path.join(SCRIPTS, "lib"))
     import single_service as SS
     fixed = SS.api_settings(man, None)
-    return {n: v for n, v in SS.api_settings(man, url).items() if n not in fixed}
+    return {n: v for n, v in SS.api_settings(man, url, None, custom_domain).items() if n not in fixed}
 
 def verify_single(d, man, quiet):
     ips = resolves(d); ok, said = single_healthy(d, man) if ips else (False, f"https://{d}{proxied_health(man)}: not read, the name does not resolve")
@@ -279,13 +282,15 @@ def switch_single(app_id, infra, p, man):
     # mold_v0-045: an app deployed before then holds the old spelling (OCTILLION_CONSOLE_URL): it gets the same value, so a
     # release that still reads it (or one rolled back to) links to the new front door too.
     sys.path.insert(0, os.path.join(SCRIPTS, "lib")); import single_service as SS
-    want = SS.with_held_spellings(console_settings(man, url), held, SS.env_aliases(man))
+    want = SS.with_held_spellings(console_settings(man, url, d), held, SS.env_aliases(man))
     for n, val in want.items(): set_env(n, val, cwd, api)
     old = v.get("production_url"); v["production_url"] = url; save(infra, p)
     secrets = set(infra.get("secrets_user") or []) | set(infra.get("secrets_derived") or [])
     clerk = any(x.startswith("CLERK_") for x in secrets)
     print(f"front door: {old} -> {url} (the old address keeps working" + (", but once the API is redeployed it accepts Clerk sign-ins made on the new address, not the old one)" if clerk else ")"))
     if want: print(f"  {api}: {', '.join(f'{n}={val}' for n, val in want.items())} written; it applies at the next deploy")
+    if any(n.endswith("_MCP_URL") for n in want):
+        print(f"  AI clients: after the redeploy the MCP address is {url}/mcp (install pages and invitations say so); connections made to the old address keep working")
     if "CLERK_AUTHORIZED_PARTIES" in held:
         print(f"  NOTE: {api} holds CLERK_AUTHORIZED_PARTIES, which replaces the sign-in origins made from the console's address: add {url} to it, or Clerk sign-ins on {d} are refused")
     if "GOOGLE_REDIRECT_URI" in held:
@@ -464,6 +469,9 @@ def single_self_test():
         assert single("mv0") and single("mv0")["shape"] == "single_service" and single("mv1") is None and single("nope") is None; n += 1
         assert proxied_health(single("mv0")) == "/healthz"; n += 1
         assert console_settings(single("mv0"), "https://mv0.example.com") == {"APP_CONSOLE_URL": "https://mv0.example.com"}; n += 1
+        # mold_v0-118: the MCP address only when the console's address is the app's own domain
+        assert console_settings(single("mv0"), "https://mv0.example.com", "mv0.example.com") == {"APP_CONSOLE_URL": "https://mv0.example.com", "APP_MCP_URL": "https://mv0.example.com"}; n += 1
+        assert console_settings(single("mv0"), "https://mv0.vercel.app", "mv0.example.com") == {"APP_CONSOLE_URL": "https://mv0.vercel.app"}, "an attached domain not switched to is never the MCP address"; n += 1
 
         # verify: the console's /healthz on the domain, the API's own {"ok": true} through it
         answers = {"https://mv0.example.com/healthz": (200, {"ok": True})}
@@ -499,7 +507,9 @@ def single_self_test():
         # switch: APP_CONSOLE_URL on the API project only, and its old spelling too where the project holds it (an app
         # deployed before mold_v0-045, as octillion and maxwell), production_url moved, the redeploy and Google named
         rc, out = run(switch, "mv0"); i = load(ip)
-        assert rc == 0 and sorted(wrote) == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com"), ("mv0-api", "OCTILLION_CONSOLE_URL", "https://mv0.example.com")], wrote; n += 1
+        assert rc == 0 and sorted(wrote) == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com"), ("mv0-api", "APP_MCP_URL", "https://mv0.example.com"),
+                                             ("mv0-api", "OCTILLION_CONSOLE_URL", "https://mv0.example.com")], wrote; n += 1
+        assert "the MCP address is https://mv0.example.com/mcp" in out, out; n += 1
         assert i["vercel"]["production_url"] == "https://mv0.example.com" and i["vercel"]["custom_domain"] == "mv0.example.com"; n += 1
         assert "WEB_ORIGIN" not in out and "provision.py mv0 --deploy" in out and "/api/auth/google/callback" in out and "CLERK_AUTHORIZED_PARTIES" not in out, out; n += 1
         assert out.index("redeploy") < out.index("Google"); n += 1
@@ -511,7 +521,7 @@ def single_self_test():
         i = load(ip); i["secrets_user"] = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]; i["vercel"]["production_url"] = "https://mv0.vercel.app"; save(i, ip)
         g["env_names"] = lambda cwd, project: set(); wrote.clear()
         rc, out = run(switch, "mv0"); assert rc == 0 and "not the old one" in out and "satellite" in out, out; n += 1
-        assert wrote == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com")], f"a new app (no old name held): the new name only: {wrote}"; n += 1
+        assert wrote == [("mv0-api", "APP_CONSOLE_URL", "https://mv0.example.com"), ("mv0-api", "APP_MCP_URL", "https://mv0.example.com")], f"a new app (no old name held): the new names only: {wrote}"; n += 1
 
         # ---- attach through the project API; nothing recorded unless Vercel holds it -------------------------------
         mp = os.path.join(tmp, "state", "application", "mv1", "infrastructure.json")

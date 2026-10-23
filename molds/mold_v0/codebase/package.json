@@ -36,6 +36,7 @@
     "test:landing": "tsx scripts/landing-test.ts",
     "test:member-keys": "tsx scripts/member-keys-test.ts",
     "test:mcp-oauth": "tsx scripts/mcp-oauth-test.ts builtin && tsx scripts/mcp-oauth-test.ts clerk",
+    "test:mcp-domain": "tsx scripts/mcp-domain-test.ts clerk && tsx scripts/mcp-domain-test.ts builtin",
     "test:sign-in": "tsx scripts/sign-in-test.ts builtin && tsx scripts/sign-in-test.ts clerk",
     "test:email": "tsx scripts/email-test.ts",
     "test:proxy-hops": "tsx scripts/proxy-hops-test.ts",
