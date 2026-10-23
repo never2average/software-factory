@@ -6,6 +6,8 @@ import { landing as declared, sourceOfferItems } from '@/config/landing.generate
 import { profile } from '@/config/profile.generated';
 import { cn } from '@/lib/utils';
 import { linkable, type LandingBlock, type LandingItem, type LandingLink } from './landing-types';
+import { buildLegal } from './legal';
+import { legalLinks } from './legal-types';
 
 /**
  * The shell's public landing page (mold_v0-091): the build's declared landing block (a pack's pack.json `landing`, the
@@ -240,10 +242,12 @@ export function SiteHeader() {
   );
 }
 
-/** The public pages' footer: the name and tagline, the block's note and links, the shell's own links and the source offer. */
+/** The public pages' footer: the name and tagline, the block's note and links, the shell's own links, the legal pages' (mold_v0-109) and the source offer. */
 export function SiteFooter() {
   const l = resolvedLanding();
   const links: LandingLink[] = [INSTALL, SIGN_IN, { label: 'Create an account', href: SIGN_UP.href }, ...(l.footer?.links ?? [])];
+  // The app's Terms and Privacy (mold_v0-109), when its profile.json has `legal`.
+  links.push(...legalLinks(buildLegal()).map(({ label, href }) => ({ label, href })));
   const linkClass = 'text-muted-foreground hover:text-foreground inline-flex min-h-6 items-center underline-offset-4 hover:underline';
   return (
     <footer className='border-t'>

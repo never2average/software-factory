@@ -18,6 +18,9 @@
  * the app's own source, every page ends with a "Source code" footer naming each project, its licence and the exact
  * commit's address, and /install.json carries the same sentences as `source_code`. Without one, nothing changes.
  *
+ * The legal pages (mold_v0-109, src/legal.ts): with profile.json `legal`, every page links the app's Terms and Privacy
+ * (the console's /terms and /privacy, or the company's own pages); without it, nothing changes.
+ *
  * Member keys off (mold_v0-099, profile `member_keys: false`): no page shows a key. Each client's page has its sign-in
  * only (no "With an API key" card, nothing for a header), /install says every client signs in, and sign-in counts as
  * available under the built-in sign-in too (src/mcp-oauth.ts is then /mcp's OAuth server), not only under Clerk. Every
@@ -40,6 +43,8 @@ import { builtinAuth } from "./auth-provider.js";
 import { memberKeysOn, PROFILE, type Profile } from "./profile.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml, offerSentences } from "./source-offer.js";
+import { legalFooterHtml } from "./legal.js";
+import { GENERATED_LEGAL } from "./legal.generated.js";
 
 /** What the key placeholder reads as in a header: never a key, never in a URL. */
 export const KEY_PLACEHOLDER = "<your API key>";
@@ -146,7 +151,7 @@ main{max-width:760px;margin:0 auto;padding:32px 16px}
 a{color:inherit}h1{font-size:1.6rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}.muted{color:var(--muted)}
 pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
 ul{padding-left:20px}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0}
-</style></head><body><main>${body}${offerFooterHtml(currentOffer())}</main></body></html>`;
+</style></head><body><main>${body}${legalFooterHtml(GENERATED_LEGAL)}${offerFooterHtml(currentOffer())}</main></body></html>`;
 
 const block = (v: { steps: string; command?: string | null; file?: string | null; snippet?: string | null; install_url?: string | null }) =>
   `<p>${esc(v.steps)}</p>` +

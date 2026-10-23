@@ -590,9 +590,11 @@ def self_test_single(n, fails):
         # This machine's own values, the same on every machine: a verified sending domain (mold_v0-101: without one the
         # emails' sender is asked).
         mail_local = os.path.join(T, "mail-local.json"); save(mail_local, {"defaults": {"notify_domain": "mail.example.test"}})
-        def go(app, brief, answers=None, env=None, admins=True):
+        def go(app, brief, answers=None, env=None, admins=True, legal=True):
             # every brief here names its platform administrator (mold_v0's admin console) unless the case is about that
             if admins and "admins:" not in brief.lower(): brief += "Admins: ops@example.com\n"
+            # and answers the legal question (mold_v0-109) with "later" unless the case is about that
+            if legal and "legal." not in brief and "legal" not in (answers or {}): answers = {**(answers or {}), "legal": "later"}
             b = os.path.join(T, "briefs", app + ".md"); open(b, "w").write(brief)
             if answers is not None: save(os.path.join(T, "ans.json"), answers)
             return subprocess.run([sys.executable, I, b, "--app", app, *(["--answers", os.path.join(T, "ans.json")] if answers is not None else [])],
@@ -745,6 +747,40 @@ def self_test_single(n, fails):
         r = go("zz_brand", "Mold: mold_v0\nIt runs on its own server.\nDomain: brand.example.org\nBrand: Acme Ops\nBrand colour: #1F6F5C\n", admins=False); n += 1
         if r.returncode or "platform_admins" in docs("zz_brand")["application"] or "platform_admins" in load(os.path.join(A, "zz_brand", "answers.json")):
             fails.append(f"a deployed app with no administrator recorded is not stopped by intake, and nothing is invented: {(r.stdout + r.stderr).strip()[-300:]}")
+        # the legal pages (mold_v0-109): asked of a new app whose brief names no company; "later" leaves it without them;
+        # an answer becomes application.profile.legal with today's date, kept on a re-run; the brief's ## Profile lines
+        # need no question; an answer that cannot be read is asked again; a deployed app is never stopped for it.
+        lg = "Mold: mold_v0\nIt runs on its own server.\nDomain: legal.example.org\n"
+        r = go("zz_legal", lg, legal=False); n += 1
+        q = load(os.path.join(A, "zz_legal", "questions.json")) if os.path.exists(os.path.join(A, "zz_legal", "questions.json")) else {}
+        if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["legal"] or q["pending"][0].get("suggested") != "later" or os.path.exists(os.path.join(A, "zz_legal", "application.json")):
+            fails.append(f"a new mold_v0 app whose brief names no company must be asked exactly the legal question, nothing written: rc={r.returncode} {q.get('pending')}")
+        r = go("zz_legal", lg, {"legal": "Acme Widgets"}, legal=False); n += 1
+        if r.returncode != 2 or "no email address" not in r.stdout: fails.append(f"a legal answer with no address must be asked again, with why: rc={r.returncode} {r.stdout[-300:]}")
+        r = go("zz_legal", lg, {"legal": "Acme Widgets, Inc., Legal@Acme.example"}, legal=False); n += 1
+        want = {"company_name": "Acme Widgets, Inc.", "contact_email": "Legal@Acme.example", "effective_date": TODAY}
+        if r.returncode or (docs("zz_legal")["application"].get("profile") or {}).get("legal") != want or load(os.path.join(A, "zz_legal", "answers.json")).get("legal") != want \
+                or "legal pages: /terms and /privacy for Acme Widgets, Inc." not in r.stdout:
+            fails.append(f"an answered company must reach application.profile.legal with today's date and answers.json, and be said: {(r.stdout + r.stderr).strip()[-300:]}")
+        a_ = load(os.path.join(A, "zz_legal", "answers.json")); a_["legal"]["effective_date"] = "2026-01-02"; save(os.path.join(A, "zz_legal", "answers.json"), a_)
+        r = go("zz_legal", lg, legal=False); n += 1
+        if r.returncode or (docs("zz_legal")["application"].get("profile") or {}).get("legal", {}).get("effective_date") != "2026-01-02":
+            fails.append(f"a re-run keeps the answered company and its date: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_legal2", lg, {"legal": "later"}, legal=False); n += 1
+        if r.returncode or "legal" in (docs("zz_legal2")["application"].get("profile") or {}) or "no legal pages" not in r.stdout:
+            fails.append(f"later leaves the app without legal pages, and says so: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_legal3", lg + "\n## Profile\nlegal.company_name = Brand Ltd\nlegal.contact_email = privacy@brand.example.org\nlegal.jurisdiction = England and Wales\n", legal=False); n += 1
+        if r.returncode or docs("zz_legal3")["application"].get("profile", {}).get("legal") != {"company_name": "Brand Ltd", "contact_email": "privacy@brand.example.org", "jurisdiction": "England and Wales", "effective_date": TODAY}:
+            fails.append(f"the brief's ## Profile legal lines reach state with no question, dated today: {(r.stdout + r.stderr).strip()[-300:]}")
+        r = go("zz_legal4", lg + "\n## Profile\nlegal.company_name = Brand Ltd\nlegal.contact_email = privacy@brand.example.org\nlegal.terms_url = http://brand.example.org/terms\n", legal=False); n += 1
+        if r.returncode == 0 or "legal.terms_url" not in r.stdout + r.stderr or os.path.exists(os.path.join(A, "zz_legal4", "application.json")):
+            fails.append(f"a brief's own terms page that is not https:// is refused, nothing written: rc={r.returncode} {(r.stdout + r.stderr).strip()[-200:]}")
+        d_ = docs("zz_legal2"); d_["infrastructure"]["deployed_at"] = "2026-10-20T00:00:00+00:00"
+        for k, v in d_.items(): save(os.path.join(A, "zz_legal2", k + ".json"), v)
+        ans_ = load(os.path.join(A, "zz_legal2", "answers.json")); ans_.pop("legal", None); save(os.path.join(A, "zz_legal2", "answers.json"), ans_)
+        r = go("zz_legal2", lg, legal=False); n += 1
+        if r.returncode or "legal" in (docs("zz_legal2")["application"].get("profile") or {}):
+            fails.append(f"a deployed app whose brief names no company is not stopped by intake, and nothing is invented: {(r.stdout + r.stderr).strip()[-300:]}")
         r = go("zz_two", "Mold: mold_v0\nA product for a team.\n"); n += 1
         q = load(os.path.join(A, "zz_two", "questions.json")) if os.path.exists(os.path.join(A, "zz_two", "questions.json")) else {}
         if r.returncode != 2 or [x["id"] for x in q.get("pending", [])] != ["deploy_target"]:
@@ -919,6 +955,44 @@ def sender_question(app_id, mold_id, hints, existing, answers):
             "why": "this machine has no verified sending domain (defaults.notify_domain in state/factory.local.json) and the brief names no sender"
                    + (f"; {a!r} is not an address" if a is not None else "")}
 
+def legal_question(app_id, mold_id, hints, existing, answers, deployed):
+    """The legal pages' question (mold_v0-109), or None when it is answered: the brief's ## Profile legal.* lines, an
+    answer (this run's or an earlier one in answers.json; "later" is one), or a deployed app (never stopped here: its
+    pages are turned on by adding the lines to its brief). An answer that cannot be read is asked again, with why."""
+    import app_profile
+    s = app_profile.spec(mold_id, ROOT)
+    if not s or "legal" not in s.get("app_settable", []): return None
+    if (hints.get("profile") or {}).get("legal"): return None
+    why = None
+    if answers.get("legal") is not None:
+        _, why = app_profile.legal_from_answer(answers["legal"])
+        if not why: return None
+    elif deployed: return None
+    return {"id": "legal", "path": "application.profile.legal", "options": None, "suggested": "later",
+            "question": "Which company offers this app, for its Terms of use and Privacy notice pages? Write the company's legal name, then an "
+                        "email address people can write to about the terms and their data, for example: Acme Ltd, legal@acme.com. Answer later "
+                        "to leave the app without these pages for now (they can be added before launch).",
+            "why": "the app's Terms and Privacy pages name the company behind it, and the brief names none (## Profile: legal.company_name, legal.contact_email)"
+                   + (f"; {why}" if why else "")}
+
+def _legal_settings(app_id, ans, hints, existing):
+    """mold_v0-109: the app's `legal` from the brief (## Profile legal.* lines) or from the answer, with its effective
+    date: the brief's, else the date it was first recorded for this company and address (kept on re-runs), else today.
+    The answer is put back into `ans` as the block it became (answers.json keeps the date). Exits on one it cannot read."""
+    import app_profile
+    ex = (((existing.get("application") or {}).get("profile") or {}).get("legal") or {})
+    same = lambda d: ex.get("effective_date") if (ex.get("company_name"), ex.get("contact_email")) == (d.get("company_name"), d.get("contact_email")) else None
+    b = (hints.get("profile") or {}).get("legal")
+    if b:
+        if isinstance(b, dict) and "effective_date" not in b: b["effective_date"] = same(b) or TODAY
+        return
+    if ans.get("legal") is None: return
+    got, why = app_profile.legal_from_answer(ans["legal"])
+    if why: sys.exit(f"{app_id}: legal: {why}. Nothing was written.")
+    if not got: ans["legal"] = "later"; return
+    got.setdefault("effective_date", same(got) or TODAY)
+    ans["legal"] = got
+
 def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     """The four documents of a single-service app, with what a deploy, a lane run or the operator recorded kept."""
     mold = next(m for m in factory["molds"] if m["mold_id"] == mold_id)
@@ -944,6 +1018,7 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
     # The app's own profile settings (mold_v0-090): the brief's `## Profile` / `## Budgets` settings, exactly. The brief is
     # where they are set, so a setting taken out of the brief is taken out of state too (never carried forward).
     import app_profile
+    _legal_settings(app_id, ans, hints, existing)
     for note in hints.get("profile_notes") or []: print("note: " + note)
     perrs = list(hints.get("profile_problems") or []) + app_profile.problems(hints.get("profile"), mold_id, ROOT)
     if perrs: sys.exit(f"{app_id}: the brief's profile settings were refused, so nothing was written:\n  " + "\n  ".join(perrs))
@@ -957,6 +1032,13 @@ def build_single(app_id, mold_id, ans, hints, factory, brief_path, existing):
         if app_profile.address_problem(sender): sys.exit(f"{app_id}: {app_profile.address_problem(sender)}. Nothing was written.")
         app.setdefault("profile", {})["email_from_address"] = sender
         print(f"the emails' sender: {sender} (answered; in effect from the next deploy)")
+    # The legal pages (mold_v0-109): the company someone answered, when the brief names none.
+    if isinstance(ans.get("legal"), dict) and not (hints.get("profile") or {}).get("legal"):
+        app.setdefault("profile", {})["legal"] = ans["legal"]
+        print(f"legal pages: /terms and /privacy for {ans['legal']['company_name']} <{ans['legal']['contact_email']}> (answered; in effect from the next deploy)")
+    elif not (app.get("profile") or {}).get("legal") and "legal" in ((app_profile.spec(mold_id, ROOT) or {}).get("app_settable") or []):
+        print("note: no legal pages: the app has no Terms or Privacy page until its brief's ## Profile names the company "
+              "(legal.company_name = ..., legal.contact_email = ...) or the legal question is answered")
     ex_app, ex_inf, ex_ds, ex_di = (existing.get(n, {}) for n in ("application", "infrastructure", "datastores", "datainfra"))
     for k in ("status", "testing", "revert"):
         if ex_app.get(k): app[k] = ex_app[k]
@@ -1163,6 +1245,12 @@ def main_single(app_id, mold_id, hints, factory, brief_path, outdir, existing, a
     q = sender_question(app_id, mold_id, hints, existing, answers)
     if q: pending.append(q)
     elif "email_from_address" in answers: resolved["email_from_address"] = str(answers["email_from_address"]).strip()
+    # The legal pages (mold_v0-109): the company behind the app, asked of a new app whose brief names none; "later" leaves
+    # it without Terms and Privacy pages. An earlier answer (answers.json) stands.
+    if "legal" not in answers and os.path.isfile(prev) and load(prev).get("legal") is not None: answers["legal"] = load(prev)["legal"]
+    q = legal_question(app_id, mold_id, hints, existing, answers, ctx["deployed"])
+    if q: pending.append(q)
+    elif answers.get("legal") is not None and not (hints.get("profile") or {}).get("legal"): resolved["legal"] = answers["legal"]
     # The brief's pack sections (mold_v0-062): their open points join the same questions; the brand is asked with them.
     pk, extra = None, {}
     with_pack = text is not None and __import__("brief_pack").has_sections(text)

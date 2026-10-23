@@ -8,6 +8,8 @@
 //   src/run-tools.generated.json         the run tools the packs' agent kinds need (mold_v0-072), installed in the runner image
 //   src/profile.generated.ts             the profile: product name, MCP server name, console title, email sender
 //   src/email-pitch.generated.ts         the landing block's hero subheadline, the welcome email's pitch (mold_v0-101)
+//   src/legal.generated.ts               profile.json `legal` (mold_v0-109, src/legal.ts), checked; null without one
+//   web/src/config/legal.generated.ts    the same, for the console's /terms, /privacy, footers and sitemap
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
@@ -69,6 +71,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // The words engine (mold_v0-100): plain TypeScript node runs as it is (types stripped), shared with the server and the console.
 const WORDS_ENGINE = path.join(HERE, "..", "src", "words.ts");
 const { BASE_WORDS, WORD_KEYS, resolveWords, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
+// The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
+const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -873,6 +877,8 @@ let profile = { ...DEFAULT_PROFILE };
 const appWords = {}, hostWords = {};
 /** profile.json `landing` (mold_v0-091): the app's own landing block, over a pack's; checked and written below, never part of the profile modules. */
 let profileLanding;
+/** profile.json `legal` (mold_v0-109, src/legal.ts): the app's legal pages; checked here, never part of the profile modules. */
+let profileLegal = null;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
 const hostProfiles = packs.filter((p) => p.host?.profile);
@@ -882,6 +888,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   const pf = { ...(hostProfiles[0]?.host.profile ?? {}), ...(filePf && typeof filePf === "object" && !Array.isArray(filePf) ? filePf : {}) };
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
+  if (hostProfiles[0]?.host.profile?.legal !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set legal: only the app's own profile.json names the company behind it (mold_v0-109)");
   if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
   if (hostProfiles[0]?.host.profile?.source_offer?.upstreams !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set source_offer.upstreams: only the app's own profile.json says an upstream is its licensor's own (mold_v0-099)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
@@ -923,6 +930,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
       if (k === "landing") { profileLanding = v; continue; }
+      // The app's legal pages (mold_v0-109, src/legal.ts): written to legal.generated.ts below, never to the profile modules.
+      if (k === "legal") { const bad = legalProblems(v); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileLegal = legalOf(v); continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
       if (k === "install_clients") {
         const known = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)"/g)].map((m) => m[1]).filter((id) => id !== "header");
@@ -932,7 +941,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1321,6 +1330,15 @@ files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
+// The legal pages (mold_v0-109, src/legal.ts): the app's own `legal`, checked above; null: no legal pages, no links.
+files.set(path.join(OUT, "src", "legal.generated.ts"), HEADER +
+  "import type { Legal } from \"./legal.js\";\n\n" +
+  "/** profile.json `legal` (mold_v0-109, src/legal.ts): the install pages' footer links; null: no legal pages. */\n" +
+  `export const GENERATED_LEGAL: Legal | null = ${json(profileLegal)};\n`);
+files.set(path.join(OUT, "web", "src", "config", "legal.generated.ts"), HEADER +
+  "import type { Legal } from '@/features/site/legal-types';\n\n" +
+  "/** profile.json `legal` (mold_v0-109, src/legal.ts): /terms, /privacy, their links and the sitemap; null: no legal pages. */\n" +
+  `export const legal: Legal | null = ${json(profileLegal)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);
