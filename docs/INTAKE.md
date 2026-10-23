@@ -115,6 +115,54 @@ three `GATEWAY_*` names are optional and never asked for: set them on `<project>
 or the reasoning effort; absent, the mold defaults apply. Brief hints: `ai gateway` / `vercel's gateway` select the
 gateway; `cloudflare workers ai` the default.
 
+## mold_v0: the app's own profile settings (`## Profile`, `## Budgets`)
+
+A mold_v0 app may set some of its build's profile fields from its own state (mold_v0-090): today `limits`, the
+platform's ceilings (`src/rate-limits.ts`: `mcp`, `endpoints`, `runs`, and `plans.<plan>` for one plan's own). The
+mold names what an app may set (`molds/mold_v0/branding/rules.json` `profile.app_settable`); the factory checks each
+value as the build checks it (`.claude/scripts/lib/app_profile.py`, against the names in the shell's
+`scripts/gen-packs.mjs` `LIMIT_KEYS`).
+
+Write them in the brief, one setting per `limits.` path, in a section headed `## Profile` or `## Budgets`:
+
+```
+## Budgets (operator, 2026-10-22)
+Per audit: US$40; per kind per company per month: US$500.
+limits.runs.budget_usd_max = 40
+limits.runs.kind_month_budget_usd = 500
+limits.plans.pro.mcp.per_key_per_minute: 600
+```
+
+- The heading is exactly `## Profile` or `## Budgets` (a note in brackets after it is fine: `## Budgets (operator,
+  2026-10-22)`); `## Budget history` or a `###` heading is not one.
+- `=` or `:`; a value is a positive number (`40`, `12.5`; a `$` before it is allowed) that ends the clause: the end
+  of the line, `,` `;` or `.` before a space, or ` (`. Anything else after it (`4 0`, `4e9`, `40k`, `40%`,
+  `400 but we chose 40`, `1,000`) makes the setting unreadable, and it is refused. Settings in an HTML comment, struck
+  through (`~~ ~~`) or in a code block are never applied. Other prose in the section is fine.
+- Limits that count things (requests, runs) are whole numbers. Each spending and run limit has a ceiling the factory
+  sets (`molds/mold_v0/branding/rules.json` `profile.app_limits_max`: today runs.budget_usd_max 200,
+  runs.kind_month_budget_usd 2000, runs.concurrency_per_workspace 32, runs.live_per_workspace 200, a plan's own
+  too); a value above it is refused, and raising a ceiling is a reviewed change to that file, never a brief edit.
+- The brief is where they are set: intake writes `application.json` `profile` exactly from these lines on every run
+  (`{"limits": {"runs": {"budget_usd_max": 40, "kind_month_budget_usd": 500}}}`), so a line taken out of the brief is
+  taken out of state, and a value raised by hand in state goes back to the brief's at the next intake run
+  (until then `factory.py validate` refuses state that is not what the brief says). A
+  `limits.` setting outside those sections is ignored, and intake says so.
+- Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
+  setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
+  `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer`
+  (the factory's `defaults.source_offer`), `billing`, `entitlements`, or anything else. A profile setting is never a
+  secret: every value is a number.
+- A host pack that brings its own value for the same field (`host.profile.limits`) is refused at the build: the shell
+  merges a host pack's profile at the top level, so the app's would replace it whole.
+- Where it takes effect: `branding.py prepare` and `packs.py apply` write it into `build/<app_id>/profile.json` over the
+  mold's own (a field the app does not set goes back to the mold's), the shell's generator checks it again and
+  compiles it, and `packs.py verify` checks the copy carries it. A deploy makes the copy afresh, so a change applies
+  at the app's next deploy (which, as always, needs the operator's yes). The lane copies keep the mold's defaults.
+  The server's environment (`OCTILLION_LIMIT_<SECTION>_<NAME>`) still wins over the profile; a pack's job kinds are
+  clamped to these ceilings, never above them.
+- mold_v1 takes no profile settings: a brief with them for a mold_v1 app is refused.
+
 ## mold_v0: the brief's pack sections
 
 A new mold_v0 app is **a brief + a generated pack.json + a brand** (mold_v0-062). Besides the lines every mold_v0 brief

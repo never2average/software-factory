@@ -796,6 +796,11 @@ def run():
             try: rc = SS.main_for("zz_shop", ["zz_shop", "--deploy"], dict(va, packs=["shop_notes"]), cp(vi), {}, vd2, FakeP(projects=["zz-shop-api", "zz-shop"]), say=lambda s: None, root=t)
             finally: SS.build_source = real_bs
             ok(rc == 1 and json.load(open(os.path.join(vd2, "application.json"))).get("status") == "planned", "provision.py: a build copy that cannot be made exits 1 and leaves the app as it was (not reverted)")
+            # mold_v0-090: an app whose only own thing is its profile settings is built too (packs.py apply writes them, then verify)
+            built.clear(); prof_app = dict(va, profile={"limits": {"runs": {"budget_usd_max": 40}}})
+            ok(SS.uses_build(prof_app) and SS.source_for("zz_shop", prof_app, t) == bdir and SS.build_source("zz_shop", prof_app, t, say=lambda s: None, run=brun) == bdir
+               and built == [["packs.py", "apply", "zz_shop"], ["packs.py", "verify", "zz_shop"]],
+               f"profile settings and nothing else: build/<app_id>/ from packs.py apply and verify (never the bare codebase, which would drop them): {built}")
             ran_none = []
             ok(SS.build_source("zz_shop", dict(va), t, run=lambda *x, **k: ran_none.append(x)) == SS.codebase("mold_vx", t) and not ran_none,
                "an app with neither packs nor a brand: the codebase itself, nothing run")
