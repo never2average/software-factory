@@ -1015,6 +1015,20 @@ linked from the sidebar's footer), which adds what the running server measures (
 region, the object store, where each model provider's calls go now). Never a secret value: names, providers, regions and
 hosts only.
 
+**Landing page (mold_v0-091).** The console's `/` is the build's landing page, declared, not written: a declarative
+pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it, section by section (a section the
+profile names replaces the pack's; at most one pack of a build declares one). The sections, all optional, in page order:
+`hero` (eyebrow, headline, subheadline, primary and secondary call to action, note), `coverage` (a row of text badges,
+such as the regulators covered), `value_points`, `how_it_works` (numbered steps), `features` (a grid), `faq` (disclosures
+that open without script), `closing` (a last call to action), `footer` (a note and links) and `seo` (title and description
+for search results and Open Graph). Every value is plain text on one line, shown as text; a link is a path of this site,
+an https:// address or a mailto: address (`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result and the
+source offer's footer items into `web/src/config/landing.generated.ts`). The page (`web/src/features/site/landing.tsx`)
+is in the build's brand (its name, tagline, `icon.svg` and the theme's tokens, light and dark) with a header (sign in,
+get started, install) and a footer that carries the source offer whenever the install pages do. With no block it is the
+neutral page in the profile's words: a hero, what every build does and how to start. A host pack's own landing page
+(code, mold_v0-039) stays its own.
+
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and
 `packs.py apply <app>` copies them into `build/<app_id>/`, then runs the mold's generators there; deploys and lanes
