@@ -187,6 +187,12 @@
      "items": []
     },
     {
+     "title": "Data repositories",
+     "url": "/admin/repositories",
+     "icon": "book",
+     "items": []
+    },
+    {
      "title": "Key vault",
      "url": "/admin/keys",
      "icon": "lock",

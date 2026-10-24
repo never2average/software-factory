@@ -75,6 +75,8 @@ const WORDS_ENGINE = path.join(HERE, "..", "src", "words.ts");
 const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
 // The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
 const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
+// The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
+const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -109,8 +111,9 @@ const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner", "host",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
   "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
-  // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts)
-  "landing", "guide"]);
+  // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
+  // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts)
+  "landing", "guide", "console"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -897,6 +900,8 @@ const appWords = {}, hostWords = {};
 let profileLanding;
 /** profile.json `legal` (mold_v0-109, src/legal.ts): the app's legal pages; checked here, never part of the profile modules. */
 let profileLegal = null;
+/** profile.json `console` (mold_v0-130, src/console-pages.ts): the shell pages the app hides, joined with its packs'. */
+let profileConsole;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
 const hostProfiles = packs.filter((p) => p.host?.profile);
@@ -948,6 +953,8 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
       if (k === "landing") { profileLanding = v; continue; }
+      // The shell pages the customer console hides (mold_v0-130, src/console-pages.ts): joined with the packs' below.
+      if (k === "console") { const bad = consoleProblems(v, "profile.json"); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileConsole = v; continue; }
       // The app's legal pages (mold_v0-109, src/legal.ts): written to legal.generated.ts below, never to the profile modules.
       if (k === "legal") { const bad = legalProblems(v); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileLegal = legalOf(v); continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
@@ -959,7 +966,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -1141,13 +1148,20 @@ const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type ===
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
 const dueAreaCount = recordAreas.filter((a) => a.due).length;
+/**
+ * The shell pages this build's customer console hides (mold_v0-130, src/console-pages.ts): the packs' pack.json `console`
+ * and the app's profile.json `console`, joined. Each leaves the /app sidebar (below, the tabs, nav-config.ts) and redirects
+ * to /app (pack-routes.generated.json).
+ */
+for (const p of packs) if (p.json?.console !== undefined) for (const b of consoleProblems(p.json.console, "pack.json")) fail(`packs/${p.id}`, b);
+const HIDDEN = hiddenPages([...packs.map((p) => p.json?.console), profileConsole]);
 const workspaceItems = [
   ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
   ...(dueAreaCount ? [{ title: "Notices", url: "/app/notices", icon: "notification", items: [] }] : []),
   // The workspace store's file viewer (mold_v0-056) when a pack has a workspace store.
   ...(packs.some((p) => defsByPack[p.id]?.store) ? [{ title: "Files", url: "/app/files", icon: "page", items: [] }] : []),
-];
+].filter((x) => !isHiddenUrl(x.url, HIDDEN));
 {
   const owner = new Map();
   for (const a of recordAreas) {
@@ -1312,6 +1326,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
       redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
     }
   }
+  // A shell page the build hides (mold_v0-130): its address, and every one under it, to the console's home.
+  redirects.push(...hiddenRedirects(HIDDEN));
   refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-routes.generated.json"), JSON.stringify({ $comment: "Generated by scripts/gen-packs.mjs from web/src/packs/*/routes.json (mold_v0-039). Do not edit: run npm run gen:packs.", rewrites, redirects }, null, 2) + "\n");
 }
@@ -1380,11 +1396,16 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   " * when a pack has a workspace store. */\n" +
   `export const workspacePortalNav: NavGroup[] = ${json(workspaceItems.length ? [{ label: "Workspace", items: workspaceItems }] : [])};\n\n` +
   "/** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */\n" +
-  `export const packOnboardingSteps = ${onboardingSteps.length};\n` +
+  `export const packOnboardingSteps = ${onboardingSteps.length};\n\n` +
+  "/** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */\n" +
+  `export const repositoryCount = ${packs.reduce((n, p) => n + Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length, 0)};\n\n` +
+  "/** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */\n" +
+  `export const hiddenConsoleUrls: string[] = ${json(HIDDEN.map((h) => CONSOLE_PAGES[h]))};\n` +
   // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own.
+  // A build that hides the customer's Activity page (mold_v0-130) keeps the staff's.
   (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).length) ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
-    `export const usagePortalNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
+    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
   viewsModule());
@@ -1479,7 +1500,11 @@ function packGuideData() {
 }
 
 /** The declared tabs a workspace is shown: not one over an area or runs whose list tool the pack withholds (mold_v0-067). */
-function shownTabs() { return packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack))); }
+function shownTabs() {
+  return packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack))
+    // nor one that opens a shell page the build hides (mold_v0-130)
+    && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind])));
+}
 
 /**
  * The packs' metrics, charts and tabs for the console (mold_v0-063, 058): what each chart shows, and the declared tabs

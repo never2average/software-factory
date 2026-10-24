@@ -15,7 +15,9 @@
  *                       X-Pack-Request: 1 (CSRF, as the packs' routes).
  *   /api/admin/data     platform staff, inside the admin router (requirePlatformAdmin, the CSRF header on cookie writes,
  *                       the access log): shared areas only; reads need "read", writes "library", deletes "delete";
- *                       GET /_repositories, POST /_repositories/:pack/:name/sync ("library"; {force: true} "delete").
+ *                       GET /_repositories (with each upstream catalog's pin and index state, mold_v0-129),
+ *                       POST /_repositories/:pack/:name/sync ("library"; {force: true} "delete"; src/repository-index.ts
+ *                       indexNow, the admin MCP's admin_sync_<repository> too; 409 while another instance indexes it).
  *   An operation whose generated MCP tool a pack excludes or marks admin_only answers 404 here too (mold_v0-067,
  *   src/mcp-withheld.ts): on /api/data for the workspace's tools, on /api/admin/data for an excluded staff tool.
  */

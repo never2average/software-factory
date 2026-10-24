@@ -65,6 +65,12 @@ export const workspacePortalNav: NavGroup[] = [];
 /** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */
 export const packOnboardingSteps = 0;
 
+/** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */
+export const repositoryCount = 0;
+
+/** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */
+export const hiddenConsoleUrls: string[] = [];
+
 /** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */
 export const usagePortalNav: NavGroup[] = [];
 export const usageAdminNav: NavGroup[] = [];

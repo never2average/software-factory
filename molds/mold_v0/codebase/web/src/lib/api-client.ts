@@ -27,6 +27,10 @@ async function request<T>(url: string, method: string, body?: unknown, headers: 
 export const adminApi = <T = any>(method: string, path: string, body?: unknown) =>
   request<T>(`/api/admin/onboarding${path}`, method, body, method === 'GET' ? {} : ADMIN_HEADERS);
 
+/** /api/admin/data/* (platform admins: shared record areas and the data repositories, src/data-routes.ts). */
+export const adminDataApi = <T = any>(method: string, path: string, body?: unknown) =>
+  request<T>(`/api/admin/data${path}`, method, body, method === 'GET' ? {} : ADMIN_HEADERS);
+
 /** /api/app/* (the signed-in person's active account). `headers`: say, If-Match on a save that checks the version. */
 export const appApi = <T = any>(method: string, path: string, body?: unknown, headers?: Record<string, string>) =>
   request<T>(`/api/app${path}`, method, body, method === 'GET' ? headers : { 'X-Pack-Request': '1', ...headers });

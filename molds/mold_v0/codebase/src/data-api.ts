@@ -77,10 +77,13 @@ export const adminDataApi = {
     if (Array.isArray(ops)) for (const o of ops) platformArea(String((o as { area?: unknown })?.area));
     return { results: await adminRecords.batch(ops) };
   },
-  /** Every repository of the build: its kind, the areas it feeds, who indexes it. */
-  repositories: async () => ({ repositories: (await import("./data-repositories.js")).allRepositories() }),
-  /** Index an upstream catalog at its pin into its shared areas (idempotent; `force` passes the prune guard). */
-  sync: async (pack: string, name: string, opts: { force?: boolean } = {}) => ({ index: await (await import("./data-repositories.js")).syncUpstreamCatalog(pack, name, opts) }),
+  /** Every repository of the build: its kind, the areas it feeds, who indexes it; an upstream catalog's pin and index state (mold_v0-128). */
+  repositories: async () => (await import("./repository-index.js")).repositoryStatus(),
+  /**
+   * Index an upstream catalog at its pin into its shared areas (idempotent; `force` passes the prune guard): staff's index
+   * (the admin MCP's admin_sync_<repository>, the console's Index now), recorded, one instance at a time (mold_v0-128).
+   */
+  sync: async (pack: string, name: string, opts: { force?: boolean } = {}) => ({ index: await (await import("./repository-index.js")).indexNow(pack, name, opts) }),
 };
 
 /** Index a workspace's files into its rows (after a commit: mold_v0-064's hook calls this). */

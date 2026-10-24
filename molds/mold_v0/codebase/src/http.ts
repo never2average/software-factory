@@ -53,6 +53,7 @@ import { autoscalerStatus, kickAutoscaler, startAutoscaler, stopAutoscaler } fro
 /** On Vercel, orchestrator traffic drives the autoscaler (no ticking loop there); elsewhere the loop does. */
 const serverlessTick = (force = false) => { if (process.env.VERCEL) telemetry.keepAlive(kickAutoscaler({ force }).catch((e) => console.error("autoscaler kick:", (e as Error).message))); };
 import { startArchiver, stopArchiver } from "./archive.js";
+import { startCatalogIndexing } from "./repository-index.js";
 import { storageEnabled } from "./storage.js";
 import { brokerOrchestratorCredentials, brokerSessionCredentials, gatewayHandler } from "./gateway.js";
 import { usageReport } from "./usage.js";
@@ -107,6 +108,9 @@ export function createApp() {
   void importEnvKeysOnce();
   adminTokens.warnRetiredAdminToken();
   app.use((_req, _res, next) => void importEnvKeysOnce().then(() => next()));
+  // The upstream catalogs not indexed at their pin (mold_v0-128, src/repository-index.ts): once per instance, in the
+  // background from its first request (kept alive past the answer on Vercel); never delays or fails a request.
+  app.use((_req, _res, next) => { startCatalogIndexing(telemetry.keepAlive); next(); });
 
   app.get("/healthz", async (_req, res) => {
     if (draining) return void res.status(503).json({ ok: false, draining: true }); // rolling deploy: stop routing here
@@ -802,6 +806,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else console.error(`  autoscaler    off (${autoscale ? "needs an https PUBLIC_URL and APP_WORKER_TOKEN" : "APP_AUTOSCALE=off"})`);
     // Off-machine archive of traces and research to R2 (src/archive.ts): backfills, then keeps up every 5 minutes.
     startArchiver();
+    // The upstream catalogs (mold_v0-128): indexed at their pin in the background, without waiting for a request.
+    startCatalogIndexing();
     console.error(`  archive       ${storageEnabled() ? "on (traces + research to R2)" : "off (R2_* not set)"}`);
     // The packs' schedules and the daily due-date check (src/schedules.ts), every minute; APP_SCHEDULER=off disables.
     if (startScheduler()) console.error("  scheduler     on (every minute; APP_SCHEDULER=off to disable)");

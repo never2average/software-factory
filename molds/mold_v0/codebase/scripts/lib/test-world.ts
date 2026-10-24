@@ -19,6 +19,8 @@ process.env.APP_REGISTRY = "scripts/fixtures/registry.json";
 process.env.APP_WORKER_TOKEN ??= `test-worker-${randomBytes(8).toString("hex")}`;
 process.env.REASONS_ENABLED = "off";
 process.env.APP_AUTOSCALE ??= "off";
+// The upstream catalogs' automatic index (mold_v0-128) never starts on its own in a test: a test that proves it turns it on.
+process.env.APP_CATALOG_AUTOINDEX ??= "off";
 // Every workspace has an allowance unless a test says otherwise: an account with none starts no run (mold_v0-018).
 process.env.APP_ORG_MONTHLY_BUDGET_USD ??= "1000";
 export const STAMP = Date.now().toString(36);

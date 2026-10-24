@@ -30,6 +30,11 @@
     "mode": "fail_closed",
     "pass": "RLS CHECK PASS (postgres)"
   },
+  "catalogs": {
+    "$comment": "The upstream catalogs' index after a deploy (mold_v0-128; its scripts/catalogs-index.ts): every upstream catalog of the build's packs not indexed at its pin is indexed once, right after the deploy's health checks (compose_remote: in a one-off container of the new release, with the server's env file; vercel: on this machine against the api project's production database, from the app's build copy). Applies only while the codebase's package.json has the script. Never a failed deploy: what it said ('said', its summary line) is printed and recorded in infrastructure.json catalog_index; the server indexes a catalog it could not by itself and shows the error to staff.",
+    "script": "catalogs:index",
+    "said": "CATALOGS INDEX:"
+  },
   "compose": {
     "file": "deploy/docker-compose.prod.yml",
     "mint": "deploy/bootstrap.sh",
