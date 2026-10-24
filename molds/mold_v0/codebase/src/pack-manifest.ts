@@ -19,6 +19,7 @@
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
 import { LandingSchema } from "./landing.js";
+import { GuideSchema } from "./pack-guide.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
@@ -110,6 +111,12 @@ export const PackJsonSchema = z.object({
    * by section; at most one pack of a build declares one (scripts/gen-packs.mjs).
    */
   landing: LandingSchema.optional(),
+  /**
+   * The customer guide's own pages (mold_v0-106; src/pack-guide.ts): inline markdown or a directory of the pack's .md
+   * files, and their navigation groups, before the pages the console writes from these declarations. Markdown only,
+   * checked by scripts/gen-packs.mjs (no raw HTML or images, safe links). Not for a host pack (its guide is its code).
+   */
+  guide: GuideSchema.optional(),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;
 
