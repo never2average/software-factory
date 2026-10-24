@@ -810,8 +810,12 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   (`web/src/features/admin/engine.ts`, the console's copy of `src/host-tables.ts`, from `build-facts.generated.ts`:
   the host pack's tables and the packs' job kinds with their labels). Without it they show the packs' runs per job kind,
   by the kind's label and in the build's word for a run: an account's runs and latest runs (`orgDetail` `runs`), the
-  weekly chart (Analytics), Health's runs tab (`GET /compute/runs`, `src/compute-jobs.ts` `runKinds`); an account's
-  month spend is its runs'. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
+  weekly chart (Analytics), and FinOps' runs tab, named with the build's run noun ("Audits"), runs per kind with
+  their cost over FinOps' period (`GET /spend/runs`, `src/compute-jobs.ts` `runKinds`; mold_v0-126 moved it there
+  from Health, whose old `?section=runs` link redirects to it); an account's month spend is its runs'. The runs tab
+  takes the place of FinOps' pricing Experiments tab, which shows only when the app has a pricing experiment (a live
+  plan in one, or an account ever shown a variant: `src/experiments.ts` `anyPricingExperiment`,
+  `GET /spend/experiments/any`), after the runs tab, or when a link opens it. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
   build, and, run in a host pack's build, that the engine's stages, messages, account page and funnel are unchanged.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
