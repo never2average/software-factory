@@ -3,10 +3,12 @@
 // (scripts/console-tabs-test.ts).
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { RecordAreaSpec, RecordFieldSpec } from '@/config/pack-nav.generated';
 import { useScrollsSideways } from '@/hooks/use-scrolls-sideways';
 
-export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string };
+/** A row of an area's list; a merged tab's row (mold_v0-135) also names the areas that hold its key, in the tab's order. */
+export type RecordRow = { key: string; title: string | null; data: Record<string, unknown>; updated_at: string; areas?: string[] };
 export type Page = { records: RecordRow[]; next: string | null };
 
 export const optionLabel = (f: RecordFieldSpec | undefined, v: string) => {
@@ -26,7 +28,9 @@ export const fieldLabel = (area: RecordAreaSpec, field: string) => area.fields.f
 
 export function RecordLink({ area, r, detail }: { area: RecordAreaSpec; r: RecordRow; detail: boolean }) {
   const text = r.title || r.key;
-  return detail ? <Link className='underline-offset-4 hover:underline' href={`/app/records/${area.name}/${encodeURIComponent(r.key)}`}>{text}</Link> : <span>{text}</span>;
+  // A merged tab's row opens the record of the first of its areas (mold_v0-135).
+  const at = r.areas?.[0] ?? area.name;
+  return detail ? <Link className='underline-offset-4 hover:underline' href={`/app/records/${at}/${encodeURIComponent(r.key)}`}>{text}</Link> : <span>{text}</span>;
 }
 
 /** A board: a column per option of `by` (in declared order; a stored value no longer an option gets its own), a card per record. */
@@ -100,6 +104,73 @@ export function BoardColumns({ area, by, detail, data, onMove, role = null }: {
         })}
       </div>
       </div>
+    </div>
+  );
+}
+
+/** A page of records as a table: the record, then the area's list columns (a merged tab's: its columns, mold_v0-135). */
+export function RecordTable({ area, detail, data }: { area: RecordAreaSpec; detail: boolean; data: Page }) {
+  return (
+    <Table label={area.label}>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Record</TableHead>
+          {area.list_columns.map((c) => <TableHead key={c}>{fieldLabel(area, c)}</TableHead>)}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {data.records.map((r) => (
+          <TableRow key={r.key}>
+            <TableCell><RecordLink area={area} r={r} detail={detail} /></TableCell>
+            {area.list_columns.map((c) => <TableCell key={c}>{show(area, c, r.data[c])}</TableCell>)}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+/**
+ * Records on a timeline by `by` (a date field, or updated): newest month first, the undated after; each with a badge of
+ * the `badge` field (the lifecycle's state; a merged tab's board field).
+ */
+export function TimelineList({ area, by, badge, detail, data }: { area: RecordAreaSpec; by: string; badge: string | null; detail: boolean; data: Page }) {
+  const when = (r: RecordRow) => {
+    const v = by === 'updated' ? r.updated_at : r.data[by];
+    return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
+  };
+  const dated = data.records.filter((r) => when(r)).sort((a, b) => when(b)!.localeCompare(when(a)!));
+  const undated = data.records.filter((r) => !when(r));
+  const months = [...new Set(dated.map((r) => when(r)!.slice(0, 7)))];
+  const month = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const label = by === 'updated' ? 'Last changed' : fieldLabel(area, by);
+  return (
+    <div className='flex flex-col gap-6'>
+      {data.next && <p className='text-muted-foreground text-xs'>The first 200 records; the table has them all.</p>}
+      {months.map((m) => (
+        <section key={m} className='flex flex-col gap-2'>
+          <h3 className='text-sm font-medium'>{month(m)}</h3>
+          <ol className='border-l pl-4'>
+            {dated.filter((r) => when(r)!.startsWith(m)).map((r) => (
+              <li key={r.key} className='relative py-1.5 text-sm'>
+                <span aria-hidden className='bg-foreground/40 absolute top-3 -left-[1.3rem] size-2 rounded-full' />
+                <span className='text-muted-foreground mr-3 inline-block w-14 tabular-nums'><span className='sr-only'>{label}: </span>{day(when(r)!)}</span>
+                <RecordLink area={area} r={r} detail={detail} />
+                {badge && r.data[badge] !== undefined && r.data[badge] !== null && r.data[badge] !== '' && (
+                  <Badge variant='outline' className='ml-2'>{show(area, badge, r.data[badge])}</Badge>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
+      {undated.length > 0 && (
+        <section className='flex flex-col gap-2'>
+          <h3 className='text-sm font-medium'>No {label.toLowerCase()}</h3>
+          <ul className='flex flex-col gap-1 text-sm'>{undated.map((r) => <li key={r.key}><RecordLink area={area} r={r} detail={detail} /></li>)}</ul>
+        </section>
+      )}
     </div>
   );
 }

@@ -1,0 +1,74 @@
+{
+  "$schema": "../../../../packs/pack.schema.json",
+  "id": "fixture_status",
+  "name": "Fixture status",
+  "version": "0.1.0",
+  "description": "A declarative test fixture (mold_v0-135; scripts/merged-tabs-test.ts, scripts/console-tabs-test.ts): a shared library of requirements, a workspace's own requirements and its status of each, merged into one tab. Never shipped.",
+  "record_areas": [
+    {
+      "name": "req_library",
+      "label": "Requirement library",
+      "role": "source",
+      "scope": "platform",
+      "list_columns": ["code", "topic", "weight"],
+      "fields": [
+        { "name": "code", "label": "Code", "type": "text", "max_length": 40 },
+        { "name": "topic", "label": "Topic", "type": "enum", "options": [{ "value": "access", "label": "Access" }, { "value": "data", "label": "Data" }, { "value": "ops", "label": "Operations" }] },
+        { "name": "weight", "label": "Weight", "type": "enum", "options": [{ "value": "low", "label": "Low" }, { "value": "medium", "label": "Medium" }, { "value": "high", "label": "High" }] }
+      ]
+    },
+    {
+      "name": "req_own",
+      "label": "Own requirements",
+      "role": "source",
+      "scope": "workspace",
+      "permissions": { "read": ["member", "billing", "owner"] },
+      "list_columns": ["code", "topic", "origin"],
+      "fields": [
+        { "name": "code", "label": "Code", "type": "text", "max_length": 40 },
+        { "name": "topic", "label": "Topic", "type": "enum", "options": [{ "value": "access", "label": "Access" }, { "value": "vendor", "label": "Vendor" }] },
+        { "name": "weight", "label": "Weight", "type": "enum", "options": [{ "value": "low", "label": "Low" }, { "value": "medium", "label": "Medium" }, { "value": "high", "label": "High" }] },
+        { "name": "origin", "label": "Origin", "type": "text", "max_length": 200 }
+      ]
+    },
+    {
+      "name": "req_status",
+      "label": "Requirement status",
+      "role": "check",
+      "scope": "workspace",
+      "list_columns": ["state", "due"],
+      "fields": [
+        { "name": "state", "label": "State", "type": "enum", "options": [{ "value": "unknown", "label": "Unknown" }, { "value": "planned", "label": "Planned" }, { "value": "partial", "label": "Partial" }, { "value": "done", "label": "Done" }, { "value": "not_applicable", "label": "Not applicable" }] },
+        { "name": "due", "label": "Next due", "type": "date" },
+        { "name": "note", "label": "Note", "type": "text", "max_length": 500 }
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "id": "ours",
+      "kind": "area",
+      "label": "Our requirements",
+      "icon": "circleCheck",
+      "group": "Requirements",
+      "$comment": "Every requirement that applies to the workspace with its current state: the ones it tracks a state for (the shared library's, or its own), then its own ones with no state yet. The library's other entries are not listed (rows: matched).",
+      "areas": [
+        { "area": "req_status" },
+        { "area": "req_own", "source": "Our own" },
+        { "area": "req_library", "rows": "matched", "source": "Shared" }
+      ],
+      "columns": ["source", "code", "topic", "state", "due"],
+      "views": ["table", "board", "timeline", "detail"],
+      "board_by": "state",
+      "timeline_by": "due"
+    },
+    {
+      "id": "library",
+      "kind": "area",
+      "area": "req_library",
+      "icon": "book",
+      "group": "Requirements",
+      "columns": ["code", "weight"]
+    }
+  ]
+}
