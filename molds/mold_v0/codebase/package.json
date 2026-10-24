@@ -37,6 +37,7 @@
     "test:install-docs": "tsx scripts/install-docs-test.ts",
     "test:source-offer": "tsx scripts/source-offer-test.ts",
     "test:landing": "tsx scripts/landing-test.ts",
+    "test:no-account": "tsx scripts/no-account-test.ts builtin && tsx scripts/no-account-test.ts clerk",
     "test:legal": "tsx scripts/legal-test.ts",
     "test:member-keys": "tsx scripts/member-keys-test.ts",
     "test:mcp-oauth": "tsx scripts/mcp-oauth-test.ts builtin && tsx scripts/mcp-oauth-test.ts clerk",

@@ -29,7 +29,8 @@ export async function contextFor(browser, ctx, page, options = {}) {
     outside.push(new URL(ws.url()).host);
     return ws.close();
   });
-  if (page.signed_in) await c.addCookies(await ctx.session());
+  // `as`: one of the lane world's other people (world.mts sessionAs), else its workspace owner.
+  if (page.signed_in) await c.addCookies(await (page.as && ctx.sessionAs?.[page.as] ? ctx.sessionAs[page.as]() : ctx.session()));
   return { context: c, outside };
 }
 

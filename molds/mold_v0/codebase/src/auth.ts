@@ -210,3 +210,10 @@ export async function orgForClerk(clerkOrgId: string): Promise<Org | null> {
   }
   return row ? { orgId: row.id, slug: row.slug, name: row.name } : null;
 }
+
+/**
+ * Who may open an account here (mold_v0-098; the console's landing and sign-up pages say so): `invite_only`, the
+ * platform's staff make every account and a person asks for access (POST /api/access-requests); `self_serve`, a Clerk
+ * organization someone makes becomes an account on first sight (orgForClerk). The built-in sign-in is always invite-only.
+ */
+export const accountsMode = (): "invite_only" | "self_serve" => (clerkEnabled() && selfServe() ? "self_serve" : "invite_only");
