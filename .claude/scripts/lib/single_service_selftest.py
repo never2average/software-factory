@@ -484,6 +484,35 @@ def run():
             except SS.Stop as e: msg = str(e); ok(getattr(e, "rls", None) and not e.rls["passed"], f"compose: {what}: the failed verdict travels with the stop, so it is recorded")
             ok("row-level security check failed" in msg and "switched back by itself" in msg and [c[0] for c in R6.calls][-1] == "back",
                f"compose: {what} is a failed health check: the server goes back to the release before ({msg[:200]})")
+        # --- 7c. the upstream catalogs' index after a deploy (mold_v0-128): said and recorded, never a failed deploy ------
+        real_cat = SS.catalogs_spec(SS.codebase("mold_v0"), SS.manifest("mold_v0"))
+        ok(real_cat and real_cat["script"] == "catalogs:index", f"mold_v0 declares the catalogs' index, and its package.json has it: {real_cat}")
+        ok(SS.catalogs_spec(cb, man) is None and F.get("catalogs") is None, "a codebase without that script asks for no catalogs index (the fixture)")
+        json.dump({"scripts": {"check:rls": "tsx scripts/check-rls.ts", "catalogs:index": "tsx scripts/catalogs-index.ts"}}, open(os.path.join(cbx, "package.json"), "w"))
+        cspec = SS.catalogs_spec(cbx, {"catalogs": {"script": "catalogs:index", "said": "CATALOGS INDEX:"}}); FCAT = dict(FR, catalogs=cspec)
+        csteps = [st["id"] for st in SS.plan(S, FCAT, cb)]
+        ok("catalogs" in csteps and csteps.index("catalogs") > csteps.index("rls") and "npm run --silent catalogs:index" in " ".join({st["id"]: st for st in SS.plan(S, FCAT, cb)}["catalogs"]["argv"])
+           and "catalogs" not in [st["id"] for st in SS.plan(S, FR, cb)], f"the plan indexes the catalogs after the RLS check, in a one-off container, only when declared: {csteps}")
+        CSAID = "CATALOGS INDEX: maxwell_catalogs indexed (regulators 12, controls 340); rows now: controls 340, regulators 12"
+        for what, ans, want in (("an index that ran", (0, "  maxwell/maxwell_catalogs: indexed\n" + CSAID + "\n"), CSAID), ("an index that failed", (1, "boom: the database is unreachable"), "boom: the database is unreachable")):
+            R7 = Runner(dict(R.answers, rls=(0, PASS + "\n"), catalogs=ans))
+            res7 = SS.deploy(S, FCAT, cb, runner=R7, secrets_for=lambda m: {}, resolver=lambda d: ["203.0.113.7"], read_public=lambda u: ("200", {"ok": True}, ""),
+                             say=lambda s_: None, release="20261020T000007Z", wait=lambda s_: None)
+            ids7 = [c[0] for c in R7.calls]
+            ok(res7["catalogs"] == {"exit": ans[0], "said": want} and ids7.index("catalogs") > ids7.index("rls") and "back" not in ids7,
+               f"compose: {what}: said and returned, never a failed deploy: {res7.get('catalogs')} {ids7}")
+        adc = os.path.join(t, "cat-app"); os.makedirs(adc); json.dump({"target": "compose_remote"}, open(os.path.join(adc, "infrastructure.json"), "w"))
+        SS.record_catalogs(adc, CSAID, 0, "by provision.py --deploy-remote")
+        ci = json.load(open(os.path.join(adc, "infrastructure.json")))["catalog_index"]
+        ok(ci["said"] == CSAID and ci["exit"] == 0 and "+00:00" in ci["at"], f"the index's summary lands in infrastructure.json catalog_index: {ci}")
+        class PVC:
+            def pull_env(self, cb_, proj, required=False, environment="production"): return {"DATABASE_URL": "postgres://u:p@db.invalid/x"}
+        bdir = os.path.join(t, "cat-build"); os.makedirs(os.path.join(bdir, "node_modules", ".bin")); open(os.path.join(bdir, "node_modules", ".bin", "tsx"), "w").close()
+        ran = []
+        rc, said = SS.catalogs_vercel(PVC(), cbx, bdir, "zz-shop-api", cspec, run=lambda d, u, sp, timeout=0: ran.append((d, u, sp["script"])) or (0, "x\n" + CSAID))
+        ok(rc == 0 and said == CSAID and ran == [(bdir, "postgres://u:p@db.invalid/x", "catalogs:index")], f"vercel: the index runs from the build copy against the api project's database: {ran} {said}")
+        rc, said = SS.catalogs_vercel(PVC(), cbx, bdir, "zz-shop-api", cspec, run=lambda *a, **k: (_ for _ in ()).throw(OSError("no npm")))
+        ok(rc is None and said.startswith("not run"), f"vercel: an index that cannot run is said, never raised: {said}")
         adr = os.path.join(t, "rls-app"); os.makedirs(adr); json.dump({"postgres": {"provider": "self_hosted", "rls": "fail_closed"}}, open(os.path.join(adr, "datastores.json"), "w"))
         ev = SS.record_rls(adr, spec, True, PASS, "by provision.py --deploy-remote", "enforced", "ran in a one-off container.")
         stored = json.load(open(os.path.join(adr, "datastores.json")))["postgres"]["rls_verified"]
