@@ -40,12 +40,12 @@ const pitchOf = (out: string) => JSON.parse(/export const GENERATED_EMAIL_PITCH:
 const GOOD = {
   $comment: "a fixture",
   sections: [
-    { type: "hero", eyebrow: "For teams", headline: "Ship audits", subheadline: "A sub-headline.", primary_cta: { label: "Start", href: "/auth/sign-up" }, secondary_cta: { label: "Install", href: "/install" }, note: "A note.", links: [{ label: "Open source on GitHub", href: "https://github.com/example-org/app" }], strip: { title: "Covered", items: ["SEBI CSCRF 2024", "DPDP Rules 2025"], note: "Two catalogs." } },
-    { type: "how_it_works", eyebrow: "Steps", title: "Four steps", steps: [{ title: "Sign up", body: "Make an account." }, { title: "Connect", body: "Add a client." }], layout: "loop", loop_label: "Again" },
-    { type: "problem", title: "The problem", lead: "Why.", points: [{ title: "One", body: "First." }], visual: { title: "a chat", lines: ["> ask", "answer"], highlight: "# so?" }, compare: { title: "Weighed", items: [{ label: "A", note: "picked", tone: "good" }, { label: "B", tone: "bad" }] } },
-    { type: "concept", id: "idea", nav_label: "The idea", title: "The idea", items: [{ title: "Old way", chips: ["a", "b"] }, { title: "New way", chips: ["a"], highlight: true }], note: "A note." },
-    { type: "proof", title: "Numbers", metrics: [{ value: "826", label: "controls", note: "in 7 catalogs" }], items: [{ title: "A", body: "a" }] },
-    { type: "where_you_work", title: "Where", clients: ["claude", "cursor"], chat: { messages: [{ from: "person", text: "Hi?" }, { from: "tool", text: "x \u00b7 y" }, { from: "assistant", text: "Hello." }], note: "Illustrative" } },
+    { type: "hero", eyebrow: "For teams", headline: "Ship audits", subheadline: "A sub-headline.", primary_cta: { label: "Start", href: "/auth/sign-up" }, secondary_cta: { label: "Install", href: "/install" }, note: "A note.", links: [{ label: "Open source on GitHub", href: "https://github.com/example-org/app" }], headline_highlight: "every day.", visual: { type: "decision_graph", label: "One ask, two answers.", root: "> ask", branches: [{ logo: "cursor", label: "cursor", outcome: "yes", tone: "good" }, { label: "other", outcome: "no", tone: "bad" }] }, strip: { title: "Covered", items: ["SEBI CSCRF 2024", "DPDP Rules 2025"], note: "Two catalogs." } },
+    { type: "how_it_works", eyebrow: "Steps", title: "Four steps", visual: { type: "paths", count_label: "{n} steps to done", done_label: "Done at once", measure_label: "You track", items: [{ icon: "search", title: "Old", value: "slow", path: ["a", "b", "goal"], measure: "clicks" }, { icon: "bolt", title: "New", value: "fast", path: ["goal"], highlight: true, measure: "results" }] }, steps: [{ title: "Sign up", body: "Make an account." }, { title: "Connect", body: "Add a client." }], layout: "loop", loop_label: "Again" },
+    { type: "problem", title: "The problem", lead: "Why.", points: [{ title: "One", body: "First.", icon: "eye-off" }, { title: "Two", body: "Second." }], visual: { type: "transcript", title: "a chat", lines: [{ text: "> ask", tone: "prompt" }, { text: "answer" }], highlight: "# so?", aside: { title: "Weighed", items: [{ label: "A", note: "picked", tone: "pick" }, { label: "B", tone: "alert" }] } } },
+    { type: "concept", id: "idea", nav_label: "The idea", title: "The idea", visual: { type: "loop", label: "Try, check, fix.", steps: [{ label: "Try", sub: "a first go" }, { label: "Check", sub: "did it work" }], question: "Worked?", yes: { label: "Keep it", sub: "watch it" }, no: { label: "Fix", sub: "and try again" }, again: "again" }, items: [{ title: "Old way", chips: ["a", "b"] }, { title: "New way", chips: ["a"], highlight: true }], note: "A note." },
+    { type: "proof", title: "Numbers", visual: { type: "scorecard", bars: { title: "By row", rows: [{ logo: "cursor", label: "cursor", value: 62 }] }, donut: { title: "Share", slices: [{ label: "A", value: 58 }, { label: "B", value: 30, tone: "alert" }, { label: "C", value: 12, tone: "muted" }] }, trend: { title: "After", delta: "+22 pts", points: [22, 25, 41, 48], marker_after: 1, marker_label: "fix" }, chips: [{ label: "Kept", tone: "primary" }], note: "Sample data." }, metrics: [{ value: "826", label: "controls", note: "in 7 catalogs" }], items: [{ title: "A", body: "a" }] },
+    { type: "where_you_work", title: "Where", clients: ["claude", "cursor"], visual: { type: "chat", messages: [{ from: "person", text: "Hi?" }, { from: "tool", text: "x \u00b7 y" }, { from: "bars", rows: [{ label: "low", value: 22 }, { label: "high", value: 71 }] }, { from: "assistant", text: "Hello." }], note: "Illustrative" } },
     { type: "faq", items: [{ question: "Is it good?", answer: "Yes." }] },
     { type: "cta", title: "Go", body: "Now.", primary_cta: { label: "Start", href: "https://example.org/start?x=1#y" }, secondary_cta: { label: "Mail us", href: "mailto:team@example.org" } },
     { type: "cta", title: "Still here?" },
@@ -116,7 +116,15 @@ try {
     bad("a right-to-left override", sec({ type: "problem", title: "abc\u202edcb" }), /plain text on one line/);
     bad("a zero-width space", sec({ type: "faq", items: [{ question: "a\u200bb", answer: "x" }] }), /landing\.sections\[0\]\.items\[0\]\.question: plain text/);
     bad("a tag character", sec({ type: "hero", strip: { items: ["SEBI\u{E0041}"] } }), /landing\.sections\[0\]\.strip\.items\[0\]: plain text/);
-    bad("a line break in a transcript line", sec({ type: "problem", visual: { lines: ["a\nb"] } }), /landing\.sections\[0\]\.visual\.lines\[0\]: plain text/);
+    bad("a line break in a transcript line", sec({ type: "problem", visual: { type: "transcript", title: "t", lines: [{ text: "a\nb" }] } }), /landing\.sections\[0\]\.visual\.lines\[0\]\.text: plain text/);
+    bad("an unknown visual", sec({ type: "problem", visual: { type: "hologram" } }), /landing\.sections\[0\]\.visual\.type: /);
+    bad("a scorecard with nothing to show", sec({ type: "proof", visual: { type: "scorecard", chips: [{ label: "x" }] } }), /a scorecard shows bars, a donut, a trend or more/);
+    bad("a bar over 100", sec({ type: "proof", visual: { type: "scorecard", bars: { title: "t", rows: [{ label: "a", value: 101 }] } } }), /visual\.bars\.rows\[0\]\.value: /);
+    bad("a decision graph with one branch", sec({ type: "hero", visual: { type: "decision_graph", label: "l", root: "r", branches: [{ label: "a", outcome: "b" }] } }), /visual\.branches: /);
+    bad("an icon the shell does not draw", sec({ type: "problem", points: [{ title: "t", body: "b", icon: "skull" }] }), /points\[0\]\.icon: /);
+    bad("a count label without {n}", sec({ type: "how_it_works", visual: { type: "paths", count_label: "steps", items: [{ title: "a", value: "b", path: ["x"] }] } }), /count_label: says \{n\}/);
+    bad("a strip with badges and logos", sec({ type: "hero", strip: { items: ["a"], logos: [{ logo: "cursor", label: "Cursor" }] } }), /a strip shows text badges \(items\) or logos, not both/);
+    bad("an unknown header account", { header: { account: "magic" } }, /landing\.header\.account: /);
     bad("an empty text", sec({ type: "hero", headline: "   " }), /text is required/);
     bad("a long headline", sec({ type: "hero", headline: "x".repeat(121) }), /at most 120 characters/);
     bad("a long badge", sec({ type: "hero", strip: { items: ["x".repeat(41)] } }), /at most 40 characters/);
@@ -125,9 +133,9 @@ try {
     bad("too many FAQ items", sec({ type: "faq", items: Array.from({ length: 16 }, () => ({ question: "q", answer: "a" })) }), /landing\.sections\[0\]\.items: /);
     bad("too many steps", sec({ type: "how_it_works", steps: Array.from({ length: 7 }, () => ({ title: "t", body: "b" })) }), /landing\.sections\[0\]\.steps: /);
     bad("no badges", sec({ type: "hero", strip: { items: [] } }), /landing\.sections\[0\]\.strip\.items: /);
-    bad("proof with nothing to show", sec({ type: "proof", title: "x" }), /proof shows metrics, items or both/);
+    bad("proof with nothing to show", sec({ type: "proof", title: "x" }), /proof shows metrics, items, a visual or more/);
     bad("an unknown layout", sec({ type: "how_it_works", steps: [{ title: "t", body: "b" }], layout: "spiral" }), /\.layout: /);
-    bad("an unknown tone", sec({ type: "problem", compare: { items: [{ label: "a", tone: "neon" }] } }), /compare\.items\[0\]\.tone: /);
+    bad("an unknown tone", sec({ type: "problem", visual: { type: "transcript", title: "t", lines: [{ text: "x" }], aside: { items: [{ label: "a", tone: "neon" }] } } }), /visual\.aside\.items\[0\]\.tone: /);
     bad("a client id that is not one", sec({ type: "where_you_work", clients: ["Claude Desktop"] }), /clients\[0\]: a client id/);
     bad("a client twice", sec({ type: "where_you_work", clients: ["claude", "claude"] }), /clients: each client once/);
     bad("an unknown section type", sec({ type: "testimonials", quotes: ["best ever"] }), /landing\.sections\[0\]\.type: one of hero, problem, concept/);
@@ -320,7 +328,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     for (const id of WIRE) assert.match(n.html, new RegExp(`<section id="${id}" aria-labelledby="${id}-title"`), `${id}: a labelled region`);
     assert.match(n.html, /<nav aria-label="Sections"[^>]*>(?:(?!<\/nav>)[\s\S])*href="\/#problem"[^>]*>Why<(?:(?!<\/nav>)[\s\S])*href="\/#faq"[^>]*>FAQ</, "the header's navigation: the page's sections, in order");
     assert.ok(!/href="\/#intro"|href="\/#get-started"/.test(n.html), "the hero and the calls to action are not in the navigation");
-    assert.match(n.html, /<details[^>]*><summary[^>]*><span class="sr-only">Menu<\/span>/, "a menu on small screens that opens without script");
+    assert.match(n.html, /aria-label="Open menu"/, "a menu on small screens");
     assert.match(n.html, /aria-labelledby="intro-strip"[\s\S]*?aria-label="Claude"/, "the hero's strip: the offered clients' logos");
     assert.match(n.html, /aria-label="AI clients"[\s\S]*?Claude Code/, "where you work: the offered clients");
     assert.match(n.html, /Ask again<!-- -->: back to step 1|Ask again: back to step 1/, "how it works: a loop back to step 1, in words");
@@ -344,12 +352,22 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     assert.match(p.html, /href="\/#how-it-works"[^>]*>How it works<[\s\S]*href="\/#problem"[^>]*>Why<[\s\S]*href="\/#idea"[^>]*>The idea</, "the navigation follows the picked order and a nav_label");
     assert.match(p.html, /<ol[^>]*>[\s\S]*Step 1: <\/span>Sign up/, "steps are an ordered list, numbered for a screen reader");
     assert.match(p.html, /Again<!-- -->: back to step 1|Again: back to step 1/, "its loop label");
-    assert.match(p.html, /<details[^>]*><summary[^>]*>[\s\S]*Is it good\?/, "the FAQ opens without script");
+    assert.match(p.html, /data-slot="accordion"[\s\S]*Is it good\?/, "the FAQ: an accordion of its questions");
     assert.match(p.html, /SEBI CSCRF 2024/, "the hero's strip of badges");
     assert.match(p.html, /<ul aria-label="More links"[^>]*><li><a href="https:\/\/github\.com\/example-org\/app"[^>]* rel="noopener noreferrer">Open source on GitHub<\/a>/, "the hero's own links: an outside link, no opener");
     assert.match(p.html, /<dd[^>]*>826<\/dd>/, "a metric");
     assert.ok(/aria-label="AI clients"[\s\S]*?Claude<\/span>[\s\S]*?Cursor<\/span>/.test(p.html) && !/aria-label="AI clients"[^]*?ChatGPT<\/span>/.test(p.html.split('id="faq"')[0]!), "where you work: the clients it named, in its order");
     assert.match(p.html, /<span class="sr-only">You: <\/span>Hi\?/, "the sample chat says who speaks");
+    // The visual templates, drawn from the block's data.
+    assert.match(p.html, /<svg viewBox="0 0 560 400"[^>]*role="img" aria-label="One ask, two answers\."/, "a decision graph, labelled");
+    assert.match(p.html, /<svg viewBox="0 0 340 200"[^>]*aria-label="One ask, two answers\."/, "and its phone drawing, sized to its branches");
+    assert.match(p.html, /<svg viewBox="0 0 380 \d+"[^>]*role="img" aria-label="Try, check, fix\."/, "a loop, labelled");
+    assert.match(p.html, />03<\/tspan><tspan dx="8">Fix</, "the loop's fix box numbered after its steps");
+    assert.ok(p.html.includes("2 steps to done") && p.html.includes("Done at once") && p.html.includes("\u2713 goal"), "paths: the count, the done label and the reached goal");
+    assert.match(p.html, /style="width:62%"/, "a scorecard bar at its value");
+    assert.match(p.html, /stroke-dasharray="30 100" stroke-dashoffset="-58"/, "a donut slice after the first");
+    assert.match(p.html, /<span class="text-primary">every day\.<\/span>/, "the headline's highlight");
+    assert.match(p.html, /class="block h-full rounded-full bg-destructive\/70" style="width:22%"/, "a low bar in the chat drawn as low");
     assert.match(p.html, /aria-label="Old way: a, then b"/, "a concept card's path, in words");
     assert.match(p.html, /href="mailto:team@example.org"/, "a mailto: call to action");
     assert.ok(p.html.includes(`<code class="break-all">${up.commit}</code>`) && p.html.includes(`href="${up.repo}/tree/${up.commit}"`), "the footer offers the upstream at its commit");
@@ -366,7 +384,7 @@ process.stdout.write('\\u0001' + JSON.stringify({ html: page(), invite: page('in
     // A hostile block that got past nothing (every text plain, so all of it is allowed): it is text, never markup.
     const evil = "<script>alert(1)</script><img src=x onerror=alert(2)>\"'&";
     const h = await render("hostile", { name: "Acme", landing: { sections: [{ type: "hero", headline: evil, subheadline: evil, primary_cta: { label: evil.slice(0, 40), href: "/start" }, strip: { items: [evil.slice(0, 40)] } },
-      { type: "problem", title: evil.slice(0, 120), visual: { lines: [evil] }, compare: { items: [{ label: evil.slice(0, 40) }] } }, { type: "faq", items: [{ question: evil, answer: evil }] }],
+      { type: "problem", title: evil.slice(0, 120), visual: { type: "transcript", title: evil.slice(0, 60), lines: [{ text: evil }], aside: { items: [{ label: evil.slice(0, 30) }] } } }, { type: "faq", items: [{ question: evil, answer: evil }] }],
       footer: { note: evil, links: [{ label: evil.slice(0, 40), href: "https://example.org/a?b=1&c=2" }] }, seo: { title: evil.slice(0, 70), description: evil } } });
     assert.ok(!/<script/i.test(h.html) && !/<img src="?x/i.test(h.html) && !/onerror=/i.test(h.html.replace(/&lt;img src=x onerror=alert\(2\)&gt;/g, "")), "no tag or handler from the block's text reached the markup");
     assert.ok(h.html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), "the text is shown, escaped");

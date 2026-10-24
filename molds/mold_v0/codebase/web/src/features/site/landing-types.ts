@@ -7,32 +7,55 @@
 export interface LandingLink { label: string; href: string }
 export interface LandingItem { title: string; body: string }
 
-interface Head { id?: string; nav_label?: string; eyebrow?: string; title?: string; lead?: string }
+interface Head { id?: string; nav_label?: string; nav?: boolean; eyebrow?: string; title?: string; lead?: string }
+
+export type IconName = 'eye-off' | 'git-compare' | 'code' | 'search' | 'message-chatbot' | 'terminal' | 'bolt' | 'shield-check' | 'chart-bar' | 'plug'
+  | 'users' | 'lock' | 'file-text' | 'clock' | 'check' | 'alert-triangle' | 'list-check' | 'building' | 'robot' | 'refresh';
+
+/** The visual templates (src/landing.ts VISUALS): pictures the shell draws from data. */
+export interface DecisionGraphVisual { type: 'decision_graph'; label: string; root: string; branches: { logo?: string; label: string; outcome: string; tone?: 'good' | 'bad' | 'neutral' }[] }
+export interface TranscriptVisual {
+  type: 'transcript'; title: string; lines: { text: string; tone?: 'prompt' | 'agent' | 'command' | 'ok' }[]; highlight?: string;
+  aside?: { title?: string; items: { label: string; note?: string; tone?: 'pick' | 'neutral' | 'muted' | 'alert' }[]; note?: string };
+}
+export interface LoopVisual {
+  type: 'loop'; label: string; steps: { label: string; sub: string }[]; question: string; yes_tag?: string; no_tag?: string;
+  yes: { label: string; sub: string }; no: { label: string; sub: string }; again: string;
+}
+export interface PathsVisual {
+  type: 'paths'; count_label?: string; done_label?: string; measure_label?: string;
+  items: { icon?: IconName; title: string; subtitle?: string; value_label?: string; value: string; path: string[]; highlight?: boolean; measure?: string }[];
+}
+export interface ScorecardVisual {
+  type: 'scorecard';
+  bars?: { title: string; rows: { logo?: string; label: string; value: number }[] };
+  donut?: { title: string; slices: { label: string; value: number; tone?: 'primary' | 'alert' | 'muted' }[] };
+  trend?: { title: string; delta?: string; points: number[]; marker_after?: number; marker_label?: string };
+  chips?: { label: string; tone?: 'primary' | 'muted' | 'alert' | 'secondary' }[];
+  note?: string;
+}
+export type ChatMessage = { from: 'person' | 'assistant' | 'tool'; text: string } | { from: 'bars'; rows: { label: string; value: number }[]; low_below?: number };
+export interface ChatVisual { type: 'chat'; messages: ChatMessage[]; note?: string }
+export type LandingVisual = DecisionGraphVisual | TranscriptVisual | LoopVisual | PathsVisual | ScorecardVisual | ChatVisual;
 
 export interface HeroSection {
-  type: 'hero'; id?: string; eyebrow?: string; headline?: string; subheadline?: string;
-  primary_cta?: LandingLink; secondary_cta?: LandingLink; note?: string;
+  type: 'hero'; id?: string; eyebrow?: string; headline?: string; headline_highlight?: string; subheadline?: string;
+  /** A link, or 'account': sign in (or open the console when signed in), with an arrow. */
+  primary_cta?: LandingLink | 'account'; secondary_cta?: LandingLink; note?: string;
   /** Up to 3 more links under the calls to action (the app's own: its repository, its docs). */
   links?: LandingLink[];
-  /** Text badges, or (without items) the logos of the AI clients the build offers. */
-  strip?: { title?: string; items?: string[]; note?: string };
+  visual?: LandingVisual;
+  /** Text badges, named logos, or (with neither) the logos of the AI clients the build offers. */
+  strip?: { title?: string; label?: string; items?: string[]; logos?: { logo: string; label: string }[]; note?: string };
 }
-export type CompareTone = 'good' | 'bad' | 'neutral' | 'muted';
-export interface ProblemSection extends Head {
-  type: 'problem'; points?: LandingItem[];
-  visual?: { title?: string; lines: string[]; highlight?: string };
-  compare?: { title?: string; items: { label: string; note?: string; tone?: CompareTone }[]; note?: string };
-}
+export interface ProblemSection extends Head { type: 'problem'; visual?: LandingVisual; points?: (LandingItem & { icon?: IconName })[] }
 export interface ConceptSection extends Head {
-  type: 'concept'; note?: string;
+  type: 'concept'; visual?: LandingVisual; note?: string;
   items?: { title: string; subtitle?: string; body?: string; chips?: string[]; highlight?: boolean }[];
 }
-export interface HowItWorksSection extends Head { type: 'how_it_works'; steps: LandingItem[]; layout?: 'steps' | 'flow' | 'loop'; loop_label?: string }
-export interface ProofSection extends Head { type: 'proof'; metrics?: { value: string; label: string; note?: string }[]; items?: LandingItem[]; note?: string }
-export interface WhereYouWorkSection extends Head {
-  type: 'where_you_work'; clients?: string[]; note?: string;
-  chat?: { messages: { from: 'person' | 'assistant' | 'tool'; text: string }[]; note?: string };
-}
+export interface HowItWorksSection extends Head { type: 'how_it_works'; visual?: LandingVisual; steps?: LandingItem[]; layout?: 'steps' | 'flow' | 'loop'; loop_label?: string }
+export interface ProofSection extends Head { type: 'proof'; visual?: LandingVisual; metrics?: { value: string; label: string; note?: string }[]; items?: LandingItem[]; note?: string }
+export interface WhereYouWorkSection extends Head { type: 'where_you_work'; visual?: LandingVisual; clients?: string[]; note?: string }
 export interface FaqSection extends Head { type: 'faq'; items: { question: string; answer: string }[] }
 export interface CtaSection { type: 'cta'; id?: string; title?: string; body?: string; primary_cta?: LandingLink; secondary_cta?: LandingLink }
 
@@ -42,7 +65,8 @@ export type SectionType = LandingSection['type'];
 export interface LandingBlock {
   /** The sections in the app's order; absent: the whole wireframe in the shell's neutral words. */
   sections?: LandingSection[];
-  footer?: { note?: string; links?: LandingLink[] };
+  header?: { links?: LandingLink[]; account?: 'sign_in_and_start' | 'account' };
+  footer?: { note?: string; links?: LandingLink[]; tagline?: string; copyright?: string; shell_links?: boolean };
   seo?: { title?: string; description?: string };
 }
 

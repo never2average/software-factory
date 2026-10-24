@@ -70,7 +70,21 @@ const Href = z.string().superRefine((h, ctx) => { const p = hrefProblem(h); if (
 const Cta = z.object({ label: text(40), href: Href }).strict();
 const Item = z.object({ title: text(80), body: text(400) }).strict();
 const Faq = z.object({ title: text(120).optional(), items: z.array(z.object({ question: text(200), answer: text(1200) }).strict()).min(1).max(15) }).strict();
-const Footer = z.object({ note: text(300).optional(), links: z.array(Cta).max(8).optional() }).strict();
+/**
+ * The footer: a note and up to 8 links. `tagline` replaces the profile's short description beside the mark, `copyright`
+ * is the bottom line (default: the legal company's name, else the product's), and `shell_links: false` leaves out the
+ * shell's own ways in (install, sign in, create an account); the sections, the legal pages and the source offer stay.
+ */
+const Footer = z.object({
+  note: text(300).optional(), links: z.array(Cta).max(8).optional(),
+  tagline: text(200).optional(), copyright: text(120).optional(), shell_links: z.boolean().optional(),
+}).strict();
+/**
+ * The header (mold_v0-122): up to 2 links beside the ways in (default: the install pages), and which ways in:
+ * "sign_in_and_start" (default: sign in, and the start call) or "account" (one account button: sign in, or open the
+ * console when signed in, with an arrow).
+ */
+const Header = z.object({ links: z.array(Cta).max(2).optional(), account: z.enum(["sign_in_and_start", "account"]).optional() }).strict();
 const Seo = z.object({ title: text(70).optional(), description: text(200).optional() }).strict();
 
 // ---------- the old block (mold_v0-091), still read and converted ----------
@@ -117,28 +131,105 @@ const Id = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/, "an anchor: lower-case let
 /** A client id of src/connect-catalog.ts (gen-packs checks it is one the build's install pages offer). */
 const ClientId = z.string().regex(/^[a-z0-9-]{1,40}$/, "a client id of the install pages (src/connect-catalog.ts), such as claude or cursor");
 
-const head = { id: Id.optional(), nav_label: text(24).optional(), eyebrow: text(60).optional(), title: text(120).optional(), lead: text(600).optional() };
+const head = {
+  id: Id.optional(), nav_label: text(24).optional(), nav: z.boolean().optional(),
+  eyebrow: text(60).optional(), title: text(120).optional(), lead: text(600).optional(),
+};
+
+/** A logo the shell draws: an AI client's or agent's id (web/src/features/site/agent-logos.tsx; others get a terminal glyph). */
+const LogoId = z.string().regex(/^[a-z0-9-]{1,40}$/, "a logo id, such as claude-code or cursor");
+/** An icon the shell draws, by name (web/src/features/site/landing-icons.tsx). */
+export const ICONS = ["eye-off", "git-compare", "code", "search", "message-chatbot", "terminal", "bolt", "shield-check", "chart-bar", "plug",
+  "users", "lock", "file-text", "clock", "check", "alert-triangle", "list-check", "building", "robot", "refresh"] as const;
+const Icon = z.enum(ICONS);
+const Percent = z.number().min(0).max(100);
+
+/**
+ * The visual templates (mold_v0-122): pictures the shell draws from data, after the first product's landing page, each in
+ * the build's theme tokens. A section may carry one as `visual`.
+ *   decision_graph  one prompt branching to 2-4 outcomes (a logo, a label, an outcome with a tone)
+ *   transcript      a terminal card of lines (prompt, agent, command, ok), a highlight, and an aside list of options weighed
+ *   loop            1-4 steps, a yes/no question, a "yes" box and a "no" box that runs the last step again
+ *   paths           1-4 cards: an icon, a title, a value, a path of chips to a goal (the highlighted card reaches it at once)
+ *   scorecard       bars by row, a donut of shares, a trend line with a marker, and a row of chips
+ *   chat            a sample chat: the person's messages, a tool call, the assistant's text and bars, a note
+ */
+const VISUALS = {
+  decision_graph: z.object({
+    type: z.literal("decision_graph"), label: text(300), root: text(24),
+    branches: z.array(z.object({ logo: LogoId.optional(), label: text(16), outcome: text(16), tone: z.enum(["good", "bad", "neutral"]).optional() }).strict()).min(2).max(4),
+  }).strict(),
+  transcript: z.object({
+    type: z.literal("transcript"), title: text(60),
+    lines: z.array(z.object({ text: text(160), tone: z.enum(["prompt", "agent", "command", "ok"]).optional() }).strict()).min(1).max(10),
+    highlight: text(160).optional(),
+    aside: z.object({
+      title: text(40).optional(),
+      items: z.array(z.object({ label: text(30), note: text(40).optional(), tone: z.enum(["pick", "neutral", "muted", "alert"]).optional() }).strict()).min(1).max(6),
+      note: text(200).optional(),
+    }).strict().optional(),
+  }).strict(),
+  loop: z.object({
+    type: z.literal("loop"), label: text(300),
+    steps: z.array(z.object({ label: text(22), sub: text(34) }).strict()).min(1).max(4),
+    question: text(14), yes_tag: text(6).optional(), no_tag: text(6).optional(),
+    yes: z.object({ label: text(16), sub: text(24) }).strict(), no: z.object({ label: text(14), sub: text(24) }).strict(), again: text(16),
+  }).strict(),
+  paths: z.object({
+    type: z.literal("paths"),
+    items: z.array(z.object({
+      icon: Icon.optional(), title: text(12), subtitle: text(30).optional(), value_label: text(20).optional(), value: text(24),
+      path: z.array(text(14)).min(1).max(6), highlight: z.boolean().optional(), measure: text(30).optional(),
+    }).strict()).min(1).max(4),
+    count_label: text(40).refine((s) => s.includes("{n}"), "says {n} where the number of steps goes").optional(),
+    done_label: text(30).optional(), measure_label: text(20).optional(),
+  }).strict(),
+  scorecard: z.object({
+    type: z.literal("scorecard"),
+    bars: z.object({ title: text(30), rows: z.array(z.object({ logo: LogoId.optional(), label: text(16), value: Percent }).strict()).min(1).max(8) }).strict().optional(),
+    donut: z.object({ title: text(30), slices: z.array(z.object({ label: text(16), value: Percent, tone: z.enum(["primary", "alert", "muted"]).optional() }).strict()).min(1).max(4) }).strict().optional(),
+    trend: z.object({ title: text(30), delta: text(12).optional(), points: z.array(Percent).min(2).max(12), marker_after: z.number().int().min(0).optional(), marker_label: text(16).optional() }).strict().optional(),
+    chips: z.array(z.object({ label: text(20), tone: z.enum(["primary", "muted", "alert", "secondary"]).optional() }).strict()).min(1).max(8).optional(),
+    note: text(120).optional(),
+  }).strict().refine((v) => v.bars || v.donut || v.trend, "a scorecard shows bars, a donut, a trend or more"),
+  chat: z.object({
+    type: z.literal("chat"),
+    messages: z.array(z.union([
+      z.object({ from: z.enum(["person", "assistant", "tool"]), text: text(300) }).strict(),
+      z.object({ from: z.literal("bars"), rows: z.array(z.object({ label: text(16), value: Percent }).strict()).min(1).max(6), low_below: Percent.optional() }).strict(),
+    ])).min(1).max(8),
+    note: text(120).optional(),
+  }).strict(),
+} as const;
+export const VISUAL_TYPES = Object.keys(VISUALS) as (keyof typeof VISUALS)[];
+const Visual = z.discriminatedUnion("type", Object.values(VISUALS) as unknown as [z.ZodObject, ...z.ZodObject[]]);
+export type VisualOf<K extends keyof typeof VISUALS> = z.infer<(typeof VISUALS)[K]>;
+
+/** A hero's first call to action: a link, or "account" (sign in, or open the console when signed in, with an arrow). */
+const HeroCta = z.union([z.literal("account"), Cta]);
 
 const SECTION_SCHEMAS = {
   hero: z.object({
     type: z.literal("hero"), id: Id.optional(),
-    eyebrow: text(80).optional(), headline: text(120).optional(), subheadline: text(300).optional(),
-    primary_cta: Cta.optional(), secondary_cta: Cta.optional(), note: text(200).optional(),
+    eyebrow: text(80).optional(), headline: text(120).optional(), headline_highlight: text(80).optional(), subheadline: text(300).optional(),
+    primary_cta: HeroCta.optional(), secondary_cta: Cta.optional(), note: text(200).optional(),
     links: z.array(Cta).min(1).max(3).optional(),
-    strip: z.object({ title: text(80).optional(), items: z.array(text(40)).min(1).max(30).optional(), note: text(300).optional() }).strict().optional(),
+    visual: Visual.optional(),
+    strip: z.object({
+      title: text(80).optional(), label: text(60).optional(),
+      items: z.array(text(40)).min(1).max(30).optional(),
+      logos: z.array(z.object({ logo: LogoId, label: text(30) }).strict()).min(1).max(12).optional(),
+      note: text(300).optional(),
+    }).strict().refine((s) => !(s.items && s.logos), "a strip shows text badges (items) or logos, not both").optional(),
   }).strict(),
   problem: z.object({
     type: z.literal("problem"), ...head,
-    points: z.array(Item).min(1).max(4).optional(),
-    visual: z.object({ title: text(60).optional(), lines: z.array(text(160)).min(1).max(8), highlight: text(160).optional() }).strict().optional(),
-    compare: z.object({
-      title: text(60).optional(),
-      items: z.array(z.object({ label: text(40), note: text(60).optional(), tone: z.enum(["good", "bad", "neutral", "muted"]).optional() }).strict()).min(1).max(6),
-      note: text(200).optional(),
-    }).strict().optional(),
+    visual: Visual.optional(),
+    points: z.array(z.object({ title: text(80), body: text(400), icon: Icon.optional() }).strict()).min(1).max(4).optional(),
   }).strict(),
   concept: z.object({
     type: z.literal("concept"), ...head,
+    visual: Visual.optional(),
     items: z.array(z.object({
       title: text(80), subtitle: text(80).optional(), body: text(400).optional(),
       chips: z.array(text(30)).min(1).max(6).optional(), highlight: z.boolean().optional(),
@@ -147,20 +238,22 @@ const SECTION_SCHEMAS = {
   }).strict(),
   how_it_works: z.object({
     type: z.literal("how_it_works"), ...head,
-    steps: z.array(Item).min(1).max(6),
+    visual: Visual.optional(),
+    steps: z.array(Item).min(1).max(6).optional(),
     layout: z.enum(["steps", "flow", "loop"]).optional(),
     loop_label: text(40).optional(),
-  }).strict(),
+  }).strict().refine((s) => s.steps || s.visual, "how it works shows steps, a visual or both"),
   proof: z.object({
     type: z.literal("proof"), ...head,
+    visual: Visual.optional(),
     metrics: z.array(z.object({ value: text(16), label: text(80), note: text(160).optional() }).strict()).min(1).max(6).optional(),
     items: z.array(Item).min(1).max(12).optional(),
     note: text(300).optional(),
-  }).strict().refine((s) => s.metrics || s.items, "proof shows metrics, items or both: give at least one"),
+  }).strict().refine((s) => s.metrics || s.items || s.visual, "proof shows metrics, items, a visual or more: give at least one"),
   where_you_work: z.object({
     type: z.literal("where_you_work"), ...head,
+    visual: Visual.optional(),
     clients: z.array(ClientId).min(1).max(12).refine((a) => new Set(a).size === a.length, "each client once").optional(),
-    chat: z.object({ messages: z.array(z.object({ from: z.enum(["person", "assistant", "tool"]), text: text(300) }).strict()).min(1).max(6), note: text(120).optional() }).strict().optional(),
     note: text(300).optional(),
   }).strict(),
   faq: z.object({ type: z.literal("faq"), ...head, items: Faq.shape.items }).strict(),
@@ -171,7 +264,7 @@ export type Section = { [K in SectionType]: z.infer<(typeof SECTION_SCHEMAS)[K]>
 export type SectionOf<K extends SectionType> = z.infer<(typeof SECTION_SCHEMAS)[K]>;
 
 /** The block a build shows (what gen-packs writes): sections (absent: the whole wireframe, neutral), footer, seo. */
-export interface Landing { sections?: Section[]; footer?: z.infer<typeof Footer>; seo?: z.infer<typeof Seo> }
+export interface Landing { sections?: Section[]; header?: z.infer<typeof Header>; footer?: z.infer<typeof Footer>; seo?: z.infer<typeof Seo> }
 
 /** Each section's anchor when it names none (a second call to action gets -2, a third -3). */
 export const DEFAULT_IDS: Record<SectionType, string> = {
@@ -193,6 +286,7 @@ export function sectionIds(sections: readonly { type: string; id?: string }[]): 
 const NewSchema = z.object({
   $comment: z.string().max(2000).optional(),
   sections: z.array(z.unknown()).min(1, "at least one section (leave sections out for the whole wireframe)").max(MAX_SECTIONS, `at most ${MAX_SECTIONS} sections`).optional(),
+  header: Header.optional(),
   footer: Footer.optional(),
   seo: Seo.optional(),
 }).strict();
@@ -307,6 +401,6 @@ export function mergeLanding(fromPack: object | null | undefined, fromProfile: o
     }
     sections = next;
   } else if (prof?.sections) sections = prof.sections;
-  const footer = prof?.footer ?? pack?.footer, seo = prof?.seo ?? pack?.seo;
-  return { ...(sections ? { sections } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}) };
+  const header = prof?.header ?? pack?.header, footer = prof?.footer ?? pack?.footer, seo = prof?.seo ?? pack?.seo;
+  return { ...(sections ? { sections } : {}), ...(header ? { header } : {}), ...(footer ? { footer } : {}), ...(seo ? { seo } : {}) };
 }

@@ -6,11 +6,15 @@ import { landing as declared, landingClients, sourceOfferItems } from '@/config/
 import { profile } from '@/config/profile.generated';
 import { fill } from '@/lib/vocabulary';
 import { cn } from '@/lib/utils';
-import { AccountLinks } from './account-links';
-import { ClientLogo, hasClientMark } from './agent-logos';
+import { AccountButton } from './account-links';
+import { AgentLogo, ClientLogo, hasClientMark } from './agent-logos';
+import { LandingFaq } from './landing-faq';
+import { LANDING_ICONS } from './landing-icons';
+import { Visual } from './landing-visuals';
+import { SiteHeaderView } from './site-header';
 import {
   linkable, sectionIds,
-  type AccountsMode, type CompareTone, type ConceptSection, type CtaSection, type FaqSection, type HeroSection, type HowItWorksSection,
+  type AccountsMode, type ConceptSection, type CtaSection, type FaqSection, type HeroSection, type HowItWorksSection,
   type LandingBlock, type LandingClient, type LandingItem, type LandingLink, type LandingSection, type ProblemSection, type ProofSection,
   type SectionType, type WhereYouWorkSection
 } from './landing-types';
@@ -62,11 +66,15 @@ function neutralSections(): LandingSection[] {
       type: 'problem',
       title: fill('Your assistant cannot see your {workspace}'),
       lead: 'AI assistants are where work starts now, but the records, files and results your team relies on live somewhere else. Every chat starts by copying them in and ends by copying answers back out.',
-      visual: { title: 'assistant · new chat', lines: [fill('> what changed in our {workspace} this week?'), 'assistant ▸ I do not have access to that.', 'assistant ▸ Paste the records here and I will take a look.'], highlight: '# what if it could look for itself?' },
+      visual: {
+        type: 'transcript', title: 'assistant · new chat',
+        lines: [{ text: fill('> what changed in our {workspace} this week?'), tone: 'prompt' }, { text: 'assistant ▸ I do not have access to that.' }, { text: 'assistant ▸ Paste the records here and I will take a look.' }],
+        highlight: '# what if it could look for itself?'
+      },
       points: [
-        { title: 'Copied by hand', body: 'Every answer starts with an export and ends with a paste, so nothing stays current.' },
-        { title: 'Nothing kept', body: 'What the assistant did stays in one chat. Nobody else can review it later.' },
-        { title: 'Hard to share safely', body: fill("Pasting a {workspace}'s records into a chat leaves them wherever the chat goes.") }
+        { icon: 'file-text', title: 'Copied by hand', body: 'Every answer starts with an export and ends with a paste, so nothing stays current.' },
+        { icon: 'clock', title: 'Nothing kept', body: 'What the assistant did stays in one chat. Nobody else can review it later.' },
+        { icon: 'lock', title: 'Hard to share safely', body: fill("Pasting a {workspace}'s records into a chat leaves them wherever the chat goes.") }
       ]
     },
     {
@@ -103,7 +111,9 @@ function neutralSections(): LandingSection[] {
     {
       type: 'where_you_work',
       lead: fill('Add {product} to the AI clients your team uses. The install page gives the exact steps for each one.'),
-      chat: {
+      clients: clientsFor(undefined).map((c) => c.id),
+      visual: {
+        type: 'chat',
         messages: [
           { from: 'person', text: fill('What is open in our {workspace}?') },
           { from: 'tool', text: fill('{product} · reading your {workspace}') },
@@ -126,18 +136,17 @@ function neutralSections(): LandingSection[] {
 }
 
 /** A section with its anchor, its place among the page's bands and its links as the access mode has them. */
-export interface Placed { section: LandingSection; id: string; tint: boolean }
+export interface Placed { section: LandingSection; id: string }
 
 /** The page this build shows: the block's sections (else the neutral wireframe), each with its anchor; the header's navigation. */
 export function resolvedLanding(block: LandingBlock | null = declared, access?: AccountsMode) {
   const ctas = siteCtas(access);
   const sections = block?.sections?.length ? block.sections : neutralSections();
   const ids = sectionIds(sections);
-  let band = 0;
-  const placed: Placed[] = sections.map((section, i) => ({ section, id: ids[i]!, tint: section.type !== 'hero' && section.type !== 'cta' && band++ % 2 === 1 }));
-  const nav = placed.flatMap(({ section: s, id }) => (s.type === 'hero' || s.type === 'cta' ? [] : [{ label: s.nav_label ?? NAV_LABEL[s.type], href: `/#${id}` }]));
+  const placed: Placed[] = sections.map((section, i) => ({ section, id: ids[i]! }));
+  const nav = placed.flatMap(({ section: s, id }) => (s.type === 'hero' || s.type === 'cta' || s.nav === false ? [] : [{ label: s.nav_label ?? NAV_LABEL[s.type], href: `/#${id}` }]));
   const heroSection = sections.find((s): s is HeroSection => s.type === 'hero');
-  return { placed, nav, ctas, hero: heroOf(heroSection ?? { type: 'hero' }, ctas, access), footer: block?.footer, seo: block?.seo };
+  return { placed, nav, ctas, hero: heroOf(heroSection ?? { type: 'hero' }, ctas, access), header: block?.header, footer: block?.footer, seo: block?.seo };
 }
 
 /** The hero filled in from the profile where the block leaves it out. */
@@ -149,7 +158,7 @@ function heroOf(h: HeroSection, ctas: SiteCtas, access?: AccountsMode) {
     headline,
     // The console's description, unless it only repeats the headline (a brand's is "<name> — <tagline>").
     subheadline: h.subheadline ?? (profile.console_description.toLowerCase().includes(headline.toLowerCase()) ? undefined : profile.console_description),
-    primary_cta: forAccess(h.primary_cta ?? ctas.start, access),
+    primary_cta: h.primary_cta === 'account' ? 'account' as const : forAccess(h.primary_cta ?? ctas.start, access),
     secondary_cta: forAccess(h.secondary_cta ?? ctas.install, access),
     links: h.links?.map((k) => forAccess(k, access))
   };
@@ -192,21 +201,21 @@ const Wrap = ({ children, className }: { children: React.ReactNode; className?: 
   <div className={cn('mx-auto w-full max-w-6xl px-4 sm:px-6', className)}>{children}</div>
 );
 
-/** A section's band: its anchor, an eyebrow (left out when it only repeats the title), the title and a lead; every other band tinted. */
-function Band({ id, eyebrow, title, lead, center, tint, children }: {
-  id: string; eyebrow?: string; title: string; lead?: string; center?: boolean; tint?: boolean; children?: React.ReactNode;
+/** A section's band (the first product's section wrapper): its anchor, an eyebrow (left out when it only repeats the title), the title and a lead. */
+function Band({ id, eyebrow, title, lead, center, children }: {
+  id: string; eyebrow?: string; title: string; lead?: string; center?: boolean; children?: React.ReactNode;
 }) {
   const hid = `${id}-title`;
   return (
-    <section id={id} aria-labelledby={hid} className={cn('scroll-mt-20 border-t py-16 sm:py-24', tint && 'bg-muted/30')}>
-      <Wrap>
+    <section id={id} aria-labelledby={hid} className='scroll-mt-20 border-t py-16 sm:py-24'>
+      <div className='mx-auto max-w-6xl px-4 sm:px-6'>
         <div className={cn('max-w-2xl', center && 'sm:mx-auto sm:text-center')}>
-          {eyebrow && eyebrow.toLowerCase() !== title.toLowerCase() ? <p className='text-primary font-mono text-xs font-medium tracking-wider break-words uppercase'>{eyebrow}</p> : null}
-          <h2 id={hid} className='mt-2 text-3xl font-semibold tracking-tight text-balance break-words sm:text-4xl'>{title}</h2>
-          {lead ? <p className='text-muted-foreground mt-3 text-lg text-pretty break-words'>{lead}</p> : null}
+          {eyebrow && eyebrow.toLowerCase() !== title.toLowerCase() ? <p className='text-primary font-mono text-xs tracking-wider uppercase'>{eyebrow}</p> : null}
+          <h2 id={hid} className='mt-2 text-3xl font-semibold tracking-tight text-balance sm:text-4xl'>{title}</h2>
+          {lead ? <p className='text-muted-foreground mt-3 text-lg text-pretty'>{lead}</p> : null}
         </div>
         {children ? <div className='mt-10 sm:mt-14'>{children}</div> : null}
-      </Wrap>
+      </div>
     </section>
   );
 }
@@ -229,148 +238,142 @@ function Cards({ items, columns }: { items: LandingItem[]; columns: string }) {
 }
 
 const cols = (n: number) => (n >= 3 ? 'sm:grid-cols-2 lg:grid-cols-3' : n === 2 ? 'sm:grid-cols-2' : '');
+/** Children one after another, the second and later 3rem below (a visual, then the section's own list). */
+const Stack = ({ parts }: { parts: React.ReactNode[] }) => {
+  const shown = parts.filter(Boolean);
+  return shown.length ? <>{shown.map((p, i) => <div key={i} className={i ? 'mt-12' : undefined}>{p}</div>)}</> : null;
+};
 
 // ---------- the sections ----------
 
-/** The grid and glow behind the top of the page, in the theme's border and primary. */
+/** The grid and glow behind the top of a public page, in the theme's border and primary. */
 function Backdrop() {
   return (
     <>
-      <div aria-hidden='true' className='pointer-events-none absolute inset-0 -z-10 [mask-image:radial-gradient(70%_60%_at_50%_0%,black,transparent)] bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-[size:56px_56px] opacity-60' />
-      <div aria-hidden='true' className='pointer-events-none absolute -top-40 left-1/2 -z-10 h-[520px] w-[900px] max-w-full -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--primary)_22%,transparent),transparent)] blur-2xl' />
+      <div aria-hidden='true' className='pointer-events-none absolute inset-0 [mask-image:radial-gradient(70%_60%_at_50%_0%,black,transparent)] bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-[size:56px_56px] opacity-60' />
+      <div aria-hidden='true' className='pointer-events-none absolute -top-40 left-1/2 h-[520px] w-[900px] max-w-full -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,color-mix(in_oklch,var(--primary)_22%,transparent),transparent)] blur-2xl' />
     </>
   );
 }
 
-function Hero({ id, hero }: { id: string; hero: ReturnType<typeof heroOf> }) {
+function Hero({ id, hero, ctas }: { id: string; hero: ReturnType<typeof heroOf>; ctas: SiteCtas }) {
   const strip = hero.strip;
-  const logos = strip && !strip.items ? clientsFor(undefined) : [];
+  const logos = strip && !strip.items ? (strip.logos ?? clientsFor(undefined).map((c) => ({ logo: c.id, label: c.name, client: true }))) : [];
   const stripId = `${id}-strip`;
+  const primary = hero.primary_cta;
   return (
-    <section id={id} aria-labelledby={`${id}-title`} className='relative isolate scroll-mt-20 overflow-hidden'>
+    <section id={id} aria-labelledby={`${id}-title`} className='relative scroll-mt-20 overflow-hidden'>
       <Backdrop />
-      <Wrap className='pt-16 pb-14 sm:pt-24 sm:pb-20'>
-        <div className='max-w-3xl'>
-          {hero.eyebrow ? <p className='text-primary font-mono text-xs font-medium tracking-wider break-words uppercase'>{hero.eyebrow}</p> : null}
-          <h1 id={`${id}-title`} className='mt-3 text-4xl font-semibold tracking-tight text-balance break-words sm:text-5xl lg:leading-[1.1]'>{hero.headline}</h1>
-          {hero.subheadline ? <p className='text-muted-foreground mt-5 max-w-2xl text-lg text-pretty break-words sm:text-xl'>{hero.subheadline}</p> : null}
-          <Ctas primary={hero.primary_cta} secondary={hero.secondary_cta} className='mt-8' />
-          {hero.links ? (
-            <ul aria-label='More links' className='mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm'>
-              {hero.links.map((k, i) => <li key={i}><SmartLink link={k} className='text-foreground inline-flex min-h-6 items-center gap-1 font-medium underline underline-offset-4' /></li>)}
-            </ul>
-          ) : null}
-          {hero.note ? <p className='text-muted-foreground mt-5 text-sm break-words'>{hero.note}</p> : null}
+      <div className='relative mx-auto max-w-6xl px-4 pt-16 pb-14 sm:px-6 sm:pt-24 sm:pb-20'>
+        <div className={cn(hero.visual && 'grid gap-12 lg:grid-cols-[1fr_1.1fr] lg:items-center')}>
+          <div className='min-w-0'>
+            {hero.eyebrow ? <p className='text-primary mb-3 font-mono text-xs tracking-wider uppercase'>{hero.eyebrow}</p> : null}
+            <h1 id={`${id}-title`} className='text-3xl font-semibold tracking-tight text-balance sm:text-4xl lg:text-[2.75rem] lg:leading-[1.1]'>
+              {hero.headline}{hero.headline_highlight ? <> <span className='text-primary'>{hero.headline_highlight}</span></> : null}
+            </h1>
+            {hero.subheadline ? <p className={cn('text-muted-foreground mt-4 text-base text-pretty sm:text-lg', hero.visual ? 'max-w-md' : 'max-w-2xl')}>{hero.subheadline}</p> : null}
+            <div className='mt-8 flex flex-wrap gap-3'>
+              {primary === 'account' ? <AccountButton size='lg' signIn={ctas.signIn} open={ctas.open} />
+                : primary ? <SmartLink link={primary} className={buttonVariants({ size: 'lg' })} /> : null}
+              {hero.secondary_cta ? <SmartLink link={hero.secondary_cta} className={buttonVariants({ size: 'lg', variant: 'outline' })} /> : null}
+            </div>
+            {hero.links ? (
+              <ul aria-label='More links' className='mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm'>
+                {hero.links.map((k, i) => <li key={i}><SmartLink link={k} className='text-foreground inline-flex min-h-6 items-center gap-1 font-medium underline underline-offset-4' /></li>)}
+              </ul>
+            ) : null}
+            {hero.note ? <p className='text-muted-foreground mt-5 text-sm'>{hero.note}</p> : null}
+          </div>
+          {hero.visual ? <Visual v={hero.visual} /> : null}
         </div>
         {strip && (strip.items || logos.length) ? (
-          <div className='mt-14 sm:mt-16'>
-            {strip.title ? <p id={stripId} className='text-muted-foreground font-mono text-xs tracking-wider break-words uppercase'>{strip.title}</p> : null}
+          <div className='mt-16'>
+            {strip.title ? <p id={stripId} className='text-muted-foreground mb-4 font-mono text-xs tracking-wider uppercase'>{strip.title}</p> : null}
             {strip.items ? (
-              <ul aria-labelledby={strip.title ? stripId : undefined} className='mt-4 flex flex-wrap gap-2'>
-                {strip.items.map((c, i) => <li key={i} className='bg-card rounded-full border px-3 py-1 text-sm font-medium break-words'>{c}</li>)}
+              <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : strip.label} className='flex flex-wrap gap-2'>
+                {strip.items.map((c, i) => <li key={i} className='bg-card rounded-full border px-3 py-1 text-sm font-medium'>{c}</li>)}
               </ul>
             ) : (
-              <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : 'AI clients'} className='text-foreground/80 mt-4 flex flex-wrap gap-x-8 gap-y-3 font-mono text-sm'>
-                {logos.map((c) => <li key={c.id} className='flex items-center gap-2'><ClientLogo id={c.id} size={18} aria-hidden='true' />{c.name}</li>)}
+              <ul aria-labelledby={strip.title ? stripId : undefined} aria-label={strip.title ? undefined : (strip.label ?? 'AI clients')} className='text-foreground/60 flex flex-wrap gap-x-8 gap-y-3 font-mono text-sm'>
+                {logos.map((c) => (
+                  <li key={c.logo} className='flex items-center gap-2'>
+                    {'client' in c ? <ClientLogo id={c.logo} size={18} aria-hidden='true' /> : <AgentLogo id={c.logo} size={18} aria-hidden='true' />}{c.label}
+                  </li>
+                ))}
               </ul>
             )}
-            {strip.note ? <p className='text-muted-foreground mt-4 max-w-3xl text-sm break-words'>{strip.note}</p> : null}
+            {strip.note ? <p className='text-muted-foreground mt-4 max-w-3xl text-sm'>{strip.note}</p> : null}
           </div>
         ) : null}
-      </Wrap>
+      </div>
     </section>
   );
 }
 
-const TONE: Record<CompareTone, string> = {
-  good: 'border-primary/50 bg-primary/10 text-foreground',
-  // The red is the frame, not the text: red text on its own tint can fall short of 4.5:1.
-  bad: 'border-destructive/40 bg-destructive/10 text-foreground',
-  neutral: 'text-foreground',
-  muted: 'text-muted-foreground'
-};
-
 function Problem({ p, s }: { p: Placed; s: ProblemSection }) {
-  const both = s.visual && s.compare;
   return (
-    <Band id={p.id} tint={p.tint} {...head(s)}>
-      {s.visual || s.compare ? (
-        <div className={cn('grid gap-6', both && 'lg:grid-cols-[1.25fr_1fr]')}>
-          {s.visual ? (
-            <figure className='bg-card min-w-0 overflow-hidden rounded-xl border'>
-              <figcaption className='flex items-center gap-1.5 border-b px-4 py-3'>
-                <span aria-hidden='true' className='bg-foreground/15 size-2.5 rounded-full' /><span aria-hidden='true' className='bg-foreground/15 size-2.5 rounded-full' /><span aria-hidden='true' className='bg-foreground/15 size-2.5 rounded-full' />
-                <span className='text-muted-foreground ml-2 font-mono text-xs break-words'>{s.visual.title ?? 'Transcript'}</span>
-              </figcaption>
-              <div className='flex flex-col gap-1 p-5 font-mono text-[13px] leading-6'>
-                {s.visual.lines.map((line, i) => <p key={i} className={cn('break-words', line.startsWith('>') ? 'text-foreground' : 'text-foreground/80')}>{line}</p>)}
-                {s.visual.highlight ? <p className='border-primary text-foreground mt-3 border-l-2 pl-3 break-words'>{s.visual.highlight}</p> : null}
-              </div>
-            </figure>
-          ) : null}
-          {s.compare ? (
-            <div className='bg-card/40 flex min-w-0 flex-col justify-center gap-3 rounded-xl border p-5'>
-              {s.compare.title ? <p className='text-muted-foreground font-mono text-xs tracking-wide break-words uppercase'>{s.compare.title}</p> : null}
-              <ul className='flex flex-col gap-2'>
-                {s.compare.items.map((c, i) => (
-                  <li key={i} className={cn('flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border px-3.5 py-3', TONE[c.tone ?? 'neutral'])}>
-                    <span className='font-medium break-words'>{c.label}</span>
-                    {c.note ? <span className={cn('text-xs break-words', c.tone === 'good' || c.tone === 'bad' ? '' : 'text-muted-foreground')}>{c.note}</span> : null}
-                  </li>
-                ))}
-              </ul>
-              {s.compare.note ? <p className='text-muted-foreground text-sm break-words'>{s.compare.note}</p> : null}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {s.points ? (
-        <ul className={cn('grid gap-8', (s.visual || s.compare) && 'mt-12', s.points.length >= 3 ? 'sm:grid-cols-3' : s.points.length === 2 ? 'sm:grid-cols-2' : '', s.points.length === 4 && 'sm:grid-cols-2 lg:grid-cols-4')}>
-          {s.points.map((pt, i) => (
-            <li key={i} className='flex flex-col gap-2'>
-              <span aria-hidden='true' className='text-primary font-mono text-sm font-medium'>{two(i + 1)}</span>
-              <h3 className='text-lg font-semibold break-words'>{pt.title}</h3>
-              <p className='text-muted-foreground text-sm leading-relaxed break-words'>{pt.body}</p>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+    <Band id={p.id} {...head(s)}>
+      <Stack parts={[
+        s.visual ? <Visual v={s.visual} /> : null,
+        s.points ? (
+          <ul className={cn('grid gap-8', s.points.length >= 3 ? 'sm:grid-cols-3' : s.points.length === 2 ? 'sm:grid-cols-2' : '', s.points.length === 4 && 'sm:grid-cols-2 lg:grid-cols-4')}>
+            {s.points.map((pt, i) => {
+              const Icon = pt.icon ? LANDING_ICONS[pt.icon] : null;
+              return (
+                <li key={i} className='flex flex-col gap-3'>
+                  {Icon ? <Icon className='text-primary size-7' stroke={1.5} aria-hidden='true' /> : <span aria-hidden='true' className='text-primary font-mono text-sm font-medium'>{two(i + 1)}</span>}
+                  <h3 className='text-lg font-semibold'>{pt.title}</h3>
+                  <p className='text-muted-foreground text-sm leading-relaxed'>{pt.body}</p>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null
+      ]} />
     </Band>
   );
 }
 
-function Concept({ p, s }: { p: Placed; s: ConceptSection }) {
+function ConceptCards({ s }: { s: ConceptSection }) {
   const n = s.items?.length ?? 0;
+  if (!s.items) return null;
   return (
-    <Band id={p.id} tint={p.tint} {...head(s)}>
-      {s.items ? (
-        <ul className={cn('grid gap-4', n >= 3 ? 'md:grid-cols-3' : n === 2 ? 'md:grid-cols-2' : '', n === 4 && 'md:grid-cols-2 lg:grid-cols-4', n > 4 && 'md:grid-cols-2 lg:grid-cols-3')}>
-          {s.items.map((it, i) => (
-            <li key={i} className={cn('flex flex-col gap-4 rounded-2xl border p-5', it.highlight ? 'border-primary/50 bg-primary/10 shadow-primary/40 shadow-[0_0_40px_-12px]' : 'bg-card/40')}>
-              <div className='flex flex-col gap-0.5'>
-                <h3 className='text-lg leading-tight font-semibold break-words'>{it.title}</h3>
-                {it.subtitle ? <p className='text-muted-foreground text-xs break-words'>{it.subtitle}</p> : null}
-              </div>
-              {it.body ? <p className='text-muted-foreground text-sm leading-relaxed break-words'>{it.body}</p> : null}
-              {it.chips ? (
-                <ol aria-label={`${it.title}: ${it.chips.join(', then ')}`} className='mt-auto flex flex-wrap items-center gap-1.5'>
-                  {it.chips.map((c, k) => {
-                    const last = k === it.chips!.length - 1;
-                    return (
-                      <li key={k} className='flex items-center gap-1.5'>
-                        {k > 0 ? <span aria-hidden='true' className='text-muted-foreground text-xs'>→</span> : null}
-                        <span className={cn('rounded-full px-2.5 py-1 text-xs break-words',
-                          last && it.highlight ? 'bg-primary text-primary-foreground font-medium' : k === 0 ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground border border-dashed')}>{c}</span>
-                      </li>
-                    );
-                  })}
-                </ol>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {s.note ? <p className={cn('text-muted-foreground text-sm break-words', s.items && 'mt-8')}>{s.note}</p> : null}
+    <ul className={cn('grid gap-4', n >= 3 ? 'md:grid-cols-3' : n === 2 ? 'md:grid-cols-2' : '', n === 4 && 'md:grid-cols-2 lg:grid-cols-4', n > 4 && 'md:grid-cols-2 lg:grid-cols-3')}>
+      {s.items.map((it, i) => (
+        <li key={i} className={cn('flex flex-col gap-4 rounded-2xl border p-5', it.highlight ? 'border-primary/50 bg-primary/10 shadow-primary/40 shadow-[0_0_40px_-12px]' : 'bg-card/40')}>
+          <div className='flex flex-col gap-0.5'>
+            <h3 className='text-lg leading-tight font-semibold break-words'>{it.title}</h3>
+            {it.subtitle ? <p className='text-muted-foreground text-xs break-words'>{it.subtitle}</p> : null}
+          </div>
+          {it.body ? <p className='text-muted-foreground text-sm leading-relaxed break-words'>{it.body}</p> : null}
+          {it.chips ? (
+            <ol aria-label={`${it.title}: ${it.chips.join(', then ')}`} className='mt-auto flex flex-wrap items-center gap-1.5'>
+              {it.chips.map((c, k) => {
+                const last = k === it.chips!.length - 1;
+                return (
+                  <li key={k} className='flex items-center gap-1.5'>
+                    {k > 0 ? <span aria-hidden='true' className='text-muted-foreground text-xs'>→</span> : null}
+                    <span className={cn('rounded-full px-2.5 py-1 text-xs break-words',
+                      last && it.highlight ? 'bg-primary text-primary-foreground font-medium' : k === 0 ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground border border-dashed')}>{c}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Concept({ p, s }: { p: Placed; s: ConceptSection }) {
+  return (
+    <Band id={p.id} {...head(s)}>
+      <Stack parts={[
+        s.visual ? <Visual v={s.visual} /> : null,
+        s.items ? <ConceptCards s={s} /> : null,
+        s.note ? <p className='text-muted-foreground text-sm break-words'>{s.note}</p> : null
+      ]} />
     </Band>
   );
 }
@@ -382,7 +385,7 @@ const Next = () => (
   </svg>
 );
 
-function HowItWorks({ p, s }: { p: Placed; s: HowItWorksSection }) {
+function Steps({ s }: { s: HowItWorksSection & { steps: LandingItem[] } }) {
   const layout = s.layout ?? 'flow';
   const n = s.steps.length;
   const StepText = ({ st, i }: { st: LandingItem; i: number }) => (
@@ -391,125 +394,106 @@ function HowItWorks({ p, s }: { p: Placed; s: HowItWorksSection }) {
       <p className='text-muted-foreground text-sm leading-relaxed break-words'>{st.body}</p>
     </>
   );
+  if (layout === 'steps') return (
+    <ol className={cn('grid gap-6', cols(n))}>
+      {s.steps.map((st, i) => (
+        <li key={i} className='flex gap-4'>
+          <span aria-hidden='true' className='bg-primary text-primary-foreground flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold'>{i + 1}</span>
+          <div className='flex min-w-0 flex-col gap-1'><StepText st={st} i={i} /></div>
+        </li>
+      ))}
+    </ol>
+  );
   return (
-    <Band id={p.id} tint={p.tint} {...head(s)}>
-      {layout === 'steps' ? (
-        <ol className={cn('grid gap-6', cols(n))}>
-          {s.steps.map((st, i) => (
-            <li key={i} className='flex gap-4'>
-              <span aria-hidden='true' className='bg-primary text-primary-foreground flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold'>{i + 1}</span>
-              <div className='flex min-w-0 flex-col gap-1'><StepText st={st} i={i} /></div>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <div>
-          <ol className='flex flex-col lg:flex-row lg:items-stretch'>
-            {s.steps.map((st, i) => (
-              <li key={i} className='flex min-w-0 flex-col lg:flex-1 lg:flex-row lg:items-center'>
-                {i > 0 ? <Next /> : null}
-                <div className='bg-card border-primary/40 flex h-full min-w-0 flex-1 flex-col gap-1.5 rounded-2xl border p-5'>
-                  <span aria-hidden='true' className='text-primary font-mono text-xs font-medium'>{two(i + 1)}</span>
-                  <StepText st={st} i={i} />
-                </div>
-              </li>
-            ))}
-          </ol>
-          {layout === 'loop' ? (
-            <>
-              {/* The way back, drawn from the steps: from under the last step to under the first. */}
-              <div aria-hidden='true' className='relative hidden lg:block' style={{ marginLeft: `${50 / n}%`, marginRight: `${50 / n}%` }}>
-                <div className='border-primary/50 h-8 rounded-b-2xl border-x-2 border-b-2 border-dashed' />
-                <svg viewBox='0 0 12 8' className='text-primary absolute -top-1.5 -left-[5px] h-2 w-3'><path d='M6 0 12 8H0Z' fill='currentColor' /></svg>
-              </div>
-              <p className='text-muted-foreground mt-3 flex items-center justify-center gap-2 text-sm'>
-                <svg aria-hidden='true' viewBox='0 0 24 24' className='text-primary size-4 shrink-0'><path d='M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' /></svg>
-                <span className='break-words'>{s.loop_label ?? 'Repeat'}: back to step 1</span>
-              </p>
-            </>
-          ) : null}
-        </div>
-      )}
+    <div>
+      <ol className='flex flex-col lg:flex-row lg:items-stretch'>
+        {s.steps.map((st, i) => (
+          <li key={i} className='flex min-w-0 flex-col lg:flex-1 lg:flex-row lg:items-center'>
+            {i > 0 ? <Next /> : null}
+            <div className='bg-card border-primary/40 flex h-full min-w-0 flex-1 flex-col gap-1.5 rounded-2xl border p-5'>
+              <span aria-hidden='true' className='text-primary font-mono text-xs font-medium'>{two(i + 1)}</span>
+              <StepText st={st} i={i} />
+            </div>
+          </li>
+        ))}
+      </ol>
+      {layout === 'loop' ? (
+        <>
+          {/* The way back, drawn from the steps: from under the last step to under the first. */}
+          <div aria-hidden='true' className='relative hidden lg:block' style={{ marginLeft: `${50 / n}%`, marginRight: `${50 / n}%` }}>
+            <div className='border-primary/50 h-8 rounded-b-2xl border-x-2 border-b-2 border-dashed' />
+            <svg viewBox='0 0 12 8' className='text-primary absolute -top-1.5 -left-[5px] h-2 w-3'><path d='M6 0 12 8H0Z' fill='currentColor' /></svg>
+          </div>
+          <p className='text-muted-foreground mt-3 flex items-center justify-center gap-2 text-sm'>
+            <svg aria-hidden='true' viewBox='0 0 24 24' className='text-primary size-4 shrink-0'><path d='M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' /></svg>
+            <span className='break-words'>{s.loop_label ?? 'Repeat'}: back to step 1</span>
+          </p>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function HowItWorks({ p, s }: { p: Placed; s: HowItWorksSection }) {
+  return (
+    <Band id={p.id} {...head(s)}>
+      <Stack parts={[s.visual ? <Visual v={s.visual} /> : null, s.steps ? <Steps s={{ ...s, steps: s.steps }} /> : null]} />
     </Band>
   );
 }
 
 function Proof({ p, s }: { p: Placed; s: ProofSection }) {
   return (
-    <Band id={p.id} tint={p.tint} {...head(s)}>
-      {s.metrics ? (
-        <dl className={cn('grid gap-x-10 gap-y-10', cols(s.metrics.length))}>
-          {s.metrics.map((m, i) => (
-            <div key={i} className='flex flex-col gap-1 border-t pt-5'>
-              <dt className='order-2 font-medium break-words'>{m.label}</dt>
-              <dd className='order-1 text-4xl font-semibold tracking-tight break-words tabular-nums'>{m.value}</dd>
-              {m.note ? <dd className='text-muted-foreground order-3 text-sm break-words'>{m.note}</dd> : null}
-            </div>
-          ))}
-        </dl>
-      ) : null}
-      {s.items ? <div className={cn(s.metrics && 'mt-12')}><Cards items={s.items} columns={cols(s.items.length)} /></div> : null}
-      {s.note ? <p className='text-muted-foreground mt-8 text-sm break-words'>{s.note}</p> : null}
+    <Band id={p.id} {...head(s)}>
+      <Stack parts={[
+        s.visual ? <Visual v={s.visual} /> : null,
+        s.metrics ? (
+          <dl className={cn('grid gap-x-10 gap-y-10', cols(s.metrics.length))}>
+            {s.metrics.map((m, i) => (
+              <div key={i} className='flex flex-col gap-1 border-t pt-5'>
+                <dt className='order-2 font-medium break-words'>{m.label}</dt>
+                <dd className='order-1 text-4xl font-semibold tracking-tight break-words tabular-nums'>{m.value}</dd>
+                {m.note ? <dd className='text-muted-foreground order-3 text-sm break-words'>{m.note}</dd> : null}
+              </div>
+            ))}
+          </dl>
+        ) : null,
+        s.items ? <Cards items={s.items} columns={cols(s.items.length)} /> : null,
+        s.note ? <p className='text-muted-foreground text-sm break-words'>{s.note}</p> : null
+      ]} />
     </Band>
   );
 }
 
-const SPEAKER = { person: 'You', assistant: 'Assistant', tool: 'Tool call' } as const;
-
 function WhereYouWork({ p, s, ctas }: { p: Placed; s: WhereYouWorkSection; ctas: SiteCtas }) {
-  const clients = clientsFor(s.clients);
+  // The clients' grid when the block names clients, or has no visual; the visual (a sample chat) beside it.
+  const clients = s.clients || !s.visual ? clientsFor(s.clients) : [];
+  const grid = clients.length ? (
+    <div className='min-w-0'>
+      <ul aria-label='AI clients' className='grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3'>
+        {clients.map((c) => (
+          <li key={c.id} className='bg-card flex min-w-0 items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium'>
+            <ClientLogo id={c.id} size={20} aria-hidden='true' className='shrink-0' /><span className='min-w-0 break-words'>{c.name}</span>
+          </li>
+        ))}
+      </ul>
+      <p className='mt-6'><SmartLink link={{ label: 'See the steps for each client', href: ctas.install.href }} className='text-foreground inline-flex min-h-6 items-center font-medium underline underline-offset-4' /></p>
+      {s.note ? <p className='text-muted-foreground mt-4 text-sm break-words'>{s.note}</p> : null}
+    </div>
+  ) : null;
   return (
-    <Band id={p.id} tint={p.tint} {...head(s)}>
-      <div className={cn('grid gap-10', s.chat && 'lg:grid-cols-2 lg:items-start')}>
-        <div className='min-w-0'>
-          {clients.length ? (
-            <ul aria-label='AI clients' className='grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3'>
-              {clients.map((c) => (
-                <li key={c.id} className='bg-card flex min-w-0 items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium'>
-                  <ClientLogo id={c.id} size={20} aria-hidden='true' className='shrink-0' /><span className='min-w-0 break-words'>{c.name}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <p className='mt-6'><SmartLink link={{ label: 'See the steps for each client', href: ctas.install.href }} className='text-foreground inline-flex min-h-6 items-center font-medium underline underline-offset-4' /></p>
-          {s.note ? <p className='text-muted-foreground mt-4 text-sm break-words'>{s.note}</p> : null}
-        </div>
-        {s.chat ? (
-          <figure className='flex min-w-0 flex-col gap-4'>
-            {s.chat.messages.map((m, i) => (
-              m.from === 'person' ? (
-                <p key={i} className='bg-muted ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm break-words'><span className='sr-only'>{SPEAKER.person}: </span>{m.text}</p>
-              ) : m.from === 'tool' ? (
-                <p key={i} className='text-muted-foreground flex w-fit max-w-full items-center gap-2 rounded-full border px-3 py-1.5 font-mono text-xs break-words'>
-                  <svg aria-hidden='true' viewBox='0 0 24 24' className='text-primary size-3.5 shrink-0'><path d='M13 3 4 14h7l-1 7 9-11h-7z' fill='currentColor' /></svg>
-                  <span className='sr-only'>{SPEAKER.tool}: </span>{m.text}
-                </p>
-              ) : (
-                <p key={i} className='border-primary/40 border-l-2 pl-4 text-sm leading-relaxed break-words'><span className='sr-only'>{SPEAKER.assistant}: </span>{m.text}</p>
-              )
-            ))}
-            {s.chat.note ? <figcaption className='text-muted-foreground pt-2 text-center text-xs break-words'>{s.chat.note}</figcaption> : null}
-          </figure>
-        ) : null}
-      </div>
+    <Band id={p.id} {...head(s)}>
+      {grid && s.visual ? <div className='grid gap-10 lg:grid-cols-2 lg:items-start'>{grid}<div className='min-w-0'><Visual v={s.visual} /></div></div>
+        : grid ?? (s.visual ? <Visual v={s.visual} /> : null)}
+      {!grid && s.note ? <p className='text-muted-foreground mt-6 text-center text-sm break-words'>{s.note}</p> : null}
     </Band>
   );
 }
 
 function Faq({ p, s }: { p: Placed; s: FaqSection }) {
   return (
-    <Band id={p.id} tint={p.tint} center {...head(s)}>
-      <div className='mx-auto flex max-w-3xl flex-col divide-y border-y'>
-        {s.items.map((q, i) => (
-          <details key={i} className='group'>
-            <summary className='focus-visible:ring-ring/50 flex min-h-12 cursor-pointer list-none items-center justify-between gap-4 rounded-md py-4 text-left text-base font-medium outline-none focus-visible:ring-3 [&::-webkit-details-marker]:hidden'>
-              <span className='break-words'>{q.question}</span>
-              <svg aria-hidden='true' viewBox='0 0 16 16' className='text-muted-foreground size-4 shrink-0 transition-transform group-open:rotate-180'><path d='M4 6l4 4 4-4' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round' /></svg>
-            </summary>
-            <p className='text-muted-foreground pb-4 text-sm leading-relaxed break-words'>{q.answer}</p>
-          </details>
-        ))}
-      </div>
+    <Band id={p.id} center {...head(s)}>
+      <div className='mx-auto max-w-3xl'><LandingFaq items={s.items} /></div>
     </Band>
   );
 }
@@ -536,7 +520,7 @@ export function LandingSections({ access }: { access?: AccountsMode } = {}) {
       {l.placed.map((p) => {
         const s = p.section;
         switch (s.type) {
-          case 'hero': return <Hero key={p.id} id={p.id} hero={heroOf(s, l.ctas, access)} />;
+          case 'hero': return <Hero key={p.id} id={p.id} hero={heroOf(s, l.ctas, access)} ctas={l.ctas} />;
           case 'problem': return <Problem key={p.id} p={p} s={s} />;
           case 'concept': return <Concept key={p.id} p={p} s={s} />;
           case 'how_it_works': return <HowItWorks key={p.id} p={p} s={s} />;
@@ -552,76 +536,55 @@ export function LandingSections({ access }: { access?: AccountsMode } = {}) {
 
 // ---------- header and footer ----------
 
-const Mark = () => (
-  <Link href='/' className='flex min-w-0 items-center gap-2 font-semibold tracking-tight' aria-label={`${profile.name} home`}>
+/** The build's mark and name, linking home (the header's and the footer's). */
+const Logo = () => (
+  <Link href='/' className='flex items-center gap-2 font-semibold tracking-tight' aria-label={`${profile.name} home`}>
     <BrandMark />
-    <span className='truncate'>{profile.name}</span>
+    <span>{profile.name}</span>
   </Link>
 );
 
-/** The public pages' header: the build's mark and name, the picked sections, and the ways in (account-aware). */
+/** The public pages' header: the build's mark and name, the picked sections, the block's header links and the ways in (account-aware). */
 export function SiteHeader({ access }: { access?: AccountsMode } = {}) {
   const l = resolvedLanding(declared, access);
-  const menu = [...l.nav, { label: 'Install', href: l.ctas.install.href }];
   return (
-    <header className='bg-background/85 supports-[backdrop-filter]:bg-background/70 sticky top-0 z-40 border-b backdrop-blur'>
-      <Wrap className='flex min-h-16 items-center gap-4 py-3'>
-        <Mark />
-        {l.nav.length ? (
-          <nav aria-label='Sections' className='hidden items-center gap-1 lg:flex'>
-            {l.nav.map((n) => <a key={n.href} href={n.href} className='text-muted-foreground hover:text-foreground rounded-md px-3 py-2 text-sm transition-colors'>{n.label}</a>)}
-          </nav>
-        ) : null}
-        <div className='ml-auto flex shrink-0 items-center gap-1 sm:gap-2'>
-          <Link href={l.ctas.install.href} className={cn(buttonVariants({ variant: 'ghost' }), 'hidden h-10 sm:inline-flex')}>Install</Link>
-          <AccountLinks start={l.ctas.start} signIn={l.ctas.signIn} open={l.ctas.open} />
-          {l.nav.length ? (
-            <details className='group relative lg:hidden'>
-              <summary className={cn(buttonVariants({ variant: 'ghost', size: 'icon' }), 'size-10 list-none [&::-webkit-details-marker]:hidden')}>
-                <span className='sr-only'>Menu</span>
-                <svg aria-hidden='true' viewBox='0 0 24 24' className='size-5'><path d='M4 7h16M4 12h16M4 17h16' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' /></svg>
-              </summary>
-              <nav aria-label='Menu' className='bg-popover text-popover-foreground absolute top-12 right-0 z-50 flex w-64 flex-col gap-1 rounded-xl border p-2 shadow-lg'>
-                {menu.map((n) => <a key={n.href} href={n.href} className='hover:bg-muted flex min-h-11 items-center rounded-md px-3 text-sm'>{n.label}</a>)}
-              </nav>
-            </details>
-          ) : null}
-        </div>
-      </Wrap>
-    </header>
+    <SiteHeaderView name={profile.name} mark={<BrandMark />} nav={l.nav} links={l.header?.links ?? [{ label: 'Install', href: l.ctas.install.href }]}
+      account={l.header?.account ?? 'sign_in_and_start'} ctas={l.ctas} />
   );
 }
 
-/** The public pages' footer: the name and tagline, the block's note, the sections and the ways in, the block's links, the legal pages (mold_v0-109) and the source offer. */
+/**
+ * The public pages' footer: the mark and the tagline (the block's, else the profile's short description) with the block's
+ * note; the sections, the shell's ways in (unless the block says shell_links: false) and the block's links; the bottom
+ * line (the block's copyright, else the legal company's name, else the product's) with the legal pages (mold_v0-109);
+ * and the source offer whenever the install pages carry it.
+ */
 export function SiteFooter({ access }: { access?: AccountsMode } = {}) {
   const l = resolvedLanding(declared, access);
-  const links: LandingLink[] = [...l.nav, l.ctas.install, l.ctas.signIn, access === 'invite_only' ? l.ctas.start : { label: 'Create an account', href: l.ctas.start.href }, ...(l.footer?.links ?? []).map((k) => forAccess(k, access))];
+  const own = l.footer?.shell_links === false ? [] : [l.ctas.install, l.ctas.signIn, access === 'invite_only' ? l.ctas.start : { label: 'Create an account', href: l.ctas.start.href }];
+  const links: LandingLink[] = [...l.nav, ...own, ...(l.footer?.links ?? []).map((k) => forAccess(k, access))];
   const legal = buildLegal();
   // The app's Terms and Privacy (mold_v0-109), when its profile.json has `legal`.
   const legalNav = legalLinks(legal);
-  const linkClass = 'text-muted-foreground hover:text-foreground inline-flex min-h-6 items-center underline-offset-4 hover:underline';
+  const linkClass = 'text-muted-foreground hover:text-foreground inline-flex min-h-6 items-center transition-colors';
   return (
     <footer className='border-t'>
-      <Wrap className='flex flex-col gap-8 py-10'>
-        <div className='flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between'>
-          <div className='flex max-w-sm flex-col gap-2'>
-            <p className='flex items-center gap-2 font-semibold'><BrandMark className='size-6' /><span className='break-words'>{profile.name}</span></p>
-            <p className='text-muted-foreground text-sm break-words'>{profile.short_description}</p>
-            {l.footer?.note ? <p className='text-muted-foreground text-sm break-words'>{l.footer.note}</p> : null}
+      <div className='mx-auto flex max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6'>
+        <div className='flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between'>
+          <div className='flex max-w-xs flex-col gap-2'>
+            <Logo />
+            <p className='text-muted-foreground text-sm'>{l.footer?.tagline ?? profile.short_description}</p>
+            {l.footer?.note ? <p className='text-muted-foreground text-sm'>{l.footer.note}</p> : null}
           </div>
-          <nav aria-label='Footer'>
-            <ul className='grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:flex sm:max-w-xl sm:flex-wrap sm:justify-end sm:gap-x-6'>
-              {links.map((k, i) => <li key={i}><SmartLink link={k} className={linkClass} /></li>)}
-            </ul>
+          <nav aria-label='Footer' className='grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:flex sm:flex-wrap sm:gap-x-6'>
+            {links.map((k, i) => <SmartLink key={i} link={k} className={linkClass} />)}
           </nav>
         </div>
         <div className='text-muted-foreground flex flex-col gap-3 border-t pt-6 text-xs sm:flex-row sm:items-center sm:justify-between'>
-          <p className='break-words'>{legal ? `© ${legal.company_name}` : profile.name}</p>
+          <p>{l.footer?.copyright ?? (legal ? `© ${legal.company_name}` : profile.name)}</p>
           {legalNav.length ? (
-            <nav aria-label='Legal'>
-              <ul className='flex flex-wrap gap-x-6 gap-y-2'>
-                {legalNav.map(({ label, href }) => <li key={href}><SmartLink link={{ label, href }} className={linkClass} /></li>)}
-              </ul>
+            <nav aria-label='Legal' className='flex flex-wrap gap-x-6 gap-y-2'>
+              {legalNav.map(({ label, href }) => <SmartLink key={href} link={{ label, href }} className={linkClass} />)}
             </nav>
           ) : null}
         </div>
@@ -639,7 +602,7 @@ export function SiteFooter({ access }: { access?: AccountsMode } = {}) {
             </ul>
           </section>
         ) : null}
-      </Wrap>
+      </div>
     </footer>
   );
 }
