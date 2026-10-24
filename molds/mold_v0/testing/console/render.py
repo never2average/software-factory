@@ -213,7 +213,11 @@ def choose_pages(mode, codebase, base, extra, say=print):
     for n in notes: say(f"  note: {n}")
     total = len({p["path"] for p in s["pages"]})
     say(f"pages {mode}: {len(chosen)} of {total} pages")
-    for path, why in chosen.items(): say(f"  {path}  <- {'; '.join(dict.fromkeys(why))}")
+    every = [r for r in rules if r[0] == "all"][:1]
+    if every:
+        say(f"  every page, because {every[0][-1]}: {', '.join(chosen)}")
+    else:
+        for path, why in chosen.items(): say(f"  {path}  <- {'; '.join(dict.fromkeys(why))}")
     return [{"path": p, "reasons": w} for p, w in chosen.items()]
 
 
