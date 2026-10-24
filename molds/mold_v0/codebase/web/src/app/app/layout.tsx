@@ -32,7 +32,7 @@ export default async function PortalLayout({ children }: { children: React.React
   return (
     <AreaShell area='portal' groups={portalNav} docs={customerDocsNav()}>
       {children}
-      <InvitationLanding activeOrgId={orgId} />
+      <InvitationLanding activeOrgId={orgId ?? null} />
     </AreaShell>
   );
 }
