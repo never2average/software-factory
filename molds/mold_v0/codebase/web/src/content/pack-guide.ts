@@ -16,7 +16,7 @@ export interface PackGuideData {
   packs: { id: string; name: string; description: string | null }[];
   onboarding: { label: string; help: string | null; prompt: string | null }[];
   get_started: string[];
-  tabs: { group: string; label: string; kind: string; description: string | null; area?: string; charts: string[] }[];
+  tabs: { group: string; label: string; kind: string; description: string | null; area?: string; charts: string[]; include?: string[] }[];
   areas: {
     name: string; label: string; description: string | null; scope: 'platform' | 'workspace'; role: string; sealed: boolean;
     fields: { label: string; type: string; help: string | null; required: boolean; options: string[]; to: string | null; multiple: boolean }[];
@@ -65,7 +65,13 @@ function tabWhat(t: PackGuideData['tabs'][number], d: PackGuideData): string {
   if (t.description) return sentence(t.description);
   const area = t.area ? d.areas.find((a) => a.name === t.area) : undefined;
   switch (t.kind) {
-    case 'overview': return t.charts.length ? `Charts: ${list(t.charts)}.` : 'The overview charts.';
+    case 'overview': {
+      // A home tab (mold_v0-134): the shell's sections it includes come first, in its order.
+      const parts: string[] = (t.include ?? []).map((x) => (x === 'setup' ? 'your setup checklist, until every step is done' : 'the records due soon'));
+      if (t.charts.length) parts.push(`charts: ${list(t.charts)}`);
+      const text = parts.join('; ');
+      return text ? sentence(text.charAt(0).toUpperCase() + text.slice(1)) : 'The overview charts.';
+    }
     case 'area': return area?.description ? sentence(area.description.split(/(?<=[.!?])\s/)[0]!) : `The records of ${t.label}.`;
     case 'runs': return fill('Every {run} of your {workspace} and how it went.');
     case 'reports': return fill('The reports your {runs} wrote.');
@@ -181,7 +187,7 @@ function runsMarkdown(d: PackGuideData): string {
 /** The whole guide: the packs' own pages first (in their groups), then the generated ones. */
 export function packGuide(d: PackGuideData, catalog: Catalog, shell: ShellTexts): { groups: [string, string[]][]; pages: { slug: string; title: string; group: string; body: string }[] } {
   const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  const setupPage = d.tabs.find((t) => t.kind === 'setup')?.label ?? 'Setup & training';
+  const setupPage = d.tabs.find((t) => t.kind === 'setup' || (t.include ?? []).includes('setup'))?.label ?? 'Setup & training';
   const T = d.titles;
   const generated: { title: string; group: string; body: string }[] = [
     { title: T.start, group: 'Getting started', body: startMarkdown(d, shell, setupPage) },

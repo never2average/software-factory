@@ -9,7 +9,8 @@
  * list of tabs, and its address (and every address under it) redirects to the console's home, /app. What the packs and
  * the profile hide is joined: a page is shown unless one of them hides it. The staff console (/admin) is never changed,
  * nor the API behind a page (an MCP client or a script reads the same data as before).
- * The home page itself (Setup & training, /app) is never hidden: the redirects land there.
+ * The home page itself (Setup & training, /app) is never hidden: the redirects land there (or on the tab that includes
+ * its checklist, mold_v0-134, where /app itself leads).
  */
 
 /** The shell's customer pages a build may hide: id -> the page's address. */
@@ -60,6 +61,9 @@ export const isHiddenUrl = (url: string, hidden: readonly ConsolePage[]) => {
   return hidden.some((h) => p === CONSOLE_PAGES[h] || p.startsWith(`${CONSOLE_PAGES[h]}/`));
 };
 
-/** The console's redirects for the hidden pages: each address, and every address under it, to the home page. */
-export const hiddenRedirects = (hidden: readonly ConsolePage[]) =>
-  hidden.flatMap((h) => [CONSOLE_PAGES[h], `${CONSOLE_PAGES[h]}/:path*`].map((source) => ({ source, destination: "/app", permanent: false })));
+/**
+ * The console's redirects for the hidden pages: each address, and every address under it, to the home page (/app, or
+ * the tab that includes the Setup page's checklist, mold_v0-134, so a redirect takes one hop).
+ */
+export const hiddenRedirects = (hidden: readonly ConsolePage[], home = "/app") =>
+  hidden.flatMap((h) => [CONSOLE_PAGES[h], `${CONSOLE_PAGES[h]}/:path*`].map((source) => ({ source, destination: home, permanent: false })));

@@ -2,6 +2,7 @@
 // /app Setup & training. Right column: the connection string (with a live connection test), a journey selector and
 // tips. Main column: the selected journey. "Get set up" is the setup timeline and recent problems (workflow coverage
 // lives on /app/adoption); the other journeys (managed on /admin, src/playbooks.ts) show their stages, marked from real tool calls.
+// SetupChecklist is the same checklist as a section of a home tab (mold_v0-134: an overview tab's include: setup).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
@@ -46,6 +47,7 @@ interface Tips { muted: boolean; nudges: { id: number; message: string; prompt: 
 
 export function SetupPage() {
   const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
+  const pack = usePackSteps();
   // Journeys and in-chat tips are a host pack's (mold_v0-039): asked for only when the build has one that offers them.
   const journeysOn = hostFeature('journeys');
   const { data: jr, reload: reloadJourneys } = useOrgLoad(() => (journeysOn ? appApi<{ journeys: Journey[] }>('GET', '/journeys') : Promise.resolve({ journeys: [] as Journey[] })));
@@ -58,7 +60,7 @@ export function SetupPage() {
         <div className='grid w-full gap-x-10 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_24rem]'>
           <div className='order-2 flex min-w-0 flex-col gap-8 lg:order-1'>
             {selected === 'setup' || !journey ? (<>
-              {packOnboardingSteps > 0 && <PackChecklist />}
+              <PackChecklist data={pack.data} />
               <Timeline s={s} />
               {s.errors.length > 0 && <Problems errors={s.errors} />}
             </>) : <JourneyView key={journey.id} j={journey} onChanged={reloadJourneys} note={s.viewer_note ?? null} />}
@@ -75,6 +77,47 @@ export function SetupPage() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+/**
+ * The Setup page's checklist on a home tab (mold_v0-134): the packs' onboarding steps and the setup steps, compact (only
+ * the next open step says what to do), beside the connection panel. Once every step is done it folds to one line, which
+ * opens it again (to connect another client, say). Journeys, tips and recent problems stay on the Setup page's own
+ * layout (a build with a host pack; /app leads to this tab only when a declared tab includes the checklist).
+ */
+export function SetupChecklist() {
+  const { data: s, error, reload } = useOrgLoad(() => appApi<Setup>('GET', '/setup'));
+  const pack = usePackSteps();
+  const [open, setOpen] = useState(false);
+  if (error) return <ErrorState error={error} />;
+  if (!s || !pack.settled) return <LoadingCards count={1} />;
+  const done = s.done + (pack.data?.done ?? 0), total = s.total + (pack.data?.total ?? 0);
+  const complete = done >= total;
+  if (complete && !open) return (
+    <section aria-labelledby='home-setup-title' data-home-section='setup' data-complete=''
+      className='flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-4 py-2.5 text-sm'>
+      <Icons.circleCheck aria-hidden='true' className='text-primary size-4 shrink-0' />
+      <h2 id='home-setup-title' className='font-medium'>You&apos;re all set</h2>
+      <span className='text-muted-foreground'>{total} of {total} setup steps done.</span>
+      <Button variant='link' size='sm' className='ml-auto h-auto px-0' aria-expanded={false} onClick={() => setOpen(true)}>Show setup</Button>
+    </section>
+  );
+  return (
+    <section aria-labelledby='home-setup-title' data-home-section='setup' className='flex min-w-0 flex-col gap-4'>
+      <div className='flex flex-wrap items-center gap-x-3 gap-y-1'>
+        <h2 id='home-setup-title' className='text-base font-semibold tracking-tight'>Setup</h2>
+        <span className='text-muted-foreground text-sm'>{done} of {total} steps done.</span>
+        {complete && <Button variant='link' size='sm' className='ml-auto h-auto px-0' aria-expanded onClick={() => setOpen(false)}>Hide setup</Button>}
+      </div>
+      <div className='grid w-full gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start'>
+        <div className='flex min-w-0 flex-col gap-6'>
+          <PackChecklist data={pack.data} compact />
+          <Timeline s={s} compact />
+        </div>
+        <ConnectionBox s={s} onConnected={reload} />
+      </div>
+    </section>
   );
 }
 
@@ -333,11 +376,14 @@ interface TimelineItem { id: string; label: string; done: boolean; body: React.R
  * Get set up and every journey: progress, then a vertical timeline. The earliest open item is highlighted (ring on its
  * node, tinted body); done items show a check. One component, so every journey looks exactly like Get set up.
  */
-function TimelineSection({ title, done, total, noun, items, footer }: {
+function TimelineSection({ title, done, total, noun, items, footer, compact = false }: {
   title: string; done: number; total: number; noun: string; items: TimelineItem[]; footer: React.ReactNode;
+  /** A home tab's checklist (mold_v0-134): tighter, only the current item's text, a step the page links to (#anchor) too. */
+  compact?: boolean;
 }) {
   const pct = Math.round((done / Math.max(1, total)) * 100);
   const current = items.find((x) => !x.done)?.id;
+  const linked = typeof window !== 'undefined' ? decodeURIComponent(window.location.hash.slice(1)) : '';
   return (
     <Section title={title} description={`${done} of ${total} ${noun} done.`}
       action={<Badge variant={pct === 100 ? 'default' : 'secondary'}>{pct}%</Badge>}>
@@ -347,7 +393,7 @@ function TimelineSection({ title, done, total, noun, items, footer }: {
           const cur = current === x.id;
           const last = i === items.length - 1;
           return (
-            <li key={x.id} id={x.anchor} className='relative flex scroll-mt-24 gap-4 pb-7 last:pb-0'>
+            <li key={x.id} id={x.anchor} className={cn('relative flex scroll-mt-24 gap-4 last:pb-0', compact ? 'pb-3' : 'pb-7')}>
               {!last && <span aria-hidden='true' className={cn('absolute top-8 bottom-0 left-[15px] w-px', x.done ? 'bg-primary/60' : 'bg-border')} />}
               <span className={cn('relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums',
                 x.done ? 'border-primary bg-primary text-primary-foreground' : cur ? 'border-primary text-primary bg-background ring-primary/20 ring-4' : 'border-border text-muted-foreground bg-background')}>
@@ -357,20 +403,20 @@ function TimelineSection({ title, done, total, noun, items, footer }: {
                 <div className='flex flex-wrap items-center gap-2'>
                   <span className={cn('font-medium', x.done && 'text-muted-foreground')}>{x.label}</span>
                 </div>
-                {x.body}
+                {(!compact || cur || (!!x.anchor && x.anchor === linked)) && x.body}
               </div>
             </li>
           );
         })}
       </ol>
-      {footer && <p className='text-muted-foreground border-t pt-3 text-sm'>{footer}</p>}
+      {footer && !compact && <p className='text-muted-foreground border-t pt-3 text-sm'>{footer}</p>}
     </Section>
   );
 }
 
-function Timeline({ s }: { s: Setup }) {
+function Timeline({ s, compact }: { s: Setup; compact?: boolean }) {
   return (
-    <TimelineSection title='Get set up' done={s.done} total={s.total} noun='steps'
+    <TimelineSection title='Get set up' done={s.done} total={s.total} noun='steps' compact={compact}
       items={s.steps.map((x) => ({ id: x.id, label: x.label.replace(' (team)', ''), done: x.done, body: <StepHelp help={x.help} done={x.done} prompt={x.prompt ?? null} /> }))}
       footer={hostFeature('journeys') ? <>How much of the workflow your team uses is on <a href='/app/journeys' className='text-primary underline underline-offset-4'>Journeys</a>.</> : null} />
   );
@@ -382,21 +428,26 @@ interface PackChecklistData { steps: { pack: string; id: string; label: string; 
  * The packs' onboarding steps (mold_v0-011; src/onboarding.ts, /api/onboarding), each ticked from what really happened
  * in this workspace. Shown only when a pack declares a step (packOnboardingSteps): with none the page is the shell's.
  */
-function PackChecklist() {
-  const { data } = useOrgLoad(async () => {
+function usePackSteps(): { data: PackChecklistData | null; settled: boolean } {
+  const { data, error } = useOrgLoad(async () => {
+    if (!packOnboardingSteps) return null;
     const res = await fetch('/api/onboarding', { credentials: 'same-origin', headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error(`Request failed (${res.status})`);
     return (await res.json()) as PackChecklistData;
   });
-  // A link to one step (/app#onboarding-<pack>-<step>, from a tab's empty state): the page loads the steps after the
-  // browser looked for the anchor, so scroll to it once they are drawn.
+  return { data, settled: !packOnboardingSteps || data !== null || error !== null };
+}
+
+function PackChecklist({ data, compact }: { data: PackChecklistData | null; compact?: boolean }) {
+  // A link to one step (/app#onboarding-<pack>-<step>, from a tab's empty state; on a home tab, mold_v0-134, the redirect
+  // keeps the anchor): the page loads the steps after the browser looked for the anchor, so scroll to it once drawn.
   useEffect(() => {
     if (!data?.total || typeof window === 'undefined' || !window.location.hash.startsWith('#onboarding-')) return;
     document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView({ block: 'start' });
   }, [data]);
   if (!data || !data.total) return null;
   return (
-    <TimelineSection title='Set up your workspace' done={data.done} total={data.total} noun='steps'
+    <TimelineSection title='Set up your workspace' done={data.done} total={data.total} noun='steps' compact={compact}
       items={data.steps.map((x) => ({ id: `${x.pack}/${x.id}`, anchor: onboardingAnchor(x.pack, x.id), label: x.label, done: x.done,
         body: x.done ? <p className='text-muted-foreground text-sm'>Done <When d={x.at} />.</p> : x.help ? <p className='text-muted-foreground text-sm'>{x.help}</p> : null }))}
       footer={<>These steps tick themselves as you go.</>} />

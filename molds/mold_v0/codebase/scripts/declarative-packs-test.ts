@@ -8,7 +8,9 @@
 //    import; and refuses malformed pack.json files with the path and the reason. A tab's empty state (mold_v0-107):
 //    malformed `empty` blocks refused, the defaults and the pack's own resolved into the console's registry. A merged
 //    tab (mold_v0-135, scripts/fixtures/packs/fixture_status: `areas` in place of `area`): built and resolved (its own
-//    area, its areas' rows and source words, its columns, the roles that may read every area), malformed ones refused.
+//    area, its areas' rows and source words, its columns, the roles that may read every area), malformed ones refused. A home tab
+//    (mold_v0-134): an overview's `include` (setup, notices) refused where malformed or contradicted by the build, and
+//    accepted into the registry in its order, with /app and /app/notices redirected to it.
 // 3. A code entry extends a declarative pack (its tool and area join the declared ones); one that redeclares a declared
 //    name is refused.
 // 4. In the database (two workspaces): typed fields (validation errors on bad values), required fields, references that
@@ -220,6 +222,65 @@ try {
     const cols = (JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(readFileSync(path.join(dflt.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8"))![1]!) as any[])[0].columns;
     assert.deepEqual(cols, ["source", "state", "due", "code", "topic", "origin", "weight"], "default columns: the source words, then each area's list columns in order, without repeats");
     console.log(`✓ a merged tab: ${m} malformed ones refused (area and areas, counts, repeats, a first matched area, source words, kinds, undeclared areas, columns, types across areas, board and timeline fields, a source field); built with its own area, rows, source words, columns and the roles that may read every area`);
+  }
+
+  // ---------- 2d. a home tab: an overview that includes the shell's sections (mold_v0-134) ----------
+  {
+    let m = 0;
+    const chart = (j: any) => { j.charts = [{ name: "summary", title: "Summary", type: "bar", metrics: [j.metrics[0].name] }]; };
+    const due = (j: any) => { j.record_areas.find((a: any) => a.name === "tracker_findings").due = { field: "due" }; };
+    const home = (tab: Record<string, unknown>, more: Record<string, unknown>[] = [], withDue = true) =>
+      variant((j) => { chart(j); if (withDue) due(j); j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], ...tab }, ...more]; });
+    const no = (what: string, json: unknown, re: RegExp) => { refused(`include: ${what}`, tryPack(json), re); m++; };
+    no("on an area tab", variant((j) => { j.tabs = [{ id: "apps", kind: "area", area: "tracker_apps", include: ["setup"] }]; }), /tabs\[0\]\.include: include is for an overview tab/);
+    no("a section twice", home({ include: ["setup", "setup"] }), /tabs\[0\]\.include: a section is included twice/);
+    no("a section the shell does not have", home({ include: ["billing"] }), /tabs\[0\]\.include\[0\]: Invalid option/);
+    no("an empty list", home({ include: [] }), /tabs\[0\]\.include: Too small/);
+    no("a list that is not one", home({ include: "setup" }), /tabs\[0\]\.include: Invalid input/);
+    no("roles on a home tab", home({ include: ["setup"], roles: ["owner"] }), /tabs\[0\]\.roles: a tab that includes a section of the shell's is every member's home page/);
+    no("an overview with neither charts nor a section", home({ charts: undefined }), /tabs\[0\]\.charts: an overview tab lists its charts \(or includes a section of the shell's\)/);
+    no("notices in a build with no due dates", home({ include: ["notices"] }, [], false), /tab home: include notices: the build has no due dates/);
+    no("a setup tab beside it", home({ include: ["setup"] }, [{ id: "start", kind: "setup", label: "Get started" }]), /tab home: include setup: tab start is the Setup page, which this tab now shows; drop that tab/);
+    no("a notices tab beside it", home({ include: ["notices"] }, [{ id: "due", kind: "notices", label: "Due soon" }]), /tab home: include notices: tab due is the Notices page/);
+    no("two home tabs", home({ include: ["setup"] }, [{ id: "home2", kind: "overview", label: "Home again", charts: ["summary"], include: ["notices", "setup"] }]), /tab home2: include setup: tab home already includes it \(one home page per build\)/);
+    // Accepted: the include in its order (notices first here), a home tab with no charts, and the redirects.
+    const ok = tryPack(variant((j) => {
+      chart(j); due(j);
+      j.metrics[0].roles = ["owner"];
+      j.tabs = [{ id: "home", kind: "overview", label: "Home", charts: ["summary"], include: ["notices", "setup"] }, { id: "plain", kind: "overview", charts: ["summary"] },
+        { id: "apps", kind: "area", area: "tracker_apps" }];
+    }));
+    assert.equal(ok.r.status, 0, `a home tab builds: ${ok.r.stderr}`);
+    const nav = readFileSync(path.join(ok.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8");
+    const tabsOf = (text: string) => Object.fromEntries((JSON.parse(/export const packTabs: PackTabSpec\[\] = ([\s\S]*?);\n/.exec(text)![1]!) as { id: string }[]).map((t) => [t.id, t]));
+    const got = tabsOf(nav) as Record<string, any>;
+    assert.deepEqual(got.home.include, ["notices", "setup"], "the sections in the tab's order");
+    assert.equal(got.home.url, "/app/packs/fixture_tracker/home", "a page of its own");
+    assert.deepEqual(got.home.roles, ["viewer", "member", "billing", "owner"], "a home tab is every role's (its charts' metric is the owner's only)");
+    assert.deepEqual(got.plain.roles, ["owner"], "a plain overview is still narrowed to the roles that read its metrics");
+    assert.ok(!("include" in got.plain), "an overview with no include carries none");
+    assert.match(nav, /include\?: \('setup' \| 'notices'\)\[\];/, "the spec's type names the sections");
+    const routes = JSON.parse(readFileSync(path.join(ok.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
+    assert.deepEqual(routes.redirects, [
+      { source: "/app", destination: "/app/packs/fixture_tracker/home", permanent: false },
+      { source: "/app/notices", destination: "/app/packs/fixture_tracker/home", permanent: false },
+      { source: "/app/notices/:path*", destination: "/app/packs/fixture_tracker/home", permanent: false },
+    ], "/app and /app/notices (and below it) lead to the home tab");
+    const only = tryPack(variant((j) => { j.tabs = [{ id: "home", kind: "overview", include: ["setup"] }, { id: "apps", kind: "area", area: "tracker_apps" }]; }));
+    assert.equal(only.r.status, 0, `a home tab with no charts builds: ${only.r.stderr}`);
+    const onlyTabs = tabsOf(readFileSync(path.join(only.out, "web", "src", "config", "pack-nav.generated.ts"), "utf8")) as Record<string, any>;
+    assert.deepEqual([onlyTabs.home.include, onlyTabs.home.charts, onlyTabs.home.label], [["setup"], [], "Overview"], "setup only, no charts, the kind's word");
+    const onlyRoutes = JSON.parse(readFileSync(path.join(only.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
+    assert.deepEqual(onlyRoutes.redirects, [{ source: "/app", destination: "/app/packs/fixture_tracker/home", permanent: false }], "setup only: /app leads there; /app/notices is untouched");
+    // A hidden page (mold_v0-130) leads to the home tab in one hop; a hidden Notices page that the tab includes leads there too.
+    const hid = tryPack(variant((j) => { chart(j); due(j); j.console = { hide: ["activity", "notices"] }; j.tabs = [{ id: "home", kind: "overview", charts: ["summary"], include: ["setup", "notices"] }]; }));
+    assert.equal(hid.r.status, 0, `a home tab with hidden pages builds: ${hid.r.stderr}`);
+    const hidRoutes = JSON.parse(readFileSync(path.join(hid.out, "web", "src", "config", "pack-routes.generated.json"), "utf8"));
+    assert.deepEqual(hidRoutes.redirects.map((r: { source: string; destination: string }) => `${r.source} -> ${r.destination}`), [
+      "/app -> /app/packs/fixture_tracker/home", "/app/notices -> /app/packs/fixture_tracker/home", "/app/notices/:path* -> /app/packs/fixture_tracker/home",
+      "/app/activity -> /app/packs/fixture_tracker/home", "/app/activity/:path* -> /app/packs/fixture_tracker/home",
+    ], "every redirect takes one hop to the home tab");
+    console.log(`✓ a home tab (include): ${m} malformed or contradicted ones refused (kind, twice, unknown, empty, not a list, roles, no content, no due dates, a setup or notices tab beside it, two home tabs); its sections in order, every role's, /app and /app/notices redirected to it in one hop`);
   }
 
   // ---------- 3. code extends a declarative pack ----------
