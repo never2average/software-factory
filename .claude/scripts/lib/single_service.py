@@ -107,6 +107,7 @@ import datetime, getpass, json, os, re, secrets as pysecrets, shlex, shutil, sub
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import vm_remote as VR   # the host probe, SSH/rsync argv, DNS check, key pair, hidden prompt, env file, firewall rules
+import clerk_mcp         # Clerk as the sign-in AI clients use on /mcp (mold_v0-116)
 
 SCRIPTS = os.path.dirname(HERE)
 ROOT = os.path.dirname(os.path.dirname(SCRIPTS))
@@ -163,6 +164,47 @@ def rls_said(out, spec):
     return VR.redact(" | ".join(hit[-1:] or lines[-3:]))[:400]
 
 def rls_passed(rc, out, spec): return rc == 0 and bool(spec) and spec["pass_text"] in (out or "")
+
+def catalogs_spec(cb, man):
+    """mold.json "catalogs" (mold_v0-128) when the codebase's package.json really has that script, else None."""
+    spec = (man or {}).get("catalogs")
+    if not isinstance(spec, dict) or not spec.get("script"): return None
+    try: scripts = (json.load(open(os.path.join(cb, "package.json"))).get("scripts") or {})
+    except (OSError, ValueError): return None
+    return dict(spec, said_text=spec.get("said") or "CATALOGS INDEX:") if spec["script"] in scripts else None
+
+def catalogs_said(out, spec):
+    """The index's summary line (its said_text line), else its last lines; redacted, one line."""
+    lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
+    hit = [l for l in lines if spec and l.startswith(spec["said_text"])]
+    return VR.redact(" | ".join(hit[-1:] or lines[-3:]))[:600]
+
+def record_catalogs(adir, said, rc, how, save_fn=None):
+    """infrastructure.json catalog_index: what the deploy's index of the upstream catalogs said (mold_v0-128). Never a verdict
+    on the deploy: a catalog that could not be indexed is retried by the server and shown to staff."""
+    ip = os.path.join(adir, "infrastructure.json")
+    try: infra = load(ip)
+    except (OSError, ValueError): return
+    infra["catalog_index"] = {"at": now(), "exit": rc, "said": said, "how": how}
+    (save_fn or save)(ip, infra)
+
+def catalogs_vercel(P, cb, build, api, spec, say=print, run=None):
+    """Vercel: the index from the app's build copy (its packs) against the api project's production database, once, after
+    the deploy. -> (exit, said). Never raises: what it could not do is said."""
+    import agent_result as AR
+    if not os.path.exists(os.path.join(build, "node_modules", ".bin", "tsx")) and not os.path.exists(os.path.join(cb, "node_modules", ".bin", "tsx")):
+        return None, "not run: the mold's dependencies are not installed on this machine (the server indexes the catalogs by itself)"
+    if not os.path.exists(os.path.join(build, "node_modules")) and os.path.isdir(os.path.join(cb, "node_modules")):
+        try: os.symlink(os.path.join(cb, "node_modules"), os.path.join(build, "node_modules"))
+        except OSError: pass
+    try:
+        url = P.pull_env(cb, api, required=False).get("DATABASE_URL")
+        if not url or url == "[SENSITIVE]": return None, f"not run: DATABASE_URL could not be read back from {api} (the server indexes the catalogs by itself)"
+        AR.forbid(url)
+        rc, out = (run or rls_local)(build, url, {"script": spec["script"]}, timeout=900)
+        return rc, catalogs_said(out, spec)
+    except Exception as e:   # never the deploy's failure
+        return None, f"not run: {type(e).__name__} (the server indexes the catalogs by itself)"
 
 RLS_SOURCE = "check:rls"      # rls_verified.source starts with this for a single-service app (factory.py reads it)
 def record_rls(adir, spec, passed, said, how, running, detail, save_fn=None):
@@ -343,7 +385,7 @@ def compose_facts(cb, man):
             "mint": c.get("mint", ""), "publishers": sorted(n for n, s in P["services"].items() if s["ports"] and not s["profiles"]),
             "healthcheck": bool(re.search(r"(?m)^\s*HEALTHCHECK\s", dtext)),
             "dockerfile_sources": dockerfile_sources(dtext) + [x for x in (K["dockerfile_sources"] if K else []) if x not in dockerfile_sources(dtext)],
-            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "console": K, "aliases": env_aliases(man)}
+            "excludes": list(c.get("source_excludes") or []), "rls": rls_spec(cb, man), "catalogs": catalogs_spec(cb, man), "console": K, "aliases": env_aliases(man)}
 
 def missing_build_inputs(cb, F):
     """Files the image build copies that the snapshot does not have: the build would stop on the server."""
@@ -759,15 +801,22 @@ def plan(S, F, source_dir, bundle_dir="<bundle>", shown=True, release=None):
         {"id": "rls", "title": f"row-level security on the deployed database: the product's own `npm run {F['rls']['script']}` in a one-off "
                                f"container of the new release, with the server's env file (catalog + live probe, rolled back)",
          "argv": ssh(rls_cmd(S, F)), "timeout": 300},
-    ] if F.get("rls") else []) + [
+    ] if F.get("rls") else []) + ([
+        {"id": "catalogs", "title": f"the upstream catalogs indexed at their pins: the product's own `npm run {F['catalogs']['script']}` in a one-off "
+                                    f"container of the new release, with the server's env file (said, never a failed deploy)",
+         "argv": ssh(script_cmd(S, F, F["catalogs"]["script"])), "timeout": 900},
+    ] if F.get("catalogs") else []) + [
         {"id": "keep", "title": "every release but the serving and the previous one removed", "argv": ssh(g(f"bash {S['factory_dir']}/keep.sh")), "timeout": 300},
         {"id": "back", "title": "ONLY if the health step or the public read fails: back to the release that served before (up.sh --back --drop)",
          "argv": ssh(g(f"bash {S['factory_dir']}/up.sh --back --drop")), "timeout": UP_WAIT_S * 2 + 600},
     ]
 
-def rls_cmd(S, F):
+def rls_cmd(S, F): return script_cmd(S, F, F["rls"]["script"])
+
+def script_cmd(S, F, script):
+    """One of the product's npm scripts in a one-off container of the serving release, with the server's env file."""
     return (f"{S['sudo']}docker compose -p {shlex.quote(S['project'])} -f {S['current']}/{S['compose_file']} --env-file {shlex.quote(S['env_file'])} "
-            f"run --rm -T --no-deps {shlex.quote(F['service'])} npm run --silent {shlex.quote(F['rls']['script'])}")
+            f"run --rm -T --no-deps {shlex.quote(F['service'])} npm run --silent {shlex.quote(script)}")
 
 def print_plan(S, F, steps, say=print):
     say(f"{S['app_id']}: deploy plan for its own server (compose project {S['project']}, never {F['default_project']!r}); nothing is contacted by this --dry-run")
@@ -987,11 +1036,15 @@ def deploy(S, F, cb, runner=None, secrets_for=None, resolver=VR.resolve, read_pu
             e = Stop(f"release {release} came up but does not serve as it should: " + "; ".join(bad) + f". {what}. Fix the cause and deploy again.")
             e.rls = rls; raise e
         say(f"[public] {url} answered 200 ok" + (f" through the console; {', '.join(f'{p} {c[0]}' for p, c in pages.items())}" if F.get("console") else ""))
+        catalogs = None
+        if F.get("catalogs"):   # the upstream catalogs at their pins (mold_v0-128): said, never a reason to go back
+            r = run("catalogs", check=False); catalogs = {"exit": r.returncode, "said": catalogs_said((r.stdout or "") + "\n" + (r.stderr or ""), F["catalogs"])}
+            say(f"    {catalogs['said'] or 'the catalogs index said nothing'}" + (f" (exit {r.returncode}; the server indexes them by itself)" if r.returncode else ""))
         run("keep", check=False)
         health = {"app": kv.get("APP_STATE", ""), "uid": kv.get("APP_UID", ""), "published": kv.get("PUBLISHED", ""),
                   "public": str(public[0]), "disk_percent": kv.get("DISK_PERCENT", ""), "at": now()}
         if F.get("console"): health.update(console=kv.get("CONSOLE_STATE", ""), console_uid=kv.get("CONSOLE_UID", ""), pages={p: c[0] for p, c in pages.items()})
-        return {"release": release, "facts": facts, "health": health, "rls": rls}
+        return {"release": release, "facts": facts, "health": health, "rls": rls, "catalogs": catalogs}
     finally:
         if own: shutil.rmtree(bundle_dir, ignore_errors=True)
 
@@ -1171,15 +1224,29 @@ def vercel_project(infra): return (infra.get("vercel") or {}).get("project", "")
 def vercel_projects(base): return {r: f"{base}{s}" for r, s in SUFFIX.items()} if base else {}
 def vercel_spec(man, role): return (((man or {}).get("vercel") or {}).get("projects") or {}).get(role) or {}
 
-def api_settings(man, console_url=None, admins=None):
+def own_domain_url(console_url, custom_domain):
+    """https://<custom_domain> when the console's address is the app's own domain (infrastructure.vercel.custom_domain,
+    recorded by domain.py attach and made the front door by domain.py switch), else None: a domain that is attached but
+    not switched to yet (DNS still pending) is never handed to AI clients."""
+    d = str(custom_domain or "").strip().lower().removeprefix("https://").rstrip("/")
+    if not d or not console_url or not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", d): return None
+    return f"https://{d}" if console_url.rstrip("/").lower() == f"https://{d}" else None
+
+def api_settings(man, console_url=None, admins=None, custom_domain=None):
     """The settings the mold has the factory write on the api project (mold.json vercel.projects.api.env, mold_v0-084),
-    never secrets: name -> value, with {console_url} the console project's production address and {platform_admins}
-    the app's platform administrators (application.json platform_admins, comma-separated). A value whose part is not
-    known (None, or no administrator recorded) is left out, so whatever the project holds under that name is kept.
+    never secrets: name -> value, with {console_url} the console project's production address, {own_domain} the app's
+    own domain as an address (own_domain_url: only once it is the console's address; mold_v0-118, where AI clients
+    connect) and {platform_admins} the app's platform administrators (application.json platform_admins,
+    comma-separated). A value whose part is not known (None, no domain, or no administrator recorded) is left out, so
+    whatever the project holds under that name is kept (an app without a domain gets nothing new).
     Only plain names and values on one line."""
     out = {}
+    own = own_domain_url(console_url, custom_domain)
     for n, v in (vercel_spec(man, "api").get("env") or {}).items():
         if n.startswith("$") or not re.fullmatch(r"[A-Z][A-Z0-9_]*", n) or not isinstance(v, str) or re.search(r"[\r\n]", v): continue
+        if "{own_domain}" in v:
+            if not own: continue
+            v = v.replace("{own_domain}", own)
         if "{console_url}" in v:
             if not console_url: continue
             v = v.replace("{console_url}", console_url.rstrip("/"))
@@ -1390,6 +1457,8 @@ def vercel_plan(app_id, F, infra, man, K=None, cb=None, app=None):
             *([f"{names.get('api')}: the mold's settings written before its deploy ({', '.join(f'{n}={v}' for n, v in (vercel_spec(man, 'api').get('env') or {}).items() if not n.startswith('$'))}); "
                "{console_url} is the console's address read back after its deploy (the last deploy's until then), and the API is deployed once more when it changed, "
                "so sign-in codes and invitations link to the console"
+               + (f"; {{own_domain}} is the app's own domain once it is the console's front door ({own_domain_url(v.get('production_url'), v.get('custom_domain')) or 'none yet: not written'}), "
+                  "where AI clients connect" if any("{own_domain}" in str(x) for x in (vercel_spec(man, 'api').get('env') or {}).values()) else "")
                + (f"; {ADMINS} is application.json platform_admins ({admins_of(app) or 'none recorded: a variable the project already holds is kept, else the deploy stops and asks'})"
                   if admin_env_names(man) else "")] if api_settings(man, "x") else []),
             f"{names.get('web')}: {K['api_env'] or '<the API-address variable>'} set to the API's address (nothing else of the API's: never DATABASE_URL, never a minted key; "
@@ -1560,7 +1629,7 @@ def _rollback_said(rec, names):
 
 def _stop_text(e): return str(e.code if isinstance(e, SystemExit) and e.code is not None else e)
 
-def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None, build_run=subprocess.run):
+def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_read_page, rls_run=None, build_run=subprocess.run, read_json=None, catalogs_run=None):
     """The two-project deploy: the api project first, then the console pointed at its address; health on both; when
     anything after the first deploy fails, both projects go back to what served before. Raises Stop with the reason."""
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
@@ -1593,6 +1662,12 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     missing = [n for n in infra.get("secrets_user") or [] if not all(has_value(n, present[r], F.get("aliases")) for r in project_for(F, K, n))]
     if missing:
         P.ask_nicely_for(app_id, missing); raise NeedsHuman(f"{app_id}: {', '.join(missing)} not set yet on {api} / {web}; nothing was deployed.")
+    # /mcp's sign-in (mold_v0-116): with member keys off and the API on Clerk with no way to find it (no publishable key
+    # anywhere), nothing would let an AI client in: asked for before anything is deployed. Clerk's own registration
+    # setting is the check's to report (the deploy says it at the end), never a reason to stop a deploy here.
+    ck = clerk_reading(app_id, app, man, cb, names, {"api": True, "web": True}, P, root, read_json=lambda u: (None, None, "not read during a deploy"), api_held=present["api"])
+    if ck and ck["block"] and ck["block"][0] == "secret":
+        raise NeedsHuman(f"{app_id}: {clerk_block(app_id, P, ck)}; member API keys are off, so nothing else lets an AI client connect. Nothing was deployed.")
     if ensure_database(app_id, infra, cb, api, present["api"], P, say=say): save(ipath, infra)
     # A key held under either spelling is present: never minted again under the other, which would win over it.
     want = [n for n in infra.get("secrets_derived") or [] if not has_value(n, present["api"], F.get("aliases")) and n != "DATABASE_URL"]
@@ -1621,10 +1696,13 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # (checked again after this run's console deploy), the proxy hops; written before the API's deploy reads them.
         adm = admins_of(app)
         have = P.pull_env(cb, api, required=False)
-        want = with_held_spellings(api_settings(man, v.get("production_url"), adm), set(have), F.get("aliases"))
+        want = with_held_spellings(api_settings(man, v.get("production_url"), adm, v.get("custom_domain")), set(have), F.get("aliases"))
         if have or not P.vercel_env_names(cb, api):      # a failed read (names there, no values) writes nothing
             for n, val in want.items():
                 if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set to {val}")
+            # The console's publishable key onto the API (mold_v0-116; lib/clerk_mcp.py): public by design, yet never said.
+            for n, val in ((ck or {}).get("copy") or {}).items():
+                if have.get(n) != val: P._set_env(n, val, cb, project=api); say(f"  {api}: {n} set from {web}'s publishable key, so the API finds Clerk's sign-in server for /mcp (a public key; not shown)")
         for attempt in (1, 2):
             out = P.vercel_deploy(f"vercel deploy --prod --yes --project {api}{scope}", build, f"{api} deploy")
             if before["api"].get("id"): P.promote_new({"projects": {"api": before["api"]}}, cb, ["api"])   # after an earlier rollback Vercel holds production
@@ -1656,7 +1734,7 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
         # The console's address is known now: the API's emails must link to it (mold_v0-084). When it is not what the
         # API holds (a first deploy, or a new address), it is written and the API deployed once more to read it.
         have = P.pull_env(cb, api, required=False)
-        stale = {n: val for n, val in with_held_spellings(api_settings(man, front, adm), set(have), F.get("aliases")).items() if have.get(n) != val}
+        stale = {n: val for n, val in with_held_spellings(api_settings(man, front, adm, v.get("custom_domain")), set(have), F.get("aliases")).items() if have.get(n) != val}
         if stale and not have and P.vercel_env_names(cb, api):
             # The project holds names but none could be read back (a failed pull): never take that for "stale".
             say(f"  NOTE: {api}'s settings could not be read back; {', '.join(stale)} left as they are (the next deploy checks again)"); stale = {}
@@ -1681,12 +1759,42 @@ def vercel_deploy(app_id, app, infra, adir, P, say=print, root=None, read_page=_
     app["mold_commit"] = mold_commit(app["mold_id"], root) or app.get("mold_commit", "")
     save(ipath, infra); save(os.path.join(adir, "application.json"), app)
     if rls: record_rls(adir, F["rls"], True, rls[1], "by provision.py --deploy", rls[2], rls[3])
+    if F.get("catalogs"):   # the upstream catalogs at their pins (mold_v0-128): after the deploy, said, never a reason to go back
+        rc, said = catalogs_vercel(P, cb, build, api, F["catalogs"], say, catalogs_run)
+        say(f"  {api}: {said}" + (f" (exit {rc}; the server indexes them by itself)" if rc else ""))
+        record_catalogs(adir, said, rc, "by provision.py --deploy, on this machine against the api project's production database")
+    fr = ((ck or {}).get("facts") or {}).get("frontend")
+    if fr:    # Clerk's own setting (mold_v0-116): said after the deploy, never a reason to roll it back
+        reg = clerk_mcp.registration(fr, read_json)
+        if reg["state"] == "off":
+            say(f"  NOTE: Clerk ({clerk_mcp.host_of(fr)}) lets no AI client register itself ({reg['said']}), so AI clients cannot sign in on /mcp yet.")
+            for l in clerk_mcp.ask(app_id, fr, clerk_mcp.member_keys_off(dict(app, app_id=app_id), root or ROOT)).splitlines(): say("    " + l)
     say(f"{app_id}: deployed. The console {url} ({web}; {K['proxied_health']} reaches the API, {', '.join(f'{p} {c}' for p, c in h['pages'].items())}); "
         f"the API {api_url} ({api}; {man['health_path']} 200 ok)"); return 0
 
-def vercel_check(app_id, app, infra, P, say=print, root=None):
+def clerk_reading(app_id, app, man, cb, names, exists, P, root=None, read_json=None, api_held=None):
+    """The /mcp sign-in reading for a Vercel app (mold_v0-116; lib/clerk_mcp.py judge), from the two projects' values
+    (pulled, held in memory, never printed). None when the mold declares no Clerk sign-in. With api_held (the API's
+    names), an API that holds neither Clerk's secret nor the sign-in switch is read as built-in without pulling values."""
+    cs = clerk_mcp.clerk_spec(man)
+    if not cs: return None
+    if api_held is not None and not ({cs["secret"], cs.get("provider_env") or "AUTH_PROVIDER"} & set(api_held)): exists = {}
+    vals = {r: (P.pull_env(cb, n, required=False) if exists.get(r) else {}) for r, n in names.items()}
+    keys_off = clerk_mcp.member_keys_off(dict(app, app_id=app_id), root or ROOT)
+    return clerk_mcp.judge(app_id, man, vals.get("api") or {}, vals.get("web") or {}, keys_off, read_json)
+
+def clerk_block(app_id, P, reading):
+    """Note what the operator must do for a blocking reading (exit 3 through provision.py), and the sentence for it."""
+    import agent_result as AR
+    kind, name, how, msg = reading["block"]
+    if kind == "secret": AR.need("secret", name, AR.secret_how(app_id, name)); P.ask_nicely_for(app_id, [name])
+    else: AR.need(kind, name, how)
+    return msg
+
+def vercel_check(app_id, app, infra, P, say=print, root=None, read_json=None):
     """Read-only. Exit 0 = ready for --deploy (nothing on Vercel is the operator's to type unless the console's sign-in
-    names are required; optional keys stay off)."""
+    names are required; optional keys stay off). For an app on Clerk it also reads Clerk's own sign-in metadata
+    (mold_v0-116), so AI clients can sign in on /mcp."""
     import agent_result as AR
     man = manifest(app["mold_id"], root); cb = codebase(app["mold_id"], root); F = compose_facts(cb, man); K = console_facts(cb, man)
     names = vercel_projects(vercel_project(infra))
@@ -1710,6 +1818,8 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
             f"(never removed; its value is not read here). Record them as platform_admins in state/application/{app_id}/answers.json so the factory keeps them")
     elif gap:
         say(f"  - {admin_todo(app_id)}"); need_admins(app_id, app)
+    ck = clerk_reading(app_id, app, man, cb, names, {r: bool(meta[r].get("id")) for r in names}, P, root, read_json, api_held=present["api"])
+    for l in (ck or {}).get("lines") or []: say(l)
     say("a deploy will:")
     for i, l in enumerate(vercel_plan(app_id, F, infra, man, K, app=app), 1): say(f"  {i}. {l}")
     pre = console_preflight(K)
@@ -1720,6 +1830,8 @@ def vercel_check(app_id, app, infra, P, say=print, root=None):
             say(f"  python3 .claude/scripts/provision.py {app_id} --set-secret {n}"); AR.need("secret", n, AR.secret_how(app_id, n))
         say(f"{len(missing)} value(s) only you hold are not set yet ({', '.join(missing)}): run each line above in a separate terminal on this machine."); return 1
     if gap: say(f"Not ready: {admin_ask(app_id, app)}"); return 1
+    if ck and ck["block"]:
+        say(f"Not ready: {clerk_block(app_id, P, ck)}. Member API keys are off for {app_id} (profile member_keys: false), so nothing else lets an AI client connect."); return 1
     if pre: say("  - the mold's codebase cannot run as two projects as it is (see 'not ready' above). " + _codebase_fix(app["mold_id"], "see above")); return 1
     why = rls_tools_missing(cb, F.get("rls"))
     if why: say(f"  - {why}"); return 1
@@ -1856,6 +1968,8 @@ def main_for(app_id, a, app, infra, ds, adir, P, say=print, root=None):
         if res.get("rls"):
             record_rls(adir, F["rls"], True, res["rls"]["said"], f"by provision.py --deploy-remote in a one-off container of release {res['release']}",
                        "enforced", "ran in a one-off container of the serving release's image, with the env file its containers read (the same database and login).")
+        if res.get("catalogs"):
+            record_catalogs(adir, res["catalogs"]["said"], res["catalogs"]["exit"], f"by provision.py --deploy-remote in a one-off container of release {res['release']}")
         say(f"{app_id}: deployed release {res['release']} to {S['url']}; health {S['health_path']} answered 200 ok. Next: python3 .claude/scripts/lanes.py {app_id}")
         return 0
     except Stop as e:

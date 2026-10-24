@@ -6,7 +6,7 @@
 //
 // The API (always):
 // 1. /api/auth/config says who may open an account: invite_only (the shell's default).
-// 2. Signed in with no account open is a 403 no_account, with the accounts the person is already in (only real ones):
+// 2. Signed in with no account open is a 403 no_account:
 //    nobody's member (Clerk: anyone who signed up; built-in: someone removed from their workspace), a member of a
 //    directory organization that is not an account (Clerk), and platform staff with no account of their own, whom
 //    /admin/session names as staff. A member of an account gets 200 from GET /api/app/access.
@@ -17,8 +17,9 @@
 // lane stand-in for @clerk/nextjs, molds/mold_v0/testing/console/clerk-standin, which reads the mock's session):
 // 5. Every portal route (/app, /app/usage) shows the page for no account: who they are signed in as, the form with their
 //    address filled in; sending it shows the confirmation and stores the request (source: /app).
-// 6. Platform staff see "Open the admin console". A person in an account sees it (Clerk: the account to open; built-in,
-//    last: the invitation, which opens the account in one click).
+// 6. Platform staff see "Open the admin console" (and no request form). Clerk: someone whose active organization is one
+//    they made (no account) gets the page. Built-in, last: an invitation shows as "Join <account>" (the portal's
+//    invitation dialog's buttons, web/src/features/portal/invitation-landing.tsx) and opens the account in one click.
 // 7. Invite-only: the landing page's calls to action lead to /request-access, whose form sends; sign-up says so.
 // 8. axe (molds/mold_v0/testing/accessibility/vendor/axe.min.js): no serious or critical WCAG A/AA violation on the page,
 //    the request page and the landing, in the dark theme and the light one; at 390, 820 and 1440 px nothing scrolls
@@ -94,7 +95,7 @@ try {
   const [rowA] = await db.query<{ clerk_org_id: string; name: string }>("SELECT clerk_org_id, name FROM organizations WHERE slug = $1", [A.body.org.slug]);
   const dirA = rowA!.clerk_org_id;
 
-  let owner: Person, stranger: Person, staff: Person, selfMade: Person | null = null, invitee: Person | null = null;
+  let owner: Person, stranger: Person, staff: Person, selfMade: Person | null = null, alsoInA: Person | null = null, invitee: Person | null = null;
   if (PROVIDER === "clerk") {
     const clerkPerson = async (email: string, first: string, opts: { platform_admin?: boolean; orgs?: string[]; active?: string; orgName?: string } = {}): Promise<Person> => {
       const u = await mockPost("/_mock/clerk/users", { email, first_name: first, verified: true, ...(opts.platform_admin ? { platform_admin: true } : {}) });
@@ -114,7 +115,9 @@ try {
     staff = await clerkPerson(STAFF, "Staff", { platform_admin: true });
     // Someone who made a Clerk organization of their own (not an account: self-serve is off) and is also in A.
     const own = (await mockPost("/v1/organizations", { name: `Own org ${STAMP}` }, true)).id as string;
-    selfMade = await clerkPerson(`maker-${STAMP}@a.example`, "Maker", { orgs: [own, dirA], active: own, orgName: `Own org ${STAMP}` });
+    selfMade = await clerkPerson(`maker-${STAMP}@b.example`, "Maker", { orgs: [own], active: own, orgName: `Own org ${STAMP}` });
+    // The same, but also in A: the server uses A (the oldest account membership; mold_v0 #70), so the portal opens.
+    alsoInA = await clerkPerson(`maker-a-${STAMP}@a.example`, "Maker", { orgs: [own, dirA], active: own, orgName: `Own org ${STAMP}` });
   } else {
     const builtinPerson = async (email: string): Promise<Person & { resign: () => Promise<void> }> => {
       let cookie = await codeSignIn(email);
@@ -146,7 +149,7 @@ try {
   // ---------- 2. no account: 403 no_account, with the accounts the person is in ----------
   assert.equal((await call("GET", "/api/app/access", await owner.h())).status, 200, "a member of A: the portal opens");
   const s1 = await call("GET", "/api/app/access", await stranger.h());
-  assert.equal(s1.status, 403, JSON.stringify(s1.body)); assert.equal(s1.body.code, "no_account"); assert.deepEqual(s1.body.accounts, []);
+  assert.equal(s1.status, 403, JSON.stringify(s1.body)); assert.equal(s1.body.code, "no_account");
   assert.equal((await call("GET", "/api/app/me", await stranger.h())).body.code, "no_account", "every portal call says the same");
   assert.equal((await call("GET", "/admin/session", await stranger.h())).body.is_platform_admin, false);
   const s2 = await call("GET", "/api/app/access", await staff.h());
@@ -155,10 +158,10 @@ try {
   assert.equal(ss.body.is_platform_admin, true, JSON.stringify(ss.body)); assert.equal(ss.body.email, STAFF);
   if (selfMade) {
     const s3 = await call("GET", "/api/app/access", await selfMade.h());
-    assert.equal(s3.status, 403, JSON.stringify(s3.body)); assert.equal(s3.body.code, "no_account");
-    assert.deepEqual(s3.body.accounts, [{ id: dirA, name: rowA!.name }], "their own organization is left out; the account they are in is offered");
+    assert.equal(s3.status, 403, JSON.stringify(s3.body)); assert.equal(s3.body.code, "no_account", "an organization they made themselves is no account");
+    assert.equal((await call("GET", "/api/app/access", await alsoInA!.h())).status, 200, "in an account too: the server uses it");
   }
-  ok(`no account open: 403 no_account with the accounts the person is in (${PROVIDER === "clerk" ? "nobody's member, an organization that is not an account" : "someone removed from their workspace"}); staff are named by /admin/session`);
+  ok(`no account open: 403 no_account (${PROVIDER === "clerk" ? "nobody's member, an organization that is not an account" : "someone removed from their workspace"}); staff are named by /admin/session`);
 
   // ---------- 3. the request ----------
   const req1 = await call("POST", "/api/access-requests", {}, { email: stranger.email, company: "Example Co", name: "Sam", message: "We would like to try it.", source: { landing: "/app" } });
@@ -368,12 +371,11 @@ async function browserChecks(w: { owner: any; stranger: any; staff: any; selfMad
       const c2 = await ctxFor(w.selfMade);
       const p2 = await c2.newPage();
       await p2.goto("/app", { waitUntil: "networkidle" });
-      await p2.waitForSelector('[data-testid="no-account"]', { timeout: 20000 });
-      assert.match(await p2.locator("h1").innerText(), /Choose your .+ account/);
-      assert.equal(await p2.getByRole("button", { name: `Open ${w.nameA}` }).count(), 1, "the account they are in, to open");
-      assert.equal(await p2.locator('[data-testid="request-access-form"]').count(), 0, "no request form for someone already in an account");
+      await p2.waitForSelector('[data-testid="request-access-form"]', { timeout: 20000 });
+      assert.match(await p2.locator("h1").innerText(), /not in an? .+ account yet/);
+      assert.equal(await p2.locator('text=Could not load this page').count(), 0, "no error card");
       await c2.close();
-      ok("Clerk: in an organization that is not an account, the page offers the account they are in");
+      ok("Clerk: someone whose active organization is one they made themselves (no account) gets the page, not an error card");
     }
   }
   // 7. invite-only public pages.
@@ -402,7 +404,7 @@ async function browserChecks(w: { owner: any; stranger: any; staff: any; selfMad
   const notes = [
     ...(await grade(w.stranger, "/app", "app no account", '[data-testid="request-access-form"]')),
     ...(await grade(w.staff, "/app", "app staff", '[data-testid="open-admin"]')),
-    ...(w.selfMade ? await grade(w.selfMade, "/app", "app choose", '[data-testid="no-account"]') : []),
+    ...(w.selfMade ? await grade(w.selfMade, "/app", "app own org", '[data-testid="request-access-form"]') : []),
     ...(await grade(null, "/request-access", "request access", '[data-testid="request-access-form"]')),
     ...(await grade(null, "/", "landing", "#landing-hero")),
   ];
@@ -414,7 +416,7 @@ async function browserChecks(w: { owner: any; stranger: any; staff: any; selfMad
       const c3 = await ctxFor(w.invitee);
       const p3 = await c3.newPage();
       await p3.goto("/app", { waitUntil: "networkidle" });
-      const btn = p3.getByRole("button", { name: `Accept the invitation to ${w.nameA}` });
+      const btn = p3.getByRole("button", { name: `Join ${w.nameA}` });
       await btn.waitFor({ timeout: 20000 });
       // Graded before it is accepted (below), so the page with an invitation is measured too.
       if (SHOTS) await p3.screenshot({ path: path.join(SHOTS, `${PROVIDER}-app-invitation-1440-dark.png`), fullPage: true });

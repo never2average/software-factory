@@ -17,6 +17,7 @@ import { AccountPeek, AccountPeekActions, accountActions, dollars, useAccountAct
 import { copyText, StageDots, StatusBadge, SubBadge, When } from './ui';
 import { Gate } from './role';
 import { hostFeature } from '@/features/packs/host-nav';
+import { sessionEngine } from './engine';
 
 interface Orgs { orgs: Org[]; stages: { id: string; label: string; next: string }[]; stripe_error?: string }
 
@@ -38,7 +39,8 @@ const num = (n: number | null | undefined) => (n == null ? dash : n ? <span clas
 const VIEWS: RecordViewDef<Org>[] = [
   { id: 'all', label: 'All', group: 'stage' },
   { id: 'attention', label: 'Needs attention', match: (o) => o.attention.length > 0 },
-  { id: 'onboarding', label: 'Onboarding', match: (o) => o.stage_index < 6, group: 'stage' },
+  // Not yet at the session engine's run stage; without it, not yet at the last stage (the shell's, then the packs' steps).
+  { id: 'onboarding', label: 'Onboarding', match: (o) => o.stage_index < (sessionEngine() ? 6 : Object.keys(o.reached ?? {}).length - 1), group: 'stage' },
   { id: 'active', label: 'Active 7d', match: (o) => o.calls_7d > 0 },
   { id: 'paying', label: 'Paying', match: (o) => o.subscription?.status === 'active' },
   { id: 'trialing', label: 'Trialing', match: (o) => o.subscription?.status === 'trialing' },
@@ -104,7 +106,7 @@ export function AdminAccounts() {
       </span>
     ) },
     { key: 'budget_pct', label: 'Budget used %', type: 'number', hidden: true, value: budgetPct, render: (o) => { const p = budgetPct(o); return p == null ? dash : <span className='tabular-nums'>{p}%</span>; } },
-    { key: 'running', label: 'Running', type: 'number', hidden: true, value: (o) => o.onboarding_running + o.sims_running, render: (o) => num(o.onboarding_running + o.sims_running) },
+    { key: 'running', label: 'Running', type: 'number', hidden: true, value: (o) => o.onboarding_running + o.sims_running + (o.runs_running ?? 0), render: (o) => num(o.onboarding_running + o.sims_running + (o.runs_running ?? 0)) },
     { key: 'created_at', label: 'Created', type: 'date', hidden: true, value: (o) => o.created_at, render: (o) => <When d={o.created_at} /> },
     { key: 'stripe', label: 'Stripe', name: 'Stripe customer', type: 'boolean', hidden: true, value: (o) => !!o.stripe_customer_id, render: (o) => (o.stripe_customer_id ? 'Yes' : 'No') }
   ];

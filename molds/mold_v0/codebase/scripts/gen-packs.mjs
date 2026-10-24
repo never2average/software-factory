@@ -7,15 +7,20 @@
 //   src/pack-migrations.generated.ts     the ordered list of pack migration directories (no pack code imported)
 //   src/run-tools.generated.json         the run tools the packs' agent kinds need (mold_v0-072), installed in the runner image
 //   src/profile.generated.ts             the profile: product name, MCP server name, console title, email sender
+//   src/email-pitch.generated.ts         the landing block's hero subheadline, the welcome email's pitch (mold_v0-101)
+//   src/legal.generated.ts               profile.json `legal` (mold_v0-109, src/legal.ts), checked; null without one
+//   web/src/config/legal.generated.ts    the same, for the console's /terms, /privacy, footers and sitemap
 //   web/src/config/pack-nav.generated.ts the packs' console pages and their sidebar entries (/app and /admin), and the
 //                                        record areas they declare (mold_v0-047) with their list pages' sidebar entries
 //   web/src/config/profile.generated.ts  the profile, for the console
 //   src/hosts.generated.ts               the host packs' server entries (mold_v0-039; src/host.ts), imported by src/hosts.ts
 //   web/src/config/pack-web.generated.ts the host packs' console code (web/src/packs/<id>/index.ts)
+//   web/src/config/pack-guides.generated.ts  the customer guide: a host pack's guide code, else the packs' own guide pages
+//                                        (pack.json guide) and the facts its generated pages are written from (mold_v0-106)
 //   orchestrator/packs.generated.ts      the host packs' orchestrator entries (orchestrator/packs/<id>/main.ts)
 //   src/deploy-facts.generated.ts        the deploy facts the factory wrote into this build copy (deploy-facts.json at the
 //                                        codebase root, mold_v0-050): names, places and providers, never a value; null
-//                                        without the file. Read by src/data-map.ts (DATA-MAP.md and the About page)
+//                                        without the file. Read by src/data-map.ts (DATA-MAP.md)
 //
 // Host packs (mold_v0-039): a pack whose pack.json has `host` (an entry with defineHost, src/host.ts) is the product's
 // own surface: tools, routes and hooks at the shell's fixed points, console pages (web/src/packs/<id>/), an orchestrator
@@ -67,7 +72,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // The words engine (mold_v0-100): plain TypeScript node runs as it is (types stripped), shared with the server and the console.
 const WORDS_ENGINE = path.join(HERE, "..", "src", "words.ts");
-const { BASE_WORDS, WORD_KEYS, resolveWords, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
+const { BASE_WORDS, WORD_KEYS, fillWith, resolveWords, wordProblem } = await import(pathToFileURL(WORDS_ENGINE).href);
+// The legal pages' rules (mold_v0-109): plain TypeScript with no imports, as the words engine.
+const { legalProblems, legalOf } = await import(pathToFileURL(path.join(HERE, "..", "src", "legal.ts")).href);
+// The shell pages a build hides from its customer console (mold_v0-130): plain TypeScript with no imports, as the words engine.
+const { CONSOLE_PAGES, consoleProblems, hiddenPages, hiddenRedirects, isHiddenUrl, TAB_KIND_PAGE } = await import(pathToFileURL(path.join(HERE, "..", "src", "console-pages.ts")).href);
 const argv = process.argv.slice(2);
 const opt = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 const ROOT = path.resolve(HERE, "..");
@@ -102,8 +111,9 @@ const MIGRATION = /^(\d{4})_([a-z0-9_]+)\.sql$/;
 const MANIFEST_KEYS = new Set(["$schema", "$comment", "id", "name", "version", "description", "entry", "migrations", "pages", "words", "upstream", "runner", "host",
   // the declarations (mold_v0-057; src/pack-manifest.ts checks them, and refuses the keys reserved for later tickets)
   "record_areas", "job_kinds", "credentials", "operator_credentials", "schedules", "onboarding", "metrics", "repositories", "run_results", "tabs", "mcp", "charts",
-  // the app's landing page (mold_v0-091, src/landing.ts)
-  "landing"]);
+  // the app's landing page (mold_v0-091, src/landing.ts), the customer guide's own pages (mold_v0-106, src/pack-guide.ts),
+  // the shell pages the customer console hides (mold_v0-130, src/console-pages.ts)
+  "landing", "guide", "console"]);
 const PAGE_KEYS = new Set(["id", "area", "title", "description", "data", "columns", "nav_group", "icon"]);
 /** What a pack's code may import besides its own files and src/pack-api.ts. */
 const ALLOWED_BARE = new Set(["zod", "node:crypto", "node:path", "node:url", "node:util", "node:buffer", "node:events", "node:fs", "node:fs/promises",
@@ -604,7 +614,23 @@ function loadPack(dirName) {
   if (host && entry !== null && entry === host.entry) fail(where, "host.entry and entry must be different files (definePack and defineHost)");
   // Its upstream pin (mold_v0-050), checked with the rest of pack.json below (src/pack-manifest.ts): the source offer's.
   const upstream = m.upstream && typeof m.upstream === "object" && !Array.isArray(m.upstream) ? m.upstream : null;
-  return { id, dir, json: m, host, schema, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
+  // The customer guide's own pages (mold_v0-106, src/pack-guide.ts): a host pack's guide is its code (web/src/packs/<id>/guide.ts);
+  // a guide directory's .md files are read here (flat, plain files), checked with the rest of the guide below.
+  let guideFiles = null;
+  if (m.guide !== undefined && host) fail(where, "guide: a host pack's customer guide is its console code (web/src/packs/<id>/guide.ts), not pack.json guide");
+  const gdir = m.guide && typeof m.guide === "object" && !Array.isArray(m.guide) ? m.guide.dir : undefined;
+  if (typeof gdir === "string" && /^[a-z0-9_\-/]+$/i.test(gdir) && !gdir.split("/").includes("..") && !gdir.startsWith("/")) {
+    const d = path.join(dir, gdir);
+    if (!existsSync(d) || !statSync(d).isDirectory()) fail(where, `guide.dir ${gdir} is not a directory of the pack`);
+    else {
+      guideFiles = [];
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.isSymbolicLink() || !e.isFile() || !e.name.endsWith(".md")) fail(`packs/${dirName}/${gdir}/${e.name}`, "a guide directory holds .md pages only (one per page, no subdirectories)");
+        else guideFiles.push({ name: e.name, text: readFileSync(path.join(d, e.name), "utf8") });
+      }
+    }
+  }
+  return { id, dir, json: m, host, schema, guideFiles, migrationsDir: migrations && posix(path.relative(ROOT, path.join(dir, migrations))), manifest: { id, name: m.name, version: m.version, entry, migrations, words, dir: posix(path.relative(ROOT, dir)), ...(upstream ? { upstream } : {}) }, pages };
 }
 
 // ---------- a host pack's console and orchestrator code (mold_v0-039) ----------
@@ -728,8 +754,20 @@ function limitsProblem(v, plans = true) {
 /** profile.json `source_offer` (mold_v0-050): null when it is well formed, else what is wrong. */
 const SPDX = /^(?=.{1,80}$)\(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?( (AND|OR|WITH) \(?[A-Za-z0-9][A-Za-z0-9.+-]*\)?)*$/;
 function sourceOfferProblem(v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app}";
-  for (const k of Object.keys(v)) if (k !== "app" && k !== "$comment") return `unknown field ${k} (known: app)`;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object {app, upstreams}";
+  for (const k of Object.keys(v)) if (k !== "app" && k !== "upstreams" && k !== "$comment") return `unknown field ${k} (known: app, upstreams)`;
+  // The packs whose pinned upstream is the licensor's own project (mold_v0-099): {"<pack id>": "licensor_owned"}, each a
+  // pack of this build that pins an upstream (an id that is not would hide nothing, or something later added by mistake).
+  if (v.upstreams !== undefined) {
+    const u = v.upstreams;
+    if (!u || typeof u !== "object" || Array.isArray(u) || !Object.keys(u).length) return 'upstreams must be an object {"<pack id>": "licensor_owned"}';
+    for (const [id, how] of Object.entries(u)) {
+      if (how !== "licensor_owned") return `upstreams.${String(id).slice(0, 40)} must be "licensor_owned"`;
+      const pk = packs.find((p) => p.id === id);
+      if (!pk) return `upstreams names ${String(id).slice(0, 40)}, which is not a pack of this build`;
+      if (!pk.manifest.upstream) return `upstreams names ${id}, whose pack.json pins no upstream`;
+    }
+  }
   const a = v.app;
   if (a === undefined || a === "licensor_exception") return null;
   if (!a || typeof a !== "object" || Array.isArray(a)) return 'app must be "licensor_exception" or {url, license}';
@@ -811,7 +849,14 @@ const blockKeys = (file, name) => {
  */
 function emailProblem(v) {
   if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object";
-  for (const k of Object.keys(v)) if (!["$comment", "provider", "notifications"].includes(k)) return `${k} is not an email setting (known: provider, notifications)`;
+  for (const k of Object.keys(v)) if (!["$comment", "provider", "notifications", "pitch", "library_nouns"].includes(k)) return `${k} is not an email setting (known: provider, notifications, pitch, library_nouns)`;
+  // What a library item of each kind is called (mold_v0-101): kind -> a word of the build's.
+  if (v.library_nouns !== undefined) {
+    if (!v.library_nouns || typeof v.library_nouns !== "object" || Array.isArray(v.library_nouns)) return "library_nouns: an object of kind -> words";
+    for (const [k, x] of Object.entries(v.library_nouns)) if (!/^[a-z][a-z_]{0,30}$/.test(k) || wordProblem(x)) return `library_nouns.${k.slice(0, 40)}: a kind (lowercase) -> ${wordProblem(x) ?? "words"}`;
+  }
+  // The welcome email's pitch (mold_v0-101, src/email.ts): plain text on one line; placeholders are filled from the words.
+  if (v.pitch !== undefined && (typeof v.pitch !== "string" || !v.pitch.trim() || v.pitch.length > 400 || /[\u0000-\u001f\u007f<>]/.test(v.pitch))) return "pitch: plain text on one line, up to 400 characters, no < or >";
   if (v.provider !== undefined && !["resend", "test", "none"].includes(v.provider)) return "provider must be resend, test or none";
   const groups = blockKeys("email.ts", "NOTIFICATION_GROUPS");
   if (v.notifications !== undefined) {
@@ -853,6 +898,10 @@ let profile = { ...DEFAULT_PROFILE };
 const appWords = {}, hostWords = {};
 /** profile.json `landing` (mold_v0-091): the app's own landing block, over a pack's; checked and written below, never part of the profile modules. */
 let profileLanding;
+/** profile.json `legal` (mold_v0-109, src/legal.ts): the app's legal pages; checked here, never part of the profile modules. */
+let profileLegal = null;
+/** profile.json `console` (mold_v0-130, src/console-pages.ts): the shell pages the app hides, joined with its packs'. */
+let profileConsole;
 // A host pack's own profile (mold_v0-039) comes under profile.json: the product's names when the build has no brand of
 // its own, the brand's (written to profile.json by the factory) when it has one. At most one host pack brings one.
 const hostProfiles = packs.filter((p) => p.host?.profile);
@@ -862,7 +911,9 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
   const pf = { ...(hostProfiles[0]?.host.profile ?? {}), ...(filePf && typeof filePf === "object" && !Array.isArray(filePf) ? filePf : {}) };
   if (filePf && (typeof filePf !== "object" || Array.isArray(filePf))) fail(rel(PROFILE_FILE), "must be an object");
   if (hostProfiles[0]?.host.profile?.billing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set billing: only the app's own profile.json turns billing on");
+  if (hostProfiles[0]?.host.profile?.legal !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set legal: only the app's own profile.json names the company behind it (mold_v0-109)");
   if (hostProfiles[0]?.host.profile?.landing !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set landing: a pack declares its landing page in pack.json `landing` (mold_v0-091)");
+  if (hostProfiles[0]?.host.profile?.source_offer?.upstreams !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set source_offer.upstreams: only the app's own profile.json says an upstream is its licensor's own (mold_v0-099)");
   if (hostProfiles[0]?.host.profile?.entitlements !== undefined) fail(`packs/${hostProfiles[0].id}`, "host.profile may not set entitlements: only the app's own profile.json says what each plan unlocks");
   {
     for (const [k, v] of Object.entries(pf)) {
@@ -898,8 +949,14 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
       // Where the build's own source is offered (mold_v0-050, src/source-offer.ts), optional: {app: {url, license}} or
       // {app: "licensor_exception"} (the licensor's additional permission applies to this deployment, and it says so).
       if (k === "source_offer") { const bad = sourceOfferProblem(v); if (bad) fail(rel(PROFILE_FILE), `source_offer: ${bad}`); else profile[k] = v; continue; }
+      // Per-member API keys (mold_v0-099, src/member-keys.ts): false turns them off; absent or true, as before.
+      if (k === "member_keys") { if (typeof v !== "boolean") fail(rel(PROFILE_FILE), "member_keys: true or false (false: no member API keys; clients sign in)"); else profile[k] = v; continue; }
       // The app's landing page (mold_v0-091, src/landing.ts): checked with the packs' blocks below.
       if (k === "landing") { profileLanding = v; continue; }
+      // The shell pages the customer console hides (mold_v0-130, src/console-pages.ts): joined with the packs' below.
+      if (k === "console") { const bad = consoleProblems(v, "profile.json"); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileConsole = v; continue; }
+      // The app's legal pages (mold_v0-109, src/legal.ts): written to legal.generated.ts below, never to the profile modules.
+      if (k === "legal") { const bad = legalProblems(v); if (bad.length) for (const b of bad) fail(rel(PROFILE_FILE), b); else profileLegal = legalOf(v); continue; }
       // The clients the install pages offer (mold_v0-010), optional: absent, every client src/connect-catalog.ts lists.
       if (k === "install_clients") {
         const known = [...readFileSync(path.join(ROOT, "src", "connect-catalog.ts"), "utf8").matchAll(/\{ id: "([a-z0-9-]+)"/g)].map((m) => m[1]).filter((id) => id !== "header");
@@ -909,7 +966,7 @@ if (hostProfiles.length > 1) fail("profile", `host packs ${hostProfiles.map((p) 
         else profile[k] = v;
         continue;
       }
-      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, landing, words)`);
+      if (!PROFILE_KEYS.includes(k)) fail(rel(PROFILE_FILE), `unknown field ${k} (known: ${PROFILE_KEYS.join(", ")}, limits, billing, email, entitlements, mcp_server_version, mcp_instructions, install_clients, source_offer, member_keys, landing, legal, console, words)`);
       else if (typeof v !== "string" || !v.trim()) fail(rel(PROFILE_FILE), `${k} must be text`);
       else profile[k] = v;
     }
@@ -928,6 +985,14 @@ const refuse = () => {
 };
 refuse();
 
+/**
+ * The titles of the customer guide's pages the console writes from the packs' declarations (mold_v0-106;
+ * web/src/content/customer-guide.ts reads them from pack-guides.generated.ts), in the build's words: a pack's own guide
+ * page may not take one.
+ */
+const GUIDE_TITLES = Object.fromEntries(Object.entries({ start: "Getting started", console: "Your console", records: "Records", runs: "{Runs}", tools: "MCP tools", account: "Your account" })
+  .map(([k, t]) => [k, fillWith(resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, t)]));
+
 // ---------- each pack's definition: its pack.json's declarations (mold_v0-057) extended by its code entry ----------
 // Record areas (mold_v0-047), credentials (mold_v0-034) and onboarding (mold_v0-011) are read from it for the console.
 
@@ -945,15 +1010,17 @@ function readDefinitions() {
     const script = path.join(dir, "definitions.mts");
     writeFileSync(script, `import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi] = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const [api, manifestApi, specApi, entries, pages, catalogApi, shellToolsApi, offerApi, wordsApi, words, product, guideApi, guideTitles] = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const MARK = process.argv[3];
 const { RecordAreaSchema, CredentialSchema, OnboardingStepSchema, validatePack } = await import(pathToFileURL(api).href);
 const { compileDeclarations, mergePack, PackJsonError } = await import(pathToFileURL(manifestApi).href);
-const { checkViews, viewsOf, tabRoles, tabLabel, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { checkViews, viewsOf, tabRoles, tabLabel, tabEmpty, metricRoles, metricUnit } = await import(pathToFileURL(specApi).href);
+const { fillWith } = await import(pathToFileURL(wordsApi).href);
 const { upstreamProblems } = await import(pathToFileURL(offerApi).href);
+const { compileGuide } = await import(pathToFileURL(guideApi).href);
 const out = {};
 const loaded = [];
-for (const [id, json, file] of entries) {
+for (const [id, json, file, guideFiles] of entries) {
   let declared;
   try { declared = compileDeclarations(json); }
   catch (e) { out[id] = { json: e instanceof PackJsonError ? e.problems : [String(e?.message ?? e)] }; continue; }
@@ -973,13 +1040,25 @@ for (const [id, json, file] of entries) {
       argRefs: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].flatMap((k) => (k.args ?? []).filter((a) => a.type === "reference").map((a) => ({ kind: k.name, arg: a.name, to: a.to }))),
       store: (def.agentJobKinds ?? []).length > 0 || (def.jobKinds ?? []).some((k) => k.workspace === true),
       resultChecks: def.runResults?.check ?? [],
-      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })) };
+      kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, runner: k.runner, entry: k.entry ?? null, validator: k.validator ?? null, tools: k.agent?.tools ?? [] })),
+      // The customer guide (mold_v0-106): the pack's own pages (pack.json guide, checked: src/pack-guide.ts) and what the
+      // console's generated pages say of it, in its declared words.
+      guide: json.guide === undefined ? null : compileGuide(json.guide, guideFiles, guideTitles),
+      facts: {
+        name: json.name, description: json.description ?? null,
+        onboarding: (def.onboarding ?? []).map((st) => OnboardingStepSchema.parse(st)).map((st) => ({ id: st.id, label: st.label, help: st.help ?? null, prompt: st.prompt ?? null })),
+        kinds: [...(def.jobKinds ?? []), ...(def.agentJobKinds ?? [])].map((k) => ({ name: k.name, label: k.label ?? null, description: k.description ?? null,
+          credentials: k.credentials ?? [], report: k.report ? (k.report.label ?? "") : null, approval: k.approval ? k.approval.preview : null })),
+        credentials: (def.credentials ?? []).map((c) => CredentialSchema.parse(c)).map((c) => ({ name: c.name, label: c.label, help: c.help ?? null, bound_to: c.bound_to, area: c.area ?? null })),
+        schedules: (def.schedules ?? []).map((x) => ({ name: x.name, label: x.label ?? null, job_kind: x.job_kind, cron: x.cron, area: x.assets?.area ?? null, enabled: x.enabled !== false })),
+      } };
   } catch (e) { out[id] = { error: String(e?.message ?? e).slice(0, 3000) }; }
 }
 // Metrics, charts and tabs across the build (mold_v0-063, 058): checked together once every pack loaded.
 let views = { problems: [], metrics: [], charts: [], tabs: [] };
+let b = null;
 if (loaded.length === entries.length) {
-  const b = viewsOf(loaded, pages);
+  b = viewsOf(loaded, pages);
   const problems = checkViews(b);
   const over = (m) => b.areas.find((a) => a.name === m.over) ?? m.over;
   views = { problems,
@@ -993,7 +1072,7 @@ if (loaded.length === entries.length) {
 // withhold (exclude, admin_only) also withhold their console tabs (below).
 const { generateCatalog } = await import(pathToFileURL(catalogApi).href);
 const { SHELL_TOOL_NAMES, RECORD_TOOL_NAMES, ADMIN_SHELL_TOOL_NAMES } = await import(pathToFileURL(shellToolsApi).href);
-const mcp = { problems: [], withheld: [] };
+const mcp = { problems: [], withheld: [], tools: [], records: [] };
 if (loaded.length === entries.length) {
   const shell = [...SHELL_TOOL_NAMES, ...RECORD_TOOL_NAMES];
   const own = new Map();
@@ -1006,6 +1085,12 @@ if (loaded.length === entries.length) {
   const catalog = generateCatalog(loaded, { customer: shell, admin: ADMIN_SHELL_TOOL_NAMES });
   mcp.problems.push(...catalog.problems);
   mcp.withheld = catalog.withheld;
+  // Each tab's empty state (mold_v0-107), in the build's words: an area is addable when its create tool is on the customer MCP.
+  const addable = new Set(catalog.tools.filter((t) => t.op === "create" && t.door === "workspace" && !t.admin_only).map((t) => t.area));
+  if (b) views.tabs = views.tabs.map((t) => ({ ...t, empty: tabEmpty(t, b, { addable: (a) => addable.has(a), fill: (x) => fillWith(words, product, x) }) }));
+  // The generated tools a workspace's client sees (mold_v0-106: the guide groups the tools by what they reach).
+  mcp.tools = catalog.tools.filter((t) => t.door === "workspace" && !t.admin_only).map((t) => ({ name: t.name, pack: t.pack, op: t.op, area: t.area ?? null, kind: t.kind ?? null }));
+  mcp.records = [...RECORD_TOOL_NAMES];
 }
 process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mcp }) + "\\n");
 `);
@@ -1013,9 +1098,10 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     // with a one-time word, so nothing a pack's entry prints while it loads can stand in for it.
     const input = path.join(dir, "input.json"), mark = `PACK_DEFINITIONS_${randomBytes(12).toString("hex")}`;
     writeFileSync(input, JSON.stringify([PACK_API, path.join(ROOT, "src", "pack-manifest.ts"), path.join(ROOT, "src", "metric-spec.ts"),
-      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry)]),
+      packs.map((p) => [p.id, p.json, p.manifest.entry === null ? null : path.join(p.dir, p.manifest.entry), p.guideFiles]),
       Object.fromEntries(packs.map((p) => [p.id, p.pages.filter((pg) => pg.area === "app").map((pg) => pg.id)])),
-      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts")]));
+      path.join(ROOT, "src", "mcp-catalog.ts"), path.join(ROOT, "src", "shell-tools.ts"), path.join(ROOT, "src", "source-offer.ts"),
+      WORDS_ENGINE, resolveWords([appWords, hostWords, ...packs.map((p) => p.manifest.words)]), profile.name, path.join(ROOT, "src", "pack-guide.ts"), Object.values(GUIDE_TITLES)]));
     const r = spawnSync(tsx, [script, input, mark], { cwd: ROOT, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     const line = (r.stdout ?? "").split("\n").findLast((l) => l.startsWith(`${mark} `));
     if (r.status !== 0 || !line) { fail("packs", `loading the packs' definitions failed: ${r.error ? `${r.error.code ?? ""} ${r.error.message} ` : ""}${((r.stderr ?? "") + (r.stdout ?? "")).trim().split("\n").slice(-6).join(" | ").slice(0, 1200)}`); return {}; }
@@ -1024,10 +1110,12 @@ process.stdout.write("\\n" + MARK + " " + JSON.stringify({ packs: out, views, mc
     for (const pr of mcp.problems) fail("packs", pr);
     packViews = views;
     withheld = mcp.withheld;
-    const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [] };
+    guideTools = { tools: mcp.tools, records: mcp.records };
+    const empty = { declared: {}, areas: [], credentials: [], onboarding: [], metrics: [], argRefs: [], kinds: [], guide: null, facts: null };
     for (const [id, v] of Object.entries(got)) {
       if (v.json !== undefined) { for (const pr of v.json) fail(`packs/${id}/pack.json`, pr); got[id] = empty; }
       else if (v.error !== undefined) { fail(`packs/${id}`, `its definition does not load: ${v.error}`); got[id] = empty; }
+      else for (const pr of v.guide?.problems ?? []) fail(`packs/${id}/pack.json`, pr);
     }
     // A declared kind's programs are files of the pack (a workspace-harness kind's entry and validator).
     for (const p of packs) for (const k of got[p.id]?.kinds ?? []) for (const f of [k.entry, k.validator])
@@ -1045,6 +1133,8 @@ let packViews = { problems: [], metrics: [], charts: [], tabs: [] };
  * is withheld has no Records entry and no area tab; a pack whose runs list is withheld has no runs tab.
  */
 let withheld = [];
+/** The generated tools a workspace's client sees, and the shell's record tools (mold_v0-106: the guide's MCP tools page). */
+let guideTools = { tools: [], records: [] };
 const listWithheld = (area, op = "list") => withheld.some((w) => w.area === area && w.op === op);
 const runsWithheld = (pack) => withheld.some((w) => w.pack === pack && w.op === "list_runs");
 const defsByPack = readDefinitions();
@@ -1058,13 +1148,20 @@ const linksOf = (a) => [...(a.links ?? []), ...a.fields.filter((f) => f.type ===
 /** Job kinds (mold_v0-041) and due-date areas (mold_v0-035): the console's Schedules and Notices pages appear with one. */
 const jobKindCount = packs.reduce((n, p) => n + (defsByPack[p.id]?.kinds ?? []).filter((k) => k.runner === "workspace-harness").length, 0);
 const dueAreaCount = recordAreas.filter((a) => a.due).length;
+/**
+ * The shell pages this build's customer console hides (mold_v0-130, src/console-pages.ts): the packs' pack.json `console`
+ * and the app's profile.json `console`, joined. Each leaves the /app sidebar (below, the tabs, nav-config.ts) and redirects
+ * to /app (pack-routes.generated.json).
+ */
+for (const p of packs) if (p.json?.console !== undefined) for (const b of consoleProblems(p.json.console, "pack.json")) fail(`packs/${p.id}`, b);
+const HIDDEN = hiddenPages([...packs.map((p) => p.json?.console), profileConsole]);
 const workspaceItems = [
   ...(credentialFields.length ? [{ title: "Credentials", url: "/app/credentials", icon: "lock", items: [] }] : []),
   ...(jobKindCount ? [{ title: "Schedules", url: "/app/schedules", icon: "calendar", items: [] }] : []),
   ...(dueAreaCount ? [{ title: "Notices", url: "/app/notices", icon: "notification", items: [] }] : []),
   // The workspace store's file viewer (mold_v0-056) when a pack has a workspace store.
   ...(packs.some((p) => defsByPack[p.id]?.store) ? [{ title: "Files", url: "/app/files", icon: "page", items: [] }] : []),
-];
+].filter((x) => !isHiddenUrl(x.url, HIDDEN));
 {
   const owner = new Map();
   for (const a of recordAreas) {
@@ -1159,6 +1256,14 @@ files.set(path.join(OUT, "src", "pack-migrations.generated.ts"), HEADER +
   "export interface HostSchema { readonly tables: readonly string[]; readonly functions: readonly string[]; readonly adopts: Readonly<Record<string, string>>; readonly platform_read: readonly string[]; readonly references: Readonly<Record<string, string>> }\n" +
   "/** Pack migration directories (relative to the codebase root), applied after the shell's in this order (src/migrate.ts). */\n" +
   `export const PACK_MIGRATION_DIRS: readonly { readonly pack: string; readonly dir: string; readonly schema?: HostSchema }[] = ${json(packs.filter((p) => p.migrationsDir).map((p) => ({ pack: p.id, dir: p.migrationsDir, ...(p.schema ? { schema: p.schema } : {}) })))};\n`);
+// What the admin console's shared pages show for this build (mold_v0-104): the host pack's own tables (the console's
+// copy of src/host-tables.ts reads them, so the session engine's sections show only in a build that has its tables)
+// and every job kind the packs declare, with its label (the pack's runs, in its words, where those sections were).
+files.set(path.join(OUT, "web", "src", "config", "build-facts.generated.ts"), HEADER +
+  "/** A host pack's own tables (pack.json host.schema.tables), as src/pack-migrations.generated.ts lists them; none with zero packs. */\n" +
+  `export const HOST_TABLES: readonly string[] = ${json(packs.flatMap((p) => p.schema?.tables ?? []))};\n` +
+  "/** The packs' job kinds (jobKinds and agentJobKinds): the pack, the kind's name and its label (null: the name). */\n" +
+  `export const JOB_KINDS: readonly { pack: string; name: string; label: string | null }[] = ${json(packs.flatMap((p) => (defsByPack[p.id]?.kinds ?? []).map((k) => ({ pack: p.id, name: k.name, label: k.label ?? null }))))};\n`);
 // The host packs (mold_v0-039): their server entries, registered by src/hosts.ts (which a process's entry imports first).
 const srcHosts = path.join(OUT, "src", "hosts.generated.ts");
 const hostPacks = packs.filter((p) => p.host && p.host.entry);
@@ -1184,13 +1289,20 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
     "\n/** The host packs' sidebar entries and console features (mold_v0-039; features/packs/host-nav.ts); none with zero packs. */\n" +
     `export const HOST_NAV: readonly unknown[] = [${navs.map((_id, i) => `nav${i}`).join(", ")}];\n`);
 }
-// Their customer guides (web/src/packs/<id>/guide.ts: pure TS, relative imports only, as the docs corpus reads it).
+// Their customer guides (web/src/packs/<id>/guide.ts: pure TS, relative imports only, as the docs corpus reads it), and
+// the other packs' guide (mold_v0-106): their own pages (pack.json guide) and the facts the console writes its generated
+// pages from, or null (zero packs, or a host pack's guide: the shell's or the host's guide, unchanged).
 {
   const guides = webPacks.filter((id) => existsSync(path.join(WEB_PACKS, id, "guide.ts")));
+  const packGuide = guides.length ? null : packGuideData();
+  refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-guides.generated.ts"), HEADER +
     guides.map((id, i) => `import * as guide${i} from '../packs/${id}/guide';\n`).join("") +
     "\n/** The host packs' customer guides (mold_v0-039): the first replaces the shell's (src/content/customer-guide.ts). */\n" +
-    `export const HOST_GUIDES: readonly unknown[] = [${guides.map((_id, i) => `guide${i}`).join(", ")}];\n`);
+    `export const HOST_GUIDES: readonly unknown[] = [${guides.map((_id, i) => `guide${i}`).join(", ")}];\n\n` +
+    "/**\n * The packs' customer guide (mold_v0-106; src/pack-guide.ts, web/src/content/customer-guide.ts PackGuideData): their own\n" +
+    " * pages from pack.json `guide` and what the pages generated from their declarations say; null: no pack, or a host pack's guide.\n */\n" +
+    `export const PACK_GUIDE: unknown = ${json(packGuide)};\n`);
 }
 // Their console URLs (web/src/packs/<id>/routes.json): each rewritten to the shell's host page route, and their redirects.
 {
@@ -1214,6 +1326,8 @@ files.set(path.join(OUT, "web", "src", "config", "pack-web.generated.ts"), HEADE
       redirects.push({ source: x.source, destination: x.destination, permanent: x.permanent !== false });
     }
   }
+  // A shell page the build hides (mold_v0-130): its address, and every one under it, to the console's home.
+  redirects.push(...hiddenRedirects(HIDDEN));
   refuse();
   files.set(path.join(OUT, "web", "src", "config", "pack-routes.generated.json"), JSON.stringify({ $comment: "Generated by scripts/gen-packs.mjs from web/src/packs/*/routes.json (mold_v0-039). Do not edit: run npm run gen:packs.", rewrites, redirects }, null, 2) + "\n");
 }
@@ -1240,6 +1354,11 @@ files.set(path.join(OUT, "web", "src", "lib", "words.generated.ts"),
 files.set(path.join(OUT, "src", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default): the names the shell shows. Read through src/profile.ts. */\n" +
   `export const GENERATED_PROFILE = ${json(profile)} as const;\n`);
+// The emails' pitch (mold_v0-101): the landing block's hero subheadline, in a module of its own so the landing block
+// never reaches the profile modules (the MCP surface and the console's names).
+files.set(path.join(OUT, "src", "email-pitch.generated.ts"), HEADER +
+  "/** The landing block's hero subheadline (mold_v0-101): the welcome email's pitch when the profile has no email.pitch (src/email.ts); null without one. */\n" +
+  `export const GENERATED_EMAIL_PITCH: string | null = ${JSON.stringify(landingPage.landing?.hero?.subheadline ?? null)};\n`);
 
 const nav = (area) => {
   const groups = new Map();
@@ -1277,11 +1396,16 @@ files.set(path.join(OUT, "web", "src", "config", "pack-nav.generated.ts"), HEADE
   " * when a pack has a workspace store. */\n" +
   `export const workspacePortalNav: NavGroup[] = ${json(workspaceItems.length ? [{ label: "Workspace", items: workspaceItems }] : [])};\n\n` +
   "/** How many onboarding steps the packs declare (mold_v0-011): 0 leaves the Setup page exactly as the shell's. */\n" +
-  `export const packOnboardingSteps = ${onboardingSteps.length};\n` +
+  `export const packOnboardingSteps = ${onboardingSteps.length};\n\n` +
+  "/** How many data repositories the packs declare (mold_v0-129): the admin console's Data repositories page shows with one. */\n" +
+  `export const repositoryCount = ${packs.reduce((n, p) => n + Object.keys(p.json?.repositories ?? defsByPack[p.id]?.repositories ?? {}).length, 0)};\n\n` +
+  "/** The shell's customer pages this build hides (mold_v0-130, src/console-pages.ts): left out of the sidebar, redirected to /app. */\n" +
+  `export const hiddenConsoleUrls: string[] = ${json(HIDDEN.map((h) => CONSOLE_PAGES[h]))};\n` +
   // The neutral Activity pages (mold_v0-008): tool calls and run spend per member, run and workspace, once a pack adds
   // tools or runs. With zero packs the sidebar is the shell's own.
+  // A build that hides the customer's Activity page (mold_v0-130) keeps the staff's.
   (packs.some((p) => p.manifest.entry !== null || Object.keys(defsByPack[p.id]?.declared ?? {}).length) ? "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\n" +
-    `export const usagePortalNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
+    `export const usagePortalNav: NavGroup[] = ${json(HIDDEN.includes("activity") ? [] : [{ label: "Activity", items: [{ title: "Activity", url: "/app/activity", icon: "chartLine", items: [] }] }])};\n` +
     `export const usageAdminNav: NavGroup[] = ${json([{ label: "Activity", items: [{ title: "Activity", url: "/admin/activity", icon: "chartLine", items: [] }] }])};\n`
     : "\n/** The Activity pages (mold_v0-008): in the sidebar when the build has a pack (a pack with tools or declarations: a host pack's own pages are its own). */\nexport const usagePortalNav: NavGroup[] = [];\nexport const usageAdminNav: NavGroup[] = [];\n") +
   viewsModule());
@@ -1293,9 +1417,94 @@ files.set(path.join(OUT, "web", "src", "config", "landing.generated.ts"), HEADER
   `export const landing: LandingBlock | null = ${json(landingPage.landing)};\n\n` +
   "/** The source offer's footer items (src/source-offer.ts offerFooterItems), as the install pages say them; [] when nothing is offered. */\n" +
   `export const sourceOfferItems: readonly OfferFooterItem[] = ${json(landingPage.offer)};\n`);
+// The legal pages (mold_v0-109, src/legal.ts): the app's own `legal`, checked above; null: no legal pages, no links.
+files.set(path.join(OUT, "src", "legal.generated.ts"), HEADER +
+  "import type { Legal } from \"./legal.js\";\n\n" +
+  "/** profile.json `legal` (mold_v0-109, src/legal.ts): the install pages' footer links; null: no legal pages. */\n" +
+  `export const GENERATED_LEGAL: Legal | null = ${json(profileLegal)};\n`);
+files.set(path.join(OUT, "web", "src", "config", "legal.generated.ts"), HEADER +
+  "import type { Legal } from '@/features/site/legal-types';\n\n" +
+  "/** profile.json `legal` (mold_v0-109, src/legal.ts): /terms, /privacy, their links and the sitemap; null: no legal pages. */\n" +
+  `export const legal: Legal | null = ${json(profileLegal)};\n`);
 files.set(path.join(OUT, "web", "src", "config", "profile.generated.ts"), HEADER +
   "/** The profile (profile.json over the neutral default), for the console's title and descriptions. */\n" +
   `export const profile = ${json((({ limits: _l, billing: _b, email: _e, entitlements: _n, ...p }) => p)(profile))} as const;\n`);
+
+/**
+ * The customer guide of a build whose packs bring no guide code (mold_v0-106): each pack's own pages (pack.json guide,
+ * checked by src/pack-guide.ts) and the facts web/src/content/customer-guide.ts writes the generated pages from: what
+ * the app is, its onboarding steps, the console's tabs, its record areas, the job kinds a workspace may start, its
+ * credentials and schedules, and the generated MCP tools by what they reach. Only what a workspace is offered: an area
+ * whose list tool, a kind whose start tool the pack withholds (mcp exclude, admin_only) is left out, with its schedules
+ * and the credentials only such kinds use. Null with zero packs (the shell's own guide).
+ */
+function packGuideData() {
+  if (!packs.length) return null;
+  const facts = packs.map((p) => ({ p, f: defsByPack[p.id]?.facts ?? null, g: defsByPack[p.id]?.guide ?? null }));
+  const pages = [], groups = [], seen = new Map();
+  for (const { p, g } of facts) {
+    for (const grp of g?.groups ?? []) if (!groups.includes(grp)) groups.push(grp);
+    for (const pg of g?.pages ?? []) {
+      if (seen.has(pg.slug)) { fail(`packs/${p.id}/pack.json`, `guide page ${JSON.stringify(pg.title)}: pack ${seen.get(pg.slug)} has a page at the same address (/app/docs/${pg.slug})`); continue; }
+      seen.set(pg.slug, p.id);
+      pages.push(pg);
+    }
+  }
+  const areaLabel = (name) => recordAreas.find((a) => a.name === name)?.label ?? name;
+  const tools = guideTools.tools;
+  const startOf = (pack, kind) => tools.find((t) => t.pack === pack && t.op === "start" && t.kind === kind)?.name ?? null;
+  const kinds = facts.flatMap(({ p, f }) => (f?.kinds ?? []).map((k) => ({ pack: p.id, ...k, start: startOf(p.id, k.name) })));
+  const offered = kinds.filter((k) => k.start);
+  const credentialLabel = (pack, name) => facts.find((x) => x.p.id === pack)?.f?.credentials.find((c) => c.name === name)?.label ?? name;
+  const kindLabel = (k) => k.label ?? k.name.replace(/_/g, " ");
+  const label = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const chartTitle = (name) => packViews.charts.find((c) => c.name === name)?.title ?? name;
+  const optionOf = (o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value });
+  return {
+    titles: GUIDE_TITLES,
+    generated: !facts.some(({ g }) => g && g.generated === false),
+    groups,
+    pages,
+    packs: facts.map(({ p, f }) => ({ id: p.id, name: f?.name ?? p.manifest.name, description: f?.description ?? null })),
+    onboarding: facts.flatMap(({ f }) => (f?.onboarding ?? []).map((st) => ({ label: st.label, help: st.help, prompt: st.prompt }))),
+    get_started: tools.filter((t) => t.op === "get_started").map((t) => t.name),
+    tabs: shownTabs().map((t) => ({ group: t.group ?? "", label: t.label, kind: t.kind, description: t.description ?? null,
+      ...(t.kind === "area" ? { area: t.area } : {}), charts: (t.charts ?? []).map(chartTitle) })),
+    areas: recordAreas.filter((a) => !listWithheld(a.name)).map((a) => {
+      const opts = (fl) => (fl?.options ?? []).map(optionOf);
+      const lc = a.lifecycle, lcField = lc ? a.fields.find((fl) => fl.name === lc.field) : null;
+      const state = (v) => opts(lcField).find((o) => o.value === v)?.label ?? v;
+      return {
+        name: a.name, label: a.label, description: a.description ?? null, scope: a.scope, role: a.role, sealed: a.sealed === true || a.role === "asset",
+        fields: a.fields.map((fl) => ({ label: fl.label, type: fl.type, help: fl.help ?? null, required: fl.required === true,
+          options: opts(fl).map((o) => o.label), to: fl.to ? areaLabel(fl.to) : linksOf(a).some((l) => l.field === fl.name) ? areaLabel(linksOf(a).find((l) => l.field === fl.name).area) : null, multiple: fl.multiple === true })),
+        lifecycle: lc ? { field: lcField?.label ?? lc.field, initial: state(lc.initial), states: opts(lcField).map((o) => o.label),
+          moves: lc.transitions.map((tr) => ({ label: tr.label ?? null, from: tr.from === "*" ? "*" : tr.from.map(state), to: state(tr.to) })) } : null,
+        due: a.due ? { field: a.fields.find((fl) => fl.name === a.due.field)?.label ?? a.due.field, within_days: a.due.within_days ?? 7 } : null,
+        tools: tools.filter((t) => t.area === a.name).map((t) => t.name),
+      };
+    }),
+    kinds: offered.map((k) => ({ label: label(kindLabel(k)), description: k.description, credentials: k.credentials.map((c) => credentialLabel(k.pack, c)),
+      report: k.report, start: k.start, approval: k.approval ? label(kindLabel(kinds.find((x) => x.pack === k.pack && x.name === k.approval) ?? { name: k.approval })) : null })),
+    credentials: facts.flatMap(({ p, f }) => (f?.credentials ?? []).filter((c) => {
+      const users = kinds.filter((k) => k.pack === p.id && k.credentials.includes(c.name));
+      return !users.length || users.some((k) => k.start);
+    }).map((c) => ({ label: c.label, help: c.help, bound_to: c.bound_to, area: c.area ? areaLabel(c.area) : null }))),
+    schedules: facts.flatMap(({ p, f }) => (f?.schedules ?? []).flatMap((x) => {
+      const k = offered.find((y) => y.pack === p.id && y.name === x.job_kind);
+      return k ? [{ label: x.label ?? label(kindLabel(k)), kind: label(kindLabel(k)), cron: x.cron, area: x.area ? areaLabel(x.area) : null, enabled: x.enabled }] : [];
+    })),
+    tools: tools.map((t) => ({ name: t.name, op: t.op, area: t.area ? areaLabel(t.area) : null })),
+    record_tools: guideTools.records,
+  };
+}
+
+/** The declared tabs a workspace is shown: not one over an area or runs whose list tool the pack withholds (mold_v0-067). */
+function shownTabs() {
+  return packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack))
+    // nor one that opens a shell page the build hides (mold_v0-130)
+    && !(TAB_KIND_PAGE[t.kind] && HIDDEN.includes(TAB_KIND_PAGE[t.kind])));
+}
 
 /**
  * The packs' metrics, charts and tabs for the console (mold_v0-063, 058): what each chart shows, and the declared tabs
@@ -1305,12 +1514,13 @@ function viewsModule() {
   const SHELL_PAGES = { credentials: "/app/credentials", usage: "/app/activity", schedules: "/app/schedules", notices: "/app/notices", setup: "/app", billing: "/app/billing", profile: "/app/profile" };
   const DEFAULT_ICONS = { overview: "dashboard", area: "kanban", runs: "play", reports: "page", credentials: "lock", usage: "chartLine", schedules: "calendar", notices: "notification", setup: "rocket", billing: "billing", profile: "account", page: "page", files: "page" };
   // A tab over an area whose list tool, or over runs whose list tool, the pack withholds is not shown (mold_v0-067).
-  const shown = packViews.tabs.filter((t) => !(t.kind === "area" && listWithheld(t.area)) && !(t.kind === "runs" && runsWithheld(t.pack)));
+  const shown = shownTabs();
   const tabs = shown.map((t) => ({
     pack: t.pack, id: t.id, kind: t.kind, label: t.label, description: t.description ?? null, icon: t.icon ?? DEFAULT_ICONS[t.kind],
     url: t.kind === "files" ? `/app/files?store=${t.pack}` : SHELL_PAGES[t.kind] ?? `/app/packs/${t.pack}/${t.kind === "page" ? t.page : t.id}`, roles: t.roles,
     ...(t.kind === "area" ? { area: t.area, views: t.views ?? ["table", "detail"], board_by: t.board_by ?? recordAreas.find((a) => a.name === t.area)?.lifecycle?.field ?? null, timeline_by: t.timeline_by ?? "updated" } : {}),
     charts: t.charts ?? [],
+    ...(t.empty ? { empty: t.empty } : {}),
   }));
   const groups = [];
   for (const t of tabs) {
@@ -1329,7 +1539,9 @@ function viewsModule() {
     "/** A console tab a pack declares (mold_v0-058): its sidebar entry and its page (web/src/features/tabs/tab-page.tsx). */\n" +
     "export interface PackTabSpec {\n  pack: string;\n  id: string;\n  kind: 'overview' | 'area' | 'runs' | 'reports' | 'credentials' | 'usage' | 'schedules' | 'notices' | 'setup' | 'billing' | 'profile' | 'page' | 'files';\n" +
     "  label: string;\n  description: string | null;\n  icon: string;\n  url: string;\n  roles: string[];\n  area?: string;\n  views?: ('table' | 'board' | 'timeline' | 'detail')[];\n" +
-    "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n}\n" +
+    "  board_by?: string | null;\n  timeline_by?: string;\n  charts: string[];\n" +
+    "  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */\n" +
+    "  empty?: { title: string; text: string; cta: { label: string; href: string } | null };\n}\n" +
     `export const packTabs: PackTabSpec[] = ${json(tabs)};\n\n` +
     "/** The /app sidebar when packs declare tabs: exactly those, in order (empty: the shell's own sidebar). */\n" +
     `export const tabPortalNav: NavGroup[] = ${json(groups)};\n`;

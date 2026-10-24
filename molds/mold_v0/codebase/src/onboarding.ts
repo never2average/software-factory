@@ -22,7 +22,7 @@ import { hasCredential } from "./credentials.js";
 import { getDb } from "./db.js";
 import { OnboardingStepSchema, PackError, z } from "./pack-api.js";
 import { packs } from "./packs.js";
-import { withTenant } from "./tenant-scope.js";
+import { asPlatform, withTenant } from "./tenant-scope.js";
 
 export type OnboardingStep = z.output<typeof OnboardingStepSchema> & { pack: string };
 
@@ -56,9 +56,62 @@ async function doneAt(orgId: number, s: OnboardingStep): Promise<string | null> 
   });
 }
 
-/** The checklist for workspace `orgId`: every pack step, done or not, with when it was done. */
-export async function onboardingFor(orgId: number) {
-  const steps = await Promise.all(onboardingSteps().map(async (s) => {
+/** A step's key across packs: `<pack>:<id>` (step ids are unique within a pack only). */
+export const stepKey = (s: { pack: string; id: string }) => `${s.pack}:${s.id}`;
+/** The conditions the shell's own account stages already measure (src/admin.ts): not stages of their own. */
+const SHELL_CONDITIONS = new Set(["workspace", "connected", "first_call"]);
+/** The steps that are account stages on the admin console (src/admin.ts accountStages): every step but the shell's. */
+export const stageSteps = (): OnboardingStep[] => onboardingSteps().filter((s) => !SHELL_CONDITIONS.has(s.done_when.split(":", 1)[0]!));
+
+/**
+ * When each workspace first met each of `stageSteps()` (mold_v0-103): the same conditions as doneAt, for the admin
+ * console's funnel, read across workspaces in one grouped query per kind of condition (platform staff only; the
+ * caller is the admin console). `orgIds` narrows it to those workspaces. Workspaces with none met are absent.
+ */
+export async function stageStepsReached(orgIds?: number[]): Promise<Map<number, Record<string, string>>> {
+  const steps = stageSteps();
+  const out = new Map<number, Record<string, string>>();
+  if (!steps.length || (orgIds && !orgIds.length)) return out;
+  const by = (what: string) => steps.filter((s) => s.done_when.startsWith(`${what}:`));
+  const ids = orgIds ?? null;
+  type Row = { org_id: number; a: string; b: string; at: Date | string | null };
+  const q = async (what: string, sql: string, params: unknown[]): Promise<Row[]> => (by(what).length ? (await getDb()).query<Row>(sql, [...params, ids]) : []);
+  const packsOf = (what: string) => [...new Set(by(what).map((s) => s.pack))];
+  const [runs, records, tools, creds] = await asPlatform(() => Promise.all([
+    q("run", `/* tenant: internal: the admin console's account funnel, every workspace (or those listed) */
+      SELECT org_id, pack AS a, kind AS b, min(ended_at) AS at FROM runs WHERE status = 'succeeded' AND pack = ANY($1::text[])
+        AND ($2::int[] IS NULL OR org_id = ANY($2::int[])) GROUP BY org_id, pack, kind`, [packsOf("run")]),
+    q("record", `/* tenant: internal: the admin console's account funnel, every workspace (or those listed) */
+      SELECT org_id, pack AS a, area AS b, min(created_at) AS at FROM workspace_records WHERE org_id IS NOT NULL AND pack = ANY($1::text[])
+        AND ($2::int[] IS NULL OR org_id = ANY($2::int[])) GROUP BY org_id, pack, area`, [packsOf("record")]),
+    q("tool", `/* tenant: internal: the admin console's account funnel, every workspace (or those listed) */
+      SELECT org_id, '' AS a, name AS b, min(at) AS at FROM mcp_events WHERE method = 'tools/call' AND ok AND name = ANY($1::text[])
+        AND ($2::int[] IS NULL OR org_id = ANY($2::int[])) GROUP BY org_id, name`, [by("tool").map((s) => s.done_when.slice(5))]),
+    q("credential", `/* tenant: internal: the admin console's account funnel, every workspace (or those listed) */
+      SELECT org_id, pack AS a, name AS b, min(created_at) AS at FROM workspace_credentials WHERE pack = ANY($1::text[])
+        AND ($2::int[] IS NULL OR org_id = ANY($2::int[])) GROUP BY org_id, pack, name`, [packsOf("credential")]),
+  ]));
+  const index = (rows: Row[]) => new Map(rows.map((r) => [`${r.org_id} ${r.a} ${r.b}`, iso(r.at)]));
+  const at = { run: index(runs), record: index(records), tool: index(tools), credential: index(creds) } as Record<string, Map<string, string | null>>;
+  const orgs = new Set([...runs, ...records, ...tools, ...creds].map((r) => Number(r.org_id)));
+  for (const org of orgs) {
+    const reached: Record<string, string> = {};
+    for (const s of steps) {
+      const [what, arg = ""] = s.done_when.split(":", 2) as [string, string?];
+      const t = at[what]?.get(`${org} ${what === "tool" ? "" : s.pack} ${arg}`);
+      if (t) reached[stepKey(s)] = t;
+    }
+    if (Object.keys(reached).length) out.set(org, reached);
+  }
+  return out;
+}
+
+/**
+ * The checklist for workspace `orgId`: every pack step (or only pack `pack`'s: its get_started tool, mold_v0-105, in
+ * src/mcp-tools.ts), done or not, with when it was done.
+ */
+export async function onboardingFor(orgId: number, pack?: string) {
+  const steps = await Promise.all(onboardingSteps().filter((s) => pack === undefined || s.pack === pack).map(async (s) => {
     const at = await doneAt(orgId, s);
     return { pack: s.pack, id: s.id, label: s.label, help: s.help ?? null, done: at !== null, at };
   }));

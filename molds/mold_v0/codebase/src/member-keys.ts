@@ -18,6 +18,12 @@
  *   POST /api/keys/:id/revoke    one of your own keys; an owner any key of the workspace
  * A change riding the session cookie carries X-Pack-Request: 1 (CSRF, as the data API). Key creation shares the
  * shell's hourly key number per person (src/rate-limits.ts endpointLimit "key", its own bucket, apart from staff's).
+ *
+ * Off (mold_v0-099): a profile with `member_keys: false` (src/profile.ts memberKeysOn) has no member keys. Every route
+ * here answers 403 {code: "member_keys_off"} for a signed-in person (nothing is listed, made or revoked), the console has
+ * no API keys page, and a member key made while they were on is refused on /mcp with a sentence saying so (src/auth.ts
+ * resolveKey): clients connect with sign-in (OAuth) instead. Turning them on again brings back the keys that have not
+ * expired or been revoked meanwhile.
  */
 import { createHash, randomBytes } from "node:crypto";
 import express, { type NextFunction, type Request, type Response, type Router } from "express";
@@ -26,6 +32,7 @@ import { customerSession, type Session } from "./app.js";
 import { getDb } from "./db.js";
 import { memberSetup } from "./install-pages.js";
 import { plain } from "./mcp-catalog.js";
+import { memberKeysOn, PROFILE } from "./profile.js";
 import { endpointLimit } from "./rate-limits.js";
 import { asPlatform } from "./tenant-scope.js";
 
@@ -38,7 +45,11 @@ export const MAX_KEYS_PER_MEMBER = 20;
 const KEY_PREFIX = "oct_";
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
-export class KeyError extends Error { constructor(message: string, public status = 400) { super(message); } }
+export class KeyError extends Error { constructor(message: string, public status = 400, public code?: string) { super(message); } }
+
+/** What a person is told when member keys are off (mold_v0-099): how to connect instead. */
+export const keysOffMessage = (publicUrl: string) =>
+  `API keys are turned off for ${PROFILE.name}: connect your AI client to ${publicUrl.replace(/\/$/, "")}/mcp and sign in when it asks (OAuth).`;
 
 export interface KeyRow {
   id: number; name: string; key_prefix: string; kind: "member" | "person" | "account"; user_id: string | null;
@@ -83,6 +94,7 @@ export async function workspaceKeys(orgId: number): Promise<KeyRow[]> {
 
 /** Make a member key for `userId` in workspace `orgId`. The key is returned once; only its hash is stored. */
 export async function createMemberKey(orgId: number, userId: string, input: { name?: unknown; expires_in_days?: unknown }): Promise<{ key: string; row: KeyRow }> {
+  if (!memberKeysOn()) throw new KeyError("API keys are turned off for this service", 403, "member_keys_off");
   const name = nameOf(input.name), days = daysOf(input.expires_in_days);
   const key = `${KEY_PREFIX}${randomBytes(24).toString("base64url")}`;
   // The tenant role may not write keys (sql/migrations/0003): written by the platform, for the session's own person in
@@ -123,7 +135,7 @@ export async function revokeKey(orgId: number, keyId: number, by: { userId: stri
 const answer = (fn: (req: Request, res: Response) => unknown, status = 200) => async (req: Request, res: Response, next: NextFunction) => {
   try { res.status(status).json(await fn(req, res)); }
   catch (e) {
-    if (e instanceof KeyError) return void res.status(e.status).json({ error: e.message });
+    if (e instanceof KeyError) return void res.status(e.status).json({ error: e.message, ...(e.code ? { code: e.code } : {}) });
     next(e);
   }
 };
@@ -136,6 +148,8 @@ export function memberKeyAppRouter(publicUrl: string): Router {
   r.use((err: Error & { status?: number }, _req: Request, res: Response, next: NextFunction) =>
     (err ? void res.status(err.status && err.status < 500 ? err.status : 400).json({ error: "The request body must be JSON" }) : next()));
   r.use(customerSession);
+  // Member keys off (mold_v0-099): nothing here answers but the sentence saying how to connect instead.
+  r.use((_req, res, next) => (memberKeysOn() ? next() : void res.status(403).json({ error: keysOffMessage(publicUrl), code: "member_keys_off" })));
   // A cross-site form cannot send a custom header: a change riding the session cookie must carry this one.
   r.use((req, res, next) => (req.method !== "GET" && req.method !== "HEAD" && res.locals.viaCookie && req.get("x-pack-request") !== "1"
     ? void res.status(403).json({ error: "Missing X-Pack-Request header" }) : next()));

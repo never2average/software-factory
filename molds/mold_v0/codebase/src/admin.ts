@@ -22,7 +22,12 @@ import { parsePlanConfig, PlanConfigError } from "./plan-config.js";
 import { clientCatalog } from "./connect-catalog.js";
 import { getDb } from "./db.js";
 import { researchJobs, sessionEngine } from "./host-tables.js";
+import { onboardingSteps, stageSteps, stageStepsReached, stepKey } from "./onboarding.js";
+import { jobKinds } from "./runs.js";
+import { RUN_USD } from "./run-spend.js";
+import { fill, word } from "./vocabulary.js";
 import * as clerk from "./clerk.js";
+import { mcpUrlSetting } from "./console-url.js";
 import { people as directory } from "./people.js";
 import * as mail from "./email.js";
 import { currentAdminRole } from "./admin-roles.js";
@@ -66,7 +71,7 @@ export function integrations() {
  * never goes in the URL: URLs end up in logs, browser history and screenshots.
  */
 export function connectInfo(key?: string) {
-  const base = publicUrl();
+  const base = mcpUrlSetting() ?? publicUrl(); // the app's own domain once it has one (APP_MCP_URL, mold_v0-118)
   const url = `${base}/mcp`;
   // Every client the app supports, with its exact way in (src/connect-catalog.ts).
   const signInAvailable = Boolean(clerk.clerkEnabled() && clerk.frontendApi());
@@ -96,6 +101,8 @@ interface OrgFacts {
   active_keys: number; key_last_used: Date | null; first_seen: Date | null; last_seen: Date | null; first_call_at: Date | null;
   onboarded_at: Date | null; onboarding_running: number; onboarding_failed: number; first_sim_at: Date | null; sims_running: number;
   first_report_at: Date | null; calls_7d: number; errors_7d: number; month_spend_usd: number;
+  /** The pack runs queued or running (a build without the session engine; 0 with no job kinds). */
+  runs_running?: number;
 }
 /**
  * An account's facts. The onboarding, simulation and session figures read the session engine's tables, a host pack's
@@ -123,7 +130,10 @@ ${researchJobs() ? `
     (SELECT count(*) FROM mcp_events e WHERE e.org_id = o.id AND e.method = 'tools/call' AND e.at > now() - interval '7 days') AS calls_7d,
     (SELECT count(*) FROM mcp_events e WHERE e.org_id = o.id AND NOT e.ok AND e.at > now() - interval '7 days') AS errors_7d,
     ${sessionEngine() ? `(SELECT coalesce(sum(u.cost_usd), 0) FROM gateway_usage u JOIN agent_sessions a ON a.id = u.session_id
-      WHERE a.org_id = o.id AND a.queued_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')` : "0"} AS month_spend_usd
+      WHERE a.org_id = o.id AND a.queued_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')` : `(SELECT coalesce(sum(${RUN_USD}), 0) FROM runs r
+      WHERE r.org_id = o.id AND r.created_at >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`} AS month_spend_usd${sessionEngine() ? "" : jobKinds().length ? `,
+    (SELECT count(*) FROM runs r WHERE r.org_id = o.id AND r.status IN ('queued', 'running')) AS runs_running` : `,
+    0 AS runs_running`}
   FROM organizations o`;
 
 // ---------- people, from Clerk ----------
@@ -179,31 +189,64 @@ async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Prom
 
 // ---------- the funnel ----------
 
-/** In order. An org's stage is the furthest step it has reached; `next` is what has to happen after that. */
-export const STAGES = [
+/** One step of an account's way in. An org's stage is the furthest step it has reached; `next` is what has to happen after that. */
+export interface Stage { id: string; label: string; next: string }
+/**
+ * The shell's own steps, every build's: from the account to its first tool call. What follows is the product's: the
+ * pack's onboarding steps (src/onboarding.ts stageSteps: `onboarding[].done_when` run:, record:, credential:, tool:),
+ * or, in a build with the session engine (a host pack's tables, src/host-tables.ts), that engine's own steps.
+ */
+const SHELL_STAGES = (): Stage[] => [
   { id: "created", label: "Account created", next: "Invite the first person" },
   { id: "invited", label: "Invited", next: "Accept the invitation email" },
   { id: "joined", label: "Joined", next: "Add the connector in Claude, ChatGPT or an IDE and sign in" },
   { id: "connected", label: "Connected", next: `Ask: "Get me started with ${PROFILE.name}"` },
-  { id: "first_call", label: "First tool call", next: "Onboard a product (name, website, docs)" },
-  { id: "onboarded", label: "Product onboarded", next: "Run a simulation" },
-  { id: "simulated", label: "Simulation run", next: "Open the visibility report" },
+  { id: "first_call", label: "First tool call", next: `Keep using ${PROFILE.name} in their own work` },
+];
+/** The session engine's steps (its tables: products, their research, simulations; its report tool), as they always were. */
+const ENGINE_STAGES = (): Stage[] => [
+  { id: "onboarded", label: "Product onboarded", next: fill("Run a {run}") },
+  { id: "simulated", label: fill("{Run} run"), next: "Open the visibility report" },
   { id: "reported", label: "Report read", next: "Act on the report and re-run" },
-] as const;
-export type StageId = (typeof STAGES)[number]["id"];
+];
+const SHELL_STAGE_COUNT = 5;
+const ENGINE_FIRST_NEXT = "Onboard a product (name, website, docs)";
+
+let stageCache: { from: unknown; list: Stage[] } | null = null;
+/** The build's account stages, in order: the shell's, then the session engine's or the packs' onboarding steps. */
+export function accountStages(): Stage[] {
+  const from = onboardingSteps();
+  if (stageCache?.from === from) return stageCache.list;
+  const shell = SHELL_STAGES();
+  let tail: Stage[];
+  if (sessionEngine()) {
+    shell[shell.length - 1]!.next = ENGINE_FIRST_NEXT;
+    tail = ENGINE_STAGES();
+  } else {
+    const steps = stageSteps();
+    tail = steps.map((s, i) => ({ id: stepKey(s), label: s.label, next: steps[i + 1]?.label ?? `Keep using ${PROFILE.name} in their own work` }));
+    if (steps.length) shell[shell.length - 1]!.next = steps[0]!.label;
+  }
+  stageCache = { from, list: [...shell, ...tail] };
+  return stageCache.list;
+}
 
 const DAY = 86_400_000;
 const daysSince = (d: Date | string | null) => (d ? Math.floor((Date.now() - new Date(d).getTime()) / DAY) : 0);
 const minDate = (xs: (string | null | undefined)[]) => xs.filter(Boolean).sort()[0] ?? null;
 
-function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionSummary | null, defaultBudget: number) {
+function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionSummary | null, defaultBudget: number, steps: Record<string, string> = {}) {
+  const STAGES = accountStages();
+  const eng = sessionEngine();
   const members = people?.members ?? [];
   const invites = people?.invitations ?? [];
-  const reached: Record<StageId, Date | string | null> = {
+  const reached: Record<string, Date | string | null> = {
     created: f.created_at,
     invited: minDate(invites.map((i) => i.created_at)),
     joined: minDate(members.map((m) => m.created_at)),
-    connected: f.first_seen, first_call: f.first_call_at, onboarded: f.onboarded_at, simulated: f.first_sim_at, reported: f.first_report_at,
+    connected: f.first_seen, first_call: f.first_call_at,
+    ...(eng ? { onboarded: f.onboarded_at, simulated: f.first_sim_at, reported: f.first_report_at }
+      : Object.fromEntries(STAGES.slice(SHELL_STAGE_COUNT).map((s) => [s.id, steps[s.id] ?? null]))),
   };
   let i = STAGES.length - 1;
   while (i > 0 && !reached[STAGES[i].id]) i--;
@@ -221,7 +264,7 @@ function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionS
   if (!activeMembers && !pendingInvites.length && !Number(f.active_keys)) attention.push("Nobody can get in: no active member, pending invitation or API key");
   const expired = invites.filter((x) => x.state === "expired" && !members.some((m) => (m.email ?? "") === x.email));
   if (expired.length) attention.push(`Invitation expired for ${expired.map((x) => x.email).join(", ")}: resend it`);
-  if (Number(f.onboarding_failed) && !f.onboarded_at) attention.push("Product onboarding failed");
+  if (eng && Number(f.onboarding_failed) && !f.onboarded_at) attention.push(ENGINE_ATTENTION.failed);
   if (Number(f.errors_7d) >= 3) attention.push(`${f.errors_7d} tool errors in the last 7 days`);
   if (sub && ["past_due", "unpaid", "incomplete"].includes(sub.status)) attention.push(`Stripe subscription is ${sub.status.replace("_", " ")}`);
   if (sub?.cancel_at_period_end) attention.push(`Subscription cancels on ${sub.renews_at?.slice(0, 10)}`);
@@ -232,9 +275,17 @@ function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionS
     case "invited": if (pendingInvites.length && since(reached.invited) >= 2) attention.push(`Invited ${since(reached.invited)}d ago, invitation not accepted`); break;
     case "joined": if (since(reached.joined) >= 1) attention.push(`Joined ${since(reached.joined)}d ago, never connected a client`); break;
     case "connected": if (since(f.first_seen) >= 1) attention.push("Connected but never called a tool (tools may be switched off in the client)"); break;
-    case "first_call": if (!Number(f.onboarding_running) && since(f.first_call_at) >= 2) attention.push("Using tools but has not onboarded a product"); break;
-    case "onboarded": if (since(f.onboarded_at) >= 2) attention.push("Product onboarded, no simulation yet"); break;
-    case "simulated": if (!Number(f.sims_running) && since(f.first_sim_at) >= 2) attention.push("Simulation ran, report never opened"); break;
+    default:
+      if (eng) {
+        switch (stage.id) {
+          case "first_call": if (!Number(f.onboarding_running) && since(f.first_call_at) >= 2) attention.push(ENGINE_ATTENTION.first_call); break;
+          case "onboarded": if (since(f.onboarded_at) >= 2) attention.push(ENGINE_ATTENTION.onboarded); break;
+          case "simulated": if (!Number(f.sims_running) && since(f.first_sim_at) >= 2) attention.push(ENGINE_ATTENTION.simulated); break;
+        }
+      } else if (i < STAGES.length - 1 && !Number(f.runs_running) && since(reached[stage.id]) >= 2) {
+        // The pack's next onboarding step, not done two days after the last one (nothing of theirs running meanwhile).
+        attention.push(`${since(reached[stage.id])}d at "${stage.label}", next step not done: ${STAGES[i + 1]!.label}`);
+      }
   }
   return {
     id: f.id, slug: f.slug, name: f.name, created_at: f.created_at, clerk_org_id: f.clerk_org_id, stripe_customer_id: f.stripe_customer_id,
@@ -242,26 +293,36 @@ function shapeOrg(f: OrgFacts, people: People | null, sub: billing.SubscriptionS
     members: activeMembers, pending_invites: pendingInvites.length, contact: members[0]?.email ?? invites[0]?.email ?? null,
     active_keys: Number(f.active_keys), key_last_used: f.key_last_used, last_seen: f.last_seen,
     calls_7d: Number(f.calls_7d), errors_7d: Number(f.errors_7d), onboarding_running: Number(f.onboarding_running), sims_running: Number(f.sims_running),
+    ...(eng ? {} : { runs_running: Number(f.runs_running) }),
     subscription: sub, month_spend_usd: Number(f.month_spend_usd), budget_usd: budget, budget_source: budgetSource,
     prepaid_allowed: Boolean(f.prepaid_allowed), allowance_usd: override, attention,
   };
 }
+/** The session engine's attention messages (a host pack's onboarding and simulations), as they always were. */
+const ENGINE_ATTENTION = {
+  get failed() { return "Product onboarding failed"; },
+  get first_call() { return "Using tools but has not onboarded a product"; },
+  get onboarded() { return fill("Product onboarded, no {run} yet"); },
+  get simulated() { return fill("{Run} ran, report never opened"); },
+};
 export type AdminOrg = ReturnType<typeof shapeOrg>;
 
 /** Cumulative: how many of `orgs` reached each step (their furthest step is at or past it), so the drop-off between steps is visible. */
 export const funnelOf = (orgs: readonly { stage_index: number }[]) =>
-  STAGES.map((s, i) => ({ id: s.id, label: s.label, reached: orgs.filter((o) => o.stage_index >= i).length }));
+  accountStages().map((s, i) => ({ id: s.id, label: s.label, reached: orgs.filter((o) => o.stage_index >= i).length }));
 
 async function shapeAll(rows: OrgFacts[], fresh = false) {
   const subs = await subscriptions();
   const defaultBudget = integrations().default_budget_usd;
   const people = await pool(rows, 5, (r) => peopleOf(r.clerk_org_id, fresh));
-  return { orgs: rows.map((r, i) => shapeOrg(r, people[i], r.stripe_customer_id ? subs.map.get(r.stripe_customer_id) ?? null : null, defaultBudget)), stripe_error: subs.error };
+  // The packs' onboarding steps each account has done (none in a build with the session engine, whose steps are its own).
+  const steps = sessionEngine() ? new Map<number, Record<string, string>>() : await stageStepsReached(rows.length === 1 ? [rows[0]!.id] : undefined);
+  return { orgs: rows.map((r, i) => shapeOrg(r, people[i], r.stripe_customer_id ? subs.map.get(r.stripe_customer_id) ?? null : null, defaultBudget, steps.get(Number(r.id)))), stripe_error: subs.error };
 }
 
 export async function listOrgs(fresh = true) {
   const rows = await (await getDb()).query<OrgFacts>(`${ORG_FACTS()} ORDER BY o.created_at DESC`);
-  return { stages: STAGES, ...(await shapeAll(rows, fresh)) };
+  return { stages: accountStages(), ...(await shapeAll(rows, fresh)) };
 }
 
 async function factsBySlug(slug: string) {
@@ -315,7 +376,8 @@ export async function overview(q: { from?: unknown; to?: unknown } = {}) {
     daily: {
       days: perDay.map((r) => r.day),
       pending: perDay.map((r) => Number(r.pending)), active_7d: perDay.map((r) => Number(r.active_7d)),
-      accounts: upTo(orgs.map((o) => o.created_at)), reported: upTo(inCohort.map((o) => o.reached.reported)), // as the funnel counts it
+      // As the funnel counts its last step: the session engine's report, else the last of the shell's and the packs' steps.
+      accounts: upTo(orgs.map((o) => o.created_at)), reported: upTo(inCohort.map((o) => o.reached[sessionEngine() ? "reported" : accountStages().at(-1)!.id])),
       paying: ends.map((e) => new Set(spans.filter((x) => x.from < e && (x.to == null || x.to >= e)).map((x) => x.customer)).size),
     },
   };
@@ -356,7 +418,11 @@ export async function orgDetail(slug: string) {
        SELECT 'sessions', to_char(queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), count(*) FROM agent_sessions WHERE org_id = $1 AND queued_at >= $2 GROUP BY 2
        UNION ALL
        SELECT 'spend', to_char(a.queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), sum(u.cost_usd) FROM gateway_usage u JOIN agent_sessions a ON a.id = u.session_id
-        WHERE a.org_id = $1 AND a.queued_at >= $3 GROUP BY 2` : ""}`, eng ? [org.id, sp.last30, sp.month] : [org.id, sp.last30]),
+        WHERE a.org_id = $1 AND a.queued_at >= $3 GROUP BY 2` : `
+       UNION ALL
+       SELECT 'runs', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), count(*) FROM runs WHERE org_id = $1 AND created_at >= $2 GROUP BY 2
+       UNION ALL
+       SELECT 'spend', to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), sum(${RUN_USD}) FROM runs r WHERE r.org_id = $1 AND r.created_at >= $3 GROUP BY 2`}`, [org.id, sp.last30, sp.month]),
   ]);
   const testMode = integrations().stripe_test_mode;
   return {
@@ -373,7 +439,37 @@ export async function orgDetail(slug: string) {
     daily: {
       days: sp.days30, calls: daySeries(sp.days30, perDay, "calls"), errors: daySeries(sp.days30, perDay, "errors"), sessions: daySeries(sp.days30, perDay, "sessions"),
       month_days: sp.monthDays, spend: daySeries(sp.monthDays, perDay, "spend", true),
+      ...(eng ? {} : { runs: daySeries(sp.days30, perDay, "runs") }),
     },
+    // A build without the session engine (mold_v0-104): the console shows the packs' runs instead of its sections.
+    ...(eng ? {} : { engine: false, runs: await accountRuns(org.id) }),
+  };
+}
+
+/**
+ * An account's pack runs (mold_v0-104), for the console's account pages in a build without the session engine: per
+ * job kind the pack declares (its label, in the pack's words), how many ran and how they ended, and the latest runs.
+ * Null when the build declares no job kind.
+ */
+async function accountRuns(orgId: number) {
+  const kinds = jobKinds();
+  if (!kinds.length) return null;
+  const db = await getDb();
+  const labelOf = (pack: string, kind: string) => kinds.find((k) => k.pack === pack && k.name === kind)?.label ?? kind;
+  const [byKind, recent] = await Promise.all([
+    db.query<{ pack: string; kind: string; total: unknown; running: unknown; succeeded: unknown; failed: unknown; last_at: Date | null; usd: unknown }>(
+      `SELECT r.pack, r.kind, count(*) AS total, count(*) FILTER (WHERE r.status IN ('queued', 'running')) AS running,
+              count(*) FILTER (WHERE r.status = 'succeeded') AS succeeded, count(*) FILTER (WHERE r.status = 'failed') AS failed,
+              max(r.created_at) AS last_at, coalesce(sum(${RUN_USD}), 0) AS usd
+         FROM runs r WHERE r.org_id = $1 GROUP BY r.pack, r.kind ORDER BY max(r.created_at) DESC`, [orgId]),
+    db.query<{ id: string; pack: string; kind: string; status: string; error: string | null; created_at: Date; ended_at: Date | null }>(
+      "SELECT id, pack, kind, status, error, created_at, ended_at FROM runs WHERE org_id = $1 ORDER BY created_at DESC LIMIT 10", [orgId]),
+  ]);
+  return {
+    word: { one: word("Run"), many: word("Runs") },
+    by_kind: byKind.map((k) => ({ pack: k.pack, kind: k.kind, label: labelOf(k.pack, k.kind), total: Number(k.total), running: Number(k.running),
+      succeeded: Number(k.succeeded), failed: Number(k.failed), last_at: k.last_at, usd: Number(k.usd) })),
+    recent: recent.map((r) => ({ id: r.id, pack: r.pack, kind: r.kind, label: labelOf(r.pack, r.kind), status: r.status, error: r.error, created_at: r.created_at, ended_at: r.ended_at })),
   };
 }
 
@@ -802,4 +898,4 @@ export async function team(slug: string, fresh = false) {
     invitations: (people?.invitations ?? []).filter((x) => x.state === "pending" || x.state === "expired"),
   };
 }
-export { factsBySlug as accountFacts, STAGES as ACCOUNT_STAGES };
+export { factsBySlug as accountFacts };

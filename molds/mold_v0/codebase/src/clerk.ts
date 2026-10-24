@@ -11,6 +11,9 @@
  *   CLERK_JWT_KEY               optional PEM public key: verify session tokens without calling Clerk (else JWKS)
  *   CLERK_AUTHORIZED_PARTIES    origins allowed in a session token's azp (default: PUBLIC_URL's origin)
  *   CLERK_MCP_AUDIENCE          the /mcp resource URI(s) OAuth tokens must be issued for, comma-separated (default PUBLIC_URL/mcp)
+ *   APP_MCP_URL                 where AI clients connect (src/console-url.ts mcpUrl, mold_v0-118): its /mcp comes first in
+ *                               mcpAudiences (the resource the metadata names), the list above (or PUBLIC_URL/mcp) after
+ *                               it, so tokens issued for the old address are still accepted
  *   APP_OAUTH_AUDIENCE    auto (default), enforce or report: see audienceOk
  *   CLERK_API_URL               override for the smoke test only (it points it at its local mock, scripts/lib/mock-providers.ts)
  *   CLERK_FRONTEND_API_URL      the Frontend API (the OAuth server and the issuer of its JWTs); set it in production when
@@ -23,7 +26,7 @@
 import { createLocalJWKSet, importSPKI, jwtVerify, decodeProtectedHeader, type JWTPayload } from "jose";
 import { authProvider } from "./auth-provider.js";
 import { ENV } from "./env-names.js";
-import { consoleUrl } from "./console-url.js";
+import { consoleUrl, mcpUrlSetting } from "./console-url.js";
 
 /** Clerk is on when it is the server's sign-in (src/auth-provider.ts: AUTH_PROVIDER=clerk, or unset with this key) and
  *  its key is set. With AUTH_PROVIDER=builtin it is off even when a key is left in the environment. */
@@ -108,6 +111,13 @@ export const invitations = {
   revoke: (orgId: string, invitationId: string) =>
     call<ClerkInvitation>("POST", `/organizations/${encodeURIComponent(orgId)}/invitations/${encodeURIComponent(invitationId)}/revoke`, {}),
 };
+/** A person's pending invitations, across organizations (Clerk matches them by the person's email addresses). Clerk
+ *  only (src/app.ts acceptPendingInvitation); the built-in sign-in accepts its own (src/builtin-auth.ts). */
+export const pendingInvitationsForUser = async (userId: string) =>
+  (await all<ClerkUserInvitation>(`/users/${encodeURIComponent(userId)}/organization_invitations`, { status: "pending" }))
+    .map((x) => ({ ...x, organization_id: x.organization_id ?? x.public_organization_data?.id ?? "" })).filter((x) => x.organization_id && x.status === "pending");
+/** An invitation as GET /users/{id}/organization_invitations returns it: the organization by id, or in its public data. */
+export interface ClerkUserInvitation extends ClerkInvitation { organization_id?: string; public_organization_data?: { id: string; name?: string } | null }
 
 /**
  * A person's memberships are read on every portal request and MCP connection, so they are cached for half a minute.
@@ -122,9 +132,9 @@ const changed = <T>(userId: string, r: T) => { userMemberships.delete(userId); f
 export const memberships = {
   list: (orgId: string) => all<ClerkMembership>(`/organizations/${encodeURIComponent(orgId)}/memberships`),
   /** A person's memberships across organizations (each with its organization), cached for 30 seconds. */
-  forUser: async (userId: string) => {
+  forUser: async (userId: string, fresh = false) => {
     const hit = userMemberships.get(userId);
-    if (hit && Date.now() - hit.at < 30_000) return hit.list;
+    if (!fresh && hit && Date.now() - hit.at < 30_000) return hit.list;
     const list = await all<ClerkMembership>(`/users/${encodeURIComponent(userId)}/organization_memberships`);
     userMemberships.set(userId, { at: Date.now(), list });
     return list;
@@ -143,6 +153,13 @@ export const memberships = {
 };
 
 const userCache = new Map<string, { at: number; user: ClerkUser }>();
+/** Adds the person to the organization with that role (and membership public_metadata, e.g. an invitation's). Clerk only. */
+export const createMembership = async (orgId: string, userId: string, role: string, metadata?: Record<string, unknown> | null) => {
+  const m = await call<ClerkMembership>("POST", `/organizations/${encodeURIComponent(orgId)}/memberships`, { user_id: userId, role });
+  return changed(userId, metadata && Object.keys(metadata).length ? await call<ClerkMembership>("PATCH",
+    `/organizations/${encodeURIComponent(orgId)}/memberships/${encodeURIComponent(userId)}/metadata`, { public_metadata: metadata }) : m);
+};
+
 export const users = {
   get: async (id: string, fresh = false) => {
     const hit = userCache.get(id);
@@ -195,6 +212,9 @@ const authorizedParties = () => {
   const origins = new Set<string>();
   if (process.env.PUBLIC_URL) origins.add(new URL(publicUrl()).origin);
   if (ENV.APP_CONSOLE_URL) { try { origins.add(new URL(consoleUrl()).origin); } catch { /* unusable address: ignored */ } }
+  // The app's own domain (APP_MCP_URL, mold_v0-118) is the console's too on the two-project shape.
+  const mcp = mcpUrlSetting();
+  if (mcp) origins.add(new URL(mcp).origin);
   return [...origins];
 };
 export const authorizedPartiesForTest = authorizedParties;
@@ -339,10 +359,16 @@ export function frontendApi(): string | null {
     return null;
   }
 }
-/** Every resource URI a /mcp token may be issued for: CLERK_MCP_AUDIENCE may list more than one (a second domain). */
+/**
+ * Every resource URI a /mcp token may be issued for: APP_MCP_URL's /mcp first when it is set (the app's own domain,
+ * mold_v0-118), then CLERK_MCP_AUDIENCE (it may list more than one: a second domain), else PUBLIC_URL/mcp. A connection
+ * made before the domain (its token names PUBLIC_URL/mcp) keeps working.
+ */
 export const mcpAudiences = () => {
   const list = (process.env.CLERK_MCP_AUDIENCE ?? "").split(",").map((x) => x.trim().replace(/\/+$/, "")).filter(Boolean);
-  return list.length ? list : [`${publicUrl()}/mcp`];
+  const mcp = mcpUrlSetting();
+  const all = [...(mcp ? [`${mcp}/mcp`] : []), ...(list.length ? list : [`${publicUrl()}/mcp`])];
+  return all.filter((a, i) => all.findIndex((b) => canonicalResource(b) === canonicalResource(a)) === i);
 };
 /** The customer /mcp's resource URI (what its protected-resource metadata names): the first of mcpAudiences. */
 export const mcpAudience = () => mcpAudiences()[0]!;

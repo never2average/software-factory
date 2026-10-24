@@ -16,7 +16,9 @@
 // 3. A rendered check in a headless browser (when the machine has one: CHROME_BIN, or a Playwright cache): the console's
 //    chart and board components, bundled, drawing the vulnerability overview and the board: bars, lines and stacks with
 //    colour tokens only (no hex), legends for two series or more, an ordinal ramp for severity, an accessible summary
-//    per chart, a table view; the board's columns are the lifecycle's states in order.
+//    per chart, a table view; the board's columns are the lifecycle's states in order. The tabs' empty states (mold_v0-107:
+//    a section named by its title, its text, its link) and a table that scrolls sideways, a labelled region the keyboard
+//    can reach (mold_v0-114), beside one that fits, which is not a tab stop.
 // 4. The build copy's console typechecks with the tabs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -89,7 +91,9 @@ async function renderInBrowser(chrome: string, web: string, input: unknown) {
 import { packCharts, packTabs, recordAreas } from '@/config/pack-nav.generated';
 import { ChartCell } from '@/features/tabs/charts';
 import { BoardColumns } from '@/features/tabs/board';
-const { answers, records } = (window as unknown as { __INPUT__: { answers: { name: string }[]; records: never } }).__INPUT__;
+import { EmptyState } from '@/features/tabs/empty';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+const { answers, records } = (window as unknown as { __INPUT__: { answers: { name: string }[]; records: any } }).__INPUT__;
 const results = new Map(answers.map((a) => [a.name, a]));
 const tab = packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === 'overview')!;
 const chart = (n: string) => packCharts.find((c) => c.pack === 'fixture_vulns' && c.name === n)!;
@@ -99,6 +103,17 @@ createRoot(document.getElementById('root')!).render(
     {tab.charts.map((n) => <div key={n} data-chart={n}><ChartCell chart={chart(n)} results={results as never} width={540} /></div>)}
     <div data-table='severity'><ChartCell chart={{ ...chart('severity'), type: 'table' }} results={results as never} width={540} /></div>
     <div data-board='1' style={{ gridColumn: '1 / -1' }}><BoardColumns area={area} by='state' detail data={records} role='member' onMove={() => {}} /></div>
+    <div data-board='narrow' style={{ width: 600 }}><BoardColumns area={area} by='state' detail={false} data={records} role='viewer' /></div>
+    <div data-empty='1'><EmptyState empty={packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === 'applications')!.empty} id='empty-audit_apps' /></div>
+    <div data-empty='2'><EmptyState empty={packTabs.find((t) => t.pack === 'fixture_vulns' && t.id === 'vulnerabilities')!.empty} id='empty-audit_findings' /></div>
+    {[['wide', 1100], ['narrow', 240]].map(([k, w]) => (
+      <div key={k} data-scroll={k} style={{ width: w as number }}>
+        <Table label={area.label}>
+          <TableHeader><TableRow><TableHead>Record</TableHead><TableHead>Severity</TableHead><TableHead>State</TableHead></TableRow></TableHeader>
+          <TableBody>{records.records.map((r: { key: string; title: string; data: { severity: string; state: string } }) => (
+            <TableRow key={r.key}><TableCell>{r.title}</TableCell><TableCell>{r.data.severity}</TableCell><TableCell>{r.data.state}</TableCell></TableRow>))}</TableBody>
+        </Table>
+      </div>))}
   </div>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
 `);
@@ -111,7 +126,10 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   const theme = readFileSync(path.join(web, "src", "styles", "themes", "supabase.css"), "utf8").replace(/\[data-theme='supabase'\] \{\s*@theme[\s\S]*$/, "");
   const viz = readFileSync(path.join(web, "src", "styles", "theme.css"), "utf8");
   const css = `${theme}\n${viz.slice(viz.indexOf("/*\n * Chart colours"))}\n${process.env.CONSOLE_TABS_CSS ? readFileSync(process.env.CONSOLE_TABS_CSS, "utf8") : ""}
-    body { background: var(--background); color: var(--foreground); font-family: system-ui, sans-serif; margin: 16px; }`;
+    body { background: var(--background); color: var(--foreground); font-family: system-ui, sans-serif; margin: 16px; }
+    /* The utility classes the table's and the board's sideways scroll rely on, for a run without the compiled CSS. */
+    .overflow-x-auto { overflow-x: auto; } .whitespace-nowrap { white-space: nowrap; } .w-max { width: max-content; }
+    [data-slot="board-scroller"] > [role="list"] { display: flex; gap: 0.75rem; } .w-64 { width: 16rem; } .shrink-0 { flex-shrink: 0; }`;
   const page = (dark: boolean) => {
     const f = path.join(dir, dark ? "dark.html" : "light.html");
     writeFileSync(f, `<!doctype html><html data-theme="supabase" class="${dark ? "dark" : ""}"><head><meta charset="utf-8"><style>${css}</style></head>
@@ -123,7 +141,7 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.equal(r.status, 0, `the browser ran: ${r.stderr.slice(0, 1000)}`);
   const dom = r.stdout;
   assert.match(dom, /data-ready="1"/, `the page rendered (${dom.slice(0, 300)})`);
-  const between = (open: RegExp) => { const m = open.exec(dom); if (!m) return ""; const rest = dom.slice(m.index); const next = rest.slice(1).search(/<div data-(chart|table|board)=/); return next < 0 ? rest : rest.slice(0, next + 1); };
+  const between = (open: RegExp) => { const m = open.exec(dom); if (!m) return ""; const rest = dom.slice(m.index); const next = rest.slice(1).search(/<div data-(chart|table|board|empty|scroll)=/); return next < 0 ? rest : rest.slice(0, next + 1); };
   const charts: Record<string, string> = {};
   for (const m of dom.matchAll(/<div data-chart="([a-z_]+)">/g)) charts[m[1]!] = between(new RegExp(`<div data-chart="${m[1]}">`));
   if (process.env.CONSOLE_TABS_SNAPSHOT_DIR) {
@@ -132,7 +150,8 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
       spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, dark ? "overview-dark.png" : "overview-light.png")}`, `file://${page(dark)}`], { timeout: 120_000 });
     writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, "dom.html"), dom);
   }
-  return { charts, table: between(/<div data-table="severity">/), board: between(/<div data-board="1"/) };
+  return { charts, table: between(/<div data-table="severity">/), board: between(/<div data-board="1"/), empty: [between(/<div data-empty="1"/), between(/<div data-empty="2"/)],
+    wide: between(/<div data-scroll="wide"/), narrow: between(/<div data-scroll="narrow"/), boardNarrow: between(/<div data-board="narrow"/) };
 }
 
 try {
@@ -174,6 +193,14 @@ try {
       "fixture_vulns/overview", "fixture_vulns/vulnerabilities", "fixture_vulns/applications", "fixture_vulns/controls", "fixture_vulns/audits", "fixture_vulns/reports"], "each tab with a page is a page of the route");
     assert.deepEqual([nav.vulnerabilities.views, nav.vulnerabilities.board_by, nav.vulnerabilities.timeline_by, nav.vulnerabilities.charts], [["table", "board", "timeline", "detail"], "state", "due", ["severity", "due"]], "an area tab: its views, a board by the lifecycle's field");
     assert.equal(nav.billing, null, "a shell page's tab has no page of its own");
+    // Empty states (mold_v0-107): the pack's own where it says one, the shell's default in the build's words for the rest.
+    const empty = Object.fromEntries(nav.packTabs.filter((t: any) => t.pack === "fixture_vulns").map((t: any) => [t.id, t.empty ?? null]));
+    assert.deepEqual(empty.applications, { title: "No applications yet.", text: "Add the applications you want audited; each one is a folder of repositories.",
+      cta: { label: "How to describe an application", href: "https://example.org/guides/applications" } }, "a tab's own empty state");
+    assert.deepEqual(empty.audits, { title: "No audits yet.", text: "Ask your AI client to start “Audit an application”. Not connected yet? The Setup page shows how.", cta: { label: "Open setup", href: "/app" } }, "a runs tab pointing at its job kind");
+    assert.equal(empty.vulnerabilities.title, "No vulnerabilities yet.", "the default names the area");
+    assert.match(empty.controls.text, /^Every workspace shares these\./, "a shared area's default, in the build's words");
+    assert.deepEqual([empty.overview, empty.billing], [null, null], "an overview and a shell page have none");
     const zeroAdmin = JSON.parse(readFileSync(path.join(SNAP, "zero-packs.json"), "utf8")).adminNav;
     assert.deepEqual(nav.adminNav.slice(0, zeroAdmin.length), zeroAdmin, "/admin keeps the shell's groups (tabs are the /app sidebar's)");
     console.log("✓ packs with tabs: the /app sidebar is exactly the 16 declared tabs in 4 groups, each limited to the roles that may read it; 10 tab pages; /admin unchanged");
@@ -236,6 +263,21 @@ try {
       assert.match(render.board, /href="\/app\/records\/audit_findings\/f7"/, "a card opens the record (the detail view)");
       const menu = /<select aria-label="Move Outdated TLS"[^>]*>(.*?)<\/select>/s.exec(render.board)?.[1] ?? "";
       assert.deepEqual([...menu.matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]), ["", "triaged", "fixed"], "an open card's moves for a member: Triage, Mark fixed (accepting the risk is the owner's)");
+      // Empty states and the table's scroll region (mold_v0-107, mold_v0-114).
+      const [own, dflt] = render.empty;
+      assert.match(own!, /<section aria-labelledby="empty-audit_apps-title" data-empty-state=""/, "an empty state is a section named by its title");
+      assert.match(own!, /<h3 id="empty-audit_apps-title"[^>]*>No applications yet\.<\/h3>/, "its title");
+      assert.match(own!, /<p[^>]*>Add the applications you want audited; each one is a folder of repositories\.<\/p>/, "its text, as text");
+      assert.match(own!, /<a [^>]*href="https:\/\/example\.org\/guides\/applications"[^>]*rel="noopener noreferrer"[^>]*>How to describe an application<\/a>|<a [^>]*rel="noopener noreferrer"[^>]*href="https:\/\/example\.org\/guides\/applications"[^>]*>How to describe an application<\/a>/, "its link, opened without handing the page over");
+      assert.match(dflt!, /<a [^>]*href="\/app"[^>]*>Open setup<\/a>/, "the default links to the Setup page");
+      assert.doesNotMatch(dflt!, /noopener/, "a path of this site is a plain link");
+      assert.doesNotMatch(render.wide, /tabindex=/, "a table that fits is not a tab stop");
+      const container = /<div data-slot="table-container"[^>]*>/.exec(render.narrow)?.[0] ?? "";
+      for (const attr of ['tabindex="0"', 'role="region"', 'aria-label="Vulnerabilities"']) assert.ok(container.includes(attr), `a table that scrolls sideways is a labelled region the keyboard can reach (${attr}): ${container}`);
+      const boardScroller = /<div[^>]*data-slot="board-scroller"[^>]*>/.exec(render.boardNarrow)?.[0] ?? "";
+      for (const attr of ['tabindex="0"', 'role="region"', 'aria-label="Vulnerabilities by State"']) assert.ok(boardScroller.includes(attr), `a board that scrolls sideways, with no control on its cards, is a named tab stop (${attr}): ${boardScroller}`);
+      assert.doesNotMatch(render.boardNarrow, /<(a|select|button)\b/, "(that board has no control of its own: no detail view, a viewer)");
+      console.log("✓ rendered: empty states (a named section, its text, a link: external with rel=noopener, the Setup page by default); a table or a board that scrolls sideways is a focusable labelled region, a table that fits is not");
       console.log("✓ rendered in a headless browser: the overview's 8 charts (tiles, ordinal severity bars, found vs fixed lines with a legend, stacked severity per week with 2px gaps), tokens only, each with a summary and a table view; the board by state");
     }
   }

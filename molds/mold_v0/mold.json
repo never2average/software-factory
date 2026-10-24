@@ -30,6 +30,11 @@
     "mode": "fail_closed",
     "pass": "RLS CHECK PASS (postgres)"
   },
+  "catalogs": {
+    "$comment": "The upstream catalogs' index after a deploy (mold_v0-128; its scripts/catalogs-index.ts): every upstream catalog of the build's packs not indexed at its pin is indexed once, right after the deploy's health checks (compose_remote: in a one-off container of the new release, with the server's env file; vercel: on this machine against the api project's production database, from the app's build copy). Applies only while the codebase's package.json has the script. Never a failed deploy: what it said ('said', its summary line) is printed and recorded in infrastructure.json catalog_index; the server indexes a catalog it could not by itself and shows the error to staff.",
+    "script": "catalogs:index",
+    "said": "CATALOGS INDEX:"
+  },
   "compose": {
     "file": "deploy/docker-compose.prod.yml",
     "mint": "deploy/bootstrap.sh",
@@ -76,10 +81,11 @@
         "database": true,
         "health": "/healthz",
         "env": {
-          "$comment": "Settings the factory writes on the api project at every deploy (mold_v0-084), never secrets: {console_url} is the console project's production address, read back from Vercel after its deploy (the API is deployed once more when it changed), so sign-in codes, invitations and every email link to the console; APP_PROXY_HOPS is the one proxy in front of the function (Vercel's edge), so per-IP limits read the address the edge saw; {platform_admins} is the app's platform administrators (application.json platform_admins, comma-separated addresses or *@domain entries; src/clerk.ts), the only people besides a company account's members who may sign in and reach /admin. While state records none, the name is not written and whatever the project holds under either spelling (env_names) is kept (provision.py's check says so; with neither, the check and the deploy stop and ask). A project that holds the old spelling gets the same value under both.",
+          "$comment": "Settings the factory writes on the api project at every deploy (mold_v0-084), never secrets: {console_url} is the console project's production address, read back from Vercel after its deploy (the API is deployed once more when it changed), so sign-in codes, invitations and every email link to the console; APP_PROXY_HOPS is the one proxy in front of the function (Vercel's edge), so per-IP limits read the address the edge saw; {platform_admins} is the app's platform administrators (application.json platform_admins, comma-separated addresses or *@domain entries; src/clerk.ts), the only people besides a company account's members who may sign in and reach /admin. While state records none, the name is not written and whatever the project holds under either spelling (env_names) is kept (provision.py's check says so; with neither, the check and the deploy stop and ask). {own_domain} is the app's own domain (infrastructure.vercel.custom_domain) as https://<domain>, only once it is the console's front door (domain.py switch): APP_MCP_URL, where AI clients connect (the console forwards /mcp, /.well-known, /oauth and /install to the API), so the MCP address, the resource its sign-in is for and the install pages are on the domain, while tokens issued for the API's own address are still accepted (mold_v0-118); an app without a domain gets nothing. A project that holds the old spelling gets the same value under both.",
           "APP_CONSOLE_URL": "{console_url}",
           "APP_PROXY_HOPS": "1",
-          "APP_PLATFORM_ADMINS": "{platform_admins}"
+          "APP_PLATFORM_ADMINS": "{platform_admins}",
+          "APP_MCP_URL": "{own_domain}"
         }
       },
       "web": {
@@ -95,6 +101,20 @@
           "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "optional",
           "CLERK_SECRET_KEY": "optional"
         }
+      }
+    }
+  },
+  "mcp_sign_in": {
+    "$comment": "How AI clients sign in on /mcp (mold_v0-116; .claude/scripts/lib/clerk_mcp.py). builtin: the file that makes the shell its own OAuth server under its built-in sign-in. clerk: the API is on Clerk when `secret` is set (and `provider_env` does not say builtin; src/auth-provider.ts); it finds Clerk's Frontend API, where clients sign in, from `frontend_api_env` (a Clerk proxy's address: the operator's own, never written by the factory) or a publishable key (src/clerk.ts frontendApi). On Vercel the deploy copies the console's publishable key (`publishable.web`, public by design) onto the api project as `publishable.api` at every deploy while the API is on Clerk (a server deploy already passes it to the API through the compose file). provision.py's check reads Clerk's /.well-known/oauth-authorization-server: no registration_endpoint and no client_id_metadata_document_supported means no AI client can register itself, an operator step in Clerk's dashboard; it stops the check (exit 3) only when member keys are off (profile member_keys: false), since then nothing else lets a client connect. member_keys: false is refused at validation when neither file in branding/rules.json profile.member_keys_off.mcp_sign_in_any is in the codebase.",
+    "builtin": "src/mcp-oauth.ts",
+    "clerk": {
+      "file": "src/clerk.ts",
+      "secret": "CLERK_SECRET_KEY",
+      "provider_env": "AUTH_PROVIDER",
+      "frontend_api_env": "CLERK_FRONTEND_API_URL",
+      "publishable": {
+        "api": "CLERK_PUBLISHABLE_KEY",
+        "web": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
       }
     }
   },

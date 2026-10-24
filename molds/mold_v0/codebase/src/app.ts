@@ -379,20 +379,47 @@ async function billingUsage(s: Session) {
 // ---------- routes ----------
 
 /**
- * A signed-in person with no account open (code no_account, mold_v0-098): of their memberships, the ones that are
- * accounts and not suspended, so the console's page can offer to open one (a directory organization that is not an
- * account, which someone made for themselves under Clerk, is left out). Read by directory id only: no directory call.
+ * Under Clerk, a signed-in person with no account membership may still hold a pending invitation to one: Clerk's
+ * invitation link carries a ticket that only its sign-in and sign-up pages consume, so someone already signed in (say,
+ * with an organization they made themselves active) never accepts it. Here the server accepts it for them: an
+ * invitation to an organization that is an account, addressed to one of the person's verified email addresses, becomes
+ * a membership with the invitation's role and metadata (the account role), and the invitation is revoked (used).
+ * Memberships are read fresh first (an invitation accepted in the browser a moment ago). One check per person at a
+ * time, and a miss is remembered for ten seconds.
  */
-async function accountsAmong(ms: clerk.ClerkMembership[]): Promise<{ id: string; name: string }[]> {
-  const open = ms.filter((x) => x.organization && !clerk.isSuspended(x));
-  if (!open.length) return [];
-  const rows = await (await getDb()).query<{ clerk_org_id: string; name: string }>(
-    "/* tenant: platform: the signed-in person's own memberships, by directory id */ SELECT clerk_org_id, name FROM organizations WHERE clerk_org_id = ANY($1::text[])",
-    [open.map((x) => x.organization!.id)]).catch(() => []);
-  return open.flatMap((x) => {
-    const r = rows.find((y) => y.clerk_org_id === x.organization!.id);
-    return r ? [{ id: r.clerk_org_id, name: r.name }] : [];
-  });
+const inviteChecks = new Map<string, { at: number; p: Promise<{ m: clerk.ClerkMembership; org: Org } | null> }>();
+function acceptPendingInvitation(userId: string) {
+  const hit = inviteChecks.get(userId);
+  if (hit && Date.now() - hit.at < 10_000) return hit.p;
+  const p = (async () => {
+    for (const x of (await clerk.memberships.forUser(userId, true)).filter((x) => x.organization).sort((a, b) => a.created_at - b.created_at)) {
+      if (clerk.isSuspended(x)) continue;
+      const org = await orgForClerk(x.organization!.id);
+      if (org) return { m: x, org };
+    }
+    const user = await clerk.users.get(userId, true);
+    const verified = new Set(user.email_addresses.filter((e) => e.verification?.status === "verified").map((e) => e.email_address.toLowerCase()));
+    for (const inv of await clerk.pendingInvitationsForUser(userId)) {
+      const email = inv.email_address.toLowerCase();
+      if (!verified.has(email)) { console.log(`clerk invitation not accepted: user=${userId} org=${inv.organization_id} invitation=${inv.id}: ${email} is not a verified address of theirs`); continue; }
+      const org = await orgForClerk(inv.organization_id);
+      if (!org) continue;
+      let m = await clerk.createMembership(inv.organization_id, userId, inv.role, inv.public_metadata).catch(async (err) => {
+        // Accepted meanwhile (in the browser, or by another request): use the membership that is there.
+        const there = (await clerk.memberships.forUser(userId, true)).find((x) => x.organization?.id === inv.organization_id);
+        if (!there) throw err;
+        return there;
+      });
+      await clerk.invitations.revoke(inv.organization_id, inv.id).catch((err) => console.error(`clerk invitation revoke ${inv.id}:`, (err as Error).message));
+      if (!m.organization) m = (await clerk.memberships.forUser(userId, true)).find((x) => x.organization?.id === inv.organization_id) ?? m;
+      console.log(`clerk invitation accepted by the server: user=${userId} org=${inv.organization_id} account=${org.slug} invitation=${inv.id} role=${inv.role}`);
+      if (!m.organization || clerk.isSuspended(m)) continue;
+      return { m, org };
+    }
+    return null;
+  })().catch((err) => { console.error(`clerk invitation check for ${userId}:`, (err as Error).message); return null; });
+  inviteChecks.set(userId, { at: Date.now(), p });
+  return p;
 }
 
 /**
@@ -406,13 +433,27 @@ export async function customerSession(req: Request, res: Response, next: NextFun
   if (!dir.enabled()) return void res.status(503).json({ error: "Sign-in is not configured (CLERK_SECRET_KEY)" });
   const c = await signedIn(req);
   if (!c) return void res.status(401).json({ error: "Sign in", sign_in_url: dir.provider === "clerk" ? "/sign-in" : "/auth/sign-in" });
-  const ms = (await dir.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
-  // The session's active organization; without one, the person's oldest membership that is not suspended.
-  const m = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : ms.find((x) => !clerk.isSuspended(x));
-  if (!m) return void res.status(403).json({ error: fill("You are not in a {product} {account} yet. Ask your admin to invite you."), code: "no_account", accounts: await accountsAmong(ms) });
-  if (clerk.isSuspended(m)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
-  const org = await orgForClerk(m.organization!.id);
-  if (!org) return void res.status(403).json({ error: fill("This organization is not a {product} {account}. {product} is invite-only for now: ask your {product} contact for an invitation."), code: "no_account", accounts: await accountsAmong(ms) });
+  let ms = (await dir.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
+  // The session's active organization when it is an account; else (no active one, or one the person made for
+  // themselves that is no account) the person's oldest membership of an account that is not suspended.
+  const active = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : undefined;
+  let m = active, org = active ? await orgForClerk(active.organization!.id) : null;
+  if (active && org && clerk.isSuspended(active)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
+  if (!org) {
+    m = undefined;
+    for (const x of ms) {
+      if (clerk.isSuspended(x)) continue;
+      const o = await orgForClerk(x.organization!.id);
+      if (o) { m = x; org = o; break; }
+    }
+  }
+  if (!m && dir.provider === "clerk") {
+    const got = await acceptPendingInvitation(c.userId);
+    if (got) { m = got.m; org = got.org; ms = (await dir.memberships.forUser(c.userId)).filter((x) => x.organization).sort((a, b) => a.created_at - b.created_at); }
+  }
+  if (!m && ms.some((x) => clerk.isSuspended(x))) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
+  if (!m && !ms.length) return void res.status(403).json({ error: fill("You are not in a {product} {account} yet. Ask your admin to invite you."), code: "no_account" });
+  if (!m || !org) return void res.status(403).json({ error: fill("This organization is not a {product} {account}. {product} is invite-only for now: ask your {product} contact for an invitation."), code: "no_account" });
   const user = await dir.users.get(c.userId);
   const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
     accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };

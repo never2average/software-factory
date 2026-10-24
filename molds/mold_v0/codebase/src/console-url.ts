@@ -9,6 +9,13 @@
  *                 API, and the factory sets it on the API project to the console project's address, so sign-in codes,
  *                 invitations and every other email link to the console, not to the API.
  *
+ *   mcpUrl()      APP_MCP_URL, else PUBLIC_URL: where AI clients connect (mold_v0-118); the MCP endpoint is its /mcp. On
+ *                 Vercel the console project serves the app's own domain and forwards /mcp, /.well-known, /oauth and
+ *                 /install to this API, so the factory sets it to that domain once the app has one (domain.py switch,
+ *                 and every deploy after): the resource the sign-in is for, the install pages and every connector
+ *                 address are then on the domain. A token issued for PUBLIC_URL/mcp is still accepted (src/clerk.ts
+ *                 mcpAudiences), so connections made before keep working. Unset, everything stays on PUBLIC_URL.
+ *
  * Only an http(s) origin, with an optional path, is taken: anything else (another scheme, credentials in the address,
  * a query or a fragment) is ignored, with one line on stderr, for the address it would replace.
  */
@@ -32,6 +39,11 @@ export function cleanAddress(raw: string | undefined | null, name = "address"): 
 
 /** Where this API answers: PUBLIC_URL, else this process's own local address. */
 export const publicUrl = () => cleanAddress(process.env.PUBLIC_URL, "PUBLIC_URL") ?? fallbackPublic();
+
+/** Where AI clients connect: APP_MCP_URL (a trailing /mcp is dropped), else PUBLIC_URL. Never from a request. */
+export const mcpUrl = () => mcpUrlSetting() ?? publicUrl();
+/** APP_MCP_URL as an address, or null when it is unset or not one. */
+export const mcpUrlSetting = () => cleanAddress(ENV.APP_MCP_URL, "APP_MCP_URL")?.replace(/\/mcp$/, "") ?? null;
 
 /** Where people open the console: APP_CONSOLE_URL, else PUBLIC_URL. Every link in an email is built on this. */
 export const consoleUrl = () => cleanAddress(ENV.APP_CONSOLE_URL, "APP_CONSOLE_URL") ?? publicUrl();

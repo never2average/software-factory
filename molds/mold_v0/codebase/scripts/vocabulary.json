@@ -148,27 +148,22 @@
         }
       },
       "account_funnel": {
-        "why": "The admin funnel's stages after the first tool call (onboarded, simulated, reported) and their attention rules are the first product's (audit row 7).",
-        "migration": "Shell stages up to first_call, then stages from the pack's onboarding[].done_when (audit row 7 ticket).",
+        "why": "The session engine's attention messages that no build word can say (its failed product research, its report), kept word for word in a build with that engine (audit row 7).",
+        "migration": "Done for every other build (mold_v0-103): the shell's stages up to first_call, then the packs' onboarding[].done_when steps. These two go with a host pack hook for its own stages and messages.",
         "files": {
-          "src/admin.ts": 6,
-          "src/insights.ts": 1,
-          "web/src/features/admin/lib.ts": 1
+          "src/admin.ts": 2
         }
       },
       "admin_sections": {
-        "why": "Staff-only admin sections built for the session engine: account detail and peek lists, analytics per week, compute job kinds, the plan editor's examples and the simulations metric (audit row 8).",
-        "migration": "Hidden when sessionEngine() is false, and the pack's runs shown per job kind in its words (audit row 8 ticket).",
+        "why": "Staff-only admin text that only the session engine's builds show and no build word can say: the attention message for its failed product research, its tip dialog, its plan template's example, its compute knobs and job kinds, its billing metric (audit row 8).",
+        "migration": "Done on the console's pages (mold_v0-104): the engine's sections show only when sessionEngine() (web/src/features/admin/engine.ts), the packs' runs per job kind in their words otherwise. What is left goes with host pack hooks for its own texts.",
         "files": {
-          "web/src/features/admin/account-peek.tsx": 8,
-          "web/src/features/admin/spend.tsx": 5,
-          "web/src/features/admin/account-detail.tsx": 3,
-          "web/src/features/admin/analytics.tsx": 3,
+          "web/src/features/admin/account-peek.tsx": 3,
+          "web/src/features/admin/spend.tsx": 1,
           "src/plan-config.ts": 2,
           "src/compute-jobs.ts": 1,
           "src/compute.ts": 1,
-          "src/settings.ts": 1,
-          "web/src/features/admin/compute-jobs.tsx": 1
+          "src/settings.ts": 1
         }
       },
       "access_requests": {
@@ -183,13 +178,6 @@
         "migration": "Redirect /app/usage to /app/activity when sessionEngine() is false, the page moving to the host pack (audit row 14 ticket).",
         "files": {
           "web/src/features/portal/usage.tsx": 12
-        }
-      },
-      "email_copy": {
-        "why": "Email templates still pitch the first product (audit row 3).",
-        "migration": "mold_v0-101 (branch mold_v0-101-email) rewrites them with src/vocabulary.ts fill() and lowers this ceiling to 0.",
-        "files": {
-          "src/email.ts": 5
         }
       }
     }

@@ -60,6 +60,7 @@
  */
 import { z } from "zod";
 import type { AccountPermission, AccountRole } from "./account-roles.js";
+import { hrefProblem, NOT_PLAIN } from "./landing.js";
 import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.js";
 import { parseCron } from "./cron.js";
 import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
@@ -717,7 +718,8 @@ const WorkspaceFilesSchema = z.object({
   .refine((r) => r.files === undefined || r.dir !== undefined, "files are read inside each dir: declare dir");
 /**
  * An upstream catalog at a pinned commit: `upstream` (pack.json#upstream, or {repo, commit}) is fetched at the pin only
- * (any other commit or a redirect is refused), its `files` read there and indexed into platform areas by staff,
+ * (any other commit or a redirect is refused), its `files` read there and indexed into platform areas (by the server
+ * itself whenever its pin changes, unless `index` is "manual"; by staff at any time),
  * idempotently (by fingerprint), pruning only rows it wrote (and refusing to empty an area or prune more than
  * `prune.max_fraction` of it). Other keys are the pack's loader's own settings.
  */
@@ -728,6 +730,12 @@ const UpstreamCatalogSchema = z.object({
   files: z.record(fileKey, repoPath).optional(),
   map: z.record(name, RowMapSchema).optional(),
   prune: z.object({ max_fraction: z.number().min(0).max(1).optional(), allow_empty: z.boolean().optional() }).strict().optional(),
+  /**
+   * Who indexes it (mold_v0-128, src/repository-index.ts): "automatic" (the default) the server itself, whenever the pin
+   * it last indexed is not the declared one (at startup, on the first read of an empty area, after a deploy), and staff
+   * at any time; "manual" staff only (the admin MCP's admin_sync_<repository>, the console's Repositories page).
+   */
+  index: z.enum(["automatic", "manual"]).optional(),
 }).catchall(z.unknown());
 /**
  * An external HTTP API, read live and read only: `base_url` (its host among `egress`, the only hosts it may reach; a
@@ -938,6 +946,35 @@ export const TAB_ICONS = ["dashboard", "chartBar", "chartLine", "trendingUp", "g
   "plug", "user", "teams", "page", "post", "settings", "clock", "calendar", "search", "check", "circleCheck", "warning", "alertCircle", "shield", "lock",
   "notification", "billing", "account", "code", "product", "workspace", "forms", "play", "refresh", "media", "adjustments"] as const;
 export const TAB_VIEWS = ["table", "board", "timeline", "detail"] as const;
+/**
+ * What an area, runs or reports tab says while it has nothing to show (mold_v0-107): `text`, and a call to action `cta`
+ * with a `label` and either an `href` (a path of this site, an https:// or a mailto: address: the landing block's rules,
+ * src/landing.ts) or an `action`:
+ *   setup               the Setup page (/app), where the person connects an AI client and follows the onboarding steps
+ *   onboarding:<step>   one of this pack's onboarding steps, on the Setup page
+ *   run:<kind>          one of this pack's job kinds: started from an AI client, so the action leads to the Setup page
+ * Plain text, shown as text, on one line; no braces (the build's word placeholders are the shell's: a pack writes its own
+ * words). Anything left out gets the shell's default, made from the area's label, the build's words and its onboarding
+ * (src/metric-spec.ts tabEmpty).
+ */
+export const TAB_EMPTY_ACTION = /^(setup|onboarding:[a-z][a-z0-9_]{1,62}|run:[a-z][a-z0-9_]{1,62})$/;
+const emptyText = (max: number) => z.string().min(1, "text is required").max(max, `at most ${max} characters`)
+  .refine((s) => s.trim().length > 0, "text is required")
+  .refine((s) => !NOT_PLAIN.test(s), "plain text on one line: no line breaks, control or invisible characters")
+  .refine((s) => !/[{}]/.test(s), "no braces: placeholders are the shell's own words; write the pack's words as they are");
+export const TabEmptySchema = z.object({
+  text: emptyText(300).optional(),
+  cta: z.object({
+    label: emptyText(40).optional(),
+    href: z.string().min(1).max(500).superRefine((h, ctx) => { const p = hrefProblem(h); if (p) ctx.addIssue({ code: "custom", message: p }); }).optional(),
+    action: z.string().regex(TAB_EMPTY_ACTION, "setup, onboarding:<one of the pack's onboarding steps> or run:<one of the pack's job kinds>").optional(),
+  }).strict().superRefine((c, ctx) => {
+    if ((c.href === undefined) === (c.action === undefined)) ctx.addIssue({ code: "custom", message: "a call to action has either an href or an action" });
+    if (c.href !== undefined && c.label === undefined) ctx.addIssue({ code: "custom", message: "a link names its label", path: ["label"] });
+  }).optional(),
+  $comment: z.string().max(2000).optional(),
+}).strict();
+export type TabEmpty = z.output<typeof TabEmptySchema>;
 export const TabSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/, "lowercase letters, digits and -, starting with a letter"),
   kind: z.enum(TAB_KINDS),
@@ -952,6 +989,7 @@ export const TabSchema = z.object({
   charts: z.array(name).max(12).optional(),
   page: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).optional(),
   roles: z.array(role).min(1).max(4).optional(),
+  empty: TabEmptySchema.optional(),
   $comment: z.string().max(2000).optional(),
 }).strict().superRefine((t, ctx) => {
   const bad = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
@@ -961,6 +999,7 @@ export const TabSchema = z.object({
   if (t.charts?.length && t.kind !== "overview" && t.kind !== "area") bad("charts are for an overview or an area tab", "charts");
   if (t.kind === "page" && !t.page) bad("a page tab names one of the pack's pages", "page");
   if (t.kind !== "page" && t.page !== undefined) bad("page is for a page tab", "page");
+  if (t.empty && t.kind !== "area" && t.kind !== "runs" && t.kind !== "reports") bad("empty is for an area, runs or reports tab", "empty");
   if (t.views && new Set(t.views).size !== t.views.length) bad("a view is listed twice", "views");
   if (t.board_by && !(t.views ?? []).includes("board")) bad("board_by is for a tab with the board view", "board_by");
   if (t.timeline_by && !(t.views ?? []).includes("timeline")) bad("timeline_by is for a tab with the timeline view", "timeline_by");
@@ -1056,9 +1095,14 @@ export const ScheduleSchema = z.object({
  * exists), "run:<kind>" (a run of this pack's job kind succeeded).
  */
 export const ONBOARDING_CONDITION = /^(workspace|connected|first_call|(tool|credential|record|run):[a-z][a-z0-9_]{0,63})$/;
-/** An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events. */
+/**
+ * An onboarding checklist step (wired by mold_v0-011): the /app Setup page's pack checklist, ticked from real events,
+ * and the pack's generated `<prefix>_get_started` MCP tool (mold_v0-105, src/mcp-tools.ts): the next step not done,
+ * how to do it, and `prompt`, the words the person can type in their AI client to do it (default: built from the label).
+ */
 export const OnboardingStepSchema = z.object({
   id: name, label: z.string().min(1).max(120), help: z.string().max(500).optional(),
+  prompt: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>`]*$/, "plain text: one line, no control or direction characters, no < > or `").optional(),
   done_when: z.string().regex(ONBOARDING_CONDITION, "done_when: workspace, connected, first_call, tool:<name>, credential:<name>, record:<area> or run:<kind>"),
 }).strict();
 
@@ -1074,6 +1118,11 @@ export const OnboardingStepSchema = z.object({
  *   describe    generated name -> the description clients see (plain text, one paragraph)
  *   admin_only  customer tools moved to the admin MCP (platform staff with "accounts", naming the workspace); never on
  *               the customer MCP (only the MCP tool moves: the data API and the console still serve the workspace)
+ *   instructions  (mold_v0-105) the customer MCP server's instructions: what the app is and how to work with it, plain
+ *               text, up to 4000 characters, used when the profile has no `mcp_instructions` and no host pack has its
+ *               own (several packs' are joined, in pack order); the shell adds the generated tools' paragraph after it
+ * A pack that declares onboarding steps also gets `<prefix>_get_started` (mold_v0-105): the caller's workspace's progress
+ * through them, the next step and the prompt to type; the instructions tell clients to call it first.
  */
 const mcpToolName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "a tool name: lowercase letters, digits and _, starting with a letter, at most 64");
 export const McpSettingsSchema = z.object({
@@ -1085,6 +1134,8 @@ export const McpSettingsSchema = z.object({
   describe: z.record(mcpToolName, z.string().trim().min(1).max(1000)
     .regex(/^[^\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>]*$/, "plain text: no control or direction characters, no < or >")).optional(),
   admin_only: z.array(mcpToolName).max(500).optional(),
+  instructions: z.string().trim().min(1).max(4000)
+    .regex(/^[^\u0000-\u0008\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]*$/, "plain text: no control or direction characters (line breaks are fine)").optional(),
 }).strict();
 export type McpSettings = z.output<typeof McpSettingsSchema>;
 

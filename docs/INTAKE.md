@@ -128,8 +128,11 @@ not. Written to `application.json` `platform_admins`; `provision.py` writes it a
 
 ## mold_v0: the app's own profile settings (`## Profile`, `## Budgets`)
 
-A mold_v0 app may set some of its build's profile fields from its own state (mold_v0-090): today `limits`, the
-platform's ceilings (`src/rate-limits.ts`: `mcp`, `endpoints`, `runs`, and `plans.<plan>` for one plan's own). The
+A mold_v0 app may set some of its build's profile fields from its own state (mold_v0-090): `limits`, the
+platform's ceilings (`src/rate-limits.ts`: `mcp`, `endpoints`, `runs`, and `plans.<plan>` for one plan's own);
+`member_keys` (mold_v0-099: `false` turns per-member API keys off, so clients connect by sign-in only); and
+`source_offer.upstreams` (mold_v0-099: one of the app's packs whose pinned upstream is the app licensor's own project,
+which the build then does not offer as source; `source_offer.app` stays the factory's `defaults.source_offer`). The
 mold names what an app may set (`molds/mold_v0/branding/rules.json` `profile.app_settable`); the factory checks each
 value as the build checks it (`.claude/scripts/lib/app_profile.py`, against the names in the shell's
 `scripts/gen-packs.mjs` `LIMIT_KEYS`).
@@ -143,6 +146,16 @@ limits.runs.budget_usd_max = 40
 limits.runs.kind_month_budget_usd = 500
 limits.plans.pro.mcp.per_key_per_minute: 600
 ```
+
+and, in a `## Profile` section (mold_v0-099), one per line:
+
+```
+member_keys = false
+source_offer.upstreams.<pack id> = licensor_owned
+```
+
+`member_keys` is `true` or `false`; an upstream setting names one of the app's own packs (`Packs:`) and the word
+`licensor_owned`, nothing else; the shell's generator refuses a pack that pins no upstream.
 
 - The heading is exactly `## Profile` or `## Budgets` (a note in brackets after it is fine: `## Budgets (operator,
   2026-10-22)`); `## Budget history` or a `###` heading is not one.
@@ -159,11 +172,59 @@ limits.plans.pro.mcp.per_key_per_minute: 600
   taken out of state, and a value raised by hand in state goes back to the brief's at the next intake run
   (until then `factory.py validate` refuses state that is not what the brief says). A
   `limits.` setting outside those sections is ignored, and intake says so.
+
+**The emails' sender and notifications** (mold_v0-101) are profile settings too, in the same sections:
+
+```
+## Profile
+email_from_address = hello@yourcompany.com
+email.notifications = access_requests, due_dates
+email.pitch = {product} audits your applications against your regulators' controls.
+```
+
+- `email_from_address`: one address, on a domain the email provider (Resend) has verified. `email.notifications`: the
+  groups the shell sends besides sign-in codes and invitations (`access_requests`, `library`, `usage`, `due_dates`,
+  `billing`), or `none`. `email.provider = resend | none` is accepted too. `email.pitch`: the welcome email's sentence
+  about the product (one line, up to 400 characters, `{product}` and the other words allowed); absent, the landing
+  block's hero subheadline, else the tagline.
+- Most briefs need neither line. An app that sets neither, and whose host pack's own profile sets neither, gets the
+  factory's defaults in its build (`molds/mold_v0/branding/rules.json` `profile.email_defaults`): the sender
+  `<app_id>@<notify_domain>` (this machine's `defaults.notify_domain` in `state/factory.local.json`) and
+  `access_requests`, plus `due_dates` when one of its packs declares a record area with due dates. `packs.py apply`
+  names them.
+- On a machine with no `notify_domain`, a brief with no `email_from_address` gets one question, `email_from_address`
+  (answer an address, or `later` to leave it unset: the app then sends from the shell's placeholder, which the provider
+  refuses). The answer is kept in `application.json` `profile` and in `answers.json`, which `factory.py validate` reads
+  beside the brief.
+**The legal pages** (mold_v0-109): the company behind the app, which turns on its Terms of use (`/terms`) and Privacy
+notice (`/privacy`) and the links to them on the landing page's footer, the sign-in pages and the install pages:
+
+```
+## Profile
+legal.company_name = Acme Ltd
+legal.contact_email = legal@acme.com
+legal.jurisdiction = England and Wales
+legal.effective_date = 2026-10-23
+legal.terms_url = https://acme.com/terms
+legal.privacy_url = https://acme.com/privacy
+```
+
+- `company_name` (the legal name) and `contact_email` (where people write about the terms and their data) are needed;
+  `jurisdiction` (whose law governs the terms; absent, the pages do not say), `effective_date` (YYYY-MM-DD; absent,
+  intake records the date it first saw this company and address, and keeps it) and the company's own pages
+  (`terms_url`, `privacy_url`, https:// only: then that link wins and the shell's page redirects there) are optional.
+  Plain text on one line, no brackets.
+- A new app whose brief has no `legal.` lines gets one question, `legal`: answer the legal name and the address
+  (`Acme Ltd, legal@acme.com`), or `later` to leave the app without legal pages. The answer is kept in
+  `application.json` `profile.legal` and in `answers.json`, which `factory.py validate` reads beside the brief. An app
+  already deployed is not stopped for it: add the lines to its brief and re-run intake to turn its pages on.
+- The pages are the shell's neutral template in the app's own words (`molds/mold_v0/codebase/web/src/features/site/legal-text.ts`):
+  a reasonable start, not legal advice. A company with its own reviewed terms sets `terms_url` and `privacy_url`.
 - Refused, with nothing written: an unknown section or limit name, a value that is not a positive number, the same
   setting twice with two values, and any field the app may not set: the brand's words (`name`, `console_title`, …;
-  `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer`
+  `Brand:` lines and `branding.py` set them), `host_packs` (from `Packs:` and the mold's host-pack list), `source_offer.app`
   (the factory's `defaults.source_offer`), `billing`, `entitlements`, or anything else. A profile setting is never a
-  secret: every value is a number.
+  secret: every value is a number, true or false, the word `licensor_owned`, an address or a line of the legal pages.
 - A host pack that brings its own value for the same field (`host.profile.limits`) is refused at the build: the shell
   merges a host pack's profile at the top level, so the app's would replace it whole.
 - Where it takes effect: `branding.py prepare` and `packs.py apply` write it into `build/<app_id>/profile.json` over the

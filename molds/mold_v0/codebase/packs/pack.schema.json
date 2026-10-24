@@ -2070,6 +2070,12 @@
             "type": "string",
             "maxLength": 500
           },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069<>`]*$"
+          },
           "done_when": {
             "type": "string",
             "pattern": "^(workspace|connected|first_call|(tool|credential|record|run):[a-z][a-z0-9_]{0,63})$"
@@ -2604,6 +2610,41 @@
               ]
             }
           },
+          "empty": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "cta": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "href": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "action": {
+                    "type": "string",
+                    "pattern": "^(setup|onboarding:[a-z][a-z0-9_]{1,62}|run:[a-z][a-z0-9_]{1,62})$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "$comment": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "additionalProperties": false
+          },
           "$comment": {
             "type": "string",
             "maxLength": 2000
@@ -2918,6 +2959,13 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "index": {
+                "type": "string",
+                "enum": [
+                  "automatic",
+                  "manual"
+                ]
               }
             },
             "required": [
@@ -3129,6 +3177,12 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]{0,63}$"
           }
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$"
         }
       },
       "additionalProperties": false
@@ -3471,6 +3525,84 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "guide": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "markdown": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200000
+        },
+        "dir": {
+          "type": "string",
+          "pattern": "^[a-z0-9_\\-/]+$"
+        },
+        "groups": {
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "pages": {
+                "minItems": 1,
+                "maxItems": 40,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              }
+            },
+            "required": [
+              "title",
+              "pages"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "generated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "console": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "hide": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "activity",
+              "usage",
+              "billing",
+              "profile",
+              "credentials",
+              "schedules",
+              "notices",
+              "files"
+            ]
+          }
         }
       },
       "additionalProperties": false

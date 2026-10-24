@@ -19,7 +19,17 @@
  *                      {app: "licensor_exception"} when the shell's licensor (or an affiliate) runs it under the additional
  *                      permission that does not require the offer, which the build then says (src/source-offer.ts);
  *                      absent, the build says nothing about its own source (its packs' copyleft upstreams are offered
- *                      either way)
+ *                      either way). `upstreams` (mold_v0-099): {"<pack id>": "licensor_owned"} for a pack whose pinned
+ *                      upstream is the app licensor's own project: as its copyright holder it need not offer that
+ *                      source, so the build does not (no footer line, no /install.json sentence, no MCP instructions
+ *                      line, no DATA-MAP.md row; its "Source code" section goes when nothing else is in it). Only the app's own
+ *                      profile.json sets `upstreams`, never a host pack's profile; gen-packs refuses a pack id the build
+ *                      does not have or whose pack pins no upstream
+ *   member_keys        optional (mold_v0-099): false turns per-member API keys off (src/member-keys.ts): the console's
+ *                      API keys page and its sidebar link go, the install pages and the setup offer sign-in (OAuth) only,
+ *                      POST /api/keys and the rest of /api/keys are refused (403, "member_keys_off"), and a member key
+ *                      made before is refused on /mcp with a sentence saying so (src/auth.ts resolveKey). Absent or
+ *                      true: as before. The account keys staff issue on /admin are not member keys and keep working
  *   billing            optional (mold_v0-019): price per run, off unless `enabled` is true (src/run-charges.ts); only
  *                      the app's own profile.json sets it, never a host pack's profile
  *   email              optional (mold_v0-083): the email adapter's transport and which notifications are on
@@ -28,6 +38,10 @@
  *                      every feature. Only the app's own profile.json sets it, never a host pack's profile
  *   landing            optional (mold_v0-091, src/landing.ts): the app's landing page at /, over a pack's pack.json
  *                      `landing`; never part of this profile: gen-packs writes it to web/src/config/landing.generated.ts
+ *   legal              optional (mold_v0-109, src/legal.ts): the company behind the app (company_name, contact_email,
+ *                      effective_date; optionally jurisdiction, terms_url, privacy_url): its /terms and /privacy pages
+ *                      and their links; never part of this profile: gen-packs writes it to src/legal.generated.ts and
+ *                      web/src/config/legal.generated.ts. Only the app's own profile.json sets it
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
  *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
  *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json
@@ -56,6 +70,7 @@ export interface Profile {
   mcp_instructions?: string;
   install_clients?: readonly string[];
   source_offer?: SourceOfferSetting;
+  member_keys?: boolean;
   billing?: ProfileBilling;
   email?: ProfileEmail;
   entitlements?: ProfileEntitlements;
@@ -65,10 +80,22 @@ export interface Profile {
  * The email adapter (mold_v0-083, src/email.ts). `provider`: resend (default), test (kept in the process; never in
  * production) or none; APP_EMAIL_PROVIDER overrides it on a server. `notifications`: the groups that are on
  * besides sign-in codes and invitations (always on): access_requests, library, usage, due_dates, billing; absent, none.
+ * `pitch` (mold_v0-101): the welcome email's sentence about the product.
  */
 export interface ProfileEmail {
   provider?: "resend" | "test" | "none";
   notifications?: string[];
+  /**
+   * The welcome email's sentence about what the product does (mold_v0-101, src/email.ts), plain text on one line, up to
+   * 400 characters, placeholders allowed ({product}, {runs}); absent, the landing block's hero subheadline, else the
+   * short_description. A host pack's profile may set it, for its product.
+   */
+  pitch?: string;
+  /**
+   * What a library item of each kind is called in the library emails (mold_v0-101), {"<kind>": "<words>"}: a host pack's
+   * profile names its own (its library is its own); absent, the kind as it is.
+   */
+  library_nouns?: Record<string, string>;
 }
 
 /**
@@ -114,3 +141,12 @@ export const profileNamespace = (p: Profile = PROFILE): string =>
 
 /** The default sender, as Name <address> (an admin can change it on the Emails settings). */
 export const defaultSender = (p: Profile = PROFILE) => `${p.email_sender_name} <${p.email_from_address}>`;
+
+/** Whether people may make their own API keys (mold_v0-099, profile `member_keys`): on unless the profile says false. */
+export function memberKeysOn(p?: Pick<Profile, "member_keys">): boolean {
+  if (p) return p.member_keys !== false;
+  return testMemberKeys ?? PROFILE.member_keys !== false;
+}
+let testMemberKeys: boolean | undefined;
+/** Tests only: turn member keys on or off as the profile would (null: the profile's own setting). */
+export function setMemberKeysForTest(on: boolean | null) { testMemberKeys = on ?? undefined; }

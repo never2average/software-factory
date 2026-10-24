@@ -4,8 +4,8 @@
  * API answers their calls with 403 no_account (src/app.ts customerSession), which the portal's layout asks about before it
  * draws a page (web/src/app/app/layout.tsx). Plain words, and every way forward:
  *   - who they are signed in as, and signing out to use another address;
- *   - the accounts they are already in (a directory organization that is not an account is left out) and the
- *     invitations waiting for their address, each one click away;
+ *   - the invitations waiting for their address (and a Clerk invitation ticket in the address), the same choices as the
+ *     portal's invitation dialog (./invitation-landing.tsx), and, with no organization active, the ones they are in;
  *   - platform staff: the admin console, where an account is made first;
  *   - everyone else (staff open accounts themselves): the request form (POST /api/access-requests), their address and name filled in, then a confirmation.
  * Accounts are made by the platform's staff (invite-only) or, under Clerk with self-serve on, from an organization.
@@ -18,36 +18,34 @@ import { cn } from '@/lib/utils';
 import { Icons } from '@/components/icons';
 import { fill } from '@/lib/vocabulary';
 import { RequestAccessForm } from '@/features/site/request-access-form';
+import { InvitationButtons, useInvitationChoices } from './invitation-landing';
 
 export interface NoAccountProps {
   /** `no_account`: nothing open (the API's 403); `choose`: signed in with no active account but in some (Clerk). */
   reason: 'no_account' | 'choose';
-  /** The accounts the person is already in (the API's 403 body), each openable. */
-  accounts?: { id: string; name: string }[];
   /** The address the server knows them by (/admin/session), until the browser's sign-in has loaded. */
   email?: string | null;
   platformAdmin?: boolean;
 }
 
-export function NoAccount({ reason, accounts = [], email: serverEmail = null, platformAdmin = false }: NoAccountProps) {
+export function NoAccount({ reason, email: serverEmail = null, platformAdmin = false }: NoAccountProps) {
   const { user } = useUser();
-  const { isLoaded, setActive, userMemberships, userInvitations } = useOrganizationList({ userMemberships: true, userInvitations: true });
+  const { isLoaded, setActive, userMemberships } = useOrganizationList({ userMemberships: true });
+  // The pending invitations (and a Clerk invitation ticket in the address), as the portal's invitation dialog offers them.
+  const invites = useInvitationChoices();
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const email = user?.primaryEmailAddress?.emailAddress || serverEmail || '';
   const name = user ? [user.firstName, user.lastName].filter(Boolean).join(' ') : '';
-  // The accounts to offer: the server's list (only real accounts); with none from the server (`choose`), the directory's.
-  const mine = accounts.length ? accounts
-    : reason === 'choose' ? (userMemberships?.data ?? []).map((m) => ({ id: m.organization.id, name: m.organization.name })) : [];
-  const invitations = (userInvitations?.data ?? []) as { id: string; publicOrganizationData: { id: string; name: string }; accept: () => Promise<unknown> }[];
+  // `choose` (Clerk, no organization active): the person's organizations, to make one active.
+  const mine = reason === 'choose' ? (userMemberships?.data ?? []).map((m) => ({ id: m.organization.id, name: m.organization.name })) : [];
   const choosing = mine.length > 0;
   // `choose`: the directory's list is still loading; nothing to offer yet, so no form either.
   const pending = reason === 'choose' && !choosing && !isLoaded;
   // A full load after switching, so the layout asks the server again with the new account.
-  const open = async (id: string, first?: () => Promise<unknown>) => {
+  const open = async (id: string) => {
     setBusy(id); setProblem(null);
     try {
-      await first?.();
       await setActive?.({ organization: id });
       window.location.assign('/app');
     } catch (e) {
@@ -100,29 +98,27 @@ export function NoAccount({ reason, accounts = [], email: serverEmail = null, pl
             </section>
           ) : null}
 
-          {choosing || invitations.length ? (
+          {choosing ? (
             <section aria-labelledby='no-account-yours' className='flex flex-col gap-3'>
-              <h2 id='no-account-yours' className='text-lg font-semibold'>{choosing ? fill('Your {accounts}') : 'Invitations for you'}</h2>
-              {!isLoaded && !choosing ? <p role='status'><Icons.spinner aria-hidden='true' className='text-muted-foreground size-5 animate-spin' /><span className='sr-only'>Loading</span></p> : (
-                <ul className='flex flex-col gap-2'>
-                  {mine.map((a) => (
-                    <li key={a.id}>
-                      <Button variant='outline' className='h-auto min-h-11 w-full justify-between gap-3 py-2 text-left whitespace-normal' disabled={!!busy} onClick={() => void open(a.id)}>
-                        <span className='min-w-0 break-words'>Open {a.name}</span>
-                        {busy === a.id ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.arrowRight aria-hidden='true' />}
-                      </Button>
-                    </li>
-                  ))}
-                  {invitations.map((i) => (
-                    <li key={i.id}>
-                      <Button className='h-auto min-h-11 w-full justify-between gap-3 py-2 text-left whitespace-normal' disabled={!!busy} onClick={() => void open(i.publicOrganizationData.id, () => i.accept())}>
-                        <span className='min-w-0 break-words'>Accept the invitation to {i.publicOrganizationData.name}</span>
-                        {busy === i.publicOrganizationData.id ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.arrowRight aria-hidden='true' />}
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <h2 id='no-account-yours' className='text-lg font-semibold'>{fill('Your {accounts}')}</h2>
+              <ul className='flex flex-col gap-2'>
+                {mine.map((a) => (
+                  <li key={a.id}>
+                    <Button variant='outline' className='h-auto min-h-11 w-full justify-between gap-3 py-2 text-left whitespace-normal' disabled={!!busy} onClick={() => void open(a.id)}>
+                      <span className='min-w-0 break-words'>Open {a.name}</span>
+                      {busy === a.id ? <Icons.spinner aria-hidden='true' className='animate-spin' /> : <Icons.arrowRight aria-hidden='true' />}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {invites.any ? (
+            <section aria-labelledby='no-account-invitations' className='flex flex-col gap-3' data-testid='no-account-invitations'>
+              <h2 id='no-account-invitations' className='text-lg font-semibold'>{invites.invitations.length ? 'You have an invitation' : 'Accept your invitation'}</h2>
+              {/* A full load after joining, so the layout asks the server again with the new account. */}
+              <InvitationButtons choices={invites} onJoined={() => window.location.assign('/app')} />
             </section>
           ) : null}
 

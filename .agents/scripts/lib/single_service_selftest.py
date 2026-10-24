@@ -753,6 +753,19 @@ def run():
             ok(not err5 and [c[1] for c in fp5.calls if c[0] == "deploy"] == ["zz-shop-api", "zz-shop"] and fp5.projects["zz-shop-api"]["env"]["APP_CONSOLE_URL"] == "https://shop.example.org"
                and i5["vercel"]["production_url"] == "https://shop.example.org",
                f"a console on its own domain: emails keep linking to it, it stays the production address, no extra deploy: {err5[:200]} {[c[1] for c in fp5.calls if c[0] == 'deploy']} {i5['vercel'].get('production_url')}")
+            # mold_v0-118: on its own domain the API is told where AI clients connect (APP_MCP_URL), before its first deploy,
+            # with no extra deploy; an app without a domain (or one attached but not switched to) gets nothing new.
+            a5 = [i for i, c in enumerate(fp5.calls) if c[0] == "deploy"]
+            ok(fp5.projects["zz-shop-api"]["env"].get("APP_MCP_URL") == "https://shop.example.org" and fp5.calls.index(("set_env", "zz-shop-api", "APP_MCP_URL")) < a5[0]
+               and "APP_MCP_URL" not in fp5.projects["zz-shop"]["env"] and "APP_MCP_URL" not in ae and "APP_MCP_URL" not in fp3.projects["zz-shop-api"]["env"],
+               f"the app's own domain is the MCP address on the API project only, before its deploy; none without a domain: {fp5.projects['zz-shop-api']['env'].get('APP_MCP_URL')}")
+            ok(SS.own_domain_url("https://shop.example.org/", "Shop.Example.org") == "https://shop.example.org" and SS.own_domain_url("https://zz-shop.vercel.app", "shop.example.org") is None
+               and SS.own_domain_url("https://shop.example.org", None) is None and SS.own_domain_url(None, "shop.example.org") is None
+               and SS.own_domain_url("https://x.example\nY=1", "x.example\nY=1") is None
+               and SS.api_settings(man, "https://shop.example.org", None, "shop.example.org").get("APP_MCP_URL") == "https://shop.example.org"
+               and "APP_MCP_URL" not in SS.api_settings(man, "https://zz-shop.vercel.app", None, "shop.example.org") and "APP_MCP_URL" not in SS.api_settings(man, "https://c.example")
+               and SS.with_held_spellings(SS.api_settings(man, "https://shop.example.org", None, "shop.example.org"), {"OCTILLION_CONSOLE_URL"}, ("APP_", "OCTILLION_")).get("OCTILLION_MCP_URL") is None,
+               "{own_domain}: only the domain the console is on, lowercased; never an attached domain not switched to, a bad name, or an old spelling the project does not hold")
             # A failed read of the API's settings (names there, no values) is not taken for stale: nothing written, no extra deploy.
             fp6 = FakeP(env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET", "PUBLIC_URL", "APP_CONSOLE_URL", "APP_PROXY_HOPS"]}, projects=["zz-shop"])
             fp6.pull_env = lambda cb, proj, required=False, environment="production": {}
@@ -826,6 +839,83 @@ def run():
             ok(not err and {n_: fpb.projects["zz-shop-api"]["env"].get(n_) for n_ in ("OCTILLION_PLATFORM_ADMINS", "APP_PLATFORM_ADMINS")}
                == {"OCTILLION_PLATFORM_ADMINS": "ops@example.com,*@example.org", "APP_PLATFORM_ADMINS": "ops@example.com,*@example.org"},
                f"recorded administrators on a project that holds the old spelling: both get state's list, so neither goes stale: {err[:200]}")
+            AR.reset()
+            # mold_v0-116: an app on Clerk. Live today: only CLERK_SECRET_KEY on the API, so the API could not find Clerk's
+            # sign-in server; with member keys off nothing let an AI client in; and Clerk let no client register itself.
+            import base64 as b64_
+            cm_fails = SS.clerk_mcp.self_test()
+            ok(cm_fails == [], f"lib/clerk_mcp.py: publishable keys, the provider rule, what the API will know, Clerk's registration reading: {cm_fails}")
+            ok(SS.clerk_mcp.clerk_spec(man).get("publishable") == {"api": "CLERK_PUBLISHABLE_KEY", "web": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"},
+               "mold.json mcp_sign_in names the API's and the console's publishable-key names")
+            chost = "clerk.zz-shop.example.test"; cpk = "pk_live_" + b64_.b64encode((chost + "$").encode()).decode()
+            meta_url = f"https://{chost}/.well-known/oauth-authorization-server"
+            reg_off = lambda u: (200, {"issuer": f"https://{chost}"}, "") if u == meta_url else (None, None, "unexpected " + u)
+            reg_on = lambda u: (200, {"issuer": f"https://{chost}", "registration_endpoint": f"https://{chost}/oauth/register"}, "") if u == meta_url else (None, None, "unexpected " + u)
+            def clerk_fp(api_extra=None, web_pk=cpk):
+                f_ = FakeP(projects=["zz-shop-api", "zz-shop"], env={"zz-shop-api": ["DATABASE_URL", "APP_VAULT_KEY", "CRON_SECRET"]})
+                f_.projects["zz-shop-api"]["env"].update(dict({"CLERK_SECRET_KEY": "sk_live_standin"}, **(api_extra or {})))
+                f_.projects["zz-shop"]["env"]["CLERK_SECRET_KEY"] = "sk_live_standin"
+                if web_pk: f_.projects["zz-shop"]["env"]["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"] = web_pk
+                return f_
+            koff = dict(va, profile={"member_keys": False})
+            cbrun = lambda cmd, **k: (os.makedirs(os.path.join(t, "build", "zz_shop", "web"), exist_ok=True), subprocess.CompletedProcess(cmd, 0, "", ""))[1]   # build/<app>/ stand-in (a profile builds a copy)
+            AR.reset(); said = []
+            rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(), say=said.append, root=t, read_json=reg_off)
+            nd_ = AR.NOTES["needs"]; txt = "\n".join(said)
+            ok(rc == 1 and [(n_["kind"], n_["name"]) for n_ in nd_] == [("approval", "Clerk dynamic client registration")]
+               and all(w in nd_[0]["how"] for w in ("dashboard.clerk.com", "Configure", "OAuth applications", "Settings", "Dynamic client registration", "Client ID Metadata Documents"))
+               and "copies the console's NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in txt and cpk not in txt and cpk not in json.dumps(nd_),
+               f"check, keys off, Clerk letting no client register: not ready, the Clerk dashboard steps asked for (exit 3 through provision.py), the key never said: {said[-3:]} {nd_}")
+            AR.reset(); said = []
+            rc = SS.vercel_check("zz_shop", dict(va), cp(vi), clerk_fp(), say=said.append, root=t, read_json=reg_off)
+            ok(rc == 0 and not AR.NOTES["needs"] and any("WARNING" in l and "member API keys still let" in l for l in said) and any("Dynamic client registration" in l for l in said),
+               f"check, keys on, registration off: ready, with a warning and the same steps: {[l for l in said if 'Clerk' in l][:2]}")
+            AR.reset(); said = []
+            rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(), say=said.append, root=t, read_json=reg_on)
+            ok(rc == 0 and not AR.NOTES["needs"] and any("dynamic client registration on" in l for l in said), f"check, keys off, registration on: ready: {said[-2:]}")
+            AR.reset(); said = []
+            rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(), say=said.append, root=t, read_json=lambda u: (None, None, "URLError: timed out"))
+            ok(rc == 0 and not AR.NOTES["needs"] and any("could not be read" in l for l in said), "check: Clerk not answering is said and never read as off")
+            AR.reset(); said = []
+            rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(web_pk=None), say=said.append, root=t, read_json=reg_on)
+            ok(rc == 1 and [(n_["kind"], n_["name"]) for n_ in AR.NOTES["needs"]] == [("secret", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")] and "--set-secret NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" in AR.NOTES["needs"][0]["how"],
+               f"check, keys off, no publishable key anywhere: the console's key asked for at the hidden prompt: {AR.NOTES['needs']}")
+            AR.reset(); said = []
+            rc = SS.vercel_check("zz_shop", koff, cp(vi), clerk_fp(api_extra={"AUTH_PROVIDER": "builtin"}), say=said.append, root=t, read_json=lambda u: ok(False, "a built-in app never asks Clerk") or (None, None, ""))
+            ok(rc == 0 and not AR.NOTES["needs"] and any("built-in sign-in" in l for l in said), "check: AUTH_PROVIDER=builtin keeps Clerk out of it")
+            # the deploy: the console's key copied onto the API before its first deploy; a proxy address kept; the end says Clerk's setting
+            AR.reset(); fpc = clerk_fp(); said = []; err = ""
+            try: SS.vercel_deploy("zz_shop", dict(koff), cp(vi), vdir, fpc, say=said.append, root=t, read_page=pages({}), build_run=cbrun, read_json=reg_off)
+            except SS.Stop as e: err = str(e)
+            sets = [c for c in fpc.calls if c[0] == "set_env" and c[2] == "CLERK_PUBLISHABLE_KEY"]; first = [i_ for i_, c in enumerate(fpc.calls) if c[0] == "deploy"]
+            ok(not err and sets == [("set_env", "zz-shop-api", "CLERK_PUBLISHABLE_KEY")] and fpc.projects["zz-shop-api"]["env"]["CLERK_PUBLISHABLE_KEY"] == cpk
+               and fpc.calls.index(sets[0]) < first[0] and "CLERK_PUBLISHABLE_KEY" not in fpc.projects["zz-shop"]["env"]
+               and "CLERK_FRONTEND_API_URL" not in fpc.projects["zz-shop-api"]["env"] and cpk not in "\n".join(said)
+               and any("NOTE" in l and chost in l for l in said) and any("OAuth applications" in l for l in said),
+               f"deploy: the console's publishable key written on the API (once, before its first deploy, never said), and Clerk's setting said at the end: {err[:200]} {said[-4:]}")
+            fpc2 = clerk_fp(api_extra={"CLERK_PUBLISHABLE_KEY": cpk}); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(koff), cp(vi), vdir, fpc2, say=lambda s_: None, root=t, read_page=pages({}), build_run=cbrun, read_json=reg_on)
+            except SS.Stop as e: err = str(e)
+            ok(not err and not any(c[0] == "set_env" and c[2] == "CLERK_PUBLISHABLE_KEY" for c in fpc2.calls), "deploy: the same key already on the API is not written again")
+            fpc3 = clerk_fp(api_extra={"CLERK_FRONTEND_API_URL": "https://auth.zz-shop.example.test"}); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(koff), cp(vi), vdir, fpc3, say=lambda s_: None, root=t, read_page=pages({}), build_run=cbrun, read_json=lambda u: (200, {"client_id_metadata_document_supported": True}, ""))
+            except SS.Stop as e: err = str(e)
+            ok(not err and fpc3.projects["zz-shop-api"]["env"]["CLERK_FRONTEND_API_URL"] == "https://auth.zz-shop.example.test"
+               and not any(c[0] == "set_env" and c[2] == "CLERK_FRONTEND_API_URL" for c in fpc3.calls), "deploy: an operator's Clerk proxy address on the API is kept, never written")
+            fpb2 = clerk_fp(api_extra={"AUTH_PROVIDER": "builtin"}); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(koff), cp(vi), vdir, fpb2, say=lambda s_: None, root=t, read_page=pages({}), build_run=cbrun, read_json=lambda u: (None, None, "x"))
+            except SS.Stop as e: err = str(e)
+            ok(not err and not any(c[0] == "set_env" and "CLERK" in c[2] for c in fpb2.calls), "deploy: an app switched to the built-in sign-in gets no Clerk key on its API")
+            AR.reset(); fpn2 = clerk_fp(web_pk=None); err = ""; a_nk = dict(koff)
+            try: SS.vercel_deploy("zz_shop", a_nk, cp(vi), vdir, fpn2, say=lambda s_: None, root=t, read_page=pages({}), build_run=cbrun, read_json=reg_on)
+            except SS.NeedsHuman as e: err = str(e)
+            ok("member API keys are off" in err and [n_["name"] for n_ in AR.NOTES["needs"]] == ["NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"]
+               and not any(c[0] == "deploy" for c in fpn2.calls) and a_nk.get("status") == "planned",
+               f"deploy, keys off, no publishable key anywhere: stops for the key before anything deploys, not reverted: {err[:200]}")
+            AR.reset(); fpn3 = clerk_fp(web_pk=None); err = ""
+            try: SS.vercel_deploy("zz_shop", dict(va), cp(vi), vdir, fpn3, say=lambda s_: None, root=t, read_page=pages({}), build_run=cbrun, read_json=reg_on)
+            except SS.Stop as e: err = str(e)
+            ok(not err and any(c[0] == "deploy" for c in fpn3.calls), f"deploy, keys on, no publishable key: deploys (keys still let clients in): {err[:200]}")
             AR.reset()
             # mold_v0-045: env names APP_*, the old prefix still read. An app deployed before then (its state and its projects
             # hold the old names) deploys unchanged: nothing is minted under the new name beside an old one (it would win: a new

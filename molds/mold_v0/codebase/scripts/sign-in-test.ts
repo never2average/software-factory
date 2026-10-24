@@ -494,6 +494,54 @@ try {
       ok("platform admins: an APP_PLATFORM_ADMINS address and a person given a role on /admin/admins sign in with a code and reach /admin; cookie writes need the CSRF header");
     }
   } else {
+    // ---------- Clerk: a person with an organization of their own, invited into an account ----------
+    // Clerk's invitation link carries a ticket only its sign-in and sign-up pages consume, so someone already signed in
+    // (their self-made organization active) never accepted it: every /api/app call was a 403 no_account.
+    const mockClerk = async (method: string, p: string, body?: unknown) => (await fetch(`${http.mock.url}${p}`, { method,
+      headers: { authorization: "Bearer sk_test_mock", "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) })).json();
+    const selfMade = async (email: string, verified = true) => {
+      const u = await mockPost("/_mock/clerk/users", { email, verified });
+      const o = await mockClerk("POST", "/v1/organizations", { name: `Own org of ${email}` });
+      await mockPost("/_mock/clerk/memberships", { org_id: o.id, user_id: u.id, role: "org:admin" });
+      const { token } = await mockPost("/_mock/session", { user_id: u.id, org_id: o.id, org_role: "admin" });
+      return { user: u.id as string, org: o.id as string, h: { authorization: `Bearer ${token}`, "x-pack-request": "1" } };
+    };
+    const invitationOf = (email: string) => [...(http.mock.state.invitations as Map<string, any>).values()].filter((x) => x.email_address === email).at(-1);
+    const invite = async (email: string, role = "member") => {
+      const r = await call("POST", "/api/app/team/invitations", ownerA.h, { email, role });
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+    };
+    // mold_v0-127: the invitation was accepted, but the self-made organization stays active: the account is used.
+    const accepted = `accepted-${STAMP}@elsewhere.example`;
+    const p1 = await selfMade(accepted);
+    await invite(accepted);
+    await mockPost(`/_mock/invitations/${invitationOf(accepted).id}/accept`, {});
+    const me1 = await call("GET", "/api/app/me", p1.h);
+    assert.equal(me1.status, 200, JSON.stringify(me1.body)); assert.equal(me1.body.account.slug, slugA, "the account, not the self-made organization");
+    assert.equal(me1.body.account.clerk_org_id, rowA!.clerk_org_id, "the console learns which organization to make active");
+    // The invitation still pending: the server accepts it for them, with the invited role.
+    const pending = `pending-${STAMP}@elsewhere.example`;
+    const p2 = await selfMade(pending);
+    await invite(pending, "viewer");
+    const inv2 = invitationOf(pending);
+    const me2 = await call("GET", "/api/app/me", p2.h);
+    assert.equal(me2.status, 200, `the pending invitation is accepted for a signed-in person: ${JSON.stringify(me2.body)}`);
+    assert.equal(me2.body.account.slug, slugA); assert.equal(me2.body.account_role, "viewer", "with the invitation's role");
+    assert.equal(me2.body.account.clerk_org_id, rowA!.clerk_org_id);
+    assert.notEqual(inv2.status, "pending", "the invitation is used");
+    assert.ok((http.mock.state.memberships as Map<string, any>).has(`${rowA!.clerk_org_id}:${p2.user}`), "a membership of the account");
+    assert.equal((await call("GET", "/api/app/team", ownerA.h)).body.invitations.filter((x: any) => x.email === pending).length, 0, "it leaves the pending list");
+    assert.equal((await call("GET", "/api/app/me", p2.h)).status, 200, "and the next request works too");
+    // An invitation to an address the person has not verified is never accepted for them.
+    const unverified = `unverified-${STAMP}@elsewhere.example`;
+    const p3 = await selfMade(unverified, false);
+    await invite(unverified);
+    const me3 = await call("GET", "/api/app/me", p3.h);
+    assert.equal(me3.status, 403, JSON.stringify(me3.body)); assert.equal(me3.body.code, "no_account");
+    assert.equal(invitationOf(unverified).status, "pending", "an unverified address: the invitation waits");
+    assert.ok(!(http.mock.state.memberships as Map<string, any>).has(`${rowA!.clerk_org_id}:${p3.user}`), "and no membership was made");
+    ok("Clerk: a person signed in with a self-made organization active reaches the account they joined (mold_v0-127); a pending invitation to a verified address of theirs is accepted by the server, with its role; an unverified address is not");
+
     // ---------- Clerk: the built-in routes stay out of the way ----------
     assert.deepEqual((await call("GET", "/api/auth/config")).body, { provider: "clerk", accounts: "invite_only" });
     for (const p of ["/api/auth/session", "/api/auth/google/start"]) assert.equal((await call("GET", p)).status, 404, p);

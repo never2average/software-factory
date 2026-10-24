@@ -18,7 +18,9 @@
  * The agent-workspace runner's own settings (repository, commit, command, validation, write-back) are mold_v0-061's: a
  * job kind with runner "agent-workspace" is declared today with its limits, arguments and credentials only.
  */
+import { CONSOLE_PAGES } from "./console-pages.js";
 import { LandingSchema } from "./landing.js";
+import { GuideSchema } from "./pack-guide.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
 import { AgentJobKindSchema, ChartSchema, CredentialSchema, JobKindSchema, OperatorCredentialSchema, McpSettingsSchema, MetricSchema, OnboardingStepSchema, RecordAreaSchema, RepositorySchema, RunResultsSchema, ScheduleSchema, TabSchema, UpstreamSchema, z, type PackDefinition } from "./pack-api.js";
 
@@ -55,7 +57,7 @@ export const PackJsonSchema = z.object({
   /**
    * The upstream project the pack runs or reads, pinned by a full commit (mold_v0-050): its repository, the commit and its
    * licence (an SPDX id). A copyleft licence makes the build offer that project's source at that commit (src/source-offer.ts:
-   * the console's About page and footer, the install pages and the MCP server's instructions); an agent repository a job
+   * DATA-MAP.md, the root and landing footers, the install pages and the MCP server's instructions); an agent repository a job
    * kind runs from the same repository must be at the same commit, so the offer names what runs.
    */
   upstream: UpstreamSchema.optional(),
@@ -110,6 +112,21 @@ export const PackJsonSchema = z.object({
    * by section; at most one pack of a build declares one (scripts/gen-packs.mjs).
    */
   landing: LandingSchema.optional(),
+  /**
+   * The customer guide's own pages (mold_v0-106; src/pack-guide.ts): inline markdown or a directory of the pack's .md
+   * files, and their navigation groups, before the pages the console writes from these declarations. Markdown only,
+   * checked by scripts/gen-packs.mjs (no raw HTML or images, safe links). Not for a host pack (its guide is its code).
+   */
+  guide: GuideSchema.optional(),
+  /**
+   * The shell pages the customer console hides (mold_v0-130; src/console-pages.ts): `hide`, a list of page ids. Each leaves
+   * the /app sidebar and redirects to /app; the app's profile.json `console` adds to it. The staff console is unchanged.
+   */
+  console: z.object({
+    $comment: z.string().max(2000).optional(),
+    hide: z.array(z.enum(Object.keys(CONSOLE_PAGES) as [keyof typeof CONSOLE_PAGES, ...(keyof typeof CONSOLE_PAGES)[]])).max(20)
+      .refine((h) => new Set(h).size === h.length, "each page once").optional(),
+  }).strict().optional(),
 }).strict();
 export type PackJson = z.input<typeof PackJsonSchema>;
 
