@@ -268,6 +268,15 @@ export function checkViews(b: BuildViews): string[] {
     if (t.kind === "schedules" && !b.jobKinds) at(p, `${w}: the build has no job kind to schedule, so it has no Schedules page`);
     if (t.kind === "credentials" && !b.credentials) at(p, `${w}: the build declares no credential field, so it has no Credentials page`);
     if (t.kind === "notices" && !b.dueAreas) at(p, `${w}: the build has no due dates, so it has no Notices page`);
+    // An overview's included sections (mold_v0-134): what each shows must exist, one tab of the build shows each, and the
+    // shell page it replaces is not a tab of its own (that page now redirects to this one).
+    for (const x of t.include ?? []) {
+      if (x === "notices" && !b.dueAreas) at(p, `${w}: include notices: the build has no due dates, so there are no notices to show`);
+      const other = b.tabs.find((y) => y !== t && (y.include ?? []).includes(x));
+      if (other && b.tabs.indexOf(other) < b.tabs.indexOf(t)) at(p, `${w}: include ${x}: tab ${other.id}${other.pack !== p ? ` of pack ${other.pack}` : ""} already includes it (one home page per build)`);
+      const page = b.tabs.find((y) => y.kind === x);
+      if (page) at(p, `${w}: include ${x}: tab ${page.id}${page.pack !== p ? ` of pack ${page.pack}` : ""} is the ${x === "setup" ? "Setup" : "Notices"} page, which this tab now shows; drop that tab (its address redirects here)`);
+    }
     if (t.kind === "files" && !(b.stores ?? []).includes(p)) at(p, `${w}: the pack has no workspace store (no kind with workspace: true), so it has no files to show`);
     if (t.kind === "page" && b.pages && !(b.pages[p] ?? []).includes(t.page!)) at(p, `${w}: the pack has no app page ${t.page}`);
     const act = t.empty?.cta?.action;
@@ -306,7 +315,9 @@ export function tabRoles(t: Tab & { pack: string }, b: Pick<BuildViews, "areas" 
   }
   // A files tab (mold_v0-056): the roles that may read every area of the pack (src/workspace-files.ts storeReadable).
   if (t.kind === "files") roles = roles.filter((r) => b.areas.filter((a) => a.pack === t.pack).every((a) => areaReadRoles(a).includes(r)));
-  if (t.kind === "overview") {
+  // An overview that includes a shell section (mold_v0-134) is a home page: every role it names sees it (each section
+  // and each chart then shows what the person may read).
+  if (t.kind === "overview" && !t.include?.length) {
     const readable = new Set((t.charts ?? []).flatMap((n) => b.charts.find((c) => c.pack === t.pack && c.name === n)?.metrics ?? [])
       .flatMap((n) => { const m = b.metrics.find((x) => x.name === n); return m ? metricRoles(m, b.areas) : []; }));
     roles = roles.filter((r) => readable.has(r));

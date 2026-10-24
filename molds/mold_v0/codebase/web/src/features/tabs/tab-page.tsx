@@ -1,6 +1,7 @@
 'use client';
 // A tab a pack declares (mold_v0-058), at /app/packs/<pack>/<tab>: the shell draws it from pack.json alone.
-//   overview   the tab's charts (mold_v0-063; ./charts.tsx)
+//   overview   the tab's charts (mold_v0-063; ./charts.tsx), below the shell's sections it includes, in its order
+//              (mold_v0-134, a home page): the Setup page's checklist (folded to a line once done), the notices
 //   area       a record area's records: a table, a board (a column per state), a timeline (by a date), each row opening
 //              the record's page when the tab has the detail view; the tab's charts above
 //   runs       the workspace's runs; reports: finished runs and their results
@@ -15,6 +16,8 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { PackChartSpec, PackTabSpec, RecordAreaSpec } from '@/config/pack-nav.generated';
 import { useAccountRole } from '@/features/portal/role';
+import { SetupChecklist } from '@/features/portal/setup';
+import { DueSoonSection } from '@/features/schedules/notices-page';
 import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { findRecordArea } from '@/features/records/registry';
 import { BoardColumns, fieldLabel, RecordLink, show, type Page, type RecordRow } from './board';
@@ -48,6 +51,18 @@ function ChartGrid({ charts }: { charts: PackChartSpec[] }) {
   return (
     <div className='grid border-t border-l lg:grid-cols-2'>
       {charts.map((c) => <ChartCell key={`${c.pack}/${c.name}`} chart={c} results={results} />)}
+    </div>
+  );
+}
+
+/** An overview tab: the shell's sections it includes (mold_v0-134), then its charts. */
+function OverviewTab({ tab }: { tab: PackTabSpec }) {
+  const charts = tabCharts(tab);
+  if (!tab.include?.length) return <ChartGrid charts={charts} />;
+  return (
+    <div className='flex flex-col gap-8'>
+      {tab.include.map((x) => (x === 'setup' ? <SetupChecklist key={x} /> : <DueSoonSection key={x} />))}
+      {charts.length > 0 && <ChartGrid charts={charts} />}
     </div>
   );
 }
@@ -278,7 +293,7 @@ export function TabPage({ tab }: { tab: PackTabSpec }) {
   return (
     <PageContainer pageTitle={tab.label} pageDescription={tab.description ?? undefined}>
       {!loaded ? <LoadingCards count={1} /> : !allowed ? <p className='text-muted-foreground text-sm'>Your role can't see this tab. Ask an account owner.</p>
-        : tab.kind === 'overview' ? <ChartGrid charts={tabCharts(tab)} />
+        : tab.kind === 'overview' ? <OverviewTab tab={tab} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
         : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTab reports={tab.kind === 'reports'} label={tab.label} empty={tab.empty} />
         : null}

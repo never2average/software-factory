@@ -1091,6 +1091,18 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   then a labelled region with `tabindex="0"`, so a keyboard can scroll it (axe `scrollable-region-focusable`,
   mold_v0-114; `web/src/hooks/use-scrolls-sideways.ts`); one that fits is not a tab stop. `npm run test:declarative-packs` refuses malformed `empty` blocks and checks the defaults;
   `npm run test:console-tabs` draws empty states, a scrolling table and a scrolling board.
+  **A home tab** (mold_v0-134): an `overview` tab's `include` (`["setup", "notices"]`, each at most once, in the order
+  given) draws the shell's own sections above its charts: `setup` the Setup page's checklist (the packs' onboarding
+  steps and the setup steps, only the next open one explained, beside the connection panel; folded to one line, "You're
+  all set", that opens again, once every step is done; `SetupChecklist` in `web/src/features/portal/setup.tsx`) and
+  `notices` the records due soon (the first five, then "Show all"; `DueSoonSection` in
+  `web/src/features/schedules/notices-page.tsx`). Its charts may then be left out. `/app` (setup) and `/app/notices`
+  (and every address under it) redirect to the tab (`pack-routes.generated.json`; a hidden page, mold_v0-130, leads there
+  too, in one hop); the pages themselves stay for a build without one. A build refuses `include` on any other kind, a
+  section twice or unknown, `roles` on such a tab (it is every member's home: it is every role's, not narrowed by its
+  charts' metrics), `notices` with no due-date area, a second tab including the same section, and a `setup` or `notices`
+  tab beside it (its page would only redirect). `npm run test:declarative-packs` refuses those and checks the registry and
+  the redirects; `npm run test:console-tabs` draws the tab (open checklist, notices, charts; then folded).
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
