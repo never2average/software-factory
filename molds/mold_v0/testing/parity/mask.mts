@@ -23,6 +23,8 @@ export const TEXT_MASKS: [RegExp, string][] = [
   [/\b([a-z]{2,10})_(?=[A-Za-z_-]*\d)[A-Za-z0-9_-]{20,}\b/g, "$1_<key>"],
   // JWTs.
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "<jwt>"],
+  // A key shown cut short (`oct_79_3IT…`, the keys page): its namespace is the build's, the rest is not.
+  [/\b([a-z]{2,10})_[A-Za-z0-9_-]{3,16}…/g, "$1_<key>…"],
   // Long hex (hashes, random tokens) and long base64url runs with digits.
   [/\b[0-9a-f]{24,}\b/gi, "<hex>"],
   // Dates people read: Oct 24, 2026 / 24 Oct 2026 / October 24 / 24/10/2026 / 10/24/2026.
@@ -44,11 +46,26 @@ export const TEXT_MASKS: [RegExp, string][] = [
   [/©\s?\d{4}\b/g, "© <year>"],
 ];
 
+/** Base64 of a JSON document (`config=eyJ1cmwiOi...` in an install link) is decoded, masked and shown as `b64(<json>)`, so
+ * the port inside it is masked like any other and the rest still compares. */
+const B64_JSON = /\beyJ[A-Za-z0-9+/_-]{8,}={0,2}/g;
+
 export function maskText(s: string): string {
-  let out = s;
+  let out = s.replace(B64_JSON, (m) => {
+    if (/^eyJ[^.]*\.[^.]+\./.test(m)) return m;   // a JWT: masked below
+    try {
+      const txt = Buffer.from(m.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+      JSON.parse(txt);
+      return `b64(${maskText(txt)})`;
+    } catch { return m; }
+  });
   for (const [re, to] of TEXT_MASKS) out = out.replace(re, to);
   return out;
 }
+
+/** The masks as [source, flags, replacement], for a page's own text nodes (snapshot.mts masks the DOM before it reads the
+ * text and takes its screenshots, so a time or a port shows the same pixels every run). */
+export const TEXT_MASK_SOURCES = TEXT_MASKS.map(([re, to]) => [re.source, re.flags, to] as const);
 
 /** Keys whose value is a time (epoch seconds or milliseconds, or a date string) or a measured duration, never a property of
  * the build. Case-sensitive on purpose: `format` and `items` are not times. */

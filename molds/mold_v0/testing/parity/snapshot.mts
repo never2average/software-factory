@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { maskJson, maskText, stable } from "./mask.mts";
+import { maskJson, maskText, stable, TEXT_MASK_SOURCES } from "./mask.mts";
 
 type Cookie = { name: string; value: string; url: string };
 type Page = { pack: string; path: string; label: string; signed_in: boolean; as?: string };
@@ -234,6 +234,21 @@ async function snapApi(out: string, ctx: Ctx, imp: (rel: string) => Promise<any>
 
 // ---------- pages ----------
 
+/** The masks of mask.mts applied to the page's own text nodes, before its text is read and its screenshots taken: a time,
+ * a port or a minted key then renders the same every run, and nothing is hidden (the marker shows where it was). */
+async function maskDom(p: { evaluate<R, A>(f: (a: A) => R, a: A): Promise<R> }) {
+  await p.evaluate((masks: readonly (readonly [string, string, string])[]) => {
+    const res = masks.map(([src, flags, to]) => [new RegExp(src, flags), to] as const);
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const before = n.nodeValue ?? "";
+      let after = before;
+      for (const [re, to] of res) after = after.replace(re, to);
+      if (after !== before) n.nodeValue = after;
+    }
+  }, TEXT_MASK_SOURCES).catch(() => { /* a page that navigated away: its text is read as it is */ });
+}
+
 async function snapPages(out: string, ctx: Ctx, shots: boolean) {
   const { playwright, contextFor, load } = await import(pathToFileURL(path.join(import.meta.dirname, "..", "console", "browser.mjs")).href);
   const browser = await playwright().chromium.launch();
@@ -247,6 +262,10 @@ async function snapPages(out: string, ctx: Ctx, shots: boolean) {
         const p = await context.newPage();
         const res = await load(p, ctx, page);
         Object.assign(rec, { ok: res.ok, ...(res.ok ? {} : { why: maskText(res.why) }) });
+        // A page still saying "Loading…" (a busy machine) is given up to 15s more, as browser.mjs does for skeletons.
+        await p.waitForFunction(() => ![...document.querySelectorAll("body *")].some((e) => e.children.length === 0 && /^\s*Loading(…|\.\.\.)?\s*$/.test(e.textContent ?? "") && (e as HTMLElement).offsetParent !== null),
+          null, { timeout: 15000 }).catch(() => { rec.note = "still loading after 15s more (recorded as it stood)"; });
+        await maskDom(p);
         const at = new URL(p.url());
         const facts = await p.evaluate(() => ({
           title: document.title,
@@ -265,6 +284,7 @@ async function snapPages(out: string, ctx: Ctx, shots: boolean) {
             for (const scheme of SCHEMES) {
               await p.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" });
               await p.waitForTimeout(250);
+              await maskDom(p);   // a re-render after the resize may have put a time back
               const h = await p.evaluate(() => Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0));
               const png: Buffer = await p.screenshot({ fullPage: true, animations: "disabled", caret: "hide", clip: { x: 0, y: 0, width, height: Math.min(Math.max(h, 1), MAX_SHOT_HEIGHT) } });
               const sha = createHash("sha256").update(png).digest("hex");
