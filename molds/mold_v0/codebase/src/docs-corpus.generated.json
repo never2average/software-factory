@@ -55,7 +55,7 @@
    "title": "Accounts: onboarding, people, billing, analytics",
    "href": "/admin/docs/accounts#the-funnel",
    "heading": "The funnel",
-   "text": "The account pages, Analytics and Health show the session engine's products, research and runs only in a build that has\nit. A build without it shows the packs' runs there instead (mold_v0-104): per job kind, by the kind's label and in the\nbuild's word for a run (an account's page, the weekly chart, Health's runs tab), and its month's spend is its runs'."
+   "text": "The account pages, Analytics and Health show the session engine's products, research and runs only in a build that has\nit. A build without it shows the packs' runs there instead (mold_v0-104): per job kind, by the kind's label and in the\nbuild's word for a run (an account's page, the weekly chart, FinOps' runs tab with their cost), and its month's spend\nis its runs'. FinOps lists its pricing Experiments tab only when the app has a pricing experiment (a plan in one, or an\naccount ever shown a variant)."
   },
   {
    "area": "admin",

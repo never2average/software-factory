@@ -9,6 +9,7 @@ import { ENGINE_SETTINGS } from "./settings.js";
 import { jobKinds } from "./runs.js";
 import { RUN_USD } from "./run-spend.js";
 import { word } from "./vocabulary.js";
+import { reportRange } from "./insights.js";
 
 /**
  * The Compute page's Jobs table and Failures by reason (docs/compute-and-traces-spec.md §2.2 F, G). A job is a
@@ -417,14 +418,17 @@ export async function computeFailures(q: Record<string, unknown>) {
 
 const RUN_RANGES: Record<string, number> = { "24h": 24, "7d": 168, "30d": 720 };
 /**
- * Health's runs tab in a build without the session engine (whose Jobs and Sessions tables are its own): every job kind
- * the packs declare, by its label (the pack's words), with how its runs in the range ended, across every account, what
+ * FinOps' runs tab (mold_v0-104; on FinOps since mold_v0-126, where it took the pricing Experiments tab's place) in a
+ * build without the session engine (whose Jobs and Sessions tables are its own): every job kind the packs declare, by its label (the pack's words), with how its runs in the range ended, across every account, what
  * they cost, how long they took and the latest failure. Kinds with no run in the range are listed too (zero), and a
  * kind runs still carry but no pack declares any more is listed under its name. Read only.
  */
 export async function runKinds(q: Record<string, unknown>) {
-  const since = typeof q.since === "string" && RUN_RANGES[q.since] ? q.since : "7d";
-  const hours = RUN_RANGES[since]!;
+  // A period (from, to: YYYY-MM-DD, FinOps' date range), else the last `since` (24h, 7d, 30d).
+  const period = typeof q.from === "string" && typeof q.to === "string" ? reportRange(q) : null;
+  const since = period ? null : typeof q.since === "string" && RUN_RANGES[q.since] ? q.since : "7d";
+  const hours = period ? Math.round((period.end.getTime() - period.start.getTime()) / 3_600_000) : RUN_RANGES[since!]!;
+  const start = period ? period.start : new Date(Date.now() - hours * 3_600_000), end = period ? period.end : new Date(Date.now() + 60_000);
   const kinds = jobKinds();
   const rows = !kinds.length ? [] : await (await getDb()).query<{ pack: string; kind: string; total: unknown; queued: unknown; running: unknown; succeeded: unknown;
     failed: unknown; cancelled: unknown; accounts: unknown; usd: unknown; avg_s: unknown; last_at: Date | null; last_error: string | null; last_failed_at: Date | null }>(
@@ -435,7 +439,7 @@ export async function runKinds(q: Record<string, unknown>) {
             avg(extract(epoch FROM r.ended_at - r.started_at)) FILTER (WHERE r.ended_at IS NOT NULL AND r.started_at IS NOT NULL) AS avg_s,
             max(r.created_at) AS last_at, (array_agg(r.error ORDER BY r.created_at DESC) FILTER (WHERE r.status = 'failed'))[1] AS last_error,
             max(r.ended_at) FILTER (WHERE r.status = 'failed') AS last_failed_at
-       FROM runs r WHERE r.created_at >= now() - make_interval(hours => $1) GROUP BY r.pack, r.kind`, [hours]);
+       FROM runs r WHERE r.created_at >= $1 AND r.created_at < $2 GROUP BY r.pack, r.kind`, [start, end]);
   const by = new Map(rows.map((r) => [`${r.pack}/${r.kind}`, r]));
   const shape = (pack: string, name: string, label: string, description: string | null) => {
     const r = by.get(`${pack}/${name}`);
@@ -446,5 +450,5 @@ export async function runKinds(q: Record<string, unknown>) {
   };
   const list = kinds.map((k) => shape(k.pack, k.name, k.label ?? k.name, k.description ?? null));
   for (const r of [...by.values()]) list.push(shape(r.pack, r.kind, r.kind, null));
-  return { since, hours, words: { one: word("Run"), many: word("Runs") }, kinds: list };
+  return { since, hours, range: period ? { from: period.from, to: period.to } : null, words: { one: word("Run"), many: word("Runs") }, kinds: list };
 }

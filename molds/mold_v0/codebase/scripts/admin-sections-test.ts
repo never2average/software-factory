@@ -1,19 +1,22 @@
-// The admin console's account funnel, needs-attention and run sections per build (mold_v0-103, mold_v0-104), offline:
+// The admin console's account funnel, needs-attention and run sections per build (mold_v0-103, mold_v0-104, mold_v0-126), offline:
 // an embedded database, the admin module called as its routes call it.
 //   npm run test:admin-sections
 //
 // A build without the session engine (zero packs, or declarative packs):
 //   1. zero packs: the shell's five stages only (account created to first tool call); an account that has used tools
 //      for days is not told to onboard a product; no products, research, simulations or pack runs on its page; the
-//      Analytics funnel stops at the first tool call and has no weekly-runs chart; Health's runs list is empty
+//      Analytics funnel stops at the first tool call and has no weekly-runs chart; FinOps' runs list is empty and,
+//      with no pricing experiment, its Experiments tab is not listed
 //   2. a declarative pack (fixture, its word for a run "check"): the shell's stages, then one per onboarding step that is
 //      not the shell's own (record:, credential:, run:, tool:), reached from what each account really did; an account
 //      stuck at a step is named with the pack's next step; its page lists its runs per job kind by the kind's label, in
-//      the pack's word; the month's spend is its runs'; Analytics' funnel and weekly chart and Health's runs per kind
-//      read the same runs
+//      the pack's word; the month's spend is its runs'; Analytics' funnel and weekly chart and FinOps' runs per kind
+//      (with their cost, over its period) read the same runs; an account shown a plan variant brings Experiments back
 // A build with the session engine (a host pack owns its tables: run this test in that build):
 //   3. the stages, their next steps, the attention messages, the funnel and the account page are exactly the engine's,
 //      as they were before mold_v0-103: no pack stage, no pack runs, no new field on its rows
+// Every build: the console lists FinOps' runs tab in the Experiments slot, and Health no longer lists one (its old link
+// redirects to FinOps).
 import "./lib/test-world.js";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -69,7 +72,9 @@ try {
       const g = await growth();
       assert.deepEqual(g.funnel!.map((f) => f.id), ["requests", "created", "first_call"], "the Analytics funnel stops at the first tool call");
       assert.equal(g.sims_weekly, null, "no weekly-runs chart without runs");
-      assert.deepEqual((await jobs.runKinds({})).kinds, [], "Health: no job kind, no runs list");
+      assert.deepEqual((await jobs.runKinds({})).kinds, [], "FinOps: no job kind, no runs list");
+      const exps = await import("../src/experiments.js");
+      assert.equal(await exps.anyPricingExperiment(), false, "no plan in an experiment (Stripe off) and no exposure: FinOps hides Experiments");
       console.log("✓ zero packs: the shell's five stages, no false 'not onboarded a product', no product or pack-run sections");
     }
 
@@ -149,8 +154,23 @@ try {
       const k1 = kinds.kinds.find((k) => k.kind === "first_check")!, k2 = kinds.kinds.find((k) => k.kind === "deep_check")!;
       assert.deepEqual([k1.label, k1.total, k1.succeeded, k1.running, k1.accounts, k1.usd], ["Check the application", 2, 1, 1, 1, 1.25]);
       assert.deepEqual([k2.failed, k2.last_error], [1, "the repository could not be read"]);
+      // FinOps' runs tab (mold_v0-126): the same runs over FinOps' period (from, to), with their cost.
+      const today = new Date().toISOString().slice(0, 10), weekAgo = new Date(Date.now() - 7 * DAY).toISOString().slice(0, 10);
+      const fin = await jobs.runKinds({ from: weekAgo, to: today });
+      assert.deepEqual(fin.range, { from: weekAgo, to: today });
+      const f1 = fin.kinds.find((k) => k.kind === "first_check")!;
+      assert.deepEqual([f1.label, f1.total, f1.usd], ["Check the application", 2, 1.25], "the period's runs per kind and their cost");
+      const old = await jobs.runKinds({ from: "2020-01-01", to: "2020-01-31" });
+      assert.equal(old.kinds.reduce((a, k) => a + k.total, 0), 0, "a period with none: every kind at zero");
       setPacksForTest(null);
       console.log("✓ a declarative pack: its onboarding steps are the stages after the first call, stuck accounts get its next step, runs per kind in its words");
+
+      // ---------- FinOps' Experiments tab: only with a pricing experiment ----------
+      const exps = await import("../src/experiments.js");
+      await db.query("INSERT INTO plan_exposures (org_id, experiment, price_id, plan_name) VALUES ($1, 'team-price', 'price_x', 'Team')", [R.orgId]);
+      assert.equal(await exps.anyPricingExperiment(), true, "an account was shown a variant: the Experiments tab stays reachable");
+      await db.query("DELETE FROM plan_exposures WHERE org_id = $1", [R.orgId]);
+      console.log("✓ FinOps: runs per kind with their cost over its period; Experiments only when a pricing experiment exists");
     }
   } else {
     // ---------- 3. a host pack with the session engine ----------
@@ -180,6 +200,18 @@ try {
     assert.deepEqual(g.funnel!.map((x) => [x.id, x.label]), [["requests", "Access requests"], ["created", "Accounts"], ["onboarded", "Onboarded"], ["simulated", "First simulation"], ["reported", "First report"]]);
     assert.ok(Array.isArray(g.sims_weekly), "the engine's weekly chart");
     console.log("✓ a host pack with the session engine: stages, attention, account page and funnel exactly the engine's");
+  }
+  // ---------- the console: FinOps' runs tab in Experiments' place, Health without it (mold_v0-126) ----------
+  {
+    const { readFileSync } = await import("node:fs");
+    const spend = readFileSync(path.join(ROOT, "web/src/features/admin/spend.tsx"), "utf8");
+    const health = readFileSync(path.join(ROOT, "web/src/features/admin/analytics.tsx"), "utf8");
+    assert.match(spend, /\['plans', 'Plans'\], \['runs', W\.Runs\], \['experiments', 'Experiments'\]/, "FinOps: the runs tab, in the build's word, where Experiments was, Experiments after it");
+    assert.match(spend, /id !== 'runs' \|\| packRuns\(\)/, "the runs tab only with the packs' runs");
+    assert.match(spend, /id !== 'experiments' \|\| tab === 'experiments' \|\| anyExperiment/, "Experiments only with a pricing experiment, or when a link opens it");
+    assert.doesNotMatch(health, /\['runs', /, "Health lists no runs tab");
+    assert.match(health, /runs: '\/admin\/finops\?section=runs'/, "Health's old runs link goes to FinOps");
+    console.log("✓ console: FinOps' runs tab in the Experiments slot (Experiments only with an experiment); Health's old runs link redirects");
   }
   console.log("admin-sections: ok");
 } finally {

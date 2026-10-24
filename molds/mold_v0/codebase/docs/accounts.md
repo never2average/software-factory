@@ -48,7 +48,9 @@ budget used.
 
 The account pages, Analytics and Health show the session engine's products, research and runs only in a build that has
 it. A build without it shows the packs' runs there instead (mold_v0-104): per job kind, by the kind's label and in the
-build's word for a run (an account's page, the weekly chart, Health's runs tab), and its month's spend is its runs'.
+build's word for a run (an account's page, the weekly chart, FinOps' runs tab with their cost), and its month's spend
+is its runs'. FinOps lists its pricing Experiments tab only when the app has a pricing experiment (a plan in one, or an
+account ever shown a variant).
 
 ## Sign-in: built-in or Clerk
 

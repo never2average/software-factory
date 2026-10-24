@@ -38,7 +38,8 @@ import { MiniTable } from './compute-sessions';
 import { profile } from '@/config/profile.generated';
 import { KEY_PREFIX } from '@/lib/namespace';
 import { W } from '@/lib/vocabulary';
-import { kindLabel, sessionEngine } from './engine';
+import { kindLabel, packRuns, sessionEngine } from './engine';
+import { PackRunKinds } from './compute-runs';
 
 // ---------------------------------------------------------------- API shapes
 
@@ -163,7 +164,12 @@ interface RunCharges {
 // ---------------------------------------------------------------- shared bits
 
 const BASE = '/admin/finops';
-const TABS = [['revenue', 'Revenue'], ['plans', 'Plans'], ['experiments', 'Experiments'], ['spend', 'Model spend'], ['compute', 'Compute hours'], ['storage', 'Data & storage'], ['charges', 'Run charges']] as const;
+/**
+ * The tabs, in order. `runs` (mold_v0-126): the packs' runs per job kind and their cost, in the build's word for a run,
+ * in a build without the session engine that has a job kind; it takes the place pricing `experiments` had, which shows
+ * only when the app has a pricing experiment (GET /spend/experiments/any), after it.
+ */
+const TABS = [['revenue', 'Revenue'], ['plans', 'Plans'], ['runs', W.Runs], ['experiments', 'Experiments'], ['spend', 'Model spend'], ['compute', 'Compute hours'], ['storage', 'Data & storage'], ['charges', 'Run charges']] as const;
 type Tab = (typeof TABS)[number][0];
 /** Older links: the Accounts and Models tabs are Model spend now, Days became Compute hours. */
 const OLD: Record<string, Tab> = { accounts: 'spend', models: 'spend', days: 'compute' };
@@ -211,19 +217,22 @@ function SpendPage() {
   const q = rangeQuery(range);
   const revenue = useAdmin<Revenue>(tab === 'revenue' || tab === 'plans' ? `/spend/revenue?${q}` : null, { keep: true });
   const exps = useAdmin<Experiments>(tab === 'experiments' ? `/spend/experiments?${q}` : null, { keep: true });
+  const anyExperiment = useAdmin<{ any: boolean }>('/spend/experiments/any').data?.any ?? false;
   const spend = useAdmin<Spend>(tab === 'spend' ? `/spend?${q}` : null, { keep: true });
   const compute = useAdmin<Compute>(tab === 'compute' ? `/spend/compute?${q}` : null, { keep: true });
   const storage = useAdmin<Storage>(tab === 'storage' ? `/spend/storage?${q}` : null, { keep: true });
   const charges = useAdmin<RunCharges | { enabled: false }>(tab === 'charges' ? `/spend/run-charges?${q}` : null, { keep: true });
-  const active = tab === 'revenue' || tab === 'plans' ? revenue : tab === 'experiments' ? exps : tab === 'spend' ? spend : tab === 'compute' ? compute : tab === 'charges' ? charges : storage;
+  const active = tab === 'runs' ? null : tab === 'revenue' || tab === 'plans' ? revenue : tab === 'experiments' ? exps : tab === 'spend' ? spend : tab === 'compute' ? compute : tab === 'charges' ? charges : storage;
   // Run charges (mold_v0-019) is a tab only when the app bills runs (the Revenue report says so), or a link opens it.
-  const tabs = TABS.filter(([id]) => id !== 'charges' || tab === 'charges' || !!revenue.data?.run_charges);
+  // The runs tab only with the packs' runs; Experiments only with a pricing experiment, or when a link opens it.
+  const tabs = TABS.filter(([id]) => (id !== 'charges' || tab === 'charges' || !!revenue.data?.run_charges)
+    && (id !== 'runs' || packRuns()) && (id !== 'experiments' || tab === 'experiments' || anyExperiment));
   const qc = useQueryClient();
   const fetching = useIsFetching({ queryKey: ['admin'] }) > 0;
   const bar = (
     <div className='flex flex-wrap items-center gap-2'>
       <DateRangePicker value={range} onChange={setRange} />
-      {tab !== 'revenue' && tab !== 'plans' && tab !== 'experiments' && <GroupBy value={group} onChange={setGroup} second='Provider' />}
+      {tab !== 'revenue' && tab !== 'plans' && tab !== 'experiments' && tab !== 'runs' && <GroupBy value={group} onChange={setGroup} second='Provider' />}
     </div>
   );
   const unpriced = tab === 'spend' ? spend.data?.totals.unpriced_requests ?? 0 : 0;
@@ -238,13 +247,14 @@ function SpendPage() {
             </Button>
           </div>
         } />
-        {active.error && !active.data && (
+        {active?.error && !active.data && (
           <div role='alert' className='border-destructive/30 bg-destructive/5 text-destructive flex items-center gap-3 rounded-lg border px-4 py-3 text-sm'>
             <span className='min-w-0 flex-1'>Could not load the figures: {active.error.message}</span>
             <Button variant='outline' size='xs' onClick={() => void active.refetch()}>Retry</Button>
           </div>
         )}
         {tab === 'revenue' && <RevenueTab data={revenue.data} loading={!revenue.data && !revenue.error} bar={bar} group='account' />}
+        {tab === 'runs' && <PackRunKinds query={q} bar={bar} />}
         {tab === 'experiments' && <ExperimentsTab data={exps.data} loading={!exps.data && !exps.error} bar={bar} group='account' />}
         {tab === 'plans' && <RevenueTab data={revenue.data} loading={!revenue.data && !revenue.error} bar={bar} group='provider' />}
         {tab === 'spend' && <SpendTab data={spend.data} loading={!spend.data && !spend.error} bar={bar} group={group} range={range} />}

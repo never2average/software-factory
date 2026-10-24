@@ -80,6 +80,18 @@ export const checkoutMeta = (slug: string, plan: billing.Plan): Record<string, s
 const empty = (R: ReturnType<typeof spendRange>, configured: boolean, error: string | null) =>
   ({ range: { from: R.from, to: R.to, days: R.days }, stripe: { configured, error }, totals: null, experiments: [] as string[], variants: [] });
 
+/**
+ * Whether the app has a pricing experiment (mold_v0-126): a live plan in one, or an account that was ever shown a
+ * variant (plan_exposures, so an ended experiment's results stay reachable). FinOps lists its Experiments tab only then.
+ */
+export async function anyPricingExperiment(): Promise<boolean> {
+  const [seen] = await (await getDb()).query<{ any: boolean }>("/* tenant: internal: admin FinOps, whether any account saw a plan variant */ SELECT EXISTS (SELECT 1 FROM plan_exposures) AS any");
+  if (seen?.any) return true;
+  if (!billing.stripeEnabled()) return false;
+  try { return (await billing.listPlans()).some((p) => Boolean(p.experiment)); }
+  catch (err) { console.error("finops experiments: stripe failed:", (err as Error).message); return false; }
+}
+
 export async function experimentsReport(q: { from?: unknown; to?: unknown } = {}, now = Date.now()) {
   const R = spendRange(q, now);
   if (!billing.stripeEnabled()) return empty(R, false, null);
