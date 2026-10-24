@@ -38,6 +38,10 @@
  *                      every feature. Only the app's own profile.json sets it, never a host pack's profile
  *   landing            optional (mold_v0-091, src/landing.ts): the app's landing page at /, over a pack's pack.json
  *                      `landing`; never part of this profile: gen-packs writes it to web/src/config/landing.generated.ts
+ *   legal              optional (mold_v0-109, src/legal.ts): the company behind the app (company_name, contact_email,
+ *                      effective_date; optionally jurisdiction, terms_url, privacy_url): its /terms and /privacy pages
+ *                      and their links; never part of this profile: gen-packs writes it to src/legal.generated.ts and
+ *                      web/src/config/legal.generated.ts. Only the app's own profile.json sets it
  *   words              optional (mold_v0-100, src/words.ts, src/vocabulary.ts): the app's own words for the shell's
  *                      placeholders, {"run": "audit", "runs": "audits", "member": "analyst"}: keys workspace, account,
  *                      member, owner, run, tool_call, key and each with an s for its plural. Over a pack's pack.json

@@ -12,6 +12,10 @@ each one the factory can check. Today (mold_v0):
   member_keys                true or false (mold_v0-099): false turns per-member API keys off; clients sign in
                              (refused when the mold's rules name its /mcp sign-ins and the codebase has none:
                              profile.member_keys_off, mold_v0-116)
+  legal                      {"company_name", "contact_email", "effective_date" (YYYY-MM-DD), and optionally
+                             "jurisdiction", "terms_url", "privacy_url" (https://)} (mold_v0-109, the shell's src/legal.ts):
+                             the app's Terms and Privacy pages (/terms, /privacy) and the links to them; absent, the app
+                             has no legal pages. intake asks a new app for the company's legal name and contact address
   source_offer.upstreams     {"<pack id>": "licensor_owned"} (mold_v0-099): the app's packs whose pinned upstream is
                              the app licensor's own project, which the build then does not offer. Only this part of
                              source_offer: its `app` part stays the factory's (defaults.source_offer, packs.py), and
@@ -39,7 +43,8 @@ Never a secret: every value this module accepts is a positive number under a nam
 false, or the word licensor_owned under one of the app's own pack ids.
 
 Where a value comes from: the brief (intake reads `limits.<section>.<name> = <number>`, `member_keys = false` and
-`source_offer.upstreams.<pack id> = licensor_owned` lines in a `## Profile` or `## Budgets` section; docs/INTAKE.md), recorded in application.json `profile`, written by branding.py prepare and
+`source_offer.upstreams.<pack id> = licensor_owned` and `legal.<field> = <text>` lines in a `## Profile` or `## Budgets` section; docs/INTAKE.md;
+the legal block may also be an answer to intake's `legal` question), recorded in application.json `profile`, written by branding.py prepare and
 packs.py apply into build/<app_id>/profile.json over the mold's own profile.json (the app wins over the mold default; a
 field the app does not set is put back to the mold's, so a setting taken out of the brief does not linger in a build),
 then the mold's generator checks it again and compiles it. A deploy rebuilds the copy, so a change takes effect at the
@@ -143,6 +148,65 @@ def _email_problems(v, groups, at="email"):
             bad = [g for g in n if g not in groups]
             if bad: errs.append(f"{at}.notifications: {', '.join(bad)[:120]} {'is not a group' if len(bad) == 1 else 'are not groups'} (known: {', '.join(groups)})")
     return errs
+
+# ---- the legal pages (mold_v0-109) ---------------------------------------------------------------------------------
+# The shell's rules (molds/mold_v0/codebase/src/legal.ts legalProblems), checked here so a brief or an answer is refused
+# at intake, before a build: plain text on one line, one address, a date that exists, own pages on https:// only.
+LEGAL_KEYS = ("company_name", "contact_email", "effective_date", "jurisdiction", "terms_url", "privacy_url")
+LEGAL_REQUIRED = ("company_name", "contact_email", "effective_date")
+NOT_PLAIN = re.compile("[\x00-\x1f\x7f-\x9f\xad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb<>{}\\[\\]"
+                       "\U000e0000-\U000e007f\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+LEGAL_ADDRESS = re.compile(r"[^\s@<>,;\"'`\\/?#%&:]+@[^\s@<>,;\"'`\\/?#%&:]+\.[^\s@<>,;\"'`\\/?#%&:]+")
+
+def _legal_text(v, n):
+    if not isinstance(v, str) or not v.strip(): return "text is required"
+    if len(v) > n: return f"at most {n} characters"
+    if NOT_PLAIN.search(v): return "plain text on one line: no line breaks, control or invisible characters, angle brackets, braces or square brackets"
+    return None
+
+def _legal_url(v):
+    if not isinstance(v, str) or not v or len(v) > 500 or not re.fullmatch(r"https://[!-~]+", v, re.I) or re.search(r"[\"'<>\\`]", v):
+        return "an https:// address (printable, no spaces, quotes, angle brackets or backslashes)"
+    from urllib.parse import urlsplit
+    try: u = urlsplit(v)
+    except ValueError: return "not a valid https:// address"
+    return None if u.hostname and not u.username and not u.password else "an https:// address with a host and no user name or password"
+
+def legal_problems(v, at="legal"):
+    """Sentences: what is wrong with a `legal` block ([] when it is right). The shell's own check runs again at build."""
+    import datetime
+    if not isinstance(v, dict): return [f"{at} must be an object: company_name, contact_email, effective_date (and optionally jurisdiction, terms_url, privacy_url)"]
+    errs = [f"{at}.{k} is not a legal field (known: {', '.join(LEGAL_KEYS)})" for k in v if k not in LEGAL_KEYS]
+    errs += [f"{at}.{k} is required" for k in LEGAL_REQUIRED if k not in v]
+    for k, n in (("company_name", 160), ("jurisdiction", 120)):
+        if k in v and _legal_text(v[k], n): errs.append(f"{at}.{k}: {_legal_text(v[k], n)}")
+    if "contact_email" in v and not (isinstance(v["contact_email"], str) and len(v["contact_email"]) <= 254 and LEGAL_ADDRESS.fullmatch(v["contact_email"])):
+        errs.append(f"{at}.contact_email must be one email address like legal@yourcompany.com (got {json.dumps(v['contact_email'])[:60]})")
+    if "effective_date" in v:
+        d = v["effective_date"]
+        try: ok = isinstance(d, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and datetime.date.fromisoformat(d).isoformat() == d
+        except ValueError: ok = False
+        if not ok: errs.append(f"{at}.effective_date must be a date that exists, written YYYY-MM-DD (got {json.dumps(d)[:30]})")
+    for k in ("terms_url", "privacy_url"):
+        if k in v and _legal_url(v[k]): errs.append(f"{at}.{k}: {_legal_url(v[k])}")
+    return errs
+
+def legal_from_answer(a):
+    """An answer to intake's legal question -> ({company_name, contact_email} or None, problem or None). "later" (or
+    none, skip, blank): (None, None). The address is the last one in the answer; the name is what comes before it."""
+    if isinstance(a, dict):
+        e = legal_problems(a)
+        return (None, "; ".join(e)) if e else ({k: a[k] for k in LEGAL_KEYS if k in a}, None)
+    t = str(a or "").strip()
+    if t.lower() in ("later", "none", "skip", ""): return None, None
+    m = list(re.finditer(r"[^\s,;<>()\"']+@[^\s,;<>()\"']+", t))
+    if not m: return None, f"no email address in {t[:80]!r}: write the company's legal name, then the address, like Acme Ltd, legal@acme.com"
+    name = re.sub(r"[\s,;:(<\-]+$", "", t[:m[-1].start()]).strip()
+    rest = t[m[-1].end():].strip(" >)")
+    got = {"company_name": name, "contact_email": m[-1].group(0)}
+    if rest: return None, f"nothing may follow the address in {t[:80]!r}: write the company's legal name, then the address"
+    e = [x for x in legal_problems({**got, "effective_date": "2000-01-01"})]
+    return (None, "; ".join(e)) if e else (got, None)
 
 def _pack_json(pid, root, build_dir=None):
     """A pack's shell pack.json: the build copy's, else packs/<pid>/files/packs/<pid>/pack.json; {} when unreadable."""
@@ -256,6 +320,7 @@ def problems(profile, mold_id, root, packs=None):
         elif k == "email_from_address":
             e = address_problem(v)
             if e: errs.append("profile." + e)
+        elif k == "legal": errs += legal_problems(v, "profile.legal")
         else: errs.append(f"profile.{k}: the factory has no check for this field yet, so it is refused")
     return errs
 
@@ -278,6 +343,9 @@ MENTION = re.compile(r"(?<![\w.])limits((?:\.[A-Za-z0-9_-]+)+)")
 # else after it ("4 0", "4e9", "40k", "40 million", "40%", "400 but chose 40") makes the setting unreadable: refused.
 ASSIGN = re.compile(r"`?[ \t]*(?:=|:)[ \t]*`?[ \t]*(?:US[ \t]?)?\$?[ \t]*([0-9]+(?:\.[0-9]+)?)`?(?=[ \t]*$|[,;.](?:\s|$)|[ \t]+\()", re.M)
 EMAIL_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?(email_from_address|email\.notifications|email\.provider|email\.pitch)`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M | re.I)
+# The legal pages (mold_v0-109): `legal.company_name = Acme Ltd`, `legal.contact_email = legal@acme.com`,
+# `legal.jurisdiction = England and Wales`, `legal.effective_date = 2026-10-23`, `legal.terms_url = https://...`.
+LEGAL_LINE = re.compile(r"^\s*(?:[-*]\s+)?`?legal\.([a-z_]+)`?[ \t]*(?:=|:)[ \t]*([^\n]*?)[ \t]*$", re.M | re.I)
 OTHER = re.compile(r"^\s*(?:[-*]\s+)?`?([a-z_$][a-z0-9_]*)((?:\.[A-Za-z0-9_-]+)*)`?\s*(?:=|:)", re.M)
 # The word settings (mold_v0-099): `member_keys = false`, `source_offer.upstreams.<pack id> = licensor_owned`. The word
 # ends the clause as a number does above.
@@ -304,7 +372,8 @@ def from_brief(text):
     """-> (profile or None, problems, notes). Reads `limits.<section>.<name> = <number>` (or `:`) in a `## Profile` or
     `## Budgets` section; `limits.plans.<plan>.<section>.<name> = <number>` for one plan; `email_from_address = <address>`,
     `email.notifications = <group>, <group>` (or `none`) and `email.provider = resend|none` (mold_v0-101); `member_keys =
-    false` (or true) and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099). A setting written twice with two
+    false` (or true) and `source_offer.upstreams.<pack id> = licensor_owned` (mold_v0-099); `legal.<field> = <text>`
+    (mold_v0-109: company_name, contact_email, jurisdiction, effective_date, terms_url, privacy_url). A setting written twice with two
     values, a value that is not a positive number, and (in `## Profile`) any other field is a problem; a `limits.` setting
     outside those sections is ignored and said."""
     prof, errs, notes, seen = {}, [], [], {}
@@ -352,6 +421,12 @@ def from_brief(text):
                 prof.setdefault("email", {})["notifications"] = [] if raw.lower() in ("none", "off", "") else [g.strip().strip("`") for g in raw.split(",") if g.strip()]
             elif key == "email.pitch": prof.setdefault("email", {})["pitch"] = raw
             else: prof.setdefault("email", {})["provider"] = raw.lower()
+        for m in LEGAL_LINE.finditer(body):
+            key, raw = m.group(1).lower(), m.group(2).strip().strip("`").strip()
+            name = f"legal.{key}"
+            if name in seen and seen[name] != raw: errs.append(f"{head}: {name} is set twice ({seen[name]} and {raw}); keep one"); continue
+            seen[name] = raw
+            prof.setdefault("legal", {})[key] = raw
     for m in MENTION.finditer(text):
         if not any(a <= m.start() < b for a, b in spans) and re.match(r"`?[ \t]*[=:]", text[m.end():]):
             notes.append(f"limits{m.group(1)} outside a ## Profile or ## Budgets section: ignored")

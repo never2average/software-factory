@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { fontVariables } from '@/components/themes/font.config';
 import { DEFAULT_THEME, THEMES } from '@/components/themes/theme.config';
 import ThemeProvider from '@/components/themes/theme-provider';
+import { siteUrl } from '@/lib/site-url';
 import { cn } from '@/lib/utils';
 import type { Metadata, Viewport } from 'next';
 import { cookies } from 'next/headers';
@@ -14,8 +15,8 @@ import '../styles/globals.css';
 // One look everywhere: Supabase dark. No light mode, no toggle.
 const THEME_COLOR = '#171717';
 
-// Absolute URLs for icons and the share image (Vercel sets the production host; NEXT_PUBLIC_APP_URL overrides it).
-const host = process.env.NEXT_PUBLIC_APP_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3400');
+// Absolute URLs for icons and the share image: the console's own address (web/src/lib/site-url.ts, as robots.txt and the sitemap).
+const host = siteUrl();
 
 export const metadata: Metadata = {
   metadataBase: new URL(host),
