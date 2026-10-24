@@ -106,6 +106,8 @@ export interface PackTabSpec {
   board_by?: string | null;
   timeline_by?: string;
   charts: string[];
+  /** What the tab shows while it has nothing to show (mold_v0-107; src/metric-spec.ts tabEmpty): area, runs and reports tabs. */
+  empty?: { title: string; text: string; cta: { label: string; href: string } | null };
 }
 export const packTabs: PackTabSpec[] = [];
 

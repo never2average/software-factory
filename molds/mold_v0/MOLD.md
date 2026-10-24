@@ -1062,6 +1062,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   offers each card the moves its state allows (a menu, no drag), through the data API's move (`POST
   /api/data/:area/:key/move`, the record store's roles and transitions; the move stamps the state's time). `npm run test:console-tabs` checks the sidebar, the tab pages, a rendered overview and board in a headless
   browser (when the machine has one) and the build copy's typecheck.
+  **Empty states** (mold_v0-107): an area, runs or reports tab with nothing to show says so with a title ("No findings
+  yet.", from the area's label or the tab's), a line of text and a link, as a section named by its title
+  (`web/src/features/tabs/empty.tsx`). pack.json `tabs[].empty` sets `text` and `cta` (`label` and either an `href`: a
+  path of this site, an https:// or a mailto: address, the landing block's rules; or an `action`: `setup`,
+  `onboarding:<one of the pack's steps>`, `run:<one of the pack's job kinds>`); plain text on one line, no braces, at
+  most 300 and 40 characters. What it leaves out is the shell's default, in the build's words (`src/metric-spec.ts`
+  `tabEmpty`): the onboarding step that waits on the area (`done_when: record:<area>`) with a link to it on the Setup
+  page (`/app#onboarding-<pack>-<step>`); for a shared area, that the platform adds its records; for an area the
+  AI client can add to (its create tool is on the customer MCP), to ask the client; for a pack with job kinds, that its
+  runs add them; for a runs or reports tab, to start one from the AI client. gen-packs checks and resolves it into the
+  tab's spec. A record table or a board that scrolls sideways (any `Table` of the console, and the board's columns) is
+  then a labelled region with `tabindex="0"`, so a keyboard can scroll it (axe `scrollable-region-focusable`,
+  mold_v0-114; `web/src/hooks/use-scrolls-sideways.ts`); one that fits is not a tab stop. `npm run test:declarative-packs` refuses malformed `empty` blocks and checks the defaults;
+  `npm run test:console-tabs` draws empty states, a scrolling table and a scrolling board.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
