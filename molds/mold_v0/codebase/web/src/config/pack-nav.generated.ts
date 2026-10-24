@@ -109,6 +109,10 @@ export interface PackTabSpec {
   roles: string[];
   area?: string;
   views?: ('table' | 'board' | 'timeline' | 'detail')[];
+  /** An area tab's table columns: fields of its areas (a merged tab: also source). */
+  columns?: string[];
+  /** A merged tab's areas (mold_v0-135), its own first: rows by key from each, fields from the first with a value. */
+  areas?: { area: string; rows: 'all' | 'matched'; source: string | null }[];
   board_by?: string | null;
   timeline_by?: string;
   charts: string[];

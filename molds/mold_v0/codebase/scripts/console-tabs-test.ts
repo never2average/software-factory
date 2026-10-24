@@ -19,7 +19,11 @@
 //    per chart, a table view; the board's columns are the lifecycle's states in order. The tabs' empty states (mold_v0-107:
 //    a section named by its title, its text, its link) and a table that scrolls sideways, a labelled region the keyboard
 //    can reach (mold_v0-114), beside one that fits, which is not a tab stop.
-// 4. The build copy's console typechecks with the tabs.
+// 3b. A merged tab (mold_v0-135, scripts/fixtures/packs/fixture_status): its sidebar entry and roles, and in the headless
+//    browser its table (the source column, every area's fields, each row opening the record of its first area), its
+//    board (no moves), its timeline, its empty state and a narrow table the keyboard can scroll; a one-area tab's own
+//    columns.
+// 4. The build copy's console typechecks with the tabs (and the merged tab's build copy too).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -84,10 +88,7 @@ function findChrome(): string | null {
  * With CONSOLE_TABS_SNAPSHOT_DIR, also a screenshot in the light and the dark theme.
  */
 async function renderInBrowser(chrome: string, web: string, input: unknown) {
-  const { build } = await import("esbuild");
-  const dir = path.join(TMP, "render");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(web, "render-entry.tsx"), `import { createRoot } from 'react-dom/client';
+  const dom = await drawInBrowser(chrome, web, "overview", input, `import { createRoot } from 'react-dom/client';
 import { packCharts, packTabs, recordAreas } from '@/config/pack-nav.generated';
 import { ChartCell } from '@/features/tabs/charts';
 import { BoardColumns } from '@/features/tabs/board';
@@ -117,6 +118,23 @@ createRoot(document.getElementById('root')!).render(
   </div>);
 setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
 `);
+  const between = (open: RegExp) => { const m = open.exec(dom); if (!m) return ""; const rest = dom.slice(m.index); const next = rest.slice(1).search(/<div data-(chart|table|board|empty|scroll)=/); return next < 0 ? rest : rest.slice(0, next + 1); };
+  const charts: Record<string, string> = {};
+  for (const m of dom.matchAll(/<div data-chart="([a-z_]+)">/g)) charts[m[1]!] = between(new RegExp(`<div data-chart="${m[1]}">`));
+  return { charts, table: between(/<div data-table="severity">/), board: between(/<div data-board="1"/), empty: [between(/<div data-empty="1"/), between(/<div data-empty="2"/)],
+    wide: between(/<div data-scroll="wide"/), narrow: between(/<div data-scroll="narrow"/), boardNarrow: between(/<div data-board="narrow"/) };
+}
+
+/**
+ * Bundle `entry` (a module of the console, its "@/..." imports resolved) with esbuild, draw it in the headless browser at
+ * a fixed width with the theme's tokens, and return the DOM. With CONSOLE_TABS_SNAPSHOT_DIR, also `<name>-light.png`,
+ * `<name>-dark.png` and `<name>-dom.html` (the overview's keep their names: overview-*.png, dom.html).
+ */
+async function drawInBrowser(chrome: string, web: string, name: string, input: unknown, entry: string) {
+  const { build } = await import("esbuild");
+  const dir = path.join(TMP, `render-${name}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(web, "render-entry.tsx"), entry);
   writeFileSync(path.join(web, "render-link.tsx"), "export default function Link({ href, children, ...rest }: { href: string; children?: unknown }) { return <a href={href} {...(rest as object)}>{children as never}</a>; }\n");
   try {
     await build({ entryPoints: [path.join(web, "render-entry.tsx")], bundle: true, format: "iife", platform: "browser", outfile: path.join(dir, "bundle.js"), absWorkingDir: web,
@@ -141,17 +159,13 @@ setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
   assert.equal(r.status, 0, `the browser ran: ${r.stderr.slice(0, 1000)}`);
   const dom = r.stdout;
   assert.match(dom, /data-ready="1"/, `the page rendered (${dom.slice(0, 300)})`);
-  const between = (open: RegExp) => { const m = open.exec(dom); if (!m) return ""; const rest = dom.slice(m.index); const next = rest.slice(1).search(/<div data-(chart|table|board|empty|scroll)=/); return next < 0 ? rest : rest.slice(0, next + 1); };
-  const charts: Record<string, string> = {};
-  for (const m of dom.matchAll(/<div data-chart="([a-z_]+)">/g)) charts[m[1]!] = between(new RegExp(`<div data-chart="${m[1]}">`));
   if (process.env.CONSOLE_TABS_SNAPSHOT_DIR) {
     mkdirSync(process.env.CONSOLE_TABS_SNAPSHOT_DIR, { recursive: true });
     for (const dark of [false, true])
-      spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, dark ? "overview-dark.png" : "overview-light.png")}`, `file://${page(dark)}`], { timeout: 120_000 });
-    writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, "dom.html"), dom);
+      spawnSync(chrome, [...args, `--screenshot=${path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, `${name}-${dark ? "dark" : "light"}.png`)}`, `file://${page(dark)}`], { timeout: 120_000 });
+    writeFileSync(path.join(process.env.CONSOLE_TABS_SNAPSHOT_DIR, name === "overview" ? "dom.html" : `${name}-dom.html`), dom);
   }
-  return { charts, table: between(/<div data-table="severity">/), board: between(/<div data-board="1"/), empty: [between(/<div data-empty="1"/), between(/<div data-empty="2"/)],
-    wide: between(/<div data-scroll="wide"/), narrow: between(/<div data-scroll="narrow"/), boardNarrow: between(/<div data-board="narrow"/) };
+  return dom;
 }
 
 try {
@@ -282,11 +296,74 @@ try {
     }
   }
 
+  // ---------- 3b. a merged tab (mold_v0-135) ----------
+  const mergedWeb = path.join(buildCopy("merged", ["fixture_status"]), "web");
+  {
+    const nav = inConsole<Nav>(mergedWeb, NAV);
+    assert.deepEqual(nav.portalNav.map((g) => [g.label, g.items.map((i: any) => `${i.title} ${i.url} ${i.roles.join(",")}`)]), [
+      ["Requirements", ["Our requirements /app/packs/fixture_status/ours member,billing,owner", "Requirement library /app/packs/fixture_status/library viewer,member,billing,owner"]],
+    ], "a merged tab is one sidebar entry, for the roles that may read every one of its areas");
+    const chrome = findChrome();
+    if (!chrome) console.log("✓ (no headless browser on this machine: the merged tab's rendered check is skipped; set CHROME_BIN)");
+    else {
+      const row = (key: string, areas: string[], title: string | null, data: Record<string, unknown>) => ({ key, areas, title, data, updated_at: "2026-10-20T00:00:00.000Z" });
+      const page = { next: null, records: [
+        row("lib:001", ["req_status", "req_library"], "Library 001", { state: "done", due: "2026-11-02", code: "L-001", topic: "access", weight: "high" }),
+        row("lib:003", ["req_status", "req_library"], "Library 003", { state: "planned", due: "2026-12-04", code: "L-003", topic: "data", weight: "high" }),
+        row("own:a1", ["req_status", "req_own"], "Status of A-1", { state: "partial", code: "A-1", topic: "vendor", origin: "contract" }),
+        row("own:a2", ["req_own"], "Own A-2", { code: "A-2", topic: "access", origin: "contract" }),
+      ] };
+      const library = { next: null, records: [{ key: "lib:001", title: "Library 001", data: { code: "L-001", topic: "access", weight: "high" }, updated_at: "2026-10-20T00:00:00.000Z" }] };
+      const dom = await drawInBrowser(chrome, mergedWeb, "merged", { page, library }, `import { createRoot } from 'react-dom/client';
+import { packTabs } from '@/config/pack-nav.generated';
+import { BoardColumns, RecordTable, TimelineList } from '@/features/tabs/board';
+import { EmptyState } from '@/features/tabs/empty';
+import { viewArea, withSource } from '@/features/tabs/merged';
+const { page, library } = (window as unknown as { __INPUT__: { page: any; library: any } }).__INPUT__;
+const tab = packTabs.find((t) => t.id === 'ours')!;
+const area = viewArea(tab)!;
+const data = withSource(tab, page);
+createRoot(document.getElementById('root')!).render(
+  <div className='flex flex-col gap-6' style={{ width: 1180 }}>
+    <div data-merged='table'><RecordTable area={area} detail data={data} /></div>
+    <div data-merged='board'><BoardColumns area={area} by='state' detail data={data} role='member' /></div>
+    <div data-merged='timeline'><TimelineList area={area} by='due' badge='state' detail data={data} /></div>
+    <div data-merged='empty'><EmptyState empty={tab.empty} id='empty-req_status' /></div>
+    <div data-merged='narrow' style={{ width: 360 }}><RecordTable area={area} detail={false} data={data} /></div>
+    <div data-merged='library'><RecordTable area={viewArea(packTabs.find((t) => t.id === 'library')!)!} detail data={library} /></div>
+  </div>);
+setTimeout(() => { document.body.setAttribute('data-ready', '1'); }, 1500);
+`);
+      const part = (k: string) => { const i = dom.indexOf(`<div data-merged="${k}"`); assert.ok(i >= 0, `${k} rendered`); const rest = dom.slice(i + 1); const j = rest.search(/<div data-merged=/); return j < 0 ? rest : rest.slice(0, j); };
+      const text = (html: string) => html.replace(/<[^>]+>/g, "|").replace(/\|+/g, "|");
+      const table = part("table");
+      assert.match(text(table), /\|Record\|Source\|Code\|Topic\|State\|Next due\|/, "the merged table's columns: the source, then fields of several areas");
+      assert.match(text(table), /\|Library 001\|Shared\|L-001\|Access\|Done\|2026-11-02\|/, "a shared entry the workspace tracks: its state beside the library's fields");
+      assert.match(text(table), /\|Library 003\|Shared\|L-003\|Data\|Planned\|/, "an option only the library declares keeps its label");
+      assert.match(text(table), /\|Status of A-1\|Our own\|A-1\|Vendor\|Partial\|/, "its own requirement with a state");
+      assert.match(text(table), /\|Own A-2\|Our own\|A-2\|Access\|/, "its own requirement with no state yet");
+      assert.match(table, /href="\/app\/records\/req_status\/lib%3A001"/, "a row opens the record of its first area (the status)");
+      assert.match(table, /href="\/app\/records\/req_own\/own%3Aa2"/, "a row only one area holds opens that area's record");
+      const board = part("board");
+      assert.match(text(board), /Unknown\|0\|None\|Planned\|1\|.*Partial\|1\|.*Done\|1\|.*Not applicable\|0\|None\|No value\|1\|Own A-2/s, "the board: a column per state, the rows with none under No value");
+      assert.doesNotMatch(board, /<select/, "a merged tab's board offers no moves");
+      const timeline = part("timeline");
+      assert.match(text(timeline), /December 2026\|.*Library 003\|Planned\|November 2026\|.*Library 001\|Done\|No next due\|Status of A-1\|Own A-2\|/s, "the timeline by the status's date, newest first, each with its state; the undated after");
+      assert.match(part("empty"), /<h3 id="empty-req_status-title"[^>]*>No requirement status yet\.<\/h3>/, "the merged tab's empty state, by its own area");
+      const narrow = /<div data-slot="table-container"[^>]*>/.exec(part("narrow"))?.[0] ?? "";
+      for (const attr of ['tabindex="0"', 'role="region"', 'aria-label="Our requirements"']) assert.ok(narrow.includes(attr), `a narrow merged table is a labelled region the keyboard can scroll (${attr}): ${narrow}`);
+      assert.match(text(part("library")), /\|Record\|Code\|Weight\|Library 001\|L-001\|High\|/, "a one-area tab's own columns (not the area's list columns)");
+      console.log("✓ rendered: a merged tab's table (source column, several areas' fields and options, each row opening its first area's record), board (by state, no moves), timeline, empty state and a narrow table the keyboard can scroll; a one-area tab's own columns");
+    }
+  }
+
   // ---------- 4. the console typechecks with the tabs ----------
   if (process.env.CONSOLE_TABS_TYPECHECK !== "off" && existsSync(path.join(ROOT, "web", "node_modules"))) {
-    const r = spawnSync(path.join(ROOT, "web", "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: web, encoding: "utf8" });
-    assert.equal(r.status, 0, `the console typechecks with the declared tabs: ${r.stdout.slice(0, 3000)}${r.stderr.slice(0, 1000)}`);
-    console.log("✓ the build copy's console typechecks with the declared tabs, charts and metrics");
+    for (const [w, what] of [[web, "the declared tabs, charts and metrics"], [mergedWeb, "a merged tab"]] as const) {
+      const r = spawnSync(path.join(ROOT, "web", "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: w, encoding: "utf8" });
+      assert.equal(r.status, 0, `the console typechecks with ${what}: ${r.stdout.slice(0, 3000)}${r.stderr.slice(0, 1000)}`);
+      console.log(`✓ the build copy's console typechecks with ${what}`);
+    }
   } else console.log("✓ (typecheck of the build copy skipped)");
 } finally {
   rmSync(TMP, { recursive: true, force: true });
