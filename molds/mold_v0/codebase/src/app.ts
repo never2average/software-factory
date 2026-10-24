@@ -392,12 +392,22 @@ export async function customerSession(req: Request, res: Response, next: NextFun
   const c = await signedIn(req);
   if (!c) return void res.status(401).json({ error: "Sign in", sign_in_url: dir.provider === "clerk" ? "/sign-in" : "/auth/sign-in" });
   const ms = (await dir.memberships.forUser(c.userId)).filter((m) => m.organization).sort((a, b) => a.created_at - b.created_at);
-  // The session's active organization; without one, the person's oldest membership that is not suspended.
-  const m = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : ms.find((x) => !clerk.isSuspended(x));
-  if (!m) return void res.status(403).json({ error: `You are not in ${an(PROFILE.name)} account yet. Ask your admin to invite you.`, code: "no_account" });
-  if (clerk.isSuspended(m)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
-  const org = await orgForClerk(m.organization!.id);
-  if (!org) return void res.status(403).json({ error: `This organization is not ${an(PROFILE.name)} account. ${PROFILE.name} is invite-only for now: ask your ${PROFILE.name} contact for an invitation.`, code: "no_account" });
+  // The session's active organization when it is an account; else (no active one, or one the person made for
+  // themselves that is no account) the person's oldest membership of an account that is not suspended.
+  const active = c.orgId ? ms.find((x) => x.organization!.id === c.orgId) : undefined;
+  let m = active, org = active ? await orgForClerk(active.organization!.id) : null;
+  if (active && org && clerk.isSuspended(active)) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
+  if (!org) {
+    m = undefined;
+    for (const x of ms) {
+      if (clerk.isSuspended(x)) continue;
+      const o = await orgForClerk(x.organization!.id);
+      if (o) { m = x; org = o; break; }
+    }
+  }
+  if (!m && ms.some((x) => clerk.isSuspended(x))) return void res.status(403).json({ error: "Your access to this account was suspended. Ask your account admin.", code: "suspended" });
+  if (!m && !ms.length) return void res.status(403).json({ error: `You are not in ${an(PROFILE.name)} account yet. Ask your admin to invite you.`, code: "no_account" });
+  if (!m || !org) return void res.status(403).json({ error: `This organization is not ${an(PROFILE.name)} account. ${PROFILE.name} is invite-only for now: ask your ${PROFILE.name} contact for an invitation.`, code: "no_account" });
   const user = await dir.users.get(c.userId);
   const s: Session = { org: org.orgId, slug: org.slug, user: c.userId, email: clerk.primaryEmail(user).email, role: clerk.roleOf(m.role),
     accountRole: roles.accountRoleOf(m), clerkOrgId: m.organization!.id };
