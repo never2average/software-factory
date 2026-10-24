@@ -3521,6 +3521,57 @@
         }
       },
       "additionalProperties": false
+    },
+    "guide": {
+      "type": "object",
+      "properties": {
+        "$comment": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "markdown": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200000
+        },
+        "dir": {
+          "type": "string",
+          "pattern": "^[a-z0-9_\\-/]+$"
+        },
+        "groups": {
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "pages": {
+                "minItems": 1,
+                "maxItems": 40,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              }
+            },
+            "required": [
+              "title",
+              "pages"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "generated": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [
