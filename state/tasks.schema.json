@@ -64,8 +64,10 @@
         "blocked",
         "review",
         "done",
-        "dropped"
-      ]
+        "dropped",
+        "parked"
+      ],
+      "description": "parked: kept for later by the operator; not open work (hidden from tasks and the board until set back to todo)"
     },
     "priority": {
       "type": "integer",

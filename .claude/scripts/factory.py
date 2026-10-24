@@ -79,7 +79,7 @@ def cmd_tasks(a):
     show_all = "--all" in a; idx = all_tasks()
     for m in ms:
         for t in sorted(read_tasks(m), key=lambda t:(t["priority"], t["task_id"])):
-            if not show_all and t["status"] in ("done","dropped"): continue
+            if not show_all and t["status"] in ("done","dropped","parked"): continue
             b = blocked_by(t, idx); flag = f" [blocked by {','.join(b)}]" if b and t["status"]=="todo" else ""
             print(f"{t['task_id']:13} P{t['priority']} {t['status']:11} {t['owner']:6} {t['type']:10} {t['title']}{flag}")
 def next_tasks(ms):
