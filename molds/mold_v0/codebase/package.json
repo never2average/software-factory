@@ -26,6 +26,7 @@
     "gen:pack-schema": "tsx scripts/pack-schema.ts",
     "test:packs": "tsx scripts/packs-test.ts",
     "test:declarative-packs": "tsx scripts/declarative-packs-test.ts",
+    "test:row-maps": "tsx scripts/row-maps-test.ts",
     "test:record-areas": "tsx scripts/record-areas-test.ts",
     "test:metrics": "tsx scripts/metrics-test.ts",
     "test:console-tabs": "tsx scripts/console-tabs-test.ts",

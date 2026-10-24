@@ -44,6 +44,7 @@
  *                interface: the shell's tables (the default), the workspace store's files (indexed after a commit), an
  *                upstream catalog at a pinned commit (indexed by platform staff), an external HTTP API (read live).
  *                `loaders` (code only) turn a repository's files into rows when the declared mapping is not enough
+                (mold_v0-123: a map's computed values, retires and only_latest say what an app pack's loader did)
  *   the data API wired (mold_v0-059; src/data-api.ts, src/data-routes.ts): list (filter, sort, paging), get, create,
  *                update, move, delete and batch for every area, at /api/data and /api/admin/data, through the same
  *                record store as ctx.records
@@ -65,6 +66,7 @@ import type { Permission as AdminPermission, PlatformRole } from "./admin-roles.
 import { parseCron } from "./cron.js";
 import { AgentWorkspaceSchema, GATEWAY_PLACEHOLDER, placeholders } from "./agent-workspace-config.js";
 import { WorkspaceStoreSchema } from "./workspace-store-policy.js";
+import { PATTERN_LIMITS, patternProblem } from "./safe-pattern.js";
 
 export { z };
 
@@ -671,20 +673,61 @@ const valuePath = z.string().max(300).regex(VALUE_PATH, "a value path: a.b, a li
 const template = z.string().min(1).max(300).refine((t) => /\{[^{}]+\}/.test(t) && [...t.matchAll(/\{([^{}]*)\}/g)].every((m) => VALUE_PATH.test(m[1]!)) && !/[\u0000-\u001f]/.test(t),
   "a template: text with {value path} parts, e.g. {id} or {$.instrument}:{id}");
 /**
+ * A value path that may also take EVERY item of a list (mold_v0-123): "a[]" (each item of a), "a[].b" (b of each item),
+ * beside "a[0]". Only a field's computed value (FieldValueSchema `value`) takes one: it gives the list of the values found.
+ */
+export const LIST_PATH = /^(?!.*(^|[.@$])(__proto__|constructor|prototype)([.[]|$))(@[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*|(\$\.)?[A-Za-z_][A-Za-z0-9_]*(\[(0|[1-9][0-9]{0,2})?\])*(\.[A-Za-z_][A-Za-z0-9_]*(\[(0|[1-9][0-9]{0,2})?\])*)*)$/;
+const listPath = z.string().max(300).regex(LIST_PATH, "a value path: a.b, a[0], a[] (every item of the list a) or a[].b");
+/** A bounded pattern (src/safe-pattern.ts): limited syntax and size, so testing one never takes long. */
+const pattern = z.string().max(PATTERN_LIMITS.chars).superRefine((p, ctx) => {
+  const e = patternProblem(p);
+  if (e) ctx.addIssue({ code: "custom", message: `a bounded pattern: ${e}` });
+});
+/** What a value must be to count (mold_v0-123): text (not empty), a number, a record key, a list or true/false. */
+export const VALUE_KINDS = ["text", "number", "key", "list", "boolean"] as const;
+/** One test of the values at a path: `only` a kind of value, `matches` a bounded pattern (text only). */
+const ValueTestSchema = z.object({ value: listPath, only: z.enum(VALUE_KINDS).optional(), matches: pattern.optional() }).strict();
+/**
+ * A field's value (mold_v0-123): a value path, or a computed value with no code:
+ *   {value, only?, matches?, max_length?, as?}  the values at `value` that are of kind `only` and match `matches`, text cut
+ *                                               to `max_length` characters; `as` "first" (the first of them: the default
+ *                                               for a path with no []) or "list" (all of them, none when there are none:
+ *                                               the default for a path with [])
+ *   {any: [{value, only?, matches?}, ...]}      true when any test finds a value, else false
+ */
+export const FieldValueSchema = z.union([
+  valuePath,
+  z.object({ value: listPath, only: z.enum(VALUE_KINDS).optional(), matches: pattern.optional(), max_length: z.number().int().min(1).max(20_000).optional(), as: z.enum(["first", "list"]).optional() }).strict(),
+  z.object({ any: z.array(ValueTestSchema).min(1).max(10) }).strict(),
+]);
+/** A `where` value: equal to this text, number or true/false, or a test ({only?, matches?}: at least one). */
+const WhereValueSchema = z.union([z.string().max(200), z.number(), z.boolean(),
+  z.object({ only: z.enum(VALUE_KINDS).optional(), matches: pattern.optional() }).strict().refine((t) => t.only !== undefined || t.matches !== undefined, "a test names only or matches")]);
+const whereSchema = z.record(z.string().max(300).regex(VALUE_PATH, "a value path"), WhereValueSchema);
+/**
  * How a repository's documents become one area's rows (no code): `from` names one of the repository's `files` (a file, a
  * directory or a glob: every JSON document under it), `each` the list inside a document that holds one row per item
- * ("groups.controls": every control of every group), `key` and `title` templates, and `fields` each field's value path
- * (absent: the item's property of the same name, or its camelCase form).
+ * ("groups.controls": every control of every group), `key` and `title` templates, and `fields` each field's value
+ * (FieldValueSchema; absent: the item's property of the same name, or its camelCase form).
+ *
+ * For a file of lines (a workspace_files `path`, mold_v0-123): `retires` a value path naming the key of an EARLIER row
+ * a line ends (an append-only file's "this supersedes that": a line naming its own key is just its new version), and
+ * `only_latest` {by, among?}: only the lines whose `by` value is the greatest of the lines that match `among` (a `where`),
+ * e.g. the points of the latest measurement; no line matches `among`: no rows.
  */
 export const RowMapSchema = z.object({
   from: fileKey.optional(),
   each: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "a dotted path to a list (each list on the way is walked)").optional(),
   key: template,
   title: template.optional(),
-  fields: z.record(name, valuePath).optional(),
-  /** Only the items whose values are these (e.g. {"kind": "control"} in a ledger that holds several kinds of lines). */
-  where: z.record(z.string().max(300).regex(VALUE_PATH, "a value path"), z.union([z.string().max(200), z.number(), z.boolean()])).optional(),
+  fields: z.record(name, FieldValueSchema).optional(),
+  /** Only the items whose values are these (e.g. {"kind": "control"} in a ledger that holds several kinds of lines), or pass these tests. */
+  where: whereSchema.optional(),
+  retires: valuePath.optional(),
+  only_latest: z.object({ by: valuePath, among: whereSchema.optional() }).strict().optional(),
 }).strict();
+export type RowMap = z.output<typeof RowMapSchema>;
+export type FieldValue = z.output<typeof FieldValueSchema>;
 /** An upstream project pinned by commit: a full commit id, never a branch or a tag. */
 export const UpstreamSchema = z.object({
   repo: z.string().regex(/^(https:\/\/[a-z0-9.-]+(:\d{1,5})?\/[A-Za-z0-9._~/-]+|file:\/\/\/[A-Za-z0-9._~/-]+)$/, "an https:// repository address (file:// only in tests)"),
@@ -750,7 +793,7 @@ const HttpApiSchema = z.object({
   auth: z.object({ header: z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,62}$/, "a header name").optional(), scheme: z.string().regex(/^[A-Za-z]{1,20}$/, "a word").optional() }).strict().optional(),
   list: z.object({ path: z.string().regex(/^\/[A-Za-z0-9._~/-]*(\?[A-Za-z0-9._~=&-]*)?$/, "a path under base_url"), items: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/).optional() }).strict(),
   get: z.object({ path: z.string().regex(/^\/[A-Za-z0-9._~/{}-]*\{key\}[A-Za-z0-9._~/{}-]*$/, "a path under base_url with {key}") }).strict().optional(),
-  map: z.record(name, RowMapSchema.omit({ from: true, each: true, where: true })).optional(),
+  map: z.record(name, RowMapSchema.omit({ from: true, each: true, where: true, retires: true, only_latest: true })).optional(),
   max_items: z.number().int().min(1).max(5000).optional(),
 }).strict();
 /**
@@ -1385,6 +1428,10 @@ function repositoryProblems(p: PackDefinition, partial: boolean): string[] {
       for (const f of Object.keys(m.fields ?? {})) if (!a.fields.some((x) => x.name === f)) out.push(`repository ${rn}: its map of ${an} names field ${f}, which ${an} does not declare`);
       const files = (r as { files?: Record<string, string> }).files;
       if (m.from !== undefined && !Object.hasOwn(files ?? {}, m.from)) out.push(`repository ${rn}: its map of ${an} reads ${m.from}, which is not one of its files`);
+      // mold_v0-123: retires and only_latest read the lines of one file template; retires only where the last line wins.
+      const lines = r.kind === "workspace_files" && r.path !== undefined;
+      if (m.only_latest !== undefined && !lines) out.push(`repository ${rn}: its map of ${an} declares only_latest, which reads the lines of a workspace_files path`);
+      if (m.retires !== undefined && !(lines && r.kind === "workspace_files" && r.append_only)) out.push(`repository ${rn}: its map of ${an} declares retires, which needs a workspace_files path with append_only: true (the last line of a key wins)`);
     }
   }
   for (const [rn, fn] of Object.entries(p.loaders ?? {})) {

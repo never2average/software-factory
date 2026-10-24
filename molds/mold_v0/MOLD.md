@@ -897,7 +897,8 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   files and tree at the commit; indexed by the server itself whenever its pin changes, and by staff: below) and `http_api` (read live with the workspace's credential field in a
   header, https to its `egress` hosts only, the address resolved once, checked against private ranges and used for the
   connection, no redirects, 5 MB, 15 s). Rows come from a pack's `loaders` (code), else a declared `map` (`from`,
-  `each`, `key`/`title` templates, `fields` value paths, `where`) or the kind's default (fields by name or camelCase).
+  `each`, `key`/`title` templates, `fields` value paths or computed values, `where`, and for a file of lines `retires`
+  and `only_latest`: "Declared row maps" below) or the kind's default (fields by name or camelCase).
   A value path (`VALUE_PATH`, `src/pack-api.ts`; read by `valueAt`) is a dotted path of properties, each optionally
   followed by list indexes (mold_v0-076: `controls[0]`, `refs[0].id`, `$.a[2].b`; 0 to 999, no negative, computed or
   quoted index, never `__proto__`, `constructor` or `prototype`), in `fields`, `key`/`title` templates, `where` and
@@ -1343,8 +1344,8 @@ and everything under it redirect to /app (`pack-routes.generated.json`). The sta
 **Customer guide (mold_v0-106).** `/app/docs` and the docs answers' corpus (Ask AI, `src/docs-answers.ts`;
 `scripts/sync-docs-corpus.ts` writes `src/docs-corpus.generated.json` from the same pages) come from the packs when no
 host pack brings guide code. A declarative pack's `pack.json` `guide` holds its own pages: `markdown` (inline, one page
-per `## ` heading) or `dir` (a directory of the pack with one `.md` file per page, `# Title` first, in file-name order),
-`groups` (the navigation's groups, in order) and `generated` (false leaves out the pages written from the declarations).
+per `## ` heading; the only form since mold_v0-124, which took `dir` away: a pack is its pack.json alone, and `guide.dir`
+is refused, saying to write the pages inline), `groups` (the navigation's groups, in order) and `generated` (false leaves out the pages written from the declarations).
 Every page is markdown only, checked by `gen-packs.mjs` with `src/pack-guide.ts`: no raw HTML, scripts or images, no
 control or invisible characters, and every link a path of this site, an #anchor, an https:// or a mailto: address
 (never javascript:, data:, http: or //host); a page may not take a generated page's title. After a pack's own pages the
@@ -1356,6 +1357,42 @@ they reach, and the account; whatever a pack's `mcp` settings withhold is left o
 still gets a real one. Base text writes the build's words (`{run}`, `{workspace}`, `{product}`). With zero packs the
 guide is the shell's, byte for byte (`PACK_GUIDE` null); a host pack's guide code (mold_v0-039) replaces both, as
 before, and a host pack may not declare `guide`. `npm run test:pack-guide`.
+
+**Declared row maps and config-only packs (mold_v0-123, mold_v0-124).** An app pack on mold_v0 is config only (the
+operator's rule): its `pack.json` alone. A repository's `map` (`src/pack-api.ts` `RowMapSchema`, read by
+`src/data-repositories.ts`) says, with no code, what a pack's loader used to:
+- a field's value is a value path (`a.b`, `a[0]`: a list's first item) or a **computed value**
+  `{value, only?, matches?, max_length?, as?}`: the values at `value` (a value path that may also take every item of a
+  list: `a[]`, `a[].b`), kept when they are of kind `only` (`text`, not empty; `number`; `key`, a record key; `list`;
+  `boolean`) and match the bounded pattern `matches` (text only), text cut to `max_length` characters (1 to 20,000), then
+  `as` `first` (the default for a path with no `[]`) or `list` (all of them, none when there are none: the default for
+  a path with `[]`). `{any: [{value, only?, matches?}, ...]}` (1 to 10 tests) is true when any test finds a value, else
+  false. A value that does not fit is no value, never an error;
+- `where` takes, beside an equal text, number or true/false, a test `{only?, matches?}`; `$.x` reads the document's
+  root (for a file of lines, the line itself, whatever `each` walks);
+- for a `workspace_files` `path` (a file of lines; the validator refuses them anywhere else, an API's map included):
+  `retires`, a value path naming the key of an EARLIER row a line ends (only with `append_only`: one naming its own key
+  is its new version; a key retired comes back with a later line; a value that is not text is ignored), and
+  `only_latest` `{by, among?}`: only the lines whose `by` value (text compared as text, numbers as numbers) is the
+  greatest among the lines that match `among` (a `where`), e.g. the points of the latest measurement; no line matches
+  `among`: no rows. The last line of a key still wins among them.
+
+A **bounded pattern** (`src/safe-pattern.ts`, checked when the build reads pack.json and again when it is compiled)
+can never take long on any text: at most 200 characters, Unicode rules; literals, `.`, `^`, `$`, classes (`[a-z0-9_-]`,
+`[^/]`), `\d \D \w \W \s \S` and escaped punctuation, alternation, groups `( )` and `(?: )` (nested at most 4 deep), and
+`? * + {n} {n,} {n,m}` (at most 1,000); never a lookaround, backreference, named group, lazy or stacked repetition, word
+boundary, property or code-point escape, or control character; a group is never repeated (only `?`, on a group with no
+repetition inside: a repeated group is what takes exponential time); the product of the repetitions' ranges (an
+unbounded one counted as 1,000) is at most 2,000, so one test is at most a few tens of milliseconds on the worst text;
+and the text tested is at most 1,000 characters (longer text never matches). `npm run test:row-maps` proves each
+operator (taken, refused, the limits and the worst case's time).
+
+The factory holds an app's pack to it (`packs.py check`, from `mold.json` `packs.declarative`): a pack that is not one of
+`host_packs` adds `packs/<id>/pack.json` and nothing else, and its pack.json may not name `entry`, `migrations` or
+`runner`; each refusal names the declaration to write instead (a row map, `record_areas`, `guide.markdown`). gen-packs
+says the same of a pack with no entry, migrations or runner (a declarative pack): any file beside its pack.json is
+refused. The shell keeps its code seam (`entry`, `loaders`, `migrations`, `runner`) for its own fixtures and other molds'
+packs; a host pack (`octillion`) keeps its code. `npm run test:pack-guide` and `packs.py --self-test` prove the refusals.
 
 **Legal and crawl pages (mold_v0-109).** The app's own `profile.json` `legal` (`company_name`, `contact_email`,
 `effective_date` YYYY-MM-DD; optionally `jurisdiction`, and `terms_url` and `privacy_url`, the company's own https://

@@ -113,8 +113,8 @@ export const PackJsonSchema = z.object({
    */
   landing: LandingSchema.optional(),
   /**
-   * The customer guide's own pages (mold_v0-106; src/pack-guide.ts): inline markdown or a directory of the pack's .md
-   * files, and their navigation groups, before the pages the console writes from these declarations. Markdown only,
+   * The customer guide's own pages (mold_v0-106; src/pack-guide.ts): inline markdown (the only form since mold_v0-124:
+   * a pack is its pack.json alone) and their navigation groups, before the pages the console writes from these declarations. Markdown only,
    * checked by scripts/gen-packs.mjs (no raw HTML or images, safe links). Not for a host pack (its guide is its code).
    */
   guide: GuideSchema.optional(),
