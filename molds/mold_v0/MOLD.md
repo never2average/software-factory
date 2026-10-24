@@ -799,6 +799,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   the old ticket's acceptance (a new person from the landing page to a first call): there is no browser harness in the
   shell yet. The product's own setup steps and tool groups are its host pack's Setup route (mold_v0-039, below); the
   shell's own Setup page asks for joining, a connection, the tools and a first call, in the profile's words.
+  The same steps are the admin console's account stages after the shell's own five (account created to first tool
+  call; mold_v0-103): `src/admin.ts` `accountStages`, each account's step times read across workspaces in one grouped
+  query per condition (`src/onboarding.ts` `stageStepsReached`, steps other than `workspace`, `connected` and
+  `first_call`), and an account two days at a stage with the next step not done (nothing of its running) is named under
+  Needs attention with that step. With zero packs the funnel ends at the first tool call and asks nothing more. A build
+  with the session engine (a host pack's tables) keeps that engine's stages and messages word for word instead.
+- **Admin sections per build** (mold_v0-104, built): the account pages, Analytics, Health and the plan editor show the
+  session engine's products, research, simulations, jobs and metered units only when the build has its tables
+  (`web/src/features/admin/engine.ts`, the console's copy of `src/host-tables.ts`, from `build-facts.generated.ts`:
+  the host pack's tables and the packs' job kinds with their labels). Without it they show the packs' runs per job kind,
+  by the kind's label and in the build's word for a run: an account's runs and latest runs (`orgDetail` `runs`), the
+  weekly chart (Analytics), Health's runs tab (`GET /compute/runs`, `src/compute-jobs.ts` `runKinds`); an account's
+  month spend is its runs'. `npm run test:admin-sections` proves zero packs and a declarative fixture pack in a shell
+  build, and, run in a host pack's build, that the engine's stages, messages, account page and funnel are unchanged.
 - **Declarative packs** (mold_v0-057, built): a pack may be its `pack.json` alone, with no entry and no TypeScript.
   `src/pack-manifest.ts` is the one definition of pack.json (zod; its JSON Schema is written to `packs/pack.schema.json`
   by `npm run gen:pack-schema`, for editors and intake, and `npm run test:declarative-packs` holds it current and runs a
@@ -1062,6 +1076,20 @@ migrations since mold_v0-049 ("Host packs": its schema). The factory side is bui
   offers each card the moves its state allows (a menu, no drag), through the data API's move (`POST
   /api/data/:area/:key/move`, the record store's roles and transitions; the move stamps the state's time). `npm run test:console-tabs` checks the sidebar, the tab pages, a rendered overview and board in a headless
   browser (when the machine has one) and the build copy's typecheck.
+  **Empty states** (mold_v0-107): an area, runs or reports tab with nothing to show says so with a title ("No findings
+  yet.", from the area's label or the tab's), a line of text and a link, as a section named by its title
+  (`web/src/features/tabs/empty.tsx`). pack.json `tabs[].empty` sets `text` and `cta` (`label` and either an `href`: a
+  path of this site, an https:// or a mailto: address, the landing block's rules; or an `action`: `setup`,
+  `onboarding:<one of the pack's steps>`, `run:<one of the pack's job kinds>`); plain text on one line, no braces, at
+  most 300 and 40 characters. What it leaves out is the shell's default, in the build's words (`src/metric-spec.ts`
+  `tabEmpty`): the onboarding step that waits on the area (`done_when: record:<area>`) with a link to it on the Setup
+  page (`/app#onboarding-<pack>-<step>`); for a shared area, that the platform adds its records; for an area the
+  AI client can add to (its create tool is on the customer MCP), to ask the client; for a pack with job kinds, that its
+  runs add them; for a runs or reports tab, to start one from the AI client. gen-packs checks and resolves it into the
+  tab's spec. A record table or a board that scrolls sideways (any `Table` of the console, and the board's columns) is
+  then a labelled region with `tabindex="0"`, so a keyboard can scroll it (axe `scrollable-region-focusable`,
+  mold_v0-114; `web/src/hooks/use-scrolls-sideways.ts`); one that fits is not a tab stop. `npm run test:declarative-packs` refuses malformed `empty` blocks and checks the defaults;
+  `npm run test:console-tabs` draws empty states, a scrolling table and a scrolling board.
 - **Schedules per workspace and due-date alerts** (mold_v0-035, built): a pack declares default schedules
   (`definePack({ schedules })`: a name, one of its own job kinds, a five-field cron expression in UTC, at most every 5
   minutes (`src/cron.ts`), optionally `assets` (one of its own asset areas, all records or up to 50 keys: one run per
@@ -1300,6 +1328,26 @@ they reach, and the account; whatever a pack's `mcp` settings withhold is left o
 still gets a real one. Base text writes the build's words (`{run}`, `{workspace}`, `{product}`). With zero packs the
 guide is the shell's, byte for byte (`PACK_GUIDE` null); a host pack's guide code (mold_v0-039) replaces both, as
 before, and a host pack may not declare `guide`. `npm run test:pack-guide`.
+
+**Legal and crawl pages (mold_v0-109).** The app's own `profile.json` `legal` (`company_name`, `contact_email`,
+`effective_date` YYYY-MM-DD; optionally `jurisdiction`, and `terms_url` and `privacy_url`, the company's own https://
+pages, which then win) turns on the console's `/terms` and `/privacy`: the shell's neutral template
+(`web/src/features/site/legal-text.ts`) in the build's words (`{product}`, `{account}`, `{runs}`... through
+`web/src/lib/vocabulary.ts`) with the company's facts placed as text after the words are filled, so nothing a profile
+writes is read as a placeholder; a paragraph needing a fact the profile leaves out (the jurisdiction) is not shown. The
+landing page's footer, the sign-in, sign-up and consent pages (`AuthShell`) and the install pages (`src/install-pages.ts`)
+link Terms and Privacy. Without `legal` there are no such pages (404) and no links: the shell never publishes terms
+nobody agreed to. The rules are `src/legal.ts` (plain text on one line with no markup or brackets, one address, a date
+that exists, own pages https:// only), checked by `gen-packs.mjs`, which writes the block to `src/legal.generated.ts` and
+`web/src/config/legal.generated.ts`, never into the profile modules (the MCP surface is unchanged); a host pack's
+profile may not set it. `web/src/app/robots.ts` lets crawlers read the public pages and keeps them out of `/app`,
+`/admin`, `/api` and `/auth`; `web/src/app/sitemap.ts` lists the landing page, `/install` and the legal pages the console
+serves itself (`web/src/features/site/public-pages.ts`; `npm run test:legal` fails when a public page under
+`web/src/app/(site)` is not listed). Both are on the console's own address, read when asked (`web/src/lib/site-url.ts`:
+`APP_CONSOLE_URL`, else `NEXT_PUBLIC_APP_URL`, else Vercel's production address, which is the custom domain once one is
+attached), as are the icons' and share image's absolute URLs. The factory's intake asks a new app for the company (the
+brief's `## Profile` `legal.*` lines, or one question; `later` leaves the pages off; docs/INTAKE.md). The lanes grade
+`/terms` and `/privacy` only when the build serves them (`testing/console/surface.mts`).
 
 **In the factory.** A pack lives at `packs/<pack_id>/` (git-ignored): `pack.json` and a `files/` tree that mirrors the
 codebase root and only adds files. An app names its packs in `application.json` (`"packs": ["octillion"]`), and

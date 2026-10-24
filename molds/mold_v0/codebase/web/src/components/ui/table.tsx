@@ -2,11 +2,19 @@
 
 import * as React from 'react';
 
+import { useScrollsSideways } from '@/hooks/use-scrolls-sideways';
 import { cn } from '@/lib/utils';
 
-function Table({ className, ...props }: React.ComponentProps<'table'>) {
+/**
+ * A table in a container that scrolls sideways when the table is wider than the page. While it scrolls, the container
+ * is a labelled region a keyboard can reach (tabindex 0), so its hidden columns can be scrolled to with the arrow keys
+ * (WCAG 2.1.1; axe `scrollable-region-focusable`, mold_v0-114). `label` names it ("Findings"); without one, "Table".
+ */
+function Table({ className, label, ...props }: React.ComponentProps<'table'> & { label?: string }) {
+  const { ref, scrollRegion } = useScrollsSideways<HTMLDivElement>();
   return (
-    <div data-slot='table-container' className='relative w-full overflow-x-auto'>
+    <div ref={ref} data-slot='table-container' {...scrollRegion(label ?? 'Table')}
+      className='focus-visible:ring-ring/50 relative w-full overflow-x-auto rounded-sm outline-none focus-visible:ring-[3px]'>
       <table
         data-slot='table'
         className={cn('w-full caption-bottom text-sm', className)}

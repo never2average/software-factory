@@ -19,7 +19,9 @@ import { ErrorState, LoadingCards, useOrgLoad } from '@/features/portal/shared';
 import { findRecordArea } from '@/features/records/registry';
 import { BoardColumns, fieldLabel, RecordLink, show, type Page, type RecordRow } from './board';
 import { ChartCell, formatValue, type MetricResult } from './charts';
+import { EmptyState, type EmptySpec } from './empty';
 import { tabCharts } from './registry';
+import { fill } from '@/lib/vocabulary';
 
 
 async function getJson<T>(url: string): Promise<T> {
@@ -52,17 +54,17 @@ function ChartGrid({ charts }: { charts: PackChartSpec[] }) {
 
 // ---------- the area views ----------
 
-function TableView({ area, detail }: { area: RecordAreaSpec; detail: boolean }) {
+function TableView({ area, detail, empty }: { area: RecordAreaSpec; detail: boolean; empty?: EmptySpec }) {
   const [after, setAfter] = useState<string[]>([]);
   const cursor = after.at(-1) ?? '';
   const url = `/api/records/${area.name}?limit=50${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`;
   const { data, error } = useOrgLoad(() => getJson<Page>(url), [url]);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
-  if (!data.records.length) return <p className='text-muted-foreground text-sm'>No records yet.</p>;
+  if (!data.records.length && !after.length) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
   return (
     <div className='flex flex-col gap-4'>
-      <Table>
+      <Table label={area.label}>
         <TableHeader>
           <TableRow>
             <TableHead>Record</TableHead>
@@ -92,12 +94,13 @@ function useMany(area: RecordAreaSpec) {
   return useOrgLoad(() => getJson<Page>(url), [url]);
 }
 
-function BoardView({ area, by, detail }: { area: RecordAreaSpec; by: string; detail: boolean }) {
+function BoardView({ area, by, detail, empty }: { area: RecordAreaSpec; by: string; detail: boolean; empty?: EmptySpec }) {
   const { data, error, reload } = useMany(area);
   const { role } = useAccountRole();
   const [moveError, setMoveError] = useState<string | null>(null);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
+  if (!data.records.length) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
   // Moves go through the generic data API (mold_v0-059: the record store's move, with its roles and transitions).
   const movable = area.scope === 'workspace' && area.lifecycle?.field === by;
   const onMove = async (key: string, to: string) => {
@@ -117,10 +120,11 @@ function BoardView({ area, by, detail }: { area: RecordAreaSpec; by: string; det
 }
 
 
-function TimelineView({ area, by, detail }: { area: RecordAreaSpec; by: string; detail: boolean }) {
+function TimelineView({ area, by, detail, empty }: { area: RecordAreaSpec; by: string; detail: boolean; empty?: EmptySpec }) {
   const { data, error } = useMany(area);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
+  if (!data.records.length) return <EmptyState empty={empty} id={`empty-${area.name}`} />;
   const when = (r: RecordRow) => {
     const v = by === 'updated' ? r.updated_at : r.data[by];
     return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
@@ -134,7 +138,6 @@ function TimelineView({ area, by, detail }: { area: RecordAreaSpec; by: string; 
   return (
     <div className='flex flex-col gap-6'>
       {data.next && <p className='text-muted-foreground text-xs'>The first 200 records; the table has them all.</p>}
-      {!data.records.length && <p className='text-muted-foreground text-sm'>No records yet.</p>}
       {months.map((m) => (
         <section key={m} className='flex flex-col gap-2'>
           <h3 className='text-sm font-medium'>{month(m)}</h3>
@@ -191,9 +194,9 @@ function AreaTab({ tab }: { tab: PackTabSpec }) {
         </div>
       )}
       <div role={views.length > 1 ? 'tabpanel' : undefined} id='view-panel' aria-labelledby={views.length > 1 ? `view-tab-${view}` : undefined}>
-      {view === 'board' && tab.board_by ? <BoardView area={area} by={tab.board_by} detail={detail} />
-        : view === 'timeline' ? <TimelineView area={area} by={tab.timeline_by ?? 'updated'} detail={detail} />
-        : views.length ? <TableView area={area} detail={detail} /> : null}
+      {view === 'board' && tab.board_by ? <BoardView area={area} by={tab.board_by} detail={detail} empty={tab.empty} />
+        : view === 'timeline' ? <TimelineView area={area} by={tab.timeline_by ?? 'updated'} detail={detail} empty={tab.empty} />
+        : views.length ? <TableView area={area} detail={detail} empty={tab.empty} /> : null}
       </div>
     </div>
   );
@@ -215,7 +218,7 @@ function RunResults({ id }: { id: string }) {
   if (!data.results.length) return <p className='text-muted-foreground text-sm'>This run recorded no results.</p>;
   const ref = (x: { area: string; key: string } | null) => (x ? <Link className='underline-offset-4 hover:underline' href={`/app/records/${x.area}/${encodeURIComponent(x.key)}`}>{x.key}</Link> : '—');
   return (
-    <Table>
+    <Table label={fill('Results of the {run}')}>
       <TableHeader><TableRow><TableHead>Check</TableHead><TableHead>Asset</TableHead><TableHead>Result</TableHead><TableHead>Evidence</TableHead></TableRow></TableHeader>
       <TableBody>
         {data.results.map((r, i) => (
@@ -230,16 +233,16 @@ function RunResults({ id }: { id: string }) {
   );
 }
 
-function RunsTab({ reports }: { reports: boolean }) {
+function RunsTab({ reports, label, empty }: { reports: boolean; label: string; empty?: EmptySpec }) {
   const { data, error } = useOrgLoad(() => getJson<{ runs: Run[] }>('/api/runs?limit=100'), []);
   const [open, setOpen] = useState<string | null>(null);
   if (error) return <ErrorState error={error} />;
   if (!data) return <LoadingCards count={1} />;
   const runs = reports ? data.runs.filter((r) => r.status === 'succeeded' || r.status === 'failed') : data.runs;
-  if (!runs.length) return <p className='text-muted-foreground text-sm'>{reports ? 'No finished runs yet.' : 'No runs yet.'}</p>;
+  if (!runs.length) return <EmptyState empty={empty} id={reports ? 'empty-reports' : 'empty-runs'} />;
   return (
     <div className='flex flex-col gap-4'>
-      <Table>
+      <Table label={label}>
         <TableHeader>
           <TableRow>
             <TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>{reports ? 'Finished' : 'Started'}</TableHead>
@@ -277,7 +280,7 @@ export function TabPage({ tab }: { tab: PackTabSpec }) {
       {!loaded ? <LoadingCards count={1} /> : !allowed ? <p className='text-muted-foreground text-sm'>Your role can't see this tab. Ask an account owner.</p>
         : tab.kind === 'overview' ? <ChartGrid charts={tabCharts(tab)} />
         : tab.kind === 'area' ? <AreaTab tab={tab} />
-        : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTab reports={tab.kind === 'reports'} />
+        : tab.kind === 'runs' || tab.kind === 'reports' ? <RunsTab reports={tab.kind === 'reports'} label={tab.label} empty={tab.empty} />
         : null}
     </PageContainer>
   );
