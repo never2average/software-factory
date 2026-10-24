@@ -5,6 +5,7 @@ import type { Metadata } from 'next';
 import { profile } from '@/config/profile.generated';
 import { serverApi } from '@/lib/server-api';
 import { NoOrganization } from '@/features/portal/no-organization';
+import { InvitationLanding } from '@/features/portal/invitation-landing';
 import { customerDocsNav } from '@/features/docs/customer-docs';
 
 export const metadata: Metadata = { title: { default: 'Account', template: `%s | ${profile.console_title}` } };
@@ -17,5 +18,10 @@ export default async function PortalLayout({ children }: { children: React.React
     const s = await serverApi<{ is_platform_admin: boolean }>('/admin/session').catch(() => null);
     return <NoOrganization platformAdmin={!!s?.body?.is_platform_admin} />;
   }
-  return <AreaShell area='portal' groups={portalNav} docs={customerDocsNav()}>{children}</AreaShell>;
+  return (
+    <AreaShell area='portal' groups={portalNav} docs={customerDocsNav()}>
+      {children}
+      <InvitationLanding activeOrgId={orgId} />
+    </AreaShell>
+  );
 }
