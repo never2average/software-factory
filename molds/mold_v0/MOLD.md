@@ -1301,29 +1301,32 @@ value: names, providers, regions and hosts only.
 
 **Landing page (mold_v0-091; pick and place, mold_v0-122).** The console's `/` is the build's landing page, declared,
 not written: a declarative pack's `pack.json` `landing` and the app's own `profile.json` `landing` over it (at most one
-pack of a build declares one). The page is a list of sections the app picks from the shell's section library, in its
-own order: `sections: [{"type": ...}]`. The library is one wireframe (after the first product's landing page): `hero`
-(eyebrow, headline, subheadline, two calls to action, a note, and a `strip` of text badges or, without items, the logos
-of the AI clients the install pages offer), `problem` (points, a transcript card `visual`, a `compare` list of options
-weighed), `concept` (cards with a path of chips, one highlighted), `how_it_works` (steps drawn as numbered cards, a flow,
-or a flow that loops back to its first step), `proof` (metrics and/or a what-you-get list), `where_you_work` (the AI
-clients, from `src/connect-catalog.ts` and `install_clients`, with a sample chat), `faq` (disclosures that open without
-script) and `cta` (the only type a page may pick more than once). Each type is drawn by the shell from data: a pack brings
-words, never a page, a component or a picture. Beside the sections, `footer` (a note and links) and `seo` (title and
-description for search results and Open Graph). With no `sections` the page is the whole wireframe in that order, in the
-shell's neutral words (through the build's words: `{product}`, `{workspace}`, `{runs}`). A profile's `sections` replace a
-pack's; its `footer` and `seo` replace the pack's one by one. At most 10 sections, each type once (three calls to action),
-the hero first, each anchor its own; every value is plain text on one line, shown as text; a link is a path of this site,
-an https:// address or a mailto: address (`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result, the
-offered clients and the source offer's footer items into `web/src/config/landing.generated.ts`). The old block
-(`hero`, `coverage`, `value_points`, `how_it_works`, `features`, `faq`, `closing` at the top level) is still read and
-converted to sections at build time (coverage becomes the hero's strip, value points the concept's cards, features
-proof's items, closing a cta), so a build that declared one still builds; a block that mixes the two is refused. The page
-(`web/src/features/site/landing.tsx`) is in the build's brand (its name, tagline, `icon.svg` and the theme's tokens) with
-a sticky header (the picked sections as navigation, a menu on small screens, install, and an account-aware sign in or
-start: `web/src/features/site/site-ctas.ts` decides every call to action once, by who may open an account) and a footer
-(the sections and ways in, the block's links, the legal pages and the source offer whenever the install pages carry it).
-A host pack's own landing page (code, mold_v0-039) stays its own.
+pack of a build declares one). The page is a list of sections the app picks from the shell's section library, in its own
+order: `sections: [{"type": ...}]`. The library is the first product's landing page generalised: each section and each
+drawing is a data-driven port of that page's own (its section wrapper, hero with its backdrop and logo strip, header,
+footer and accordion of questions; the `visual` templates `decision_graph`, `transcript`, `loop`, `paths`, `scorecard`
+and `chat`), so that page's own words reproduce it (`scripts/fixtures/landing-reference.json`, compared by screenshots).
+The types: `hero` (eyebrow, headline and its highlighted end, subheadline, a call to action or the account button, a
+second call, up to 3 links such as the app's repository, a note, a visual, and a `strip` of text badges, named logos or
+the logos of the AI clients the install pages offer), `problem` (icon points), `concept` (cards with a path of chips,
+one highlighted), `how_it_works` (steps drawn as numbered cards, a flow, or a flow that loops back to its first step),
+`proof` (metrics and/or a what-you-get list), `where_you_work` (the AI clients, from `src/connect-catalog.ts` and
+`install_clients`), `faq` and `cta` (the only type a page may pick more than once); each but the hero and the cta may
+carry a visual, its anchor, its navigation label (or `nav: false`), an eyebrow, a title and a lead. Each is drawn by the
+shell from data: a pack brings words, never a page, a component or a picture. Beside the sections, `header` (up to 2
+links; the ways in: sign in and start, or one account button), `footer` (a tagline, a note, links, a copyright line,
+`shell_links: false`) and `seo` (title and description for search results and Open Graph). With no `sections` the page
+is the whole wireframe in that order, in the shell's neutral words (through the build's words: `{product}`,
+`{workspace}`, `{runs}`). A profile's `sections` replace a pack's; its `header`, `footer` and `seo` replace the pack's
+one by one. At most 10 sections, each type once (three calls to action), the hero first, each anchor its own; every
+value is plain text on one line, shown as text; a link is a path of this site, an https:// address or a mailto: address
+(`src/landing.ts`, checked by `gen-packs.mjs`, which writes the result, the offered clients and the source offer's
+footer items into `web/src/config/landing.generated.ts`). The old block (`hero`, `coverage`, `value_points`,
+`how_it_works`, `features`, `faq`, `closing` at the top level) is still read and converted to sections at build time
+(coverage becomes the hero's strip, value points the concept's cards, features proof's items, closing a cta), so a build
+that declared one still builds; a block that mixes the two is refused. Every call to action comes from
+`web/src/features/site/site-ctas.ts`, which knows who may open an account (mold_v0-098). A host pack's own landing page
+(code, mold_v0-039) stays its own.
 
 **Upstream catalogs index themselves (mold_v0-128, mold_v0-129).** An upstream catalog is pinned to a commit, so its rows
 are fixed by the build: the server indexes every one whose stored pin (`repository_index`, migration 0019) is not its

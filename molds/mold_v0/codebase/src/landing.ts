@@ -9,27 +9,31 @@
  * the shell's, drawn from the block's words (the operator's rule: app packs are JSON, not pages).
  *
  * PICK AND PLACE. The page is a list of sections, `sections: [{type, ...fields}]`, in the order the app wants them. The
- * section library (one wireframe: a hero with a strip of logos or badges, the problem, the concept, how it works, proof,
- * where you work, questions and a call to action) is the shell's; the app picks which sections it shows, in which order,
- * with which words. With no `sections` the page is the whole wireframe, in that order, in the shell's neutral words.
+ * section library is the shell's: faithful, data-driven generalisations of the first product's landing page (its section
+ * wrapper, hero, header, footer and questions, with the same spacing and type), so that page's own words reproduce it
+ * (scripts/fixtures/landing-reference.json). The app picks which sections it shows, in which order, with which words.
+ * With no `sections` the page is the whole wireframe, in that order, in the shell's neutral words.
  *
- *   hero            eyebrow, headline (default: the profile's tagline), subheadline, primary_cta (default: start, which
- *                   is sign-up or a request for access), secondary_cta (default: connect an AI client), up to 3 more
- *                   `links` {label, href} under them (the app's own: its repository, its docs), note, and a
- *                   strip under it: text badges (`items`), or, without items, the logos of the AI clients the build offers
- *   problem         title, lead, up to 4 points {title, body}, a transcript card (`visual`: lines of text, a highlight)
- *                   and a list of options weighed (`compare`: {label, note, tone good|bad|neutral|muted})
- *   concept         title, lead, up to 6 cards {title, subtitle, body, chips (a path drawn as chips), highlight}, note
- *   how_it_works    title, lead, 1 to 6 steps {title, body}, drawn as numbered cards (`layout: steps`), a flow (`flow`,
- *                   the default) or a flow that returns to its first step (`loop`, with `loop_label`)
- *   proof           title, lead, up to 6 metrics {value, label, note} and/or up to 12 items {title, body}, note
- *   where_you_work  title, lead, the AI clients to show (`clients`: ids the build's install pages offer, default the
- *                   first 8 of them), a sample chat (`chat.messages`: {from person|assistant|tool, text}), note
- *   faq             title, lead, 1 to 15 {question, answer}, each a disclosure that opens without script
+ *   hero            eyebrow, headline (default: the profile's tagline) and headline_highlight (in the primary colour),
+ *                   subheadline, primary_cta (a link, or "account": sign in or open the console, with an arrow; default:
+ *                   start, which is sign-up or a request for access), secondary_cta (default: connect an AI client), up
+ *                   to 3 more `links` {label, href} (the app's own: its repository, its docs), note, a `visual` beside it,
+ *                   and a strip under it: text badges (`items`), named `logos`, or the logos of the AI clients offered
+ *   problem         points {title, body, icon} under a visual
+ *   concept         cards {title, subtitle, body, chips (a path drawn as chips), highlight} under a visual, a note
+ *   how_it_works    steps {title, body} drawn as numbered cards (`layout: steps`), a flow (`flow`, the default) or a
+ *                   flow that returns to its first step (`loop`, with `loop_label`), under a visual
+ *   proof           metrics {value, label, note} and/or items {title, body} under a visual, a note
+ *   where_you_work  the AI clients to show (`clients`: ids the build's install pages offer), beside a visual (a chat)
+ *   faq             1 to 15 {question, answer}, an accordion
  *   cta             title, body, primary_cta, secondary_cta (the only type a page may pick more than once, up to 3)
- * Every section but cta may carry `id` (its anchor, a slug) and `nav_label` (its entry in the header's navigation, which
- * lists the picked sections in order); every section but hero and cta an `eyebrow`. Beside `sections`:
- *   footer          a note and up to 8 links (the shell's own links, the legal pages and the source offer are always added)
+ * Every section but hero and cta may carry `id` (its anchor, a slug), `nav_label` or `nav: false` (its entry in the
+ * header's navigation, which lists the picked sections in order), `eyebrow`, `title`, `lead` and a `visual`, one of the
+ * templates below (VISUALS: decision_graph, transcript, loop, paths, scorecard, chat). Beside `sections`:
+ *   header          up to 2 links beside the ways in (default: the install pages) and which ways in ("sign_in_and_start",
+ *                   the default, or "account": one account button)
+ *   footer          a tagline, a note, up to 8 links, a copyright line, and `shell_links: false` to leave out the shell's
+ *                   own ways in (the sections, the legal pages and the source offer are always there)
  *   seo             title and description for search results and link previews (Open Graph); default from the hero
  *
  * THE OLD BLOCK (mold_v0-091: hero, coverage, value_points, how_it_works, features, faq, closing at the top level) is
