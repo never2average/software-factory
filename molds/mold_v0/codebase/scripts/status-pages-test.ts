@@ -276,6 +276,10 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
       assert.equal(r.shown?.kind, kind, `${url}: the ${kind} status page (got ${JSON.stringify(r.shown)})`);
       const body = await r.p.locator("body").innerText();
       assert.doesNotMatch(body, /Could not load this page|Cannot GET|This page could not be found|Application error/, `${url}: no raw error text`);
+      const all = await r.p.locator("[data-status-page]").evaluateAll((els: Element[]) => els.map((e) => `${e.getAttribute("data-status-page")}: ${(e as HTMLElement).innerText.replace(/\s+/g, " ").slice(0, 160)}`));
+      const tries = await r.p.getByRole("button", { name: "Try again" }).evaluateAll((els: Element[]) => els.map((e) => e.outerHTML.slice(0, 200) + " in " + (e.closest("[data-status-page]")?.getAttribute("data-status-page") ?? "no status page")));
+      if (tries.length > 1) console.log(`  note: ${url}: ${tries.length} Try again buttons: ${JSON.stringify(tries)}`);
+      assert.equal(all.length, 1, `${url}: one status page (got ${JSON.stringify(all)}; Try again: ${JSON.stringify(tries)})`);
       await extra(r);
     } finally { await r.c.close(); }
   };
@@ -315,9 +319,9 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
   const fake = (status: number, body: unknown) => async (p: any) => p.route("**/api/app/usage**", (route: any) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }));
   await expect(w.owner, "/app/usage", 200, "denied", (r) => assert.match(r.shown!.text, /Billing manager role/), fake(403, { error: "This needs the Billing manager role.", code: "forbidden", needs: "billing" }));
   await expect(w.owner, "/app/usage", 200, "not_found", undefined, fake(404, { error: "Not found" }));
-  await expect(w.owner, "/app/usage", 200, "error", async (r) => assert.equal(await r.p.getByRole("button", { name: "Try again" }).count(), 1), fake(500, { error: "Internal error" }));
-  await expect(w.owner, "/app/usage", 200, "offline", async (r) => assert.equal(await r.p.getByRole("button", { name: "Try again" }).count(), 1), async (p) => p.route("**/api/app/usage**", (route: any) => route.abort("failed")));
-  await expect(w.owner, "/app/usage", 200, "no_account", async (r) => assert.equal(await r.p.getByRole("button", { name: "Sign out" }).count(), 1), fake(403, { error: "You are not in an account yet.", code: "no_account" }));
+  await expect(w.owner, "/app/usage", 200, "error", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), fake(500, { error: "Internal error" }));
+  await expect(w.owner, "/app/usage", 200, "offline", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Try again" }).count(), 1), async (p) => p.route("**/api/app/usage**", (route: any) => route.abort("failed")));
+  await expect(w.owner, "/app/usage", 200, "no_account", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Sign out" }).count(), 1), fake(403, { error: "You are not in an account yet.", code: "no_account" }));
   {
     // 401 from a page's own fetch: on to sign-in, back after.
     const r = await open(w.owner, "/app/files", async (p) => p.route("**/api/workspace-files**", (route: any) => route.fulfill({ status: 401, contentType: "application/json", body: '{"error":"Sign in"}' })));
@@ -326,7 +330,7 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
       await r.p.waitForURL(/\/auth\/sign-in\?redirect_url=%2Fapp%2Ffiles/, { timeout: 10000 });
     } finally { await r.c.close(); }
   }
-  await expect(w.suspended, "/app/usage", 200, "suspended", async (r) => assert.equal(await r.p.getByRole("button", { name: "Sign out" }).count(), 1));
+  await expect(w.suspended, "/app/usage", 200, "suspended", async (r) => assert.equal(await r.p.locator("[data-status-page]").getByRole("button", { name: "Sign out" }).count(), 1));
   if (w.outsider) await expect(w.outsider, "/app/usage", 200, "no_account");
   await expect(w.staff, `/admin/accounts/no-such-account-${STAMP}`, 200, "not_found", inShell);
   ok(`the data hooks: a role refusal (with the role it needs), not found, a server error and no answer (Try again), no account and 401 (on to sign-in, back after) are each the status page; a suspended member${w.outsider ? ", someone in an organization that is not an account" : ""} and an admin account that is not there meet theirs for real`);
