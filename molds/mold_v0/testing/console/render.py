@@ -301,7 +301,9 @@ def self_test():
     print(f"render: {len(ok)} checks passed (links, the stand-in in place of @clerk/nextjs only, the real package untouched)")
     # The cache key and the page selection (test_render.py): no browser, no build.
     r = unittest.TextTestRunner(verbosity=0, stream=sys.stdout).run(unittest.defaultTestLoader.discover(HERE, pattern="test_render.py"))
-    return 0 if r.wasSuccessful() else 1
+    if not r.wasSuccessful(): print(f"render: self-test failed: {len(r.failures) + len(r.errors)} of {r.testsRun} unit tests (test_render.py)"); return 1
+    print(f"render: {r.testsRun} unit tests passed (the build cache key, store, port patch and eviction; --pages auto's selection)")
+    return 0
 
 
 if __name__ == "__main__":

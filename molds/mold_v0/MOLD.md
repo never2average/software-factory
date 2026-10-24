@@ -1620,9 +1620,13 @@ at most 1%, p50 at most 1500 ms, p95 at most 5000 ms, and a tripped threshold is
 fails. It sends nothing until both addresses are proven the app's own (Vercel: one of the app's projects serves it;
 its own server: the address its deploy recorded). *accessibility* (axe-core 4.13.0, WCAG 2.2 A/AA, serious and critical
 fail) and *responsiveness* (phone 390, tablet 820, desktop 1440: sideways scroll and 24px tap targets) grade the
-console's pages **from the lane copy, served on the factory machine** (`testing/console/`): `render.py` builds
-`build/<app_id>.lane-console/` (the lane copy's `web/`, `next build --webpack`, with a lane stand-in for
-`@clerk/nextjs` in that build only, since a local copy cannot reach Clerk with the app's keys), and `world.mts` serves it
+console's pages **from the lane copy, served on the factory machine** (`testing/console/`): `render.py` builds the
+lane copy's `web/` (`next build --webpack`, with a lane stand-in for `@clerk/nextjs` in that build only, since a local
+copy cannot reach Clerk with the app's keys) and keeps the build under a hash of every input that can change it
+(`console/cache.py`, mold_v0-147: the console's files, the packs and profile, the installed packages, node, the build
+environment), so the next run with the same inputs serves a copy of it with no build; `--suite a11y,layout,shots,...`
+runs several harnesses in one world and `--pages auto` grades only the pages a change can reach (`console/pages.py`,
+plus a smoke), while the lanes grade every page. `world.mts` serves it
 on 127.0.0.1 against the lane copy's API on an embedded throwaway database behind the shell's offline Clerk
 (`scripts/lib/test-world.ts`, `mock-providers.ts`), signed in as one workspace's owner who is also platform staff; every
 request a page makes off the machine is aborted. The pages are read from the build (`console/surface.mts`): the shell's
