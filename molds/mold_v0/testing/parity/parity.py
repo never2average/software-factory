@@ -89,9 +89,27 @@ def snapshot(a):
     meta = json.load(open(meta_p))
     meta["seconds"].update({"world_and_console": round(t2 - t1, 1), "smoke": round(t3 - t2, 1), "total": round(t3 - t0, 1)})
     meta["smoke"] = sorted(smoke)
+    if RETRIED: meta["smoke_retried_after_exit"] = RETRIED   # run facts, not compared (diff.mts reads only packs)
     with open(meta_p, "w") as fh: fh.write(json.dumps(meta, indent=2, sort_keys=True) + "\n")
     print(f"parity: snapshot done in {t3 - t0:.0f}s ({', '.join(f'{k} {v}s' for k, v in sorted(meta['seconds'].items()))})")
     return 0
+
+
+RETRIED = {}
+
+
+def smoke_once(codebase, f, p):
+    tmp = tempfile.mkdtemp(prefix=f"parity-smoke-{p}-")
+    env = {k: v for k, v in os.environ.items() if k in KEEP_ENV}
+    env.update(SMOKE_ENV, PGLITE_DIR=os.path.join(tmp, "pglite"), TMPDIR=tmp)
+    try:
+        r = subprocess.run([tsx(codebase), f], cwd=codebase, env=env, capture_output=True, text=True, errors="replace", timeout=SMOKE_S)
+        return r.returncode, r.stdout + r.stderr
+    except subprocess.TimeoutExpired as e:
+        dec = lambda b: b.decode(errors="replace") if isinstance(b, bytes) else (b or "")
+        return 124, f"{dec(e.stdout)}{dec(e.stderr)}\n(stopped after {SMOKE_S}s)"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def run_smokes(codebase, out):
@@ -102,19 +120,18 @@ def run_smokes(codebase, out):
     for p in sorted(os.listdir(packs)) if os.path.isdir(packs) else []:
         f = os.path.join(packs, p, "scripts", "smoke.ts")
         if not os.path.isfile(f): continue
-        tmp = tempfile.mkdtemp(prefix=f"parity-smoke-{p}-")
-        env = {k: v for k, v in os.environ.items() if k in KEEP_ENV}
-        env.update(SMOKE_ENV, PGLITE_DIR=os.path.join(tmp, "pglite"), TMPDIR=tmp)
         t = time.time()
-        try:
-            r = subprocess.run([tsx(codebase), f], cwd=codebase, env=env, capture_output=True, text=True, timeout=SMOKE_S)
-            code, log = r.returncode, r.stdout + r.stderr
-        except subprocess.TimeoutExpired as e:
-            code, log = 124, f"{e.stdout or ''}{e.stderr or ''}\n(stopped after {SMOKE_S}s)"
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-        with open(os.path.join(out, f"smoke-{p}.log"), "w") as fh: fh.write(log if isinstance(log, str) else log.decode(errors="replace"))
+        code, log = smoke_once(codebase, f, p)
+        retried = None
+        if code >= 128 and code != 124:
+            # The runtime itself died (a signal; seen: exit 133, a V8 fatal error in the embedded database's WebAssembly on a
+            # busy 8 GB machine), not an assertion of the test: run it once more on a fresh database and log both.
+            retried = code
+            code, again = smoke_once(codebase, f, p)
+            log = f"{log}\n\n---------- the run above ended with exit {retried} (the runtime, not an assertion); run again ----------\n\n{again}"
+        with open(os.path.join(out, f"smoke-{p}.log"), "w") as fh: fh.write(log)
         res[p] = {"pass": code == 0, "exit": code, "env": SMOKE_ENV}
+        if retried: RETRIED[p] = retried
         print(f"parity: {p}'s scripts/smoke.ts {'passed' if code == 0 else f'FAILED (exit {code}; smoke-{p}.log)'} in {time.time() - t:.0f}s", flush=True)
     if res:
         with open(os.path.join(out, "smoke.json"), "w") as fh: fh.write(json.dumps(res, indent=2, sort_keys=True) + "\n")

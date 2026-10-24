@@ -246,6 +246,14 @@ async function maskDom(p: { evaluate<R, A>(f: (a: A) => R, a: A): Promise<R> }) 
       for (const [re, to] of res) after = after.replace(re, to);
       if (after !== before) n.nodeValue = after;
     }
+    // A leaf element whose text React split into several nodes (`{k.key_prefix}…`): masked as one text.
+    for (const el of document.body.querySelectorAll("*")) {
+      if (el.children.length || el.childNodes.length < 2) continue;
+      const before = el.textContent ?? "";
+      let after = before;
+      for (const [re, to] of res) after = after.replace(re, to);
+      if (after !== before) el.textContent = after;
+    }
   }, TEXT_MASK_SOURCES).catch(() => { /* a page that navigated away: its text is read as it is */ });
 }
 
