@@ -326,7 +326,8 @@ async function browserChecks(w: { owner: Person; suspended: Person; staff: Perso
     // 401 from a page's own fetch: on to sign-in, back after.
     const r = await open(w.owner, "/app/files", async (p) => p.route("**/api/workspace-files**", (route: any) => route.fulfill({ status: 401, contentType: "application/json", body: '{"error":"Sign in"}' })));
     try {
-      assert.equal(r.shown?.kind, "signed_out", JSON.stringify(r.shown));
+      // The page's own helper may go to sign-in at once (lib/api-client.ts does): the signed-out page, or sign-in itself.
+      assert.ok(r.shown?.kind === "signed_out" || r.at.pathname === "/auth/sign-in", `401: the signed-out page or sign-in (${JSON.stringify(r.shown)} at ${r.at.pathname})`);
       await r.p.waitForURL(/\/auth\/sign-in\?redirect_url=%2Fapp%2Ffiles/, { timeout: 10000 });
     } finally { await r.c.close(); }
   }
