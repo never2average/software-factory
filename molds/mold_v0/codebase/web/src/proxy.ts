@@ -8,8 +8,19 @@ import { BUILTIN_SESSION_COOKIES, CLERK } from '@/lib/auth/provider';
 // MCP server (src/admin-mcp.ts), which checks its own OAuth access tokens.
 const isProtected = createRouteMatcher(['/admin', '/admin/((?!session$|mcp$).*)', '/app', '/app/(.*)']);
 
+/**
+ * The page's own path for its server components (mold_v0-131, features/status/server.ts): a status page names the
+ * address to come back to after signing in, and the right refusal for the area it is in.
+ */
+function withPath(req: NextRequest) {
+  const h = new Headers(req.headers);
+  h.set('x-console-path', req.nextUrl.pathname + req.nextUrl.search);
+  return NextResponse.next({ request: { headers: h } });
+}
+
 const clerk = clerkMiddleware(async (auth, req) => {
   if (isProtected(req)) await auth.protect();
+  return withPath(req);
 });
 
 /**
@@ -18,7 +29,7 @@ const clerk = clerkMiddleware(async (auth, req) => {
  * and /admin/session with it (src/lib/auth/server.ts), and every API call checks it.
  */
 function builtin(req: NextRequest) {
-  if (!isProtected(req) || BUILTIN_SESSION_COOKIES.some((c) => req.cookies.has(c))) return NextResponse.next();
+  if (!isProtected(req) || BUILTIN_SESSION_COOKIES.some((c) => req.cookies.has(c))) return withPath(req);
   const url = new URL('/auth/sign-in', req.url);
   url.searchParams.set('redirect_url', req.nextUrl.pathname + req.nextUrl.search);
   return NextResponse.redirect(url);

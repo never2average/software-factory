@@ -40,6 +40,7 @@
     "test:mcp-domain": "tsx scripts/mcp-domain-test.ts clerk && tsx scripts/mcp-domain-test.ts builtin",
     "test:sign-in": "tsx scripts/sign-in-test.ts builtin && tsx scripts/sign-in-test.ts clerk",
     "test:email": "tsx scripts/email-test.ts",
+    "test:status-pages": "tsx scripts/status-pages-test.ts builtin && tsx scripts/status-pages-test.ts clerk",
     "test:proxy-hops": "tsx scripts/proxy-hops-test.ts",
     "test:data-repositories": "tsx scripts/data-repositories-test.ts",
     "test:runs": "tsx scripts/runs-test.ts",

@@ -4,7 +4,7 @@
 import { useAuth } from '@/lib/auth';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { ApiErrorStatus } from '@/features/status/from-error';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
@@ -79,11 +79,8 @@ export function LoadingCards({ count = 3 }: { count?: number }) {
 
 export function ErrorState({ error }: { error: Error }) {
   return (
-    <Alert variant='destructive'>
-      <Icons.alertCircle />
-      <AlertTitle>Could not load this page</AlertTitle>
-      <AlertDescription>{error.message}</AlertDescription>
-    </Alert>
+    // The console's status page for what the API answered (mold_v0-131): signed out, refused, not found, failed.
+    <ApiErrorStatus error={error} />
   );
 }
 

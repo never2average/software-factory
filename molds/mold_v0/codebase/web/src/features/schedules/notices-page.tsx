@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ErrorState, LoadingCards, When, fail, useOrgLoad } from '@/features/portal/shared';
+import { httpError } from '@/features/status/from-error';
 
 interface Notice { id: string; kind: 'due'; area: string; area_label: string; key: string; title: string | null; due_on: string; created_at: string; emailed: boolean; dismissed: boolean }
 
@@ -16,7 +17,7 @@ async function call<T>(method: string, path = ''): Promise<T> {
     headers: { accept: 'application/json', ...(method !== 'GET' ? { 'x-pack-request': '1' } : {}) }
   });
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+  if (!res.ok) throw httpError(res.status, json);
   return json;
 }
 

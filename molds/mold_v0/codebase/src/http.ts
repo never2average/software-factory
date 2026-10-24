@@ -24,6 +24,7 @@ import { adminActor, adminAuthRouter, requirePlatformAdmin } from "./admin-auth.
 import { ADMIN_MCP_PATHS, adminSkillList, adminToolList, adminTools, adminMcpResource, mountAdminMcp } from "./admin-mcp.js";
 import { mcpOriginGuard } from "./origin.js";
 import { mountInstallPages } from "./install-pages.js";
+import { browserNotFound } from "./status-pages.js";
 import { currentOffer } from "./data-map.js";
 import { offerFooterHtml } from "./source-offer.js";
 import { keysOffMessage, memberKeyAppRouter } from "./member-keys.js";
@@ -774,6 +775,9 @@ export function createApp() {
       res.type("html").send(WIDGET_HTML.replace("<script>", `<script>window.__${NS.toUpperCase()}_PREVIEW__ = ${boot};</script>\n<script>`));
     });
   }
+
+  // A browser's address that is neither the console's nor this server's: the console's not-found page, a 404 (mold_v0-131).
+  app.use(browserNotFound());
 
   app.use((err: Error & { status?: number; code?: unknown; env?: unknown }, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status ?? 500;
